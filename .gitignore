@@ -1,0 +1,8 @@
+# Planning, research and agent notes stay local — never committed.
+research/
+docs/
+planning/
+.claude/
+CLAUDE.md
+*.md
+!README.md
