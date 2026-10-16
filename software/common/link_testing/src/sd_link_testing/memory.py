@@ -106,12 +106,12 @@ class LossyTransport:
         if self.broken or self._rng.random() < self.loss:
             self.dropped += 1
             return
-        self._queue.put_nowait((self._clock.now() + self.delay_s, text))
+        self._queue.put_nowait((self._clock.monotonic() + self.delay_s, text))
 
     async def _run(self) -> None:
         while True:
             due, text = await self._queue.get()
-            wait = due - self._clock.now()
+            wait = due - self._clock.monotonic()
             if wait > 0:
                 await self._clock.sleep(wait)
             try:

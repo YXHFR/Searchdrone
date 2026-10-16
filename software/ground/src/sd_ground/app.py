@@ -318,10 +318,10 @@ def serve(loaded: Loaded) -> int:
 def openapi_documents() -> dict[str, dict[str, Any]]:
     """Both OpenAPI documents, built without config files, database or network."""
     from sd_ground.config import GroundConfig
-    from sd_obs.clock import FakeClock
+    from sd_obs.clock import MonotonicClock
 
     loaded = Loaded(config=GroundConfig(), root=Path("/nonexistent"), env={})
-    g = Ground(loaded=loaded, clock=FakeClock(), brain_token=BrainToken(None), version="0.0.0")
+    g = Ground(loaded=loaded, clock=MonotonicClock(), brain_token=BrainToken(None), version="0.0.0")
     return {
         "panel": create_panel_app(g).openapi(),
         "commander": create_commander_app(g).openapi(),

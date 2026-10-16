@@ -7,8 +7,9 @@ import asyncio
 from link_helpers import VEHICLE, goto
 
 from sd_link.session import Closed, Expired, Inbound, LinkSession
-from sd_link_testing import FakeClock, LossyTransport, transport_pair
+from sd_link_testing import LossyTransport, transport_pair
 from sd_schemas.link import SkillCommand
+from sd_testing import FakeClock
 
 
 async def test_hundred_orders_in_order_and_acknowledged() -> None:
@@ -39,7 +40,7 @@ async def test_hundred_orders_in_order_and_acknowledged() -> None:
         await ground.send(cmd, ttl_ms=15_000)
         # One movement order at a time: wait until an Ack stops its resends.
         for _ in range(200):
-            await clock.advance(0.05)
+            await clock.run_for(0.05)
             expired += [e for e in ground.events_nowait() if isinstance(e, Expired)]
             if ground.pending_count == 0:
                 acked += 1

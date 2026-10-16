@@ -8,9 +8,10 @@ from link_helpers import VEHICLE, frame, hello, stop_notice
 
 from sd_link.client import handshake
 from sd_link.close_codes import CloseCode
-from sd_link_testing import FakeClock, transport_pair
+from sd_link_testing import transport_pair
 from sd_schemas.base import new_id
 from sd_schemas.link import SCHEMA_MAJOR, HelloAck
+from sd_testing import FakeClock
 
 
 async def _run(answer: str | None, clock: FakeClock) -> tuple[object, int | None]:
@@ -22,7 +23,7 @@ async def _run(answer: str | None, clock: FakeClock) -> tuple[object, int | None
         await server.send(answer)
     else:
         await asyncio.sleep(0)
-        await clock.advance(5.1)
+        await clock.run_for(5.1)
     result = await task
     return result, client.close_code
 

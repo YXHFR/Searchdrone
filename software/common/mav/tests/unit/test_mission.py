@@ -27,9 +27,9 @@ from sd_mav.mission import (
     upload,
 )
 from sd_mav.vehicle import ForbiddenMavlinkError, SendOrigin
-from sd_obs.clock import FakeClock
 from sd_safety.constants import MISSION_END_LOITER_S, MISSION_MAX_ITEMS
 from sd_schemas.base import LatLonAlt
+from sd_testing import FakeClock
 
 HOME_LLA = LatLonAlt(lat=CMAC_HOME[0], lon=CMAC_HOME[1], alt_amsl_m=CMAC_HOME[2])
 NEAR = st.tuples(

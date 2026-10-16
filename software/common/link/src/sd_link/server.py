@@ -241,7 +241,7 @@ class LinkServer:
         async with self._locks.setdefault(vehicle_id, asyncio.Lock()):
             old = self._active.get(vehicle_id)
             if old is not None:
-                silent = self._clock.now() - old.session.last_inbound
+                silent = self._clock.monotonic() - old.session.last_inbound
                 if hello.boot_id == old.boot_id and silent < LINK_LOSS_DETECT_S:
                     await self._refuse(transport, CloseCode.REPLACED, "duplicate", vehicle_id)
                     return None

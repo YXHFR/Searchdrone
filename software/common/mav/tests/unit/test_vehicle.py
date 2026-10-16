@@ -24,9 +24,9 @@ from sd_mav.vehicle import (
     SendOrigin,
     Vehicle,
 )
-from sd_obs.clock import FakeClock
 from sd_schemas.base import LatLon
 from sd_schemas.link import StickAxes
+from sd_testing import FakeClock
 
 SRC = Path(sd_mav.__file__).parent
 
