@@ -1,8 +1,10 @@
 """The Unix socket the ``sd-ground`` CLI uses to talk to the running server.
 
-One JSON line in, one JSON line out. Only actions that lower risk exist: a new login link,
-a new PIN, and STOP / RETURN HOME. Never Resume. The socket file is 600 in a 700 directory,
-and a peer with another user id (``SO_PEERCRED``) is disconnected.
+One JSON line in, one JSON line out. Only these exist: a new login link or PIN (for the
+owner at the terminal; it creates a pilot login, so the AI may never use this socket,
+which an import contract enforces) and STOP / RETURN HOME. Never Resume. The socket file
+is 600 in a 700 directory, and a peer with another user id (``SO_PEERCRED``) is
+disconnected.
 """
 
 from __future__ import annotations

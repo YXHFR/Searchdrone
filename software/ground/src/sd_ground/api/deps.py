@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import HTTPConnection
 
 from sd_ground.auth import (
+    SESSION_COOKIE,
     SESSION_HEADROOM,
     Principal,
     SessionRecord,
@@ -34,7 +35,7 @@ __all__ = [
     "require_interactive",
 ]
 
-COOKIE = "sd_session"
+COOKIE = SESSION_COOKIE
 _TITLES = {
     400: "Bad Request",
     401: "Unauthorized",

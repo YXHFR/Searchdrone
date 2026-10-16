@@ -130,6 +130,9 @@ async def live(ws: WebSocket) -> None:
         async def watchdog() -> None:
             while g.clock.monotonic() - last_ping[0] < PING_TIMEOUT_S:
                 await g.clock.sleep(1.0)
+                if principal_from(ws) is None:  # logged out, revoked or expired
+                    await ws.close(4401)
+                    return
             await ws.close(1001)
 
         await until_first_done(reader, writer, watchdog)

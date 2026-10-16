@@ -320,7 +320,8 @@ async def post_decision(mission_id: IdPath, request: Request, g: G, _: Commander
     target: Path | None = None
     if body.prompt_json is not None:
         target, stored["prompt_file"] = _prompt_path(g, mid, str(body.turn_id))
-        if target.exists():  # the audit file of an earlier turn is never rewritten
+        # The audit file of an earlier turn is never rewritten.
+        if target.is_symlink() or target.exists():
             raise ApiStatusError(409, "TURN_EXISTS", "Det finns redan en promptfil för turen.")
     created = await repo_of(g).add_decision(
         decision_id=str(body.id),
@@ -331,7 +332,12 @@ async def post_decision(mission_id: IdPath, request: Request, g: G, _: Commander
     )
     if created and target is not None and body.prompt_json is not None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            raise ApiStatusError(
+                409, "TURN_EXISTS", "Det finns redan en promptfil för turen."
+            ) from None
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(body.prompt_json, ensure_ascii=False))
     return Response(status_code=204)

@@ -15,13 +15,19 @@ import json
 import re
 import threading
 from collections.abc import Awaitable, Callable, MutableMapping
-from http.cookies import SimpleCookie
 from typing import Any, Literal
 
 from pydantic import ValidationError
+from starlette.requests import cookie_parser
 
 from sd_ground import emergency
-from sd_ground.auth import Principal, SessionStore, principal_for, session_for
+from sd_ground.auth import (
+    SESSION_COOKIE,
+    Principal,
+    SessionStore,
+    principal_for,
+    session_for,
+)
 from sd_ground.emergency import EmergencyRefusedError
 from sd_ground.sources import EmergencyPath, EmergencyUnavailableError
 from sd_ground.web import error_body
@@ -40,7 +46,6 @@ _ONE = re.compile(
 )
 _ALL = re.compile(r"^/api/v1/actions/(?P<action>stop|return_home)_all$")
 _MAX_BODY = 4096
-SESSION_COOKIE = "sd_session"
 
 
 class MainLoopBridge:
@@ -105,15 +110,9 @@ class IngressApp:
         headers = {
             k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
         }
-        cookie = None
-        if "cookie" in headers:
-            jar: SimpleCookie = SimpleCookie()
-            try:
-                jar.load(headers["cookie"])
-            except Exception:
-                return None
-            morsel = jar.get(SESSION_COOKIE)
-            cookie = morsel.value if morsel is not None else None
+        # The same lenient parser as every other route: a broken cookie from another app on
+        # localhost must never hide the pilot's session from STOP / RETURN HOME.
+        cookie = cookie_parser(headers.get("cookie", "")).get(SESSION_COOKIE)
         rec = session_for(
             self.sessions, authorization=headers.get("authorization", ""), cookie=cookie
         )

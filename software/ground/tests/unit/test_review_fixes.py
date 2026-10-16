@@ -100,3 +100,52 @@ def test_observer_may_stop_on_the_main_app_too(ground: Ground, clock: FakeClock)
             ).status_code
             == 403
         )
+
+
+def test_stop_all_reaches_every_vehicle_even_if_one_fails(clock: FakeClock) -> None:
+    import pytest
+
+    from sd_ground import emergency
+    from sd_ground.auth import Principal
+    from sd_ground.sources import EmergencyUnavailableError
+    from sd_schemas.api import ActionDispatched
+    from sd_schemas.base import new_id
+
+    calls: list[str] = []
+
+    class TwoVehicles:
+        def vehicles(self) -> list[str]:
+            return ["sim-01", "sim-02"]
+
+        def dispatch(self, action: str, vehicle_id: str, **_: object) -> ActionDispatched:
+            calls.append(vehicle_id)
+            if vehicle_id == "sim-01":
+                raise EmergencyUnavailableError(503, "NO_PATH", "nere")
+            return ActionDispatched(action_id=new_id(), action_seq=1, paths={"mavlink": "queued"})
+
+    who = Principal(role="pilot", issuer_ref="operator:demo", auth_mode="local")
+    with pytest.raises(EmergencyUnavailableError) as exc:
+        emergency.dispatch_all(TwoVehicles(), "stop", str(new_id()), who)  # type: ignore[arg-type]
+    assert calls == ["sim-01", "sim-02"]  # the second vehicle still got STOP
+    assert "sim-01" in exc.value.detail_sv and "sim-02" in exc.value.detail_sv
+
+
+def test_live_ws_closes_after_logout(
+    logged_in: TestClient, ground: Ground, clock: FakeClock
+) -> None:
+    import pytest
+    from starlette.websockets import WebSocketDisconnect
+
+    with logged_in.websocket_connect("ws://127.0.0.1:8080/ws/v1/live") as ws:
+        ws.receive_json()
+        ws.send_json(
+            {"op": "subscribe", "topics": ["mission"], "server_epoch": None, "since_seq": None}
+        )
+        ws.receive_json()
+        for rec in ground.sessions.all():
+            ground.sessions.revoke(rec.token_sha256)
+        with pytest.raises(WebSocketDisconnect) as closed:
+            for _ in range(200):
+                clock.advance(1.1)
+                ws.receive_json()
+        assert closed.value.code == 4401

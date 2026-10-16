@@ -86,3 +86,22 @@ def test_emergency_route_keeps_the_guard(bridged: TestClient, ground: Ground) ->
         == 401
     )
     assert "content-security-policy" in no_csrf.headers
+
+
+@pytest.mark.parametrize(
+    "foreign",
+    ['pref={"theme":"dark"}', "grafana_sess=a b", 'broken="unterminated', "x=1;;;=2"],
+)
+def test_stop_survives_a_broken_foreign_cookie(
+    bridged: TestClient, ground: Ground, emergency: object, foreign: str
+) -> None:
+    """Cookies are shared by every app on localhost; a broken one must not hide the pilot."""
+    code, _ = ground.login_link()
+    res = bridged.post("/api/v1/session", json={"login_code": code}, headers=H)
+    token = res.cookies["sd_session"]
+    bridged.cookies.clear()
+    cookie = {"Cookie": f"{foreign}; sd_session={token}"}
+    stop = bridged.post("/api/v1/vehicles/sim-01/actions/stop", json=STOP, headers={**H, **cookie})
+    assert stop.status_code == 202, stop.text
+    assert bridged.get("/api/v1/session", headers=cookie).status_code == 200
+    assert emergency.calls[-1][0] == "stop"  # type: ignore[attr-defined]

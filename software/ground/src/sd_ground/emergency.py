@@ -47,21 +47,35 @@ def dispatch(
 def dispatch_all(
     path: EmergencyPath, action: Action, client_action_id: str, who: Principal
 ) -> ActionDispatchedAll:
+    """Send to every connected vehicle, even when one of them fails.
+
+    Fails (503) when no vehicle is connected or when any vehicle could not be reached, so
+    an answer of 202 always means every vehicle got the order.
+    """
     check_role(action, who)
-    if not path.vehicles():  # an empty list would look like success with nothing sent
+    vehicles = list(path.vehicles())  # one snapshot for the check and the loop
+    if not vehicles:  # an empty list would look like success with nothing sent
         raise EmergencyUnavailableError(
             503,
             "NO_PATH",
             "Ingen drönare är ansluten. Använd RC-sändaren eller flygkontrollens egen väg.",
         )
-    return ActionDispatchedAll(
-        actions=[
-            ActionDispatchedVehicle(
-                **path.dispatch(
-                    action, vid, client_action_id=client_action_id, via="button", by=who
-                ).model_dump(),
-                vehicle_id=vid,
+    sent: list[ActionDispatchedVehicle] = []
+    failed: list[str] = []
+    for vid in vehicles:
+        try:
+            result = path.dispatch(
+                action, vid, client_action_id=client_action_id, via="button", by=who
             )
-            for vid in path.vehicles()
-        ]
-    )
+        except EmergencyUnavailableError:
+            failed.append(vid)
+            continue
+        sent.append(ActionDispatchedVehicle(**result.model_dump(), vehicle_id=vid))
+    if failed:
+        raise EmergencyUnavailableError(
+            503,
+            "NO_PATH",
+            f"Kunde inte nå {', '.join(failed)}. Skickat till: "
+            f"{', '.join(a.vehicle_id for a in sent) or 'ingen'}.",
+        )
+    return ActionDispatchedAll(actions=sent)

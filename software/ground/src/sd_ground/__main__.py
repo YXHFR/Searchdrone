@@ -147,7 +147,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         _private_dir(token_file.parent)
         _write_private(token_file, new_token() + "\n")
         _say(f"skapade {loaded.config.auth.brain_token_file}")
-    loaded.data_dir.mkdir(parents=True, exist_ok=True)
+    _private_dir(loaded.data_dir)  # mission data and logs: only for the owner
     if args.lan:
         _make_cert(loaded.path(loaded.config.lan.tls_dir))
         _say(f"skapade certifikat i {loaded.config.lan.tls_dir}")

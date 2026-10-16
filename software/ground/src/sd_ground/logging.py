@@ -69,7 +69,9 @@ REDACTOR = Redactor()
 def setup_logging(log_file: Path | None = None, *, level: int = logging.INFO) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     if log_file is not None:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not log_file.exists():
+            log_file.touch(mode=0o600)
         handlers.append(RotatingFileHandler(log_file, maxBytes=50 * 1024 * 1024, backupCount=10))
     root = logging.getLogger()
     for handler in list(root.handlers):

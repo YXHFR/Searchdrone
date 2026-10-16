@@ -25,6 +25,7 @@ from sd_obs.clock import Clock
 __all__ = [
     "ATTEMPT_LIMIT",
     "ATTEMPT_WINDOW_S",
+    "SESSION_COOKIE",
     "SESSION_HEADROOM",
     "AuthMode",
     "BrainToken",
@@ -42,6 +43,7 @@ Role = Literal["pilot", "observer", "commander", "system"]
 AuthMode = Literal["local", "pin", "cli", "cloudflare_access"]
 Via = Literal["local", "lan", "remote"]
 
+SESSION_COOKIE = "sd_session"
 SESSION_IDLE = dt.timedelta(hours=12)
 SESSION_CAP = dt.timedelta(days=7)
 SESSION_HEADROOM = dt.timedelta(hours=2)  # takeoff and charter approval need this much left
