@@ -1,0 +1,19 @@
+{
+  "id": "0192f49e-2000-7000-8000-000000000002",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "vehicle_id": "sim-01",
+  "kind": "charter",
+  "subject_id": "0192f49e-1000-7000-8000-000000000001",
+  "subject_version": 1,
+  "status": "pending",
+  "summary_sv": "Sök av 100 × 100 m på 40 m.",
+  "required_confirmations": [],
+  "default_autonomy_mode": "WITHIN_CHARTER",
+  "gate": null,
+  "requested_by": "brain:ground",
+  "requested_at": "2026-10-15T12:30:00Z",
+  "expires_at": null,
+  "decided_by": null,
+  "decided_at": null,
+  "reason": null
+}

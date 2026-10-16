@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a11",
+  "kind": "SkillCommand",
+  "sender": "ground:main",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 42,
+  "sent_utc": "2026-10-15T12:31:07.120Z",
+  "ttl_ms": 15000,
+  "reliable": true,
+  "corr_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+  "sig": null,
+  "body": {
+    "command_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+    "skill": "goto",
+    "params": { "lat": -35.36146, "lon": 149.16523, "alt_m": 40, "speed_ms": 8 },
+    "issuer": "brain:ground",
+    "rationale": "Flyger till P1.",
+    "charter_version": 2,
+    "based_on": { "state_epoch": 7, "state_seq": 1187 },
+    "approval": null
+  }
+}

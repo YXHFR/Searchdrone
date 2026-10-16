@@ -1,0 +1,7248 @@
+{
+  "$defs": {
+    "AbsoluteLimits": {
+      "additionalProperties": false,
+      "description": "The outer cap the pilot may raise limits to, plus the largest search area (read-only).",
+      "properties": {
+        "max_alt_agl_m": {
+          "default": 300.0,
+          "minimum": 120.0,
+          "type": "number"
+        },
+        "max_area_km2": {
+          "default": 4.0,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_range_from_pilot_m": {
+          "default": 2000.0,
+          "minimum": 500.0,
+          "type": "number"
+        },
+        "max_speed_ms": {
+          "default": 25.0,
+          "minimum": 15.0,
+          "type": "number"
+        },
+        "min_alt_agl_m": {
+          "default": 5.0,
+          "exclusiveMaximum": 120.0,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "min_battery_rtl_pct": {
+          "default": 15.0,
+          "maximum": 15.0,
+          "minimum": 15.0,
+          "type": "number"
+        }
+      },
+      "title": "AbsoluteLimits",
+      "type": "object"
+    },
+    "Ack": {
+      "additionalProperties": false,
+      "description": "Both ways; terminal stages are sent reliable.",
+      "properties": {
+        "detail_sv": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GateDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ref_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "received",
+            "accepted",
+            "rejected",
+            "running",
+            "done",
+            "failed",
+            "superseded",
+            "expired"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref_id",
+        "stage"
+      ],
+      "title": "Ack",
+      "type": "object"
+    },
+    "ActionDispatched": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "action_seq": {
+          "type": "integer"
+        },
+        "paths": {
+          "additionalProperties": {
+            "enum": [
+              "queued",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "result": {
+          "const": "dispatched",
+          "default": "dispatched",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "action_seq",
+        "paths"
+      ],
+      "title": "ActionDispatched",
+      "type": "object"
+    },
+    "ActionDispatchedAll": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ActionDispatchedVehicle"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "actions"
+      ],
+      "title": "ActionDispatchedAll",
+      "type": "object"
+    },
+    "ActionDispatchedVehicle": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "action_seq": {
+          "type": "integer"
+        },
+        "paths": {
+          "additionalProperties": {
+            "enum": [
+              "queued",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "result": {
+          "const": "dispatched",
+          "default": "dispatched",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "action_seq",
+        "paths",
+        "vehicle_id"
+      ],
+      "title": "ActionDispatchedVehicle",
+      "type": "object"
+    },
+    "ActionOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "stop",
+            "return_home",
+            "resume",
+            "battery_rtl",
+            "watchdog_stop",
+            "watchdog_rtl",
+            "takeover",
+            "handback"
+          ],
+          "type": "string"
+        },
+        "action_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "action_seq": {
+          "type": "integer"
+        },
+        "by": {
+          "type": "string"
+        },
+        "detail_sv": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode_confirmed": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode_requested": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paths": {
+          "additionalProperties": {
+            "enum": [
+              "queued",
+              "unavailable",
+              "sent",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "result": {
+          "enum": [
+            "dispatched",
+            "acked",
+            "already_active",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "t": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        },
+        "via": {
+          "enum": [
+            "button",
+            "chat",
+            "cli",
+            "system"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "vehicle_id",
+        "action",
+        "action_seq",
+        "via",
+        "by",
+        "result",
+        "mode_requested",
+        "mode_confirmed",
+        "paths",
+        "detail_sv",
+        "t"
+      ],
+      "title": "ActionOutcome",
+      "type": "object"
+    },
+    "ActionRequest": {
+      "additionalProperties": false,
+      "description": "Body of STOP, FLY HOME, Resume and Take over / Hand back.",
+      "properties": {
+        "client_action_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_action_id"
+      ],
+      "title": "ActionRequest",
+      "type": "object"
+    },
+    "AiToggleRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "title": "AiToggleRequest",
+      "type": "object"
+    },
+    "AlertCode": {
+      "enum": [
+        "MAVLINK_LOST",
+        "SDLINK_LOST",
+        "ONBOARD_SILENT",
+        "BRAIN_DISCONNECTED",
+        "DB_DOWN",
+        "BATTERY_RTL",
+        "GATE_MISMATCH",
+        "CHARTER_INSTALL_FAILED",
+        "FENCE_VERIFY_FAILED",
+        "APPROVAL_EXPIRED",
+        "STOP_PATH_FAILED",
+        "HOME_PATH_FAILED",
+        "OPERATOR_ABSENT",
+        "MAVLINK_UNKNOWN_SOURCE",
+        "MAVLINK_DUPLICATE_SOURCE",
+        "FC_SAFETY_PARAMS",
+        "LATCH_ADOPTED",
+        "LOOP_STALL",
+        "PIN_INVALIDATED",
+        "MANUAL_CONTROL_LOST"
+      ],
+      "title": "AlertCode",
+      "type": "string"
+    },
+    "Annotation": {
+      "additionalProperties": false,
+      "properties": {
+        "area_m2": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "geometry": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "pin",
+            "area"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "kind",
+        "label",
+        "geometry",
+        "created_by",
+        "created_at",
+        "area_m2"
+      ],
+      "title": "Annotation",
+      "type": "object"
+    },
+    "AnnotationCreate": {
+      "additionalProperties": false,
+      "properties": {
+        "geometry": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "kind": {
+          "enum": [
+            "pin",
+            "area"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "geometry"
+      ],
+      "title": "AnnotationCreate",
+      "type": "object"
+    },
+    "ApiError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "detail_sv": {
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "$ref": "#/$defs/ApiErrorItem"
+          },
+          "type": "array"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "default": "about:blank",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "status",
+        "code",
+        "detail_sv"
+      ],
+      "title": "ApiError",
+      "type": "object"
+    },
+    "ApiErrorItem": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "detail_sv": {
+          "type": "string"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "loc": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "detail_sv"
+      ],
+      "title": "ApiErrorItem",
+      "type": "object"
+    },
+    "Approval": {
+      "additionalProperties": false,
+      "properties": {
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decided_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_autonomy_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutonomyMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GateDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "charter",
+            "command",
+            "resume"
+          ],
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requested_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "requested_by": {
+          "type": "string"
+        },
+        "required_confirmations": {
+          "items": {
+            "const": "clear_around_drone",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "expired",
+            "superseded"
+          ],
+          "type": "string"
+        },
+        "subject_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "subject_version": {
+          "type": "integer"
+        },
+        "summary_sv": {
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "vehicle_id",
+        "kind",
+        "subject_id",
+        "subject_version",
+        "status",
+        "summary_sv",
+        "required_confirmations",
+        "default_autonomy_mode",
+        "gate",
+        "requested_by",
+        "requested_at",
+        "expires_at",
+        "decided_by",
+        "decided_at",
+        "reason"
+      ],
+      "title": "Approval",
+      "type": "object"
+    },
+    "ApprovalDecisionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "autonomy_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutonomyMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "confirmations": {
+          "items": {
+            "const": "clear_around_drone",
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "subject_version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "decision",
+        "subject_version"
+      ],
+      "title": "ApprovalDecisionRequest",
+      "type": "object"
+    },
+    "ApprovalRef": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "command_hash"
+      ],
+      "title": "ApprovalRef",
+      "type": "object"
+    },
+    "AutonomyMode": {
+      "description": "Set only by the operator on the charter card; the AI can never change it.",
+      "enum": [
+        "APPROVE_EACH",
+        "WITHIN_CHARTER"
+      ],
+      "title": "AutonomyMode",
+      "type": "string"
+    },
+    "AutonomyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/AutonomyMode"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "AutonomyRequest",
+      "type": "object"
+    },
+    "BoxAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "found": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "box",
+          "default": "box",
+          "type": "string"
+        }
+      },
+      "required": [
+        "found",
+        "bbox",
+        "confidence"
+      ],
+      "title": "BoxAnswer",
+      "type": "object"
+    },
+    "BoxQuestion": {
+      "additionalProperties": false,
+      "description": "Where in an image something is (stage 2; schema only).",
+      "properties": {
+        "image_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "instructions": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "box",
+          "default": "box",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instructions",
+        "image_id"
+      ],
+      "title": "BoxQuestion",
+      "type": "object"
+    },
+    "BrainMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "client_msg_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "default": "text",
+          "enum": [
+            "text",
+            "question",
+            "status",
+            "proposal"
+          ],
+          "type": "string"
+        },
+        "refs": {
+          "additionalProperties": true,
+          "maxProperties": 16,
+          "type": "object"
+        },
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_msg_id",
+        "text"
+      ],
+      "title": "BrainMessage",
+      "type": "object"
+    },
+    "CaptureStillsParams": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "default": 1,
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "interval_s": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "maximum": 60,
+          "type": "number"
+        }
+      },
+      "title": "CaptureStillsParams",
+      "type": "object"
+    },
+    "Charter": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body": {
+          "$ref": "#/$defs/MissionCharter"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fence_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fence_verified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "install_status": {
+          "enum": [
+            "none",
+            "pending",
+            "installed",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "proposed_by": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "proposed",
+            "approved",
+            "superseded",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "version",
+        "status",
+        "body",
+        "proposed_by",
+        "approved_by",
+        "approved_at",
+        "install_status",
+        "fence_hash",
+        "fence_verified_at",
+        "approval_id",
+        "created_at"
+      ],
+      "title": "Charter",
+      "type": "object"
+    },
+    "CharterAck": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "charter_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "charter_version": {
+          "type": "integer"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "charter_id",
+        "charter_version",
+        "accepted"
+      ],
+      "title": "CharterAck",
+      "type": "object"
+    },
+    "CharterInstall": {
+      "additionalProperties": false,
+      "properties": {
+        "charter": {
+          "$ref": "#/$defs/MissionCharter"
+        }
+      },
+      "required": [
+        "charter"
+      ],
+      "title": "CharterInstall",
+      "type": "object"
+    },
+    "CharterProposal": {
+      "additionalProperties": false,
+      "description": "A new or changed charter from the pilot (panel) or the AI.\n\nIt has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot\nposition: sending one is rejected (unknown fields are forbidden). Its own charter\nvalues are checked against the mission limits by the server before any card shows.",
+      "properties": {
+        "allowed_skills": {
+          "anyOf": [
+            {
+              "items": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "alt_max_agl_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 5.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "alt_min_agl_m": {
+          "default": 15,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "area_annotation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "base_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "battery_rtl_pct": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": 15.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "default_alt_agl_m": {
+          "default": 40,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "geofence_buffer_m": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 5,
+          "type": "number"
+        },
+        "max_range_from_pilot_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_speed_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason_sv": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "sectors": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Sector"
+              },
+              "maxItems": 52,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "reason_sv"
+      ],
+      "title": "CharterProposal",
+      "type": "object"
+    },
+    "CharterProposalResult": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validation": {
+          "$ref": "#/$defs/CharterValidationResult"
+        }
+      },
+      "required": [
+        "charter_id",
+        "approval_id",
+        "validation"
+      ],
+      "title": "CharterProposalResult",
+      "type": "object"
+    },
+    "CharterValidationError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+          "type": "string"
+        },
+        "detail_sv": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "code",
+        "detail_sv"
+      ],
+      "title": "CharterValidationError",
+      "type": "object"
+    },
+    "CharterValidationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "errors": {
+          "items": {
+            "$ref": "#/$defs/CharterValidationError"
+          },
+          "type": "array"
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "title": "CharterValidationResult",
+      "type": "object"
+    },
+    "ChatMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "author_ref": {
+          "type": "string"
+        },
+        "author_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "pilot",
+                "system"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "delivery": {
+          "enum": [
+            "n/a",
+            "queued",
+            "delivered",
+            "summarized"
+          ],
+          "type": "string"
+        },
+        "handled_by": {
+          "anyOf": [
+            {
+              "const": "ground",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "text",
+            "question",
+            "status",
+            "proposal"
+          ],
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "parsed_intent": {
+          "anyOf": [
+            {
+              "enum": [
+                "stop",
+                "return_home"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refs": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "role": {
+          "enum": [
+            "operator",
+            "brain",
+            "system"
+          ],
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "mission_id",
+        "role",
+        "author_ref",
+        "kind",
+        "text",
+        "in_reply_to",
+        "refs",
+        "author_role",
+        "parsed_intent",
+        "handled_by",
+        "delivery",
+        "created_at"
+      ],
+      "title": "ChatMessage",
+      "type": "object"
+    },
+    "ChatPost": {
+      "additionalProperties": false,
+      "properties": {
+        "annotation_ids": {
+          "items": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "client_msg_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_msg_id",
+        "text"
+      ],
+      "title": "ChatPost",
+      "type": "object"
+    },
+    "ChoiceAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "choice": {
+          "type": "string"
+        },
+        "probabilities": {
+          "additionalProperties": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "type": {
+          "const": "choice",
+          "default": "choice",
+          "type": "string"
+        }
+      },
+      "required": [
+        "choice",
+        "probabilities"
+      ],
+      "title": "ChoiceAnswer",
+      "type": "object"
+    },
+    "ChoiceQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "criteria": {
+          "maxProperties": 255,
+          "minProperties": 2,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "instructions": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "choice",
+          "default": "choice",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instructions",
+        "criteria"
+      ],
+      "title": "ChoiceQuestion",
+      "type": "object"
+    },
+    "Clearance": {
+      "additionalProperties": false,
+      "properties": {
+        "charter_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "charter_version": {
+          "type": "integer"
+        },
+        "confirmed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "confirmed_by": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "consumed",
+            "expired",
+            "invalidated"
+          ],
+          "type": "string"
+        },
+        "valid_until": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "vehicle_id",
+        "charter_id",
+        "charter_version",
+        "status",
+        "confirmed_by",
+        "confirmed_at",
+        "valid_until"
+      ],
+      "title": "Clearance",
+      "type": "object"
+    },
+    "ClearanceConfirmation": {
+      "additionalProperties": false,
+      "description": "\"Clear around the drone\". Never resent after a reconnect; envelope ttl_ms <= 5000.",
+      "properties": {
+        "charter_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "charter_version": {
+          "type": "integer"
+        },
+        "clearance_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "confirmed_by": {
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "local",
+            "lan",
+            "remote"
+          ],
+          "type": "string"
+        },
+        "valid_for_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 120000,
+          "type": "integer"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "clearance_id",
+        "mission_id",
+        "vehicle_id",
+        "charter_id",
+        "charter_version",
+        "valid_for_ms",
+        "confirmed_by",
+        "origin"
+      ],
+      "title": "ClearanceConfirmation",
+      "type": "object"
+    },
+    "ClearanceState": {
+      "additionalProperties": false,
+      "properties": {
+        "charter_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "charter_version": {
+          "type": "integer"
+        },
+        "clearance_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "consumed": {
+          "type": "boolean"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "local",
+            "lan",
+            "remote"
+          ],
+          "type": "string"
+        },
+        "received_mono_ms": {
+          "type": "integer"
+        },
+        "valid_for_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 120000,
+          "type": "integer"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "clearance_id",
+        "origin",
+        "mission_id",
+        "vehicle_id",
+        "charter_id",
+        "charter_version",
+        "received_mono_ms",
+        "valid_for_ms",
+        "consumed"
+      ],
+      "title": "ClearanceState",
+      "type": "object"
+    },
+    "Command": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "enum": [
+                "llm",
+                "grammar",
+                "scripted",
+                "rule",
+                "cloud"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "based_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issuer_kind": {
+          "enum": [
+            "operator",
+            "brain",
+            "system"
+          ],
+          "type": "string"
+        },
+        "issuer_ref": {
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "rationale_sv": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skill": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CommandStatus"
+        },
+        "status_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "vehicle_id",
+        "skill",
+        "params",
+        "issuer_kind",
+        "issuer_ref",
+        "backend",
+        "rationale_sv",
+        "in_reply_to",
+        "charter_version",
+        "based_on",
+        "status",
+        "status_reason",
+        "approval_id",
+        "expires_at",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Command",
+      "type": "object"
+    },
+    "CommandCancel": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "CommandCancel",
+      "type": "object"
+    },
+    "CommandResult": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/Command"
+        },
+        "gate": {
+          "$ref": "#/$defs/GateDecision"
+        }
+      },
+      "required": [
+        "command",
+        "gate"
+      ],
+      "title": "CommandResult",
+      "type": "object"
+    },
+    "CommandStatus": {
+      "enum": [
+        "pending_approval",
+        "rejected_by_gate",
+        "rejected_by_operator",
+        "approval_expired",
+        "dispatched",
+        "received",
+        "accepted",
+        "rejected_onboard",
+        "running",
+        "done",
+        "failed",
+        "superseded",
+        "expired",
+        "cancelled"
+      ],
+      "title": "CommandStatus",
+      "type": "string"
+    },
+    "CommanderStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "ready",
+            "busy",
+            "degraded",
+            "down"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "connected",
+        "state"
+      ],
+      "title": "CommanderStatus",
+      "type": "object"
+    },
+    "DecideRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "purpose": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "questions": {
+          "maxProperties": 64,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "discriminator": {
+                "mapping": {
+                  "box": "#/$defs/BoxQuestion",
+                  "choice": "#/$defs/ChoiceQuestion",
+                  "noul": "#/$defs/NoulQuestion",
+                  "score": "#/$defs/ScoreQuestion"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/NoulQuestion"
+                },
+                {
+                  "$ref": "#/$defs/ChoiceQuestion"
+                },
+                {
+                  "$ref": "#/$defs/ScoreQuestion"
+                },
+                {
+                  "$ref": "#/$defs/BoxQuestion"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "request_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "state": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "request_id",
+        "purpose",
+        "state",
+        "questions"
+      ],
+      "title": "DecideRequest",
+      "type": "object"
+    },
+    "DecideResult": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "additionalProperties": {
+            "discriminator": {
+              "mapping": {
+                "box": "#/$defs/BoxAnswer",
+                "choice": "#/$defs/ChoiceAnswer",
+                "noul": "#/$defs/NoulAnswer",
+                "score": "#/$defs/ScoreAnswer"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/NoulAnswer"
+              },
+              {
+                "$ref": "#/$defs/ChoiceAnswer"
+              },
+              {
+                "$ref": "#/$defs/ScoreAnswer"
+              },
+              {
+                "$ref": "#/$defs/BoxAnswer"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "engine": {
+          "enum": [
+            "local",
+            "jev",
+            "openai_decisions"
+          ],
+          "type": "string"
+        },
+        "fallback_from": {
+          "anyOf": [
+            {
+              "enum": [
+                "local",
+                "jev",
+                "openai_decisions"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "location": {
+          "enum": [
+            "cloud",
+            "local"
+          ],
+          "type": "string"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "engine",
+        "location",
+        "model_id",
+        "latency_ms",
+        "answers",
+        "created_at"
+      ],
+      "title": "DecideResult",
+      "type": "object"
+    },
+    "DecisionLog": {
+      "additionalProperties": false,
+      "properties": {
+        "ai_config_hash": {
+          "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
+          "type": "string"
+        },
+        "backend": {
+          "enum": [
+            "llm",
+            "grammar",
+            "scripted",
+            "rule",
+            "cloud"
+          ],
+          "type": "string"
+        },
+        "command_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "cloud",
+                "local"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "enum": [
+                "deadline",
+                "timeout",
+                "http_error",
+                "parse_error",
+                "round_limit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate_decision": {
+          "anyOf": [
+            {
+              "enum": [
+                "ALLOW",
+                "REJECT",
+                "PENDING_APPROVAL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_json": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_ok": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "repairs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_of": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rounds": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tool_calls": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "trigger": {
+          "pattern": "^[a-z][a-z0-9_.]{0,63}$",
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "turn_id",
+        "trigger",
+        "backend",
+        "ai_config_hash",
+        "prompt_sha256",
+        "prompt_tokens",
+        "completion_tokens",
+        "latency_ms",
+        "rounds",
+        "repairs",
+        "tool_calls",
+        "command_id",
+        "gate_decision",
+        "error",
+        "prompt_json"
+      ],
+      "title": "DecisionLog",
+      "type": "object"
+    },
+    "DecisionLogStored": {
+      "additionalProperties": false,
+      "properties": {
+        "ai_config_hash": {
+          "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
+          "type": "string"
+        },
+        "backend": {
+          "enum": [
+            "llm",
+            "grammar",
+            "scripted",
+            "rule",
+            "cloud"
+          ],
+          "type": "string"
+        },
+        "command_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completion_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "cloud",
+                "local"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "enum": [
+                "deadline",
+                "timeout",
+                "http_error",
+                "parse_error",
+                "round_limit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate_decision": {
+          "anyOf": [
+            {
+              "enum": [
+                "ALLOW",
+                "REJECT",
+                "PENDING_APPROVAL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_json": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_ok": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "repairs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_of": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rounds": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tool_calls": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "trigger": {
+          "pattern": "^[a-z][a-z0-9_.]{0,63}$",
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "turn_id",
+        "trigger",
+        "backend",
+        "ai_config_hash",
+        "prompt_sha256",
+        "prompt_tokens",
+        "completion_tokens",
+        "latency_ms",
+        "rounds",
+        "repairs",
+        "tool_calls",
+        "command_id",
+        "gate_decision",
+        "error",
+        "prompt_json",
+        "prompt_file"
+      ],
+      "title": "DecisionLogStored",
+      "type": "object"
+    },
+    "Envelope": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "corr_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "msg_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "reliable": {
+          "type": "boolean"
+        },
+        "sender": {
+          "pattern": "^(ground:main|vehicle:[a-z0-9][a-z0-9-]{2,31})$",
+          "type": "string"
+        },
+        "sent_utc": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sig": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ttl_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "v": {
+          "const": 1,
+          "default": 1,
+          "type": "integer"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "msg_id",
+        "kind",
+        "sender",
+        "vehicle_id",
+        "mission_id",
+        "seq",
+        "sent_utc",
+        "ttl_ms",
+        "reliable",
+        "corr_id",
+        "body"
+      ],
+      "title": "Envelope",
+      "type": "object"
+    },
+    "EstimateResult": {
+      "additionalProperties": false,
+      "properties": {
+        "battery_after_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate": {
+          "$ref": "#/$defs/GateDecision"
+        }
+      },
+      "required": [
+        "gate",
+        "duration_s",
+        "battery_after_pct"
+      ],
+      "title": "EstimateResult",
+      "type": "object"
+    },
+    "Event": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "severity": {
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "t": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "vehicle_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "vehicle_id",
+        "t",
+        "source",
+        "type",
+        "severity",
+        "payload"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "ExecutorState": {
+      "enum": [
+        "IDLE",
+        "PREFLIGHT",
+        "TAKEOFF",
+        "TRANSIT",
+        "SURVEY",
+        "HOLD",
+        "RTL",
+        "LAND",
+        "LANDED",
+        "HELD",
+        "FAILSAFE"
+      ],
+      "title": "ExecutorState",
+      "type": "string"
+    },
+    "Features": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "default": false,
+          "type": "boolean"
+        },
+        "follow_me": {
+          "default": false,
+          "type": "boolean"
+        },
+        "manual_control": {
+          "default": true,
+          "type": "boolean"
+        },
+        "order_buttons": {
+          "default": true,
+          "type": "boolean"
+        },
+        "voice": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "title": "Features",
+      "type": "object"
+    },
+    "FindMeParams": {
+      "additionalProperties": false,
+      "description": "Stage 2. Unresolved here: the operator's position is checked onboard.",
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "hover_offset_m": {
+          "maximum": 100,
+          "minimum": 15,
+          "type": "number"
+        }
+      },
+      "required": [
+        "alt_m",
+        "hover_offset_m"
+      ],
+      "title": "FindMeParams",
+      "type": "object"
+    },
+    "FollowMeParams": {
+      "additionalProperties": false,
+      "description": "Stage 2. Unresolved here: the operator's position is checked onboard.",
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_speed_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "type": "number"
+        },
+        "standoff_m": {
+          "maximum": 50,
+          "minimum": 10,
+          "type": "number"
+        }
+      },
+      "required": [
+        "standoff_m",
+        "alt_m",
+        "max_speed_ms"
+      ],
+      "title": "FollowMeParams",
+      "type": "object"
+    },
+    "FollowTrackParams": {
+      "additionalProperties": false,
+      "description": "Stage 2. The target moves; every set-point is checked onboard. Unresolved here.",
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_speed_ms": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "standoff_m": {
+          "maximum": 200,
+          "minimum": 15,
+          "type": "number"
+        },
+        "track_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "track_id",
+        "standoff_m",
+        "alt_m",
+        "max_speed_ms"
+      ],
+      "title": "FollowTrackParams",
+      "type": "object"
+    },
+    "GateDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "ALLOW",
+            "REJECT",
+            "PENDING_APPROVAL"
+          ],
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "message_sv": {
+          "type": "string"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "required_confirmations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rule_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "side": {
+          "enum": [
+            "ground",
+            "onboard"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "reason_codes",
+        "rule_ids",
+        "message_sv",
+        "details",
+        "side"
+      ],
+      "title": "GateDecision",
+      "type": "object"
+    },
+    "GateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_confirmations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "based_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "issuer_kind": {
+          "enum": [
+            "operator",
+            "brain",
+            "system"
+          ],
+          "type": "string"
+        },
+        "issuer_ref": {
+          "pattern": "^(operator:[a-z0-9][a-z0-9_-]{0,31}|brain:ground|system:ground|rule:onboard)$",
+          "type": "string"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "maxProperties": 32,
+          "type": "object"
+        },
+        "phase": {
+          "enum": [
+            "submit",
+            "approve",
+            "estimate",
+            "onboard"
+          ],
+          "type": "string"
+        },
+        "planned_path": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/LatLonAlt"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "mission_id",
+        "vehicle_id",
+        "skill",
+        "params",
+        "issuer_kind",
+        "issuer_ref",
+        "charter_version",
+        "based_on",
+        "phase"
+      ],
+      "title": "GateRequest",
+      "type": "object"
+    },
+    "GateTargets": {
+      "additionalProperties": false,
+      "description": "Where an order would take the vehicle. The gate checks every item against the limits.\n\n``path`` holds the corner points of the route (current position first); the gate\nsamples it before checking: exact segment/polygon intersection, or samples no further\napart than half the fence buffer. When ``speed_ms`` is None the gate checks the\nexecutor's default speed. ``resolved = False`` means the targets could not be\nworked out (unknown sector, unknown position, a target that only exists onboard);\nthe gate must then reject an order that moves the vehicle.",
+      "properties": {
+        "alts_m": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "areas": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/LatLon"
+          },
+          "type": "array"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/LatLon"
+          },
+          "type": "array"
+        },
+        "resolved": {
+          "default": true,
+          "type": "boolean"
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "GateTargets",
+      "type": "object"
+    },
+    "GotoAiParams": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "anyOf": [
+            {
+              "minimum": 5.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pin": {
+          "anyOf": [
+            {
+              "pattern": "^P[0-9]{1,3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "GotoAiParams",
+      "type": "object"
+    },
+    "GotoParams": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "alt_m"
+      ],
+      "title": "GotoParams",
+      "type": "object"
+    },
+    "GotoResumePoint": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "const": "goto",
+          "default": "goto",
+          "type": "string"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "speed_ms": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "command_id",
+        "lat",
+        "lon",
+        "alt_m",
+        "speed_ms"
+      ],
+      "title": "GotoResumePoint",
+      "type": "object"
+    },
+    "Health": {
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "additionalProperties": {
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "status": {
+          "const": "ok",
+          "default": "ok",
+          "type": "string"
+        },
+        "test_rig": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ready",
+        "version",
+        "profile",
+        "parts",
+        "test_rig"
+      ],
+      "title": "Health",
+      "type": "object"
+    },
+    "Heartbeat": {
+      "additionalProperties": false,
+      "description": "Both ways, 1 Hz, not reliable, never acknowledged.",
+      "properties": {},
+      "title": "Heartbeat",
+      "type": "object"
+    },
+    "Hello": {
+      "additionalProperties": false,
+      "description": "Onboard -> ground, the first message on a connection.",
+      "properties": {
+        "boot_id": {
+          "type": "integer"
+        },
+        "charter_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executor_state": {
+          "$ref": "#/$defs/ExecutorState"
+        },
+        "fc_firmware": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_action_seq": {
+          "type": "integer"
+        },
+        "operator_latch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatchRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_major": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_major",
+        "boot_id",
+        "executor_state",
+        "charter_id",
+        "charter_version",
+        "fc_firmware",
+        "operator_latch",
+        "last_action_seq"
+      ],
+      "title": "Hello",
+      "type": "object"
+    },
+    "HelloAck": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, within 1 s of Hello.",
+      "properties": {
+        "operator_latch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatchRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_major": {
+          "type": "integer"
+        },
+        "server_epoch": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_major",
+        "server_epoch",
+        "operator_latch"
+      ],
+      "title": "HelloAck",
+      "type": "object"
+    },
+    "HoldParams": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "default": "",
+          "maxLength": 200,
+          "type": "string"
+        }
+      },
+      "title": "HoldParams",
+      "type": "object"
+    },
+    "InspectDetectionParams": {
+      "additionalProperties": false,
+      "description": "Stage 2. The detection's position exists only onboard: always unresolved here.",
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "detection_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "standoff_m": {
+          "maximum": 200,
+          "minimum": 15,
+          "type": "number"
+        }
+      },
+      "required": [
+        "detection_id",
+        "alt_m",
+        "standoff_m"
+      ],
+      "title": "InspectDetectionParams",
+      "type": "object"
+    },
+    "LandAtParams": {
+      "additionalProperties": false,
+      "properties": {
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "default": "",
+          "maxLength": 200,
+          "type": "string"
+        }
+      },
+      "title": "LandAtParams",
+      "type": "object"
+    },
+    "LatLon": {
+      "additionalProperties": false,
+      "properties": {
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "title": "LatLon",
+      "type": "object"
+    },
+    "LatLonAlt": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_amsl_m": {
+          "maximum": 9000,
+          "minimum": -500,
+          "type": "number"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "alt_amsl_m"
+      ],
+      "title": "LatLonAlt",
+      "type": "object"
+    },
+    "LatchRef": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "stop",
+            "return_home",
+            "battery_rtl",
+            "watchdog_stop",
+            "watchdog_rtl"
+          ],
+          "type": "string"
+        },
+        "action_seq": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "action_seq"
+      ],
+      "title": "LatchRef",
+      "type": "object"
+    },
+    "LimitCaps": {
+      "additionalProperties": false,
+      "description": "The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.\n\nRead by the ground station from its local settings file; the owner sets it freely.\nA cap is never below the standard values, and the battery floor and lowest height\ncan never be loosened.",
+      "properties": {
+        "max_alt_agl_m": {
+          "default": 300.0,
+          "minimum": 120.0,
+          "type": "number"
+        },
+        "max_range_from_pilot_m": {
+          "default": 2000.0,
+          "minimum": 500.0,
+          "type": "number"
+        },
+        "max_speed_ms": {
+          "default": 25.0,
+          "minimum": 15.0,
+          "type": "number"
+        },
+        "min_alt_agl_m": {
+          "default": 5.0,
+          "exclusiveMaximum": 120.0,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "min_battery_rtl_pct": {
+          "default": 15.0,
+          "maximum": 15.0,
+          "minimum": 15.0,
+          "type": "number"
+        }
+      },
+      "title": "LimitCaps",
+      "type": "object"
+    },
+    "LinkStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "mavlink": {
+          "enum": [
+            "up",
+            "lost"
+          ],
+          "type": "string"
+        },
+        "onboard_heartbeat_age_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rtt_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sdlink": {
+          "enum": [
+            "up",
+            "degraded",
+            "lost"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sdlink",
+        "mavlink",
+        "onboard_heartbeat_age_ms",
+        "rtt_ms"
+      ],
+      "title": "LinkStatus",
+      "type": "object"
+    },
+    "LoginRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "login_code": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pin": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4,12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "LoginRequest",
+      "type": "object"
+    },
+    "ManualControl": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, 10-20 Hz, not reliable. Without a new value for\n``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.",
+      "properties": {
+        "input_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "roll": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "takeover_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "throttle": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "yaw": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "takeover_id",
+        "input_seq",
+        "pitch",
+        "roll",
+        "throttle",
+        "yaw"
+      ],
+      "title": "ManualControl",
+      "type": "object"
+    },
+    "ManualControlInput": {
+      "additionalProperties": false,
+      "description": "Panel -> ground (WebSocket op \"manual\"), 10-20 Hz while the pilot steers.",
+      "properties": {
+        "input_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "roll": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "touch",
+            "gamepad"
+          ],
+          "type": "string"
+        },
+        "takeover_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "throttle": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "yaw": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "takeover_id",
+        "input_seq",
+        "pitch",
+        "roll",
+        "throttle",
+        "yaw",
+        "source"
+      ],
+      "title": "ManualControlInput",
+      "type": "object"
+    },
+    "ManualControlState": {
+      "additionalProperties": false,
+      "description": "Whether the pilot is steering by hand (Ta över) and since when.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_age_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "since": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "takeover_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "active",
+        "takeover_id",
+        "by",
+        "since",
+        "input_age_ms"
+      ],
+      "title": "ManualControlState",
+      "type": "object"
+    },
+    "ManualTakeover": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).\n\nOn ``active = True`` the AI's orders pause and the vehicle goes to LOITER; stick\nvalues (``ManualControl``) are then forwarded as MAVLink MANUAL_CONTROL. Limits and\nthe geofence still apply. A physical RC transmitter always wins.",
+      "properties": {
+        "action_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "operator_id": {
+          "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
+          "type": "string"
+        },
+        "takeover_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "takeover_id",
+        "active",
+        "action_seq",
+        "operator_id"
+      ],
+      "title": "ManualTakeover",
+      "type": "object"
+    },
+    "MapConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/LatLon"
+        },
+        "pack_url": {
+          "type": "string"
+        },
+        "zoom": {
+          "maximum": 22,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "pack_url",
+        "center",
+        "zoom"
+      ],
+      "title": "MapConfig",
+      "type": "object"
+    },
+    "MapPin": {
+      "additionalProperties": false,
+      "properties": {
+        "annotation_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^P[0-9]{1,3}$",
+          "type": "string"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "annotation_id",
+        "lat",
+        "lon"
+      ],
+      "title": "MapPin",
+      "type": "object"
+    },
+    "MarkLocationAiParams": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pin": {
+          "anyOf": [
+            {
+              "pattern": "^P[0-9]{1,3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "MarkLocationAiParams",
+      "type": "object"
+    },
+    "MarkLocationParams": {
+      "additionalProperties": false,
+      "description": "A map marker on the ground; it does not move the vehicle.",
+      "properties": {
+        "label": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "label"
+      ],
+      "title": "MarkLocationParams",
+      "type": "object"
+    },
+    "Mission": {
+      "additionalProperties": false,
+      "properties": {
+        "activated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_charter_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ai_enabled": {
+          "type": "boolean"
+        },
+        "autonomy_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutonomyMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closed_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "auto",
+                "manual"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "landed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/SafetyLimits"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paused_by": {
+          "anyOf": [
+            {
+              "enum": [
+                "operator",
+                "brain",
+                "system"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "returning_cause": {
+          "anyOf": [
+            {
+              "enum": [
+                "brain",
+                "operator",
+                "battery",
+                "failsafe",
+                "system"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_seq": {
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/MissionState"
+        },
+        "title": {
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "vehicle_id",
+        "title",
+        "status",
+        "paused_by",
+        "returning_cause",
+        "state_seq",
+        "limits",
+        "active_charter_id",
+        "autonomy_mode",
+        "ai_enabled",
+        "created_by",
+        "created_at",
+        "activated_at",
+        "landed_at",
+        "closed_at",
+        "closed_reason",
+        "notes"
+      ],
+      "title": "Mission",
+      "type": "object"
+    },
+    "MissionCharter": {
+      "additionalProperties": false,
+      "description": "An approved (or proposed) charter. Fields marked *server* are set by the ground station.",
+      "properties": {
+        "ai_silent_timeout_s": {
+          "default": 10,
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "type": "number"
+        },
+        "allowed_skills": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "alt_max_agl_m": {
+          "default": 120.0,
+          "exclusiveMinimum": 5.0,
+          "type": "number"
+        },
+        "alt_min_agl_m": {
+          "default": 15,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "approved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "area": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "autonomy_mode": {
+          "$ref": "#/$defs/AutonomyMode"
+        },
+        "battery_rtl_pct": {
+          "default": 15.0,
+          "maximum": 90,
+          "minimum": 15.0,
+          "type": "number"
+        },
+        "charter_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "default_alt_agl_m": {
+          "default": 40,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "fence_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "geofence_buffer_m": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 5,
+          "type": "number"
+        },
+        "home": {
+          "$ref": "#/$defs/LatLonAlt"
+        },
+        "max_range_from_pilot_m": {
+          "default": 500.0,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_speed_ms": {
+          "default": 15.0,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "on_ai_silent": {
+          "default": "continue_plan",
+          "enum": [
+            "continue_plan",
+            "hold",
+            "return_home"
+          ],
+          "type": "string"
+        },
+        "pilot_position": {
+          "$ref": "#/$defs/LatLon"
+        },
+        "sectors": {
+          "items": {
+            "$ref": "#/$defs/Sector"
+          },
+          "maxItems": 52,
+          "type": "array"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "charter_id",
+        "mission_id",
+        "vehicle_id",
+        "version",
+        "area",
+        "home",
+        "pilot_position",
+        "allowed_skills",
+        "autonomy_mode",
+        "sectors",
+        "fence_hash",
+        "approved_by",
+        "approved_at"
+      ],
+      "title": "MissionCharter",
+      "type": "object"
+    },
+    "MissionDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "active_command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Command"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Charter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clearance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Clearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperatorLatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mission": {
+          "$ref": "#/$defs/Mission"
+        },
+        "pending_approvals": {
+          "items": {
+            "$ref": "#/$defs/Approval"
+          },
+          "type": "array"
+        },
+        "sectors": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "mission",
+        "charter",
+        "sectors",
+        "pending_approvals",
+        "active_command",
+        "latch",
+        "clearance"
+      ],
+      "title": "MissionDetail",
+      "type": "object"
+    },
+    "MissionEndRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "MissionEndRequest",
+      "type": "object"
+    },
+    "MissionFile": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "rel_path": {
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "rel_path",
+        "bytes",
+        "sha256",
+        "started_at",
+        "ended_at"
+      ],
+      "title": "MissionFile",
+      "type": "object"
+    },
+    "MissionMemory": {
+      "additionalProperties": false,
+      "description": "What the server stores and returns.",
+      "properties": {
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "pending_operator_request": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_note": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "summarized_up_to_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary_sv": {
+          "maxLength": 1200,
+          "type": "string"
+        },
+        "updated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mission_id",
+        "summary_sv",
+        "plan_note",
+        "summarized_up_to_seq",
+        "updated_at"
+      ],
+      "title": "MissionMemory",
+      "type": "object"
+    },
+    "MissionMemoryUpdate": {
+      "additionalProperties": false,
+      "description": "What sd-brain sends (PUT .../memory). The server adds ``updated_at``.",
+      "properties": {
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "pending_operator_request": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_note": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "summarized_up_to_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary_sv": {
+          "maxLength": 1200,
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_id",
+        "summary_sv",
+        "plan_note",
+        "summarized_up_to_seq"
+      ],
+      "title": "MissionMemoryUpdate",
+      "type": "object"
+    },
+    "MissionPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "notes": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "MissionPatch",
+      "type": "object"
+    },
+    "MissionState": {
+      "enum": [
+        "DRAFT",
+        "CHARTER_PROPOSED",
+        "READY",
+        "ACTIVE",
+        "PAUSED",
+        "HELD",
+        "FAILSAFE",
+        "RETURNING",
+        "LANDED",
+        "CLOSED"
+      ],
+      "title": "MissionState",
+      "type": "string"
+    },
+    "MissionSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/MissionState"
+        },
+        "title": {
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "vehicle_id",
+        "title",
+        "status",
+        "created_at"
+      ],
+      "title": "MissionSummary",
+      "type": "object"
+    },
+    "NoulAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "p_true": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "type": {
+          "const": "noul",
+          "default": "noul",
+          "type": "string"
+        }
+      },
+      "required": [
+        "p_true"
+      ],
+      "title": "NoulAnswer",
+      "type": "object"
+    },
+    "NoulQuestion": {
+      "additionalProperties": false,
+      "description": "Yes/no. The answer is the probability that the statement is true.",
+      "properties": {
+        "instructions": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "const": "noul",
+          "default": "noul",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instructions"
+      ],
+      "title": "NoulQuestion",
+      "type": "object"
+    },
+    "OnboardEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "severity": {
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "pattern": "^executor\\.[a-z_]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "severity"
+      ],
+      "title": "OnboardEvent",
+      "type": "object"
+    },
+    "OperatorCommandRequest": {
+      "additionalProperties": false,
+      "description": "An order from the pilot, e.g. an order button. Same gate and latch as the AI's orders.",
+      "properties": {
+        "client_command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "maxProperties": 32,
+          "type": "object"
+        },
+        "rationale_sv": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "client_command_id",
+        "skill",
+        "params"
+      ],
+      "title": "OperatorCommandRequest",
+      "type": "object"
+    },
+    "OperatorLatch": {
+      "additionalProperties": false,
+      "description": "Set by STOP, FLY HOME, the battery guard or the watchdog. Only Resume lifts it.",
+      "properties": {
+        "action": {
+          "enum": [
+            "stop",
+            "return_home",
+            "battery_rtl",
+            "watchdog_stop",
+            "watchdog_rtl"
+          ],
+          "type": "string"
+        },
+        "action_seq": {
+          "type": "integer"
+        },
+        "set_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "set_by": {
+          "type": "string"
+        },
+        "set_mono_ms": {
+          "type": "integer"
+        },
+        "underlying": {
+          "anyOf": [
+            {
+              "const": "battery_rtl",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vehicle_id",
+        "action",
+        "action_seq",
+        "set_by",
+        "set_at",
+        "set_mono_ms"
+      ],
+      "title": "OperatorLatch",
+      "type": "object"
+    },
+    "OperatorOverrideNotice": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard: STOP, FLY HOME, battery or watchdog. Never from the AI.",
+      "properties": {
+        "action_seq": {
+          "type": "integer"
+        },
+        "issuer_kind": {
+          "enum": [
+            "operator",
+            "system"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "stop",
+            "return_home",
+            "battery_rtl",
+            "watchdog_stop",
+            "watchdog_rtl"
+          ],
+          "type": "string"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "override_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "override_id",
+        "kind",
+        "action_seq",
+        "issuer_kind",
+        "operator_id"
+      ],
+      "title": "OperatorOverrideNotice",
+      "type": "object"
+    },
+    "OperatorPosition": {
+      "additionalProperties": false,
+      "description": "Schema only in v1 (stage 2).",
+      "properties": {
+        "accuracy_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "t": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "accuracy_m",
+        "t"
+      ],
+      "title": "OperatorPosition",
+      "type": "object"
+    },
+    "OperatorRelease": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard; only from the pilot's Resume click.",
+      "properties": {
+        "action_seq": {
+          "type": "integer"
+        },
+        "operator_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_seq",
+        "operator_id"
+      ],
+      "title": "OperatorRelease",
+      "type": "object"
+    },
+    "OrbitParams": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "radius_m": {
+          "maximum": 150,
+          "minimum": 20,
+          "type": "number"
+        },
+        "turns": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "radius_m",
+        "alt_m"
+      ],
+      "title": "OrbitParams",
+      "type": "object"
+    },
+    "PanelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "default_vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        },
+        "features": {
+          "$ref": "#/$defs/Features"
+        },
+        "limits_absolute": {
+          "$ref": "#/$defs/AbsoluteLimits"
+        },
+        "limits_default": {
+          "$ref": "#/$defs/SafetyLimits"
+        },
+        "map": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "remote": {
+          "default": false,
+          "type": "boolean"
+        },
+        "vehicle_kind": {
+          "enum": [
+            "sim",
+            "real"
+          ],
+          "type": "string"
+        },
+        "video": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "default_vehicle_id",
+        "map",
+        "video",
+        "vehicle_kind",
+        "limits_default",
+        "limits_absolute",
+        "features"
+      ],
+      "title": "PanelConfig",
+      "type": "object"
+    },
+    "PartStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "since": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "ok",
+            "degraded",
+            "down"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "since"
+      ],
+      "title": "PartStatus",
+      "type": "object"
+    },
+    "PilotPosition": {
+      "additionalProperties": false,
+      "properties": {
+        "accuracy_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "charter",
+            "phone"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "source",
+        "accuracy_m"
+      ],
+      "title": "PilotPosition",
+      "type": "object"
+    },
+    "ProposeCharterChangeParams": {
+      "additionalProperties": false,
+      "description": "Validated as a charter proposal by the ground station, never by the gate.",
+      "properties": {
+        "allowed_skills": {
+          "anyOf": [
+            {
+              "items": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "alt_max_agl_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 5.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "alt_min_agl_m": {
+          "default": 15,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "area_annotation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "base_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "battery_rtl_pct": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": 15.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "default_alt_agl_m": {
+          "default": 40,
+          "minimum": 5.0,
+          "type": "number"
+        },
+        "geofence_buffer_m": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 5,
+          "type": "number"
+        },
+        "max_range_from_pilot_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_speed_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason_sv": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "sectors": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Sector"
+              },
+              "maxItems": 52,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "reason_sv"
+      ],
+      "title": "ProposeCharterChangeParams",
+      "type": "object"
+    },
+    "ReportParams": {
+      "additionalProperties": false,
+      "properties": {
+        "priority": {
+          "default": "info",
+          "enum": [
+            "info",
+            "warn",
+            "urgent"
+          ],
+          "type": "string"
+        },
+        "text_sv": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "text_sv"
+      ],
+      "title": "ReportParams",
+      "type": "object"
+    },
+    "ResumeParams": {
+      "additionalProperties": false,
+      "description": "Continue the step interrupted by hold. The gate rechecks the remaining route.",
+      "properties": {},
+      "title": "ResumeParams",
+      "type": "object"
+    },
+    "ReturnHomeParams": {
+      "additionalProperties": false,
+      "description": "Always allowed geometrically: flying home must never be blocked by a missing target.",
+      "properties": {
+        "reason": {
+          "default": "",
+          "maxLength": 200,
+          "type": "string"
+        }
+      },
+      "title": "ReturnHomeParams",
+      "type": "object"
+    },
+    "SafetyLimits": {
+      "additionalProperties": false,
+      "description": "Per-mission limits (outer layer). Heights are metres above the home point.",
+      "properties": {
+        "battery_rtl_pct": {
+          "default": 15.0,
+          "maximum": 90,
+          "minimum": 15.0,
+          "type": "number"
+        },
+        "max_alt_agl_m": {
+          "default": 120.0,
+          "exclusiveMinimum": 5.0,
+          "type": "number"
+        },
+        "max_range_from_pilot_m": {
+          "default": 500.0,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_speed_ms": {
+          "default": 15.0,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "SafetyLimits",
+      "type": "object"
+    },
+    "ScoreAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "probabilities": {
+          "items": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "score": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "score",
+          "default": "score",
+          "type": "string"
+        }
+      },
+      "required": [
+        "score",
+        "probabilities"
+      ],
+      "title": "ScoreAnswer",
+      "type": "object"
+    },
+    "ScoreQuestion": {
+      "additionalProperties": false,
+      "description": "Place the state on an ordered scale ``0 .. max_score``.",
+      "properties": {
+        "instructions": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "max_score": {
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "type": {
+          "const": "score",
+          "default": "score",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instructions",
+        "max_score"
+      ],
+      "title": "ScoreQuestion",
+      "type": "object"
+    },
+    "Sector": {
+      "additionalProperties": false,
+      "properties": {
+        "area": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "maxLength": 40,
+          "minLength": 1,
+          "type": "string"
+        },
+        "order_idx": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sector_id": {
+          "pattern": "^[A-Z]{1,2}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sector_id",
+        "name",
+        "area",
+        "order_idx"
+      ],
+      "title": "Sector",
+      "type": "object"
+    },
+    "Session": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_mode": {
+          "enum": [
+            "local",
+            "pin",
+            "cli",
+            "cloudflare_access"
+          ],
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issuer_ref": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "pilot",
+            "observer"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "issuer_ref",
+        "display_name",
+        "auth_mode",
+        "expires_at"
+      ],
+      "title": "Session",
+      "type": "object"
+    },
+    "SetCameraTiltParams": {
+      "additionalProperties": false,
+      "properties": {
+        "deg": {
+          "default": 90,
+          "maximum": 90,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "title": "SetCameraTiltParams",
+      "type": "object"
+    },
+    "Situation": {
+      "additionalProperties": false,
+      "properties": {
+        "active_command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Command"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ai_enabled": {
+          "type": "boolean"
+        },
+        "alerts": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "areas": {
+          "items": {
+            "$ref": "#/$defs/Annotation"
+          },
+          "type": "array"
+        },
+        "autonomy_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutonomyMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "brain_may_takeoff": {
+          "type": "boolean"
+        },
+        "charter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MissionCharter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_installed": {
+          "type": "boolean"
+        },
+        "fence_verified": {
+          "type": "boolean"
+        },
+        "home": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatLon"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/SafetyLimits"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "mission_status": {
+          "$ref": "#/$defs/MissionState"
+        },
+        "override": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperatorLatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paused_by": {
+          "anyOf": [
+            {
+              "enum": [
+                "operator",
+                "brain",
+                "system"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_approvals": {
+          "items": {
+            "$ref": "#/$defs/Approval"
+          },
+          "type": "array"
+        },
+        "pending_proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Charter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pilot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatLon"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pins": {
+          "items": {
+            "$ref": "#/$defs/MapPin"
+          },
+          "type": "array"
+        },
+        "recent_events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "type": "array"
+        },
+        "returning_cause": {
+          "anyOf": [
+            {
+              "enum": [
+                "brain",
+                "operator",
+                "battery",
+                "failsafe",
+                "system"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sectors": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "snapshot_state_epoch": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_state_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_seq": {
+          "type": "integer"
+        },
+        "takeoff_clearance_valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vehicle": {
+          "$ref": "#/$defs/VehicleSummary"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_id",
+        "vehicle_id",
+        "state_seq",
+        "snapshot_state_epoch",
+        "snapshot_state_seq",
+        "mission_status",
+        "paused_by",
+        "returning_cause",
+        "autonomy_mode",
+        "ai_enabled",
+        "limits",
+        "charter",
+        "charter_installed",
+        "fence_verified",
+        "pending_proposal",
+        "pending_approvals",
+        "takeoff_clearance_valid_until",
+        "brain_may_takeoff",
+        "override",
+        "vehicle",
+        "active_command",
+        "sectors",
+        "pins",
+        "areas",
+        "home",
+        "pilot",
+        "alerts",
+        "recent_events"
+      ],
+      "title": "Situation",
+      "type": "object"
+    },
+    "SkillCommand": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable; envelope ttl_ms = the registry's ttl_s x 1000.",
+      "properties": {
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "based_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_version": {
+          "type": "integer"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "issuer": {
+          "pattern": "^(operator:[a-z0-9][a-z0-9_-]{0,31}|brain:ground|system:ground|rule:onboard)$",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "maxProperties": 32,
+          "type": "object"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "skill",
+        "params",
+        "issuer",
+        "rationale",
+        "charter_version",
+        "based_on",
+        "approval"
+      ],
+      "title": "SkillCommand",
+      "type": "object"
+    },
+    "SkillRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "ai_config_hash": {
+          "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
+          "type": "string"
+        },
+        "backend": {
+          "enum": [
+            "llm",
+            "grammar",
+            "scripted",
+            "rule",
+            "cloud"
+          ],
+          "type": "string"
+        },
+        "based_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "params": {
+          "additionalProperties": true,
+          "maxProperties": 32,
+          "type": "object"
+        },
+        "rationale_sv": {
+          "maxLength": 500,
+          "type": "string"
+        },
+        "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "skill",
+        "params",
+        "rationale_sv",
+        "in_reply_to",
+        "based_on",
+        "charter_version",
+        "backend",
+        "ai_config_hash"
+      ],
+      "title": "SkillRequest",
+      "type": "object"
+    },
+    "SkillSpecPublic": {
+      "additionalProperties": false,
+      "description": "What ``GET /commander/v1/skills`` returns: a ``SkillSpec`` with JSON Schemas.",
+      "properties": {
+        "ai_allowed": {
+          "default": true,
+          "type": "boolean"
+        },
+        "ai_params_schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_from": {
+          "items": {
+            "$ref": "#/$defs/ExecutorState"
+          },
+          "type": "array"
+        },
+        "allowed_under_latch": {
+          "default": false,
+          "type": "boolean"
+        },
+        "allowed_when": {
+          "enum": [
+            "on_ground",
+            "airborne",
+            "any"
+          ],
+          "type": "string"
+        },
+        "description_en": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        "ends_flight": {
+          "default": false,
+          "type": "boolean"
+        },
+        "exempt_from_battery_rule": {
+          "default": false,
+          "type": "boolean"
+        },
+        "moves_vehicle": {
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
+        },
+        "params_schema": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "rate_class": {
+          "enum": [
+            "action",
+            "report",
+            "none"
+          ],
+          "type": "string"
+        },
+        "requires_approval_in_b": {
+          "default": false,
+          "type": "boolean"
+        },
+        "runs_on": {
+          "enum": [
+            "onboard",
+            "ground"
+          ],
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "type": "integer"
+        },
+        "starts_flight": {
+          "default": false,
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "implemented",
+            "stub"
+          ],
+          "type": "string"
+        },
+        "synonyms_sv": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "title_sv": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "ttl_s": {
+          "default": 15,
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "stage",
+        "status",
+        "runs_on",
+        "moves_vehicle",
+        "allowed_when",
+        "rate_class",
+        "description_en",
+        "synonyms_sv",
+        "title_sv",
+        "allowed_from",
+        "params_schema",
+        "ai_params_schema"
+      ],
+      "title": "SkillSpecPublic",
+      "type": "object"
+    },
+    "SkillSubmitResult": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "ALLOW",
+            "REJECT",
+            "PENDING_APPROVAL"
+          ],
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "message_sv": {
+          "type": "string"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/CommandStatus"
+        }
+      },
+      "required": [
+        "command_id",
+        "decision",
+        "reason_codes",
+        "message_sv",
+        "details",
+        "approval_id",
+        "status"
+      ],
+      "title": "SkillSubmitResult",
+      "type": "object"
+    },
+    "StateRef": {
+      "additionalProperties": false,
+      "description": "Which state picture an order was based on (onboard StateSnapshot epoch and sequence).",
+      "properties": {
+        "state_epoch": {
+          "type": "integer"
+        },
+        "state_seq": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "state_epoch",
+        "state_seq"
+      ],
+      "title": "StateRef",
+      "type": "object"
+    },
+    "StateSnapshot": {
+      "additionalProperties": false,
+      "description": "Onboard -> ground, 2 Hz, not reliable. What only the onboard computer knows.",
+      "properties": {
+        "active_command_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_skill": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "alt_rel_home_m": {
+          "type": "number"
+        },
+        "armed": {
+          "type": "boolean"
+        },
+        "battery_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "battery_rtl_active": {
+          "type": "boolean"
+        },
+        "charter_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "charter_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clearance_available": {
+          "type": "boolean"
+        },
+        "control_suspended": {
+          "type": "boolean"
+        },
+        "executor_state": {
+          "$ref": "#/$defs/ExecutorState"
+        },
+        "expected_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "flight_mode": {
+          "type": "string"
+        },
+        "groundspeed_ms": {
+          "type": "number"
+        },
+        "heading_deg": {
+          "type": "number"
+        },
+        "held_by": {
+          "anyOf": [
+            {
+              "enum": [
+                "operator_stop",
+                "operator_home",
+                "operator_manual",
+                "system_battery",
+                "system_watchdog",
+                "external",
+                "onboard_restart",
+                "fc_silent"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hold_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "ai_hold",
+                "skill_done",
+                "operator_released",
+                "limit",
+                "link_loss",
+                "ai_silent",
+                "startup",
+                "manual_input_lost"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_transition_state_seq": {
+          "type": "integer"
+        },
+        "limits_active": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "manual_control": {
+          "default": false,
+          "type": "boolean"
+        },
+        "position": {
+          "$ref": "#/$defs/LatLonAlt"
+        },
+        "preflight": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "type": "object"
+        },
+        "preflight_ok": {
+          "type": "boolean"
+        },
+        "progress_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resume_available": {
+          "type": "boolean"
+        },
+        "sector_progress": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "state_epoch": {
+          "type": "integer"
+        },
+        "state_seq": {
+          "type": "integer"
+        },
+        "stop_latch": {
+          "type": "boolean"
+        },
+        "tick_ms_p95": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "state_seq",
+        "state_epoch",
+        "last_transition_state_seq",
+        "executor_state",
+        "hold_reason",
+        "held_by",
+        "control_suspended",
+        "expected_mode",
+        "flight_mode",
+        "armed",
+        "position",
+        "alt_rel_home_m",
+        "groundspeed_ms",
+        "heading_deg",
+        "battery_pct",
+        "active_command_id",
+        "active_skill",
+        "progress_pct",
+        "resume_available",
+        "charter_id",
+        "charter_version",
+        "clearance_available",
+        "preflight_ok",
+        "preflight",
+        "limits_active",
+        "stop_latch",
+        "battery_rtl_active",
+        "tick_ms_p95",
+        "sector_progress"
+      ],
+      "title": "StateSnapshot",
+      "type": "object"
+    },
+    "StickAxes": {
+      "additionalProperties": false,
+      "description": "Stick values. Axes are -1..1; ``throttle`` 0..1 with 0.5 = hold height (LOITER).",
+      "properties": {
+        "input_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "roll": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "takeover_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "throttle": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "yaw": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "takeover_id",
+        "input_seq",
+        "pitch",
+        "roll",
+        "throttle",
+        "yaw"
+      ],
+      "title": "StickAxes",
+      "type": "object"
+    },
+    "StopFollowParams": {
+      "additionalProperties": false,
+      "description": "Stop following and hover. A later ``resume`` goes through the gate on its own.",
+      "properties": {
+        "then": {
+          "const": "hold",
+          "default": "hold",
+          "type": "string"
+        }
+      },
+      "title": "StopFollowParams",
+      "type": "object"
+    },
+    "SurveyResumePoint": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "base_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "interrupted_at": {
+          "$ref": "#/$defs/LatLon"
+        },
+        "kind": {
+          "const": "survey",
+          "default": "survey",
+          "type": "string"
+        },
+        "next_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seq_offset": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "speed_ms": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "waypoints": {
+          "items": {
+            "$ref": "#/$defs/LatLon"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "command_id",
+        "waypoints",
+        "alt_m",
+        "speed_ms",
+        "base_index",
+        "seq_offset",
+        "next_index",
+        "interrupted_at"
+      ],
+      "title": "SurveyResumePoint",
+      "type": "object"
+    },
+    "SurveySectorAiParams": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "anyOf": [
+            {
+              "minimum": 5.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sector": {
+          "pattern": "^[A-Z]{1,2}$",
+          "type": "string"
+        },
+        "spacing_m": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "sector"
+      ],
+      "title": "SurveySectorAiParams",
+      "type": "object"
+    },
+    "SurveySectorParams": {
+      "additionalProperties": false,
+      "description": "Search a polygon or a sector. The ground replaces ``sector_id`` with its polygon.",
+      "properties": {
+        "alt_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "heading_deg": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pattern": {
+          "default": "lawnmower",
+          "maxLength": 32,
+          "type": "string"
+        },
+        "polygon": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sector_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{1,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spacing_m": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SurveySectorParams",
+      "type": "object"
+    },
+    "SystemStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "brain_engine": {
+          "anyOf": [
+            {
+              "enum": [
+                "cloud",
+                "local"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "internet": {
+          "enum": [
+            "up",
+            "down",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "operator_present": {
+          "type": "boolean"
+        },
+        "parts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PartStatus"
+          },
+          "type": "object"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parts",
+        "internet",
+        "operator_present",
+        "version",
+        "profile"
+      ],
+      "title": "SystemStatus",
+      "type": "object"
+    },
+    "TakeoffParams": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "TakeoffParams",
+      "type": "object"
+    },
+    "TargetContext": {
+      "additionalProperties": false,
+      "properties": {
+        "charter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MissionCharter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "home": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatLonAlt"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatLonAlt"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resume_point": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "goto": "#/$defs/GotoResumePoint",
+                  "survey": "#/$defs/SurveyResumePoint"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/SurveyResumePoint"
+                },
+                {
+                  "$ref": "#/$defs/GotoResumePoint"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "charter",
+        "position",
+        "home"
+      ],
+      "title": "TargetContext",
+      "type": "object"
+    },
+    "Telemetry": {
+      "additionalProperties": false,
+      "description": "From the ground station's own MAVLink channel.",
+      "properties": {
+        "alt_amsl_m": {
+          "type": "number"
+        },
+        "alt_rel_home_m": {
+          "type": "number"
+        },
+        "armed": {
+          "type": "boolean"
+        },
+        "battery_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "battery_v": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "climb_ms": {
+          "type": "number"
+        },
+        "dist_to_pilot_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "flight_mode": {
+          "type": "string"
+        },
+        "gps_fix": {
+          "type": "integer"
+        },
+        "gps_sats": {
+          "type": "integer"
+        },
+        "groundspeed_ms": {
+          "type": "number"
+        },
+        "heading_deg": {
+          "type": "number"
+        },
+        "home": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatLon"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "landed_state": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "t": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "time_boot_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "t",
+        "time_boot_ms",
+        "lat",
+        "lon",
+        "alt_amsl_m",
+        "alt_rel_home_m",
+        "heading_deg",
+        "groundspeed_ms",
+        "climb_ms",
+        "battery_pct",
+        "battery_v",
+        "flight_mode",
+        "armed",
+        "landed_state",
+        "gps_fix",
+        "gps_sats",
+        "home",
+        "dist_to_pilot_m"
+      ],
+      "title": "Telemetry",
+      "type": "object"
+    },
+    "Trigger": {
+      "enum": [
+        "MISSION_OPENED",
+        "CHARTER_PROPOSED",
+        "PROPOSALS_CLEARED",
+        "CHARTER_READY",
+        "TAKEOFF_ACCEPTED",
+        "OPERATOR_STOP",
+        "OPERATOR_RTL",
+        "OPERATOR_RESUME_CONFIRMED",
+        "WATCHDOG_STOP",
+        "WATCHDOG_RTL",
+        "OPERATOR_ABSENT_HOLD",
+        "OPERATOR_ABSENT_RTL",
+        "BRAIN_HOLD",
+        "BRAIN_HOLD_END",
+        "BRAIN_RTL_ACCEPTED",
+        "BATTERY_RTL",
+        "CONTROL_TAKEN",
+        "FC_FAILSAFE",
+        "LATCH_ADOPTED_STOP",
+        "LATCH_ADOPTED_RTL",
+        "RESTART_FC_STOPPED",
+        "RESTART_FC_RETURNING",
+        "LANDED_DISARMED",
+        "CLOSE_AUTO",
+        "CLOSE_MANUAL",
+        "MANUAL_TAKEOVER",
+        "MANUAL_HANDBACK"
+      ],
+      "title": "Trigger",
+      "type": "string"
+    },
+    "Vehicle": {
+      "additionalProperties": false,
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "sim",
+            "real"
+          ],
+          "type": "string"
+        },
+        "mav_sysid": {
+          "maximum": 255,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "mav_sysid",
+        "connected"
+      ],
+      "title": "Vehicle",
+      "type": "object"
+    },
+    "VehicleLive": {
+      "additionalProperties": false,
+      "properties": {
+        "airborne": {
+          "type": "boolean"
+        },
+        "in_flight": {
+          "type": "boolean"
+        },
+        "latch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OperatorLatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "link": {
+          "$ref": "#/$defs/LinkStatus"
+        },
+        "manual": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManualControlState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "telemetry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Telemetry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vehicle_id",
+        "telemetry",
+        "snapshot",
+        "link",
+        "latch",
+        "airborne",
+        "in_flight"
+      ],
+      "title": "VehicleLive",
+      "type": "object"
+    },
+    "VehicleState": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_amsl_m": {
+          "type": "number"
+        },
+        "alt_rel_home_m": {
+          "type": "number"
+        },
+        "armed": {
+          "type": "boolean"
+        },
+        "battery_charge_state": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "battery_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "battery_voltage_v": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "climb_ms": {
+          "type": "number"
+        },
+        "ekf_ok": {
+          "type": "boolean"
+        },
+        "fc_connected": {
+          "type": "boolean"
+        },
+        "fc_mode": {
+          "type": "string"
+        },
+        "fc_system_status": {
+          "type": "integer"
+        },
+        "gcs_mavlink_seen_mono_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gps_fix_type": {
+          "type": "integer"
+        },
+        "gps_satellites": {
+          "type": "integer"
+        },
+        "groundspeed_ms": {
+          "type": "number"
+        },
+        "heading_deg": {
+          "type": "number"
+        },
+        "home": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatLonAlt"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "landed_state": {
+          "enum": [
+            "on_ground",
+            "in_air",
+            "takeoff",
+            "landing",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "mission_seq_current": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mono_ms": {
+          "type": "integer"
+        },
+        "pilot_position": {
+          "$ref": "#/$defs/LatLon"
+        },
+        "pilot_position_source": {
+          "enum": [
+            "charter",
+            "ground_gnss",
+            "phone"
+          ],
+          "type": "string"
+        },
+        "vehicle_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vehicle_id",
+        "mono_ms",
+        "fc_connected",
+        "gcs_mavlink_seen_mono_ms",
+        "armed",
+        "fc_mode",
+        "fc_system_status",
+        "landed_state",
+        "lat",
+        "lon",
+        "alt_rel_home_m",
+        "alt_amsl_m",
+        "groundspeed_ms",
+        "climb_ms",
+        "heading_deg",
+        "battery_pct",
+        "battery_charge_state",
+        "battery_voltage_v",
+        "gps_fix_type",
+        "gps_satellites",
+        "ekf_ok",
+        "home",
+        "mission_seq_current",
+        "pilot_position",
+        "pilot_position_source"
+      ],
+      "title": "VehicleState",
+      "type": "object"
+    },
+    "VehicleSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "airborne": {
+          "type": "boolean"
+        },
+        "alt_rel_home_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "armed": {
+          "type": "boolean"
+        },
+        "battery_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "battery_to_reserve_s": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "connected": {
+          "type": "boolean"
+        },
+        "dist_to_pilot_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executor_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "flight_mode": {
+          "type": "string"
+        },
+        "gnss_ok": {
+          "type": "boolean"
+        },
+        "groundspeed_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "landed": {
+          "type": "boolean"
+        },
+        "lat": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "link_ok": {
+          "type": "boolean"
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "manual_control": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "connected",
+        "armed",
+        "landed",
+        "airborne",
+        "flight_mode",
+        "executor_state",
+        "lat",
+        "lon",
+        "alt_rel_home_m",
+        "groundspeed_ms",
+        "battery_pct",
+        "battery_to_reserve_s",
+        "dist_to_pilot_m",
+        "gnss_ok",
+        "link_ok"
+      ],
+      "title": "VehicleSummary",
+      "type": "object"
+    },
+    "VideoConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "hls_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "whep_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "whep_url",
+        "hls_url"
+      ],
+      "title": "VideoConfig",
+      "type": "object"
+    }
+  },
+  "title": "SdSchemas"
+}
