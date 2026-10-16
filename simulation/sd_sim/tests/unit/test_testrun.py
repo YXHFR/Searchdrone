@@ -118,6 +118,6 @@ def test_summary_lists_new_results(tmp_path: Path) -> None:
     os.utime(bad, (start + 1, start + 1))
     results = testrun.results_since(start, tmp_path)
     text = testrun.summary_markdown(results, 1)
-    assert "SC00 | - | nej | 12.5 | new" in text
+    assert "SC00 | - | nej | - | 12.5 | new" in text
     assert "OLD" not in text
     assert "| ? | - | nej" in text

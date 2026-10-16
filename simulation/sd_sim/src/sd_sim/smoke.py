@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_sim import _args, config, gazebo, netcheck
-from sd_sim.errors import InfraError
+from sd_sim.errors import InfraError, VehicleError
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.sitl import CMAC_HOME
@@ -113,7 +113,7 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
             result["camera_frames_10s"] = frames
             result["camera_frames_min"] = min_frames(stack.world.vehicle)
             checks["camera"] = frames >= result["camera_frames_min"]
-    except InfraError as exc:
+    except (InfraError, VehicleError) as exc:
         result["error"] = stack.mask(str(exc))
         checks["completed"] = False
     except Exception as exc:

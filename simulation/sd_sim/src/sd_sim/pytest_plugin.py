@@ -7,6 +7,8 @@
   processing time first: sort by budget, largest first, and put each test in the shard
   with the smallest sum so far. The order is deterministic, so every pytest-xdist worker
   computes the same split.
+* With ``SD_SIM__REQUIRE_SITL=1`` (CI) a skipped ``sitl`` test counts as failed, so the
+  required check can never go green without flying.
 * Fixtures ``sim_instance`` (one simulator instance per xdist worker) and
   ``sim_physics`` / ``sim_brain``.
 """
@@ -16,10 +18,12 @@ from __future__ import annotations
 import math
 import os
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from dataclasses import dataclass
 
 import pytest
+
+from sd_sim import paths
 
 MARKERS = (
     "sitl: needs ArduPilot SITL",
@@ -87,6 +91,11 @@ def budget_of(item: pytest.Item) -> float | None:
     return float(marker.args[0])
 
 
+def require_sitl() -> bool:
+    """CI sets ``SD_SIM__REQUIRE_SITL=1``: a SITL test may then never be skipped."""
+    return os.environ.get("SD_SIM__REQUIRE_SITL") == "1"
+
+
 def worker_instance(environ: dict[str, str] | None = None) -> int:
     """Simulator instance for this pytest-xdist worker (gw0 -> 0); 0 without xdist."""
     env = os.environ if environ is None else environ
@@ -123,6 +132,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     missing = [i.nodeid for i in items if i.get_closest_marker("sitl") and budget_of(i) is None]
     if missing:
         raise pytest.UsageError("SITL-tester utan @pytest.mark.budget_s: " + ", ".join(missing))
+    needs_sitl = require_sitl() and any(i.get_closest_marker("sitl") for i in items)
+    if needs_sitl and not paths.arducopter_bin().is_file():
+        raise pytest.UsageError(
+            f"SD_SIM__REQUIRE_SITL=1 men {paths.arducopter_bin()} finns inte: "
+            "SITL-testerna skulle hoppas över."
+        )
     shards = _int_option(config, "--num-shards")
     if shards == 1:
         return
@@ -134,6 +149,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if deselected:
         config.hook.pytest_deselected(items=deselected)
     items[:] = selected
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    report: pytest.TestReport = yield
+    if report.skipped and require_sitl() and item.get_closest_marker("sitl"):
+        report.outcome = "failed"
+        report.longrepr = f"SITL-testet hoppades över ({call.when}) men SD_SIM__REQUIRE_SITL=1"
+    return report
 
 
 @pytest.fixture

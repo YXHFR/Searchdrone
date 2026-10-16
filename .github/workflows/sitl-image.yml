@@ -70,8 +70,12 @@ jobs:
             sudo tar -x -f "$saved/$layer" -C "$rootfs"
           done <<<"$layers"
           sudo chmod -R a+rX "$rootfs"
-          "$RUNNER_TEMP/gitleaks" dir "$rootfs" --config simulation/docker/image-scan.gitleaks.toml \
-            --redact --exit-code 1 --max-target-megabytes 50
+          sudo chmod -R a+rX "$saved"
+          for target in "$rootfs" "$saved/blobs"; do
+            # The layers' files, then the image config (ENV, labels, build history).
+            "$RUNNER_TEMP/gitleaks" dir "$target" --config simulation/docker/image-scan.gitleaks.toml \
+              --redact --exit-code 1 --max-target-megabytes 50
+          done
 
   # main (push or on demand): build, scan, then push.
   build-push:

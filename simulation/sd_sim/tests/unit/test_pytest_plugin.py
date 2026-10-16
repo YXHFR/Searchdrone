@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import yaml
 
 from sd_sim import paths
 from sd_sim.pytest_plugin import (
+    MARKERS,
     MAX_NODE_S,
     SHARD_LIMIT_S,
     budget_problems,
@@ -130,3 +132,45 @@ def test_missing_budget_is_a_usage_error(tmp_path: Path) -> None:
     )
     assert out.returncode != 0
     assert "budget_s" in out.stdout + out.stderr
+
+
+def test_markers_match_pyproject() -> None:
+    import tomllib
+
+    data = tomllib.loads((paths.REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    names = {m.split(":")[0] for m in data["tool"]["pytest"]["ini_options"]["markers"]}
+    assert {m.split(":")[0] for m in MARKERS} <= names
+
+
+def test_required_sitl_skip_fails(tmp_path: Path) -> None:
+    test = tmp_path / "test_x.py"
+    test.write_text(
+        "import pytest\n\n@pytest.mark.sitl\n@pytest.mark.budget_s(10)\n"
+        "@pytest.mark.skipif(True, reason='no sitl')\ndef test_x():\n    pass\n"
+    )
+    base = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-p",
+        "sd_sim.pytest_plugin",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--rootdir",
+        str(tmp_path),
+        "-c",
+        "/dev/null",
+        str(test),
+    ]
+    env = {k: v for k, v in os.environ.items() if k != "SD_SIM__REQUIRE_SITL"}
+    assert subprocess.run(base, env=env, capture_output=True, check=False).returncode == 0
+    env["SD_SIM__REQUIRE_SITL"] = "1"
+    env["SD_ARDUCOPTER_BIN"] = sys.executable  # an existing file, so collection passes
+    out = subprocess.run(base, env=env, capture_output=True, text=True, check=False)
+    assert out.returncode == 1, out.stdout
+    assert "hoppades över" in out.stdout
+    env["SD_ARDUCOPTER_BIN"] = str(tmp_path / "missing")
+    out = subprocess.run(base, env=env, capture_output=True, text=True, check=False)
+    assert out.returncode != 0
+    assert "SD_SIM__REQUIRE_SITL=1" in out.stdout + out.stderr

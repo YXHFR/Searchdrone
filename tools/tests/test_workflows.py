@@ -155,23 +155,16 @@ def test_sitl_jobs_and_aggregate() -> None:
     assert "physics=builtin" in run and "brain=scripted" in run
 
 
-def test_sitl_change_filter_covers_inputs() -> None:
+def test_sitl_change_filter_fails_closed() -> None:
     jobs = load(ROOT / ".github" / "workflows" / "sitl.yml")["jobs"]
     script = next(s["run"] for s in jobs["changes"]["steps"] if s.get("id") == "filter")
-    for glob in (
-        "software/*",
-        "simulation/*",
-        "config/*.example.toml",
-        "compose.yaml",
-        "pyproject.toml",
-        "uv.lock",
-        "justfile",
-        "hardware/drone.yaml",
-        ".github/workflows/sitl.yml",
-        ".github/actions/*",
-        "tools/*",
-    ):
-        assert glob in script, glob
+    # The diff goes to a file first, so a failing git diff fails the step (bash -e)
+    # instead of looking like "nothing changed".
+    assert "< <(" not in script
+    assert 'git diff --name-only "$base...$head" > "$RUNNER_TEMP/changed.txt"' in script
+    assert 'if [ -z "$base" ] || [ -z "$head" ]' in script
+    # Deny-list: every file not listed as harmless runs the tests.
+    assert "*) echo" in script and "run=true" in script
 
 
 def test_package_write_only_when_pushing_from_main() -> None:

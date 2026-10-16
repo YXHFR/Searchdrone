@@ -228,11 +228,16 @@ ci-sitl *args:
     fi
     # The container runs as the calling user so files in runs/ and build/ stay theirs;
     # its virtualenv lives in the container, never in the checkout's .venv.
-    sock=(); [ -S /var/run/docker.sock ] && sock=(-v /var/run/docker.sock:/var/run/docker.sock \
-        --group-add "$(stat -c %g /var/run/docker.sock)")
+    # The Docker socket gives the container control of the host's Docker, so it is only
+    # mounted for tests that start their own database container (private_db=true).
+    sock=()
+    if [[ " $* " == *" private_db=true "* ]]; then
+        sock=(-v /var/run/docker.sock:/var/run/docker.sock \
+            --group-add "$(stat -c %g /var/run/docker.sock)")
+    fi
     docker run --rm --network host --user "$(id -u):$(id -g)" "${sock[@]}" \
         -v "$PWD:/w" -w /w -e SD_SIM__HEADLESS=1 -e HOME=/tmp/home \
-        -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e GITHUB_SHA -e SD_SIM__SPEEDUP \
+        -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL \
         "$image" bash -lc 'uv sync --all-packages --frozen && uv run --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
 
 # Full demo locked to the public CMAC home (keys: lan, record, ...)

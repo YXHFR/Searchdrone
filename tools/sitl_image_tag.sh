@@ -30,6 +30,9 @@ hash="$( { find simulation/docker -type f -not -path '*/__pycache__/*'; echo "$l
 
 case "${1:-}" in
     "") echo "${tag}-${hash}" ;;
-    --image) echo "$(value sitl_image):${tag}-${hash}" ;;
+    --image)
+        image="$(value sitl_image)"
+        [[ "$image" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]] || { echo "sitl_image_tag: ogiltig sitl_image" >&2; exit 1; }
+        echo "${image}:${tag}-${hash}" ;;
     *) echo "sitl_image_tag: okänt argument '$1' (bara --image)" >&2; exit 2 ;;
 esac

@@ -42,21 +42,32 @@ class Report:
     criteria: list[Criterion] = field(default_factory=list)
     param_mismatches: list[str] = field(default_factory=list)
     infra_failure: str | None = None
+    error: str | None = None
     started_utc: str = field(
         default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     )
     _t0: float = field(default_factory=time.monotonic)
 
-    def check(self, cid: str, text: str, passed: bool | None, **kw: Any) -> bool:
+    def check(self, cid: str, text: str, passed: bool, **kw: Any) -> bool:
+        if not isinstance(passed, bool):
+            raise TypeError(f"{cid}: passed ska vara True eller False, inte {passed!r}")
         self.criteria.append(Criterion(cid, text, passed, **kw))
-        return bool(passed)
+        return passed
 
     def not_built(self, cid: str, text: str, note: str) -> None:
+        """A criterion whose part of the stack does not exist yet (``passed: null``)."""
+        if not note.strip():
+            raise ValueError(f"{cid}: ange vad som saknas")
         self.criteria.append(Criterion(cid, text, None, note=note))
 
     @property
     def passed(self) -> bool:
-        return self.infra_failure is None and all(c.passed is not False for c in self.criteria)
+        return (
+            self.infra_failure is None
+            and self.error is None
+            and any(c.passed is True for c in self.criteria)
+            and all(c.passed is not False for c in self.criteria)
+        )
 
     def failures(self) -> list[str]:
         out = [
@@ -66,6 +77,10 @@ class Report:
         ]
         if self.infra_failure:
             out.append(f"testriggen: {self.infra_failure}")
+        if self.error:
+            out.append(f"fel: {self.error}")
+        if not any(c.passed is True for c in self.criteria):
+            out.append("inget kriterium kontrollerades")
         return out
 
     def as_dict(self) -> dict[str, Any]:
@@ -100,6 +115,8 @@ class Report:
             "param_mismatches": self.param_mismatches,
             "artifacts": artifacts,
             "infra_failure": self.infra_failure,
+            "error": self.error,
+            "not_built": sum(1 for c in self.criteria if c.passed is None),
         }
 
     def write(self) -> Path:

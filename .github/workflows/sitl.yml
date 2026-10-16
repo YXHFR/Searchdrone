@@ -33,6 +33,8 @@ concurrency:
 env:
   # Every flight runs in real time (SITL speedup 1).
   SD_SIM__SPEEDUP: "1"
+  # A missing simulator binary fails the tests instead of skipping them.
+  SD_SIM__REQUIRE_SITL: "1"
   SHARDS: "1"
   WORKERS: "4"
   GITLEAKS_VERSION: "8.30.1"
@@ -64,14 +66,21 @@ jobs:
             merge_group) base="$MG_BASE"; head="$MG_HEAD" ;;
             *) echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
+          if [ -z "$base" ] || [ -z "$head" ]; then
+            echo "bas- eller head-commit saknas i händelsen"; exit 1
+          fi
+          # A failing diff must fail the job, never turn into "nothing changed".
+          git diff --name-only "$base...$head" > "$RUNNER_TEMP/changed.txt"
+          # Deny-list: only files that cannot change a flight test skip it; anything
+          # else (including files added later) runs the tests.
           run=false
           while IFS= read -r file; do
             case "$file" in
-              software/*|simulation/*|config/*.example.toml|compose.yaml|pyproject.toml|uv.lock|\
-              justfile|hardware/drone.yaml|.github/workflows/sitl.yml|.github/actions/*|tools/*)
-                echo "berör SITL-testerna: $file"; run=true ;;
+              *.md|LICENSE|LICENSES/*|REUSE.toml|.github/ISSUE_TEMPLATE/*|.github/dependabot.yml|\
+              hardware/cad/*|hardware/pcb/*|hardware/bom/*|typos.toml|.editorconfig) ;;
+              *) echo "kan påverka SITL-testerna: $file"; run=true ;;
             esac
-          done < <(git diff --name-only "$base...$head")
+          done < "$RUNNER_TEMP/changed.txt"
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
   sitl:
@@ -117,12 +126,15 @@ jobs:
         run: |
           image="$(bash tools/sitl_image_tag.sh --image)"
           echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin || true
-          if ! docker pull "$image"; then
+          pulled=false
+          if echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin; then
+            docker pull "$image" && pulled=true
+            docker logout ghcr.io
+          fi
+          if [ "$pulled" != true ]; then
             echo "::notice::$image finns inte i registret; bygger den här (utan push)."
             docker build -f simulation/docker/sitl.Dockerfile -t "$image" .
           fi
-          docker logout ghcr.io
       - &versions
         name: ArduCopter in the image matches simulation/versions.lock
         env:
@@ -169,6 +181,7 @@ jobs:
           path: |
             runs/**/result.json
             runs/summary.md
+            !runs/**/secrets/**
             !build/sim/**/secrets/**
           if-no-files-found: warn
           retention-days: 14
@@ -182,6 +195,7 @@ jobs:
             runs/**/*.tlog
             runs/**/*.BIN
             runs/**/*.log
+            !runs/**/secrets/**
             !build/sim/**/secrets/**
           if-no-files-found: ignore
           retention-days: 14

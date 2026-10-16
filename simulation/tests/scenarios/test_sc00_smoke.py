@@ -2,9 +2,9 @@
 
 Checks what the stack has today: SITL with the test rig, mavtap and linksim become
 healthy, the flight controller stays disarmed in the same mode, its whole parameter
-list matches the project's parameter files, secrets stay out of logs and command lines
-and every simulator port listens on loopback only. Criteria that need the ground
-station are recorded as not built yet and are turned on when it lands.
+list matches the project's parameter files and the safety rules, secrets stay out of
+logs and command lines and every simulator port listens on loopback only. Criteria
+whose part of the stack is missing are recorded as not built yet (``passed: null``).
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from sd_sim import config, netcheck, paths
-from sd_sim.errors import InfraError
+from sd_sim import config, netcheck, params, paths
+from sd_sim.errors import InfraError, VehicleError
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.report import Report
-from sd_sim.sitl import CMAC_HOME
+from sd_sim.sitl import CMAC_HOME, SAFETY_PARAM_FILE
 from sd_sim.util import new_run_dir
 
 pytestmark = [
@@ -32,43 +32,13 @@ pytestmark = [
 
 READY_LIMIT_S = 90.0
 STABLE_S = 30.0
-PARAM_TOLERANCE = 1e-4
 MIN_PARAMS = 500  # ArduCopter 4.7 has well over a thousand
 SECRET_ENV_KEY = re.compile(r"(PASSWORD|TOKEN|KEY)$")
 GROUND = "inte byggt än (B1-05)"
-
-
-def parse_parm(path: Path) -> dict[str, float]:
-    """ArduPilot parameter file: ``NAME value`` or ``NAME,value``; ``#`` starts a comment."""
-    out: dict[str, float] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        parts = re.split(r"[\s,]+", line)
-        out[parts[0]] = float(parts[1])
-    return out
-
-
-def expected_params(argv: list[str]) -> tuple[dict[str, float], list[str]]:
-    """Parameters from the project's own layers on SITL's ``--defaults`` (later wins)."""
-    layers = argv[argv.index("--defaults") + 1].split(",")
-    own = paths.SIMULATION / "sitl" / "params"
-    files = [Path(p) for p in layers if Path(p).parent == own]
-    merged: dict[str, float] = {}
-    for path in files:
-        merged.update(parse_parm(path))
-    return merged, [p.name for p in files]
-
-
-def mismatches(expected: dict[str, float], actual: dict[str, float]) -> list[str]:
-    out = []
-    for name, value in sorted(expected.items()):
-        if name not in actual:
-            out.append(f"{name}: saknas i flygkontrollen (väntat {value:g})")
-        elif abs(actual[name] - value) > PARAM_TOLERANCE:
-            out.append(f"{name}: {actual[name]:g} (väntat {value:g})")
-    return out
+SAFETY_PARAMS = "inte byggt än (B1-07)"
+# The onboard executor and the safety parameter file arrive together. Once the executor
+# exists, a missing safety file is an error, never "not built yet".
+ONBOARD_EXECUTOR = paths.REPO / "software" / "onboard" / "src" / "sd_onboard" / "executor"
 
 
 def secret_values(secrets_dir: Path) -> list[str]:
@@ -105,6 +75,46 @@ def argv_containing(pids: set[int], values: list[str]) -> list[int]:
     return hits
 
 
+def check_params(rep: Report, stack: Stack, actual: dict[str, float]) -> None:
+    layers = stack.sitl_layout().project_layers()
+    names = [p.name for p in layers]
+    rep.check(
+        "SC00.4a",
+        "Hela parameterlistan lästes från flygkontrollen",
+        len(actual) >= MIN_PARAMS,
+        measured=len(actual),
+        limit=MIN_PARAMS,
+    )
+    if SAFETY_PARAM_FILE not in names:
+        if ONBOARD_EXECUTOR.exists():
+            rep.check(
+                "SC00.4",
+                f"{SAFETY_PARAM_FILE} laddas i SITL",
+                False,
+                measured=names,
+                limit=[SAFETY_PARAM_FILE],
+            )
+        else:
+            rep.not_built("SC00.4", "Parametrarna stämmer med säkerhetsfilen", SAFETY_PARAMS)
+        return
+    rep.param_mismatches = params.mismatches(params.merge_layers(layers), actual)
+    rep.check(
+        "SC00.4",
+        "Flygkontrollens parametrar stämmer med projektets filer",
+        not rep.param_mismatches,
+        measured={"files": names, "mismatches": len(rep.param_mismatches)},
+        limit={"mismatches": 0},
+    )
+    broken = params.rule_violations(actual)
+    rep.check(
+        "SC00.4b",
+        "Säkerhetsparametrarna (GCS-id, staket, batteri- och länkfailsafe)",
+        not broken,
+        measured=broken,
+        limit=[],
+    )
+
+
 def test_sc00_smoke(sim_instance: int, sim_physics: str, sim_brain: str) -> None:
     cfg = config.load(
         {
@@ -123,22 +133,28 @@ def test_sc00_smoke(sim_instance: int, sim_physics: str, sim_brain: str) -> None
     values: list[str] = []
     in_argv: list[int] = []
     modes_ok = False
+    reached_end = False
     try:
         harness = Harness(stack.ports["harness_mavlink"])
         t0 = time.monotonic()
         stack.up()
-        harness.wait(lambda s: s.heartbeat, 60, "HEARTBEAT från flygkontrollen")
-        harness.wait(lambda s: s.ready, READY_LIMIT_S, "position från EKF och GPS")
+        try:
+            harness.wait(lambda s: s.heartbeat, 60, "HEARTBEAT från flygkontrollen")
+            harness.wait(lambda s: s.ready, READY_LIMIT_S, "position från EKF och GPS")
+            ready = True
+        except VehicleError:
+            ready = False
         ready_s = round(time.monotonic() - t0, 1)
-        rep.check(
+        if not rep.check(
             "SC00.1",
             "Stacken frisk (HEARTBEAT, EKF och GPS)",
-            ready_s <= READY_LIMIT_S,
+            ready,
             measured=ready_s,
             limit=READY_LIMIT_S,
             unit="s",
             clock="host",
-        )
+        ):
+            raise AssertionError("SC00.1: flygkontrollen blev inte redo")
         rep.not_built("SC00.2", "Fordonet anslutet i markserverns API", GROUND)
 
         mode, modes, armed = harness.state.mode, set(), False
@@ -155,20 +171,7 @@ def test_sc00_smoke(sim_instance: int, sim_physics: str, sim_brain: str) -> None
             limit=[mode],
         )
 
-        actual = harness.read_all_params()
-        expected, files = expected_params(stack.sitl_argv())
-        rep.param_mismatches = mismatches(expected, actual)
-        rep.check(
-            "SC00.4",
-            "Hela parameterlistan lästes och stämmer med projektets filer",
-            len(actual) >= MIN_PARAMS and not rep.param_mismatches,
-            measured={
-                "params": len(actual),
-                "files": files,
-                "mismatches": len(rep.param_mismatches),
-            },
-            limit={"min_params": MIN_PARAMS, "mismatches": 0},
-        )
+        check_params(rep, stack, harness.read_all_params())
         rep.not_built("SC00.5", "Profil sim och ingen fjärråtkomst i markservern", GROUND)
 
         values = secret_values(stack.secrets_dir)
@@ -188,14 +191,19 @@ def test_sc00_smoke(sim_instance: int, sim_physics: str, sim_brain: str) -> None
         )
         rep.not_built("SC00.8", "Ingen localhost-pilot i markservern", GROUND)
         rep.not_built("SC00.9", "Markserverns databasroll har minsta privilegium", GROUND)
+        reached_end = True
     except InfraError as exc:
+        # The rig failed; the runner retries the test once.
         rep.infra_failure = stack.mask(str(exc))
+        raise
+    except BaseException as exc:
+        rep.error = stack.mask(f"{type(exc).__name__}: {exc}")
         raise
     finally:
         if harness is not None:
             harness.close()
         stack.down()
-        if rep.infra_failure is None and "SC00.7" in {c.id for c in rep.criteria}:
+        if reached_end:
             in_logs = files_containing(run_dir, values)
             rep.check(
                 "SC00.6",
@@ -204,5 +212,7 @@ def test_sc00_smoke(sim_instance: int, sim_physics: str, sim_brain: str) -> None
                 measured={"files": in_logs, "pids": in_argv, "modes_0600": modes_ok},
                 limit={"files": [], "pids": [], "modes_0600": True},
             )
+        elif rep.error is None and rep.infra_failure is None:
+            rep.error = "scenariot nådde inte sitt slut"
         rep.write()
     assert rep.passed, "\n".join(rep.failures())

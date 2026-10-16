@@ -111,18 +111,19 @@ def summary_markdown(results: list[dict[str, Any]], exit_code: int) -> str:
         "",
         f"pytest avslutades med kod {exit_code}.",
         "",
-        "| Scenario | Variant | Godkänt | Tid (s) | Körning |",
-        "|---|---|---|---|---|",
+        "| Scenario | Variant | Godkänt | Ej byggda kriterier | Tid (s) | Körning |",
+        "|---|---|---|---|---|---|",
     ]
     for res in results:
         name = res.get("scenario") or res.get("name") or "?"
         ok = "ja" if res.get("passed") else "nej"
         lines.append(
-            f"| {name} | {res.get('variant', '-')} | {ok} | {res.get('duration_s', '-')} "
+            f"| {name} | {res.get('variant', '-')} | {ok} | {res.get('not_built', '-')} "
+            f"| {res.get('duration_s', '-')} "
             f"| {res['_run']} |"
         )
     if not results:
-        lines.append("| (inga resultat) | | | | |")
+        lines.append("| (inga resultat) | | | | | |")
     return "\n".join(lines) + "\n"
 
 
@@ -134,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     if values.get("dry") == "1":
         print(json.dumps({"args": argv}))
         return 0
-    if values.get("brain", "none") != "none":
+    if "brain" in values:
         print("Varning: brain= ignoreras, befälhavaren är inte byggd än: inte byggt än (B1-10)")
     for key in FUTURE_KEYS:
         if key in values:
