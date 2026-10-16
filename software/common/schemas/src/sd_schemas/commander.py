@@ -19,7 +19,17 @@ from sd_schemas.api import (
     CommandStatus,
     Event,
 )
-from sd_schemas.base import SKILL_NAME_PATTERN, Id, LatLon, SdModel, VehicleId, json_bytes_at_most
+from sd_schemas.base import (
+    PARAMS_MAX_BYTES,
+    PARAMS_MAX_KEYS,
+    REFS_MAX_BYTES,
+    SKILL_NAME_PATTERN,
+    Id,
+    LatLon,
+    SdModel,
+    VehicleId,
+    json_bytes_at_most,
+)
 from sd_schemas.charter import AutonomyMode, CharterValidationResult, MissionCharter
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateDecision, StateRef
@@ -44,8 +54,6 @@ __all__ = [
 
 
 # Size caps on what the AI process sends; it is the least trusted caller.
-PARAMS_MAX_BYTES = 16 * 1024
-REFS_MAX_BYTES = 4 * 1024
 PROMPT_JSON_MAX_BYTES = 1024 * 1024
 _HASH = r"^[0-9a-zA-Z_.:-]{1,128}$"
 
@@ -121,7 +129,9 @@ class BrainMessage(SdModel):
 class SkillRequest(SdModel):
     command_id: Id  # created by sd-brain; idempotent
     skill: str = Field(pattern=SKILL_NAME_PATTERN)
-    params: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] = Field(max_length=32)
+    params: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] = Field(
+        max_length=PARAMS_MAX_KEYS
+    )
     rationale_sv: str = Field(max_length=500)
     in_reply_to: Id | None
     based_on: StateRef | None  # the ground station never fills it in

@@ -15,11 +15,9 @@ from pydantic import Field, model_validator
 from sd_schemas.base import SKILL_NAME_PATTERN, GeoJsonPolygon, Id, LatLon, LatLonAlt, SdModel
 from sd_schemas.charter import CharterProposal, MissionCharter
 from sd_schemas.executor import ExecutorState, GotoResumePoint, ResumePoint
-from sd_schemas.safety import HARD_MAX_ALT_AGL_M, HARD_MAX_SPEED_MS, MIN_ALT_AGL_M
+from sd_schemas.safety import MIN_ALT_AGL_M
 
 __all__ = [
-    "AI_SCHEMA_MAX_ALT_M",
-    "AI_SCHEMA_MAX_SPEED_MS",
     "AI_SCHEMA_MIN_ALT_M",
     "FORBIDDEN_SKILL_NAMES",
     "SKILL_REGISTRY",
@@ -53,14 +51,14 @@ __all__ = [
     "TargetContext",
 ]
 
-# Fixed bounds in the AI-facing schemas: the hard ceilings. Per turn the AI sees the
-# tighter bounds of the active charter; the gate, not these numbers, enforces the limits.
+# Fixed lower bound in the AI-facing schemas. The upper bounds come per turn from the
+# active charter and limits (the owner sets the outer cap freely); the gate enforces them.
 AI_SCHEMA_MIN_ALT_M = MIN_ALT_AGL_M
-AI_SCHEMA_MAX_ALT_M = HARD_MAX_ALT_AGL_M
-AI_SCHEMA_MAX_SPEED_MS = HARD_MAX_SPEED_MS
 
-# Mirror of sd_safety.policy.FORBIDDEN_SKILL_NAMES (the source); a test there checks
-# that the two sets are equal. These names can never be registered as skills.
+
+# Mirror of sd_safety.policy.FORBIDDEN_SKILL_NAMES (the source). The gate ticket adds
+# the test that the two sets are equal; sd_schemas cannot import sd_safety.
+# These names can never be registered as skills.
 FORBIDDEN_SKILL_NAMES: frozenset[str] = frozenset(
     {
         "arm",
@@ -97,7 +95,9 @@ class GateTargets(SdModel):
     """Where an order would take the vehicle. The gate checks every item against the limits.
 
     ``path`` holds the corner points of the route (current position first); the gate
-    samples it before checking. ``resolved = False`` means the targets could not be
+    samples it before checking: exact segment/polygon intersection, or samples no further
+    apart than half the fence buffer. When ``speed_ms`` is None the gate checks the
+    executor's default speed. ``resolved = False`` means the targets could not be
     worked out (unknown sector, unknown position, a target that only exists onboard);
     the gate must then reject an order that moves the vehicle.
     """
@@ -169,12 +169,12 @@ def _default_alt(ctx: TargetContext) -> float | None:
 
 # --- parameter models (what the gate and the executor validate) -----------------------
 
-_Alt = Field(gt=0, le=HARD_MAX_ALT_AGL_M)  # metres above home
-_Speed = Field(default=None, gt=0, le=HARD_MAX_SPEED_MS)
+_Alt = Field(gt=0)  # metres above home
+_Speed = Field(default=None, gt=0)
 
 
 class TakeoffParams(SkillParams):
-    alt_m: float | None = Field(default=None, gt=0, le=HARD_MAX_ALT_AGL_M)  # None = default
+    alt_m: float | None = Field(default=None, gt=0)  # None = default
 
     def gate_targets(self, ctx: TargetContext) -> GateTargets:
         alt = self.alt_m if self.alt_m is not None else _default_alt(ctx)
@@ -202,7 +202,7 @@ class SurveySectorParams(SkillParams):
     polygon: GeoJsonPolygon | None = None
     sector_id: str | None = Field(default=None, pattern=_SECTOR)
     pattern: str = Field(default="lawnmower", max_length=32)  # others: not implemented onboard
-    alt_m: float | None = Field(default=None, gt=0, le=HARD_MAX_ALT_AGL_M)
+    alt_m: float | None = Field(default=None, gt=0)
     spacing_m: float | None = Field(default=None, ge=10, le=100)
     speed_ms: float | None = _Speed
     heading_deg: float | None = Field(default=None, ge=0, le=180)
@@ -346,7 +346,7 @@ class FollowTrackParams(SkillParams):
     track_id: Id
     standoff_m: float = Field(ge=15, le=200)
     alt_m: float = _Alt
-    max_speed_ms: float = Field(gt=0, le=HARD_MAX_SPEED_MS)
+    max_speed_ms: float = Field(gt=0)
 
 
 class StopFollowParams(_NoTargets):
@@ -372,8 +372,8 @@ class FindMeParams(SkillParams):
 
 # --- AI-facing parameter models (adapted to the models above by sd_brain) --------------
 
-_AiAlt = Field(default=None, ge=AI_SCHEMA_MIN_ALT_M, le=AI_SCHEMA_MAX_ALT_M)
-_AiSpeed = Field(default=None, ge=1, le=AI_SCHEMA_MAX_SPEED_MS)
+_AiAlt = Field(default=None, ge=AI_SCHEMA_MIN_ALT_M)
+_AiSpeed = Field(default=None, ge=1)
 
 
 class GotoAiParams(SdModel):

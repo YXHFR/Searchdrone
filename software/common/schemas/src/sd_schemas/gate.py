@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from sd_schemas.base import ISSUER_PATTERN, Id, LatLonAlt, SdModel, VehicleId
+from sd_schemas.base import (
+    ISSUER_PATTERN,
+    PARAMS_MAX_BYTES,
+    PARAMS_MAX_KEYS,
+    SKILL_NAME_PATTERN,
+    Id,
+    LatLonAlt,
+    SdModel,
+    VehicleId,
+    json_bytes_at_most,
+)
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
@@ -40,8 +50,10 @@ class GateRequest(SdModel):
     command_id: Id
     mission_id: Id
     vehicle_id: VehicleId
-    skill: str
-    params: dict[str, Any]  # raw; validated by the rule R-SCHEMA
+    skill: str = Field(pattern=SKILL_NAME_PATTERN)
+    params: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] = Field(
+        max_length=PARAMS_MAX_KEYS
+    )  # raw; validated by the rule R-SCHEMA
     issuer_kind: Literal["operator", "brain", "system"]
     issuer_ref: str = Field(pattern=ISSUER_PATTERN)
     charter_version: int | None

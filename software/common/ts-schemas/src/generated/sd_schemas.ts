@@ -1087,7 +1087,9 @@ export interface GateRequest {
  * Where an order would take the vehicle. The gate checks every item against the limits.
  *
  * ``path`` holds the corner points of the route (current position first); the gate
- * samples it before checking. ``resolved = False`` means the targets could not be
+ * samples it before checking: exact segment/polygon intersection, or samples no further
+ * apart than half the fence buffer. When ``speed_ms`` is None the gate checks the
+ * executor's default speed. ``resolved = False`` means the targets could not be
  * worked out (unknown sector, unknown position, a target that only exists onboard);
  * the gate must then reject an order that moves the vehicle.
  *
@@ -1223,9 +1225,9 @@ export interface LandAtParams {
 /**
  * The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.
  *
- * Read by the ground station from its local settings file. A cap lies between the
- * standard values and the hard ceilings; the battery floor and lowest height can
- * never be loosened.
+ * Read by the ground station from its local settings file; the owner sets it freely.
+ * A cap is never below the standard values, and the battery floor and lowest height
+ * can never be loosened.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "LimitCaps".

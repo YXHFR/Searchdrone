@@ -6,7 +6,6 @@
       "properties": {
         "max_alt_agl_m": {
           "default": 300.0,
-          "maximum": 300.0,
           "minimum": 120.0,
           "type": "number"
         },
@@ -17,13 +16,11 @@
         },
         "max_range_from_pilot_m": {
           "default": 2000.0,
-          "maximum": 2000.0,
           "minimum": 500.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 25.0,
-          "maximum": 25.0,
           "minimum": 15.0,
           "type": "number"
         },
@@ -1100,7 +1097,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 5.0,
-              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -1111,7 +1107,6 @@
         },
         "alt_min_agl_m": {
           "default": 15,
-          "maximum": 300.0,
           "minimum": 5.0,
           "type": "number"
         },
@@ -1166,7 +1161,6 @@
         },
         "default_alt_agl_m": {
           "default": 40,
-          "maximum": 300.0,
           "minimum": 5.0,
           "type": "number"
         },
@@ -1180,7 +1174,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 2000.0,
               "type": "number"
             },
             {
@@ -1193,7 +1186,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -2812,7 +2804,6 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
-          "maximum": 300.0,
           "type": "number"
         },
         "hover_offset_m": {
@@ -2834,7 +2825,6 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
-          "maximum": 300.0,
           "type": "number"
         },
         "max_speed_ms": {
@@ -2862,12 +2852,10 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
-          "maximum": 300.0,
           "type": "number"
         },
         "max_speed_ms": {
           "exclusiveMinimum": 0,
-          "maximum": 25.0,
           "type": "number"
         },
         "standoff_m": {
@@ -2998,6 +2986,7 @@
         },
         "params": {
           "additionalProperties": true,
+          "maxProperties": 32,
           "type": "object"
         },
         "phase": {
@@ -3024,6 +3013,7 @@
           "default": null
         },
         "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "type": "string"
         },
         "vehicle_id": {
@@ -3048,7 +3038,7 @@
     },
     "GateTargets": {
       "additionalProperties": false,
-      "description": "Where an order would take the vehicle. The gate checks every item against the limits.\n\n``path`` holds the corner points of the route (current position first); the gate\nsamples it before checking. ``resolved = False`` means the targets could not be\nworked out (unknown sector, unknown position, a target that only exists onboard);\nthe gate must then reject an order that moves the vehicle.",
+      "description": "Where an order would take the vehicle. The gate checks every item against the limits.\n\n``path`` holds the corner points of the route (current position first); the gate\nsamples it before checking: exact segment/polygon intersection, or samples no further\napart than half the fence buffer. When ``speed_ms`` is None the gate checks the\nexecutor's default speed. ``resolved = False`` means the targets could not be\nworked out (unknown sector, unknown position, a target that only exists onboard);\nthe gate must then reject an order that moves the vehicle.",
       "properties": {
         "alts_m": {
           "items": {
@@ -3100,7 +3090,6 @@
         "alt_m": {
           "anyOf": [
             {
-              "maximum": 300.0,
               "minimum": 5.0,
               "type": "number"
             },
@@ -3151,7 +3140,6 @@
         "speed_ms": {
           "anyOf": [
             {
-              "maximum": 25.0,
               "minimum": 1,
               "type": "number"
             },
@@ -3170,7 +3158,6 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
-          "maximum": 300.0,
           "type": "number"
         },
         "lat": {
@@ -3187,7 +3174,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -3209,6 +3195,7 @@
       "additionalProperties": false,
       "properties": {
         "alt_m": {
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "command_id": {
@@ -3222,12 +3209,17 @@
           "type": "string"
         },
         "lat": {
+          "maximum": 90,
+          "minimum": -90,
           "type": "number"
         },
         "lon": {
+          "maximum": 180,
+          "minimum": -180,
           "type": "number"
         },
         "speed_ms": {
+          "exclusiveMinimum": 0,
           "type": "number"
         }
       },
@@ -3411,7 +3403,6 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
-          "maximum": 300.0,
           "type": "number"
         },
         "detection_id": {
@@ -3545,23 +3536,20 @@
     },
     "LimitCaps": {
       "additionalProperties": false,
-      "description": "The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.\n\nRead by the ground station from its local settings file. A cap lies between the\nstandard values and the hard ceilings; the battery floor and lowest height can\nnever be loosened.",
+      "description": "The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.\n\nRead by the ground station from its local settings file; the owner sets it freely.\nA cap is never below the standard values, and the battery floor and lowest height\ncan never be loosened.",
       "properties": {
         "max_alt_agl_m": {
           "default": 300.0,
-          "maximum": 300.0,
           "minimum": 120.0,
           "type": "number"
         },
         "max_range_from_pilot_m": {
           "default": 2000.0,
-          "maximum": 2000.0,
           "minimum": 500.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 25.0,
-          "maximum": 25.0,
           "minimum": 15.0,
           "type": "number"
         },
@@ -3825,6 +3813,7 @@
       "description": "Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).\n\nOn ``active = True`` the AI's orders pause and the vehicle goes to LOITER; stick\nvalues (``ManualControl``) are then forwarded as MAVLink MANUAL_CONTROL. Limits and\nthe geofence still apply. A physical RC transmitter always wins.",
       "properties": {
         "action_seq": {
+          "minimum": 0,
           "type": "integer"
         },
         "active": {
@@ -4187,12 +4176,10 @@
         "alt_max_agl_m": {
           "default": 120.0,
           "exclusiveMinimum": 5.0,
-          "maximum": 300.0,
           "type": "number"
         },
         "alt_min_agl_m": {
           "default": 15,
-          "maximum": 300.0,
           "minimum": 5.0,
           "type": "number"
         },
@@ -4237,7 +4224,6 @@
         },
         "default_alt_agl_m": {
           "default": 40,
-          "maximum": 300.0,
           "minimum": 5.0,
           "type": "number"
         },
@@ -4263,13 +4249,11 @@
         "max_range_from_pilot_m": {
           "default": 500.0,
           "exclusiveMinimum": 0,
-          "maximum": 2000.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 15.0,
           "exclusiveMinimum": 0,
-          "maximum": 25.0,
           "type": "number"
         },
         "mission_id": {
@@ -4934,7 +4918,6 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
-          "maximum": 300.0,
           "type": "number"
         },
         "lat": {
@@ -5133,7 +5116,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 5.0,
-              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -5144,7 +5126,6 @@
         },
         "alt_min_agl_m": {
           "default": 15,
-          "maximum": 300.0,
           "minimum": 5.0,
           "type": "number"
         },
@@ -5199,7 +5180,6 @@
         },
         "default_alt_agl_m": {
           "default": 40,
-          "maximum": 300.0,
           "minimum": 5.0,
           "type": "number"
         },
@@ -5213,7 +5193,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 2000.0,
               "type": "number"
             },
             {
@@ -5226,7 +5205,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -5318,19 +5296,16 @@
         "max_alt_agl_m": {
           "default": 120.0,
           "exclusiveMinimum": 5.0,
-          "maximum": 300.0,
           "type": "number"
         },
         "max_range_from_pilot_m": {
           "default": 500.0,
           "exclusiveMinimum": 0,
-          "maximum": 2000.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 15.0,
           "exclusiveMinimum": 0,
-          "maximum": 25.0,
           "type": "number"
         }
       },
@@ -5761,6 +5736,7 @@
         },
         "params": {
           "additionalProperties": true,
+          "maxProperties": 32,
           "type": "object"
         },
         "rationale": {
@@ -5774,6 +5750,7 @@
           ]
         },
         "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "type": "string"
         }
       },
@@ -6370,9 +6347,11 @@
       "additionalProperties": false,
       "properties": {
         "alt_m": {
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "base_index": {
+          "minimum": 0,
           "type": "integer"
         },
         "command_id": {
@@ -6389,12 +6368,16 @@
           "type": "string"
         },
         "next_index": {
+          "minimum": 0,
           "type": "integer"
         },
         "seq_offset": {
+          "maximum": 1,
+          "minimum": 0,
           "type": "integer"
         },
         "speed_ms": {
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "waypoints": {
@@ -6423,7 +6406,6 @@
         "alt_m": {
           "anyOf": [
             {
-              "maximum": 300.0,
               "minimum": 5.0,
               "type": "number"
             },
@@ -6453,7 +6435,6 @@
         "speed_ms": {
           "anyOf": [
             {
-              "maximum": 25.0,
               "minimum": 1,
               "type": "number"
             },
@@ -6478,7 +6459,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -6546,7 +6526,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -6618,7 +6597,6 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
-              "maximum": 300.0,
               "type": "number"
             },
             {

@@ -8,6 +8,8 @@ from typing import Annotated, Any, Literal
 from pydantic import AwareDatetime, Field, model_validator
 
 from sd_schemas.base import (
+    PARAMS_MAX_BYTES,
+    PARAMS_MAX_KEYS,
     SKILL_NAME_PATTERN,
     GeoJsonPoint,
     GeoJsonPolygon,
@@ -440,7 +442,9 @@ class OperatorCommandRequest(SdModel):
 
     client_command_id: Id
     skill: str = Field(pattern=SKILL_NAME_PATTERN)
-    params: Annotated[dict[str, Any], json_bytes_at_most(16 * 1024)] = Field(max_length=32)
+    params: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] = Field(
+        max_length=PARAMS_MAX_KEYS
+    )
     rationale_sv: str | None = Field(default=None, max_length=500)
 
 

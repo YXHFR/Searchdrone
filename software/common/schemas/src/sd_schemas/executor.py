@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from sd_schemas.base import Id, LatLon, SdModel
 
@@ -59,21 +59,27 @@ class SurveyResumePoint(SdModel):
     kind: Literal["survey"] = "survey"
     command_id: Id
     waypoints: list[LatLon]  # every search point in the original order
-    alt_m: float
-    speed_ms: float
-    base_index: int  # index in waypoints of the first search point of the current mission
-    seq_offset: int  # 0 = original mission; 1 = resumed
-    next_index: int  # the point the vehicle was heading for
+    alt_m: float = Field(gt=0)
+    speed_ms: float = Field(gt=0)
+    base_index: int = Field(ge=0)  # index of the first search point of the current mission
+    seq_offset: int = Field(ge=0, le=1)  # 0 = original mission; 1 = resumed
+    next_index: int = Field(ge=0)  # the point the vehicle was heading for
     interrupted_at: LatLon
+
+    @model_validator(mode="after")
+    def _indices(self) -> SurveyResumePoint:
+        if not self.base_index <= self.next_index < len(self.waypoints):
+            raise ValueError("need base_index <= next_index < len(waypoints)")
+        return self
 
 
 class GotoResumePoint(SdModel):
     kind: Literal["goto"] = "goto"
     command_id: Id
-    lat: float
-    lon: float
-    alt_m: float
-    speed_ms: float
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    alt_m: float = Field(gt=0)
+    speed_ms: float = Field(gt=0)
 
 
 ResumePoint = Annotated[SurveyResumePoint | GotoResumePoint, Field(discriminator="kind")]

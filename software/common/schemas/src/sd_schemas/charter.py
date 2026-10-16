@@ -21,9 +21,6 @@ from sd_schemas.safety import (
     DEFAULT_MAX_ALT_AGL_M,
     DEFAULT_MAX_RANGE_FROM_PILOT_M,
     DEFAULT_MAX_SPEED_MS,
-    HARD_MAX_ALT_AGL_M,
-    HARD_MAX_RANGE_FROM_PILOT_M,
-    HARD_MAX_SPEED_MS,
     MIN_ALT_AGL_M,
     MIN_BATTERY_RTL_PCT,
 )
@@ -68,15 +65,11 @@ class MissionCharter(SdModel):
     geofence_buffer_m: float = Field(default=20, ge=5, le=50)
     home: LatLonAlt  # *server*: the vehicle's latest HOME_POSITION
     pilot_position: LatLon  # *server*: always = home in v1
-    alt_min_agl_m: float = Field(default=15, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
-    alt_max_agl_m: float = Field(
-        default=DEFAULT_MAX_ALT_AGL_M, gt=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M
-    )
-    default_alt_agl_m: float = Field(default=40, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
-    max_speed_ms: float = Field(default=DEFAULT_MAX_SPEED_MS, gt=0, le=HARD_MAX_SPEED_MS)
-    max_range_from_pilot_m: float = Field(
-        default=DEFAULT_MAX_RANGE_FROM_PILOT_M, gt=0, le=HARD_MAX_RANGE_FROM_PILOT_M
-    )
+    alt_min_agl_m: float = Field(default=15, ge=MIN_ALT_AGL_M)
+    alt_max_agl_m: float = Field(default=DEFAULT_MAX_ALT_AGL_M, gt=MIN_ALT_AGL_M)
+    default_alt_agl_m: float = Field(default=40, ge=MIN_ALT_AGL_M)
+    max_speed_ms: float = Field(default=DEFAULT_MAX_SPEED_MS, gt=0)
+    max_range_from_pilot_m: float = Field(default=DEFAULT_MAX_RANGE_FROM_PILOT_M, gt=0)
     battery_rtl_pct: float = Field(default=DEFAULT_BATTERY_RTL_PCT, ge=MIN_BATTERY_RTL_PCT, le=90)
     allowed_skills: list[Annotated[str, Field(pattern=SKILL_NAME_PATTERN)]] = Field(max_length=32)
     on_ai_silent: Literal["continue_plan", "hold", "return_home"] = "continue_plan"
@@ -109,14 +102,14 @@ class CharterProposal(SdModel):
     area: GeoJsonPolygon | None = None
     area_annotation_id: Id | None = None  # a drawn area; exactly one of area / area_annotation_id
     # The band itself (min < default <= max) is checked by the server (ALT_BAND_INVALID).
-    alt_min_agl_m: float = Field(default=15, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
+    alt_min_agl_m: float = Field(default=15, ge=MIN_ALT_AGL_M)
     alt_max_agl_m: float | None = Field(  # None = the mission limit
-        default=None, gt=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M
+        default=None, gt=MIN_ALT_AGL_M
     )
     geofence_buffer_m: float = Field(default=20, ge=5, le=50)
-    default_alt_agl_m: float = Field(default=40, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
-    max_speed_ms: float | None = Field(default=None, gt=0, le=HARD_MAX_SPEED_MS)
-    max_range_from_pilot_m: float | None = Field(default=None, gt=0, le=HARD_MAX_RANGE_FROM_PILOT_M)
+    default_alt_agl_m: float = Field(default=40, ge=MIN_ALT_AGL_M)
+    max_speed_ms: float | None = Field(default=None, gt=0)
+    max_range_from_pilot_m: float | None = Field(default=None, gt=0)
     battery_rtl_pct: float | None = Field(default=None, ge=MIN_BATTERY_RTL_PCT, le=90)
     allowed_skills: list[Annotated[str, Field(pattern=SKILL_NAME_PATTERN)]] | None = Field(
         default=None, max_length=32

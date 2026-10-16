@@ -2,10 +2,10 @@
 
 ``SafetyLimits()`` gives the standard values every new mission starts with. A pilot may
 make them stricter, or raise them (by click, per mission) up to the outer cap
-(``LimitCaps``), which the ground station reads from a local settings file. The AI can
-never change either. No setting can go past the hard ceilings below; raising those
-needs a code change with a flight-safety review. The gate (``sd_safety``) enforces the
-limits; this module describes them and rejects values that can never be valid.
+(``LimitCaps``), which the ground station reads from a local settings file. The owner
+decides the cap freely in that file; only the floors below can never be loosened. The
+AI can never change limits or caps. The gate (``sd_safety``) enforces the limits; this
+module describes them and rejects values that can never be valid.
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from sd_schemas.base import SdModel
 
 __all__ = [
     "DEFAULT_BATTERY_RTL_PCT",
+    "DEFAULT_CAP_ALT_AGL_M",
+    "DEFAULT_CAP_RANGE_FROM_PILOT_M",
+    "DEFAULT_CAP_SPEED_MS",
     "DEFAULT_MAX_ALT_AGL_M",
     "DEFAULT_MAX_RANGE_FROM_PILOT_M",
     "DEFAULT_MAX_SPEED_MS",
-    "HARD_MAX_ALT_AGL_M",
-    "HARD_MAX_RANGE_FROM_PILOT_M",
-    "HARD_MAX_SPEED_MS",
     "MIN_ALT_AGL_M",
     "MIN_BATTERY_RTL_PCT",
     "LimitCaps",
@@ -34,11 +34,10 @@ DEFAULT_MAX_SPEED_MS = 15.0
 DEFAULT_MAX_RANGE_FROM_PILOT_M = 500.0
 DEFAULT_BATTERY_RTL_PCT = 15.0
 
-# Hard ceilings: the owner's outer cap. The local settings file may lower the cap,
-# never raise it past these.
-HARD_MAX_ALT_AGL_M = 300.0
-HARD_MAX_SPEED_MS = 25.0
-HARD_MAX_RANGE_FROM_PILOT_M = 2000.0
+# The outer cap when the local settings file does not set one (owner decision).
+DEFAULT_CAP_ALT_AGL_M = 300.0
+DEFAULT_CAP_SPEED_MS = 25.0
+DEFAULT_CAP_RANGE_FROM_PILOT_M = 2000.0
 
 # Floors that no setting can loosen.
 MIN_ALT_AGL_M = 5.0
@@ -48,13 +47,9 @@ MIN_BATTERY_RTL_PCT = 15.0
 class SafetyLimits(SdModel):
     """Per-mission limits (outer layer). Heights are metres above the home point."""
 
-    max_alt_agl_m: float = Field(
-        default=DEFAULT_MAX_ALT_AGL_M, gt=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M
-    )
-    max_speed_ms: float = Field(default=DEFAULT_MAX_SPEED_MS, gt=0, le=HARD_MAX_SPEED_MS)
-    max_range_from_pilot_m: float = Field(
-        default=DEFAULT_MAX_RANGE_FROM_PILOT_M, gt=0, le=HARD_MAX_RANGE_FROM_PILOT_M
-    )
+    max_alt_agl_m: float = Field(default=DEFAULT_MAX_ALT_AGL_M, gt=MIN_ALT_AGL_M)
+    max_speed_ms: float = Field(default=DEFAULT_MAX_SPEED_MS, gt=0)
+    max_range_from_pilot_m: float = Field(default=DEFAULT_MAX_RANGE_FROM_PILOT_M, gt=0)
     battery_rtl_pct: float = Field(  # fly home at this level
         default=DEFAULT_BATTERY_RTL_PCT, ge=MIN_BATTERY_RTL_PCT, le=90
     )
@@ -63,21 +58,16 @@ class SafetyLimits(SdModel):
 class LimitCaps(SdModel):
     """The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.
 
-    Read by the ground station from its local settings file. A cap lies between the
-    standard values and the hard ceilings; the battery floor and lowest height can
-    never be loosened.
+    Read by the ground station from its local settings file; the owner sets it freely.
+    A cap is never below the standard values, and the battery floor and lowest height
+    can never be loosened.
     """
 
-    max_alt_agl_m: float = Field(
-        default=HARD_MAX_ALT_AGL_M, ge=DEFAULT_MAX_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M
-    )
-    max_speed_ms: float = Field(
-        default=HARD_MAX_SPEED_MS, ge=DEFAULT_MAX_SPEED_MS, le=HARD_MAX_SPEED_MS
-    )
+    max_alt_agl_m: float = Field(default=DEFAULT_CAP_ALT_AGL_M, ge=DEFAULT_MAX_ALT_AGL_M)
+    max_speed_ms: float = Field(default=DEFAULT_CAP_SPEED_MS, ge=DEFAULT_MAX_SPEED_MS)
     max_range_from_pilot_m: float = Field(
-        default=HARD_MAX_RANGE_FROM_PILOT_M,
+        default=DEFAULT_CAP_RANGE_FROM_PILOT_M,
         ge=DEFAULT_MAX_RANGE_FROM_PILOT_M,
-        le=HARD_MAX_RANGE_FROM_PILOT_M,
     )
     min_battery_rtl_pct: float = Field(
         default=MIN_BATTERY_RTL_PCT, ge=MIN_BATTERY_RTL_PCT, le=DEFAULT_BATTERY_RTL_PCT

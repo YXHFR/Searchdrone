@@ -9,8 +9,8 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 import sd_schemas as s
-from sd_schemas.base import new_id
-from sd_schemas.commander import PARAMS_MAX_BYTES, PROMPT_JSON_MAX_BYTES
+from sd_schemas.base import PARAMS_MAX_BYTES, new_id
+from sd_schemas.commander import PROMPT_JSON_MAX_BYTES
 from sd_schemas.executor import GotoResumePoint, SurveyResumePoint
 from sd_schemas.reason_codes import (
     APPROVAL_OUTCOME_CODES,
@@ -19,7 +19,6 @@ from sd_schemas.reason_codes import (
     LIMITS_CODES,
     ONBOARD_REASON_CODES,
 )
-from sd_schemas.safety import HARD_MAX_ALT_AGL_M, HARD_MAX_SPEED_MS
 from sd_schemas.skills import SKILL_REGISTRY, UNRESOLVED, TargetContext
 from sd_schemas_examples import AREA, OTHER, _charter, _decision_log, _lla
 
@@ -49,23 +48,28 @@ def test_ids_must_be_uuid7() -> None:
         {"battery_rtl_pct": 14.9},
         {"battery_rtl_pct": -5},
         {"max_speed_ms": float("inf")},
-        {"max_alt_agl_m": HARD_MAX_ALT_AGL_M + 1},
-        {"max_speed_ms": HARD_MAX_SPEED_MS + 0.1},
-        {"max_range_from_pilot_m": 5000},
+        {"max_alt_agl_m": float("nan")},
     ],
 )
-def test_safety_limits_floors_and_ceilings(bad: dict[str, float]) -> None:
+def test_safety_limits_floors_and_finite(bad: dict[str, float]) -> None:
     with pytest.raises(ValidationError):
         s.SafetyLimits(**bad)
 
 
 @pytest.mark.parametrize(
     "bad",
-    [{"max_alt_agl_m": float("inf")}, {"max_alt_agl_m": 5000}, {"max_speed_ms": 100}],
+    [{"max_alt_agl_m": float("inf")}, {"max_alt_agl_m": 100}, {"min_battery_rtl_pct": 10}],
 )
-def test_limit_caps_have_a_ceiling(bad: dict[str, float]) -> None:
+def test_limit_caps_are_finite_and_keep_floors(bad: dict[str, float]) -> None:
     with pytest.raises(ValidationError):
         s.LimitCaps(**bad)
+
+
+def test_owner_sets_the_cap_freely() -> None:
+    caps = s.LimitCaps(max_alt_agl_m=500, max_speed_ms=30, max_range_from_pilot_m=5000)
+    raised = s.SafetyLimits(max_alt_agl_m=450, max_speed_ms=28, max_range_from_pilot_m=4000)
+    assert caps.allows(raised)
+    assert not s.LimitCaps().allows(raised)
 
 
 def test_caps_allow() -> None:
@@ -83,7 +87,7 @@ def _charter_with(**kw: Any) -> s.MissionCharter:
     [
         {"battery_rtl_pct": 0},
         {"alt_min_agl_m": -10},
-        {"max_speed_ms": 1e9},
+        {"max_speed_ms": float("inf")},
         {"alt_min_agl_m": 50, "default_alt_agl_m": 40},
         {"alt_min_agl_m": 120, "alt_max_agl_m": 120, "default_alt_agl_m": 120},
     ],
@@ -103,7 +107,7 @@ def test_charter_autonomy_mode_is_never_implied() -> None:
 
 @pytest.mark.parametrize(
     "bad",
-    [{"battery_rtl_pct": 0}, {"alt_min_agl_m": -10}, {"max_speed_ms": 1e9}],
+    [{"battery_rtl_pct": 0}, {"alt_min_agl_m": -10}, {"max_speed_ms": float("inf")}],
 )
 def test_proposal_bounds(bad: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
@@ -326,6 +330,17 @@ def test_resume_rechecks_the_remaining_route() -> None:
     t = s.ResumeParams().gate_targets(CTX.model_copy(update={"resume_point": goto}))
     assert t.points == [ll]
     assert t.alts_m == [40]
+    with pytest.raises(ValidationError):
+        SurveyResumePoint(
+            command_id=OTHER,
+            waypoints=[ll],
+            alt_m=40,
+            speed_ms=7,
+            base_index=0,
+            seq_offset=0,
+            next_index=-1,
+            interrupted_at=ll,
+        )
     survey = SurveyResumePoint(
         command_id=OTHER,
         waypoints=[ll, ll],

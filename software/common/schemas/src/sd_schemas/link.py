@@ -6,17 +6,22 @@ Every message travels in an ``Envelope`` whose ``body`` is validated against
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, Field, field_validator
 
 from sd_schemas.base import (
     ISSUER_PATTERN,
+    OPERATOR_REF_PATTERN,
+    PARAMS_MAX_BYTES,
+    PARAMS_MAX_KEYS,
+    SKILL_NAME_PATTERN,
     VEHICLE_ID_PATTERN,
     Id,
     LatLonAlt,
     SdModel,
     VehicleId,
+    json_bytes_at_most,
 )
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState, HeldBy, HoldReason
@@ -144,8 +149,10 @@ class SkillCommand(SdModel):
     """Ground -> onboard, reliable; envelope ttl_ms = the registry's ttl_s x 1000."""
 
     command_id: Id
-    skill: str
-    params: dict[str, Any]
+    skill: str = Field(pattern=SKILL_NAME_PATTERN)
+    params: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] = Field(
+        max_length=PARAMS_MAX_KEYS
+    )
     issuer: str = Field(pattern=ISSUER_PATTERN)  # "operator:<alias>" | "brain:ground"
     rationale: str | None
     charter_version: int
@@ -271,8 +278,8 @@ class ManualTakeover(SdModel):
 
     takeover_id: Id
     active: bool
-    action_seq: int  # same per-vehicle sequence as latches; lower than the last seen is ignored
-    operator_id: str = Field(pattern=r"^operator:[a-z0-9][a-z0-9_-]{0,31}$")  # pilot role only
+    action_seq: int = Field(ge=0)  # shared with latches; lower than the last seen is ignored
+    operator_id: str = Field(pattern=OPERATOR_REF_PATTERN)  # only the pilot role steers
 
 
 class StickAxes(SdModel):

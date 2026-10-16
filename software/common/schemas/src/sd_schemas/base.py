@@ -14,6 +14,10 @@ __all__ = [
     "ISSUER_PATTERN",
     "MAX_POLYGON_POINTS",
     "MIN_POLYGON_POINTS",
+    "OPERATOR_REF_PATTERN",
+    "PARAMS_MAX_BYTES",
+    "PARAMS_MAX_KEYS",
+    "REFS_MAX_BYTES",
     "SKILL_NAME_PATTERN",
     "VEHICLE_ID_PATTERN",
     "GeoJsonPoint",
@@ -61,7 +65,14 @@ def new_id() -> uuid.UUID:
 
 VEHICLE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]{2,31}$"
 SKILL_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
-ISSUER_PATTERN = r"^(operator:[a-z0-9][a-z0-9_-]{0,31}|brain:ground|system:ground|rule:onboard)$"
+_OPERATOR_REF = r"operator:[a-z0-9][a-z0-9_-]{0,31}"
+OPERATOR_REF_PATTERN = "^" + _OPERATOR_REF + "$"
+ISSUER_PATTERN = "^(" + _OPERATOR_REF + "|brain:ground|system:ground|rule:onboard)$"
+
+# Size caps on order parameters and free-form references sent by a client.
+PARAMS_MAX_BYTES = 16 * 1024
+PARAMS_MAX_KEYS = 32
+REFS_MAX_BYTES = 4 * 1024
 VehicleId = Annotated[str, StringConstraints(pattern=VEHICLE_ID_PATTERN)]
 """Vehicle id such as ``sim-01``. Never a name that reveals a person or a place."""
 
