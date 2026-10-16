@@ -115,7 +115,7 @@ def test_command_ack_retries_with_rising_confirmation() -> None:
     async def run() -> None:
         clock, vehicle, _ = await _started()
         await clock.run_for(3.0)
-        vehicle.fc.drop_acks = 2
+        vehicle.fc.drop_commands = 2
         before = len(vehicle.sent)
         result = await run_with_clock(
             clock, vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL)
@@ -123,7 +123,8 @@ def test_command_ack_retries_with_rising_confirmation() -> None:
         assert result is MavResult.ACCEPTED
         tries = [m for m in vehicle.sent[before:] if m.get_type() == "COMMAND_LONG"]
         assert [int(m.confirmation) for m in tries] == [0, 1, 2]
-        vehicle.fc.drop_acks = 5
+        await clock.run_for(0.5)  # GUIDED shows in the HEARTBEAT before the next change
+        vehicle.fc.drop_commands = 5
         result = await run_with_clock(
             clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.SKILL)
         )
@@ -414,7 +415,7 @@ def test_ack_for_another_channel_is_not_ours() -> None:
     async def run() -> None:
         clock, vehicle, _ = await _started()
         await clock.run_for(2.0)
-        vehicle.fc.drop_acks = 3  # our own answers never come
+        vehicle.fc.drop_commands = 3  # our own commands never arrive
         task = asyncio.ensure_future(vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL))
         await clock.run_for(0.1)
         # The flight controller's answer to the ground station reaches this channel.
@@ -486,6 +487,77 @@ def test_stream_requests_restart_after_a_loss_mid_request() -> None:
         await clock.run_for(4.0)
         assert vehicle.fc.intervals_us == dict(ONBOARD_STREAM_US)
         assert "mav.streams_requested" in events.kinds()
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_active_failsafe_does_not_stop_retries_of_stop_steps() -> None:
+    """A failsafe that was already active (CRITICAL heartbeat, LOW battery repeated by
+    the flight controller) never cancels the retry of a STOP step; only a new one does."""
+
+    async def run() -> None:
+        clock = FakeClock()
+        fc = FakeFlightController(clock)
+        ground = FakeVehicle(clock, fc=fc, role=Role.GROUND)
+        await ground.start()
+        fc.armed, fc.alt_rel, fc.target = True, 20.0, (HOME[0], HOME[1], 20.0)
+        fc.mode = CopterMode.GUIDED
+        fc.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_LOW
+        fc.system_status = mavlink.MAV_STATE_CRITICAL
+        await clock.run_for(3.0)
+        assert ground.telemetry.last_failsafe_signal is not None
+        fc.drop_acks = 1
+        fc.refuse_modes = {int(CopterMode.BRAKE)}  # the first try must not change the mode
+        task = asyncio.ensure_future(ground.set_mode(CopterMode.BRAKE, origin=SendOrigin.GROUND))
+        await clock.run_for(0.5)
+        fc.refuse_modes = set()
+        result = await run_with_clock(clock, task)
+        assert result is MavResult.ACCEPTED
+        tries = [m for m in ground.sent if m.get_type() == "COMMAND_LONG" and int(m.command) == 176]
+        assert len(tries) == 2
+        await ground.close()
+
+    asyncio.run(run())
+
+
+def test_lost_ack_with_mode_reached_is_accepted() -> None:
+    async def run() -> None:
+        clock, vehicle, events = await _started()
+        await clock.run_for(2.0)
+        vehicle.fc.drop_acks = 1  # the change happens, its answer is lost
+        result = await run_with_clock(
+            clock, vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED
+        assert "mav.ack_lost_mode_reached" in events.kinds()
+        tries = [
+            m for m in vehicle.sent if m.get_type() == "COMMAND_LONG" and int(m.command) == 176
+        ]
+        assert len(tries) == 1
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_a_failing_event_sink_never_stops_lost_link_detection() -> None:
+    async def run() -> None:
+        clock = FakeClock()
+
+        def sink(kind: str, details: dict[str, Any]) -> None:
+            raise RuntimeError("sink bug")
+
+        vehicle = FakeVehicle(clock, on_event=sink)
+        await vehicle.start()
+        await clock.run_for(2.0)
+        for _ in range(2):
+            vehicle.fc.silent = True
+            await clock.run_for(3.2)
+            assert not vehicle.telemetry.fc_connected
+            vehicle.fc.silent = False
+            await clock.run_for(1.0)
+            assert vehicle.telemetry.fc_connected
+        assert vehicle.event_errors > 0
         await vehicle.close()
 
     asyncio.run(run())

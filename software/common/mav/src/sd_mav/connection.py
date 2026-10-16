@@ -91,10 +91,11 @@ class MavConnection:
     """A pymavlink connection (UDP, TCP or serial) with a checked identity.
 
     ``url`` uses pymavlink's syntax, e.g. ``udpin:127.0.0.1:14563``. A reader thread
-    owns every receive call, so pymavlink's own reconnects (a new socket or serial
+    owns every receive call, so reconnects triggered by a read (a new socket or serial
     port, blocking retries) never run on the event loop; each message is handed to the
     loop with ``call_soon_threadsafe``. A read error waits ``READ_RETRY_S`` and, for a
-    serial port, reopens it.
+    serial port, reopens it. Writes run on the caller's thread; for TCP and serial a
+    failed write can make pymavlink reconnect there, so v0.1.0 uses UDP only.
     """
 
     READ_RETRY_S: Final = 0.5
@@ -124,6 +125,7 @@ class MavConnection:
         self._tlog_clock: Clock | None = None
         self._tlog_lock = threading.Lock()
         self.read_errors = 0
+        self.dispatch_errors = 0
 
     @property
     def source_system(self) -> int:
@@ -169,8 +171,10 @@ class MavConnection:
         handler = self._handler
         if handler is None:
             return
-        with contextlib.suppress(Exception):  # one bad message must not stop the rest
+        try:
             handler(msg)
+        except Exception:  # one bad message must not stop the rest; counted
+            self.dispatch_errors += 1
 
     def _log(self, msg: Any) -> None:
         with self._tlog_lock:

@@ -42,7 +42,12 @@ from sd_mav.denylist import denied_reason
 from sd_mav.failsafe_signals import FailsafeSignal, signal_from
 from sd_mav.modes import GROUND_DISARM_MAX_ALT_M, CopterMode, mode_name
 from sd_obs.clock import Clock
-from sd_safety.constants import FC_HEARTBEAT_TIMEOUT_S, HEARTBEAT_INTERVAL_US, MAV_ACK_TIMEOUT_S
+from sd_safety.constants import (
+    FC_HEARTBEAT_TIMEOUT_S,
+    HEARTBEAT_INTERVAL_US,
+    MAV_ACK_TIMEOUT_S,
+    OVERRIDE_NOTICE_WINDOW_S,
+)
 from sd_schemas.base import LatLon, LatLonAlt
 from sd_schemas.link import StickAxes
 from sd_schemas.vehicle import LandedState, VehicleState
@@ -63,6 +68,8 @@ MODE_FRESH_S: Final = 1.5  # a HEARTBEAT older than this does not tell the curre
 _OUR_HEARTBEAT_S: Final = 1.0
 _WATCH_S: Final = 0.05
 _ARMED_FLAG: Final = mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+# A failsafe signal not seen for this long counts as new when it comes back.
+_SIGNAL_QUIET_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
 # Landed states that count as "in the air" (the flight controller's own words).
 _AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
 # Commands that move the vehicle; their retries stop when the flight controller decided.
@@ -187,7 +194,8 @@ class FcTelemetry:
     mission_seq_current: int | None = None
     fc_firmware: str | None = None
     last_failsafe_signal: FailsafeSignal | None = None
-    last_failsafe_mono_ms: int | None = None
+    last_failsafe_mono_ms: int | None = None  # any failsafe signal, repeated ones too
+    failsafe_onset_mono_ms: int | None = None  # a signal that was not active just before
 
     @property
     def fc_mode(self) -> str:
@@ -278,9 +286,11 @@ class Vehicle:
         self._command_locks: dict[int, asyncio.Lock] = {}
         self._tasks: list[asyncio.Task[None]] = []
         self._streams_task: asyncio.Task[None] | None = None
+        self._signal_seen_ms: dict[str, int] = {}
         self._connected_event = asyncio.Event()
         self._closed = False
         self.blocked_count = 0
+        self.event_errors = 0
         self.sent_count = 0
 
     # --- lifecycle ---------------------------------------------------------------------
@@ -399,8 +409,12 @@ class Vehicle:
         return denied_reason(msg) or check(msg, self._context(origin))
 
     def _event(self, kind: str, details: dict[str, Any]) -> None:
-        if self._on_event is not None:
+        if self._on_event is None:
+            return
+        try:
             self._on_event(kind, details)
+        except Exception:  # the event sink must never stop the link's own work
+            self.event_errors += 1
 
     # --- sending -----------------------------------------------------------------------
 
@@ -431,10 +445,13 @@ class Vehicle:
         A ``COMMAND_LONG`` waits for its ``COMMAND_ACK`` (``ack_timeout_s`` per attempt,
         ``attempts`` attempts with a rising ``confirmation``) and returns the result.
         Every attempt is checked again. A command that moves the vehicle is not sent
-        again (``CANCELLED``) once a failsafe signal arrived or the flight controller
+        again (``CANCELLED``) once a new failsafe began (a signal that was quiet before;
+        a failsafe that was already active does not count) or the flight controller
         changed to a mode that is neither the starting one nor the one asked for, so a
-        retry never overrides the flight controller's own decision. Callers confirm a
-        mode through the HEARTBEAT; an acknowledgement only says the command arrived.
+        retry never overrides the flight controller's own decision. A mode change whose
+        answer was lost but whose mode the HEARTBEAT already shows returns ``ACCEPTED``.
+        Callers confirm a mode through the HEARTBEAT; an acknowledgement only says the
+        command arrived.
         Other messages return ``None``.
         """
         if msg.get_type() != "COMMAND_LONG":
@@ -448,15 +465,20 @@ class Vehicle:
         lock = self._command_locks.setdefault(command, asyncio.Lock())
         async with lock:
             start_mode = self._t.fc_custom_mode
-            start_failsafe = self._t.last_failsafe_mono_ms
+            start_onset = self._t.failsafe_onset_mono_ms
             for attempt in range(attempts):
                 if attempt and moves:
                     t = self._t
+                    if wanted_mode is not None and t.fc_custom_mode == wanted_mode:
+                        # The answer was lost, but the HEARTBEAT already shows the mode.
+                        self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
+                        return MavResult.ACCEPTED
                     changed = t.fc_custom_mode not in (start_mode, wanted_mode)
-                    if t.last_failsafe_mono_ms != start_failsafe or changed:
+                    new_failsafe = t.failsafe_onset_mono_ms != start_onset
+                    if new_failsafe or changed:
                         self._event(
                             "mav.retry_cancelled",
-                            {"command": command, "mode": t.fc_mode, "failsafe": not changed},
+                            {"command": command, "mode": t.fc_mode, "failsafe": new_failsafe},
                         )
                         return MavResult.CANCELLED
                 msg.confirmation = attempt
@@ -661,6 +683,8 @@ class Vehicle:
         return target in ((ours, self._transport.source_component), (ours, 0), (0, 0))
 
     def _on_message(self, msg: Any) -> None:
+        if self._closed:
+            return
         src = (msg.get_srcSystem(), msg.get_srcComponent())
         kind = msg.get_type()
         if src == (self.fc_sysid, FC_COMPID):
@@ -691,7 +715,17 @@ class Vehicle:
         t = self._t
         signal = signal_from(msg)
         if signal is not None:
-            t = replace(t, last_failsafe_signal=signal, last_failsafe_mono_ms=now)
+            seen = self._signal_seen_ms.get(signal.name)
+            self._signal_seen_ms[signal.name] = now
+            # ArduPilot repeats an active failsafe state (CRITICAL heartbeat, LOW battery)
+            # several times a second; only a signal that was quiet before is a new one.
+            onset = seen is None or now - seen > _SIGNAL_QUIET_MS
+            t = replace(
+                t,
+                last_failsafe_signal=signal,
+                last_failsafe_mono_ms=now,
+                failsafe_onset_mono_ms=now if onset else t.failsafe_onset_mono_ms,
+            )
             self._event("mav.failsafe_signal", {"source": signal.source, "name": signal.name})
         notify = False
         match kind:

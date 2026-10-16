@@ -134,7 +134,8 @@ class FakeFlightController:
         self.params: dict[str, float] = {k: float(v) for k, v in FC_SAFETY_EXPECTED.items()}
         self.intervals_us: dict[int, int] = {}
         self.refuse_modes: set[int] = set()
-        self.drop_acks = 0  # the next n COMMAND_ACKs are lost
+        self.drop_acks = 0  # the next n COMMAND_ACKs are lost (the command still acts)
+        self.drop_commands = 0  # the next n COMMAND_LONGs are lost on the way
         self.silent = False  # no heartbeat or telemetry, no answers
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self._upload: _Upload | None = None
@@ -340,6 +341,9 @@ class FakeFlightController:
     def _handle(self, link: FakeLink, msg: Any) -> None:
         kind = msg.get_type()
         if kind == "COMMAND_LONG" and int(msg.target_system) == self.sysid:
+            if self.drop_commands > 0:
+                self.drop_commands -= 1
+                return
             self._ack(link, int(msg.command), self._command(link, msg))
         elif kind == "SET_POSITION_TARGET_GLOBAL_INT" and self.mode == CopterMode.GUIDED:
             self.target = (msg.lat_int / 1e7, msg.lon_int / 1e7, float(msg.alt))

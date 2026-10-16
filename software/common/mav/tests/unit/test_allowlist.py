@@ -337,7 +337,7 @@ def test_mission_count_and_read_back() -> None:
     assert not sends(count(FC, 1, 401, 0), ctx())
     req_list = mavlink.MAVLink_mission_request_list_message
     assert sends(req_list(FC, 1, 0), ctx(origin="startup"))
-    assert sends(req_list(FC, 1, 1), ctx(origin="startup"))  # read the fence back (PF7)
+    assert sends(req_list(FC, 1, 1), ctx(origin="startup"))  # read the fence back
     assert not sends(req_list(FC, 1, 2), ctx(origin="startup"))
     ack = mavlink.MAVLink_mission_ack_message
     assert sends(ack(FC, 1, 0, 0), ctx())

@@ -161,7 +161,7 @@ def test_upload_and_download_against_the_fake() -> None:
         assert fence_hash(
             await run_with_clock(clock, download(ground, FENCE, origin=SendOrigin.GROUND))
         ) == fence_hash(fence)
-        # PF7: the onboard computer reads the fence but never uploads one.
+        # The onboard computer reads the fence but never uploads one.
         assert fence_hash(
             await run_with_clock(clock, download(onboard, FENCE, origin=SendOrigin.STARTUP))
         ) == fence_hash(fence)
