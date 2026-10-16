@@ -50,6 +50,10 @@ mediamtx_api = "http://127.0.0.1:9997"
 mediamtx_whep = "http://127.0.0.1:8889"
 mediamtx_hls = "http://127.0.0.1:8888"
 
+[map]
+pack = "demo"                           # <data_dir>/tiles/demo.pmtiles from `just maps-fetch`
+zoom = 15                               # start zoom in the panel
+
 [health]
 internet_probe = false
 

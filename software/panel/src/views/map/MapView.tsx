@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { exposeMap } from "../../lib/testHooks";
 import { useLiveStore } from "../../state/liveStore";
 import { useSessionStore } from "../../state/sessionStore";
+import { useUiStore } from "../../state/uiStore";
 import type { ViewProps } from "../registry";
 
 export function hasWebGL2(): boolean {
@@ -25,30 +26,44 @@ function DroneText() {
   );
 }
 
+/** Narrow or touch screens get the compact (folded) attribution. */
+function compactAttribution(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(max-width: 600px)").matches;
+}
+
 /**
- * The map frame. The offline map pack and the layers come with the map ticket; here MapLibre
- * starts on a plain background when the server offers a map, and the text fallbacks exist.
+ * The map frame: the offline map pack from sd-ground (PMTiles) with the Protomaps style in
+ * the panel's theme. Without a pack or without WebGL2 it shows the text fallbacks instead.
  */
 export default function MapView(_: ViewProps) {
   const { t } = useTranslation();
   const mapCfg = useSessionStore((s) => s.config?.map ?? null);
+  const theme = useUiStore((s) => s.theme);
   const box = useRef<HTMLDivElement>(null);
   const [webgl] = useState(hasWebGL2);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!mapCfg || !webgl || !box.current) return;
     let disposed = false;
     let map: { remove(): void } | null = null;
-    void import("./createMap").then(({ createMap }) => {
-      if (disposed || !box.current) return;
-      map = createMap(box.current, mapCfg);
-      exposeMap(map);
-    });
+    setFailed(false);
+    // A map that cannot start (chunk, worker or WebGL context) fails here alone: the view
+    // shows the text fallback and the rest of the panel, STOPP included, is untouched.
+    import("./createMap")
+      .then(({ createMap }) => {
+        if (disposed || !box.current) return;
+        map = createMap(box.current, mapCfg, theme, compactAttribution());
+        exposeMap(map);
+      })
+      .catch(() => {
+        if (!disposed) setFailed(true);
+      });
     return () => {
       disposed = true;
       map?.remove();
     };
-  }, [mapCfg, webgl]);
+  }, [mapCfg, webgl, theme]);
 
   if (!mapCfg) {
     return (
@@ -58,10 +73,10 @@ export default function MapView(_: ViewProps) {
       </div>
     );
   }
-  if (!webgl) {
+  if (!webgl || failed) {
     return (
       <div className="view-body view-empty">
-        <p>{t("views.map.noWebgl")}</p>
+        <p>{t(webgl ? "views.map.failed" : "views.map.noWebgl")}</p>
         <DroneText />
       </div>
     );

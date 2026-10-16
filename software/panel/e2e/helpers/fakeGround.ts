@@ -1,5 +1,6 @@
-// Fake sd-ground for the mock end-to-end tests: page.route for /api/v1/** and /tiles/**,
-// page.routeWebSocket for /ws/v1/live. Every test also checks, when it ends, that the panel
+// Fake sd-ground for the mock end-to-end tests: page.route for /api/v1/** and /tiles/**
+// (the synthetic test pack with HTTP Range, plus a stand-in sprite), page.routeWebSocket for
+// /ws/v1/live. Every test also checks, when it ends, that the panel
 // made no request to another host, read no geolocation, sent the CSRF header on every
 // changing request, never sent Idempotency-Key, and called no path the fake does not know.
 import { existsSync, readFileSync } from "node:fs";
@@ -37,6 +38,24 @@ type Handler = (
 ) => { status: number; body?: unknown; headers?: Record<string, string> } | "hang";
 
 const API = "/api/v1";
+const FIXTURE_PACK = fileURLToPath(new URL("../fixtures/fixture.pmtiles", import.meta.url));
+// A 1×1 transparent PNG: the sprite sheet stand-in (the test pack has no icons).
+const PNG_1PX = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** An empty glyph range in the MapLibre glyph PBF format (the test pack has no names). */
+function emptyGlyphs(fontstack: string, range: string): Buffer {
+  const field = (tag: number, bytes: Buffer) =>
+    Buffer.concat([Buffer.from([tag, bytes.length]), bytes]);
+  const stack = Buffer.concat([
+    field(0x0a, Buffer.from(fontstack)),
+    field(0x12, Buffer.from(range)),
+  ]);
+  return field(0x0a, stack);
+}
+
 const SNAPSHOT = fileURLToPath(
   new URL("../../../ground/tests/contract/snapshots/openapi.json", import.meta.url),
 );
@@ -59,6 +78,8 @@ export class FakeGround {
   readonly external: string[] = [];
   readonly unknown: string[] = [];
   readonly cspErrors: string[] = [];
+  /** Every /tiles/ request and its status (glyph and tile failures make a test fail). */
+  readonly tiles: { path: string; status: number }[] = [];
   session: Session | null = pilotSession;
   config: PanelConfig = structuredClone(panelConfig);
   private overrides: { match: string; handler: Handler; times: number }[] = [];
@@ -99,7 +120,7 @@ export class FakeGround {
       },
     );
     await page.route(`${this.origin}/api/v1/**`, (route) => this.handle(route));
-    await page.route(`${this.origin}/tiles/**`, (route) => route.fulfill({ status: 404 }));
+    await page.route(`${this.origin}/tiles/**`, (route) => this.handleTiles(route));
     const host = new URL(this.origin).host;
     await page.routeWebSocket(
       (url) => url.host !== host,
@@ -193,6 +214,37 @@ export class FakeGround {
   }
 
   // --- internals ----------------------------------------------------------------------
+
+  private async handleTiles(route: Route): Promise<void> {
+    const req = route.request();
+    const path = decodeURIComponent(new URL(req.url()).pathname);
+    const answer = async (status: number, body?: Buffer, headers: Record<string, string> = {}) => {
+      this.tiles.push({ path, status });
+      await route.fulfill(body ? { status, body, headers } : { status, headers });
+    };
+    if (path === "/tiles/fixture.pmtiles") {
+      const data = readFileSync(FIXTURE_PACK);
+      const range = /^bytes=(\d+)-(\d*)$/.exec((await req.allHeaders()).range ?? "");
+      if (!range) return answer(200, data, { "Content-Type": "application/vnd.pmtiles" });
+      const start = Number(range[1]);
+      const end = Math.min(range[2] ? Number(range[2]) : data.length - 1, data.length - 1);
+      return answer(206, data.subarray(start, end + 1), {
+        "Content-Type": "application/vnd.pmtiles",
+        "Content-Range": `bytes ${start}-${end}/${data.length}`,
+        "Accept-Ranges": "bytes",
+      });
+    }
+    const sprite = /^\/tiles\/assets\/sprites\/v4\/(dark|light)(@2x)?\.(json|png)$/.exec(path);
+    if (sprite?.[3] === "json")
+      return answer(200, Buffer.from("{}"), { "Content-Type": "application/json" });
+    if (sprite) return answer(200, PNG_1PX, { "Content-Type": "image/png" });
+    const glyphs = /^\/tiles\/assets\/fonts\/([A-Za-z ]{1,64})\/(\d{1,5}-\d{1,5})\.pbf$/.exec(path);
+    if (glyphs?.[1] && glyphs[2])
+      return answer(200, emptyGlyphs(glyphs[1], glyphs[2]), {
+        "Content-Type": "application/x-protobuf",
+      });
+    return answer(404);
+  }
 
   private onSocket(ws: WebSocketRoute): void {
     if (this.refuseSockets) {
