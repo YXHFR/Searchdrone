@@ -16,7 +16,10 @@ def test_testrun_not_built(capsys: pytest.CaptureFixture[str]) -> None:
     assert "inte byggt än (B0-08)" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("bad", [["foo=1"], ["--physics=builtin"], ["qgc=true"]])
+@pytest.mark.parametrize(
+    "bad",
+    [["foo=1"], ["--physics=builtin"], ["qgc=true"], ["qgc=yes"], ["qgc=on"], ["qgc=TRUE "]],
+)
 def test_testrun_rejects(bad: list[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         testrun.main(bad)

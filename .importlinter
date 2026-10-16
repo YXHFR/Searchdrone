@@ -96,7 +96,7 @@ forbidden_modules = sd_mav, sd_link, sd_onboard, sd_ground, sd_sim, pymavlink, s
 name = the AI has no database, link or subprocess access
 type = forbidden
 source_modules = sd_brain
-forbidden_modules = asyncpg, sqlalchemy, psycopg, sd_ground, sd_link, pymavlink, subprocess
+forbidden_modules = asyncpg, sqlalchemy, psycopg, sqlite3, aiosqlite, sd_ground, sd_link, pymavlink, subprocess, multiprocessing
 
 [importlinter:contract:testing-isolation]
 name = test-only packages are never imported by production packages
