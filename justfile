@@ -178,15 +178,17 @@ stop *args:
 
 alias sim-down := stop
 
-# Check the simulator environment
-sim-doctor: (_not-built "B0-05")
+# Check the simulator environment (keys: physics)
+sim-doctor *args:
+    uv run --package sd-sim python -m sd_sim.doctor "$@"
 
-# Install ArduPilot SITL and Gazebo
-sim-setup: (_not-built "B0-05")
+# Install ArduPilot SITL and Gazebo; safe to run again (asks for the Ubuntu password)
+sim-setup:
+    bash tools/setup/wsl-setup.sh sim
 
-# GUIDED, arm, take off to 20 m, land (keys: physics, gui)
+# GUIDED, arm, take off to 20 m, land (keys: physics, gui, instance)
 sim-smoke *args:
-    uv run --no-sync python tools/just_args.py sim-smoke "$@"
+    uv run --package sd-sim python -m sd_sim.smoke "$@"
 
 # Scenario tests, headless (keys: sc, variant, physics, instance, shard, shards, ...)
 test-sitl *args:

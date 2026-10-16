@@ -1,0 +1,11 @@
+# Listening sockets that may bind outside loopback while the simulator runs.
+# `just sim-doctor` and `just sim-smoke` fail on any other non-loopback listener on a
+# port from ports.yaml. Every entry needs a reason. Keep this list as short as possible.
+
+- port: sitl_rc_in
+  proto: udp
+  reason: >-
+    ArduPilot SITL binds its UDP RC input to 0.0.0.0 in its own code and has no option
+    for the address. Nothing in Searchdrone sends to it. It is reachable from outside
+    only if the WSL firewall lets inbound traffic in, which windows-check.ps1 forbids
+    (DefaultInboundAction = Block). Never used on a real vehicle.

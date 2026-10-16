@@ -2,7 +2,8 @@
 # when typos flags a correct Swedish or domain word.
 
 [files]
-extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE"]
+extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE",
+  "simulation/sitl/params/known_params_*.txt"]  # ArduPilot's own parameter names
 
 [default.extend-words]
 # Domain
@@ -13,3 +14,9 @@ databas = "databas"
 formen = "formen"
 parm = "parm"
 fpr = "fpr"
+# Simulator: ArduPilot parameter and frame names, package names, Swedish messages
+thst = "thst"
+thr = "thr"
+gir = "gir"
+som = "som"
+paket = "paket"

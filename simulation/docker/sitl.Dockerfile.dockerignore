@@ -1,0 +1,3 @@
+# Build context for sitl.Dockerfile: only the version lock is sent to the builder.
+*
+!simulation/versions.lock

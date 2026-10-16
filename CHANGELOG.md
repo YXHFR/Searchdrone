@@ -13,5 +13,9 @@ All notable changes to this project are listed here. The format follows
 - Forbidden-file guard that blocks planning files, agent files, secrets, personal config,
   media, large files, coordinates outside public test sites and private search patterns.
 - `tools/bootstrap.sh` and `tools/setup/wsl-setup.sh` for a fresh WSL2 Ubuntu 24.04.
+- Simulator environment: `just sim-setup` installs ArduPilot SITL (Copter-4.7.1) and Gazebo
+  Harmonic, `just sim-doctor` checks the setup, `just sim-smoke` flies a take-off and landing.
+  Simulated radio link (`linksim`), MAVLink tap, test rig, SITL container image and
+  `simulation/ports.yaml`. Every simulator port listens on 127.0.0.1.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.

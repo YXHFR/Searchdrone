@@ -6,7 +6,9 @@ ubuntu = "24.04"
 ardupilot_tag = "Copter-4.7.1"
 ardupilot_commit = "dbe792162d06cab66c3475fd5556bf7a120f119e"
 ardupilot_gazebo_commit = "082a0fe231f6e63bc8d1598f1cba461d9e2ea7f5"
-gz_distribution = "harmonic"
+gz_distribution = "harmonic"        # Gazebo Harmonic, gz-sim 8.x
+# Base image of the SITL container (Ubuntu 24.04 build of 2026-09-11, published 2026-09-18).
+ubuntu_image = "ubuntu:noble-20260911@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3"
 just_version = "1.58.0"           # rust-just on PyPI
 uv_version = "0.11.33"
 uv_sha256 = "aa9fca823c03289fb6e3460b3dc864f3ea895cafaf9b99247701a67b17d1b018"  # uv-x86_64-unknown-linux-gnu.tar.gz
