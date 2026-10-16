@@ -31,8 +31,13 @@ Role name: `security`. Read `common.md` first; its rules apply here too.
   `owner-gate.yml`, `pr-title.yml`) write `gate/*` statuses, each its own context, and
   only from `pull_request_target` or `issue_comment`. A same-repository pull request
   runs its own `pull_request` workflows, so a new or changed workflow or action that
-  requests `statuses: write`, or posts any `gate/*` or `review/*` status, could
-  approve itself.
+  requests `statuses: write` or `checks: write`, posts any `gate/*` or `review/*`
+  status, or has a job named `gate/*` or `review/*` (which creates a check run of that
+  name), could approve itself. The same goes for a workflow that posts `review/*`
+  comments, sets the `owner-ok` label or uses a personal access token from secrets:
+  both gates trust only the owner's own account. Every workflow sets a top-level
+  `permissions:` block (`{}` or `contents: read`) and grants per job only what that
+  job needs; a missing block or `write-all` is a finding.
 - **Repository hygiene.** Personal data in committed files and in commit metadata
   (author e-mail must be a GitHub `noreply` address), symbolic links, agent files
   (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/`, `.mcp.json`), references to internal
@@ -54,5 +59,8 @@ Role name: `security`. Read `common.md` first; its rules apply here too.
 - `set -a; source .env`, or `SD_GROUND__*` reaching the AI process.
 - Signs that a commit skipped the git hooks.
 - A workflow or action, other than the gate workflows, that can write commit
-  statuses (`statuses: write`, or a `gate/*` or `review/*` context).
+  statuses or check runs (`statuses: write`, `checks: write`, a `gate/*` or
+  `review/*` context or job name).
+- A workflow that posts `review/*` comments, sets `owner-ok`, or uses a personal
+  access token secret.
 - Pull request text that quotes internal documents or links a private repository.

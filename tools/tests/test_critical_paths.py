@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
 from pathlib import Path
+
+from check_hw_files import glob_regex as glob_re
 
 ROOT = Path(__file__).resolve().parents[2]
 LIST = ROOT / ".github" / "review" / "critical_paths.txt"
@@ -22,25 +23,6 @@ REQUIRED = (
     ".github/**",
     "tools/**",
 )
-
-
-def glob_re(pattern: str) -> re.Pattern[str]:
-    out = ""
-    i = 0
-    while i < len(pattern):
-        if pattern.startswith("**/", i):
-            out += "(?:.*/)?"
-            i += 3
-        elif pattern.startswith("**", i):
-            out += ".*"
-            i += 2
-        elif pattern[i] == "*":
-            out += "[^/]*"
-            i += 1
-        else:
-            out += re.escape(pattern[i])
-            i += 1
-    return re.compile(out + r"\Z")
 
 
 def sections() -> tuple[list[str], list[str]]:

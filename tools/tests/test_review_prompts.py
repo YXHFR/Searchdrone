@@ -65,6 +65,9 @@ def test_architecture_scope_rule() -> None:
     assert "`hardware/**` is never rejected for scope" in text
     assert "Face recognition and object search" in text
     assert "never, in any stage" in text
+    scope = text.split("## stage_scope: v0.1.0", 1)[1].split("## Permanent scope rule")[0]
+    for item in ("RF-DETR", "`follow_track`", "`find_me`", "`cloudflared`", "MAVLink 2"):
+        assert item in scope, item
 
 
 @pytest.mark.parametrize("name", [*ROLE_FILES.values(), "common.md", "retro.md"])
