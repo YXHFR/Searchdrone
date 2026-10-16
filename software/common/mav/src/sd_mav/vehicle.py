@@ -68,7 +68,9 @@ MODE_FRESH_S: Final = 1.5  # a HEARTBEAT older than this does not tell the curre
 _OUR_HEARTBEAT_S: Final = 1.0
 _WATCH_S: Final = 0.05
 _ARMED_FLAG: Final = mavlink.MAV_MODE_FLAG_SAFETY_ARMED
-# A failsafe signal not seen for this long counts as new when it comes back.
+# A failsafe signal not seen for this long counts as new when it comes back. Same
+# window as the executor's classification of a mode change (a failsafe signal up to
+# this long around the change counts), so both agree on what "new" means.
 _SIGNAL_QUIET_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
 # Landed states that count as "in the air" (the flight controller's own words).
 _AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
@@ -469,7 +471,12 @@ class Vehicle:
             for attempt in range(attempts):
                 if attempt and moves:
                     t = self._t
-                    if wanted_mode is not None and t.fc_custom_mode == wanted_mode:
+                    fresh = (
+                        t.fc_heartbeat_mono_ms is not None
+                        and self._clock.monotonic_ms() - t.fc_heartbeat_mono_ms
+                        <= MODE_FRESH_S * 1000
+                    )
+                    if fresh and wanted_mode is not None and t.fc_custom_mode == wanted_mode:
                         # The answer was lost, but the HEARTBEAT already shows the mode.
                         self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
                         return MavResult.ACCEPTED

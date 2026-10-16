@@ -273,12 +273,13 @@ def test_lost_link_detected_within_3s(sim: Sim) -> None:
         ground = _vehicle(sim.ground_url(), Role.GROUND, events)
         await ground.start()
         lost: list[float] = []
-        ground.subscribe(
-            lambda t: None if t.fc_connected or lost else lost.append(time.monotonic())
-        )
         try:
             assert await ground.wait_connected(5.0)
             await asyncio.sleep(2.0)
+            # Only from now on: the first updates before the link was up say "not connected".
+            ground.subscribe(
+                lambda t: None if t.fc_connected or lost else lost.append(time.monotonic())
+            )
             cut = time.monotonic()
             sim.set_ground_link(False)
             for _ in range(60):
@@ -286,6 +287,7 @@ def test_lost_link_detected_within_3s(sim: Sim) -> None:
                     break
                 await asyncio.sleep(0.1)
             assert lost, "the cut link was not noticed"
+            assert "mav.fc_lost" in [k for k, _ in events]
             assert lost[0] - cut <= 3.0, lost[0] - cut
             requested_before = sum(1 for k, _ in events if k == "mav.streams_requested")
             sim.set_ground_link(True)

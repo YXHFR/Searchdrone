@@ -561,3 +561,20 @@ def test_a_failing_event_sink_never_stops_lost_link_detection() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_stale_heartbeat_never_counts_as_mode_reached() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(2.0)
+        vehicle.fc.mode = CopterMode.LOITER
+        await clock.run_for(0.5)  # LOITER is the last mode the vehicle saw ...
+        vehicle.fc.silent = True  # ... and then the link goes quiet
+        await clock.run_for(1.6)
+        result = await run_with_clock(
+            clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.TIMEOUT  # never ACCEPTED from a stale HEARTBEAT
+        await vehicle.close()
+
+    asyncio.run(run())
