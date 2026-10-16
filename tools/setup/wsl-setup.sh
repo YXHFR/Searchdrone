@@ -16,6 +16,11 @@ MODE="${1:-base}"
 ver() { python3 tools/versions.py "$1"; }
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33mVarning: %s\033[0m\n' "$*"; }
+# The key file must hold exactly one primary key, with the published fingerprint.
+key_is() {
+    [ "$(gpg --show-keys --with-colons "$1" 2>/dev/null \
+        | awk -F: '$1 == "pub" {want = 1; next} want && $1 == "fpr" {print $10; want = 0}')" = "$2" ]
+}
 
 # 0. Checks
 grep -q 'VERSION_ID="24.04"' /etc/os-release || { echo "Kräver Ubuntu 24.04"; exit 1; }
@@ -39,7 +44,7 @@ base_setup() {
             sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
             sudo chmod a+r /etc/apt/keyrings/docker.asc
             # Docker's published signing key fingerprint (docs.docker.com)
-            gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | grep -q '^fpr:::::::::9DC858229FC7DD38854AE2D88D81803C0EBFCD88:' \
+            key_is /etc/apt/keyrings/docker.asc 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 \
                 || { echo "Fel fingeravtryck på Dockers nyckel"; exit 1; }
             echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
                 | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -123,11 +128,11 @@ sim_setup() {
         tmpkey="$(mktemp)"
         curl -fsSL https://packages.osrfoundation.org/gazebo.gpg -o "$tmpkey"
         # OSRF's published signing key fingerprint (gazebosim.org install docs)
-        gpg --show-keys --with-colons "$tmpkey" | grep -q '^fpr:::::::::D2486D2DD83DB69272AFE98867170598AF249743:' \
+        key_is "$tmpkey" D2486D2DD83DB69272AFE98867170598AF249743 \
             || { echo "Fel fingeravtryck på Gazebos nyckel"; exit 1; }
         sudo install -m 0644 "$tmpkey" /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
         rm -f "$tmpkey"
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
             | sudo tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
         sudo apt-get update
     fi

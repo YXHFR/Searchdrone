@@ -1,6 +1,6 @@
-# Every parameter name of ArduCopter Copter-4.7.1 (commit dbe7921), one per line.
-# Generated from apm.pdef.xml (Tools/autotest/param_metadata/param_parse.py
-# --vehicle ArduCopter). Regenerate when the ArduPilot version changes.
+# Every parameter name of ArduCopter Copter-4.7.1, one per line.
+# Generated with simulation/docker/known_params.py from apm.pdef.xml
+# (Tools/autotest/param_metadata/param_parse.py --vehicle ArduCopter).
 ACRO_BAL_PITCH
 ACRO_BAL_ROLL
 ACRO_OPTIONS

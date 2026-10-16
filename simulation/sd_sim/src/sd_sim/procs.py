@@ -90,14 +90,25 @@ class ProcessGroup:
     def _save(self) -> None:
         self.pids_file.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "launcher": {"pid": os.getpid(), "cmd": _cmdline(os.getpid())},
-            "procs": [
-                {"name": p.name, "pid": p.pid, "cmd": _cmdline(p.pid)}
-                for p in self.procs
-                if p.alive()
-            ],
+            "launcher": identity(os.getpid()),
+            "procs": [{"name": p.name, **identity(p.pid)} for p in self.procs if p.alive()],
         }
         self.pids_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def owned_pids(self) -> set[int]:
+        """Our processes and everything in their process groups (e.g. Gazebo's servers)."""
+        leaders = {p.pid for p in self.procs if p.alive()}
+        owned = set(leaders)
+        for stat in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                fields = (
+                    stat.read_text(encoding="utf-8", errors="replace").rsplit(")", 1)[-1].split()
+                )
+            except OSError:
+                continue
+            if fields and int(fields[2]) in leaders:  # field 5: process group id
+                owned.add(int(stat.parent.name))
+        return owned
 
     def stop_all(self) -> None:
         """Stop in reverse start order: SIGTERM, then SIGKILL after the grace time."""
@@ -108,19 +119,44 @@ class ProcessGroup:
 
 
 def _cmdline(pid: int) -> str:
+    """The full command line (all arguments), or "" when the process is gone."""
     try:
-        return Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0].decode(errors="replace")
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
         return ""
+    return " ".join(part.decode(errors="replace") for part in raw.split(b"\0") if part)
+
+
+def _start_time(pid: int) -> str:
+    """Start time in clock ticks since boot (/proc/<pid>/stat field 22)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    # The command name (field 2) may contain spaces; the fields after it do not.
+    return stat.rsplit(")", 1)[-1].split()[19]
+
+
+def identity(pid: int) -> dict[str, Any]:
+    return {"pid": pid, "cmd": _cmdline(pid), "start": _start_time(pid)}
 
 
 def stop_pid(pid: int, popen: subprocess.Popen[bytes] | None = None) -> None:
+    """SIGTERM, then SIGKILL. Signals the whole process group only when ``pid`` leads
+    its own group (every process we start does); otherwise just that pid."""
     try:
         pgid = os.getpgid(pid)
     except ProcessLookupError:
         return
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(pgid, signal.SIGTERM)
+
+    def send(sig: int) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            if pgid == pid:
+                os.killpg(pgid, sig)
+            else:
+                os.kill(pid, sig)
+
+    send(signal.SIGTERM)
     end = time.monotonic() + STOP_GRACE_S
     while time.monotonic() < end:
         if popen is not None:
@@ -129,8 +165,7 @@ def stop_pid(pid: int, popen: subprocess.Popen[bytes] | None = None) -> None:
         elif not Path(f"/proc/{pid}").exists():
             return
         time.sleep(0.1)
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(pgid, signal.SIGKILL)
+    send(signal.SIGKILL)
     if popen is not None:
         with contextlib.suppress(subprocess.TimeoutExpired):
             popen.wait(timeout=2)
@@ -143,9 +178,14 @@ def read_recorded(pids_file: Path) -> dict[str, Any]:
         return {}
 
 
-def _still_same(row: dict[str, Any]) -> bool:
-    cmd = str(row.get("cmd", ""))
-    return bool(cmd) and _cmdline(int(row["pid"])) == cmd
+def still_same(row: dict[str, Any]) -> bool:
+    """Is the recorded process still the same one (pids are reused after a reboot)?"""
+    try:
+        pid = int(row["pid"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    cmd, start = str(row.get("cmd", "")), str(row.get("start", ""))
+    return bool(cmd and start) and _cmdline(pid) == cmd and _start_time(pid) == start
 
 
 def stop_recorded(pids_file: Path, wait_s: float = 30.0) -> list[str]:
@@ -160,14 +200,14 @@ def stop_recorded(pids_file: Path, wait_s: float = 30.0) -> list[str]:
         return []
     names = [str(row["name"]) for row in data.get("procs", [])]
     launcher = data.get("launcher")
-    if launcher and _still_same(launcher):
+    if launcher and still_same(launcher):
         with contextlib.suppress(ProcessLookupError):
             os.kill(int(launcher["pid"]), signal.SIGTERM)
         end = time.monotonic() + wait_s
         while time.monotonic() < end and pids_file.exists():
             time.sleep(0.2)
     for row in reversed(read_recorded(pids_file).get("procs", [])):
-        if _still_same(row):
+        if still_same(row):
             stop_pid(int(row["pid"]))
     pids_file.unlink(missing_ok=True)
     return names

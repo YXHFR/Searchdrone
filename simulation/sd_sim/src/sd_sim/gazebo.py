@@ -1,7 +1,8 @@
 """Gazebo Harmonic helpers: which world to run, its command line and environment.
 
-Gazebo Transport is kept on loopback (``GZ_IP=127.0.0.1``) and every instance gets its
-own partition, so two worlds never mix their topics. Until the Searchdrone world
+Gazebo Transport carries its topics on loopback (``GZ_IP=127.0.0.1``; its discovery
+sockets bind all addresses by design, see listen_allowlist.yaml) and every instance gets
+its own partition, so two worlds never mix their topics. Until the Searchdrone world
 exists, ArduPilot's ``iris_runway`` world (iris with a gimbal camera) is used.
 """
 

@@ -79,6 +79,9 @@ class LinkState:
     def tcp_dead(self) -> bool:
         return self.profile.loss_pct >= 100
 
+    def udp_up(self, flow: str):
+        return lambda: self.up[flow] and self.profile.loss_pct < 100
+
 
 def _reset(writer: asyncio.StreamWriter) -> None:
     """Close with RST instead of FIN (SO_LINGER 0)."""
@@ -106,6 +109,14 @@ class _Pair:
             asyncio.create_task(self._pump(self.vehicle[0], self.ground[1])),
             asyncio.create_task(self._pump(self.ground[0], self.vehicle[1])),
         ]
+        done = asyncio.gather(*self.tasks, return_exceptions=True)
+        done.add_done_callback(lambda _f: self._finished())
+
+    def _finished(self) -> None:
+        """Both directions ended (FIN both ways): close the sockets and forget the pair."""
+        for _, writer in (self.vehicle, self.ground):
+            writer.close()
+        self.flow.forget(self)
 
     async def _pump(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         queue: asyncio.Queue[tuple[float, bytes]] = asyncio.Queue()
@@ -150,6 +161,7 @@ class _Pair:
                 queue.task_done()
 
     def reset(self) -> None:
+        self.flow.forget(self)
         for task in self.tasks:
             task.cancel()
         _reset(self.vehicle[1])
@@ -182,6 +194,11 @@ class TcpFlow:
         self._server = await asyncio.start_server(
             self._accept, host="127.0.0.1", port=self.listen_port
         )
+        self.sync()  # e.g. started with the dead profile
+
+    def forget(self, pair: _Pair) -> None:
+        if pair in self._pairs:
+            self._pairs.remove(pair)
 
     async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.connections += 1
@@ -205,9 +222,8 @@ class TcpFlow:
         if self.is_up() and not self._up.is_set():
             down_for = time.monotonic() - (self._down_since or time.monotonic())
             if down_for > TCP_RESET_AFTER_S:
-                for pair in self._pairs:
+                for pair in list(self._pairs):
                     pair.reset()
-                self._pairs.clear()
             self._down_since = None
             self._up.set()
             pending, self._pending = self._pending, []
@@ -220,7 +236,7 @@ class TcpFlow:
     def close(self) -> None:
         if self._server is not None:
             self._server.close()
-        for pair in self._pairs:
+        for pair in list(self._pairs):
             pair.reset()
         for _, writer in self._pending:
             writer.transport.abort()
@@ -241,6 +257,7 @@ class LinkSim:
             listen_port=ports["radio_mavlink_in"],
             target_port=ports["ground_mavlink"],
             policy=self.state.udp_policy("mavlink"),
+            is_up=self.state.udp_up("mavlink"),
             tap=TlogWriter(radio_tlog) if radio_tlog is not None else None,
         )
         self.video = UdpRelay(
@@ -249,6 +266,7 @@ class LinkSim:
             target_port=ports["video_out_udp"],
             one_way=True,
             policy=self.state.udp_policy("video"),
+            is_up=self.state.udp_up("video"),
         )
         self.link = TcpFlow(ports["linksim_sdlink"], ports["ground_sdlink"], self.state)
 

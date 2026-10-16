@@ -19,6 +19,8 @@ from sd_sim.linksim.core import FLOWS, LinkSim, Profile
 
 MAX_HEADER_BYTES = 8192
 MAX_BODY_BYTES = 4096
+MAX_CONNECTIONS = 16
+IO_TIMEOUT_S = 5.0
 
 
 @dataclass
@@ -71,6 +73,7 @@ class ControlApi:
         self._token = token.encode()
         self.port = port
         self._server: asyncio.Server | None = None
+        self._slots = asyncio.Semaphore(MAX_CONNECTIONS)
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(self._serve, host="127.0.0.1", port=self.port)
@@ -80,9 +83,16 @@ class ControlApi:
             self._server.close()
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._slots.locked():
+            writer.transport.abort()  # too many open connections
+            return
+        async with self._slots:
+            await self._serve_one(reader, writer)
+
+    async def _serve_one(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             try:
-                request = await asyncio.wait_for(read_request(reader), timeout=5)
+                request = await asyncio.wait_for(read_request(reader), timeout=IO_TIMEOUT_S)
             except (BadRequestError, TimeoutError):
                 status, payload = HTTPStatus.BAD_REQUEST, {"error": "bad request"}
             else:
@@ -95,8 +105,8 @@ class ControlApi:
                 "Connection: close\r\n\r\n".encode()
                 + body
             )
-            await writer.drain()
-        except (ConnectionError, OSError):
+            await asyncio.wait_for(writer.drain(), timeout=IO_TIMEOUT_S)
+        except (ConnectionError, OSError, TimeoutError):
             pass
         finally:
             writer.close()

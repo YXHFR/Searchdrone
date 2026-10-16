@@ -19,8 +19,9 @@ from typing import Any
 from sd_sim import _args, config, gazebo, netcheck
 from sd_sim.errors import InfraError
 from sd_sim.harness import Harness
-from sd_sim.launch import Stack, new_run_dir, say
+from sd_sim.launch import Stack
 from sd_sim.sitl import CMAC_HOME
+from sd_sim.util import new_run_dir, say
 
 ALLOWED_KEYS = ("physics", "gui", "instance", "dry")
 TAKEOFF_ALT_M = 20.0
@@ -34,11 +35,25 @@ def min_frames(vehicle: str) -> int:
     return int(FRAME_SHARE * gazebo.CAMERA_FPS[vehicle] * FRAME_WINDOW_S)
 
 
+def harden(cfg: config.SimConfig) -> config.SimConfig:
+    """Settings the smoke flight always uses, whatever local config or environment say:
+    no QGroundControl path (it bypasses the gate), the public CMAC home, the standard
+    vehicle, and the camera only in Gazebo server mode."""
+    cfg.qgc = False
+    cfg.home, cfg.personal_home = CMAC_HOME, False
+    cfg.vehicle = "stock"
+    cfg.video = "camera" if cfg.physics == "gz" and not cfg.gui else "off"
+    return cfg
+
+
 def check_listeners(stack: Stack) -> list[str]:
     if shutil.which("ss") is None:
         return ["ss saknas: kunde inte kontrollera portarna"]
     bad = netcheck.violations(
-        netcheck.parse_ss(netcheck.run_ss()), stack.ports, netcheck.load_allowlist()
+        netcheck.parse_ss(netcheck.run_ss()),
+        stack.ports,
+        netcheck.load_allowlist(),
+        owned_pids=stack.group.owned_pids(),
     )
     return [str(item) for item in bad]
 
@@ -54,10 +69,10 @@ def count_frames(stack: Stack) -> int:
     return frames() - start
 
 
-def fly(harness: Harness, result: dict[str, Any]) -> None:
+def fly(harness: Harness, result: dict[str, Any], t0: float) -> None:
     harness.wait(lambda s: s.heartbeat, 60, "HEARTBEAT från flygkontrollen")
     harness.wait(lambda s: s.ready, 90, "position från EKF och GPS")
-    result["ready_s"] = round(time.monotonic() - result["_t0"], 1)
+    result["ready_s"] = round(time.monotonic() - t0, 1)
     harness.set_mode("GUIDED")
     harness.arm()
     harness.takeoff(TAKEOFF_ALT_M)
@@ -68,6 +83,8 @@ def fly(harness: Harness, result: dict[str, Any]) -> None:
 
 
 def run(cfg: config.SimConfig) -> tuple[int, Path]:
+    cfg = harden(cfg)
+    t0 = time.monotonic()
     run_dir = new_run_dir(cfg.instance, "smoke")
     stack = Stack(cfg, run_dir, observer=False)
     result: dict[str, Any] = {
@@ -77,7 +94,6 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         "gui": cfg.gui,
         "instance": cfg.instance,
         "target_alt_m": TAKEOFF_ALT_M,
-        "_t0": time.monotonic(),
     }
     checks: dict[str, bool] = {}
     harness: Harness | None = None
@@ -85,7 +101,7 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         harness = Harness(stack.ports["harness_mavlink"])
         stack.up()
         fly_start = time.monotonic()
-        fly(harness, result)
+        fly(harness, result, t0)
         result["flight_s"] = round(time.monotonic() - fly_start, 1)
         result["max_alt_m"] = round(harness.state.max_rel_alt_m, 2)
         checks["altitude"] = abs(result["max_alt_m"] - TAKEOFF_ALT_M) <= ALT_TOLERANCE_M
@@ -100,11 +116,14 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
     except InfraError as exc:
         result["error"] = stack.mask(str(exc))
         checks["completed"] = False
+    except Exception as exc:
+        result["error"] = stack.mask(f"{type(exc).__name__}: {exc}")
+        checks["completed"] = False
     finally:
         if harness is not None:
             harness.close()
         stack.down()
-    result["duration_s"] = round(time.monotonic() - result.pop("_t0"), 1)
+    result["duration_s"] = round(time.monotonic() - t0, 1)
     checks["duration"] = result["duration_s"] <= MAX_DURATION_S
     checks.setdefault("completed", True)
     result["checks"] = checks
@@ -126,11 +145,6 @@ def main(argv: list[str] | None = None) -> int:
         cfg = config.load({**values, "video": "off", "qgc": "false"})
     except config.ConfigError as exc:
         _args.fail(f"sd_sim.smoke: {exc}")
-        return 2
-    cfg.vehicle = "stock"
-    cfg.home, cfg.personal_home = CMAC_HOME, False  # the smoke test never uses a personal home
-    if cfg.physics == "gz" and not cfg.gui:
-        cfg.video = "camera"
     code, run_dir = run(cfg)
     summary = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     say(json.dumps(summary, indent=2, ensure_ascii=False))

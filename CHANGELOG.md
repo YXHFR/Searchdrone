@@ -16,6 +16,7 @@ All notable changes to this project are listed here. The format follows
 - Simulator environment: `just sim-setup` installs ArduPilot SITL (Copter-4.7.1) and Gazebo
   Harmonic, `just sim-doctor` checks the setup, `just sim-smoke` flies a take-off and landing.
   Simulated radio link (`linksim`), MAVLink tap, test rig, SITL container image and
-  `simulation/ports.yaml`. Every simulator port listens on 127.0.0.1.
+  `simulation/ports.yaml`. Simulator ports listen on 127.0.0.1; the few sockets ArduPilot
+  and Gazebo bind to all addresses themselves are listed with their reasons and checked.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.

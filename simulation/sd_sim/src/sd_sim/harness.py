@@ -5,9 +5,10 @@ does not keep the GCS failsafe alive, because the flight controller only counts
 system ``MAV_GCS_SYSID`` (250, the ground station). Everything that writes to the
 flight controller from test code lives here.
 
-``python -m sd_sim.harness observe --instance N --state-file F`` runs it as a
-read-only observer for the launcher: it writes the vehicle state as JSON twice a
-second so the launcher can wait for a healthy vehicle.
+``python -m sd_sim.harness observe --instance N --state-file F`` runs it as an
+observer for the launcher (it requests telemetry streams and sends its heartbeat, but
+no flight commands): it writes the vehicle state as JSON twice a second so the
+launcher can wait for a healthy vehicle.
 """
 
 from __future__ import annotations
@@ -48,7 +49,6 @@ class VehicleState:
     gps_fix: int = 0
     rel_alt_m: float = 0.0
     max_rel_alt_m: float = 0.0
-    last_heartbeat_mono: float = 0.0
 
     @property
     def ready(self) -> bool:
@@ -99,7 +99,6 @@ class Harness:
         s = self.state
         if kind == "HEARTBEAT" and msg.type != mavlink.MAV_TYPE_GCS:
             s.heartbeat = True
-            s.last_heartbeat_mono = time.monotonic()
             s.armed = bool(msg.base_mode & mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
             s.mode = mavutil.mode_string_v10(msg)
             if not self._streams_requested:
@@ -178,7 +177,7 @@ class Harness:
 
 
 def observe(instance: int, state_file: Path) -> int:
-    """Read-only observer for the launcher; writes the state file until SIGTERM."""
+    """Observer for the launcher (no flight commands); writes the state file until SIGTERM."""
     harness = Harness.for_instance(instance)
     stopping = False
 

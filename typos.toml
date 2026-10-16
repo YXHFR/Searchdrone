@@ -15,8 +15,11 @@ formen = "formen"
 parm = "parm"
 fpr = "fpr"
 # Simulator: ArduPilot parameter and frame names, package names, Swedish messages
-thst = "thst"
-thr = "thr"
 gir = "gir"
 som = "som"
 paket = "paket"
+
+[default.extend-identifiers]
+# ArduPilot parameter and SITL frame names
+MOT_THST_HOVER = "MOT_THST_HOVER"
+hoverThrOut = "hoverThrOut"

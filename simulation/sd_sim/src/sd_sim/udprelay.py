@@ -26,6 +26,10 @@ def _pass(_direction: str) -> float | None:
     return 0.0
 
 
+def _always_up() -> bool:
+    return True
+
+
 @dataclass
 class Counters:
     packets_in: int = 0
@@ -46,6 +50,9 @@ class UdpRelay:
     target_port: int
     one_way: bool = False
     policy: Policy = _pass
+    # Checked again when a delayed datagram is due, so "down" also stops datagrams that
+    # were already in flight.
+    is_up: Callable[[], bool] = _always_up
     tap: TlogWriter | None = None
     counters: dict[str, Counters] = field(
         default_factory=lambda: {FROM_VEHICLE: Counters(), TO_VEHICLE: Counters()}
@@ -94,6 +101,9 @@ class UdpRelay:
             asyncio.get_running_loop().call_later(delay, self._send, data, direction)
 
     def _send(self, data: bytes, direction: str) -> None:
+        if not self.is_up():
+            self.counters[direction].dropped += 1
+            return
         if direction == FROM_VEHICLE:
             if self._ground_side is None:
                 return

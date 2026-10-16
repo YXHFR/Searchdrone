@@ -17,7 +17,8 @@ from pathlib import Path
 
 from sd_sim import _args, config, netcheck, paths, ports
 from sd_sim.errors import InfraError
-from sd_sim.launch import Stack, new_run_dir, say, tcp_port_taken, udp_port_taken
+from sd_sim.launch import Stack
+from sd_sim.util import new_run_dir, port_taken, say
 
 OK, WARN, FAIL, SKIP = "OK", "VARNING", "FEL", "-"
 MIN_FREE_RAM_MB = 6000
@@ -116,9 +117,11 @@ def check_docker() -> Row:
 def check_ports_free(instance: int = 0) -> Row:
     busy: list[int] = []
     for name, port in ports.for_instance(instance).items():
-        if name.startswith(("postgres", "mediamtx", "llm")):
-            continue  # shared services may already run
-        if udp_port_taken(port) or tcp_port_taken(port):
+        # Shared services may already run; QGroundControl on Windows may hold its port
+        # (SITL only sends to it); Gazebo's discovery ports are shared by design.
+        if name.startswith(("postgres", "mediamtx", "llm", "gz_discovery", "qgc")):
+            continue
+        if port_taken(name, port):
             busy.append(port)
     if busy:
         return Row("Fria portar (instans 0)", FAIL, f"Upptagna: {busy}. Kör just stop.")
@@ -137,19 +140,26 @@ def check_ram() -> Row:
     return Row("Ledigt minne", WARN, f"{mb} MB. Stäng program eller kör med gui=false.")
 
 
-def check_loopback() -> Row:
-    """Start a builtin instance and check every listening simulator port."""
+def check_loopback(physics: str) -> Row:
+    """Start instance 0 (with Gazebo for physics=gz) and check every listening socket on
+    a simulator port or owned by one of the simulator's processes."""
     if shutil.which("ss") is None:
         return Row("Bara loopback lyssnar", FAIL, "ss saknas (installera iproute2).")
-    cfg = config.load({"physics": "builtin", "video": "off"})
-    cfg.vehicle = "stock"
+    try:
+        cfg = config.load({"physics": physics, "gui": "false", "video": "off", "instance": "0"})
+    except config.ConfigError as exc:
+        return Row("Bara loopback lyssnar", FAIL, f"Fel i config/sim.toml: {exc}")
+    cfg.vehicle, cfg.qgc = "stock", False
     stack = Stack(cfg, new_run_dir(0, "doctor"))
     try:
         stack.up()
         bad = netcheck.violations(
-            netcheck.parse_ss(netcheck.run_ss()), stack.ports, netcheck.load_allowlist()
+            netcheck.parse_ss(netcheck.run_ss()),
+            stack.ports,
+            netcheck.load_allowlist(),
+            owned_pids=stack.group.owned_pids(),
         )
-    except InfraError as exc:
+    except (InfraError, OSError, subprocess.SubprocessError) as exc:
         return Row("Bara loopback lyssnar", FAIL, str(exc).splitlines()[0])
     finally:
         stack.down()
@@ -177,8 +187,9 @@ def run_checks(physics: str) -> list[Row]:
         ]
     sitl_ok = next(r for r in rows if r.name == "ArduPilot SITL").status == OK
     ports_ok = next(r for r in rows if r.name.startswith("Fria portar")).status == OK
-    if sitl_ok and ports_ok:
-        rows.append(check_loopback())
+    gz_ok = physics != "gz" or all(r.status == OK for r in rows if r.name.startswith("Gazebo"))
+    if sitl_ok and ports_ok and gz_ok:
+        rows.append(check_loopback(physics))
     else:
         rows.append(Row("Bara loopback lyssnar", FAIL, "Kräver SITL och fria portar."))
     return rows

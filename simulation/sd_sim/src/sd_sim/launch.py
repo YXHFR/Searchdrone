@@ -13,12 +13,10 @@ import os
 import secrets
 import shutil
 import signal
-import socket
 import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 
@@ -26,6 +24,7 @@ from sd_sim import _args, config, gazebo, paths, ports, procs
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
+from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
 
 ALLOWED_KEYS = (
     "physics",
@@ -44,22 +43,15 @@ ALLOWED_KEYS = (
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
 # Parts of the stack that later work adds; until then `up` says it skips them.
-NOT_BUILT_PARTS = ("postgres", "sd-ground", "sd-onboard", "sd-brain", "video_relay")
+# The database and the ground station start BEFORE SITL, so that they stop after it
+# (processes stop in reverse start order and the ground station's heartbeat must end
+# last); the rest start after SITL.
+NOT_BUILT_BEFORE_SITL = ("postgres", "sd-ground")
+NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain", "video_relay")
 
 HEALTH_LINK_S = 10.0
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
-
-
-def say(message: str) -> None:
-    print(message, flush=True)
-
-
-def new_run_dir(instance: int, label: str = "sim", repo: Path = paths.REPO) -> Path:
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run = paths.runs_dir(repo) / f"{stamp}-{label}-i{instance}"
-    run.mkdir(parents=True, exist_ok=False)
-    return run
 
 
 def write_secret(directory: Path, name: str, value: str) -> Path:
@@ -78,25 +70,6 @@ def check_secret_modes(directory: Path) -> None:
     for path in directory.iterdir():
         if path.stat().st_mode & 0o777 != 0o600:
             raise InfraError(f"{path.name} i hemlighetsmappen har fel rättigheter (ska vara 0600)")
-
-
-def udp_port_taken(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        try:
-            sock.bind(("127.0.0.1", port))
-        except OSError:
-            return True
-    return False
-
-
-def tcp_port_taken(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-        except OSError:
-            return True
-    return False
 
 
 class Stack:
@@ -150,7 +123,7 @@ class Stack:
             f"http://127.0.0.1:{self.ports['linksim_control']}{path}",
             headers={"Authorization": f"Bearer {self.linksim_token}"},
         )
-        with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310
+        with LOOPBACK_OPENER.open(req, timeout=2) as resp:
             return json.loads(resp.read())
 
     def _linksim_healthy(self) -> bool:
@@ -168,16 +141,16 @@ class Stack:
     # --- steps ---------------------------------------------------------------------
 
     def check_ports_free(self) -> None:
-        busy = []
-        udp = ["mavtap_in", "radio_mavlink_in", "video_raw_udp"]
+        names = [
+            "mavtap_in",
+            "radio_mavlink_in",
+            "video_raw_udp",
+            "linksim_sdlink",
+            "linksim_control",
+        ]
         if self.observer:  # otherwise the caller's own harness already holds the port
-            udp.append("harness_mavlink")
-        for name in udp:
-            if udp_port_taken(self.ports[name]):
-                busy.append(self.ports[name])
-        for name in ("linksim_sdlink", "linksim_control"):
-            if tcp_port_taken(self.ports[name]):
-                busy.append(self.ports[name])
+            names.append("harness_mavlink")
+        busy = busy_ports(self.ports, names)
         if busy:
             ports_text = ", ".join(str(p) for p in busy)
             raise InfraError(f"Port {ports_text} är upptagen. Kör just stop och försök igen.")
@@ -331,11 +304,13 @@ class Stack:
             self.start_gazebo()
         say("==> testrigg, mavtap och linksim")
         self.start_link_processes()
+        for part in NOT_BUILT_BEFORE_SITL:
+            say(f"hoppar över {part} (inte byggt än)")
         say("==> arducopter (SITL)")
         sitl = self.start_sitl()
         if self.observer:
             self.wait_vehicle_observed(sitl)
-        for part in NOT_BUILT_PARTS:
+        for part in NOT_BUILT_AFTER_SITL:
             say(f"hoppar över {part} (inte byggt än)")
         self.start_video_source()
 
@@ -343,31 +318,38 @@ class Stack:
         self.group.stop_all()
 
 
+class StopRequestedError(Exception):
+    """Ctrl-C or ``just stop`` arrived; stop everything that was started."""
+
+
+def _raise_stop(_sig: int, _frame: FrameType | None) -> None:
+    raise StopRequestedError
+
+
 def _run_foreground(stack: Stack) -> int:
-    stopping = False
-
-    def stop(_sig: int, _frame: FrameType | None) -> None:
-        nonlocal stopping
-        stopping = True
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+    # The handlers raise, so a stop also interrupts a health wait during start-up.
+    signal.signal(signal.SIGTERM, _raise_stop)
+    signal.signal(signal.SIGINT, _raise_stop)
     try:
         stack.up()
         say(f"Klart. Simulatorn kör (instans {stack.cfg.instance}). Loggar: {stack.run_dir}")
         say("Stoppa med Ctrl-C eller just stop.")
-        while not stopping:
+        while True:
             for proc in stack.group.procs:
-                if not proc.alive() and not stopping:
+                if not proc.alive():
                     say(f"{proc.name} avslutades oväntat. Se {proc.log}.")
                     return 1
             time.sleep(0.5)
+    except StopRequestedError:
         say("Stoppar simulatorn.")
         return 0
     except InfraError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     finally:
+        # A second Ctrl-C must not interrupt the clean-up itself.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         stack.down()
 
 
@@ -393,7 +375,6 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     except config.ConfigError as exc:
         _args.fail(f"sd_sim.launch: {exc}")
-        raise AssertionError from exc  # unreachable: fail() exits
     if dry:
         print(json.dumps({"command": command, "flags": flags, "args": rest}))
         return 0

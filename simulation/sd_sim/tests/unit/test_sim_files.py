@@ -14,13 +14,14 @@ KNOWN_KEYS = SIM / "sitl" / "frames" / "known_keys.txt"
 
 
 def tracked(prefix: str) -> list[Path]:
+    """Committed files plus new files that are not ignored (never gitignored local files)."""
     out = subprocess.run(
-        ["git", "ls-files", "-z", prefix], cwd=ROOT, capture_output=True, check=True
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", prefix],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
     ).stdout.decode()
-    files = [ROOT / name for name in out.split("\0") if name]
-    # Files created by this change that are not committed yet still count.
-    files += [p for p in (ROOT / prefix).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
-    return sorted(set(files))
+    return sorted({ROOT / name for name in out.split("\0") if name and (ROOT / name).is_file()})
 
 
 def read_list(path: Path) -> list[str]:

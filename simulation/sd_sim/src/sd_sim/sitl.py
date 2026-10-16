@@ -32,17 +32,19 @@ class SitlLayout:
 
     def defaults(self, physics: str) -> list[Path]:
         """Parameter layers, later files win: ArduPilot's sim defaults, Gazebo's (gz
-        only), the safety parameters, the sim-only parameters, then extras."""
+        only), extras (e.g. the QGC port), then the safety parameters and the sim-only
+        parameters. The safety layer comes after every generated layer, so nothing
+        generated at run time can override a failsafe."""
         layers = [self.ardupilot_home / "Tools" / "autotest" / "default_params" / "copter.parm"]
         if physics == "gz":
             layers.append(
                 self.ardupilot_home / "Tools" / "autotest" / "default_params" / "gazebo-iris.parm"
             )
+        layers.extend(self.extra_defaults)
         params = self.repo / "simulation" / "sitl" / "params"
         for name in ("searchdrone-safety.parm", "sd_quad14-sim.parm"):
             if (params / name).is_file():
                 layers.append(params / name)
-        layers.extend(self.extra_defaults)
         return layers
 
 

@@ -20,6 +20,7 @@ RUN useradd --create-home --shell /bin/bash builder \
  && echo "builder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/builder \
  && chmod 0440 /etc/sudoers.d/builder
 COPY simulation/versions.lock /tmp/versions.lock
+COPY simulation/docker/known_params.py /tmp/known_params.py
 USER builder
 WORKDIR /home/builder
 RUN set -eu; \
@@ -40,7 +41,7 @@ RUN set -eu; \
     ./waf configure --board sitl; \
     ./waf copter; \
     python3 Tools/autotest/param_metadata/param_parse.py --vehicle ArduCopter --format xml; \
-    python3 -c "import xml.etree.ElementTree as E; names = sorted({p.get('name').split(':')[-1] for p in E.parse('apm.pdef.xml').iter('param') if p.get('name')}); open('known_params.txt', 'w').write(''.join(n + chr(10) for n in names))"
+    python3 /tmp/known_params.py apm.pdef.xml > known_params.txt
 
 # --- 2. runtime ------------------------------------------------------------------------
 FROM ${UBUNTU_IMAGE}
@@ -58,8 +59,9 @@ RUN apt-get update \
 # Docker CLI from Docker's signed apt repository (for tests with their own database).
 RUN install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
- && gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc \
-      | grep -q '^fpr:::::::::9DC858229FC7DD38854AE2D88D81803C0EBFCD88:' \
+ && test "$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc \
+      | awk -F: '$1 == "pub" {w = 1; next} w && $1 == "fpr" {print $10; w = 0}')" \
+      = 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 \
  && chmod a+r /etc/apt/keyrings/docker.asc \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       > /etc/apt/sources.list.d/docker.list \

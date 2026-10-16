@@ -82,3 +82,12 @@ def test_stock_vehicle_and_missing_files(tmp_path: Path) -> None:
 def test_unknown_physics(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         build_sitl_argv(SitlOptions(physics="unity"), ports.for_instance(0), fake_layout(tmp_path))
+
+
+def test_safety_layer_comes_after_generated_layers(tmp_path: Path) -> None:
+    layout = fake_layout(tmp_path)
+    extra = tmp_path / "qgc.parm"
+    layout = SitlLayout(layout.arducopter, layout.ardupilot_home, layout.repo, (extra,))
+    layers = layout.defaults("builtin")
+    safety = next(i for i, p in enumerate(layers) if p.name == "searchdrone-safety.parm")
+    assert layers.index(extra) < safety

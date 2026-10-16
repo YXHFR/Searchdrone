@@ -20,6 +20,6 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 - `linksim` is the simulated radio: MAVLink and video over UDP with delay, jitter and loss, SD-link over TCP with delay only. Its control API on 127.0.0.1 needs a bearer token from `build/sim/i<N>/secrets/linksim_token`.
 - `mavtap` records the onboard computer's MAVLink channel without changing it.
 - `harness` is the test rig's own MAVLink channel (system 253) on SITL serial0.
-- Ports come from `simulation/ports.yaml`; `simulation/listen_allowlist.yaml` lists the only socket allowed outside loopback, with the reason.
+- Ports come from `simulation/ports.yaml`; `simulation/listen_allowlist.yaml` lists the few sockets that ArduPilot and Gazebo bind to all addresses themselves, each with its reason; every other non-loopback socket on a simulator port or owned by a simulator process fails the check.
 
 Run the checks from the repository root: `just check`. The SITL smoke test (`-m sitl`) runs when ArduCopter SITL is built.
