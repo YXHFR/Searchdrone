@@ -1158,6 +1158,20 @@ requires-dist = [
 name = "sd-mav"
 version = "0.0.0"
 source = { editable = "software/common/mav" }
+dependencies = [
+    { name = "pymavlink" },
+    { name = "sd-obs" },
+    { name = "sd-safety" },
+    { name = "sd-schemas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pymavlink", specifier = ">=2.4.47" },
+    { name = "sd-obs", editable = "software/common/obs" },
+    { name = "sd-safety", editable = "software/common/safety" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
+]
 
 [[package]]
 name = "sd-obs"
