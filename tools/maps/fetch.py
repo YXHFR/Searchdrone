@@ -114,7 +114,7 @@ def load_settings(root: Path, args: dict[str, str]) -> Settings:
         raise FetchError("protomaps_build i config/maps.toml ska vara ett datum YYYYMMDD.", 2)
     name = args.get("name", str(conf.get("name", "demo")))
     if not re.fullmatch(PACK_NAME, name):
-        raise FetchError("name: 1 till 64 tecken a-z, 0-9, - och _, som börjar med a-z eller 0-9.", 2)
+        raise FetchError("name: högst 64 tecken a-z, 0-9, - och _ (först a-z eller 0-9).", 2)
     try:
         maxzoom = int(args.get("maxzoom") or conf.get("maxzoom", 15))
     except ValueError:
