@@ -63,7 +63,12 @@ def test_dockerfile_copies_only_allowed_files() -> None:
 
 def test_dockerignore_sends_only_the_lock() -> None:
     lines = read_list(SIM / "docker" / "sitl.Dockerfile.dockerignore")
-    assert lines == ["*", "!simulation/versions.lock"]
+    assert lines == ["*", "!simulation/versions.lock", "!simulation/docker/known_params.py"]
+    # Everything the Dockerfile copies must be sent to the builder.
+    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        words = line.split()
+        if words[:1] == ["COPY"] and not any(w.startswith("--from=") for w in words):
+            assert f"!{words[1]}" in lines, line
 
 
 def test_wsl_setup_uses_locked_versions() -> None:

@@ -187,11 +187,17 @@ def run_checks(physics: str) -> list[Row]:
         ]
     sitl_ok = next(r for r in rows if r.name == "ArduPilot SITL").status == OK
     ports_ok = next(r for r in rows if r.name.startswith("Fria portar")).status == OK
-    gz_ok = physics != "gz" or all(r.status == OK for r in rows if r.name.startswith("Gazebo"))
+    gz_rows = ("Gazebo Harmonic (gz sim 8)", "ArduPilots Gazebo-plugin", "GZ_IP = 127.0.0.1")
+    gz_ok = physics != "gz" or all(r.status == OK for r in rows if r.name in gz_rows)
     if sitl_ok and ports_ok and gz_ok:
         rows.append(check_loopback(physics))
     else:
-        rows.append(Row("Bara loopback lyssnar", FAIL, "Kräver SITL och fria portar."))
+        missing = [
+            text
+            for ok, text in ((sitl_ok, "SITL"), (ports_ok, "fria portar"), (gz_ok, "Gazebo"))
+            if not ok
+        ]
+        rows.append(Row("Bara loopback lyssnar", FAIL, "Kräver " + " och ".join(missing) + "."))
     return rows
 
 

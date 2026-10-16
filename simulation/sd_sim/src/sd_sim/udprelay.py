@@ -84,6 +84,8 @@ class UdpRelay:
         self._ground_side = ground_side
 
     def _handle(self, data: bytes, direction: str) -> None:
+        # The tap records the decision when a datagram arrives. A delayed datagram that a
+        # later "down" stops is counted in ``dropped`` but not marked in the tap.
         stats = self.counters[direction]
         stats.packets_in += 1
         stats.bytes_in += len(data)

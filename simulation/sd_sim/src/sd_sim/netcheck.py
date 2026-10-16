@@ -64,6 +64,20 @@ def load_allowlist(path: Path = paths.LISTEN_ALLOWLIST) -> set[tuple[str, str]]:
     return allowed
 
 
+def ephemeral_range() -> tuple[int, int]:
+    """The kernel's range for random local ports."""
+    try:
+        low, high = Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split()
+        return int(low), int(high)
+    except (OSError, ValueError):
+        return 32768, 60999  # Linux default
+
+
+def in_ephemeral_range(port: int) -> bool:
+    low, high = ephemeral_range()
+    return low <= port <= high
+
+
 def violations(
     listeners: list[Listener],
     ports_by_name: dict[str, int],
@@ -82,7 +96,11 @@ def violations(
         names = names_by_port.get(item.port, set())
         if not names and item.pid not in owned_pids:
             continue
-        if not names and (f"ephemeral:{item.process}", item.proto) in allowlist:
+        if (
+            not names
+            and (f"ephemeral:{item.process}", item.proto) in allowlist
+            and in_ephemeral_range(item.port)
+        ):
             continue
         if any((name, item.proto) in allowlist for name in names):
             continue

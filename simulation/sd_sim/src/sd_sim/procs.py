@@ -72,6 +72,18 @@ class ProcessGroup:
     ) -> Proc:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         log = self.logs_dir / f"{name}.log"
+        # A stop signal must not land between starting the child and recording it, or
+        # the child would be left running unseen.
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        try:
+            proc = self._spawn(name, argv, env=env, cwd=cwd, log=log)
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        return proc
+
+    def _spawn(
+        self, name: str, argv: list[str], *, env: dict[str, str], cwd: Path | None, log: Path
+    ) -> Proc:
         with log.open("ab") as out:
             popen = subprocess.Popen(  # noqa: S603 - argv is built by the launcher, never a shell
                 argv,
