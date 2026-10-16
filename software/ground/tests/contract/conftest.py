@@ -128,7 +128,10 @@ def scram_verifier(password: str, iterations: int = 4096) -> str:
 
 
 async def _ensure_app_role(owner_password: str, app_password: str) -> None:
-    """Create sd_app like `sd-ground db setup` will: only if missing, never altered."""
+    """Create sd_app like `sd-ground db setup` will: only if missing, never altered here.
+
+    Only the opt-in test_migration_refuses_privileged_app_role changes it, and undoes it.
+    """
     conn = await _connect("postgres", "sd_owner", owner_password)
     try:
         if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = 'sd_app'"):

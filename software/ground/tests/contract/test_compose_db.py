@@ -60,12 +60,12 @@ def test_port_only_on_loopback() -> None:
 
 
 # Restarting stops the shared local database, so it runs in CI or on request only.
-RESTART_OK = os.environ.get("CI") == "true" or os.environ.get("SD_TEST_DB_RESTART") == "1"
+INVASIVE_OK = os.environ.get("CI") == "true" or os.environ.get("SD_TEST_DB_INVASIVE") == "1"
 
 
 @pytest.mark.slow
 @pytest.mark.skipif(JUST is None, reason="just is not installed")
-@pytest.mark.skipif(not RESTART_OK, reason="set SD_TEST_DB_RESTART=1 (restarts the database)")
+@pytest.mark.skipif(not INVASIVE_OK, reason="set SD_TEST_DB_INVASIVE=1 (restarts the database)")
 def test_data_survives_db_down_up(fresh_db: Db) -> None:
     fresh_db.run("CREATE TABLE keep (v text)")
     fresh_db.run("INSERT INTO keep VALUES ('kvar')")

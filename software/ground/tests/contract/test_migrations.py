@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from conftest import Db  # fixtures live in conftest.py (not importable at runtime)
 
 pytestmark = [pytest.mark.contract, pytest.mark.db]
+# Briefly changing the shared sd_app role runs in CI, or locally only on request.
+INVASIVE_OK = os.environ.get("CI") == "true" or os.environ.get("SD_TEST_DB_INVASIVE") == "1"
 
 TABLES = {
     "vehicles",
@@ -256,8 +258,10 @@ def test_app_role_is_unprivileged(fresh_db: Db) -> None:
     assert rows and not any(rows[0].values())
 
 
+@pytest.mark.skipif(not INVASIVE_OK, reason="set SD_TEST_DB_INVASIVE=1 (changes sd_app)")
 def test_migration_refuses_privileged_app_role(fresh_db: Db) -> None:
-    # sd_app is cluster-wide: every change is undone in `finally`.
+    # sd_app is cluster-wide: every change is undone in `finally`. If this test is killed
+    # midway, `ALTER ROLE sd_app NOCREATEDB` restores it (the migration refuses until then).
     group = f"sd_test_grp_{os.getpid()}"
     fresh_db.run(f"CREATE ROLE {group} NOLOGIN")
     try:
