@@ -14,7 +14,7 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "migrate test-panel-e2e panel-build"
+unbuilt := "migrate"
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
@@ -163,11 +163,22 @@ ground: (_not-built "B1-05")
 # Write a commander token for sd-brain
 brain-token: (_not-built "B1-10")
 
-# Panel end-to-end tests against a mock server
-test-panel-e2e: (_not-built "B1-06")
+# --- panel ---------------------------------------------------------------------------
+
+# Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)
+panel:
+    pnpm --filter @searchdrone/panel dev
+
+# Panel end-to-end tests against a fake ground station (same four steps as CI)
+test-panel-e2e:
+    pnpm --filter @searchdrone/panel build
+    pnpm --filter @searchdrone/panel check
+    pnpm --filter @searchdrone/panel build:test
+    pnpm --filter @searchdrone/panel e2e
 
 [private]
-panel-build: (_not-built "B1-06")
+panel-build:
+    pnpm --filter @searchdrone/panel build
 
 # --- simulator -----------------------------------------------------------------------
 
@@ -191,15 +202,17 @@ stop *args:
 
 alias sim-down := stop
 
-# Check the simulator environment
-sim-doctor: (_not-built "B0-05")
+# Check the simulator environment (keys: physics)
+sim-doctor *args:
+    uv run --package sd-sim python -m sd_sim.doctor "$@"
 
-# Install ArduPilot SITL and Gazebo
-sim-setup: (_not-built "B0-05")
+# Install ArduPilot SITL and Gazebo; safe to run again (asks for the Ubuntu password)
+sim-setup:
+    bash tools/setup/wsl-setup.sh sim
 
-# GUIDED, arm, take off to 20 m, land (keys: physics, gui)
+# GUIDED, arm, take off to 20 m, land (keys: physics, gui, instance)
 sim-smoke *args:
-    uv run --no-sync python tools/just_args.py sim-smoke "$@"
+    uv run --package sd-sim python -m sd_sim.smoke "$@"
 
 # Scenario tests, headless (keys: sc, variant, physics, instance, shard, shards, ...)
 test-sitl *args:

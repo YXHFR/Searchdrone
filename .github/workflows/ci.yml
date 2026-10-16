@@ -92,7 +92,7 @@ jobs:
               | jq -e '.assignments.unbuilt.value | split(" ") | index("test-panel-e2e")' >/dev/null; then
             echo "hoppar över test-panel-e2e (inte byggt än)"
           else
-            pnpm exec playwright install --with-deps chromium firefox webkit
+            pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium firefox webkit
             just test-panel-e2e
           fi
 

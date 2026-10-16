@@ -1,0 +1,22 @@
+[
+  "<ARDUPILOT>/arducopter",
+  "-I",
+  "0",
+  "--speedup",
+  "1",
+  "--home",
+  "-35.363261,149.165230,584.0,353",
+  "--wipe",
+  "--model",
+  "JSON",
+  "--sim-address",
+  "127.0.0.1",
+  "--defaults",
+  "<ARDUPILOT>/Tools/autotest/default_params/copter.parm,<ARDUPILOT>/Tools/autotest/default_params/gazebo-iris.parm,<REPO>/simulation/sitl/params/searchdrone-safety.parm,<REPO>/simulation/sitl/params/sd_quad14-sim.parm",
+  "--serial0",
+  "udpclient:127.0.0.1:14564",
+  "--serial1",
+  "udpclient:127.0.0.1:14562",
+  "--serial2",
+  "udpclient:127.0.0.1:14561"
+]

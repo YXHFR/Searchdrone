@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterable
+from typing import NoReturn
 
 NOT_BUILT_EXIT = 2
 
@@ -27,7 +28,7 @@ def parse(argv: Iterable[str], allowed: Iterable[str], prog: str) -> dict[str, s
     return out
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(message, file=sys.stderr)
     raise SystemExit(2)
 

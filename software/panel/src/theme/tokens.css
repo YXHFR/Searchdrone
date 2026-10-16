@@ -1,0 +1,49 @@
+/* Colour and size tokens. Dark is the default; "light" is the high-contrast daylight theme. */
+:root {
+  --c-bg: #0f1417;
+  --c-panel: #171e22;
+  --c-panel-2: #1d262c;
+  --c-line: #26313a;
+  --c-text: #e6edf1;
+  --c-mute: #9fb0bc;
+  --c-acc: #4fb3ff;
+  --c-acc-text: #04121d;
+  --c-ok: #3ecf8e;
+  --c-warn: #ffb547;
+  --c-bad: #ff5a5a;
+  --c-stop: #d32f2f;
+  --c-stop-text: #ffffff;
+  --c-home: #ffb547;
+  --c-home-text: #1a1200;
+  --c-focus: #ffd166;
+  --c-input: #0b1013;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --topbar-h: 48px;
+  --safety-h: 96px;
+  --z-safety: 1000;
+  --z-dialog: 900;
+  --z-menu: 800;
+  --z-pip: 500;
+  --radius: 10px;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --c-bg: #ffffff;
+  --c-panel: #f3f6f8;
+  --c-panel-2: #e8eef2;
+  --c-line: #9aa9b4;
+  --c-text: #0b1013;
+  --c-mute: #3b4a55;
+  --c-acc: #0b5cad;
+  --c-acc-text: #ffffff;
+  --c-ok: #0f6b45;
+  --c-warn: #8a5300;
+  --c-bad: #b3261e;
+  --c-stop: #c62828;
+  --c-home: #ffb547;
+  --c-home-text: #1a1200;
+  --c-focus: #7a3dff;
+  --c-input: #ffffff;
+  color-scheme: light;
+}
