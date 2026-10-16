@@ -146,7 +146,7 @@ class IngressApp:
             return
         try:
             req = ActionRequest.model_validate(json.loads(body or b"{}"))
-        except (ValidationError, json.JSONDecodeError):
+        except (ValidationError, ValueError):  # ValueError: bad JSON or not UTF-8
             await _respond(send, 422, error_body(422, "VALIDATION", "Fel i indata."))
             return
         match = one or every

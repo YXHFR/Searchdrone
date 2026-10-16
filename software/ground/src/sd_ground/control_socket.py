@@ -1,10 +1,11 @@
 """The Unix socket the ``sd-ground`` CLI uses to talk to the running server.
 
 One JSON line in, one JSON line out. Only these exist: a new login link or PIN (for the
-owner at the terminal; it creates a pilot login, so the AI may never use this socket,
-which an import contract enforces) and STOP / RETURN HOME. Never Resume. The socket file
-is 600 in a 700 directory, and a peer with another user id (``SO_PEERCRED``) is
-disconnected.
+owner at the terminal; it creates a pilot login, so the AI may never use this socket: an
+import contract guards against direct use, and the real boundary is the file mode plus the
+peer's user id, which needs the AI to run as its own OS user in the field profile) and
+STOP / RETURN HOME. Never Resume. The socket file is 600 in a 700 directory, and a peer
+with another user id (``SO_PEERCRED``) is disconnected. One bad request never stops it.
 """
 
 from __future__ import annotations
@@ -20,11 +21,13 @@ from pathlib import Path
 from typing import Any
 
 from sd_ground.auth import Principal
+from sd_ground.logging import get_logger
 from sd_ground.sources import EmergencyPath, EmergencyUnavailableError
 
 __all__ = ["MAX_LINE", "ControlSocket", "call", "socket_path"]
 
 MAX_LINE = 4096
+log = get_logger("sd_ground.control")
 _CLI = Principal(role="pilot", issuer_ref="operator:cli", auth_mode="cli", via="local")
 
 
@@ -103,7 +106,12 @@ class ControlSocket:
                 try:
                     if self._peer_uid(conn) != os.getuid():
                         continue
-                    conn.sendall((json.dumps(self._handle(self._read_line(conn))) + "\n").encode())
+                    try:
+                        reply = self._handle(self._read_line(conn))
+                    except Exception as exc:  # one bad request never stops the CLI STOP path
+                        log.error("control.request_failed", error=type(exc).__name__)
+                        reply = {"ok": False, "error": "INTERNAL"}
+                    conn.sendall((json.dumps(reply) + "\n").encode())
                 except OSError:
                     continue
 
@@ -132,7 +140,7 @@ class ControlSocket:
             return {"ok": False, "error": "LINE_TOO_LONG"}
         try:
             req = json.loads(line)
-        except json.JSONDecodeError:
+        except ValueError:  # bad JSON or not UTF-8
             return {"ok": False, "error": "BAD_JSON"}
         if not isinstance(req, dict):
             return {"ok": False, "error": "BAD_JSON"}
@@ -180,10 +188,10 @@ def call(path: Path, request: dict[str, Any], timeout: float = 5.0) -> dict[str,
                 if not chunk:
                     break
                 data += chunk
-    except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError, BrokenPipeError):
+    except OSError:  # no server, a dead socket or a timeout (TimeoutError is an OSError)
         return None
     try:
         out = json.loads(data.split(b"\n", 1)[0] or b"null")
-    except json.JSONDecodeError:
+    except ValueError:
         return None
     return out if isinstance(out, dict) else None  # pyright: ignore[reportUnknownVariableType]

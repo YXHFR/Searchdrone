@@ -83,6 +83,11 @@ def test_clean_tree_is_kept(tmp_path: Path) -> None:
             "test-only packages are never imported by production packages",
         ),
         ("sd_safety", "import sd_obs\n", "sd_safety is pure logic without I/O"),
+        (
+            "sd_brain",
+            "import socket\n",
+            "the AI opens no raw sockets",
+        ),
     ],
 )
 def test_crossing_a_boundary_breaks(tmp_path: Path, pkg: str, code: str, contract: str) -> None:

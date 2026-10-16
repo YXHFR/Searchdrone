@@ -184,7 +184,7 @@ forbidden_modules =
     alembic
 
 [importlinter:contract:brain-no-raw-sockets]
-name = the AI opens no raw sockets (it may not use the CLI's control socket for logins)
+name = the AI opens no raw sockets
 type = forbidden
 source_modules = sd_brain
 forbidden_modules =

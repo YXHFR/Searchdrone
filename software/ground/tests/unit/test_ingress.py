@@ -105,3 +105,9 @@ def test_stop_survives_a_broken_foreign_cookie(
     assert stop.status_code == 202, stop.text
     assert bridged.get("/api/v1/session", headers=cookie).status_code == 200
     assert emergency.calls[-1][0] == "stop"  # type: ignore[attr-defined]
+
+
+def test_stop_with_non_utf8_body_is_422(bridged: TestClient, ground: Ground) -> None:
+    _login(bridged, ground)
+    res = bridged.post("/api/v1/vehicles/sim-01/actions/stop", content=b"\xff\xfe", headers=H)
+    assert res.status_code == 422

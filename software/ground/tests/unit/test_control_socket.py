@@ -104,3 +104,16 @@ def test_cli_without_server_exits_2(tmp_path: Path) -> None:
         )
         assert res.returncode == 2, res.stderr
         assert "sd-ground körs inte" in res.stderr
+
+
+def test_garbage_never_stops_the_cli_stop_path(control: ControlSocket, emergency: object) -> None:
+    import socket as raw
+
+    for junk in (b"\xff\xfe\xfa\n", b"[1, 2]\n", b"\n", b'{"op": "action", "action": 5}\n'):
+        with raw.socket(raw.AF_UNIX, raw.SOCK_STREAM) as s:
+            s.connect(str(control.path))
+            s.sendall(junk)
+            assert b'"ok": false' in s.recv(4096)
+    reply = call(control.path, {"op": "action", "vehicle_id": "sim-01", "action": "stop"})
+    assert reply is not None and reply["ok"] is True
+    assert emergency.calls[-1][0] == "stop"  # type: ignore[attr-defined]
