@@ -1,0 +1,318 @@
+"""Builds the apps and starts ``sd-ground serve`` in the order the safety design needs.
+
+Start order: config check, logging, database (wait up to 30 s; wrong schema version
+stops the server; no database = safe start mode with sessions in memory), background
+tasks, control socket, commander API (:7700, main loop), then the ingress thread with the
+panel listeners (:8080 and, in LAN mode, :8443 with TLS), and finally the login link.
+The MAVLink thread and the SD-link server plug in through ``sd_ground.sources``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import signal
+import sys
+from collections.abc import Awaitable, Callable, MutableMapping
+from pathlib import Path
+from typing import Any
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from sd_ground.api import commander as commander_api
+from sd_ground.api import live as live_api
+from sd_ground.api import panel as panel_api
+from sd_ground.api.deps import install_error_handlers
+from sd_ground.auth import BrainToken
+from sd_ground.config import Loaded, check, parse_bind
+from sd_ground.context import Ground, lan_addresses
+from sd_ground.control_socket import ControlSocket, socket_path
+from sd_ground.db.engine import make_engine, with_password
+from sd_ground.db.repo import Repo
+from sd_ground.db.setup import head_revision
+from sd_ground.ingress import IngressApp, IngressThread, MainLoopBridge
+from sd_ground.liveness import LoopLiveness
+from sd_ground.logging import get_logger, setup_logging
+from sd_ground.services.telemetry import TelemetryService
+from sd_ground.web import COMMANDER_BODY_LIMIT, LoopbackGuard, PanelGuard
+
+__all__ = [
+    "Background",
+    "commander_asgi",
+    "create_commander_app",
+    "create_panel_app",
+    "openapi_documents",
+    "panel_asgi",
+    "read_brain_token",
+    "serve",
+]
+
+API_VERSION = "1"  # the /api/v1 and /commander/v1 contract, not the package version
+DB_CHECK_S = 2.0
+SESSION_RELOAD_S = 10.0
+log = get_logger("sd_ground")
+
+Scope = MutableMapping[str, Any]
+ASGIApp = Callable[[Scope, Any, Any], Awaitable[None]]
+
+
+def create_panel_app(g: Ground) -> FastAPI:
+    app = FastAPI(
+        title="Searchdrone panel API",
+        version=API_VERSION,
+        openapi_url="/api/v1/openapi.json",
+        docs_url=None,
+        redoc_url=None,
+    )
+    app.state.ground = g
+    install_error_handlers(app)
+    app.include_router(panel_api.router)
+    app.include_router(live_api.router)
+    static = g.loaded.path(g.config.http.static_dir)
+    if (static / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=static, html=True), name="panel")
+    return app
+
+
+def create_commander_app(g: Ground) -> FastAPI:
+    app = FastAPI(
+        title="Searchdrone commander API",
+        version=API_VERSION,
+        openapi_url="/commander/v1/openapi.json",
+        docs_url=None,
+        redoc_url=None,
+    )
+    app.state.ground = g
+    app.state.commander_hub = commander_api.CommanderHub(g)
+    install_error_handlers(app)
+    app.include_router(commander_api.router)
+    return app
+
+
+def _labelled(app: ASGIApp, listener: str) -> ASGIApp:
+    async def labelled(scope: Scope, receive: Any, send: Any) -> None:
+        scope["sd_listener"] = listener
+        await app(scope, receive, send)
+
+    return labelled
+
+
+def panel_asgi(
+    g: Ground,
+    main_app: ASGIApp,
+    *,
+    main_loop: asyncio.AbstractEventLoop | None = None,
+    listener: str = "local",
+) -> PanelGuard:
+    """The full panel listener: guard -> ingress (STOP / HOME) -> bridge -> main app."""
+    forward: ASGIApp = main_app if main_loop is None else MainLoopBridge(main_app, main_loop)
+    inner = IngressApp(sessions=g.sessions, emergency=g.emergency, forward=forward)
+    return PanelGuard(
+        _labelled(inner, listener),
+        allowed_hosts=g.allowed_hosts,
+        is_commander_token=g.brain_token.matches,
+        profile=g.config.profile,
+    )
+
+
+def commander_asgi(g: Ground, app: ASGIApp) -> LoopbackGuard:
+    _, port = parse_bind(g.config.http.commander_bind)
+    return LoopbackGuard(app, port=port, body_limit=COMMANDER_BODY_LIMIT)
+
+
+def read_brain_token(loaded: Loaded) -> str | None:
+    path = loaded.path(loaded.config.auth.brain_token_file)
+    if not path.is_file():
+        return None
+    value = path.read_text(encoding="utf-8").strip()
+    return value or None
+
+
+class Background:
+    """The main loop's housekeeping: database health, sessions, events, telemetry."""
+
+    def __init__(self, g: Ground, liveness: LoopLiveness | None = None) -> None:
+        self.g = g
+        self.liveness = liveness
+        self.telemetry = TelemetryService(g)
+        self._next_reload = 0.0
+
+    async def db_tick(self) -> None:
+        g = self.g
+        if g.repo is None:
+            return
+        was_ok = g.db_ok
+        try:
+            await g.repo.ping()
+            g.db_ok = True
+        except Exception as exc:
+            if was_ok:
+                log.error("system.db_down", error=type(exc).__name__)
+                g.add_event("system.db_down", severity="critical")
+            g.db_ok = False
+            return
+        if not was_ok:
+            log.info("system.db_up")
+            g.add_event("system.db_up")
+        for rec in g.sessions.pending():
+            try:
+                await g.repo.save_session(rec)
+                g.sessions.mark_persisted(rec.token_sha256)
+            except Exception:  # noqa: S112 - retried on the next tick
+                continue
+        now = g.clock.monotonic()
+        if now >= self._next_reload:
+            self._next_reload = now + SESSION_RELOAD_S
+            with contextlib.suppress(Exception):
+                await g.repo.touch_sessions([r for r in g.sessions.all() if not r.pending_persist])
+                g.sessions.load(await g.repo.sessions())
+        await g.flush_events()
+
+    async def run_db(self) -> None:
+        while True:
+            await self.db_tick()
+            if self.liveness is not None:
+                self.liveness.beat("main")
+            await self.g.clock.sleep(DB_CHECK_S)
+
+    def tasks(self) -> list[asyncio.Task[None]]:
+        return [
+            asyncio.create_task(self.run_db(), name="db"),
+            asyncio.create_task(self.telemetry.run(), name="telemetry"),
+        ]
+
+
+async def _start_db(g: Ground) -> None:
+    """Connect (≤ 30 s). Wrong schema version stops the server; no database = safe mode."""
+    if g.repo is None:
+        return
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + g.config.db.connect_timeout_s
+    while True:
+        try:
+            revision = await g.repo.schema_revision()
+            break
+        except Exception as exc:
+            if loop.time() >= deadline:
+                log.error("db.unreachable_safe_mode", error=type(exc).__name__)
+                g.add_event("system.db_down", severity="critical")
+                return
+            await asyncio.sleep(1.0)
+    if revision != head_revision():
+        raise SystemExit("Databasen är inte uppdaterad. Kör: just migrate")
+    g.db_ok = True
+    g.sessions.load(await g.repo.sessions())
+
+
+def _uvicorn(app: Any, bind: str, **extra: Any) -> uvicorn.Server:
+    host, port = parse_bind(bind)
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        lifespan="off",
+        log_level="warning",
+        access_log=False,
+        server_header=False,
+        date_header=False,
+        **extra,
+    )
+    return uvicorn.Server(config)
+
+
+async def _serve(loaded: Loaded) -> int:
+    errors = check(loaded)
+    if errors:
+        for line in errors:
+            print(line, file=sys.stderr)  # noqa: T201 - operator-facing CLI output
+        return 1
+    cfg = loaded.config
+    setup_logging(loaded.data_dir / "logs" / "sd-ground.jsonl")
+    from sd_obs.clock import MonotonicClock
+
+    token = read_brain_token(loaded)
+    g = Ground(loaded=loaded, clock=MonotonicClock(), brain_token=BrainToken(token))
+    if cfg.lan.enabled:
+        g.lan_hosts = lan_addresses()
+    g.repo = Repo(
+        make_engine(with_password(cfg.db.url, loaded.secret("SD_GROUND__DB_APP_PASSWORD")))
+    )
+    await _start_db(g)
+    liveness = LoopLiveness()
+    background = Background(g, liveness)
+    tasks = background.tasks()
+    main_loop = asyncio.get_running_loop()
+
+    control = ControlSocket(
+        socket_path(loaded.data_dir), login_link=g.login_link, pair=g.pair, emergency=g.emergency
+    )
+    control.start()
+
+    commander_app = create_commander_app(g)
+    commander_server = _uvicorn(commander_asgi(g, commander_app), cfg.http.commander_bind)
+    panel_app = create_panel_app(g)
+    servers = [_uvicorn(panel_asgi(g, panel_app, main_loop=main_loop), cfg.http.panel_bind)]
+    if cfg.lan.enabled:
+        tls = loaded.path(cfg.lan.tls_dir)
+        servers.append(
+            _uvicorn(
+                panel_asgi(g, panel_app, main_loop=main_loop, listener="lan"),
+                cfg.lan.bind,
+                ssl_certfile=str(tls / "server.crt"),
+                ssl_keyfile=str(tls / "server.key"),
+            )
+        )
+    ingress = IngressThread(servers, beat=lambda: liveness.beat("ingress"))
+    commander_task = asyncio.create_task(commander_server.serve())
+    ingress.start()
+    await asyncio.to_thread(ingress.started_event.wait, 10)
+
+    g.add_event("system.start", payload={"version": g.version, "profile": cfg.profile})
+    log.info("system.start", version=g.version, profile=cfg.profile)
+    if g.test_rig:
+        log.warning("auth.test_rig", detail="cli_may_confirm = true: bara för testriggen")
+    _code, url = g.login_link()
+    print(f"Searchdrone markstation körs. Öppna panelen: {url}", flush=True)  # noqa: T201
+    if cfg.lan.enabled:
+        _c, pin, lan_url = g.pair()
+        print(f"Mobil i samma nät: {lan_url}  PIN: {pin}", flush=True)  # noqa: T201
+
+    stop = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        main_loop.add_signal_handler(sig, stop.set)
+    await stop.wait()
+
+    log.info("system.stop")
+    g.add_event("system.stop")
+    ingress.stop()
+    commander_server.should_exit = True
+    await asyncio.wait_for(asyncio.to_thread(ingress.join, 5), 6)
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(commander_task, 5)
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(g.flush_events(), 5)
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    control.stop()
+    await g.repo.close()
+    return 0
+
+
+def serve(loaded: Loaded) -> int:
+    return asyncio.run(_serve(loaded))
+
+
+def openapi_documents() -> dict[str, dict[str, Any]]:
+    """Both OpenAPI documents, built without config files, database or network."""
+    from sd_ground.config import GroundConfig
+    from sd_obs.clock import FakeClock
+
+    loaded = Loaded(config=GroundConfig(), root=Path("/nonexistent"), env={})
+    g = Ground(loaded=loaded, clock=FakeClock(), brain_token=BrainToken(None), version="0.0.0")
+    return {
+        "panel": create_panel_app(g).openapi(),
+        "commander": create_commander_app(g).openapi(),
+    }

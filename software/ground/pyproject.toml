@@ -7,10 +7,23 @@ license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.16",
+    "anyio>=4.4",
     "asyncpg>=0.30",
+    "cryptography>=43",
+    "fastapi>=0.115",
     "geoalchemy2>=0.17",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "sd-obs",
+    "sd-schemas",
+    "segno>=1.6",
     "sqlalchemy[asyncio]>=2.0,<2.1",
+    "structlog>=25",
+    "uvicorn[standard]>=0.34",
 ]
+
+[project.scripts]
+sd-ground = "sd_ground.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

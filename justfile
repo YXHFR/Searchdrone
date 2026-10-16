@@ -14,7 +14,7 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "migrate test-panel-e2e panel-build"
+unbuilt := "test-panel-e2e panel-build"
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
@@ -154,11 +154,13 @@ db-down: _env-file
 db-check: _env-file
     docker compose --env-file .env exec -T db psql -U sd_owner -d searchdrone -v ON_ERROR_STOP=1 -tAc 'SELECT postgis_full_version()'
 
-# Create or upgrade the database schema
-migrate: (_not-built "B1-05")
+# Create or upgrade the database schema (creates the role sd_app if missing)
+migrate:
+    uv run --package sd-ground sd-ground db setup
 
-# Start the ground station
-ground: (_not-built "B1-05")
+# Start the ground station (prints the login link)
+ground:
+    uv run --package sd-ground sd-ground serve
 
 # Write a commander token for sd-brain
 brain-token: (_not-built "B1-10")

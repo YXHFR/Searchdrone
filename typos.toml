@@ -20,3 +20,8 @@ byt = "byt"
 vill = "vill"
 objekt = "objekt"
 tak = "tak"
+# Swedish (sd_ground: CLI help and error texts, B1-05)
+lokal = "lokal"
+adress = "adress"
+som = "som"
+minut = "minut"

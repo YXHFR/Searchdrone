@@ -36,6 +36,7 @@ dev = [
   "pytest>=8.4", "pytest-asyncio>=1.0", "pytest-cov>=6.0", "hypothesis>=6.130",
   "ruff>=0.16", "pyright>=1.1.400", "import-linter>=2.1", "reuse>=5.0",
   "httpx>=0.28", "pillow>=11", "packaging>=24", "pyyaml>=6.0", "jsonschema>=4.23",
+  "pytest-socket>=0.7",  # B1-05: tests may only reach loopback
 ]
 # Test-only workspace packages. Production packages never import these.
 test = ["sd-link-testing"]
@@ -70,7 +71,8 @@ exclude = ["**/node_modules", "**/.venv", "**/generated", "**/__pycache__"]
 executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
 
 [tool.pytest.ini_options]
-addopts = "--import-mode=importlib -ra --strict-markers"
+# Tests may only reach loopback and Unix sockets (pytest-socket): nothing calls the internet.
+addopts = "--import-mode=importlib -ra --strict-markers --disable-socket --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
 testpaths = ["software", "simulation/sd_sim", "tools/tests"]
 pythonpath = ["tools"]     # tools/tests import the scripts in tools/ (not a package)
 norecursedirs = ["node_modules", ".venv", "dist", "build", "generated"]

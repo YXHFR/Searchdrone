@@ -1,0 +1,5660 @@
+{
+  "components": {
+    "schemas": {
+      "AbsoluteLimits": {
+        "additionalProperties": false,
+        "description": "The outer cap the pilot may raise limits to, plus the largest search area (read-only).",
+        "properties": {
+          "max_alt_agl_m": {
+            "default": 300.0,
+            "minimum": 120.0,
+            "title": "Max Alt Agl M",
+            "type": "number"
+          },
+          "max_area_km2": {
+            "default": 4.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Area Km2",
+            "type": "number"
+          },
+          "max_range_from_pilot_m": {
+            "default": 2000.0,
+            "minimum": 500.0,
+            "title": "Max Range From Pilot M",
+            "type": "number"
+          },
+          "max_speed_ms": {
+            "default": 25.0,
+            "minimum": 15.0,
+            "title": "Max Speed Ms",
+            "type": "number"
+          },
+          "min_alt_agl_m": {
+            "default": 5.0,
+            "exclusiveMaximum": 120.0,
+            "minimum": 5.0,
+            "title": "Min Alt Agl M",
+            "type": "number"
+          },
+          "min_battery_rtl_pct": {
+            "default": 15.0,
+            "maximum": 15.0,
+            "minimum": 15.0,
+            "title": "Min Battery Rtl Pct",
+            "type": "number"
+          }
+        },
+        "title": "AbsoluteLimits",
+        "type": "object"
+      },
+      "ActionDispatched": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Action Id",
+            "type": "string"
+          },
+          "action_seq": {
+            "title": "Action Seq",
+            "type": "integer"
+          },
+          "paths": {
+            "additionalProperties": {
+              "enum": [
+                "queued",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "object"
+          },
+          "result": {
+            "const": "dispatched",
+            "default": "dispatched",
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id",
+          "action_seq",
+          "paths"
+        ],
+        "title": "ActionDispatched",
+        "type": "object"
+      },
+      "ActionDispatchedAll": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/ActionDispatchedVehicle"
+            },
+            "title": "Actions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "title": "ActionDispatchedAll",
+        "type": "object"
+      },
+      "ActionDispatchedVehicle": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Action Id",
+            "type": "string"
+          },
+          "action_seq": {
+            "title": "Action Seq",
+            "type": "integer"
+          },
+          "paths": {
+            "additionalProperties": {
+              "enum": [
+                "queued",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "object"
+          },
+          "result": {
+            "const": "dispatched",
+            "default": "dispatched",
+            "title": "Result",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id",
+          "action_seq",
+          "paths",
+          "vehicle_id"
+        ],
+        "title": "ActionDispatchedVehicle",
+        "type": "object"
+      },
+      "ActionOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "stop",
+              "return_home",
+              "resume",
+              "battery_rtl",
+              "watchdog_stop",
+              "watchdog_rtl",
+              "takeover",
+              "handback"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Action Id",
+            "type": "string"
+          },
+          "action_seq": {
+            "title": "Action Seq",
+            "type": "integer"
+          },
+          "by": {
+            "title": "By",
+            "type": "string"
+          },
+          "detail_sv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Sv"
+          },
+          "mode_confirmed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Confirmed"
+          },
+          "mode_requested": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Requested"
+          },
+          "paths": {
+            "additionalProperties": {
+              "enum": [
+                "queued",
+                "unavailable",
+                "sent",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "object"
+          },
+          "result": {
+            "enum": [
+              "dispatched",
+              "acked",
+              "already_active",
+              "failed"
+            ],
+            "title": "Result",
+            "type": "string"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          },
+          "via": {
+            "enum": [
+              "button",
+              "chat",
+              "cli",
+              "system"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_id",
+          "vehicle_id",
+          "action",
+          "action_seq",
+          "via",
+          "by",
+          "result",
+          "mode_requested",
+          "mode_confirmed",
+          "paths",
+          "detail_sv",
+          "t"
+        ],
+        "title": "ActionOutcome",
+        "type": "object"
+      },
+      "ActionRequest": {
+        "additionalProperties": false,
+        "description": "Body of STOP, FLY HOME, Resume and Take over / Hand back.",
+        "properties": {
+          "client_action_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Client Action Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_action_id"
+        ],
+        "title": "ActionRequest",
+        "type": "object"
+      },
+      "AiToggleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AiToggleRequest",
+        "type": "object"
+      },
+      "Annotation": {
+        "additionalProperties": false,
+        "properties": {
+          "area_m2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area M2"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "geometry": {
+            "additionalProperties": true,
+            "title": "Geometry",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "pin",
+              "area"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "kind",
+          "label",
+          "geometry",
+          "created_by",
+          "created_at",
+          "area_m2"
+        ],
+        "title": "Annotation",
+        "type": "object"
+      },
+      "AnnotationCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "additionalProperties": true,
+            "title": "Geometry",
+            "type": "object"
+          },
+          "kind": {
+            "enum": [
+              "pin",
+              "area"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "geometry"
+        ],
+        "title": "AnnotationCreate",
+        "type": "object"
+      },
+      "Approval": {
+        "additionalProperties": false,
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "default_autonomy_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutonomyMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "charter",
+              "command",
+              "resume"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "title": "Requested By",
+            "type": "string"
+          },
+          "required_confirmations": {
+            "items": {
+              "const": "clear_around_drone",
+              "type": "string"
+            },
+            "title": "Required Confirmations",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_version": {
+            "title": "Subject Version",
+            "type": "integer"
+          },
+          "summary_sv": {
+            "title": "Summary Sv",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "kind",
+          "subject_id",
+          "subject_version",
+          "status",
+          "summary_sv",
+          "required_confirmations",
+          "default_autonomy_mode",
+          "gate",
+          "requested_by",
+          "requested_at",
+          "expires_at",
+          "decided_by",
+          "decided_at",
+          "reason"
+        ],
+        "title": "Approval",
+        "type": "object"
+      },
+      "ApprovalDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "autonomy_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutonomyMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmations": {
+            "items": {
+              "const": "clear_around_drone",
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Confirmations",
+            "type": "array"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "subject_version": {
+            "title": "Subject Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision",
+          "subject_version"
+        ],
+        "title": "ApprovalDecisionRequest",
+        "type": "object"
+      },
+      "AutonomyMode": {
+        "description": "Set only by the operator on the charter card; the AI can never change it.",
+        "enum": [
+          "APPROVE_EACH",
+          "WITHIN_CHARTER"
+        ],
+        "title": "AutonomyMode",
+        "type": "string"
+      },
+      "AutonomyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/AutonomyMode"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "AutonomyRequest",
+        "type": "object"
+      },
+      "Charter": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "body": {
+            "$ref": "#/components/schemas/MissionCharter"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fence_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Hash"
+          },
+          "fence_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Verified At"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "install_status": {
+            "enum": [
+              "none",
+              "pending",
+              "installed",
+              "failed"
+            ],
+            "title": "Install Status",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "proposed_by": {
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "superseded",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "version",
+          "status",
+          "body",
+          "proposed_by",
+          "approved_by",
+          "approved_at",
+          "install_status",
+          "fence_hash",
+          "fence_verified_at",
+          "approval_id",
+          "created_at"
+        ],
+        "title": "Charter",
+        "type": "object"
+      },
+      "CharterProposal": {
+        "additionalProperties": false,
+        "description": "A new or changed charter from the pilot (panel) or the AI.\n\nIt has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot\nposition: sending one is rejected (unknown fields are forbidden). Its own charter\nvalues are checked against the mission limits by the server before any card shows.",
+        "properties": {
+          "allowed_skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Skills"
+          },
+          "alt_max_agl_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Max Agl M"
+          },
+          "alt_min_agl_m": {
+            "default": 15,
+            "minimum": 5.0,
+            "title": "Alt Min Agl M",
+            "type": "number"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "area_annotation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Annotation Id"
+          },
+          "base_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version"
+          },
+          "battery_rtl_pct": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 15.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Rtl Pct"
+          },
+          "default_alt_agl_m": {
+            "default": 40,
+            "minimum": 5.0,
+            "title": "Default Alt Agl M",
+            "type": "number"
+          },
+          "geofence_buffer_m": {
+            "default": 20,
+            "maximum": 50.0,
+            "minimum": 5.0,
+            "title": "Geofence Buffer M",
+            "type": "number"
+          },
+          "max_range_from_pilot_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Range From Pilot M"
+          },
+          "max_speed_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Speed Ms"
+          },
+          "reason_sv": {
+            "maxLength": 500,
+            "title": "Reason Sv",
+            "type": "string"
+          },
+          "sectors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Sector"
+                },
+                "maxItems": 52,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sectors"
+          }
+        },
+        "required": [
+          "reason_sv"
+        ],
+        "title": "CharterProposal",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "author_ref": {
+            "title": "Author Ref",
+            "type": "string"
+          },
+          "author_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pilot",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Role"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivery": {
+            "enum": [
+              "n/a",
+              "queued",
+              "delivered",
+              "summarized"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "handled_by": {
+            "anyOf": [
+              {
+                "const": "ground",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handled By"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "question",
+              "status",
+              "proposal"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "parsed_intent": {
+            "anyOf": [
+              {
+                "enum": [
+                  "stop",
+                  "return_home"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed Intent"
+          },
+          "refs": {
+            "additionalProperties": true,
+            "title": "Refs",
+            "type": "object"
+          },
+          "role": {
+            "enum": [
+              "operator",
+              "brain",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "mission_id",
+          "role",
+          "author_ref",
+          "kind",
+          "text",
+          "in_reply_to",
+          "refs",
+          "author_role",
+          "parsed_intent",
+          "handled_by",
+          "delivery",
+          "created_at"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ChatPost": {
+        "additionalProperties": false,
+        "properties": {
+          "annotation_ids": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Annotation Ids",
+            "type": "array"
+          },
+          "client_msg_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Client Msg Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_msg_id",
+          "text"
+        ],
+        "title": "ChatPost",
+        "type": "object"
+      },
+      "Clearance": {
+        "additionalProperties": false,
+        "properties": {
+          "charter_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Charter Id",
+            "type": "string"
+          },
+          "charter_version": {
+            "title": "Charter Version",
+            "type": "integer"
+          },
+          "confirmed_at": {
+            "format": "date-time",
+            "title": "Confirmed At",
+            "type": "string"
+          },
+          "confirmed_by": {
+            "title": "Confirmed By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "consumed",
+              "expired",
+              "invalidated"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "valid_until": {
+            "format": "date-time",
+            "title": "Valid Until",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "charter_id",
+          "charter_version",
+          "status",
+          "confirmed_by",
+          "confirmed_at",
+          "valid_until"
+        ],
+        "title": "Clearance",
+        "type": "object"
+      },
+      "Command": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "backend": {
+            "anyOf": [
+              {
+                "enum": [
+                  "llm",
+                  "grammar",
+                  "scripted",
+                  "rule",
+                  "cloud"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend"
+          },
+          "based_on": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charter_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charter Version"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "issuer_kind": {
+            "enum": [
+              "operator",
+              "brain",
+              "system"
+            ],
+            "title": "Issuer Kind",
+            "type": "string"
+          },
+          "issuer_ref": {
+            "title": "Issuer Ref",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "rationale_sv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale Sv"
+          },
+          "skill": {
+            "title": "Skill",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommandStatus"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "skill",
+          "params",
+          "issuer_kind",
+          "issuer_ref",
+          "backend",
+          "rationale_sv",
+          "in_reply_to",
+          "charter_version",
+          "based_on",
+          "status",
+          "status_reason",
+          "approval_id",
+          "expires_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Command",
+        "type": "object"
+      },
+      "CommandResult": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/Command"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateDecision"
+          }
+        },
+        "required": [
+          "command",
+          "gate"
+        ],
+        "title": "CommandResult",
+        "type": "object"
+      },
+      "CommandStatus": {
+        "enum": [
+          "pending_approval",
+          "rejected_by_gate",
+          "rejected_by_operator",
+          "approval_expired",
+          "dispatched",
+          "received",
+          "accepted",
+          "rejected_onboard",
+          "running",
+          "done",
+          "failed",
+          "superseded",
+          "expired",
+          "cancelled"
+        ],
+        "title": "CommandStatus",
+        "type": "string"
+      },
+      "Event": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "mission_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mission Id"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "severity": {
+            "enum": [
+              "debug",
+              "info",
+              "warning",
+              "critical"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle Id"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "t",
+          "source",
+          "type",
+          "severity",
+          "payload"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "ExecutorState": {
+        "enum": [
+          "IDLE",
+          "PREFLIGHT",
+          "TAKEOFF",
+          "TRANSIT",
+          "SURVEY",
+          "HOLD",
+          "RTL",
+          "LAND",
+          "LANDED",
+          "HELD",
+          "FAILSAFE"
+        ],
+        "title": "ExecutorState",
+        "type": "string"
+      },
+      "Features": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "default": false,
+            "title": "Candidates",
+            "type": "boolean"
+          },
+          "follow_me": {
+            "default": false,
+            "title": "Follow Me",
+            "type": "boolean"
+          },
+          "manual_control": {
+            "default": true,
+            "title": "Manual Control",
+            "type": "boolean"
+          },
+          "order_buttons": {
+            "default": true,
+            "title": "Order Buttons",
+            "type": "boolean"
+          },
+          "voice": {
+            "default": false,
+            "title": "Voice",
+            "type": "boolean"
+          }
+        },
+        "title": "Features",
+        "type": "object"
+      },
+      "GateDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "ALLOW",
+              "REJECT",
+              "PENDING_APPROVAL"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "message_sv": {
+            "title": "Message Sv",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "required_confirmations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Confirmations",
+            "type": "array"
+          },
+          "rule_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rule Ids",
+            "type": "array"
+          },
+          "side": {
+            "enum": [
+              "ground",
+              "onboard"
+            ],
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "reason_codes",
+          "rule_ids",
+          "message_sv",
+          "details",
+          "side"
+        ],
+        "title": "GateDecision",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Health": {
+        "additionalProperties": false,
+        "properties": {
+          "parts": {
+            "additionalProperties": {
+              "enum": [
+                "ok",
+                "degraded",
+                "down"
+              ],
+              "type": "string"
+            },
+            "title": "Parts",
+            "type": "object"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "test_rig": {
+            "title": "Test Rig",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ready",
+          "version",
+          "profile",
+          "parts",
+          "test_rig"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "LatLon": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "LatLon",
+        "type": "object"
+      },
+      "LatLonAlt": {
+        "additionalProperties": false,
+        "properties": {
+          "alt_amsl_m": {
+            "maximum": 9000.0,
+            "minimum": -500.0,
+            "title": "Alt Amsl M",
+            "type": "number"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "alt_amsl_m"
+        ],
+        "title": "LatLonAlt",
+        "type": "object"
+      },
+      "LinkStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "mavlink": {
+            "enum": [
+              "up",
+              "lost"
+            ],
+            "title": "Mavlink",
+            "type": "string"
+          },
+          "onboard_heartbeat_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Onboard Heartbeat Age Ms"
+          },
+          "rtt_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rtt Ms"
+          },
+          "sdlink": {
+            "enum": [
+              "up",
+              "degraded",
+              "lost"
+            ],
+            "title": "Sdlink",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sdlink",
+          "mavlink",
+          "onboard_heartbeat_age_ms",
+          "rtt_ms"
+        ],
+        "title": "LinkStatus",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "login_code": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Login Code"
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4,12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pin"
+          }
+        },
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "ManualControlState": {
+        "additionalProperties": false,
+        "description": "Whether the pilot is steering by hand (Ta över) and since when.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By"
+          },
+          "input_age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Age Ms"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "takeover_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Takeover Id"
+          }
+        },
+        "required": [
+          "active",
+          "takeover_id",
+          "by",
+          "since",
+          "input_age_ms"
+        ],
+        "title": "ManualControlState",
+        "type": "object"
+      },
+      "MapConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "center": {
+            "$ref": "#/components/schemas/LatLon"
+          },
+          "pack_url": {
+            "title": "Pack Url",
+            "type": "string"
+          },
+          "zoom": {
+            "maximum": 22.0,
+            "minimum": 0.0,
+            "title": "Zoom",
+            "type": "number"
+          }
+        },
+        "required": [
+          "pack_url",
+          "center",
+          "zoom"
+        ],
+        "title": "MapConfig",
+        "type": "object"
+      },
+      "Mission": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "active_charter_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Charter Id"
+          },
+          "ai_enabled": {
+            "title": "Ai Enabled",
+            "type": "boolean"
+          },
+          "autonomy_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutonomyMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "closed_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Reason"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "landed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landed At"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SafetyLimits"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "paused_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "operator",
+                  "brain",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused By"
+          },
+          "returning_cause": {
+            "anyOf": [
+              {
+                "enum": [
+                  "brain",
+                  "operator",
+                  "battery",
+                  "failsafe",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returning Cause"
+          },
+          "state_seq": {
+            "title": "State Seq",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MissionState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vehicle_id",
+          "title",
+          "status",
+          "paused_by",
+          "returning_cause",
+          "state_seq",
+          "limits",
+          "active_charter_id",
+          "autonomy_mode",
+          "ai_enabled",
+          "created_by",
+          "created_at",
+          "activated_at",
+          "landed_at",
+          "closed_at",
+          "closed_reason",
+          "notes"
+        ],
+        "title": "Mission",
+        "type": "object"
+      },
+      "MissionCharter": {
+        "additionalProperties": false,
+        "description": "An approved (or proposed) charter. Fields marked *server* are set by the ground station.",
+        "properties": {
+          "ai_silent_timeout_s": {
+            "default": 10,
+            "exclusiveMinimum": 0.0,
+            "maximum": 600.0,
+            "title": "Ai Silent Timeout S",
+            "type": "number"
+          },
+          "allowed_skills": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Allowed Skills",
+            "type": "array"
+          },
+          "alt_max_agl_m": {
+            "default": 120.0,
+            "exclusiveMinimum": 5.0,
+            "title": "Alt Max Agl M",
+            "type": "number"
+          },
+          "alt_min_agl_m": {
+            "default": 15,
+            "minimum": 5.0,
+            "title": "Alt Min Agl M",
+            "type": "number"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "area": {
+            "additionalProperties": true,
+            "title": "Area",
+            "type": "object"
+          },
+          "autonomy_mode": {
+            "$ref": "#/components/schemas/AutonomyMode"
+          },
+          "battery_rtl_pct": {
+            "default": 15.0,
+            "maximum": 90.0,
+            "minimum": 15.0,
+            "title": "Battery Rtl Pct",
+            "type": "number"
+          },
+          "charter_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Charter Id",
+            "type": "string"
+          },
+          "default_alt_agl_m": {
+            "default": 40,
+            "minimum": 5.0,
+            "title": "Default Alt Agl M",
+            "type": "number"
+          },
+          "fence_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Hash"
+          },
+          "geofence_buffer_m": {
+            "default": 20,
+            "maximum": 50.0,
+            "minimum": 5.0,
+            "title": "Geofence Buffer M",
+            "type": "number"
+          },
+          "home": {
+            "$ref": "#/components/schemas/LatLonAlt"
+          },
+          "max_range_from_pilot_m": {
+            "default": 500.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Range From Pilot M",
+            "type": "number"
+          },
+          "max_speed_ms": {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Speed Ms",
+            "type": "number"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "on_ai_silent": {
+            "default": "continue_plan",
+            "enum": [
+              "continue_plan",
+              "hold",
+              "return_home"
+            ],
+            "title": "On Ai Silent",
+            "type": "string"
+          },
+          "pilot_position": {
+            "$ref": "#/components/schemas/LatLon"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/Sector"
+            },
+            "maxItems": 52,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "charter_id",
+          "mission_id",
+          "vehicle_id",
+          "version",
+          "area",
+          "home",
+          "pilot_position",
+          "allowed_skills",
+          "autonomy_mode",
+          "sectors",
+          "fence_hash",
+          "approved_by",
+          "approved_at"
+        ],
+        "title": "MissionCharter",
+        "type": "object"
+      },
+      "MissionDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "active_command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Command"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Charter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clearance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Clearance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorLatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mission": {
+            "$ref": "#/components/schemas/Mission"
+          },
+          "pending_approvals": {
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            },
+            "title": "Pending Approvals",
+            "type": "array"
+          },
+          "sectors": {
+            "additionalProperties": true,
+            "title": "Sectors",
+            "type": "object"
+          }
+        },
+        "required": [
+          "mission",
+          "charter",
+          "sectors",
+          "pending_approvals",
+          "active_command",
+          "latch",
+          "clearance"
+        ],
+        "title": "MissionDetail",
+        "type": "object"
+      },
+      "MissionEndRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "MissionEndRequest",
+        "type": "object"
+      },
+      "MissionFile": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "rel_path": {
+            "title": "Rel Path",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "rel_path",
+          "bytes",
+          "sha256",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "MissionFile",
+        "type": "object"
+      },
+      "MissionPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "MissionPatch",
+        "type": "object"
+      },
+      "MissionState": {
+        "enum": [
+          "DRAFT",
+          "CHARTER_PROPOSED",
+          "READY",
+          "ACTIVE",
+          "PAUSED",
+          "HELD",
+          "FAILSAFE",
+          "RETURNING",
+          "LANDED",
+          "CLOSED"
+        ],
+        "title": "MissionState",
+        "type": "string"
+      },
+      "MissionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MissionState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vehicle_id",
+          "title",
+          "status",
+          "created_at"
+        ],
+        "title": "MissionSummary",
+        "type": "object"
+      },
+      "OperatorCommandRequest": {
+        "additionalProperties": false,
+        "description": "An order from the pilot, e.g. an order button. Same gate and latch as the AI's orders.",
+        "properties": {
+          "client_command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Client Command Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "maxProperties": 32,
+            "title": "Params",
+            "type": "object"
+          },
+          "rationale_sv": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale Sv"
+          },
+          "skill": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Skill",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_command_id",
+          "skill",
+          "params"
+        ],
+        "title": "OperatorCommandRequest",
+        "type": "object"
+      },
+      "OperatorLatch": {
+        "additionalProperties": false,
+        "description": "Set by STOP, FLY HOME, the battery guard or the watchdog. Only Resume lifts it.",
+        "properties": {
+          "action": {
+            "enum": [
+              "stop",
+              "return_home",
+              "battery_rtl",
+              "watchdog_stop",
+              "watchdog_rtl"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_seq": {
+            "title": "Action Seq",
+            "type": "integer"
+          },
+          "set_at": {
+            "format": "date-time",
+            "title": "Set At",
+            "type": "string"
+          },
+          "set_by": {
+            "title": "Set By",
+            "type": "string"
+          },
+          "set_mono_ms": {
+            "title": "Set Mono Ms",
+            "type": "integer"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "const": "battery_rtl",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle_id",
+          "action",
+          "action_seq",
+          "set_by",
+          "set_at",
+          "set_mono_ms"
+        ],
+        "title": "OperatorLatch",
+        "type": "object"
+      },
+      "PanelConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "default_vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Default Vehicle Id",
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/Features"
+          },
+          "limits_absolute": {
+            "$ref": "#/components/schemas/AbsoluteLimits"
+          },
+          "limits_default": {
+            "$ref": "#/components/schemas/SafetyLimits"
+          },
+          "map": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MapConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote": {
+            "default": false,
+            "title": "Remote",
+            "type": "boolean"
+          },
+          "vehicle_kind": {
+            "enum": [
+              "sim",
+              "real"
+            ],
+            "title": "Vehicle Kind",
+            "type": "string"
+          },
+          "video": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VideoConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "default_vehicle_id",
+          "map",
+          "video",
+          "vehicle_kind",
+          "limits_default",
+          "limits_absolute",
+          "features"
+        ],
+        "title": "PanelConfig",
+        "type": "object"
+      },
+      "PartStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "state": {
+            "enum": [
+              "ok",
+              "degraded",
+              "down"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "since"
+        ],
+        "title": "PartStatus",
+        "type": "object"
+      },
+      "SafetyLimits": {
+        "additionalProperties": false,
+        "description": "Per-mission limits (outer layer). Heights are metres above the home point.",
+        "properties": {
+          "battery_rtl_pct": {
+            "default": 15.0,
+            "maximum": 90.0,
+            "minimum": 15.0,
+            "title": "Battery Rtl Pct",
+            "type": "number"
+          },
+          "max_alt_agl_m": {
+            "default": 120.0,
+            "exclusiveMinimum": 5.0,
+            "title": "Max Alt Agl M",
+            "type": "number"
+          },
+          "max_range_from_pilot_m": {
+            "default": 500.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Range From Pilot M",
+            "type": "number"
+          },
+          "max_speed_ms": {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Speed Ms",
+            "type": "number"
+          }
+        },
+        "title": "SafetyLimits",
+        "type": "object"
+      },
+      "Sector": {
+        "additionalProperties": false,
+        "properties": {
+          "area": {
+            "additionalProperties": true,
+            "title": "Area",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "order_idx": {
+            "minimum": 0.0,
+            "title": "Order Idx",
+            "type": "integer"
+          },
+          "sector_id": {
+            "pattern": "^[A-Z]{1,2}$",
+            "title": "Sector Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sector_id",
+          "name",
+          "area",
+          "order_idx"
+        ],
+        "title": "Sector",
+        "type": "object"
+      },
+      "Session": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_mode": {
+            "enum": [
+              "local",
+              "pin",
+              "cli",
+              "cloudflare_access"
+            ],
+            "title": "Auth Mode",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "issuer_ref": {
+            "title": "Issuer Ref",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "pilot",
+              "observer"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "issuer_ref",
+          "display_name",
+          "auth_mode",
+          "expires_at"
+        ],
+        "title": "Session",
+        "type": "object"
+      },
+      "StateRef": {
+        "additionalProperties": false,
+        "description": "Which state picture an order was based on (onboard StateSnapshot epoch and sequence).",
+        "properties": {
+          "state_epoch": {
+            "title": "State Epoch",
+            "type": "integer"
+          },
+          "state_seq": {
+            "title": "State Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state_epoch",
+          "state_seq"
+        ],
+        "title": "StateRef",
+        "type": "object"
+      },
+      "StateSnapshot": {
+        "additionalProperties": false,
+        "description": "Onboard -> ground, 2 Hz, not reliable. What only the onboard computer knows.",
+        "properties": {
+          "active_command_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Command Id"
+          },
+          "active_skill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Skill"
+          },
+          "alt_rel_home_m": {
+            "title": "Alt Rel Home M",
+            "type": "number"
+          },
+          "armed": {
+            "title": "Armed",
+            "type": "boolean"
+          },
+          "battery_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Pct"
+          },
+          "battery_rtl_active": {
+            "title": "Battery Rtl Active",
+            "type": "boolean"
+          },
+          "charter_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charter Id"
+          },
+          "charter_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charter Version"
+          },
+          "clearance_available": {
+            "title": "Clearance Available",
+            "type": "boolean"
+          },
+          "control_suspended": {
+            "title": "Control Suspended",
+            "type": "boolean"
+          },
+          "executor_state": {
+            "$ref": "#/components/schemas/ExecutorState"
+          },
+          "expected_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Mode"
+          },
+          "flight_mode": {
+            "title": "Flight Mode",
+            "type": "string"
+          },
+          "groundspeed_ms": {
+            "title": "Groundspeed Ms",
+            "type": "number"
+          },
+          "heading_deg": {
+            "title": "Heading Deg",
+            "type": "number"
+          },
+          "held_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "operator_stop",
+                  "operator_home",
+                  "operator_manual",
+                  "system_battery",
+                  "system_watchdog",
+                  "external",
+                  "onboard_restart",
+                  "fc_silent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held By"
+          },
+          "hold_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ai_hold",
+                  "skill_done",
+                  "operator_released",
+                  "limit",
+                  "link_loss",
+                  "ai_silent",
+                  "startup",
+                  "manual_input_lost"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Reason"
+          },
+          "last_transition_state_seq": {
+            "title": "Last Transition State Seq",
+            "type": "integer"
+          },
+          "limits_active": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits Active",
+            "type": "array"
+          },
+          "manual_control": {
+            "default": false,
+            "title": "Manual Control",
+            "type": "boolean"
+          },
+          "position": {
+            "$ref": "#/components/schemas/LatLonAlt"
+          },
+          "preflight": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Preflight",
+            "type": "object"
+          },
+          "preflight_ok": {
+            "title": "Preflight Ok",
+            "type": "boolean"
+          },
+          "progress_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct"
+          },
+          "resume_available": {
+            "title": "Resume Available",
+            "type": "boolean"
+          },
+          "sector_progress": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Sector Progress",
+            "type": "object"
+          },
+          "state_epoch": {
+            "title": "State Epoch",
+            "type": "integer"
+          },
+          "state_seq": {
+            "title": "State Seq",
+            "type": "integer"
+          },
+          "stop_latch": {
+            "title": "Stop Latch",
+            "type": "boolean"
+          },
+          "tick_ms_p95": {
+            "title": "Tick Ms P95",
+            "type": "number"
+          }
+        },
+        "required": [
+          "state_seq",
+          "state_epoch",
+          "last_transition_state_seq",
+          "executor_state",
+          "hold_reason",
+          "held_by",
+          "control_suspended",
+          "expected_mode",
+          "flight_mode",
+          "armed",
+          "position",
+          "alt_rel_home_m",
+          "groundspeed_ms",
+          "heading_deg",
+          "battery_pct",
+          "active_command_id",
+          "active_skill",
+          "progress_pct",
+          "resume_available",
+          "charter_id",
+          "charter_version",
+          "clearance_available",
+          "preflight_ok",
+          "preflight",
+          "limits_active",
+          "stop_latch",
+          "battery_rtl_active",
+          "tick_ms_p95",
+          "sector_progress"
+        ],
+        "title": "StateSnapshot",
+        "type": "object"
+      },
+      "SystemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "brain_engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cloud",
+                  "local"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brain Engine"
+          },
+          "internet": {
+            "enum": [
+              "up",
+              "down",
+              "unknown"
+            ],
+            "title": "Internet",
+            "type": "string"
+          },
+          "operator_present": {
+            "title": "Operator Present",
+            "type": "boolean"
+          },
+          "parts": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PartStatus"
+            },
+            "title": "Parts",
+            "type": "object"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parts",
+          "internet",
+          "operator_present",
+          "version",
+          "profile"
+        ],
+        "title": "SystemStatus",
+        "type": "object"
+      },
+      "Telemetry": {
+        "additionalProperties": false,
+        "description": "From the ground station's own MAVLink channel.",
+        "properties": {
+          "alt_amsl_m": {
+            "title": "Alt Amsl M",
+            "type": "number"
+          },
+          "alt_rel_home_m": {
+            "title": "Alt Rel Home M",
+            "type": "number"
+          },
+          "armed": {
+            "title": "Armed",
+            "type": "boolean"
+          },
+          "battery_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Pct"
+          },
+          "battery_v": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery V"
+          },
+          "climb_ms": {
+            "title": "Climb Ms",
+            "type": "number"
+          },
+          "dist_to_pilot_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dist To Pilot M"
+          },
+          "flight_mode": {
+            "title": "Flight Mode",
+            "type": "string"
+          },
+          "gps_fix": {
+            "title": "Gps Fix",
+            "type": "integer"
+          },
+          "gps_sats": {
+            "title": "Gps Sats",
+            "type": "integer"
+          },
+          "groundspeed_ms": {
+            "title": "Groundspeed Ms",
+            "type": "number"
+          },
+          "heading_deg": {
+            "title": "Heading Deg",
+            "type": "number"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LatLon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "landed_state": {
+            "title": "Landed State",
+            "type": "string"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "time_boot_ms": {
+            "title": "Time Boot Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "t",
+          "time_boot_ms",
+          "lat",
+          "lon",
+          "alt_amsl_m",
+          "alt_rel_home_m",
+          "heading_deg",
+          "groundspeed_ms",
+          "climb_ms",
+          "battery_pct",
+          "battery_v",
+          "flight_mode",
+          "armed",
+          "landed_state",
+          "gps_fix",
+          "gps_sats",
+          "home",
+          "dist_to_pilot_m"
+        ],
+        "title": "Telemetry",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "Vehicle": {
+        "additionalProperties": false,
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "sim",
+              "real"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mav_sysid": {
+            "maximum": 255.0,
+            "minimum": 1.0,
+            "title": "Mav Sysid",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "mav_sysid",
+          "connected"
+        ],
+        "title": "Vehicle",
+        "type": "object"
+      },
+      "VehicleLive": {
+        "additionalProperties": false,
+        "properties": {
+          "airborne": {
+            "title": "Airborne",
+            "type": "boolean"
+          },
+          "in_flight": {
+            "title": "In Flight",
+            "type": "boolean"
+          },
+          "latch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorLatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "link": {
+            "$ref": "#/components/schemas/LinkStatus"
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualControlState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StateSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Telemetry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle_id",
+          "telemetry",
+          "snapshot",
+          "link",
+          "latch",
+          "airborne",
+          "in_flight"
+        ],
+        "title": "VehicleLive",
+        "type": "object"
+      },
+      "VideoConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "hls_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hls Url"
+          },
+          "whep_url": {
+            "title": "Whep Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "whep_url",
+          "hls_url"
+        ],
+        "title": "VideoConfig",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Searchdrone panel API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/actions/return_home_all": {
+      "post": {
+        "operationId": "post_return_home_all_api_v1_actions_return_home_all_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatchedAll"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Return Home All"
+      }
+    },
+    "/api/v1/actions/stop_all": {
+      "post": {
+        "operationId": "post_stop_all_api_v1_actions_stop_all_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatchedAll"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Stop All"
+      }
+    },
+    "/api/v1/annotations/{annotation_id}": {
+      "delete": {
+        "operationId": "delete_annotation_api_v1_annotations__annotation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "annotation_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Annotation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Annotation"
+      }
+    },
+    "/api/v1/approvals/{approval_id}/decision": {
+      "post": {
+        "operationId": "post_decision_api_v1_approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Decision"
+      }
+    },
+    "/api/v1/commands/{command_id}/cancel": {
+      "post": {
+        "operationId": "post_cancel_api_v1_commands__command_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Command"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Cancel"
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "get_health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Health"
+      }
+    },
+    "/api/v1/missions": {
+      "get": {
+        "operationId": "get_missions_api_v1_missions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z_]{3,20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MissionSummary"
+                  },
+                  "title": "Response Get Missions Api V1 Missions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Missions"
+      }
+    },
+    "/api/v1/missions/active": {
+      "get": {
+        "operationId": "get_mission_active_api_v1_missions_active_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "vehicle_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vehicle Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "none"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Mission Active"
+      }
+    },
+    "/api/v1/missions/{mission_id}": {
+      "get": {
+        "operationId": "get_mission_api_v1_missions__mission_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Mission"
+      },
+      "patch": {
+        "operationId": "patch_mission_api_v1_missions__mission_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MissionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Mission"
+      }
+    },
+    "/api/v1/missions/{mission_id}/ai": {
+      "put": {
+        "operationId": "put_ai_api_v1_missions__mission_id__ai_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiToggleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ai"
+      }
+    },
+    "/api/v1/missions/{mission_id}/annotations": {
+      "get": {
+        "operationId": "get_annotations_api_v1_missions__mission_id__annotations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Annotation"
+                  },
+                  "title": "Response Get Annotations Api V1 Missions  Mission Id  Annotations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Annotations"
+      },
+      "post": {
+        "operationId": "post_annotation_api_v1_missions__mission_id__annotations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnotationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Annotation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Annotation"
+      }
+    },
+    "/api/v1/missions/{mission_id}/approvals": {
+      "get": {
+        "operationId": "get_approvals_api_v1_missions__mission_id__approvals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Approval"
+                  },
+                  "title": "Response Get Approvals Api V1 Missions  Mission Id  Approvals Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Approvals"
+      }
+    },
+    "/api/v1/missions/{mission_id}/autonomy": {
+      "put": {
+        "operationId": "put_autonomy_api_v1_missions__mission_id__autonomy_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutonomyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Autonomy"
+      }
+    },
+    "/api/v1/missions/{mission_id}/candidates": {
+      "get": {
+        "operationId": "get_candidates_api_v1_missions__mission_id__candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "items": {},
+                    "type": "array"
+                  },
+                  "title": "Response Get Candidates Api V1 Missions  Mission Id  Candidates Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Candidates"
+      }
+    },
+    "/api/v1/missions/{mission_id}/charters": {
+      "get": {
+        "operationId": "get_charters_api_v1_missions__mission_id__charters_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Charter"
+                  },
+                  "title": "Response Get Charters Api V1 Missions  Mission Id  Charters Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Charters"
+      },
+      "post": {
+        "operationId": "post_charter_api_v1_missions__mission_id__charters_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharterProposal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Charter"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Charter"
+      }
+    },
+    "/api/v1/missions/{mission_id}/chat": {
+      "get": {
+        "operationId": "get_chat_api_v1_missions__mission_id__chat_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Chat Api V1 Missions  Mission Id  Chat Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chat"
+      },
+      "post": {
+        "operationId": "post_chat_api_v1_missions__mission_id__chat_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatPost"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatMessage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Chat"
+      }
+    },
+    "/api/v1/missions/{mission_id}/clearance": {
+      "post": {
+        "operationId": "post_clearance_api_v1_missions__mission_id__clearance_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Clearance"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Clearance"
+      }
+    },
+    "/api/v1/missions/{mission_id}/commands": {
+      "get": {
+        "operationId": "get_commands_api_v1_missions__mission_id__commands_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Command"
+                  },
+                  "title": "Response Get Commands Api V1 Missions  Mission Id  Commands Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Commands"
+      },
+      "post": {
+        "operationId": "post_command_api_v1_missions__mission_id__commands_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorCommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Command"
+      }
+    },
+    "/api/v1/missions/{mission_id}/detections": {
+      "get": {
+        "operationId": "get_detections_api_v1_missions__mission_id__detections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {},
+                  "title": "Response Get Detections Api V1 Missions  Mission Id  Detections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Detections"
+      }
+    },
+    "/api/v1/missions/{mission_id}/end": {
+      "post": {
+        "operationId": "post_end_api_v1_missions__mission_id__end_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MissionEndRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post End"
+      }
+    },
+    "/api/v1/missions/{mission_id}/events": {
+      "get": {
+        "operationId": "get_events_api_v1_missions__mission_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "title": "Response Get Events Api V1 Missions  Mission Id  Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Events"
+      }
+    },
+    "/api/v1/missions/{mission_id}/files": {
+      "get": {
+        "operationId": "get_files_api_v1_missions__mission_id__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MissionFile"
+                  },
+                  "title": "Response Get Files Api V1 Missions  Mission Id  Files Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Files"
+      }
+    },
+    "/api/v1/missions/{mission_id}/files/{file_id}": {
+      "get": {
+        "operationId": "get_file_api_v1_missions__mission_id__files__file_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "File Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get File"
+      }
+    },
+    "/api/v1/missions/{mission_id}/gate_decisions": {
+      "get": {
+        "operationId": "get_gate_decisions_api_v1_missions__mission_id__gate_decisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "command_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Command Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GateDecision"
+                  },
+                  "title": "Response Get Gate Decisions Api V1 Missions  Mission Id  Gate Decisions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Gate Decisions"
+      }
+    },
+    "/api/v1/missions/{mission_id}/limits": {
+      "put": {
+        "operationId": "put_limits_api_v1_missions__mission_id__limits_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SafetyLimits"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Limits"
+      }
+    },
+    "/api/v1/missions/{mission_id}/sectors": {
+      "get": {
+        "operationId": "get_sectors_api_v1_missions__mission_id__sectors_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Sectors Api V1 Missions  Mission Id  Sectors Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Sectors"
+      }
+    },
+    "/api/v1/missions/{mission_id}/track": {
+      "get": {
+        "operationId": "get_track_api_v1_missions__mission_id__track_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_points",
+            "required": false,
+            "schema": {
+              "default": 5000,
+              "maximum": 50000,
+              "minimum": 2,
+              "title": "Max Points",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Track Api V1 Missions  Mission Id  Track Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Track"
+      }
+    },
+    "/api/v1/panel/config": {
+      "get": {
+        "operationId": "get_panel_config_api_v1_panel_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Panel Config"
+      }
+    },
+    "/api/v1/session": {
+      "get": {
+        "operationId": "get_session_api_v1_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Session"
+      },
+      "post": {
+        "operationId": "post_session_api_v1_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Session"
+      }
+    },
+    "/api/v1/session/logout": {
+      "post": {
+        "operationId": "post_logout_api_v1_session_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Post Logout"
+      }
+    },
+    "/api/v1/system/status": {
+      "get": {
+        "operationId": "get_system_status_api_v1_system_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get System Status"
+      }
+    },
+    "/api/v1/vehicles": {
+      "get": {
+        "operationId": "get_vehicles_api_v1_vehicles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Vehicle"
+                  },
+                  "title": "Response Get Vehicles Api V1 Vehicles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Vehicles"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/actions/resume": {
+      "post": {
+        "operationId": "post_resume_api_v1_vehicles__vehicle_id__actions_resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatched"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Resume"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/actions/return_home": {
+      "post": {
+        "operationId": "post_return_home_api_v1_vehicles__vehicle_id__actions_return_home_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatched"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Return Home"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/actions/stop": {
+      "post": {
+        "operationId": "post_stop_api_v1_vehicles__vehicle_id__actions_stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatched"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Stop"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/actions/{action_id}": {
+      "get": {
+        "operationId": "get_action_api_v1_vehicles__vehicle_id__actions__action_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Action Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionOutcome"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Action"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/missions/open": {
+      "post": {
+        "operationId": "post_mission_open_api_v1_vehicles__vehicle_id__missions_open_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Mission"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Mission Open"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/state": {
+      "get": {
+        "operationId": "get_vehicle_state_api_v1_vehicles__vehicle_id__state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VehicleLive"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Vehicle State"
+      }
+    },
+    "/api/v1/video/{vehicle_id}/main/hls/{path}": {
+      "get": {
+        "operationId": "hls_api_v1_video__vehicle_id__main_hls__path__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hls"
+      }
+    },
+    "/api/v1/video/{vehicle_id}/main/whep": {
+      "delete": {
+        "operationId": "whep_delete_api_v1_video__vehicle_id__main_whep_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Whep Delete"
+      },
+      "patch": {
+        "operationId": "whep_patch_api_v1_video__vehicle_id__main_whep_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Whep Patch"
+      },
+      "post": {
+        "operationId": "whep_post_api_v1_video__vehicle_id__main_whep_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Whep Post"
+      }
+    }
+  }
+}
