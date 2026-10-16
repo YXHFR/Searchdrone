@@ -38,3 +38,8 @@ All notable changes to this project are listed here. The format follows
   license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
   Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
   `gate/pr-title` and `gate/review`, Dependabot and a pull request template.
+- Hardware gate: `hardware/drone.yaml` and `hardware/limits.yaml` (simulated quad, about
+  2.3 kg and 33 min hover), `sd_hwcalc` with `just hw-check` for mass, hover power, hover
+  time and thrust margins, and the required check `hardware-ok`. Every other file under
+  `hardware/` fails closed until its own check exists. Changes to `hardware/` and
+  `.github/CODEOWNERS` also need the owner's OK on the exact head commit (`gate/owner`).

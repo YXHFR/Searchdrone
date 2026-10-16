@@ -1,0 +1,30 @@
+# Searchdrone airframe description: the single source for mass, propellers and battery.
+# Checked by `just hw-check` (sd_hwcalc) against hardware/limits.yaml; the simulator model
+# reads mass and propeller size from this file. Units are in the field names.
+schema_version: 1
+name: sd_quad14
+revision: "A-sim"
+frame_mass_kg: 0.55
+avionics_mass_kg: 0.25        # flight controller, ESCs, GPS, companion computer, radio
+avionics_power_w: 12.0
+payload_mass_kg: 0.05         # simple camera
+motors:
+  count: 4
+  mass_kg: 0.12               # per motor
+  max_thrust_kg_per_motor: 1.6
+props:
+  count: 4                    # must equal motors.count
+  diameter_in: 14
+  mass_kg: 0.025              # per propeller
+battery:
+  chemistry: li-ion
+  cells_series: 6
+  cells_parallel: 2
+  capacity_mah: 9000          # whole pack
+  nominal_cell_v: 3.6
+  mass_kg: 0.87
+  usable_fraction: 0.80
+propulsion:
+  efficiency_total: 0.40      # rotor figure of merit x motor x ESC
+environment:
+  air_density_kg_m3: 1.225

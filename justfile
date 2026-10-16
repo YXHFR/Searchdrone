@@ -244,7 +244,8 @@ maps-fetch: (_not-built "B1-11")
 # --- hardware, acceptance and release ------------------------------------------------
 
 # Check mass and flight time against hardware/drone.yaml
-hw-check: (_not-built "B0-06")
+hw-check:
+    uv run --package sd-hwcalc python -m sd_hwcalc check hardware/drone.yaml --limits hardware/limits.yaml
 
 # Acceptance checks for a release (keys: phase, sha)
 accept *args:

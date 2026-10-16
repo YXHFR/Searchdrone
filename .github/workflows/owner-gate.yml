@@ -1,0 +1,86 @@
+# The owner's approval for hardware/ and .github/CODEOWNERS. Pull requests are opened
+# with the owner's account, so GitHub's Approve cannot be used; the owner's OK is the
+# label `owner-ok`, bound to the head commit (new commits remove it). This job writes the
+# commit status `gate/owner` on the PR's head: success when no protected path changed or
+# the owner approved exactly this commit. The logic is in tools/check_owner_gate.py,
+# always taken from the base branch; no code from the pull request is checked out or run.
+name: owner-gate
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] statuses on head SHA; no PR code is executed
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: owner-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  gate-owner:
+    name: gate/owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Check out the gate script from the base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/check_owner_gate.py
+          sparse-checkout-cone-mode: false
+      - name: Evaluate the owner's approval
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          SENDER: ${{ github.event.sender.login }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+          OWNER: ${{ github.repository_owner }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        # The PR (head and labels) is fetched fresh, never taken from the event.
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          head_sha="$(jq -r .head.sha "$RUNNER_TEMP/pr.json")"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
+            > "$RUNNER_TEMP/files.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$head_sha/statuses?per_page=100" \
+            > "$RUNNER_TEMP/statuses.json"
+          python3 tools/check_owner_gate.py --action "$ACTION" --label "$LABEL" \
+            --sender "$SENDER" --sender-type "$SENDER_TYPE" --owner "$OWNER" \
+            --event-head-sha "$EVENT_HEAD" --pr "$RUNNER_TEMP/pr.json" \
+            --files "$RUNNER_TEMP/files.json" --statuses "$RUNNER_TEMP/statuses.json" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Remove a stale or untrusted owner-ok label
+        if: ${{ steps.gate.outputs.remove_label == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/owner-ok" >/dev/null 2>&1 \
+            || echo "owner-ok was not on the pull request"
+      - name: Publish gate/owner
+        # Always runs: if the evaluation failed, the status becomes "error" so an older
+        # success on the same commit cannot stay in place.
+        if: ${{ always() && steps.gate.outputs.head_sha != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+          OUTCOME: ${{ steps.gate.outcome }}
+          STATE: ${{ steps.gate.outputs.state }}
+          DESC: ${{ steps.gate.outputs.description }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" != success ] || [ -z "$STATE" ]; then
+            STATE=error
+            DESC="Owner gate could not evaluate the pull request; see the run"
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$STATE" -f context="gate/owner" -f description="$DESC" \
+            -f target_url="$RUN_URL"

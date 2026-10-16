@@ -817,6 +817,16 @@ requires-dist = [
 name = "sd-hwcalc"
 version = "0.0.0"
 source = { editable = "software/hwcalc" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
 
 [[package]]
 name = "sd-link"
