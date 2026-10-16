@@ -3854,6 +3854,12 @@
         "center": {
           "$ref": "#/$defs/LatLon"
         },
+        "maxzoom": {
+          "default": 15,
+          "maximum": 22,
+          "minimum": 0,
+          "type": "integer"
+        },
         "pack_url": {
           "type": "string"
         },

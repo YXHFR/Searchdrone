@@ -103,6 +103,7 @@ class FakeTools:
 def _settings(**kw: Any) -> fetch.Settings:
     base: dict[str, Any] = {
         "build": "20260811",
+        "etag": '"abc-1"',
         "name": "demo",
         "maxzoom": 15,
         "bbox": (149.13, -35.39, 149.20, -35.33),
@@ -112,7 +113,9 @@ def _settings(**kw: Any) -> fetch.Settings:
     return fetch.Settings(**base)
 
 
-def _run(tmp_path: Path, s: fetch.Settings, tools: FakeTools, status: int = 206) -> Path | None:
+def _run(
+    tmp_path: Path, s: fetch.Settings, tools: FakeTools, status: int = 206, etag: str = '"abc-1"'
+) -> Path | None:
     return fetch.fetch(
         s,
         tmp_path / "data" / "tiles",
@@ -120,7 +123,7 @@ def _run(tmp_path: Path, s: fetch.Settings, tools: FakeTools, status: int = 206)
         bin_dir=tmp_path / "bin",
         runner=tools,
         fetch_url=lambda _: TARBALL,
-        status=lambda _: status,
+        status=lambda _: (status, etag),
         now=lambda: dt.datetime(2026, 10, 16, tzinfo=dt.UTC),
     )
 
@@ -130,6 +133,7 @@ def _run(tmp_path: Path, s: fetch.Settings, tools: FakeTools, status: int = 206)
 
 def test_defaults_are_cmac_plus_minus_3_km() -> None:
     s = fetch.load_settings(ROOT, {})
+    assert s.etag
     assert (s.build, s.name, s.maxzoom, s.dry) == ("20260811", "demo", 15, False)
     min_lon, min_lat, max_lon, max_lat = s.bbox
     assert min_lat < CMAC_LAT < max_lat and min_lon < CMAC_LON < max_lon
@@ -140,9 +144,10 @@ def test_defaults_are_cmac_plus_minus_3_km() -> None:
 
 def test_keys_override_config() -> None:
     s = fetch.load_settings(
-        ROOT, {"bbox": "149.1,-35.4,149.2,-35.3", "maxzoom": "13", "name": "sim-area", "dry": "1"}
+        ROOT,
+        {"bbox": "149.14,-35.38,149.19,-35.34", "maxzoom": "13", "name": "sim-area", "dry": "1"},
     )
-    assert s.bbox == (149.1, -35.4, 149.2, -35.3)
+    assert s.bbox == (149.14, -35.38, 149.19, -35.34)
     assert (s.maxzoom, s.name, s.dry) == (13, "sim-area", True)
 
 
@@ -182,6 +187,9 @@ def test_bad_arguments_exit_2(
         {"maxzoom": "x"},
         {"name": "../evil"},
         {"name": ""},
+        {"name": "-demo"},
+        {"name": "Demo"},
+        {"name": "a" * 65},
     ],
 )
 def test_bad_values_exit_2(args: dict[str, str]) -> None:
@@ -213,7 +221,7 @@ def test_fetch_writes_pack_assets_and_manifest(tmp_path: Path) -> None:
     assert out == tiles / "demo.pmtiles"
     assert out.read_bytes() == FIXTURE.read_bytes()
     extract = next(c for c in tools.commands if c[1] == "extract")
-    assert extract[0] == str(tmp_path / "bin" / "pmtiles")
+    assert extract[0] == str(tmp_path / "bin" / "sd-pmtiles-9.9.9")
     assert extract[2] == "https://example.invalid/20260811.pmtiles"
     assert extract[4:] == ["--bbox=149.130000,-35.390000,149.200000,-35.330000", "--maxzoom=15"]
     for rel, data in ASSET_FILES.items():
@@ -226,8 +234,8 @@ def test_fetch_writes_pack_assets_and_manifest(tmp_path: Path) -> None:
     assert manifest["created_at"] == "2026-10-16T00:00:00+00:00"
     assert not list(tiles.glob(".*")), "no temporary files are left"
     # The program was installed from the checked archive, executable.
-    assert (tmp_path / "bin" / "pmtiles").read_bytes() == PROGRAM
-    assert (tmp_path / "bin" / "pmtiles").stat().st_mode & 0o777 == 0o755
+    assert (tmp_path / "bin" / "sd-pmtiles-9.9.9").read_bytes() == PROGRAM
+    assert (tmp_path / "bin" / "sd-pmtiles-9.9.9").stat().st_mode & 0o777 == 0o755
 
 
 def test_the_ground_station_reads_the_fetched_pack(tmp_path: Path) -> None:
@@ -256,6 +264,24 @@ def test_gone_build_exits_2_with_the_message(tmp_path: Path) -> None:
         "Kartbygget 20260811 finns inte längre. Välj ett nytt på "
         "https://maps.protomaps.com/builds och ändra protomaps_build."
     )
+
+
+def test_changed_build_is_refused(tmp_path: Path) -> None:
+    tools = FakeTools()
+    with pytest.raises(fetch.FetchError, match="har ändrats") as err:
+        _run(tmp_path, _settings(), tools, etag='"other-2"')
+    assert err.value.code == 1
+    assert not any(c[1] == "extract" for c in tools.commands)
+
+
+def test_weak_etag_matches(tmp_path: Path) -> None:
+    assert _run(tmp_path, _settings(), FakeTools(), etag='W/"abc-1"') is not None
+
+
+def test_a_pmtiles_of_the_user_is_left_alone(tmp_path: Path) -> None:
+    (tmp_path / "pmtiles").write_bytes(b"someone else's program")
+    fetch.ensure_pmtiles(_lock()["go_pmtiles"], tmp_path, lambda _: TARBALL)
+    assert (tmp_path / "pmtiles").read_bytes() == b"someone else's program"
 
 
 def test_other_http_errors_exit_1(tmp_path: Path) -> None:
@@ -298,14 +324,14 @@ def test_wrong_archive_checksum_installs_nothing(tmp_path: Path) -> None:
     lock = _lock()["go_pmtiles"]
     with pytest.raises(fetch.FetchError, match="kontrollsumman"):
         fetch.ensure_pmtiles(lock, tmp_path, lambda _: TARBALL + b"x")
-    assert not (tmp_path / "pmtiles").exists()
+    assert not (tmp_path / "sd-pmtiles-9.9.9").exists()
 
 
 def test_wrong_program_checksum_installs_nothing(tmp_path: Path) -> None:
     lock = _lock()["go_pmtiles"] | {"binary_sha256": "0" * 64}
     with pytest.raises(fetch.FetchError, match="för programmet"):
         fetch.ensure_pmtiles(lock, tmp_path, lambda _: TARBALL)
-    assert not (tmp_path / "pmtiles").exists()
+    assert not (tmp_path / "sd-pmtiles-9.9.9").exists()
 
 
 def test_symlink_in_archive_is_refused(tmp_path: Path) -> None:
@@ -316,13 +342,14 @@ def test_symlink_in_archive_is_refused(tmp_path: Path) -> None:
 
 
 def test_installed_program_is_reused(tmp_path: Path) -> None:
-    (tmp_path / "pmtiles").write_bytes(PROGRAM)
+    (tmp_path / "sd-pmtiles-9.9.9").write_bytes(PROGRAM)
 
     def no_download(_: str) -> bytes:
         raise AssertionError("must not download again")
 
     assert (
-        fetch.ensure_pmtiles(_lock()["go_pmtiles"], tmp_path, no_download) == tmp_path / "pmtiles"
+        fetch.ensure_pmtiles(_lock()["go_pmtiles"], tmp_path, no_download)
+        == tmp_path / "sd-pmtiles-9.9.9"
     )
 
 

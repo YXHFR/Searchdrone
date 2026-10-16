@@ -106,7 +106,7 @@ class VideoConfig(_Section):
 
 class MapConfig(_Section):
     # The offline map pack <data_dir>/tiles/<pack>.pmtiles, made by `just maps-fetch`.
-    pack: str = Field(default="demo", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    pack: str = Field(default="demo", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")  # tiles.PACK_NAME
     zoom: float = Field(default=15.0, ge=0, le=22)
 
 

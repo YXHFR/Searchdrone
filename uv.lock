@@ -1202,6 +1202,7 @@ dev = [
     { name = "pyyaml" },
     { name = "reuse" },
     { name = "ruff" },
+    { name = "shapely" },
 ]
 test = [
     { name = "sd-link-testing" },
@@ -1227,6 +1228,7 @@ dev = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "reuse", specifier = ">=5.0" },
     { name = "ruff", specifier = ">=0.16" },
+    { name = "shapely", specifier = ">=2.1" },
 ]
 test = [{ name = "sd-link-testing", editable = "software/common/link_testing" }]
 

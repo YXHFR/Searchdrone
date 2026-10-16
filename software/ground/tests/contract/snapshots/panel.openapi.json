@@ -1859,6 +1859,13 @@
           "center": {
             "$ref": "#/components/schemas/LatLon"
           },
+          "maxzoom": {
+            "default": 15,
+            "maximum": 22.0,
+            "minimum": 0.0,
+            "title": "Maxzoom",
+            "type": "integer"
+          },
           "pack_url": {
             "title": "Pack Url",
             "type": "string"

@@ -14,7 +14,10 @@ const ALLOWED = [
   "https://wiki.openstreetmap.org/wiki/This_map_requires_WebGL", // MapLibre no-WebGL message
   "https://github.com/mapbox/mapbox-gl-js/issues/", // MapLibre comment link in an error text
   "https://github.com/protomaps/PMTiles/tree/main/js", // PMTiles Leaflet error text (unused)
-  "https://github.com/maplibre/maplibre-gl-js/blob/", // licence link in the worker's header comment
+];
+// Allowed by exact shape only: the licence link in the MapLibre worker's header comment.
+const ALLOWED_RE = [
+  /^https:\/\/github\.com\/maplibre\/maplibre-gl-js\/blob\/v[0-9.]+\/LICENSE\.txt$/,
 ];
 const FORBIDDEN = ["__sd", 'name="sd-build"', "navigator.geolocation", '"crash"'];
 
@@ -32,7 +35,8 @@ for (const file of files(DIST).filter((f) => /\.(js|css|html)$/.test(f))) {
   for (const m of text.matchAll(
     /(?:https?|wss?):\/\/[^\s"'`)<>]+|(?<=["'`])\/\/[a-z0-9-]+\.[a-z0-9.-]+[^\s"'`)<>]*/gi,
   )) {
-    if (!ALLOWED.some((a) => m[0].startsWith(a))) problems.push(`${file}: external URL ${m[0]}`);
+    const ok = ALLOWED.some((a) => m[0].startsWith(a)) || ALLOWED_RE.some((r) => r.test(m[0]));
+    if (!ok) problems.push(`${file}: external URL ${m[0]}`);
   }
   for (const f of FORBIDDEN) if (text.includes(f)) problems.push(`${file}: forbidden text ${f}`);
 }

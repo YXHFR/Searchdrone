@@ -3,8 +3,9 @@
 Keys (all optional): ``bbox=min_lon,min_lat,max_lon,max_lat``, ``maxzoom=15``,
 ``name=demo``, ``dry=1`` (only show how large the pack would be).
 
-1. Installs ``go-pmtiles`` in the locked version to ``~/.local/bin/pmtiles`` (SHA-256 of the
-   download and of the program are checked, see ``tools/maps/maps-extract.toml``).
+1. Installs ``go-pmtiles`` in the locked version as ``~/.local/bin/sd-pmtiles-<version>``
+   (SHA-256 of the download and of the program are checked, ``tools/maps/maps-extract.toml``).
+   The build's ETag must match ``protomaps_etag``; tile data is otherwise trusted on TLS.
 2. Cuts the area out of the Protomaps build named in ``config/maps.toml`` (or the example
    file) with ``pmtiles extract``, straight into ``<data_dir>/tiles/<name>.pmtiles``.
 3. Copies glyphs and sprites from ``basemaps-assets`` at a fixed commit to
@@ -23,6 +24,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +37,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from sd_ground.api.tiles import PACK_NAME
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCK = ROOT / "tools" / "maps" / "maps-extract.toml"
@@ -59,6 +63,7 @@ class FetchError(Exception):
 @dataclass(frozen=True)
 class Settings:
     build: str
+    etag: str  # the build's ETag: the archive is checked to be exactly this build
     name: str
     maxzoom: int
     bbox: Bbox
@@ -108,8 +113,8 @@ def load_settings(root: Path, args: dict[str, str]) -> Settings:
     if not (len(build) == 8 and build.isdigit()):
         raise FetchError("protomaps_build i config/maps.toml ska vara ett datum YYYYMMDD.", 2)
     name = args.get("name", str(conf.get("name", "demo")))
-    if not name or not all(c.isascii() and (c.isalnum() or c in "-_") for c in name):
-        raise FetchError("name får bara innehålla a-z, 0-9, - och _.", 2)
+    if not re.fullmatch(PACK_NAME, name):
+        raise FetchError("name: 1 till 64 tecken a-z, 0-9, - och _, som börjar med a-z eller 0-9.", 2)
     try:
         maxzoom = int(args.get("maxzoom") or conf.get("maxzoom", 15))
     except ValueError:
@@ -122,7 +127,10 @@ def load_settings(root: Path, args: dict[str, str]) -> Settings:
         bbox = bbox_around(
             float(conf["center_lat"]), float(conf["center_lon"]), float(conf["half_size_m"])
         )
-    return Settings(build, name.lower(), maxzoom, bbox, args.get("dry", "0") in ("1", "true"))
+    etag = str(conf.get("protomaps_etag", ""))
+    if not etag:
+        raise FetchError("protomaps_etag saknas i config/maps.toml (se exempelfilen).", 2)
+    return Settings(build, etag, name, maxzoom, bbox, args.get("dry", "0") in ("1", "true"))
 
 
 def data_dir(root: Path) -> Path:
@@ -149,14 +157,14 @@ def download(url: str) -> bytes:
         return resp.read(MAX_BINARY_BYTES + 1)
 
 
-def url_status(url: str) -> int:
-    """HTTP status of the first byte (some hosts refuse HEAD and unnamed clients)."""
+def url_status(url: str) -> tuple[int, str]:
+    """HTTP status and ETag of the first byte (some hosts refuse HEAD and unnamed clients)."""
     try:
         req = _request(url, {"Range": "bytes=0-0"})
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:  # noqa: S310
-            return int(resp.status)
+            return int(resp.status), str(resp.headers.get("ETag", ""))
     except urllib.error.HTTPError as exc:
-        return int(exc.code)
+        return int(exc.code), ""
 
 
 def sha256(data: bytes) -> str:
@@ -167,7 +175,8 @@ def ensure_pmtiles(
     lock: dict[str, Any], bin_dir: Path, fetch: Callable[[str], bytes] = download
 ) -> Path:
     """``bin_dir/pmtiles`` in the locked version; downloaded and checked if needed."""
-    target = bin_dir / "pmtiles"
+    # Its own name, so a pmtiles the user installed for something else is never replaced.
+    target = bin_dir / f"sd-pmtiles-{lock['version']}"
     if target.is_file() and sha256(target.read_bytes()) == lock["binary_sha256"]:
         return target
     blob = fetch(lock["url"])
@@ -182,7 +191,7 @@ def ensure_pmtiles(
     if sha256(program) != lock["binary_sha256"]:
         raise FetchError("go-pmtiles: kontrollsumman för programmet stämmer inte.")
     bin_dir.mkdir(parents=True, exist_ok=True)
-    tmp = bin_dir / ".pmtiles.download"
+    tmp = bin_dir / f".{target.name}.download"
     tmp.write_bytes(program)
     tmp.chmod(0o755)
     tmp.replace(target)
@@ -193,8 +202,13 @@ def build_url(lock: dict[str, Any], build: str) -> str:
     return str(lock["build"]["url_template"]).format(build=build)
 
 
-def check_build(url: str, build: str, status: Callable[[str], int] = url_status) -> None:
-    code = status(url)
+def check_build(
+    url: str, s: Settings, status: Callable[[str], tuple[int, str]] = url_status
+) -> None:
+    """The build exists and is the one in the config (same ETag), so the tiles that
+    ``pmtiles extract`` reads come from that archive and no other."""
+    build = s.build
+    code, etag = status(url)
     if code == 404:
         raise FetchError(
             f"Kartbygget {build} finns inte längre. Välj ett nytt på {BUILDS_PAGE} "
@@ -203,6 +217,11 @@ def check_build(url: str, build: str, status: Callable[[str], int] = url_status)
         )
     if code >= 400:
         raise FetchError(f"Kartbygget {build} svarar {code}. Försök igen senare.")
+    if etag.strip('W/"') != s.etag.strip('W/"'):
+        raise FetchError(
+            f"Kartbygget {build} har ändrats (ETag {etag or 'saknas'}, väntade {s.etag}). "
+            "Inget hämtades."
+        )
 
 
 def run(cmd: Sequence[str]) -> None:
@@ -299,12 +318,12 @@ def fetch(
     bin_dir: Path,
     runner: Runner = run,
     fetch_url: Callable[[str], bytes] = download,
-    status: Callable[[str], int] = url_status,
+    status: Callable[[str], tuple[int, str]] = url_status,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Path | None:
     program = ensure_pmtiles(lock["go_pmtiles"], bin_dir, fetch_url)
     url = build_url(lock, s.build)
-    check_build(url, s.build, status)
+    check_build(url, s, status)
     tiles.mkdir(parents=True, exist_ok=True)
     final = tiles / f"{s.name}.pmtiles"
     if s.dry:
@@ -317,15 +336,16 @@ def fetch(
         raise FetchError("pmtiles extract skrev ingen fil.")
     count = install_assets(lock["assets"], tiles, runner)
     part.replace(final)
-    blob = final.read_bytes()
+    with final.open("rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
     manifest = {
         "name": s.name,
         "protomaps_build": s.build,
         "source": url,
         "bbox": list(s.bbox),
         "maxzoom": s.maxzoom,
-        "sha256": sha256(blob),
-        "bytes": len(blob),
+        "sha256": digest,
+        "bytes": final.stat().st_size,
         "assets_commit": lock["assets"]["commit"],
         "asset_files": count,
         "created_at": now().isoformat(timespec="seconds"),

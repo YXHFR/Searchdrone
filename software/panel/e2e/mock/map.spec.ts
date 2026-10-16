@@ -4,12 +4,13 @@
 import type { MapConfig } from "@searchdrone/schemas";
 import { HOME } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { isMobile } from "../helpers/safety";
+import { expectSafetyVisible, isMobile } from "../helpers/safety";
 
 const MAP: MapConfig = {
   pack_url: "/tiles/fixture.pmtiles",
   center: HOME,
   zoom: 12,
+  maxzoom: 15,
   attribution: "© OpenStreetMap contributors, Protomaps",
   assets_url: "/tiles/assets",
 };
@@ -82,4 +83,27 @@ test("without a map pack the map view says so and requests no tiles", async ({ p
   if (isMobile(page)) await page.getByTestId("tab-map").click();
   await expect(page.getByText("Ingen offlinekarta laddad")).toBeVisible();
   expect(ground.tiles).toEqual([]);
+});
+
+test("STOPP and FLYG HEM stay visible and work over the real map", async ({ page, ground }) => {
+  ground.setConfig({ map: MAP });
+  await ground.open();
+  const webgl2 = await page.evaluate(
+    () => document.createElement("canvas").getContext("webgl2") !== null,
+  );
+  test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
+  if (isMobile(page)) await page.getByTestId("tab-map").click();
+  await page.waitForFunction(
+    () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
+  );
+  await expectSafetyVisible(page, "map loaded");
+  if (!isMobile(page)) {
+    await page.getByTestId("maximize-map").click();
+    await page.waitForFunction(
+      () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
+    );
+    await expectSafetyVisible(page, "map full screen");
+  }
+  await page.getByTestId("safety-stop").click();
+  await expect.poll(() => ground.posts("/api/v1/vehicles/sim-01/actions/stop").length).toBe(1);
 });

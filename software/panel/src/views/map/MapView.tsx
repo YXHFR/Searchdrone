@@ -41,16 +41,24 @@ export default function MapView(_: ViewProps) {
   const theme = useUiStore((s) => s.theme);
   const box = useRef<HTMLDivElement>(null);
   const [webgl] = useState(hasWebGL2);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!mapCfg || !webgl || !box.current) return;
     let disposed = false;
     let map: { remove(): void } | null = null;
-    void import("./createMap").then(({ createMap }) => {
-      if (disposed || !box.current) return;
-      map = createMap(box.current, mapCfg, theme, compactAttribution());
-      exposeMap(map);
-    });
+    setFailed(false);
+    // A map that cannot start (chunk, worker or WebGL context) fails here alone: the view
+    // shows the text fallback and the rest of the panel, STOPP included, is untouched.
+    import("./createMap")
+      .then(({ createMap }) => {
+        if (disposed || !box.current) return;
+        map = createMap(box.current, mapCfg, theme, compactAttribution());
+        exposeMap(map);
+      })
+      .catch(() => {
+        if (!disposed) setFailed(true);
+      });
     return () => {
       disposed = true;
       map?.remove();
@@ -65,10 +73,10 @@ export default function MapView(_: ViewProps) {
       </div>
     );
   }
-  if (!webgl) {
+  if (!webgl || failed) {
     return (
       <div className="view-body view-empty">
-        <p>{t("views.map.noWebgl")}</p>
+        <p>{t(webgl ? "views.map.failed" : "views.map.noWebgl")}</p>
         <DroneText />
       </div>
     );

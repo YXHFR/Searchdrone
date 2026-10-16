@@ -7,7 +7,8 @@ requires-python = ">=3.12,<3.13"
 required-version = ">=0.11,<0.12"
 package = false
 default-groups = ["dev", "test"]
-# Versions released less than two weeks before they were locked are held back (B1-11).
+# Versions released less than two weeks before they were locked (2026-10-16) are held back
+# (B1-11); both ceilings may be lifted from 2026-10-25.
 constraint-dependencies = ["shapely<2.2", "numpy<2.5.4"]
 
 [tool.uv.workspace]
@@ -40,7 +41,7 @@ dev = [
   "httpx>=0.28", "pillow>=11", "packaging>=24", "pyyaml>=6.0", "jsonschema>=4.23",
   "pytest-socket>=0.7",  # B1-05: tests may only reach loopback
   # B1-11: build the small synthetic map fixture for the panel tests
-  "pmtiles>=3.8.1", "mapbox-vector-tile>=2.2.0",
+  "pmtiles>=3.8.1", "mapbox-vector-tile>=2.2.0", "shapely>=2.1",
 ]
 # Test-only workspace packages. Production packages never import these.
 test = ["sd-link-testing"]

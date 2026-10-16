@@ -6,6 +6,8 @@
 # A Protomaps build that is kept long: the last build of a patch version (here 4.15.1).
 # Daily builds disappear after a week; see https://maps.protomaps.com/builds
 protomaps_build = "20260811"
+# The build's ETag (HTTP header): `just maps-fetch` refuses an archive that has changed.
+protomaps_etag = "e4343a15fa4bf60f81112ba7784a3f73-512"
 name = "demo"
 maxzoom = 15
 # Centre of the area: the public ArduPilot SITL site (CMAC), the demo's home.

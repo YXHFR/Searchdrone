@@ -4,26 +4,16 @@ up to date with its source, and it lies at the public SITL site."""
 from __future__ import annotations
 
 import importlib.util
-import math
 import subprocess
 from pathlib import Path
 
 from sd_ground.api.tiles import read_center
+from sd_safety.targets import distance_m
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "software" / "panel" / "e2e" / "fixtures"
 FIXTURE = FIXTURES / "fixture.pmtiles"
 CMAC_LAT, CMAC_LON = -35.363261, 149.165230
-
-
-def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-    )
-    return 2 * 6_371_000 * math.asin(math.sqrt(a))
 
 
 def test_only_the_test_pack_is_committed() -> None:
@@ -58,4 +48,4 @@ def test_test_pack_matches_its_source() -> None:
 def test_test_pack_lies_at_the_public_sitl_site() -> None:
     center = read_center(FIXTURE)
     assert center is not None
-    assert _distance_m(center.lat, center.lon, CMAC_LAT, CMAC_LON) < 3000
+    assert distance_m(center.lat, center.lon, CMAC_LAT, CMAC_LON) < 3000

@@ -6,16 +6,18 @@ import type { MapConfig } from "@searchdrone/schemas";
 import type { StyleSpecification } from "maplibre-gl";
 
 export const SOURCE_ID = "protomaps";
-// The packs are cut at zoom 15 (`just maps-fetch`); MapLibre overzooms 16-18 from there.
-export const PACK_MAXZOOM = 15;
+// The packs are cut at zoom 15 by default (`just maps-fetch`); sd-ground reads the real value
+// from the pack header (MapConfig.maxzoom) and MapLibre overzooms above it, up to 18.
+const DEFAULT_PACK_MAXZOOM = 15;
+// sd-ground always sends these (defaults in sd_schemas.api.MapConfig); the fallbacks only
+// satisfy the optional fields of the generated type.
+const DEFAULT_ASSETS_URL = "/tiles/assets";
+const DEFAULT_ATTRIBUTION = "© OpenStreetMap contributors, Protomaps";
 
 export type MapFlavor = "dark" | "light";
-// The server's defaults for the two optional MapConfig fields.
-export const DEFAULT_ASSETS_URL = "/tiles/assets";
-export const DEFAULT_ATTRIBUTION = "© OpenStreetMap contributors, Protomaps";
 
 /** Absolute same-origin URL (MapLibre's workers need absolute URLs). */
-export function absolute(origin: string, path: string): string {
+function absolute(origin: string, path: string): string {
   return new URL(path, origin).href;
 }
 
@@ -32,7 +34,7 @@ export function buildStyle(cfg: MapConfig, flavor: MapFlavor, origin: string): S
         // Tile URLs (not a TileJSON url) so the zoom range is fixed here, not read from the pack.
         tiles: [`pmtiles://${pack}/{z}/{x}/{y}`],
         minzoom: 0,
-        maxzoom: PACK_MAXZOOM,
+        maxzoom: cfg.maxzoom ?? DEFAULT_PACK_MAXZOOM,
       },
     },
     layers: layers(SOURCE_ID, namedFlavor(flavor), { lang: "sv" }),
@@ -40,8 +42,8 @@ export function buildStyle(cfg: MapConfig, flavor: MapFlavor, origin: string): S
 }
 
 /** The attribution as plain text: MapLibre renders it as HTML, so it is escaped first. */
-export function escapeAttribution(text: string): string {
-  return text.replace(
+export function attributionHtml(cfg: MapConfig): string {
+  return (cfg.attribution ?? DEFAULT_ATTRIBUTION).replace(
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
   );

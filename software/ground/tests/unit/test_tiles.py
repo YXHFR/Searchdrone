@@ -39,6 +39,7 @@ def test_panel_config_points_at_the_pack(logged_in: TestClient, tiles: Path) -> 
     assert body["pack_url"] == "/tiles/demo.pmtiles"
     assert body["assets_url"] == "/tiles/assets"
     assert body["zoom"] == 15
+    assert body["maxzoom"] == 15  # from the pack header
     assert "OpenStreetMap" in body["attribution"]
     assert abs(body["center"]["lat"] - CMAC_LAT) < 0.01
     assert abs(body["center"]["lon"] - CMAC_LON) < 0.01
@@ -89,6 +90,26 @@ def test_symlink_out_of_the_tiles_dir_is_refused(
     outside.write_bytes(FIXTURE.read_bytes())
     (tiles / "link.pmtiles").symlink_to(outside)
     assert logged_in.get("/tiles/link.pmtiles").status_code == 404
+
+
+def test_symlinked_pack_out_of_the_tiles_dir_gives_no_map(make_ground, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from sd_ground.api.tiles import map_config
+
+    g: Ground = make_ground()
+    root = g.loaded.data_dir / "tiles"
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside.pmtiles"
+    shutil.copyfile(FIXTURE, outside)
+    (root / "demo.pmtiles").symlink_to(outside)
+    assert map_config(g) is None
+
+
+def test_type_comes_from_the_requested_name(logged_in: TestClient, tiles: Path) -> None:
+    (tiles / "notes.txt").write_text("x")
+    (tiles / "odd.pmtiles").symlink_to(tiles / "notes.txt")
+    res = logged_in.get("/tiles/odd.pmtiles")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/vnd.pmtiles"
 
 
 def test_login_required(panel: TestClient, tiles: Path) -> None:

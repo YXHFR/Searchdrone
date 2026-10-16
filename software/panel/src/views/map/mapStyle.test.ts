@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildStyle, escapeAttribution, PACK_MAXZOOM, SOURCE_ID } from "./mapStyle";
+import { attributionHtml, buildStyle, SOURCE_ID } from "./mapStyle";
 
 const cfg = {
   pack_url: "/tiles/demo.pmtiles",
   center: { lat: -35.363261, lon: 149.16523 },
   zoom: 15,
+  maxzoom: 15,
   attribution: "© OpenStreetMap contributors, Protomaps",
   assets_url: "/tiles/assets",
 };
@@ -15,8 +16,17 @@ describe("offline map style", () => {
     const style = buildStyle(cfg, "dark", ORIGIN);
     const source = style.sources[SOURCE_ID];
     expect(source?.type).toBe("vector");
-    expect(PACK_MAXZOOM).toBe(15);
     expect(source && "maxzoom" in source ? source.maxzoom : undefined).toBe(15);
+  });
+
+  it("follows the pack's own maxzoom and defaults to 15", () => {
+    const zoom = (c: Parameters<typeof buildStyle>[0]) => {
+      const s = buildStyle(c, "dark", ORIGIN).sources[SOURCE_ID];
+      return s && "maxzoom" in s ? s.maxzoom : undefined;
+    };
+    expect(zoom({ ...cfg, maxzoom: 13 })).toBe(13);
+    const { maxzoom: _, ...noMax } = cfg;
+    expect(zoom(noMax)).toBe(15);
   });
 
   it("loads everything from the panel's own origin", () => {
@@ -40,8 +50,10 @@ describe("offline map style", () => {
   });
 
   it("keeps the attribution plain text", () => {
-    expect(escapeAttribution('<img src=x onerror="a()">& ©')).toBe(
+    expect(attributionHtml({ ...cfg, attribution: '<img src=x onerror="a()">& ©' })).toBe(
       "&lt;img src=x onerror=&quot;a()&quot;&gt;&amp; ©",
     );
+    const { attribution: _, ...noText } = cfg;
+    expect(attributionHtml(noText)).toContain("OpenStreetMap");
   });
 });

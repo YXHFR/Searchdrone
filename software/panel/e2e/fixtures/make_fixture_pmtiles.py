@@ -48,7 +48,7 @@ def _tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
     return minx, maxy - size, minx + size, maxy
 
 
-def _tile_range(z: int, lon0: float, lat0: float, lon1: float, lat1: float) -> range:
+def _tile_range(z: int, lon0: float, lon1: float) -> range:
     def tx(lon: float) -> int:
         return int((lon + 180) / 360 * 2**z)
 
@@ -73,7 +73,7 @@ def build(source: Path = SOURCE) -> bytes:
 
     tiles: list[tuple[int, bytes]] = []
     for z in range(MIN_ZOOM, MAX_ZOOM + 1):
-        for x in _tile_range(z, lon0, lat0, lon1, lat1):
+        for x in _tile_range(z, lon0, lon1):
             for y in range(_tile_y(z, lat1), _tile_y(z, lat0) + 1):
                 minx, miny, maxx, maxy = _tile_bounds(z, x, y)
                 pad = (maxx - minx) * BUFFER / EXTENT

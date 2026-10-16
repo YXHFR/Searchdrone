@@ -172,6 +172,7 @@ class MapConfig(SdModel):
     pack_url: str  # e.g. "/tiles/demo.pmtiles"
     center: LatLon
     zoom: float = Field(ge=0, le=22)
+    maxzoom: int = Field(default=15, ge=0, le=22)  # highest zoom in the pack; MapLibre overzooms
     # Plain text (never HTML). OpenStreetMap data is ODbL, which requires this line.
     attribution: str = Field(default=MAP_ATTRIBUTION, min_length=1, max_length=200)
     assets_url: str = "/tiles/assets"  # glyphs under fonts/, sprites under sprites/v4/
