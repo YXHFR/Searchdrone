@@ -347,7 +347,7 @@ def test_mission_count_and_read_back() -> None:
 
 
 def test_ground_fence_upload() -> None:
-    g = ctx(Profile.GROUND, "ground")
+    g = ctx(Profile.GROUND, "ground", on_ground=True, armed=False)
     lat, lon = HOME
     count = mavlink.MAVLink_mission_count_message
     assert sends(count(FC, 1, 4, 1), g)
@@ -369,6 +369,15 @@ def test_ground_fence_upload() -> None:
     req_list = mavlink.MAVLink_mission_request_list_message
     assert sends(req_list(FC, 1, 1), g)
     assert not sends(req_list(FC, 1, 0), g)
+    # A new fence replaces the old one at once: never armed, never in the air.
+    for state in (
+        ctx(Profile.GROUND, "ground", on_ground=True, armed=True),
+        ctx(Profile.GROUND, "ground", on_ground=True, armed=None),
+        ctx(Profile.GROUND, "ground", armed=True, airborne=True),
+        ctx(Profile.GROUND, "ground", armed=False),
+    ):
+        assert not sends(count(FC, 1, 4, 1), state)
+        assert not sends(vertex, state)
 
 
 # --- manual control (the pilot's sticks, LOITER only) -------------------------------------
@@ -379,7 +388,7 @@ def _sticks(x: int = 0, y: int = 0, z: int = 500, r: int = 0, buttons: int = 0) 
 
 
 def test_manual_control_only_sticks_in_loiter() -> None:
-    loiter = ctx(origin="manual", fc_mode=CopterMode.LOITER)
+    loiter = ctx(origin="manual", fc_mode=CopterMode.LOITER, armed=True, airborne=True)
     assert sends(_sticks(), loiter)
     assert sends(_sticks(1000, -1000, 1000, 1000), loiter)
     assert sends(_sticks(z=0), loiter)
@@ -394,11 +403,23 @@ def test_manual_control_only_sticks_in_loiter() -> None:
     assert not sends(other, loiter)
     for mode in CopterMode:
         if mode != CopterMode.LOITER:
-            assert not sends(_sticks(), ctx(origin="manual", fc_mode=mode)), mode
-    assert not sends(_sticks(), ctx(origin="manual", fc_mode=None))  # stale heartbeat
+            c = ctx(origin="manual", fc_mode=mode, armed=True, airborne=True)
+            assert not sends(_sticks(), c), mode
+    assert not sends(_sticks(), ctx(origin="manual", fc_mode=None, armed=True, airborne=True))
+    # On the ground (or disarmed) the throttle-down plus full-yaw gesture would arm or
+    # disarm the motors, so no sticks there at all.
+    for state in (
+        ctx(origin="manual", fc_mode=CopterMode.LOITER, armed=True, on_ground=True),
+        ctx(origin="manual", fc_mode=CopterMode.LOITER, armed=False),
+        ctx(origin="manual", fc_mode=CopterMode.LOITER, armed=None),
+    ):
+        assert not sends(_sticks(z=0, r=1000), state)
+        assert not sends(_sticks(z=0, r=-1000), state)
+        assert not sends(_sticks(), state)
     for origin in ALL_ORIGINS:
         if origin != "manual":
-            assert not sends(_sticks(), ctx(origin=origin, fc_mode=CopterMode.LOITER)), origin
+            c = ctx(origin=origin, fc_mode=CopterMode.LOITER, armed=True, airborne=True)
+            assert not sends(_sticks(), c), origin
     assert not sends(_sticks(), ctx(Profile.GROUND, "ground", fc_mode=CopterMode.LOITER))
     rc = zero_message(mavlink.MAVLink_rc_channels_override_message)
     assert not sends(rc, loiter)
@@ -414,3 +435,11 @@ def test_origin_strings_match_send_origin() -> None:
     from sd_mav import allowlist
 
     assert {o.value for o in SendOrigin} == allowlist._ONBOARD_ORIGINS | {allowlist._GROUND}
+
+
+def test_context_and_envelope_sanity() -> None:
+    with pytest.raises(ValueError):
+        ctx(on_ground=True, airborne=True)
+    for bad in (float("inf"), float("nan"), 0.0, -1.0):
+        with pytest.raises(ValueError):
+            SendEnvelope(max_alt_agl_m=bad)

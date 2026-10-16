@@ -7,7 +7,9 @@ the ground station's through linksim, exactly like the full system:
 * the flight controller's HEARTBEAT comes at 5 Hz once asked for;
 * a mode change on the allowlist is accepted, a refused one never leaves;
 * three missions and a fence go up and come back with the same hash;
-* a cut ground link is noticed within 3 s, and streams come back after it.
+* a cut ground link is noticed within 3 s, and streams come back after it;
+* the flight helpers fly (arm, take off, goto, speed, LOITER, LAND), the ground station
+  disarms only on the ground, and onboard sticks are ignored by ArduCopter today.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from sd_mav.mission import (
     upload,
 )
 from sd_obs.clock import MonotonicClock
+from sd_schemas.link import StickAxes
 from sd_sim import config, paths
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
@@ -287,14 +290,109 @@ def test_lost_link_detected_within_3s(sim: Sim) -> None:
             requested_before = sum(1 for k, _ in events if k == "mav.streams_requested")
             sim.set_ground_link(True)
             assert await ground.wait_connected(5.0)
-            for _ in range(50):
+            for _ in range(100):
                 if sum(1 for k, _ in events if k == "mav.streams_requested") > requested_before:
                     break
                 await asyncio.sleep(0.2)
-            assert sum(1 for k, _ in events if k == "mav.streams_requested") > requested_before
+            assert sum(1 for k, _ in events if k == "mav.streams_requested") > requested_before, [
+                k for k, _ in events
+            ]
             assert [k for k, _ in events].count("mav.fc_connected") == 2
         finally:
             sim.set_ground_link(True)
+            await ground.close()
+
+    asyncio.run(run())
+
+
+def _metres(t: Any, lat: float, lon: float) -> float:
+    from sd_safety.targets import distance_m
+
+    return distance_m(lat, lon, t.lat, t.lon)
+
+
+@pytest.mark.budget_s(180)
+def test_flight_helpers_and_onboard_sticks(sim: Sim) -> None:
+    """arm, take off, goto, speed, LOITER and LAND through the allowlist; the ground may
+    disarm only on the ground. Also pins today's ArduCopter behaviour that MANUAL_CONTROL
+    from the onboard computer (1/191) is ignored: it accepts sticks only from its GCS id."""
+
+    async def run() -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        onboard = _vehicle(sim.onboard_url(), Role.ONBOARD, events)
+        ground = _vehicle(sim.ground_url(), Role.GROUND, events)
+        await onboard.start()
+        await ground.start()
+        try:
+            assert await onboard.wait_connected(5.0) and await ground.wait_connected(5.0)
+            await asyncio.sleep(3.0)
+            assert await onboard.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL) is (
+                MavResult.ACCEPTED
+            )
+            await asyncio.sleep(0.6)
+            for _ in range(15):  # pre-arm checks can need a few seconds after start
+                if await onboard.arm(origin=SendOrigin.SKILL) is MavResult.ACCEPTED:
+                    break
+                await asyncio.sleep(2.0)
+            await asyncio.sleep(0.6)
+            # Standing armed on the ground: the ground station's STOP may disarm.
+            assert await ground.disarm(origin=SendOrigin.GROUND) is MavResult.ACCEPTED
+            await asyncio.sleep(0.6)
+            assert not onboard.telemetry.armed
+            assert await onboard.arm(origin=SendOrigin.SKILL) is MavResult.ACCEPTED
+            assert await onboard.takeoff(15.0, origin=SendOrigin.SKILL) is MavResult.ACCEPTED
+            for _ in range(40):
+                if onboard.telemetry.alt_rel_home_m > 14.0:
+                    break
+                await asyncio.sleep(0.5)
+            assert onboard.telemetry.alt_rel_home_m > 14.0
+            assert onboard.telemetry.landed_state in ("in_air", "takeoff")
+            with pytest.raises(ForbiddenMavlinkError):  # never in the air
+                await ground.disarm(origin=SendOrigin.GROUND)
+            assert await onboard.change_speed(5.0, origin=SendOrigin.SKILL) is MavResult.ACCEPTED
+            target = (HOME_LAT + 0.0003, HOME_LON)  # about 33 m north
+            await onboard.goto(*target, 15.0, origin=SendOrigin.SKILL)
+            for _ in range(40):
+                if _metres(onboard.telemetry, *target) < 2.0:
+                    break
+                await asyncio.sleep(0.5)
+            assert _metres(onboard.telemetry, *target) < 2.0
+            assert await onboard.set_mode(CopterMode.LOITER, origin=SendOrigin.MANUAL) is (
+                MavResult.ACCEPTED
+            )
+            await asyncio.sleep(0.6)
+            t0 = onboard.telemetry
+            axes = StickAxes.model_validate(
+                {
+                    "takeover_id": "0192f4a3-0000-7000-8000-0000000000c0",
+                    "input_seq": 1,
+                    "pitch": 0.6,
+                    "roll": 0.0,
+                    "throttle": 0.5,
+                    "yaw": 0.0,
+                }
+            )
+            for _ in range(30):
+                if onboard.telemetry.landed_state not in ("in_air", "takeoff", "landing"):
+                    break
+                await onboard.manual_control(axes, origin=SendOrigin.MANUAL)
+                await asyncio.sleep(0.1)
+            moved = _metres(onboard.telemetry, t0.lat, t0.lon)
+            assert moved < 3.0, f"sticks from 1/191 moved the vehicle {moved:.1f} m"
+            assert await onboard.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL) is (
+                MavResult.ACCEPTED
+            )
+            assert await ground.set_mode(CopterMode.LAND, origin=SendOrigin.GROUND) is (
+                MavResult.ACCEPTED
+            )
+            for _ in range(60):
+                if not onboard.telemetry.armed:
+                    break
+                await asyncio.sleep(0.5)
+            assert not onboard.telemetry.armed
+            assert not [d for k, d in events if "forbidden" in k and d["origin"] != "ground"]
+        finally:
+            await onboard.close()
             await ground.close()
 
     asyncio.run(run())

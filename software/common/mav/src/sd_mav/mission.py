@@ -31,7 +31,7 @@ from typing import Any, Final
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
 from sd_mav.allowlist import FC_COMPID, FENCE_MAX_VERTICES
-from sd_mav.vehicle import SendOrigin, Vehicle
+from sd_mav.vehicle import ForbiddenMavlinkError, SendOrigin, Vehicle
 from sd_safety.constants import (
     MAV_ACK_TIMEOUT_S,
     MISSION_END_LOITER_S,
@@ -268,6 +268,12 @@ async def upload(vehicle: Vehicle, items: Sequence[MissionItem], *, origin: Send
     clock = vehicle.clock
     deadline = clock.monotonic() + MISSION_UPLOAD_TIMEOUT_S
     count = mavlink.MAVLink_mission_count_message(vehicle.fc_sysid, FC_COMPID, len(items), mtype)
+    # Check everything first: the flight controller drops its stored mission as soon as
+    # MISSION_COUNT arrives, so a refusal halfway would leave half a mission behind.
+    for msg in (count, *(i.to_message(vehicle.fc_sysid) for i in items)):
+        reason = vehicle.would_refuse(msg, origin=origin)
+        if reason is not None:
+            raise ForbiddenMavlinkError(msg.get_type(), reason)
     await vehicle.send(count, origin=origin)
     silent = 0
 

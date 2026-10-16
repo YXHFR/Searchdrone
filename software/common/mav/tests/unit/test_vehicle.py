@@ -209,6 +209,18 @@ def test_manual_control_scales_sticks_in_loiter_only() -> None:
             await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)  # STABILIZE
         await run_with_clock(clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.MANUAL))
         await clock.run_for(0.5)
+        with pytest.raises(ForbiddenMavlinkError):  # in LOITER, but on the ground
+            await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)
+
+        async def climb() -> None:
+            await vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+            await vehicle.arm(origin=SendOrigin.SKILL)
+            await vehicle.takeoff(10.0, origin=SendOrigin.SKILL)
+
+        await run_with_clock(clock, climb())
+        await clock.run_for(6.0)
+        await run_with_clock(clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.MANUAL))
+        await clock.run_for(0.6)
         with pytest.raises(ForbiddenMavlinkError):
             await vehicle.manual_control(axes, origin=SendOrigin.SKILL)
         await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)
@@ -415,6 +427,65 @@ def test_ack_for_another_channel_is_not_ours() -> None:
         )
         result = await run_with_clock(clock, task)
         assert result is MavResult.TIMEOUT
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_retry_never_overrides_a_failsafe() -> None:
+    async def run() -> None:
+        clock, vehicle, events = await _started()
+        await clock.run_for(2.0)
+        fc = vehicle.fc
+        fc.drop_acks = 1  # the first answer is lost ...
+        task = asyncio.ensure_future(vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL))
+        await clock.run_for(0.3)
+        fc.set_mode_external(CopterMode.RTL)  # ... and a failsafe takes over meanwhile
+        fc.statustext("Battery 1 is critical")
+        result = await run_with_clock(clock, task)
+        assert result is MavResult.CANCELLED
+        tries = [
+            m for m in vehicle.sent if m.get_type() == "COMMAND_LONG" and int(m.command) == 176
+        ]
+        assert [int(m.param2) for m in tries] == [4]  # no second GUIDED
+        assert "mav.retry_cancelled" in events.kinds()
+        # Without a failsafe or a foreign mode, the retry still goes out.
+        fc.mode = CopterMode.LOITER
+        await clock.run_for(0.5)
+        fc.drop_acks = 1
+        result = await run_with_clock(
+            clock, vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED
+        with pytest.raises(ValueError):
+            await vehicle.send(command(176, 1, 4), origin=SendOrigin.SKILL, attempts=0)
+        fc.drop_acks = 5
+        once = await run_with_clock(
+            clock,
+            vehicle.send(
+                command(176, 1, 5), origin=SendOrigin.SKILL, attempts=1, ack_timeout_s=0.2
+            ),
+        )
+        assert once is MavResult.TIMEOUT
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_stream_requests_restart_after_a_loss_mid_request() -> None:
+    async def run() -> None:
+        clock, vehicle, events = await _started()
+        vehicle.fc.drop_acks = 100  # the first round of requests hangs on missing answers
+        await clock.run_for(1.0)
+        vehicle.fc.silent = True
+        await clock.run_for(3.5)
+        assert not vehicle.telemetry.fc_connected
+        vehicle.fc.drop_acks = 0
+        vehicle.fc.intervals_us.clear()
+        vehicle.fc.silent = False
+        await clock.run_for(4.0)
+        assert vehicle.fc.intervals_us == dict(ONBOARD_STREAM_US)
+        assert "mav.streams_requested" in events.kinds()
         await vehicle.close()
 
     asyncio.run(run())

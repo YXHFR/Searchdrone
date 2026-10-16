@@ -127,7 +127,10 @@ def test_mission_hash_roundtrip() -> None:
     assert fence_hash(fence) != fence_hash(fence_items(corners[::-1]))
     assert all(i.mission_type == FENCE and i.command == 5001 and i.param1 == 3 for i in fence)
     for item in fence:
-        assert check(item.to_message(1), ctx(Profile.GROUND, "ground")) is None
+        assert (
+            check(item.to_message(1), ctx(Profile.GROUND, "ground", on_ground=True, armed=False))
+            is None
+        )
     with pytest.raises(ValueError):
         fence_items(corners[:2])
 
@@ -204,6 +207,25 @@ def test_upload_refused_by_the_flight_controller() -> None:
         items = survey_mission(HOME_LLA, [HOME], 40, 5)
         with pytest.raises(MissionError, match="refused"):
             await run_with_clock(clock, upload(vehicle, items, origin=SendOrigin.SKILL))
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_refused_item_stops_the_upload_before_it_starts() -> None:
+    async def run() -> None:
+        clock = FakeClock()
+        vehicle = FakeVehicle(clock)
+        await vehicle.start()
+        await clock.run_for(2.0)
+        good = survey_mission(HOME_LLA, [(HOME[0] + 0.001, HOME[1])], 40, 7)
+        await run_with_clock(clock, upload(vehicle, good, origin=SendOrigin.SKILL))
+        bad = survey_mission(HOME_LLA, [(HOME[0] + 0.001, HOME[1])], 121, 7)  # too high
+        before = len(vehicle.sent)
+        with pytest.raises(ForbiddenMavlinkError):
+            await upload(vehicle, bad, origin=SendOrigin.SKILL)
+        assert len(vehicle.sent) == before  # not even MISSION_COUNT
+        assert mission_hash(vehicle.fc.missions[MISSION]) == mission_hash(good)
         await vehicle.close()
 
     asyncio.run(run())

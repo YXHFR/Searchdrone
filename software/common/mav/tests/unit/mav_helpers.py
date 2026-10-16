@@ -27,6 +27,8 @@ def ctx(
     fc_mode: int | None = CopterMode.GUIDED,
     on_ground: bool = False,
     envelope: SendEnvelope | None = None,
+    armed: bool | None = None,
+    airborne: bool = False,
 ) -> SendContext:
     return SendContext(
         profile=profile,
@@ -36,6 +38,8 @@ def ctx(
         home=home,
         fc_mode=fc_mode,
         on_ground=on_ground,
+        armed=armed,
+        airborne=airborne,
     )
 
 

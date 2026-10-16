@@ -63,6 +63,18 @@ MODE_FRESH_S: Final = 1.5  # a HEARTBEAT older than this does not tell the curre
 _OUR_HEARTBEAT_S: Final = 1.0
 _WATCH_S: Final = 0.05
 _ARMED_FLAG: Final = mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+# Landed states that count as "in the air" (the flight controller's own words).
+_AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
+# Commands that move the vehicle; their retries stop when the flight controller decided.
+_MOVING_COMMANDS: Final = frozenset(
+    {
+        mavlink.MAV_CMD_DO_SET_MODE,
+        mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+        mavlink.MAV_CMD_NAV_TAKEOFF,
+        mavlink.MAV_CMD_DO_CHANGE_SPEED,
+        mavlink.MAV_CMD_DO_SET_MISSION_CURRENT,
+    }
+)
 _EKF_NEEDED: Final = (
     mavlink.EKF_ATTITUDE
     | mavlink.EKF_VELOCITY_HORIZ
@@ -368,6 +380,8 @@ class Vehicle:
             and t.position_mono_ms is not None
             and now - t.position_mono_ms <= fresh_ms
         )
+        landed_fresh = t.landed_mono_ms is not None and now - t.landed_mono_ms <= fresh_ms
+        armed = t.armed if mode_fresh else None
         return SendContext(
             profile=self.profile,
             origin=str(origin),
@@ -376,7 +390,13 @@ class Vehicle:
             home=(t.home.lat, t.home.lon) if t.home else None,
             fc_mode=t.fc_custom_mode if mode_fresh else None,
             on_ground=on_ground,
+            armed=armed,
+            airborne=bool(armed) and landed_fresh and t.landed_state in _AIRBORNE_STATES,
         )
+
+    def would_refuse(self, msg: Any, *, origin: SendOrigin) -> str | None:
+        """Why ``send`` would refuse ``msg`` right now, or ``None``; nothing is sent."""
+        return denied_reason(msg) or check(msg, self._context(origin))
 
     def _event(self, kind: str, details: dict[str, Any]) -> None:
         if self._on_event is not None:
@@ -398,20 +418,47 @@ class Vehicle:
         self._transport.write_message(msg)
         self.sent_count += 1
 
-    async def send(self, msg: Any, *, origin: SendOrigin) -> MavResult | None:
+    async def send(
+        self,
+        msg: Any,
+        *,
+        origin: SendOrigin,
+        attempts: int = ACK_ATTEMPTS,
+        ack_timeout_s: float = MAV_ACK_TIMEOUT_S,
+    ) -> MavResult | None:
         """Send ``msg`` if the allowlist allows it.
 
-        A ``COMMAND_LONG`` waits for its ``COMMAND_ACK`` (``MAV_ACK_TIMEOUT_S`` per
-        attempt, ``ACK_ATTEMPTS`` attempts with a rising ``confirmation``) and returns the
-        result; every attempt is checked again. Other messages return ``None``.
+        A ``COMMAND_LONG`` waits for its ``COMMAND_ACK`` (``ack_timeout_s`` per attempt,
+        ``attempts`` attempts with a rising ``confirmation``) and returns the result.
+        Every attempt is checked again. A command that moves the vehicle is not sent
+        again (``CANCELLED``) once a failsafe signal arrived or the flight controller
+        changed to a mode that is neither the starting one nor the one asked for, so a
+        retry never overrides the flight controller's own decision. Callers confirm a
+        mode through the HEARTBEAT; an acknowledgement only says the command arrived.
+        Other messages return ``None``.
         """
         if msg.get_type() != "COMMAND_LONG":
             self._check_and_write(msg, origin)
             return None
+        if not 1 <= attempts <= ACK_ATTEMPTS:
+            raise ValueError(f"attempts must be 1..{ACK_ATTEMPTS}")
         command = int(msg.command)
+        moves = command in _MOVING_COMMANDS
+        wanted_mode = int(msg.param2) if command == mavlink.MAV_CMD_DO_SET_MODE else None
         lock = self._command_locks.setdefault(command, asyncio.Lock())
         async with lock:
-            for attempt in range(ACK_ATTEMPTS):
+            start_mode = self._t.fc_custom_mode
+            start_failsafe = self._t.last_failsafe_mono_ms
+            for attempt in range(attempts):
+                if attempt and moves:
+                    t = self._t
+                    changed = t.fc_custom_mode not in (start_mode, wanted_mode)
+                    if t.last_failsafe_mono_ms != start_failsafe or changed:
+                        self._event(
+                            "mav.retry_cancelled",
+                            {"command": command, "mode": t.fc_mode, "failsafe": not changed},
+                        )
+                        return MavResult.CANCELLED
                 msg.confirmation = attempt
                 self._check_and_write(msg, origin)
                 ack = await self.wait_message(
@@ -421,7 +468,7 @@ class Vehicle:
                         and self.addressed_to_us(m)
                         and int(m.result) != mavlink.MAV_RESULT_IN_PROGRESS
                     ),
-                    MAV_ACK_TIMEOUT_S,
+                    ack_timeout_s,
                 )
                 if ack is not None:
                     return MavResult.of(int(ack.result))
@@ -556,9 +603,11 @@ class Vehicle:
             await self._clock.sleep(_OUR_HEARTBEAT_S)
 
     async def _watch_loop(self) -> None:
-        # Declared lost before the timeout has fully passed at the next check, so a lost
-        # connection is always noticed within FC_HEARTBEAT_TIMEOUT_S.
-        timeout_ms = (FC_HEARTBEAT_TIMEOUT_S - _WATCH_S) * 1000
+        # The link is gone from the moment the next 5 Hz HEARTBEAT fails to arrive, so it
+        # is declared lost one heartbeat interval and one check before the timeout: a
+        # lost connection is noticed within FC_HEARTBEAT_TIMEOUT_S of the cut, even when
+        # the last heartbeat was still on its way.
+        timeout_ms = (FC_HEARTBEAT_TIMEOUT_S - HEARTBEAT_INTERVAL_US / 1e6 - _WATCH_S) * 1000
         while not self._closed:
             await self._clock.sleep(_WATCH_S)
             t = self._t
@@ -567,6 +616,9 @@ class Vehicle:
                 if age >= timeout_ms:
                     self._t = replace(t, fc_connected=False)
                     self._connected_event.clear()
+                    if self._streams_task is not None and not self._streams_task.done():
+                        # Ask again from the start once the flight controller is back.
+                        self._streams_task.cancel()
                     try:
                         self._event("mav.fc_lost", {"heartbeat_age_ms": age})
                     finally:

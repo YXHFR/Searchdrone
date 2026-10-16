@@ -30,13 +30,14 @@ What                                   Allowed
 ``REQUEST_MESSAGE`` (512)              ``HOME_POSITION``, ``AUTOPILOT_VERSION``
 ``PARAM_REQUEST_READ``                 read one parameter by name
 ``MANUAL_CONTROL``                     the pilot's sticks (origin ``manual``), only while
-                                       the flight controller is in LOITER, no buttons
+                                       the flight controller is in LOITER and the
+                                       vehicle armed in the air, no buttons
 =====================================  ==================================================
 
 Ground station (sysid 250, compid 190): ``HEARTBEAT`` as a GCS, ``DO_SET_MODE`` to the
 STOP and FLY HOME steps, disarm only when standing on the ground, ``SET_MESSAGE_INTERVAL``,
 ``PARAM_REQUEST_READ`` and the fence protocol (mission type 1, polygon inclusion
-vertices only).
+vertices only, only while the vehicle stands disarmed on the ground).
 
 Origins (``sd_mav.vehicle.SendOrigin``): ``startup`` may only read and ask for streams;
 ``skill`` and ``limit`` may fly; ``override_fallback`` may only change to the STOP and
@@ -160,6 +161,11 @@ class SendEnvelope:
     max_speed_ms: float = DEFAULT_LIMITS.max_speed_ms
     fence_radius_m: float = fc_fence_params(DEFAULT_LIMITS)["FENCE_RADIUS"]
 
+    def __post_init__(self) -> None:
+        values = (self.max_alt_agl_m, self.max_speed_ms, self.fence_radius_m)
+        if not all(math.isfinite(v) and v > 0 for v in values):
+            raise ValueError(f"envelope values must be finite and positive: {values}")
+
     @classmethod
     def from_limits(cls, limits: SafetyLimits, caps: LimitCaps = DEFAULT_CAPS) -> SendEnvelope:
         """The envelope for ``limits``; ``ValueError`` if they break ``caps``."""
@@ -184,6 +190,12 @@ class SendContext:
     home: tuple[float, float] | None = None  # last HOME_POSITION (lat, lon), degrees
     fc_mode: int | None = None  # custom_mode in a fresh HEARTBEAT, None when stale
     on_ground: bool = False  # fresh telemetry: landed, armed or not, at most 0.5 m up
+    armed: bool | None = None  # from a fresh HEARTBEAT, None when stale
+    airborne: bool = False  # fresh: armed and in the air, taking off or landing
+
+    def __post_init__(self) -> None:
+        if self.on_ground and self.airborne:
+            raise ValueError("a vehicle cannot be on the ground and in the air")
 
 
 def _finite(*values: float) -> bool:
@@ -394,6 +406,13 @@ def _position_target(msg: Any, ctx: SendContext) -> str | None:
     )
 
 
+def _fence_ground_state(ctx: SendContext) -> str | None:
+    # A new fence replaces the old one at once; only on the ground and disarmed.
+    if not ctx.on_ground or ctx.armed is not False:
+        return "the fence is uploaded only when the vehicle stands disarmed on the ground"
+    return None
+
+
 def _mission_count(msg: Any, ctx: SendContext) -> str | None:
     bad = _target_ok(msg, ctx)
     if bad:
@@ -404,7 +423,7 @@ def _mission_count(msg: Any, ctx: SendContext) -> str | None:
             return f"the ground station uploads only the fence, not type {mtype}"
         if not 3 <= count <= FENCE_MAX_VERTICES:
             return f"fence with {count} vertices"
-        return _origin_for("fly", ctx)
+        return _fence_ground_state(ctx) or _origin_for("fly", ctx)
     if mtype != mavlink.MAV_MISSION_TYPE_MISSION:
         return f"the onboard computer uploads only missions, not type {mtype}"
     if not 2 <= count <= MISSION_MAX_ITEMS:
@@ -435,7 +454,11 @@ def _mission_item(msg: Any, ctx: SendContext) -> str | None:
             return "fence vertex count out of range"
         if any(v != 0 for v in params[1:]) or not 0 <= seq < FENCE_MAX_VERTICES:
             return "fence item needs param2..4 = 0 and a valid index"
-        return _within_fence(int(msg.x), int(msg.y), ctx) or _origin_for("fly", ctx)
+        return (
+            _fence_ground_state(ctx)
+            or _within_fence(int(msg.x), int(msg.y), ctx)
+            or _origin_for("fly", ctx)
+        )
     if mtype != mavlink.MAV_MISSION_TYPE_MISSION:
         return f"the onboard computer uploads only missions, not type {mtype}"
     if cmd not in _MISSION_COMMANDS:
@@ -523,6 +546,10 @@ def _manual_control(msg: Any, ctx: SendContext) -> str | None:
         return "MANUAL_CONTROL to another system"
     if ctx.fc_mode != CopterMode.LOITER:
         return "MANUAL_CONTROL only while the flight controller is in LOITER"
+    # Only in the air: on the ground the sticks could arm or disarm the motors (the
+    # flight controller's throttle-down plus full-yaw gesture).
+    if not ctx.airborne:
+        return "MANUAL_CONTROL only while the vehicle is armed and in the air"
     x, y, z, r = int(msg.x), int(msg.y), int(msg.z), int(msg.r)
     if not (
         -_STICK_MAX <= x <= _STICK_MAX
