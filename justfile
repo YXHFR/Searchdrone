@@ -14,11 +14,11 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "migrate test-panel-e2e panel-build"
+unbuilt := "migrate"
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
-unbuilt_tools := "check_forbidden_mavlink check_versions check_compose_ports check_commit_emails check_coverage check_safety_manifest"
+unbuilt_tools := "check_forbidden_mavlink check_coverage check_safety_manifest"
 
 _just := just_executable() + " --justfile " + quote(justfile()) + " --working-directory " + quote(justfile_directory())
 
@@ -73,7 +73,7 @@ lint:
         echo "hoppar över zizmor (inte byggt än)"
     fi
     if [ -n "${SD_BASE_SHA:-}" ]; then
-        if [[ " {{unbuilt_tools}} " == *" check_commit_emails "* ]]; then echo "hoppar över check_commit_emails (inte byggt än)"; else uv run tools/check_commit_emails.py --since "$SD_BASE_SHA"; fi
+        if [[ " {{unbuilt_tools}} " == *" check_commit_emails "* ]]; then echo "hoppar över check_commit_emails (inte byggt än)"; else uv run tools/check_commit_emails.py --since "$SD_BASE_SHA" --head "${SD_HEAD_SHA:-HEAD}"; fi
     fi
 
 # Type-check Python (pyright) and TypeScript (tsc)
@@ -163,11 +163,22 @@ ground: (_not-built "B1-05")
 # Write a commander token for sd-brain
 brain-token: (_not-built "B1-10")
 
-# Panel end-to-end tests against a mock server
-test-panel-e2e: (_not-built "B1-06")
+# --- panel ---------------------------------------------------------------------------
+
+# Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)
+panel:
+    pnpm --filter @searchdrone/panel dev
+
+# Panel end-to-end tests against a fake ground station (same four steps as CI)
+test-panel-e2e:
+    pnpm --filter @searchdrone/panel build
+    pnpm --filter @searchdrone/panel check
+    pnpm --filter @searchdrone/panel build:test
+    pnpm --filter @searchdrone/panel e2e
 
 [private]
-panel-build: (_not-built "B1-06")
+panel-build:
+    pnpm --filter @searchdrone/panel build
 
 # --- simulator -----------------------------------------------------------------------
 

@@ -29,3 +29,12 @@ All notable changes to this project are listed here. The format follows
 - Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
   digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
   ground station tables, append-only guards and the restricted `sd_app` role.
+- Web panel shell (`software/panel`): chat, map, video, candidates, status and manual-control
+  views that can be combined or shown in full screen, tabs and picture-in-picture on phones,
+  and the always-visible STOP / RETURN HOME bar with honest acknowledgement, retries and
+  polling. Placeholders for take-over, on-screen sticks, game controller and order buttons.
+  Playwright tests against a fake ground station; works fully offline.
+- CI on every pull request and push to `main`: lint, type checks, unit and contract tests,
+  license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
+  Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
+  `gate/pr-title` and `gate/review`, Dependabot and a pull request template.
