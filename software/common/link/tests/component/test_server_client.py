@@ -333,3 +333,93 @@ async def test_orders_over_a_real_lossy_proxy() -> None:
             await session.close()
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
+
+
+async def test_repeated_auth_or_origin_header_gets_the_right_close_code() -> None:
+    async with running(Ground()) as g:
+        for name, value, expected in (
+            ("Authorization", f"Bearer {TOKEN}", CloseCode.AUTH_FAILED),
+            ("Origin", "http://a.example", CloseCode.FORBIDDEN),
+        ):
+            headers = [("Authorization", f"Bearer {TOKEN}"), (name, value)]
+            async with connect(g.url, additional_headers=headers) as ws:
+                assert await close_code(ws) == expected
+
+
+async def test_replacing_a_dead_old_connection_does_not_wait_for_it() -> None:
+    from sd_link_testing import transport_pair
+
+    clock = FakeClock()
+    ground = Ground(clock)
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    old_client, old_server = transport_pair()
+    old_server.block_close = True  # the old peer is gone and never answers
+    first = asyncio.ensure_future(ground.server.handle(old_server, headers))
+    await old_client.send(frame(hello(boot_id=7)))
+    await asyncio.sleep(0.01)
+    assert json.loads(await old_client.recv())["kind"] == "HelloAck"
+    await clock.advance(3.1)
+    new_client, new_server = transport_pair()
+    second = asyncio.ensure_future(ground.server.handle(new_server, headers))
+    await new_client.send(frame(hello(boot_id=7)))
+    await asyncio.sleep(0.01)
+    kinds = [json.loads(await new_client.recv())["kind"]]
+    assert kinds == ["HelloAck"]  # at once, not after the old close handshake
+    await clock.advance(1.2)  # the old close gives up and aborts
+    assert old_server.aborted
+    new_server.abort()
+    await asyncio.gather(first, second)
+
+
+async def test_token_never_reaches_the_logs_even_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    logging.getLogger("websockets").setLevel(logging.DEBUG)
+    async with FakeGround() as ground:
+
+        async def on_session(session: LinkSession, ack: HelloAck) -> None:
+            await next_inbound(session)
+
+        client = LinkClient(
+            url=ground.url,
+            token=ground.token,
+            vehicle_id=VEHICLE,
+            make_hello=hello,
+            on_session=on_session,
+            clock=MonotonicClock(),
+        )
+        stop = asyncio.Event()
+        runner = asyncio.ensure_future(client.run_forever(stop))
+        async with ground.connected() as session:
+            stop.set()
+            await session.close()
+        await asyncio.wait_for(runner, 3)
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert ground.token not in text
+
+
+def test_redact() -> None:
+    from sd_link.wslog import redact
+
+    assert redact("Authorization: Bearer abc.def") == "Authorization: Bearer [REDACTED]"
+    assert redact("nothing here") == "nothing here"
+
+
+async def test_plain_ws_to_a_lan_host_warns(caplog: pytest.LogCaptureFixture) -> None:
+    for url, warns in (
+        ("ws://192.0.2.10:7600/sdlink/v1/control", True),
+        ("ws://localhost:7600/sdlink/v1/control", False),
+        ("ws://127.0.0.1:7600/sdlink/v1/control", False),
+        ("wss://ground.example:7600/sdlink/v1/control", False),
+    ):
+        caplog.clear()
+        LinkClient(
+            url=url,
+            token=TOKEN,
+            vehicle_id=VEHICLE,
+            make_hello=hello,
+            on_session=lambda s, a: asyncio.sleep(0),
+            clock=MonotonicClock(),
+        )
+        assert ("in clear" in caplog.text) is warns, url

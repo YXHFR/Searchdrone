@@ -2,12 +2,14 @@
 
 Pure logic: the caller passes ``now`` (monotonic seconds from its ``Clock``).
 
-* A reliable message without an ``Ack`` is resent after ``SDLINK_RESEND_S``, at most
-  ``SDLINK_MAX_RESENDS`` times. A resend keeps ``msg_id``, gets a new ``seq`` and its
-  ``ttl_ms`` reduced by the time since the first send. A message whose ttl has run out
-  is not sent again. After the last attempt it expires (``LINK_NO_ACK``).
-* The receiver remembers the last ``DEDUP_WINDOW`` msg_ids. A duplicate gets the same
-  ``Ack`` again and is not handed to the application.
+* A reliable message without an ``Ack`` is resent ``SDLINK_RESEND_S`` after the first
+  send, then again each ``SDLINK_RESEND_S``, at most ``SDLINK_MAX_RESENDS`` times. A
+  resend keeps ``msg_id``, gets a new ``seq`` and its ``ttl_ms`` reduced by the time since
+  the first send. A message whose ttl has run out is not sent again. After the last
+  attempt it expires (``LINK_NO_ACK``).
+* The receiver remembers the last ``DEDUP_WINDOW`` reliable messages from a sender (by
+  msg_id, and by command_id for a ``SkillCommand``). A duplicate gets exactly the same
+  ``Ack`` frame again and is not handed to the application.
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ ACK_STAGE_RANK: Final[dict[AckStage, int]] = {
     "expired": 4,
 }
 
+_EPS = 1e-9
+
 
 def advance_stage(current: AckStage | None, new: AckStage) -> AckStage | None:
     """The stage after an Ack arrives. Returns ``current`` when ``new`` would go
@@ -75,7 +79,6 @@ def inbound_deadline(received_at: float, ttl_ms: int | None) -> float | None:
 class Pending:
     envelope: Envelope  # as last sent
     first_sent: float
-    last_sent: float
     first_ttl_ms: int | None
     resends: int = 0
     keys: tuple[uuid.UUID, ...] = ()
@@ -83,7 +86,11 @@ class Pending:
 
 @dataclass(slots=True)
 class ResendQueue:
-    """Reliable messages sent on one connection and not yet acknowledged."""
+    """Reliable messages sent on one connection and not yet acknowledged.
+
+    ``take_expired`` and ``take_resends`` are separate so that expiry can be decided
+    (and reported) without waiting for any write.
+    """
 
     resend_s: float = SDLINK_RESEND_S
     max_resends: int = SDLINK_MAX_RESENDS
@@ -100,9 +107,14 @@ class ResendQueue:
         if not envelope.reliable:
             raise ValueError("only reliable messages are tracked")
         keys = ack_keys(envelope)
-        self._by_msg[envelope.msg_id] = Pending(envelope, now, now, envelope.ttl_ms, 0, keys)
+        if any(key in self._by_key for key in keys):
+            raise ValueError("a message with this id is already waiting for an Ack")
+        self._by_msg[envelope.msg_id] = Pending(envelope, now, envelope.ttl_ms, 0, keys)
         for key in keys:
             self._by_key[key] = envelope.msg_id
+
+    def is_pending(self, key: uuid.UUID) -> bool:
+        return key in self._by_key
 
     def ack(self, ref_id: uuid.UUID) -> Envelope | None:
         """Stop resending what ``ref_id`` refers to. Any Ack stage stops the resend."""
@@ -111,24 +123,32 @@ class ResendQueue:
             return None
         return self._remove(msg_id).envelope
 
-    def due(self, now: float, next_seq: Callable[[], int]) -> tuple[list[Envelope], list[Envelope]]:
-        """Messages to send again now, and messages that have expired (LINK_NO_ACK)."""
-        resend: list[Envelope] = []
+    def take_expired(self, now: float) -> list[Envelope]:
+        """Remove and return messages whose last attempt got no Ack in time, or whose
+        ttl ran out before the next resend (both: LINK_NO_ACK)."""
         expired: list[Envelope] = []
         for pending in list(self._by_msg.values()):
-            # Anchored to the first send so that tick granularity does not add up.
-            if now - pending.first_sent < (pending.resends + 1) * self.resend_s - 1e-9:
+            if not self._due(pending, now):
                 continue
             ttl = self._remaining_ttl(pending, now)
             if pending.resends >= self.max_resends or (ttl is not None and ttl <= 0):
                 expired.append(self._remove(pending.envelope.msg_id).envelope)
+        return expired
+
+    def take_resends(self, now: float, next_seq: Callable[[], int]) -> list[Envelope]:
+        """Messages to send again now (new seq, ttl reduced)."""
+        resend: list[Envelope] = []
+        for pending in list(self._by_msg.values()):
+            if not self._due(pending, now) or pending.resends >= self.max_resends:
                 continue
+            ttl = self._remaining_ttl(pending, now)
+            if ttl is not None and ttl <= 0:
+                continue  # left for take_expired
             again = pending.envelope.model_copy(update={"seq": next_seq(), "ttl_ms": ttl})
             pending.envelope = again
-            pending.last_sent = now
             pending.resends += 1
             resend.append(again)
-        return resend, expired
+        return resend
 
     def drain(self) -> list[Envelope]:
         """Everything still unacknowledged, oldest first; the queue is emptied.
@@ -137,6 +157,10 @@ class ResendQueue:
         self._by_msg.clear()
         self._by_key.clear()
         return [p.envelope for p in pending]
+
+    def _due(self, pending: Pending, now: float) -> bool:
+        # Anchored to the first send so that tick granularity does not add up.
+        return now - pending.first_sent >= (pending.resends + 1) * self.resend_s - _EPS
 
     def _remaining_ttl(self, pending: Pending, now: float) -> int | None:
         if pending.first_ttl_ms is None:
@@ -153,23 +177,27 @@ class ResendQueue:
 @dataclass(slots=True)
 class _Seen:
     keys: tuple[uuid.UUID, ...]
-    ack: Ack | None = None
+    ack_frame: str | None = None
 
 
 @dataclass(slots=True)
 class DedupCache:
-    """The last ``size`` reliable msg_ids from one sender, each with the last Ack sent
-    for it, so that a duplicate gets the same answer and no new effect."""
+    """The last ``size`` reliable messages from one sender, each with the encoded Ack
+    frame last sent for it, so that a duplicate gets the same answer and no new effect.
+
+    One cache per peer (per vehicle on the ground), kept across reconnects.
+    """
 
     size: int = DEDUP_WINDOW
     _seen: OrderedDict[uuid.UUID, _Seen] = field(default_factory=OrderedDict[uuid.UUID, _Seen])
     _by_key: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict[uuid.UUID, uuid.UUID])
 
-    def __contains__(self, msg_id: uuid.UUID) -> bool:
-        return msg_id in self._seen
-
     def __len__(self) -> int:
         return len(self._seen)
+
+    def seen(self, envelope: Envelope) -> bool:
+        """True for a msg_id seen before, or a SkillCommand whose command_id was."""
+        return any(key in self._by_key for key in ack_keys(envelope))
 
     def remember(self, envelope: Envelope) -> None:
         keys = ack_keys(envelope)
@@ -182,12 +210,15 @@ class DedupCache:
                 if self._by_key.get(key) == old_id:
                     del self._by_key[key]
 
-    def record_ack(self, ack: Ack) -> None:
-        """Remember the latest Ack sent for a message (matched by msg_id or command_id)."""
+    def record_ack(self, ack: Ack, frame: str) -> None:
+        """Remember the latest Ack frame sent for a message (by msg_id or command_id)."""
         msg_id = self._by_key.get(ack.ref_id)
         if msg_id is not None:
-            self._seen[msg_id].ack = ack
+            self._seen[msg_id].ack_frame = frame
 
-    def last_ack(self, msg_id: uuid.UUID) -> Ack | None:
-        seen = self._seen.get(msg_id)
-        return None if seen is None else seen.ack
+    def last_ack_frame(self, envelope: Envelope) -> str | None:
+        for key in ack_keys(envelope):
+            msg_id = self._by_key.get(key)
+            if msg_id is not None:
+                return self._seen[msg_id].ack_frame
+        return None

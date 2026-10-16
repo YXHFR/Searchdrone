@@ -15,15 +15,26 @@ What the package gives both sides:
   keeps `msg_id`, gets a new `seq` and a shorter ttl. Duplicates get the same `Ack` and
   no new effect. Statuses never move backwards (`advance_stage`).
 - **Sessions** (`sd_link.session.LinkSession`): heartbeat at 1 Hz, link state
-  `up` → `degraded` (3 s silent) → `lost` (10 s, closed with 1001). Nothing is resent on
-  a new connection; unacknowledged messages are handed back when a session ends.
+  `up` → `degraded` (3 s silent) → `lost` (10 s, closed with 1001). Liveness and expiry
+  run in their own task and never wait for a write; a write blocked for 2 s aborts the
+  connection. When a reliable message expires, the connection is aborted at once so
+  that the stale frame can never arrive later. Nothing is resent on a new connection;
+  unacknowledged messages are handed back when a session ends. Delivery order holds
+  when the application waits for an Ack before the next order.
+- **Stick values** (`ManualControl`) go through `LinkSession.offer`: best-effort, only
+  while the link is up, never queued or resent. The receiver keeps only the newest
+  value and drops values that arrive in a burst right after a stall.
 - **Server** (`sd_link.server.LinkServer`, ground) and **client**
   (`sd_link.client.LinkClient`, onboard, reconnects with backoff).
 - **Tokens** (`sd_link.tokens`): 32 random bytes; the ground stores only the SHA-256 and
   compares in constant time.
 
 Close codes (`sd_link.close_codes`): 4401 wrong token, 4403 unknown vehicle or a browser
-`Origin`, 4400 bad `Hello`, 4409 replaced by a newer connection, 1001 link lost.
+`Origin`, 4400 bad `Hello`, 4409 replaced by a newer connection, 1001 link lost, 1008
+too many invalid frames or events not consumed.
+
+The `websockets` library logs through `sd_link.ws`, which is pinned to INFO and redacts
+Bearer tokens.
 
 All timing goes through an injected `Clock`; tests use `sd_link_testing.FakeClock`.
 

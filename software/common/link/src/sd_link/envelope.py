@@ -187,4 +187,8 @@ def decode(text: str | bytes) -> tuple[Envelope, SdModel]:
         raise DecodeError(
             SCHEMA_INVALID, "reliable flag does not match the kind", envelope.msg_id, True
         )
+    try:
+        check_ttl(envelope.kind, envelope.ttl_ms)  # the receiver enforces the rules too
+    except ValueError as exc:
+        raise DecodeError(SCHEMA_INVALID, str(exc), envelope.msg_id, envelope.reliable) from None
     return envelope, body

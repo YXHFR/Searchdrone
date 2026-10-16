@@ -25,6 +25,7 @@ from sd_link.tokens import (
 def test_close_codes_are_locked() -> None:
     assert {c.name: c.value for c in CloseCode} == {
         "GOING_AWAY": 1001,
+        "POLICY_VIOLATION": 1008,
         "AUTH_FAILED": 4401,
         "FORBIDDEN": 4403,
         "BAD_HELLO": 4400,
@@ -51,7 +52,9 @@ def test_constants_agree_with_the_safety_package() -> None:
         safety = importlib.import_module("sd_safety.constants")
     except ModuleNotFoundError:
         pytest.skip("sd_safety.constants not built yet")
-    for name in ("SDLINK_RESEND_S", "SDLINK_MAX_RESENDS", "LINK_LOSS_DETECT_S", "LINK_LOST_S"):
+    for name in ("LINK_LOSS_DETECT_S", "LINK_LOST_S"):  # both packages must have these
+        assert getattr(safety, name) == getattr(constants, name), name
+    for name in ("SDLINK_RESEND_S", "SDLINK_MAX_RESENDS", "HEARTBEAT_INTERVAL_S"):
         if hasattr(safety, name):
             assert getattr(safety, name) == getattr(constants, name), name
 

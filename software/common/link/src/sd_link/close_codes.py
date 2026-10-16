@@ -9,6 +9,7 @@ __all__ = ["FATAL_CLOSE_CODES", "CloseCode"]
 
 class CloseCode(IntEnum):
     GOING_AWAY = 1001  # link lost (no traffic for LINK_LOST_S) or server shutting down
+    POLICY_VIOLATION = 1008  # too many invalid frames, or events not consumed (backlog)
     AUTH_FAILED = 4401  # wrong or missing token
     FORBIDDEN = 4403  # unknown vehicle, vehicle mismatch, or an Origin header
     BAD_HELLO = 4400  # first message not Hello, no Hello in time, or wrong schema_major

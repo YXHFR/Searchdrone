@@ -6,16 +6,14 @@ transports in ``sd_link_testing``.
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from websockets.asyncio.connection import Connection
 from websockets.exceptions import ConnectionClosed
 
-from sd_link.clock import Clock
+__all__ = ["ABORT_CODE", "Transport", "TransportClosedError", "WebSocketTransport"]
 
-__all__ = ["Transport", "TransportClosedError", "WebSocketTransport", "first_or_timeout"]
+ABORT_CODE = 1006  # what a connection reports after abort(): no close frame
 
 
 class TransportClosedError(Exception):
@@ -34,7 +32,13 @@ class Transport(Protocol):
         """The next frame. Raises TransportClosedError when closed."""
         ...
 
-    async def close(self, code: int, reason: str = "") -> None: ...
+    async def close(self, code: int, reason: str = "") -> None:
+        """Graceful close: frames already queued are still delivered first."""
+        ...
+
+    def abort(self) -> None:
+        """Drop the connection now, with everything still queued in it."""
+        ...
 
     @property
     def close_code(self) -> int | None: ...
@@ -59,6 +63,9 @@ class WebSocketTransport:
     async def close(self, code: int, reason: str = "") -> None:
         await self._ws.close(code, reason)
 
+    def abort(self) -> None:
+        self._ws.transport.abort()
+
     @property
     def close_code(self) -> int | None:
         return self._ws.close_code
@@ -66,34 +73,9 @@ class WebSocketTransport:
 
 def _code(exc: ConnectionClosed) -> int | None:
     frame = exc.rcvd or exc.sent
-    return None if frame is None else frame.code
+    return ABORT_CODE if frame is None else frame.code
 
 
 def _reason(exc: ConnectionClosed) -> str:
     frame = exc.rcvd or exc.sent
     return "" if frame is None else frame.reason
-
-
-async def first_or_timeout[T](
-    clock: Clock, work: Callable[[], Awaitable[T]], timeout_s: float
-) -> tuple[bool, T | None]:
-    """Run ``work`` with a deadline measured on ``clock``. Returns (done, result);
-    on timeout the work is cancelled and (False, None) is returned."""
-
-    async def runner() -> T:
-        return await work()
-
-    task = asyncio.ensure_future(runner())
-    timer = asyncio.ensure_future(clock.sleep(timeout_s))
-    try:
-        await asyncio.wait({task, timer}, return_when=asyncio.FIRST_COMPLETED)
-    except BaseException:
-        task.cancel()
-        raise
-    finally:
-        timer.cancel()
-    if task.done():
-        return True, task.result()
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
-    return False, None

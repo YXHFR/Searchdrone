@@ -1,8 +1,8 @@
 """SD-link timing and size constants.
 
-The same names live in ``sd_safety.constants`` once the safety package has them;
-``tests/unit/test_constants.py`` checks that the values agree. None of these come
-from config or the environment.
+``LINK_LOSS_DETECT_S`` and ``LINK_LOST_S`` also live in ``sd_safety.constants`` once
+the safety package has them; ``tests/unit/test_constants_and_tokens.py`` checks that
+the values agree. None of these come from config or the environment.
 """
 
 from __future__ import annotations
@@ -11,15 +11,21 @@ from typing import Final
 
 __all__ = [
     "AUTH_RETRY_S",
+    "CLOSE_TIMEOUT_S",
     "DEDUP_WINDOW",
     "HEARTBEAT_INTERVAL_S",
     "HELLO_ACK_TIMEOUT_S",
     "HELLO_TIMEOUT_S",
     "LINK_LOSS_DETECT_S",
     "LINK_LOST_S",
+    "MANUAL_QUARANTINE_S",
+    "MANUAL_STALL_GAP_S",
+    "MAX_EVENT_BACKLOG",
     "MAX_FRAME_BYTES",
+    "MAX_INVALID_FRAMES",
     "MAX_MESSAGE_BYTES",
     "MAX_PENDING_RELIABLE",
+    "OPEN_TIMEOUT_S",
     "RECONNECT_INITIAL_S",
     "RECONNECT_JITTER",
     "RECONNECT_MAX_S",
@@ -28,6 +34,7 @@ __all__ = [
     "SDLINK_RESEND_S",
     "TICK_S",
     "TOKEN_BYTES",
+    "WRITE_TIMEOUT_S",
 ]
 
 SDLINK_PATH: Final = "/sdlink/v1/control"
@@ -43,6 +50,17 @@ HEARTBEAT_INTERVAL_S: Final = 1.0  # both sides, not reliable
 LINK_LOSS_DETECT_S: Final = 3.0  # no inbound traffic -> degraded
 LINK_LOST_S: Final = 10.0  # no inbound traffic -> lost, connection closed with 1001
 TICK_S: Final = 0.05  # how often a session checks resends and liveness
+WRITE_TIMEOUT_S: Final = 2.0  # a write blocked longer than this aborts the connection
+CLOSE_TIMEOUT_S: Final = 1.0  # wait for the peer's close frame at most this long
+OPEN_TIMEOUT_S: Final = 5.0  # WebSocket opening handshake
+
+# Manual control (stick values, 10-20 Hz): never replay a stalled burst
+MANUAL_STALL_GAP_S: Final = 1.5  # no frame at all for this long = the stream stalled
+MANUAL_QUARANTINE_S: Final = 1.0  # stick values arriving this soon after a stall are dropped
+
+# Abuse limits (per connection)
+MAX_EVENT_BACKLOG: Final = 4096  # undelivered events; more closes the connection (1008)
+MAX_INVALID_FRAMES: Final = 20  # invalid frames; more closes the connection (1008)
 
 # Handshake
 HELLO_TIMEOUT_S: Final = 5.0  # server: first message must be Hello within this

@@ -6,6 +6,7 @@ import asyncio
 import heapq
 import itertools
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 __all__ = ["FakeClock"]
 
@@ -41,7 +42,7 @@ class FakeClock:
             await self._wake()
         await self._wake()
 
-    async def run_until(self, done: asyncio.Future[object] | asyncio.Event, limit_s: float) -> None:
+    async def run_until(self, done: asyncio.Future[Any] | asyncio.Event, limit_s: float) -> None:
         """Advance until ``done`` is set (or ``limit_s`` simulated seconds pass)."""
         end = self._now + limit_s
         while self._now < end and not _is_done(done):
@@ -58,5 +59,5 @@ class FakeClock:
             await asyncio.sleep(0)
 
 
-def _is_done(done: asyncio.Future[object] | asyncio.Event) -> bool:
+def _is_done(done: asyncio.Future[Any] | asyncio.Event) -> bool:
     return done.is_set() if isinstance(done, asyncio.Event) else done.done()

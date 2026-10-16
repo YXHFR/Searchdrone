@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass, field
 
 from sd_link.clock import Clock
-from sd_link.transport import TransportClosedError
+from sd_link.transport import ABORT_CODE, TransportClosedError
 
 __all__ = ["LossyTransport", "MemoryTransport", "transport_pair"]
 
@@ -23,6 +23,8 @@ class MemoryTransport:
     sent: list[str] = field(default_factory=list[str])
     _close_code: int | None = None
     _close_reason: str = ""
+    block_close: bool = False  # close() never returns (a dead peer)
+    aborted: bool = False
 
     async def send(self, text: str) -> None:
         if self._close_code is not None or self.peer is None:
@@ -44,11 +46,20 @@ class MemoryTransport:
         return item
 
     async def close(self, code: int, reason: str = "") -> None:
+        if self.block_close:
+            await asyncio.Event().wait()  # a peer that never answers the close frame
         if self._close_code is not None:
             return
         self._mark_closed(code, reason)
         if self.peer is not None:
             self.peer._mark_closed(code, reason)
+
+    def abort(self) -> None:
+        self.aborted = True
+        if self._close_code is None:
+            self._mark_closed(ABORT_CODE, "")
+        if self.peer is not None:
+            self.peer._mark_closed(ABORT_CODE, "")
 
     def _mark_closed(self, code: int, reason: str) -> None:
         if self._close_code is None:
@@ -114,6 +125,10 @@ class LossyTransport:
     async def close(self, code: int, reason: str = "") -> None:
         self._pump.cancel()
         await self.inner.close(code, reason)
+
+    def abort(self) -> None:
+        self._pump.cancel()  # frames still in flight are lost with the connection
+        self.inner.abort()
 
     @property
     def close_code(self) -> int | None:
