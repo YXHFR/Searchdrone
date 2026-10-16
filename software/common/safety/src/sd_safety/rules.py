@@ -563,10 +563,17 @@ def _pilot_distance(f: Facts) -> list[Finding]:
 
 def _speed(f: Facts) -> list[Finding]:
     t = f.targets
-    if t is None or not (t.points or t.path or t.areas):
+    if t is None:
         return []
-    # No speed given: the executor flies at its default speed, which must fit as well.
-    speed = t.speed_ms if t.speed_ms is not None else EXECUTOR_DEFAULT_SPEED_MS
+    speed = t.speed_ms
+    if speed is None:
+        # No speed given: a move along a route flies at the executor's default speed,
+        # which must fit as well. Orders that do not travel (a map marker, a takeoff
+        # climb) have no cruise speed to check.
+        travels = f.moves and (len(t.path) >= 2 or bool(t.areas))
+        if not travels:
+            return []
+        speed = EXECUTOR_DEFAULT_SPEED_MS
     out = _one(speed > f.ctx.limits.max_speed_ms, "SPEED_ABOVE_LIMIT", speed_ms=speed)
     charter = f.ctx.charter
     if charter is not None:

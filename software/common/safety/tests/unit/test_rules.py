@@ -797,6 +797,10 @@ def test_missing_speed_is_checked_at_the_default_speed() -> None:
     assert codes(req(), slow) == ["SPEED_ABOVE_CHARTER"]
     assert codes(req(params=goto(speed_ms=4)), slow) == []
     assert codes(req("hold", {}), slow) == []
+    lat, lon = latlon(0, 0)
+    assert codes(req("mark_location", {"lat": lat, "lon": lon, "label": "M1"}), slow) == []
+    slow_ground = ground_ctx(charter=slow.charter)
+    assert codes(req("takeoff", {"alt_m": 40}), slow_ground) == []
 
 
 def test_order_for_another_mission_or_vehicle() -> None:
