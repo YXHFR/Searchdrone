@@ -14,7 +14,7 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "migrate test-panel-e2e panel-build"
+unbuilt := "migrate"
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
@@ -163,11 +163,22 @@ ground: (_not-built "B1-05")
 # Write a commander token for sd-brain
 brain-token: (_not-built "B1-10")
 
-# Panel end-to-end tests against a mock server
-test-panel-e2e: (_not-built "B1-06")
+# --- panel ---------------------------------------------------------------------------
+
+# Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)
+panel:
+    pnpm --filter @searchdrone/panel dev
+
+# Panel end-to-end tests against a fake ground station (same four steps as CI)
+test-panel-e2e:
+    pnpm --filter @searchdrone/panel build
+    pnpm --filter @searchdrone/panel check
+    pnpm --filter @searchdrone/panel build:test
+    pnpm --filter @searchdrone/panel e2e
 
 [private]
-panel-build: (_not-built "B1-06")
+panel-build:
+    pnpm --filter @searchdrone/panel build
 
 # --- simulator -----------------------------------------------------------------------
 

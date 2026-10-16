@@ -74,6 +74,7 @@ dist/
 node_modules/
 .pnpm-store/
 software/panel/dist/
+software/panel/dist-test/
 playwright-report/
 test-results/
 

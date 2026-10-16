@@ -21,6 +21,11 @@ byt = "byt"
 vill = "vill"
 objekt = "objekt"
 tak = "tak"
+# Swedish (panel texts in software/panel/src/i18n/sv.json; "gir" and "som" are below)
+meny = "meny"
+tema = "tema"
+vyer = "vyer"
+manuell = "manuell"
 # Simulator: ArduPilot parameter and frame names, package names, Swedish messages
 gir = "gir"
 som = "som"
