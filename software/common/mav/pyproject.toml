@@ -1,11 +1,14 @@
 [project]
 name = "sd-mav"
 version = "0.0.0"
-description = "Thin MAVLink wrapper, a fake vehicle for tests and the flight-controller parameter allowlist."
+description = "The vehicle link: MAVLink to the flight controller behind a default-deny allowlist, plus a fake flight controller for tests."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+  "sd-schemas", "sd-safety", "sd-obs",
+  "pymavlink>=2.4.47",  # LGPL-3.0, used unmodified and imported only here
+]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
