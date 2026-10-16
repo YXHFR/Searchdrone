@@ -26,9 +26,18 @@ def test_testrun_rejects(bad: list[str]) -> None:
     assert exc.value.code == 2
 
 
-def test_launch_not_built(capsys: pytest.CaptureFixture[str]) -> None:
-    assert launch.main(["up", "physics=gz"]) == 2
-    assert "inte byggt än (B0-05)" in capsys.readouterr().out
+@pytest.mark.parametrize(
+    "bad", [["up", "physics=unity"], ["up", "instance=9"], ["up", "gui=maybe"]]
+)
+def test_launch_rejects_bad_values(bad: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        launch.main(bad)
+    assert exc.value.code == 2
+
+
+def test_launch_dry(capsys: pytest.CaptureFixture[str]) -> None:
+    assert launch.main(["up", "physics=builtin", "dry=1"]) == 0
+    assert json.loads(capsys.readouterr().out)["args"] == ["physics=builtin", "dry=1"]
 
 
 @pytest.mark.parametrize(

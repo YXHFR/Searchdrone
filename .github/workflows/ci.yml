@@ -1,0 +1,192 @@
+# Every pull request and every push to main runs the same checks as `just check`, split
+# into jobs so a failure points at the right category. `ci-ok` is the one required check.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: just lint
+        env:
+          # Set for pull requests and the merge queue: enables the commit e-mail check.
+          SD_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          SD_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: just lint
+
+  typecheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - run: just typecheck
+
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - run: just test
+
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Start Postgres from compose.yaml
+        run: |
+          if [ -f compose.yaml ]; then
+            docker compose --env-file .env up -d --wait db
+          else
+            echo "hoppar över databasen (compose.yaml inte byggt än)"
+          fi
+      - name: Generated files are up to date
+        run: just _step gen-check
+      - name: Contract, component and unit tests with coverage
+        run: just test-contract
+      - name: License policy for production dependencies
+        run: uv run tools/check_licenses.py
+
+  panel-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Panel end-to-end tests
+        run: |
+          if just --dump --dump-format json \
+              | jq -e '.assignments.unbuilt.value | split(" ") | index("test-panel-e2e")' >/dev/null; then
+            echo "hoppar över test-panel-e2e (inte byggt än)"
+          else
+            pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium firefox webkit
+            just test-panel-e2e
+          fi
+
+  reuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - run: uv run reuse lint
+
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (release binary, checksum verified)
+        run: |
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tgz}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan the new commits
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        # Only the commits this event adds, never --all: unmerged test branches (the
+        # canary test) must not turn main red.
+        run: |
+          case "$EVENT" in
+            pull_request) range="$PR_BASE..$PR_HEAD" ;;
+            merge_group) range="$MG_BASE..$MG_HEAD" ;;
+            push)
+              if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]]; then range="origin/main"; else range="$BEFORE..$SHA"; fi ;;
+            *) range="origin/main" ;;
+          esac
+          # The rules come from the base commit, so a pull request cannot allowlist
+          # the secret it adds. A push to main uses the config it was merged with.
+          config_rev="$SHA"
+          case "$EVENT" in
+            pull_request) config_rev="$PR_BASE" ;;
+            merge_group) config_rev="$MG_BASE" ;;
+          esac
+          git show "$config_rev:.gitleaks.toml" > "$RUNNER_TEMP/gitleaks.toml"
+          "$RUNNER_TEMP/gitleaks" git --config "$RUNNER_TEMP/gitleaks.toml" --redact --exit-code 1 \
+            --log-opts="$range" .
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - run: just build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build
+          path: |
+            dist/
+            software/panel/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  ci-ok:
+    if: always()
+    needs: [lint, typecheck, unit, contract, panel-e2e, reuse, secrets, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci_aggregate.jq
+          sparse-checkout-cone-mode: false
+      - name: All jobs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -e -f tools/ci_aggregate.jq

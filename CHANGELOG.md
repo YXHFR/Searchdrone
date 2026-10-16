@@ -13,6 +13,11 @@ All notable changes to this project are listed here. The format follows
 - Forbidden-file guard that blocks planning files, agent files, secrets, personal config,
   media, large files, coordinates outside public test sites and private search patterns.
 - `tools/bootstrap.sh` and `tools/setup/wsl-setup.sh` for a fresh WSL2 Ubuntu 24.04.
+- Simulator environment: `just sim-setup` installs ArduPilot SITL (Copter-4.7.1) and Gazebo
+  Harmonic, `just sim-doctor` checks the setup, `just sim-smoke` flies a take-off and landing.
+  Simulated radio link (`linksim`), MAVLink tap, test rig, SITL container image and
+  `simulation/ports.yaml`. Simulator ports listen on 127.0.0.1; the few sockets ArduPilot
+  and Gazebo bind to all addresses themselves are listed with their reasons and checked.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.
 - Shared message schemas (`sd_schemas`): ids, limits and their outer cap, mission charter,
@@ -24,6 +29,15 @@ All notable changes to this project are listed here. The format follows
 - Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
   digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
   ground station tables, append-only guards and the restricted `sd_app` role.
+- Web panel shell (`software/panel`): chat, map, video, candidates, status and manual-control
+  views that can be combined or shown in full screen, tabs and picture-in-picture on phones,
+  and the always-visible STOP / RETURN HOME bar with honest acknowledgement, retries and
+  polling. Placeholders for take-over, on-screen sticks, game controller and order buttons.
+  Playwright tests against a fake ground station; works fully offline.
+- CI on every pull request and push to `main`: lint, type checks, unit and contract tests,
+  license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
+  Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
+  `gate/pr-title` and `gate/review`, Dependabot and a pull request template.
 - Safety gate (`sd_safety.evaluate`): every rule for orders from the AI and the operator,
   exact route and area checks against concave charter areas, geodesic distances, limits
   with an outer cap and the matching flight-controller fence, manual control and the
