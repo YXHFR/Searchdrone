@@ -2,6 +2,7 @@
 *.gif binary
 *.png binary
 *.ico binary
+*.pmtiles binary
 **/generated/** linguist-generated=true
 software/ground/tests/contract/snapshots/** linguist-generated=true
 uv.lock linguist-generated=true

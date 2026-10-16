@@ -240,8 +240,9 @@ alias bench := perf
 # Download the local AI model
 models-fetch: (_not-built "B1-10")
 
-# Download the offline map extract
-maps-fetch: (_not-built "B1-11")
+# Download the offline map pack to <data_dir>/tiles/ (keys: bbox, maxzoom, name, dry)
+maps-fetch *args:
+    uv run --no-sync python tools/maps/fetch.py "$@"
 
 # --- hardware, acceptance and release ------------------------------------------------
 

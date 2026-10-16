@@ -1321,6 +1321,8 @@ export interface ManualTakeover {
  * via the `definition` "MapConfig".
  */
 export interface MapConfig {
+  assets_url?: string;
+  attribution?: string;
   center: LatLon;
   pack_url: string;
   zoom: number;

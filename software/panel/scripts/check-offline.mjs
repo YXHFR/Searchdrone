@@ -13,6 +13,8 @@ const ALLOWED = [
   "https://maplibre.invalid/", // MapLibre placeholder base URL, never resolved
   "https://wiki.openstreetmap.org/wiki/This_map_requires_WebGL", // MapLibre no-WebGL message
   "https://github.com/mapbox/mapbox-gl-js/issues/", // MapLibre comment link in an error text
+  "https://github.com/protomaps/PMTiles/tree/main/js", // PMTiles Leaflet error text (unused)
+  "https://github.com/maplibre/maplibre-gl-js/blob/", // licence link in the worker's header comment
 ];
 const FORBIDDEN = ["__sd", 'name="sd-build"', "navigator.geolocation", '"crash"'];
 

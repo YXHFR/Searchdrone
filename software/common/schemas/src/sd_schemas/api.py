@@ -165,10 +165,16 @@ class LoginRequest(SdModel):
         return self
 
 
+MAP_ATTRIBUTION = "© OpenStreetMap contributors, Protomaps"
+
+
 class MapConfig(SdModel):
     pack_url: str  # e.g. "/tiles/demo.pmtiles"
     center: LatLon
     zoom: float = Field(ge=0, le=22)
+    # Plain text (never HTML). OpenStreetMap data is ODbL, which requires this line.
+    attribution: str = Field(default=MAP_ATTRIBUTION, min_length=1, max_length=200)
+    assets_url: str = "/tiles/assets"  # glyphs under fonts/, sprites under sprites/v4/
 
 
 class VideoConfig(SdModel):

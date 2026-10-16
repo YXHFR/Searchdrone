@@ -8,7 +8,7 @@ owns are already here, with their final paths, bodies and role checks, and answe
   emergency path; Resume, action outcomes and the battery guard come with that path.
 - The mission flow (open, limits, autonomy, clearance, charters, approvals, orders, chat
   posts, map pins, sectors, track, files) comes with the mission services.
-- Video and the offline map come with their own parts.
+- Video comes with its own part. The offline map is ``sd_ground.api.tiles``.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 
 from sd_ground import emergency
+from sd_ground.api import tiles
 from sd_ground.api.deps import (
     COOKIE,
     ApiStatusError,
@@ -122,7 +123,7 @@ async def get_panel_config(g: G, _: Observer) -> PanelConfig:
     caps = limit_caps(g.loaded)
     return PanelConfig(
         default_vehicle_id=vid,
-        map=None,  # filled in when the offline map is built (B1-11)
+        map=tiles.map_config(g),
         video=VideoConfig(whep_url=f"/api/v1/video/{vid}/main/whep", hls_url=None),
         vehicle_kind="sim",
         limits_default=SafetyLimits(),

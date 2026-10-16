@@ -3841,6 +3841,16 @@
     "MapConfig": {
       "additionalProperties": false,
       "properties": {
+        "assets_url": {
+          "default": "/tiles/assets",
+          "type": "string"
+        },
+        "attribution": {
+          "default": "© OpenStreetMap contributors, Protomaps",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
         "center": {
           "$ref": "#/$defs/LatLon"
         },

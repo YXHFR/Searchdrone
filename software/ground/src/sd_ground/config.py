@@ -104,6 +104,12 @@ class VideoConfig(_Section):
     mediamtx_hls: str = "http://127.0.0.1:8888"
 
 
+class MapConfig(_Section):
+    # The offline map pack <data_dir>/tiles/<pack>.pmtiles, made by `just maps-fetch`.
+    pack: str = Field(default="demo", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    zoom: float = Field(default=15.0, ge=0, le=22)
+
+
 class HealthConfig(_Section):
     internet_probe: bool = False
 
@@ -129,6 +135,7 @@ class GroundConfig(_Section):
     auth: AuthConfig = AuthConfig()
     charter: CharterConfig = CharterConfig()
     video: VideoConfig = VideoConfig()
+    map: MapConfig = MapConfig()
     health: HealthConfig = HealthConfig()
     sim: SimConfig = SimConfig()
     remote: RemoteConfig = RemoteConfig()
