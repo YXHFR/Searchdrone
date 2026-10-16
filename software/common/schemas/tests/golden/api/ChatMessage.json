@@ -1,0 +1,16 @@
+{
+  "id": "0192f49e-3000-7000-8000-000000000003",
+  "seq": 1,
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "role": "operator",
+  "author_ref": "operator:demo",
+  "kind": "text",
+  "text": "stopp",
+  "in_reply_to": null,
+  "refs": {},
+  "author_role": "pilot",
+  "parsed_intent": "stop",
+  "handled_by": "ground",
+  "delivery": "delivered",
+  "created_at": "2026-10-15T12:30:00Z"
+}

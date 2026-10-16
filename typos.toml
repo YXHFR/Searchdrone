@@ -7,9 +7,16 @@ extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**",
 [default.extend-words]
 # Domain
 sitl = "sitl"
+brin = "brin"  # Postgres BRIN index (B0-04)
 # Swedish
 varning = "varning"
 databas = "databas"
 formen = "formen"
 parm = "parm"
 fpr = "fpr"
+# Swedish (sd_schemas: skill names, reason texts, chat examples)
+stopp = "stopp"
+byt = "byt"
+vill = "vill"
+objekt = "objekt"
+tak = "tak"

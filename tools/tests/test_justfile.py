@@ -74,8 +74,7 @@ def test_all_recipes_listed() -> None:
 @pytest.mark.parametrize(
     ("recipe", "ticket"),
     [
-        ("db-up", "B0-04"),
-        ("gen", "B0-03"),
+        ("brain-token", "B1-10"),
         ("migrate", "B1-05"),
         ("hw-check", "B0-06"),
         ("models-fetch", "B1-10"),
@@ -89,9 +88,9 @@ def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
 
 
 def test_composite_skips_unbuilt() -> None:
-    step = just("_step", "db-up")
+    step = just("_step", "migrate")
     assert step.returncode == 0
-    assert "hoppar över db-up (inte byggt än)" in step.stdout
+    assert "hoppar över migrate (inte byggt än)" in step.stdout
 
 
 def _dump() -> dict[str, Any]:
