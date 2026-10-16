@@ -8,6 +8,7 @@ Where the context is incomplete or contradicts itself, a rule takes the stricter
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -17,6 +18,8 @@ from sd_safety.constants import (
     AIRBORNE_MIN_ALT_M,
     BRAIN_BATTERY_MARGIN_PCT,
     CLEARANCE_VALID_S,
+    EXECUTOR_DEFAULT_SPEED_MS,
+    MISSION_MAX_ITEMS,
     RATE_ACTION_MIN_GAP_MS,
     RATE_ACTIONS_PER_WINDOW,
     RATE_REPORTS_PER_WINDOW,
@@ -24,7 +27,7 @@ from sd_safety.constants import (
     STATE_MAX_AGE_MS,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
-from sd_safety.limits import fc_area_max_from_home_m
+from sd_safety.limits import area_reach_from_home_m, fc_area_max_from_home_m
 from sd_safety.policy import (
     ALLOWED_OUTSIDE_CHARTER_SKILLS,
     ALWAYS_REQUIRE_APPROVAL,
@@ -144,6 +147,8 @@ def _schema_invalid(f: Facts) -> list[Finding]:
         return []
     if f.params is None:
         return [Finding("SCHEMA_INVALID", {"params": "invalid"})]
+    if f.req.planned_path is not None and len(f.req.planned_path) > MISSION_MAX_ITEMS:
+        return [Finding("SCHEMA_INVALID", {"planned_path": "too_long"})]
     t = f.targets
     if t is None:
         return [Finding("SCHEMA_INVALID", {"targets": "error"})]
@@ -160,7 +165,7 @@ def _schema_invalid(f: Facts) -> list[Finding]:
 def _targets_checked_elsewhere(f: Facts) -> bool:
     """The route exists only onboard: the ground leaves it, onboard checks the handler's path."""
     if f.onboard:
-        return f.req.planned_path is not None
+        return bool(f.req.planned_path)  # an empty path proves nothing
     return f.req.skill in GROUND_UNCHECKED_TARGETS
 
 
@@ -195,6 +200,15 @@ _GROUND_ONLY_STATES: Final = frozenset(
     {MissionState.DRAFT, MissionState.CHARTER_PROPOSED, MissionState.LANDED}
 )
 _NO_FLIGHT_SKILLS: Final = frozenset({"report", "mark_location", "propose_charter_change"})
+
+
+def _mission_match(f: Facts) -> list[Finding]:
+    """The order must be for the charter's own mission and vehicle."""
+    charter = f.ctx.charter
+    other = charter is not None and (
+        f.req.mission_id != charter.mission_id or f.req.vehicle_id != charter.vehicle_id
+    )
+    return _one(other, "MISSION_STATE_INVALID", mission="other")
 
 
 def _mission_state(f: Facts) -> list[Finding]:
@@ -303,14 +317,16 @@ def _fence_verified(f: Facts) -> list[Finding]:
 
 def _beyond_fc_fence(f: Facts) -> list[Finding]:
     charter = f.ctx.charter
-    if not f.moves or charter is None:
-        return []
+    if not f.moves or charter is None or f.req.skill == "return_home":
+        return []  # flying home is always allowed geometrically
     limit = fc_area_max_from_home_m(f.ctx.limits)
-    home = charter.home
-    worst = max(
-        distance_m(home.lat, home.lon, lat, lon) for lon, lat in charter.area["coordinates"][0]
+    worst = area_reach_from_home_m(charter)
+    return _one(
+        worst > limit,
+        "AREA_BEYOND_FC_FENCE",
+        fc_fence_distance_m=_finite(worst),
+        fc_fence_limit_m=limit,
     )
-    return _one(worst > limit, "AREA_BEYOND_FC_FENCE", distance_m=worst, limit_m=limit)
 
 
 def _link(f: Facts) -> list[Finding]:
@@ -355,7 +371,9 @@ def _when(f: Facts) -> list[Finding]:
 
 
 def clearance_problem(f: Facts) -> str | None:
-    """Why there is no valid "clear around the drone" for this order, or None."""
+    """Why there is no valid "clear around the drone" for this order, or None.
+
+    Public so that the ground station's clearance service can apply the same test."""
     c, req, ctx = f.ctx.clearance, f.req, f.ctx
     if c is None or c.consumed or c.origin == "remote":
         return "CLEARANCE_REQUIRED"
@@ -387,7 +405,7 @@ def _clearance_reject(f: Facts) -> list[Finding]:
     if not f.onboard and (f.req.issuer_kind != "brain" or f.mode_a):
         return []
     problem = clearance_problem(f)
-    return _one(problem is not None, problem or "", skill=f.req.skill)
+    return [] if problem is None else [Finding(problem, {"skill": f.req.skill})]
 
 
 def _clearance_card(f: Facts) -> list[Finding]:
@@ -465,7 +483,7 @@ def _altitude(f: Facts) -> list[Finding]:
     out: list[Finding] = []
     top, bottom = max(alts), min(alts)
     limit = f.ctx.limits.max_alt_agl_m
-    out += _one(top > limit, "ALT_ABOVE_LIMIT", alt_m=top, limit_m=limit)
+    out += _one(top > limit, "ALT_ABOVE_LIMIT", alt_m=top, alt_limit_m=limit)
     charter = f.ctx.charter
     if charter is not None:
         out += _one(top > charter.alt_max_agl_m, "ALT_ABOVE_CHARTER", alt_m=top)
@@ -492,17 +510,30 @@ def _outside_charter(f: Facts) -> list[Finding]:
     fence = polygon_from_geojson(charter.area, plane)
     if not fence.is_simple():
         return [Finding("OUTSIDE_CHARTER", {"charter_area": "invalid"})]
-    worst = 0.0
+    # Stops at the first piece found outside: its distance is a lower bound for the detail.
     for p in [*points, *(r[0] for r in routes)]:
         xy = plane.point(p)
         if not fence.contains(xy):
-            worst = max(worst, fence.boundary_distance(xy))
+            return _outside(fence.boundary_distance(xy))
     for route in routes:
         for a, b in pairwise(route):
-            worst = max(worst, fence.leg_outside_by(plane.point(a), plane.point(b)))
+            by = fence.leg_outside_by(plane.point(a), plane.point(b))
+            if by > 0.0:
+                return _outside(by)
     for area in areas:
-        worst = max(worst, fence.outside_by(polygon_from_geojson(area, plane)))
-    return _one(worst > 0.0, "OUTSIDE_CHARTER", outside_by_m=round(worst, 1))
+        by = fence.outside_by(polygon_from_geojson(area, plane))
+        if by > 0.0:
+            return _outside(by)
+    return []
+
+
+def _outside(by: float) -> list[Finding]:
+    return [Finding("OUTSIDE_CHARTER", {"outside_by_m": round(by, 1)})]
+
+
+def _finite(value: float) -> float | None:
+    """Details are stored as JSON, which has no infinity."""
+    return value if math.isfinite(value) else None
 
 
 def _pilot_distance(f: Facts) -> list[Finding]:
@@ -522,13 +553,20 @@ def _pilot_distance(f: Facts) -> list[Finding]:
     if not corners or not pilots:
         return []
     worst = max(distance_m(p.lat, p.lon, c.lat, c.lon) for p in pilots for c in corners)
-    return _one(worst > limit, "PILOT_DISTANCE", distance_m=round(worst, 1), limit_m=limit)
+    return _one(
+        worst > limit,
+        "PILOT_DISTANCE",
+        pilot_distance_m=_finite(round(worst, 1)),
+        pilot_limit_m=limit,
+    )
 
 
 def _speed(f: Facts) -> list[Finding]:
-    speed = f.targets.speed_ms if f.targets is not None else None
-    if speed is None:
+    t = f.targets
+    if t is None or not (t.points or t.path or t.areas):
         return []
+    # No speed given: the executor flies at its default speed, which must fit as well.
+    speed = t.speed_ms if t.speed_ms is not None else EXECUTOR_DEFAULT_SPEED_MS
     out = _one(speed > f.ctx.limits.max_speed_ms, "SPEED_ABOVE_LIMIT", speed_ms=speed)
     charter = f.ctx.charter
     if charter is not None:
@@ -544,10 +582,13 @@ def _absent(f: Facts) -> list[Finding]:
 
 
 def _pending(f: Facts) -> list[Finding]:
-    return _one(f.ctx.brain_pending_approvals >= 1, "PENDING_LIMIT")
+    """At the click the card being approved is itself pending: already limited at submit."""
+    return _one(f.req.phase != "approve" and f.ctx.brain_pending_approvals >= 1, "PENDING_LIMIT")
 
 
 def _rate(f: Facts) -> list[Finding]:
+    if f.req.phase == "approve":
+        return []  # the order was counted when it was submitted
     now = f.ctx.now_mono_ms
     rate_class = f.spec.rate_class if f.spec is not None else "action"
 
@@ -598,6 +639,7 @@ RULES: Final[tuple[Rule, ...]] = (
     Rule("R-AUTONOMY", _BRAIN, False, _autonomy_change),
     Rule("R-ALLOWED", _BRAIN, False, _not_allowed),
     Rule("R-AI-OFF", _BRAIN, True, _ai_off),
+    Rule("R-MISSION", _ALL, False, _mission_match),
     Rule("R-MISSION", _ALL, True, _mission_state),
     Rule("R-LATCH", _OPERATOR, True, _operator_latch),
     Rule("R-LATCH-SPARR", _BRAIN, False, _brain_latch),

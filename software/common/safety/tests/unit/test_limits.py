@@ -113,11 +113,15 @@ def test_absolute_caps_match_fc_params() -> None:
     assert expected["LOIT_SPEED_MS"] >= ABSOLUTE_MAX_SPEED_MS
     assert expected["FENCE_MARGIN"] == constants.FENCE_MARGIN_M
     assert expected["FS_GCS_TIMEOUT"] == constants.FS_GCS_TIMEOUT_S
+
+
+def test_fc_expected_matches_parm() -> None:
     parm = REPO / "simulation/sitl/params/searchdrone-safety.parm"
-    if parm.exists():  # the parameter file arrives with the simulator tickets
-        values = _parm(parm)
-        for name, value in expected.items():
-            assert values[name] == value, name
+    if not parm.exists():
+        pytest.skip("the flight controller's parameter file is not in the repository yet")
+    values = _parm(parm)
+    for name, value in constants.FC_SAFETY_EXPECTED.items():
+        assert values[name] == value, name
 
 
 def _parm(path: Path) -> dict[str, float]:
@@ -140,6 +144,7 @@ def test_charter_violations() -> None:
         max_alt_agl_m=100, max_speed_ms=10, max_range_from_pilot_m=400, battery_rtl_pct=20
     )
     assert charter_violations(CHARTER, strict) == [
+        "area",  # the L's far corner (424 m) is beyond the fence for 400 m (415 m)
         "alt_max_agl_m",
         "max_speed_ms",
         "max_range_from_pilot_m",
@@ -165,4 +170,5 @@ def test_caps_not_configurable() -> None:
         "sd_schemas.charter",
         "sd_schemas.safety",
         "sd_safety.constants",
+        "sd_safety.targets",
     }

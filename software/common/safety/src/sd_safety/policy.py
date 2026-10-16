@@ -24,7 +24,9 @@ ALWAYS_REQUIRE_APPROVAL: Final = frozenset(
     {"follow_track", "follow_me", "find_me", "land_at", "propose_charter_change"}
 )
 
-# Never skills (owner decision B6): the gate answers SKILL_UNKNOWN even if a registry has one.
+# Never skills: they would let an order bypass the gate's model of the vehicle (arming, modes,
+# parameters, the fence, the autonomy mode) or confirm a find for a person. The gate answers
+# SKILL_UNKNOWN even if a registry has one.
 FORBIDDEN_SKILL_NAMES: Final = frozenset(
     {
         "arm",

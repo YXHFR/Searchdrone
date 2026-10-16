@@ -2,7 +2,8 @@
 
 Distances are geodesic on WGS84 (Vincenty's inverse formula, sub-millimetre at these
 ranges). Containment is checked in a local east/north plane around the charter's home
-point, which is accurate to centimetres within the few kilometres a charter spans.
+point. Within the 2 km a charter can span the plane is off by at most about a metre at
+high latitudes (centimetres near the test site), far inside the 20 m fence buffer.
 
 Routes are not sampled: a straight leg lies inside a polygon exactly when every piece
 between its crossings with the polygon's edges does, so concave areas cannot hide a leg
@@ -158,22 +159,27 @@ class Polygon:
         return min(_point_segment_distance(p, a, b) for a, b in self.edges())
 
     def leg_outside_by(self, p: Xy, q: Xy) -> float:
-        """How far the straight leg p->q leaves the polygon (0.0 when it stays inside)."""
+        """How far the straight leg p->q leaves the polygon (0.0 when it stays inside). The
+        distance is measured at the first piece found outside, so it is a lower bound."""
         ts = {0.0, 1.0}
         for a, b in self.edges():
             ts.update(_crossings(p, q, a, b))
         ordered = sorted(ts)
         probes = [*ordered, *((s + t) / 2 for s, t in pairwise(ordered))]
-        worst = 0.0
         for t in probes:
             point = (p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]))
             if not self.contains(point):
-                worst = max(worst, self.boundary_distance(point))
-        return worst
+                return self.boundary_distance(point)  # the first piece outside is enough
+        return 0.0
 
     def outside_by(self, other: Polygon) -> float:
-        """How far ``other`` reaches outside this polygon (0.0 when it lies inside)."""
-        return max(self.leg_outside_by(a, b) for a, b in other.edges())
+        """How far ``other`` reaches outside this polygon (0.0 when it lies inside); stops at
+        the first edge found outside."""
+        for a, b in other.edges():
+            by = self.leg_outside_by(a, b)
+            if by > 0.0:
+                return by
+        return 0.0
 
 
 def polygon_from_geojson(polygon: dict[str, Any], plane: Plane) -> Polygon:

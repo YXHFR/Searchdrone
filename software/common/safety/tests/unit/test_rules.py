@@ -31,7 +31,7 @@ from gate_fixtures import (
 
 from sd_safety import evaluate
 from sd_safety.priority import REASON_PRIORITY
-from sd_schemas.base import LatLonAlt
+from sd_schemas.base import LatLon, LatLonAlt
 from sd_schemas.charter import AutonomyMode
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateContext, GateDecision, GateRequest, StateRef
@@ -129,8 +129,8 @@ def test_pilot_distance_from_the_charter() -> None:
     assert codes(req(params=goto(0, -499.5)), c) == []
     d = decide(req(params=goto(0, -500.5)), c)
     assert d.reason_codes == ["PILOT_DISTANCE"]
-    assert d.details["limit_m"] == 500
-    assert d.details["distance_m"] == pytest.approx(500.5, abs=0.05)
+    assert d.details["pilot_limit_m"] == 500
+    assert d.details["pilot_distance_m"] == pytest.approx(500.5, abs=0.05)
 
 
 def test_pilot_distance_from_the_limits() -> None:
@@ -258,7 +258,8 @@ def test_area_beyond_the_flight_controller_fence() -> None:
     assert ok == []
     d = decide(req(), ctx(charter=roomy.model_copy(update={"area": far}), limits=limits))
     assert "AREA_BEYOND_FC_FENCE" in d.reason_codes
-    assert d.details["limit_m"] == 515
+    assert d.details["fc_fence_limit_m"] == 515
+    assert codes(req("return_home", {}), ctx(charter=roomy.model_copy(update={"area": far}))) == []
     report = req("report", {"text_sv": "hej"})
     assert codes(report, ctx(charter=roomy.model_copy(update={"area": far}))) == []
 
@@ -767,3 +768,108 @@ def test_reason_codes_are_sorted_by_priority() -> None:
     assert out == sorted(out, key=REASON_PRIORITY.index)
     assert len(out) == len(set(out))
     assert {"AI_DISABLED", "LINK_DOWN", "OUTSIDE_CHARTER", "OPERATOR_ABSENT"} <= set(out)
+
+
+# --- findings from review -------------------------------------------------------------------
+
+
+def test_empty_planned_path_is_not_a_checked_route() -> None:
+    d = decide(req("resume", {}, phase="onboard", planned_path=[]), onboard_ctx())
+    assert d.decision == "REJECT"
+    assert d.details["targets"] == "unresolved"
+
+
+def test_planned_path_length_is_capped() -> None:
+    long = [_lla(0, 50)] * 401
+    assert "SCHEMA_INVALID" in codes(
+        req("resume", {}, phase="onboard", planned_path=long), onboard_ctx()
+    )
+
+
+def test_the_card_being_approved_does_not_count_against_itself() -> None:
+    c = ctx(brain_pending_approvals=1, recent_brain_actions_mono_ms=(NOW - 1000,))
+    assert codes(req(), c) == ["PENDING_LIMIT", "RATE_LIMIT"]
+    assert codes(req(phase="approve"), c) == []
+
+
+def test_missing_speed_is_checked_at_the_default_speed() -> None:
+    slow = ctx(charter=CHARTER.model_copy(update={"max_speed_ms": 4.0}))
+    assert codes(req(), slow) == ["SPEED_ABOVE_CHARTER"]
+    assert codes(req(params=goto(speed_ms=4)), slow) == []
+    assert codes(req("hold", {}), slow) == []
+
+
+def test_order_for_another_mission_or_vehicle() -> None:
+    from sd_schemas.base import new_id
+
+    assert "MISSION_STATE_INVALID" in codes(req(mission_id=new_id()), ctx())
+    assert "MISSION_STATE_INVALID" in codes(
+        req(vehicle_id="sim-02", phase="onboard"), onboard_ctx()
+    )
+
+
+def test_a_parameter_validator_that_raises_anything_rejects() -> None:
+    from pydantic import model_validator
+
+    from sd_schemas.skills import GotoParams
+
+    class Odd(GotoParams):
+        @model_validator(mode="after")
+        def _boom(self) -> Odd:
+            raise TypeError("not a ValueError")
+
+    d = decide(req(), ctx(registry=registry_with(spec("goto", params_model=Odd))))
+    assert d.reason_codes == ["SCHEMA_INVALID"]
+
+
+def test_a_rule_that_raises_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    from sd_safety.rules import Facts, Finding, Rule
+
+    module = importlib.import_module("sd_safety.evaluate")
+
+    def broken(_f: Facts) -> list[Finding]:
+        raise KeyError("bug")
+
+    monkeypatch.setattr(
+        module, "RULES", (*module.RULES, Rule("R-TEST", frozenset({"brain"}), False, broken))
+    )
+    d = decide(req(), ctx())
+    assert d.decision == "REJECT"
+    assert d.details["internal_error"] == "R-TEST"
+
+
+def test_details_do_not_overwrite_each_other() -> None:
+    far = polygon((-50, -520), (50, -520), (50, 600), (-50, 600))
+    wide = CHARTER.model_copy(update={"area": far})
+    d = decide(req(params=goto(0, 590, alt_m=130)), ctx(charter=wide))
+    assert {"ALT_ABOVE_LIMIT", "AREA_BEYOND_FC_FENCE", "PILOT_DISTANCE"} <= set(d.reason_codes)
+    assert d.details["alt_limit_m"] == 120
+    assert d.details["pilot_limit_m"] == 500
+    assert d.details["fc_fence_limit_m"] == 515
+
+
+def test_infinite_distances_are_not_written_as_numbers() -> None:
+    antipode = vehicle(pilot_position=LatLon(lat=-CHARTER.home.lat, lon=CHARTER.home.lon - 179.67))
+    lat, lon = latlon(0, 300)
+    mark = req("mark_location", {"lat": lat, "lon": lon, "label": "M1"})
+    out = decide(mark, ctx(charter=None, mission_state=MissionState.DRAFT, vehicle=antipode))
+    assert out.details["pilot_distance_m"] is None
+
+
+def test_worst_case_geometry_stays_fast() -> None:
+    import time
+
+    teeth: list[tuple[float, float]] = [(-245, -250), (245, -250)]
+    for i in range(49):
+        x = 240 - i * 10
+        teeth += [(x, 200), (x - 5, 200), (x - 5, -100), (x - 10, -100)]
+    comb = CHARTER.model_copy(update={"area": polygon(*teeth[:198]), "sectors": []})
+    zig = [(-240 + i * 4.8, -50 if i % 2 else 150) for i in range(100)]
+    zig += [(zig[-1][0], -90), (-240, -90)]
+    here = vehicle(**dict(zip(("lat", "lon"), latlon(0, -200), strict=True)))
+    start = time.perf_counter()
+    d = decide(req("survey_sector", {"polygon": polygon(*zig)}), ctx(charter=comb, vehicle=here))
+    assert time.perf_counter() - start < 2.0
+    assert "OUTSIDE_CHARTER" in d.reason_codes

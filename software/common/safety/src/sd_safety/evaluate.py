@@ -9,11 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import ValidationError
-
 from sd_safety.policy import FORBIDDEN_SKILL_NAMES
 from sd_safety.priority import message_sv, sort_codes
-from sd_safety.rules import CLEAR_AROUND_DRONE, RULES, Facts
+from sd_safety.rules import CLEAR_AROUND_DRONE, RULES, Facts, Finding
 from sd_safety.targets import Plane
 from sd_schemas.base import LatLonAlt
 from sd_schemas.gate import GateContext, GateDecision, GateRequest
@@ -34,7 +32,11 @@ def evaluate(req: GateRequest, ctx: GateContext) -> GateDecision:
     for rule in RULES:
         if req.issuer_kind not in rule.issuers or (rule.ground_only and ctx.side == "onboard"):
             continue
-        for finding in rule.check(facts):
+        try:
+            findings = rule.check(facts)
+        except Exception:  # a bug in a rule must reject, never crash the gate
+            findings = [Finding("SCHEMA_INVALID", {"internal_error": rule.rule_id})]
+        for finding in findings:
             codes.append(finding.code)
             if rule.rule_id not in rule_ids:
                 rule_ids.append(rule.rule_id)
@@ -82,7 +84,7 @@ def _spec(skill: str, ctx: GateContext) -> SkillSpec | None:
 def _params(spec: SkillSpec, raw: dict[str, Any]) -> SkillParams | None:
     try:
         return spec.params_model.model_validate(raw)
-    except ValidationError:
+    except Exception:  # a validator that raises anything at all means invalid parameters
         return None
 
 

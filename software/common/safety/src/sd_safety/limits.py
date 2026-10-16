@@ -24,6 +24,7 @@ from sd_safety.constants import (
     FENCE_MARGIN_M,
     FENCE_RADIUS_MARGIN_M,
 )
+from sd_safety.targets import distance_m
 from sd_schemas.charter import MissionCharter
 from sd_schemas.safety import (
     DEFAULT_MAX_ALT_AGL_M,
@@ -44,6 +45,7 @@ __all__ = [
     "DEFAULT_CAPS",
     "DEFAULT_LIMITS",
     "LimitViolation",
+    "area_reach_from_home_m",
     "charter_violations",
     "check_limits",
     "fc_area_max_from_home_m",
@@ -53,7 +55,7 @@ __all__ = [
 DEFAULT_LIMITS: Final = SafetyLimits()
 DEFAULT_CAPS: Final = LimitCaps()  # used when the local settings file sets no cap
 
-# Standard values; also the lowest an outer cap may be (owner decision).
+# Standard values; also the lowest an outer cap may be.
 ABSOLUTE_MAX_ALT_AGL_M: Final = DEFAULT_MAX_ALT_AGL_M
 ABSOLUTE_MAX_SPEED_MS: Final = DEFAULT_MAX_SPEED_MS
 ABSOLUTE_MAX_RANGE_FROM_PILOT_M: Final = DEFAULT_MAX_RANGE_FROM_PILOT_M
@@ -123,9 +125,22 @@ def check_limits(limits: SafetyLimits, caps: LimitCaps) -> list[LimitViolation]:
     return out
 
 
+def area_reach_from_home_m(charter: MissionCharter) -> float:
+    """How far the farthest corner of the charter's area lies from its home point."""
+    home = charter.home
+    return max(
+        distance_m(home.lat, home.lon, lat, lon) for lon, lat in charter.area["coordinates"][0]
+    )
+
+
 def charter_violations(charter: MissionCharter, limits: SafetyLimits) -> list[str]:
-    """The charter fields that are looser than ``limits`` (empty when it fits)."""
+    """The charter fields that are looser than ``limits`` (empty when it fits).
+
+    ``area`` is listed when a corner lies beyond what the flight controller's fence for
+    ``limits`` can hold, so lowering the limits under an active charter is refused."""
     out: list[str] = []
+    if area_reach_from_home_m(charter) > fc_area_max_from_home_m(limits):
+        out.append("area")
     if charter.alt_max_agl_m > limits.max_alt_agl_m:
         out.append("alt_max_agl_m")
     if charter.max_speed_ms > limits.max_speed_ms:
