@@ -20,8 +20,12 @@ def event(action: str, label: str = "", sender: str = "Owner", sender_type: str 
     return cog.Event(action, label, sender, sender_type, "Owner", head)
 
 
-def pr(labels: tuple[str, ...] = (), head: str = HEAD) -> dict[str, Any]:
-    return {"head": {"sha": head}, "labels": [{"name": n} for n in labels]}
+def pr(labels: tuple[str, ...] = (), head: str = HEAD, changed: int = 1) -> dict[str, Any]:
+    return {
+        "head": {"sha": head},
+        "labels": [{"name": n} for n in labels],
+        "changed_files": changed,
+    }
 
 
 def status(state: str, login: str = "github-actions[bot]", ctx: str = "gate/owner",
@@ -48,6 +52,29 @@ def test_protected_paths_need_approval(name: str) -> None:
     assert cog.decide(event("opened"), pr(), [{"filename": name}], []).state == "failure"
 
 
+def test_new_base_removes_the_approval() -> None:
+    ev = cog.Event("edited", "", "Owner", "User", "Owner", HEAD, base_changed=True)
+    res = cog.decide(ev, pr(("owner-ok",)), HW, [status("success")])
+    assert (res.state, res.remove_label) == ("failure", True)
+
+
+def test_title_edit_keeps_the_approval() -> None:
+    res = cog.decide(event("edited"), pr(("owner-ok",)), HW, [status("success")])
+    assert res.state == "success"
+
+
+@pytest.mark.parametrize("changed", [2, None])
+def test_truncated_or_unknown_file_list_fails(changed: int | None) -> None:
+    data = pr()
+    data["changed_files"] = changed
+    assert cog.decide(event("opened"), data, SW, []).state == "failure"
+
+
+def test_file_list_at_github_cap_fails() -> None:
+    files = [{"filename": f"software/x{i}"} for i in range(3000)]
+    assert cog.decide(event("opened"), pr(changed=3000), files, []).state == "failure"
+
+
 def test_moving_a_file_out_of_hardware_needs_approval() -> None:
     files = [{"filename": "elsewhere/drone.yaml", "previous_filename": "hardware/drone.yaml"}]
     assert cog.decide(event("opened"), pr(), files, []).state == "failure"
@@ -56,7 +83,7 @@ def test_moving_a_file_out_of_hardware_needs_approval() -> None:
 def test_similar_names_are_not_protected() -> None:
     files = [{"filename": "hardwarex/a"}, {"filename": "docs/hardware/a"},
              {"filename": ".github/CODEOWNERS.bak"}]  # fmt: skip
-    assert cog.decide(event("opened"), pr(), files, []).state == "success"
+    assert cog.decide(event("opened"), pr(changed=3), files, []).state == "success"
 
 
 def test_owner_label_on_current_head_is_success() -> None:
@@ -122,7 +149,7 @@ def test_other_contexts_are_ignored() -> None:
 
 
 def test_cli_reads_paginated_files(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    (tmp_path / "pr.json").write_text(json.dumps(pr(("owner-ok",))), "utf-8")
+    (tmp_path / "pr.json").write_text(json.dumps(pr(("owner-ok",), changed=2)), "utf-8")
     (tmp_path / "files.json").write_text(json.dumps([SW, HW]), "utf-8")
     (tmp_path / "statuses.json").write_text(json.dumps([[]]), "utf-8")
     out = tmp_path / "out"

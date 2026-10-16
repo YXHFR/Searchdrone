@@ -8,7 +8,7 @@ name: owner-gate
 
 on:
   pull_request_target: # zizmor: ignore[dangerous-triggers] statuses on head SHA; no PR code is executed
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 permissions: {}
 
@@ -43,10 +43,16 @@ jobs:
           SENDER_TYPE: ${{ github.event.sender.type }}
           OWNER: ${{ github.repository_owner }}
           EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
-        # The PR (head and labels) is fetched fresh, never taken from the event.
+          BASE_FROM: ${{ github.event.changes.base.ref.from }}
+        # The PR (head and labels) is fetched fresh, never taken from the event. If the
+        # fetch fails, the event's head still gets an "error" status.
         run: |
+          echo "head_sha=$EVENT_HEAD" >> "$GITHUB_OUTPUT"
+          base_changed=()
+          [ -n "$BASE_FROM" ] && base_changed=(--base-changed)
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pr.json"
           head_sha="$(jq -r .head.sha "$RUNNER_TEMP/pr.json")"
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "unexpected head sha"; exit 1; }
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
             > "$RUNNER_TEMP/files.json"
@@ -54,7 +60,7 @@ jobs:
             > "$RUNNER_TEMP/statuses.json"
           python3 tools/check_owner_gate.py --action "$ACTION" --label "$LABEL" \
             --sender "$SENDER" --sender-type "$SENDER_TYPE" --owner "$OWNER" \
-            --event-head-sha "$EVENT_HEAD" --pr "$RUNNER_TEMP/pr.json" \
+            --event-head-sha "$EVENT_HEAD" "${base_changed[@]}" --pr "$RUNNER_TEMP/pr.json" \
             --files "$RUNNER_TEMP/files.json" --statuses "$RUNNER_TEMP/statuses.json" \
             --github-output "$GITHUB_OUTPUT"
       - name: Remove a stale or untrusted owner-ok label

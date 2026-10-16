@@ -5,15 +5,19 @@ be used. Instead the owner says OK and the label ``owner-ok`` is set on the pull
 (by the owner's account, a ``User``). The approval is bound to the head commit:
 
 1. No protected path changed (``PROTECTED``) -> ``success``, nothing to approve.
-2. New commits (``synchronize``) or ``reopened`` -> the label is removed -> ``failure``.
+2. New commits (``synchronize``), ``reopened`` or a new base branch (``edited`` with a
+   base change, which changes the diff) -> the label is removed -> ``failure``.
 3. ``labeled`` with ``owner-ok``: ``success`` only if the owner set it and the PR's head,
    fetched fresh, is still the commit the event names. Otherwise the label is removed and
    the result is ``failure``.
 4. Any other event -> ``success`` only if the label is on the PR now **and** the newest
    ``gate/owner`` status that GitHub Actions wrote on the current head is ``success``.
 
-So an approval never carries over to new commits, and nobody but the owner's account can
-turn the gate green. Moving or deleting a file under ``hardware/`` counts as a change.
+So an approval never carries over to new commits or a new base. Only the owner's account
+can set a trusted label; a status can also be written by a workflow added in a pull
+request, which the reviewers must catch (the same limit as gate/review). A pull request
+whose file list GitHub truncates fails, since its protected paths cannot be verified.
+Moving or deleting a file under ``hardware/`` counts as a change.
 This check says nothing about the hardware simulations: ``hardware-ok`` must pass too.
 
 Standard library only: owner-gate.yml runs it from the base branch with the system
@@ -33,6 +37,7 @@ from typing import Any
 LABEL = "owner-ok"
 CONTEXT = "gate/owner"
 ACTIONS_BOT = "github-actions[bot]"
+MAX_FILES = 3000  # GitHub lists at most this many files of a pull request
 PROTECTED = (re.compile(r"^hardware/"), re.compile(r"^\.github/CODEOWNERS$"))
 
 
@@ -44,6 +49,7 @@ class Event:
     sender_type: str
     owner: str
     event_head_sha: str
+    base_changed: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +98,9 @@ def decide(
     files: list[dict[str, Any]],
     statuses: list[dict[str, Any]],
 ) -> Result:
+    changed = pr.get("changed_files")
+    if not isinstance(changed, int) or changed != len(files) or len(files) >= MAX_FILES:
+        return Result("failure", "Too many files to verify; split the pull request")
     if not protected_files(files):
         return Result("success", "No owner approval needed")
 
@@ -100,6 +109,8 @@ def decide(
 
     if event.action in ("synchronize", "reopened"):
         return Result("failure", "Owner approval required (new commits)", remove_label=has_label)
+    if event.action == "edited" and event.base_changed:
+        return Result("failure", "Owner approval required (new base)", remove_label=has_label)
 
     if event.action == "labeled" and event.label == LABEL:
         by_owner = event.sender == event.owner and event.sender_type == "User"
@@ -121,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sender-type", required=True)
     parser.add_argument("--owner", required=True)
     parser.add_argument("--event-head-sha", required=True)
+    parser.add_argument("--base-changed", action="store_true", help="edited: base changed")
     parser.add_argument("--pr", type=Path, required=True, help="GET pulls/<n> as JSON")
     parser.add_argument("--files", type=Path, required=True, help="GET pulls/<n>/files pages")
     parser.add_argument("--statuses", type=Path, required=True, help="GET commits/<sha>/statuses")
@@ -128,7 +140,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     event = Event(
-        args.action, args.label, args.sender, args.sender_type, args.owner, args.event_head_sha
+        args.action,
+        args.label,
+        args.sender,
+        args.sender_type,
+        args.owner,
+        args.event_head_sha,
+        args.base_changed,
     )
     pr = json.loads(args.pr.read_text(encoding="utf-8"))
     files = flatten(json.loads(args.files.read_text(encoding="utf-8")))

@@ -8,6 +8,8 @@ name: hardware
 
 on:
   pull_request:
+    # edited: a new base branch changes the diff, so the hardware jobs run again.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   merge_group:

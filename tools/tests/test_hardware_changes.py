@@ -91,7 +91,7 @@ def test_every_unchecked_type_runs_and_fails(
 def test_workflow_runs_always_without_path_filter() -> None:
     on = load()[True]  # PyYAML reads the key "on" as True
     assert set(on) == {"pull_request", "push", "merge_group"}
-    assert on["pull_request"] is None
+    assert set(on["pull_request"]["types"]) == {"opened", "synchronize", "reopened", "edited"}
     assert on["push"] == {"branches": ["main"]}
 
 
