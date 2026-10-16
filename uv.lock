@@ -771,6 +771,16 @@ source = { editable = "software/onboard" }
 name = "sd-safety"
 version = "0.0.0"
 source = { editable = "software/common/safety" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sd-schemas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
+]
 
 [[package]]
 name = "sd-schemas"

@@ -24,3 +24,7 @@ All notable changes to this project are listed here. The format follows
 - Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
   digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
   ground station tables, append-only guards and the restricted `sd_app` role.
+- Safety gate (`sd_safety.evaluate`): every rule for orders from the AI and the operator,
+  exact route and area checks against concave charter areas, geodesic distances, limits
+  with an outer cap and the matching flight-controller fence, manual control and the
+  flight-controller fence radius as reasons to reject.
