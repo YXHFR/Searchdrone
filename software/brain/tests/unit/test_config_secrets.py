@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -33,7 +34,7 @@ def test_example_config_is_valid() -> None:
     cfg = load_config(ROOT / "config/brain.example.toml", {})
     assert cfg.backend.kind == "llm_local"
     assert cfg.llm.base_url == "http://127.0.0.1:8091/v1"
-    assert cfg.cloud.base_url.startswith("https://openrouter.ai")
+    assert urlsplit(cfg.cloud.base_url).hostname == "openrouter.ai"
     assert cfg.decide.stop_check_timeout_s == 0.5
 
 

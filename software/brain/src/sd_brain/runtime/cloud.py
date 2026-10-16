@@ -8,6 +8,7 @@ order still goes through the safety gate. Without a key or model it is not confi
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -44,7 +45,9 @@ class CloudModelRuntime:
     ) -> ModelReply:
         if not self.configured or self._key is None or self._client is None:
             raise NotConfiguredError("molnmodellen är inte konfigurerad (nyckel eller modell)")
-        headers = _OPENROUTER_HEADERS if "openrouter.ai" in self.cfg.base_url else None
+        headers = (
+            _OPENROUTER_HEADERS if urlsplit(self.cfg.base_url).hostname == "openrouter.ai" else None
+        )
         # The local model's seed is not sent: cloud providers handle it differently.
         cloud_sampling = sampling.model_copy(update={"seed": None})
         reply = await openai_chat(
