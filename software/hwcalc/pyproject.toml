@@ -1,11 +1,11 @@
 [project]
 name = "sd-hwcalc"
 version = "0.0.0"
-description = "Hardware calculations (mass, flight time) checked against hardware/drone."
+description = "Hardware calculations (mass, flight time) checked against hardware/drone.yaml."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["pydantic>=2.13", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

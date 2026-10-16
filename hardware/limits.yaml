@@ -1,0 +1,6 @@
+# Pass limits for hardware/drone.yaml, checked by `just hw-check` (sd_hwcalc).
+schema_version: 1
+max_takeoff_mass_kg: 2.5            # hardware revision A limit
+min_hover_time_min: 25
+max_hover_thrust_fraction: 0.5      # hover thrust / maximum thrust
+min_thrust_to_weight: 2.0

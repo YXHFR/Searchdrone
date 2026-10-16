@@ -1,0 +1,106 @@
+# The automatic part of the hardware gate. Runs on every pull request and push to main
+# (no path filter at workflow level, so the required check `hardware-ok` always reports).
+# `changes` decides whether the hardware jobs need to run; `hw-files` fails closed on any
+# file under hardware/ that has no automatic check yet (tools/check_hw_files.py), and
+# `hw-calc` checks mass and flight time against hardware/limits.yaml (`just hw-check`).
+# The owner's approval for hardware/ is a separate check (`gate/owner`, owner-gate.yml).
+name: hardware
+
+on:
+  pull_request:
+    # edited: a new base branch changes the diff, so the hardware jobs run again.
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardware-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Does this change touch the hardware gate?
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        # Push to main and the merge queue always run the hardware jobs.
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            python3 tools/check_hw_files.py --changes --base "$PR_BASE" --head "$PR_HEAD" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  hw-files:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every changed hardware file has an automatic check
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        # A push without a previous commit (BEFORE is zeros) checks every hardware file.
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE"; head="$PR_HEAD" ;;
+            merge_group) base="$MG_BASE"; head="$MG_HEAD" ;;
+            *) base="${BEFORE:-0000000000000000000000000000000000000000}"; head="$SHA" ;;
+          esac
+          python3 tools/check_hw_files.py --base "$base" --head "$head"
+
+  hw-calc:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Mass and flight time within the hardware limits
+        run: just hw-check
+
+  hardware-ok:
+    if: always()
+    needs: [changes, hw-files, hw-calc]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci_aggregate.jq
+          sparse-checkout-cone-mode: false
+      - name: Hardware jobs succeeded, or were skipped because nothing needed them
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -e -f tools/ci_aggregate.jq

@@ -33,7 +33,14 @@ def steps(doc: dict[Any, Any]) -> list[dict[str, Any]]:
 
 def test_files_exist() -> None:
     names = {p.name for p in WORKFLOWS}
-    assert {"ci.yml", "pr-title.yml", "security.yml", "review-gate.yml"} <= names
+    assert {
+        "ci.yml",
+        "pr-title.yml",
+        "security.yml",
+        "review-gate.yml",
+        "hardware.yml",
+        "owner-gate.yml",
+    } <= names
     assert {"sitl.yml", "sitl-image.yml"} <= names
     assert (ROOT / ".github" / "actions" / "setup" / "action.yml").is_file()
 
@@ -101,7 +108,7 @@ def test_security_ok_needs_every_security_job() -> None:
     assert jobs["security-ok"]["if"] == "always()"
 
 
-@pytest.mark.parametrize("name", ["pr-title.yml", "review-gate.yml"])
+@pytest.mark.parametrize("name", ["pr-title.yml", "review-gate.yml", "owner-gate.yml"])
 def test_target_workflows_never_check_out_pr_code(name: str) -> None:
     doc = load(ROOT / ".github" / "workflows" / name)
     for step in steps(doc):
