@@ -22,6 +22,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from sd_safety.constants import OPERATOR_ABSENT_S
+
 __all__ = [
     "DEFAULT_LOGIN_CODE_TTL_S",
     "SECRET_ENV_KEYS",
@@ -82,7 +84,7 @@ class MavlinkConfig(_Section):
 
 
 class GateConfig(_Section):
-    operator_absent_s: float = Field(default=30.0, gt=0)
+    operator_absent_s: float = Field(default=OPERATOR_ABSENT_S, gt=0)
     operator_absent_action: Literal["hold", "return_home", "off"] = "hold"
 
 
