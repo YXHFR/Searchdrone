@@ -36,7 +36,8 @@ sd-sim = { workspace = true }
 
 [dependency-groups]
 dev = [
-  "pytest>=8.4", "pytest-asyncio>=1.0", "pytest-cov>=6.0", "hypothesis>=6.130",
+  "pytest>=8.4", "pytest-asyncio>=1.0", "pytest-cov>=6.0", "pytest-xdist>=3.6",
+  "pytest-rerunfailures>=15.0", "hypothesis>=6.130",
   "ruff>=0.16", "pyright>=1.1.400", "import-linter>=2.1", "reuse>=5.0",
   "httpx>=0.28", "pillow>=11", "packaging>=24", "pyyaml>=6.0", "jsonschema>=4.23",
   "pytest-socket>=0.7",  # B1-05: tests may only reach loopback
@@ -88,4 +89,13 @@ markers = [
   "db: needs Postgres+PostGIS (started by just db-up)",
   "sitl: needs ArduPilot SITL",
   "slow: > 10 s",
+  # simulator tests (also registered by sd_sim.pytest_plugin)
+  "gz: needs Gazebo (local only)",
+  "llm: needs the local language model (local only, never in CI)",
+  "nightly: runs only in the scheduled nightly suite",
+  "script(name): script for the scripted commander",
+  "budget_s(seconds): estimated wall time of a SITL test, stack start included",
+  "private_db: the instance gets its own Postgres container",
+  "param_override(file): extra SITL parameter layer for one test",
+  "lan: needs lan=1 (local only)",
 ]

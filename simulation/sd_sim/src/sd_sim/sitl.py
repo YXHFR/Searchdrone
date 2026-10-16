@@ -15,6 +15,10 @@ from pathlib import Path
 # ArduPilot's public SITL site (CMAC). Never a private address.
 CMAC_HOME = "-35.363261,149.165230,584.0,353"
 QGC_SERIAL = "--serial5"
+# The project's parameter layers, loaded after every generated layer: the safety
+# parameters (failsafes, fence, battery) and the sim-only parameters.
+SAFETY_PARAM_FILE = "searchdrone-safety.parm"
+PROJECT_PARAM_FILES = (SAFETY_PARAM_FILE, "sd_quad14-sim.parm")
 
 
 @dataclass(frozen=True)
@@ -41,11 +45,13 @@ class SitlLayout:
                 self.ardupilot_home / "Tools" / "autotest" / "default_params" / "gazebo-iris.parm"
             )
         layers.extend(self.extra_defaults)
-        params = self.repo / "simulation" / "sitl" / "params"
-        for name in ("searchdrone-safety.parm", "sd_quad14-sim.parm"):
-            if (params / name).is_file():
-                layers.append(params / name)
+        layers.extend(self.project_layers())
         return layers
+
+    def project_layers(self) -> list[Path]:
+        """The project's own parameter files that exist, in load order (later wins)."""
+        params = self.repo / "simulation" / "sitl" / "params"
+        return [params / name for name in PROJECT_PARAM_FILES if (params / name).is_file()]
 
 
 @dataclass(frozen=True)

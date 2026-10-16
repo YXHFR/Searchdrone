@@ -1,0 +1,104 @@
+# Builds the SITL image (simulation/docker/sitl.Dockerfile). Pull requests that change
+# it build it without pushing. On main the image is scanned for secrets and, only when
+# the scan is clean, pushed to ghcr.io/yxhfr/searchdrone-sitl:<tag> and :latest-main.
+# The tag comes from tools/sitl_image_tag.sh, so a published tag never changes content.
+name: sitl-image
+
+on:
+  push:
+    branches: [main]
+    paths: &image-paths
+      - simulation/docker/**
+      - simulation/versions.lock
+      - tools/sitl_image_tag.sh
+      - .github/workflows/sitl-image.yml
+  pull_request:
+    paths: *image-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sitl-image-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  # Pull requests: build and scan, never push (no package permission at all).
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - &tag
+        name: Image tag
+        id: tag
+        run: echo "image=$(bash tools/sitl_image_tag.sh --image)" >> "$GITHUB_OUTPUT"
+      - &build
+        name: Build
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+        run: docker build -f simulation/docker/sitl.Dockerfile -t "$IMAGE" .
+      - &scan
+        name: No secrets in the image's file system
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+        # Every layer is unpacked into an empty folder and scanned. Any finding, or a
+        # failure to unpack or scan, stops the job before anything is pushed.
+        run: |
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tgz}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+          saved="$RUNNER_TEMP/image"; rootfs="$RUNNER_TEMP/rootfs"
+          mkdir "$saved" "$rootfs"
+          docker save "$IMAGE" | tar -x -C "$saved"
+          layers="$(jq -r '.[0].Layers[]' "$saved/manifest.json")"
+          [ -n "$layers" ] || { echo "inga lager i avbilden"; exit 1; }
+          while IFS= read -r layer; do
+            sudo tar -x -f "$saved/$layer" -C "$rootfs"
+          done <<<"$layers"
+          sudo chmod -R a+rX "$rootfs"
+          sudo chmod -R a+rX "$saved"
+          for target in "$rootfs" "$saved/blobs"; do
+            # The layers' files, then the image config (ENV, labels, build history).
+            "$RUNNER_TEMP/gitleaks" dir "$target" --config simulation/docker/image-scan.gitleaks.toml \
+              --redact --exit-code 1 --max-target-megabytes 50
+          done
+
+  # main (push or on demand): build, scan, then push.
+  build-push:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - *checkout
+      - *tag
+      - *build
+      - *scan
+      - name: Push
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          latest="${IMAGE%:*}:latest-main"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker tag "$IMAGE" "$latest"
+          docker push "$IMAGE"
+          docker push "$latest"
+          docker logout ghcr.io

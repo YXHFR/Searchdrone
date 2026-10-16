@@ -26,7 +26,7 @@ from typing import Any
 from pymavlink import mavutil
 
 from sd_sim import ports
-from sd_sim.errors import InfraError
+from sd_sim.errors import InfraError, VehicleError
 
 HARNESS_SYSID = 253
 HARNESS_COMPID = 190
@@ -81,16 +81,19 @@ class Harness:
         """Read and apply messages for ``seconds``, sending our heartbeat once a second."""
         end = time.monotonic() + seconds
         while True:
-            now = time.monotonic()
-            if now >= self._next_heartbeat:
-                self._send_heartbeat()
-                self._next_heartbeat = now + 1.0
-            remaining = end - now
+            self._heartbeat_tick()
+            remaining = end - time.monotonic()
             if remaining <= 0:
                 return
             msg = self._conn.recv_match(blocking=True, timeout=min(remaining, 0.2))
             if msg is not None:
                 self._apply(msg)
+
+    def _heartbeat_tick(self) -> None:
+        now = time.monotonic()
+        if now >= self._next_heartbeat:
+            self._send_heartbeat()
+            self._next_heartbeat = now + 1.0
 
     def _apply(self, msg: Any) -> None:
         if msg.get_srcSystem() != FC_SYSID or msg.get_srcComponent() != FC_COMPID:
@@ -115,7 +118,7 @@ class Harness:
         end = time.monotonic() + timeout
         while not predicate(self.state):
             if time.monotonic() > end:
-                raise InfraError(f"tidsgränsen {timeout:.0f} s gick ut: {what}")
+                raise VehicleError(f"tidsgränsen {timeout:.0f} s gick ut: {what}")
             self.pump(0.2)
 
     # --- sending -------------------------------------------------------------------
@@ -146,9 +149,9 @@ class Harness:
             self._apply(msg)
             if msg.get_type() == "COMMAND_ACK" and msg.command == command:
                 if msg.result != mavlink.MAV_RESULT_ACCEPTED:
-                    raise InfraError(f"kommandot {command} avvisades (resultat {msg.result})")
+                    raise VehicleError(f"kommandot {command} avvisades (resultat {msg.result})")
                 return
-        raise InfraError(f"inget svar på kommandot {command}")
+        raise VehicleError(f"inget svar på kommandot {command}")
 
     def set_mode(self, name: str, timeout: float = 10.0) -> None:
         mapping = self._conn.mode_mapping() or {}
@@ -165,7 +168,7 @@ class Harness:
             try:
                 self._command(mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 1)
                 break
-            except InfraError:
+            except VehicleError:
                 # Pre-arm checks can still be settling right after the EKF is ready.
                 if time.monotonic() > end:
                     raise
@@ -174,6 +177,41 @@ class Harness:
 
     def takeoff(self, alt_m: float) -> None:
         self._command(mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt_m)
+
+    def read_all_params(self, timeout: float = 60.0) -> dict[str, float]:
+        """Read the flight controller's whole parameter list (read only, nothing is set).
+
+        Sends PARAM_REQUEST_LIST, then asks again for any index that did not arrive.
+        """
+        values: dict[int, tuple[str, float]] = {}
+        total: int | None = None
+        end = time.monotonic() + timeout
+        self._conn.mav.param_request_list_send(FC_SYSID, FC_COMPID)
+        quiet_since = time.monotonic()
+        while time.monotonic() < end:
+            self._heartbeat_tick()
+            msg = self._conn.recv_match(blocking=True, timeout=0.2)
+            if msg is None:
+                if total is not None and time.monotonic() - quiet_since > 1.0:
+                    for index in [i for i in range(total) if i not in values][:20]:
+                        self._conn.mav.param_request_read_send(FC_SYSID, FC_COMPID, b"", index)
+                    quiet_since = time.monotonic()
+                continue
+            self._apply(msg)
+            if msg.get_type() != "PARAM_VALUE" or msg.get_srcSystem() != FC_SYSID:
+                continue
+            quiet_since = time.monotonic()
+            total = int(msg.param_count)
+            if not 0 <= int(msg.param_index) < total:
+                continue
+            name = msg.param_id
+            if isinstance(name, bytes):
+                name = name.decode("ascii", errors="replace")
+            values[int(msg.param_index)] = (str(name).rstrip("\x00"), float(msg.param_value))
+            if len(values) >= total:
+                return dict(values.values())
+        got = f"{len(values)} av {total}" if total is not None else "inga"
+        raise InfraError(f"parameterlistan blev inte komplett inom {timeout:.0f} s ({got})")
 
 
 def observe(instance: int, state_file: Path) -> int:

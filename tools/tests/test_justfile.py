@@ -77,7 +77,6 @@ def test_all_recipes_listed() -> None:
         ("brain-token", "B1-10"),
         ("check-traceability", "B1-16"),
         ("models-fetch", "B1-10"),
-        ("ci-sitl", "B0-08"),
     ],
 )
 def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
@@ -87,7 +86,8 @@ def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
 
 
 def test_composite_skips_unbuilt() -> None:
-    step = just("_step", "ci-sitl")
+    # Every composite step is built now; the skip itself still has to work.
+    step = just("--set", "unbuilt", "ci-sitl", "_step", "ci-sitl")
     assert step.returncode == 0
     assert "hoppar över ci-sitl (inte byggt än)" in step.stdout
 
