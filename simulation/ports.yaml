@@ -1,0 +1,44 @@
+# The single source of simulator ports.
+# Instance N (0-7) gets base + 10*N for every row with per_instance: true.
+# Bases inside the same block of ten end in different digits, so instances never collide.
+# `arducopter -I N` moves only its JSON port and its own TCP ports by itself;
+# explicit udpclient addresses are not moved, so the launcher computes them from here.
+# Every port here is bound to 127.0.0.1 only, except the entries in listen_allowlist.yaml.
+
+# --- MAVLink (UDP), block 14560 + 10N ---
+ground_mavlink:      {base: 14560, per_instance: true, owner: ground, env: SD_GROUND__MAVLINK__LISTEN}  # linksim -> sd-ground
+radio_mavlink_in:    {base: 14561, per_instance: true}   # SITL serial2 -> linksim
+mavtap_in:           {base: 14562, per_instance: true}   # SITL serial1 -> mavtap
+onboard_mavlink:     {base: 14563, per_instance: true, owner: onboard, env: SD_ONBOARD__MAV_URL}  # mavtap -> sd-onboard
+harness_mavlink:     {base: 14564, per_instance: true}   # SITL serial0 -> harness
+qgc_mavlink:         {base: 14550, per_instance: false, only_instance: 0}   # SITL serial5 -> QGC (optional)
+# --- SITL <-> Gazebo ---
+sitl_json_fdm:       {base: 9002,  per_instance: true}   # moved by -I; 9003 + 10N is the reply
+# --- Gazebo Transport discovery (bound by gz-transport itself, see listen_allowlist.yaml) ---
+# Shared by every instance; GZ_PARTITION keeps the instances' topics apart.
+gz_discovery_msg:    {base: 10317, per_instance: false}
+gz_discovery_srv:    {base: 10318, per_instance: false}
+# --- SITL internal (bound by ArduPilot itself, see listen_allowlist.yaml) ---
+sitl_rc_in:          {base: 5501,  per_instance: true}   # SITL RC input over UDP; nothing in Searchdrone sends to it
+# --- Video (UDP), block 5600 + 10N ---
+video_raw_udp:       {base: 5600,  per_instance: true}   # camera/test picture -> linksim
+video_out_udp:       {base: 5602,  per_instance: true}   # linksim -> video_relay
+# --- SD-link (TCP), block 7600 + 10N ---
+ground_sdlink:       {base: 7600,  per_instance: true, owner: ground, env: SD_GROUND__SDLINK__BIND}
+linksim_sdlink:      {base: 7601,  per_instance: true}   # sd-onboard connects here
+# --- HTTP ---
+ground_commander:    {base: 7700,  per_instance: true, owner: ground, env: SD_GROUND__HTTP__COMMANDER_BIND}
+ground_panel:        {base: 8080,  per_instance: true, owner: ground, env: SD_GROUND__HTTP__PANEL_BIND}
+panel_dev:           {base: 5173,  per_instance: true, owner: panel}   # only when the panel dev server runs
+linksim_control:     {base: 8790,  per_instance: true}   # 127.0.0.1 only, simulator only
+ground_remote:       {base: 8081,  per_instance: false, only_instance: 0, owner: ground, env: SD_GROUND__REMOTE__BIND}  # remote listener; the only tunnel target; off in the simulator
+ground_lan:          {base: 8443,  per_instance: false, only_instance: 0, owner: ground, env: SD_GROUND__LAN__BIND}     # only with lan=1; the only panel port outside loopback
+# --- Shared services (not per instance) ---
+postgres_local:      {base: 5433,  per_instance: false, owner: ground}  # one server locally and in CI, database searchdrone_i<N>
+postgres_private:    {base: 5440,  per_instance: true,  owner: sim}     # own container per instance, only tests with private_db
+mediamtx_rtsp:       {base: 8554,  per_instance: false, only_instance: 0, owner: ground}
+mediamtx_whep:       {base: 8889,  per_instance: false, only_instance: 0, owner: ground}
+mediamtx_hls:        {base: 8888,  per_instance: false, only_instance: 0, owner: ground}
+mediamtx_webrtc_udp: {base: 8189,  per_instance: false, only_instance: 0, owner: ground}
+mediamtx_api:        {base: 9997,  per_instance: false, only_instance: 0, owner: ground}
+llm_http:            {base: 8091,  per_instance: false, owner: brain}  # llama-server; shared, local only

@@ -1,0 +1,4 @@
+# Build context for sitl.Dockerfile: only the files it copies are sent to the builder.
+*
+!simulation/versions.lock
+!simulation/docker/known_params.py

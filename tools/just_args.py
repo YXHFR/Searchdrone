@@ -23,7 +23,6 @@ NOT_BUILT_EXIT = 2
 # recipe -> (ticket that builds it, allowed keys)
 RECIPES: dict[str, tuple[str, frozenset[str]]] = {
     "dev": ("B1-16", frozenset({"physics", "gui", "brain", "instance"})),
-    "sim-smoke": ("B0-05", frozenset({"physics", "gui"})),
     "e2e": ("B1-16", frozenset({"runs", "offline"})),
     "accept": ("B1-16", frozenset({"phase", "sha"})),
     "perf": ("B1-17", frozenset({"runs"})),

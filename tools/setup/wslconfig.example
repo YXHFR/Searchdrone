@@ -1,0 +1,11 @@
+# Copy to C:\Users\<you>\.wslconfig, then run `wsl --shutdown` in PowerShell.
+# Sized for a 16 GB RAM computer running the simulator, the ground station and a
+# small local AI model at the same time.
+[wsl2]
+memory=10GB
+processors=12
+swap=8GB
+networkingMode=mirrored
+
+[experimental]
+autoMemoryReclaim=gradual
