@@ -1,0 +1,118 @@
+# Code scanning (CodeQL) and known-vulnerability scanning of the lockfiles (OSV).
+# Results go to the Security tab as SARIF. `security-ok` is a required check: a
+# finding or a failed scan blocks the merge.
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: "23 3 * * 1" # weekly, Monday 03:23 UTC
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Is there code in this language yet?
+        id: sources
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          case "$LANGUAGE" in
+            python) globs=('*.py') ;;
+            javascript-typescript) globs=('*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs') ;;
+          esac
+          if [ -n "$(git ls-files -- "${globs[@]}" | head -n 1)" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "hoppar över CodeQL för $LANGUAGE (ingen kod än)"
+          fi
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: steps.sources.outputs.present == 'true'
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: steps.sources.outputs.present == 'true'
+        with:
+          category: /language:${{ matrix.language }}
+
+  osv-scanner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan uv.lock and pnpm-lock.yaml
+        id: scan
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+        with:
+          scan-args: |-
+            --lockfile=uv.lock
+            --lockfile=pnpm-lock.yaml
+            --format=sarif
+            --output-file=osv.sarif
+      - name: Upload results to the Security tab
+        if: ${{ !cancelled() && hashFiles('osv.sarif') != '' }}
+        # Pull requests from forks get a read-only token; the verdict is the next step.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: osv.sarif
+          category: osv-scanner
+      - name: Fail on findings or a failed scan
+        env:
+          OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          if [ "$OUTCOME" != success ]; then
+            echo "::error::OSV-Scanner found known vulnerabilities or could not scan (see the scan step)."
+            exit 1
+          fi
+
+  security-ok:
+    if: always()
+    needs: [codeql, osv-scanner]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci_aggregate.jq
+          sparse-checkout-cone-mode: false
+      - name: All security jobs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -e -f tools/ci_aggregate.jq
