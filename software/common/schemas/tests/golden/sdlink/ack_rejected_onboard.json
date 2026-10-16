@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a1-7d01-7f00-8000-000000000001",
+  "kind": "Ack",
+  "sender": "vehicle:sim-01",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 913,
+  "sent_utc": "2026-10-15T12:31:07.180Z",
+  "ttl_ms": null,
+  "reliable": true,
+  "corr_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+  "sig": null,
+  "body": {
+    "ref_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+    "stage": "rejected",
+    "reason_codes": ["OUTSIDE_CHARTER"],
+    "detail_sv": "Målpunkten ligger 34 m utanför sökområdet.",
+    "gate": {
+      "decision": "REJECT",
+      "reason_codes": ["OUTSIDE_CHARTER"],
+      "rule_ids": ["R-AREA"],
+      "message_sv": "Målpunkten ligger 34 m utanför sökområdet.",
+      "details": { "outside_by_m": 34.2 },
+      "required_confirmations": [],
+      "side": "onboard"
+    }
+  }
+}

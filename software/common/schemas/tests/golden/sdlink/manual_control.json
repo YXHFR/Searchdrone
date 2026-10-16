@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a3-0000-7000-8000-0000000000c1",
+  "kind": "ManualControl",
+  "sender": "ground:main",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 120,
+  "sent_utc": "2026-10-15T12:33:00.050Z",
+  "ttl_ms": 1000,
+  "reliable": false,
+  "corr_id": null,
+  "sig": null,
+  "body": {
+    "takeover_id": "0192f4a3-0000-7000-8000-0000000000c0",
+    "input_seq": 17,
+    "pitch": 0.4,
+    "roll": 0.0,
+    "throttle": 0.5,
+    "yaw": 0.0
+  }
+}

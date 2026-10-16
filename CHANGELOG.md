@@ -20,3 +20,12 @@ All notable changes to this project are listed here. The format follows
   and Gazebo bind to all addresses themselves are listed with their reasons and checked.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.
+- Shared message schemas (`sd_schemas`): ids, limits and their outer cap, mission charter,
+  gate input and output, mission states, SD-link messages (including manual stick control),
+  panel and commander API models, reason codes with Swedish texts, and the decision
+  interface. Generated JSON Schema and TypeScript types (`@searchdrone/schemas`) via
+  `just gen`, checked by `just gen-check`.
+- Skill registry with all 18 skills, every one a stub until its executor is built.
+- Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
+  digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
+  ground station tables, append-only guards and the restricted `sd_app` role.

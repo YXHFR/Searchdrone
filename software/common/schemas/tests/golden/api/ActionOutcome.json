@@ -1,0 +1,17 @@
+{
+  "action_id": "0192f49e-3000-7000-8000-000000000003",
+  "vehicle_id": "sim-01",
+  "action": "stop",
+  "action_seq": 5,
+  "via": "button",
+  "by": "operator:demo",
+  "result": "acked",
+  "mode_requested": "BRAKE",
+  "mode_confirmed": "BRAKE",
+  "paths": {
+    "mavlink": "sent",
+    "sdlink": "sent"
+  },
+  "detail_sv": null,
+  "t": "2026-10-15T12:30:00Z"
+}
