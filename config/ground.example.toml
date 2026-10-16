@@ -1,26 +1,60 @@
 # Ground station (sd-ground). Copied to config/ground.toml by `just setup-config`.
-# Override any key with an environment variable SD_GROUND__<SECTION>__<KEY>.
+# Override any key with an environment variable SD_GROUND__<SECTION>__<KEY>
+# (top-level keys: SD_GROUND__<KEY>). Unknown keys stop the server.
 # Secrets are never stored here; they live in .env and secrets/ (both gitignored).
 
-[api]
-host = "127.0.0.1"        # panel API; never reachable from the internet
-port = 8080
-
-[commander]
-host = "127.0.0.1"        # API for the AI commander; always loopback
-port = 7700
+profile = "sim"                         # only the simulator profile exists in v0.1.0
+data_dir = "~/.local/share/searchdrone" # mission data, outside the repository
+default_vehicle_id = "sim-01"
 
 [db]
 # Postgres + PostGIS from compose.yaml (`just db-up`), loopback only.
-# Roles: sd_owner runs migrations (password SD_GROUND__DB_PASSWORD in .env),
-# sd_app is used by the running server (password SD_GROUND__DB_APP_PASSWORD in .env).
-host = "127.0.0.1"
-port = 5433
-name = "searchdrone"
+# The server uses sd_app (password SD_GROUND__DB_APP_PASSWORD in .env);
+# migrations run as sd_owner (password SD_GROUND__DB_PASSWORD in .env).
+url = "postgresql+asyncpg://sd_app@127.0.0.1:5433/searchdrone"
+owner_url = "postgresql+asyncpg://sd_owner@127.0.0.1:5433/searchdrone"
+
+[http]
+panel_bind = "127.0.0.1:8080"           # panel API; never reachable from the internet
+commander_bind = "127.0.0.1:7700"       # API for the AI commander; always loopback
+static_dir = "software/panel/dist"
 
 [lan]
-enabled = false           # `just demo lan=1` turns on the LAN panel with TLS and PIN pairing
-port = 8443
+enabled = false                         # `just demo lan=1` turns on the LAN panel with TLS and PIN
+bind = "0.0.0.0:8443"
+tls_dir = "config/local/tls"
+
+[sdlink]
+bind = "127.0.0.1:7600"
+link_tokens_file = "secrets/link_tokens.toml"
+
+[mavlink]
+listen = "udpin:127.0.0.1:14560"
+gcs_sysid = 250
+gcs_compid = 190
+fc_endpoint = ""                        # empty = lock to the first valid HEARTBEAT
+
+[gate]
+operator_absent_s = 30
+operator_absent_action = "hold"         # hold | return_home | off
 
 [auth]
+cli_may_confirm = false                 # only the test rig sets true
 brain_token_file = "secrets/brain_token"
+
+[charter]
+max_area_km2 = 4.0
+
+[video]
+mediamtx_api = "http://127.0.0.1:9997"
+mediamtx_whep = "http://127.0.0.1:8889"
+mediamtx_hls = "http://127.0.0.1:8888"
+
+[health]
+internet_probe = false
+
+[sim]
+dataflash_dir = ""                      # set by the simulator (where SITL writes *.BIN)
+
+[remote]
+enabled = false                         # reserved; true is refused in v0.1.0

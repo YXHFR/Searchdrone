@@ -1,0 +1,3002 @@
+{
+  "components": {
+    "schemas": {
+      "Annotation": {
+        "additionalProperties": false,
+        "properties": {
+          "area_m2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area M2"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "geometry": {
+            "additionalProperties": true,
+            "title": "Geometry",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "pin",
+              "area"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "kind",
+          "label",
+          "geometry",
+          "created_by",
+          "created_at",
+          "area_m2"
+        ],
+        "title": "Annotation",
+        "type": "object"
+      },
+      "Approval": {
+        "additionalProperties": false,
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "default_autonomy_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutonomyMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "charter",
+              "command",
+              "resume"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by": {
+            "title": "Requested By",
+            "type": "string"
+          },
+          "required_confirmations": {
+            "items": {
+              "const": "clear_around_drone",
+              "type": "string"
+            },
+            "title": "Required Confirmations",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_version": {
+            "title": "Subject Version",
+            "type": "integer"
+          },
+          "summary_sv": {
+            "title": "Summary Sv",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "kind",
+          "subject_id",
+          "subject_version",
+          "status",
+          "summary_sv",
+          "required_confirmations",
+          "default_autonomy_mode",
+          "gate",
+          "requested_by",
+          "requested_at",
+          "expires_at",
+          "decided_by",
+          "decided_at",
+          "reason"
+        ],
+        "title": "Approval",
+        "type": "object"
+      },
+      "AutonomyMode": {
+        "description": "Set only by the operator on the charter card; the AI can never change it.",
+        "enum": [
+          "APPROVE_EACH",
+          "WITHIN_CHARTER"
+        ],
+        "title": "AutonomyMode",
+        "type": "string"
+      },
+      "Charter": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "body": {
+            "$ref": "#/components/schemas/MissionCharter"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "fence_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Hash"
+          },
+          "fence_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Verified At"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "install_status": {
+            "enum": [
+              "none",
+              "pending",
+              "installed",
+              "failed"
+            ],
+            "title": "Install Status",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "proposed_by": {
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "superseded",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "version",
+          "status",
+          "body",
+          "proposed_by",
+          "approved_by",
+          "approved_at",
+          "install_status",
+          "fence_hash",
+          "fence_verified_at",
+          "approval_id",
+          "created_at"
+        ],
+        "title": "Charter",
+        "type": "object"
+      },
+      "CharterProposal": {
+        "additionalProperties": false,
+        "description": "A new or changed charter from the pilot (panel) or the AI.\n\nIt has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot\nposition: sending one is rejected (unknown fields are forbidden). Its own charter\nvalues are checked against the mission limits by the server before any card shows.",
+        "properties": {
+          "allowed_skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Skills"
+          },
+          "alt_max_agl_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Max Agl M"
+          },
+          "alt_min_agl_m": {
+            "default": 15,
+            "minimum": 5.0,
+            "title": "Alt Min Agl M",
+            "type": "number"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "area_annotation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area Annotation Id"
+          },
+          "base_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version"
+          },
+          "battery_rtl_pct": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 15.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Rtl Pct"
+          },
+          "default_alt_agl_m": {
+            "default": 40,
+            "minimum": 5.0,
+            "title": "Default Alt Agl M",
+            "type": "number"
+          },
+          "geofence_buffer_m": {
+            "default": 20,
+            "maximum": 50.0,
+            "minimum": 5.0,
+            "title": "Geofence Buffer M",
+            "type": "number"
+          },
+          "max_range_from_pilot_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Range From Pilot M"
+          },
+          "max_speed_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Speed Ms"
+          },
+          "reason_sv": {
+            "maxLength": 500,
+            "title": "Reason Sv",
+            "type": "string"
+          },
+          "sectors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Sector"
+                },
+                "maxItems": 52,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sectors"
+          }
+        },
+        "required": [
+          "reason_sv"
+        ],
+        "title": "CharterProposal",
+        "type": "object"
+      },
+      "CharterProposalResult": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "charter_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charter Id"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/CharterValidationResult"
+          }
+        },
+        "required": [
+          "charter_id",
+          "approval_id",
+          "validation"
+        ],
+        "title": "CharterProposalResult",
+        "type": "object"
+      },
+      "CharterValidationError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "detail_sv": {
+            "maxLength": 500,
+            "title": "Detail Sv",
+            "type": "string"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          }
+        },
+        "required": [
+          "code",
+          "detail_sv"
+        ],
+        "title": "CharterValidationError",
+        "type": "object"
+      },
+      "CharterValidationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/CharterValidationError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "CharterValidationResult",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "author_ref": {
+            "title": "Author Ref",
+            "type": "string"
+          },
+          "author_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pilot",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Role"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivery": {
+            "enum": [
+              "n/a",
+              "queued",
+              "delivered",
+              "summarized"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "handled_by": {
+            "anyOf": [
+              {
+                "const": "ground",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handled By"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "question",
+              "status",
+              "proposal"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "parsed_intent": {
+            "anyOf": [
+              {
+                "enum": [
+                  "stop",
+                  "return_home"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed Intent"
+          },
+          "refs": {
+            "additionalProperties": true,
+            "title": "Refs",
+            "type": "object"
+          },
+          "role": {
+            "enum": [
+              "operator",
+              "brain",
+              "system"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "mission_id",
+          "role",
+          "author_ref",
+          "kind",
+          "text",
+          "in_reply_to",
+          "refs",
+          "author_role",
+          "parsed_intent",
+          "handled_by",
+          "delivery",
+          "created_at"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "Command": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "backend": {
+            "anyOf": [
+              {
+                "enum": [
+                  "llm",
+                  "grammar",
+                  "scripted",
+                  "rule",
+                  "cloud"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend"
+          },
+          "based_on": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charter_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charter Version"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "issuer_kind": {
+            "enum": [
+              "operator",
+              "brain",
+              "system"
+            ],
+            "title": "Issuer Kind",
+            "type": "string"
+          },
+          "issuer_ref": {
+            "title": "Issuer Ref",
+            "type": "string"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "rationale_sv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale Sv"
+          },
+          "skill": {
+            "title": "Skill",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommandStatus"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "skill",
+          "params",
+          "issuer_kind",
+          "issuer_ref",
+          "backend",
+          "rationale_sv",
+          "in_reply_to",
+          "charter_version",
+          "based_on",
+          "status",
+          "status_reason",
+          "approval_id",
+          "expires_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Command",
+        "type": "object"
+      },
+      "CommandStatus": {
+        "enum": [
+          "pending_approval",
+          "rejected_by_gate",
+          "rejected_by_operator",
+          "approval_expired",
+          "dispatched",
+          "received",
+          "accepted",
+          "rejected_onboard",
+          "running",
+          "done",
+          "failed",
+          "superseded",
+          "expired",
+          "cancelled"
+        ],
+        "title": "CommandStatus",
+        "type": "string"
+      },
+      "EstimateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "battery_after_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery After Pct"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateDecision"
+          }
+        },
+        "required": [
+          "gate",
+          "duration_s",
+          "battery_after_pct"
+        ],
+        "title": "EstimateResult",
+        "type": "object"
+      },
+      "Event": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "mission_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mission Id"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "severity": {
+            "enum": [
+              "debug",
+              "info",
+              "warning",
+              "critical"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "vehicle_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle Id"
+          }
+        },
+        "required": [
+          "id",
+          "mission_id",
+          "vehicle_id",
+          "t",
+          "source",
+          "type",
+          "severity",
+          "payload"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "ExecutorState": {
+        "enum": [
+          "IDLE",
+          "PREFLIGHT",
+          "TAKEOFF",
+          "TRANSIT",
+          "SURVEY",
+          "HOLD",
+          "RTL",
+          "LAND",
+          "LANDED",
+          "HELD",
+          "FAILSAFE"
+        ],
+        "title": "ExecutorState",
+        "type": "string"
+      },
+      "GateDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "ALLOW",
+              "REJECT",
+              "PENDING_APPROVAL"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "message_sv": {
+            "title": "Message Sv",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "required_confirmations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Confirmations",
+            "type": "array"
+          },
+          "rule_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rule Ids",
+            "type": "array"
+          },
+          "side": {
+            "enum": [
+              "ground",
+              "onboard"
+            ],
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "reason_codes",
+          "rule_ids",
+          "message_sv",
+          "details",
+          "side"
+        ],
+        "title": "GateDecision",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LatLon": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "LatLon",
+        "type": "object"
+      },
+      "LatLonAlt": {
+        "additionalProperties": false,
+        "properties": {
+          "alt_amsl_m": {
+            "maximum": 9000.0,
+            "minimum": -500.0,
+            "title": "Alt Amsl M",
+            "type": "number"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "alt_amsl_m"
+        ],
+        "title": "LatLonAlt",
+        "type": "object"
+      },
+      "MapPin": {
+        "additionalProperties": false,
+        "properties": {
+          "annotation_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Annotation Id",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^P[0-9]{1,3}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "id",
+          "annotation_id",
+          "lat",
+          "lon"
+        ],
+        "title": "MapPin",
+        "type": "object"
+      },
+      "MissionCharter": {
+        "additionalProperties": false,
+        "description": "An approved (or proposed) charter. Fields marked *server* are set by the ground station.",
+        "properties": {
+          "ai_silent_timeout_s": {
+            "default": 10,
+            "exclusiveMinimum": 0.0,
+            "maximum": 600.0,
+            "title": "Ai Silent Timeout S",
+            "type": "number"
+          },
+          "allowed_skills": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Allowed Skills",
+            "type": "array"
+          },
+          "alt_max_agl_m": {
+            "default": 120.0,
+            "exclusiveMinimum": 5.0,
+            "title": "Alt Max Agl M",
+            "type": "number"
+          },
+          "alt_min_agl_m": {
+            "default": 15,
+            "minimum": 5.0,
+            "title": "Alt Min Agl M",
+            "type": "number"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "area": {
+            "additionalProperties": true,
+            "title": "Area",
+            "type": "object"
+          },
+          "autonomy_mode": {
+            "$ref": "#/components/schemas/AutonomyMode"
+          },
+          "battery_rtl_pct": {
+            "default": 15.0,
+            "maximum": 90.0,
+            "minimum": 15.0,
+            "title": "Battery Rtl Pct",
+            "type": "number"
+          },
+          "charter_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Charter Id",
+            "type": "string"
+          },
+          "default_alt_agl_m": {
+            "default": 40,
+            "minimum": 5.0,
+            "title": "Default Alt Agl M",
+            "type": "number"
+          },
+          "fence_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fence Hash"
+          },
+          "geofence_buffer_m": {
+            "default": 20,
+            "maximum": 50.0,
+            "minimum": 5.0,
+            "title": "Geofence Buffer M",
+            "type": "number"
+          },
+          "home": {
+            "$ref": "#/components/schemas/LatLonAlt"
+          },
+          "max_range_from_pilot_m": {
+            "default": 500.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Range From Pilot M",
+            "type": "number"
+          },
+          "max_speed_ms": {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Speed Ms",
+            "type": "number"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "on_ai_silent": {
+            "default": "continue_plan",
+            "enum": [
+              "continue_plan",
+              "hold",
+              "return_home"
+            ],
+            "title": "On Ai Silent",
+            "type": "string"
+          },
+          "pilot_position": {
+            "$ref": "#/components/schemas/LatLon"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/Sector"
+            },
+            "maxItems": 52,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "charter_id",
+          "mission_id",
+          "vehicle_id",
+          "version",
+          "area",
+          "home",
+          "pilot_position",
+          "allowed_skills",
+          "autonomy_mode",
+          "sectors",
+          "fence_hash",
+          "approved_by",
+          "approved_at"
+        ],
+        "title": "MissionCharter",
+        "type": "object"
+      },
+      "MissionMemory": {
+        "additionalProperties": false,
+        "description": "What the server stores and returns.",
+        "properties": {
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "pending_operator_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Operator Request"
+          },
+          "plan_note": {
+            "maxLength": 400,
+            "title": "Plan Note",
+            "type": "string"
+          },
+          "summarized_up_to_seq": {
+            "minimum": 0.0,
+            "title": "Summarized Up To Seq",
+            "type": "integer"
+          },
+          "summary_sv": {
+            "maxLength": 1200,
+            "title": "Summary Sv",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "mission_id",
+          "summary_sv",
+          "plan_note",
+          "summarized_up_to_seq",
+          "updated_at"
+        ],
+        "title": "MissionMemory",
+        "type": "object"
+      },
+      "MissionState": {
+        "enum": [
+          "DRAFT",
+          "CHARTER_PROPOSED",
+          "READY",
+          "ACTIVE",
+          "PAUSED",
+          "HELD",
+          "FAILSAFE",
+          "RETURNING",
+          "LANDED",
+          "CLOSED"
+        ],
+        "title": "MissionState",
+        "type": "string"
+      },
+      "OperatorLatch": {
+        "additionalProperties": false,
+        "description": "Set by STOP, FLY HOME, the battery guard or the watchdog. Only Resume lifts it.",
+        "properties": {
+          "action": {
+            "enum": [
+              "stop",
+              "return_home",
+              "battery_rtl",
+              "watchdog_stop",
+              "watchdog_rtl"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_seq": {
+            "title": "Action Seq",
+            "type": "integer"
+          },
+          "set_at": {
+            "format": "date-time",
+            "title": "Set At",
+            "type": "string"
+          },
+          "set_by": {
+            "title": "Set By",
+            "type": "string"
+          },
+          "set_mono_ms": {
+            "title": "Set Mono Ms",
+            "type": "integer"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "const": "battery_rtl",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle_id",
+          "action",
+          "action_seq",
+          "set_by",
+          "set_at",
+          "set_mono_ms"
+        ],
+        "title": "OperatorLatch",
+        "type": "object"
+      },
+      "SafetyLimits": {
+        "additionalProperties": false,
+        "description": "Per-mission limits (outer layer). Heights are metres above the home point.",
+        "properties": {
+          "battery_rtl_pct": {
+            "default": 15.0,
+            "maximum": 90.0,
+            "minimum": 15.0,
+            "title": "Battery Rtl Pct",
+            "type": "number"
+          },
+          "max_alt_agl_m": {
+            "default": 120.0,
+            "exclusiveMinimum": 5.0,
+            "title": "Max Alt Agl M",
+            "type": "number"
+          },
+          "max_range_from_pilot_m": {
+            "default": 500.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Range From Pilot M",
+            "type": "number"
+          },
+          "max_speed_ms": {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Speed Ms",
+            "type": "number"
+          }
+        },
+        "title": "SafetyLimits",
+        "type": "object"
+      },
+      "Sector": {
+        "additionalProperties": false,
+        "properties": {
+          "area": {
+            "additionalProperties": true,
+            "title": "Area",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "order_idx": {
+            "minimum": 0.0,
+            "title": "Order Idx",
+            "type": "integer"
+          },
+          "sector_id": {
+            "pattern": "^[A-Z]{1,2}$",
+            "title": "Sector Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sector_id",
+          "name",
+          "area",
+          "order_idx"
+        ],
+        "title": "Sector",
+        "type": "object"
+      },
+      "Situation": {
+        "additionalProperties": false,
+        "properties": {
+          "active_command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Command"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ai_enabled": {
+            "title": "Ai Enabled",
+            "type": "boolean"
+          },
+          "alerts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "areas": {
+            "items": {
+              "$ref": "#/components/schemas/Annotation"
+            },
+            "title": "Areas",
+            "type": "array"
+          },
+          "autonomy_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutonomyMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "brain_may_takeoff": {
+            "title": "Brain May Takeoff",
+            "type": "boolean"
+          },
+          "charter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MissionCharter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charter_installed": {
+            "title": "Charter Installed",
+            "type": "boolean"
+          },
+          "fence_verified": {
+            "title": "Fence Verified",
+            "type": "boolean"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LatLon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SafetyLimits"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "mission_status": {
+            "$ref": "#/components/schemas/MissionState"
+          },
+          "override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorLatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paused_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "operator",
+                  "brain",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused By"
+          },
+          "pending_approvals": {
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            },
+            "title": "Pending Approvals",
+            "type": "array"
+          },
+          "pending_proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Charter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pilot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LatLon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pins": {
+            "items": {
+              "$ref": "#/components/schemas/MapPin"
+            },
+            "title": "Pins",
+            "type": "array"
+          },
+          "recent_events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "title": "Recent Events",
+            "type": "array"
+          },
+          "returning_cause": {
+            "anyOf": [
+              {
+                "enum": [
+                  "brain",
+                  "operator",
+                  "battery",
+                  "failsafe",
+                  "system"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returning Cause"
+          },
+          "sectors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Sectors",
+            "type": "array"
+          },
+          "snapshot_state_epoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot State Epoch"
+          },
+          "snapshot_state_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot State Seq"
+          },
+          "state_seq": {
+            "title": "State Seq",
+            "type": "integer"
+          },
+          "takeoff_clearance_valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Takeoff Clearance Valid Until"
+          },
+          "vehicle": {
+            "$ref": "#/components/schemas/VehicleSummary"
+          },
+          "vehicle_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mission_id",
+          "vehicle_id",
+          "state_seq",
+          "snapshot_state_epoch",
+          "snapshot_state_seq",
+          "mission_status",
+          "paused_by",
+          "returning_cause",
+          "autonomy_mode",
+          "ai_enabled",
+          "limits",
+          "charter",
+          "charter_installed",
+          "fence_verified",
+          "pending_proposal",
+          "pending_approvals",
+          "takeoff_clearance_valid_until",
+          "brain_may_takeoff",
+          "override",
+          "vehicle",
+          "active_command",
+          "sectors",
+          "pins",
+          "areas",
+          "home",
+          "pilot",
+          "alerts",
+          "recent_events"
+        ],
+        "title": "Situation",
+        "type": "object"
+      },
+      "SkillRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_config_hash": {
+            "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
+            "title": "Ai Config Hash",
+            "type": "string"
+          },
+          "backend": {
+            "enum": [
+              "llm",
+              "grammar",
+              "scripted",
+              "rule",
+              "cloud"
+            ],
+            "title": "Backend",
+            "type": "string"
+          },
+          "based_on": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "charter_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charter Version"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "params": {
+            "additionalProperties": true,
+            "maxProperties": 32,
+            "title": "Params",
+            "type": "object"
+          },
+          "rationale_sv": {
+            "maxLength": 500,
+            "title": "Rationale Sv",
+            "type": "string"
+          },
+          "skill": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Skill",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "skill",
+          "params",
+          "rationale_sv",
+          "in_reply_to",
+          "based_on",
+          "charter_version",
+          "backend",
+          "ai_config_hash"
+        ],
+        "title": "SkillRequest",
+        "type": "object"
+      },
+      "SkillSpecPublic": {
+        "additionalProperties": false,
+        "description": "What ``GET /commander/v1/skills`` returns: a ``SkillSpec`` with JSON Schemas.",
+        "properties": {
+          "ai_allowed": {
+            "default": true,
+            "title": "Ai Allowed",
+            "type": "boolean"
+          },
+          "ai_params_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Params Schema"
+          },
+          "allowed_from": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutorState"
+            },
+            "title": "Allowed From",
+            "type": "array"
+          },
+          "allowed_under_latch": {
+            "default": false,
+            "title": "Allowed Under Latch",
+            "type": "boolean"
+          },
+          "allowed_when": {
+            "enum": [
+              "on_ground",
+              "airborne",
+              "any"
+            ],
+            "title": "Allowed When",
+            "type": "string"
+          },
+          "description_en": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Description En",
+            "type": "string"
+          },
+          "ends_flight": {
+            "default": false,
+            "title": "Ends Flight",
+            "type": "boolean"
+          },
+          "exempt_from_battery_rule": {
+            "default": false,
+            "title": "Exempt From Battery Rule",
+            "type": "boolean"
+          },
+          "moves_vehicle": {
+            "title": "Moves Vehicle",
+            "type": "boolean"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "params_schema": {
+            "additionalProperties": true,
+            "title": "Params Schema",
+            "type": "object"
+          },
+          "rate_class": {
+            "enum": [
+              "action",
+              "report",
+              "none"
+            ],
+            "title": "Rate Class",
+            "type": "string"
+          },
+          "requires_approval_in_b": {
+            "default": false,
+            "title": "Requires Approval In B",
+            "type": "boolean"
+          },
+          "runs_on": {
+            "enum": [
+              "onboard",
+              "ground"
+            ],
+            "title": "Runs On",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              1,
+              2,
+              3
+            ],
+            "title": "Stage",
+            "type": "integer"
+          },
+          "starts_flight": {
+            "default": false,
+            "title": "Starts Flight",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "implemented",
+              "stub"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "synonyms_sv": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Synonyms Sv",
+            "type": "array"
+          },
+          "title_sv": {
+            "minLength": 1,
+            "title": "Title Sv",
+            "type": "string"
+          },
+          "ttl_s": {
+            "default": 15,
+            "exclusiveMinimum": 0.0,
+            "maximum": 300.0,
+            "title": "Ttl S",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "stage",
+          "status",
+          "runs_on",
+          "moves_vehicle",
+          "allowed_when",
+          "rate_class",
+          "description_en",
+          "synonyms_sv",
+          "title_sv",
+          "allowed_from",
+          "params_schema",
+          "ai_params_schema"
+        ],
+        "title": "SkillSpecPublic",
+        "type": "object"
+      },
+      "SkillSubmitResult": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "ALLOW",
+              "REJECT",
+              "PENDING_APPROVAL"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "message_sv": {
+            "title": "Message Sv",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommandStatus"
+          }
+        },
+        "required": [
+          "command_id",
+          "decision",
+          "reason_codes",
+          "message_sv",
+          "details",
+          "approval_id",
+          "status"
+        ],
+        "title": "SkillSubmitResult",
+        "type": "object"
+      },
+      "StateRef": {
+        "additionalProperties": false,
+        "description": "Which state picture an order was based on (onboard StateSnapshot epoch and sequence).",
+        "properties": {
+          "state_epoch": {
+            "title": "State Epoch",
+            "type": "integer"
+          },
+          "state_seq": {
+            "title": "State Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state_epoch",
+          "state_seq"
+        ],
+        "title": "StateRef",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VehicleSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "airborne": {
+            "title": "Airborne",
+            "type": "boolean"
+          },
+          "alt_rel_home_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Rel Home M"
+          },
+          "armed": {
+            "title": "Armed",
+            "type": "boolean"
+          },
+          "battery_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Pct"
+          },
+          "battery_to_reserve_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery To Reserve S"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "dist_to_pilot_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dist To Pilot M"
+          },
+          "executor_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutorState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flight_mode": {
+            "title": "Flight Mode",
+            "type": "string"
+          },
+          "gnss_ok": {
+            "title": "Gnss Ok",
+            "type": "boolean"
+          },
+          "groundspeed_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Groundspeed Ms"
+          },
+          "landed": {
+            "title": "Landed",
+            "type": "boolean"
+          },
+          "lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lat"
+          },
+          "link_ok": {
+            "title": "Link Ok",
+            "type": "boolean"
+          },
+          "lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lon"
+          },
+          "manual_control": {
+            "default": false,
+            "title": "Manual Control",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connected",
+          "armed",
+          "landed",
+          "airborne",
+          "flight_mode",
+          "executor_state",
+          "lat",
+          "lon",
+          "alt_rel_home_m",
+          "groundspeed_ms",
+          "battery_pct",
+          "battery_to_reserve_s",
+          "dist_to_pilot_m",
+          "gnss_ok",
+          "link_ok"
+        ],
+        "title": "VehicleSummary",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Searchdrone commander API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/commander/v1/missions/active": {
+      "get": {
+        "operationId": "get_active_commander_v1_missions_active_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "vehicle_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vehicle Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Active Commander V1 Missions Active Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "none"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Active"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/charter-proposals": {
+      "post": {
+        "operationId": "post_charter_proposal_commander_v1_missions__mission_id__charter_proposals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharterProposal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CharterProposalResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Charter Proposal"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/chat": {
+      "get": {
+        "operationId": "get_chat_commander_v1_missions__mission_id__chat_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChatMessage"
+                  },
+                  "title": "Response Get Chat Commander V1 Missions  Mission Id  Chat Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chat"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/commands": {
+      "post": {
+        "operationId": "post_command_commander_v1_missions__mission_id__commands_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSubmitResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Command"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/commands/{command_id}/cancel": {
+      "post": {
+        "operationId": "post_cancel_commander_v1_missions__mission_id__commands__command_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Cancel Commander V1 Missions  Mission Id  Commands  Command Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Cancel"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/decisions": {
+      "post": {
+        "operationId": "post_decision_commander_v1_missions__mission_id__decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionLog"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Decision"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/estimate": {
+      "post": {
+        "operationId": "post_estimate_commander_v1_missions__mission_id__estimate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Estimate"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/memory": {
+      "get": {
+        "operationId": "get_memory_commander_v1_missions__mission_id__memory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissionMemory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory"
+      },
+      "put": {
+        "operationId": "put_memory_commander_v1_missions__mission_id__memory_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MissionMemoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Memory"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/messages": {
+      "post": {
+        "operationId": "post_message_commander_v1_missions__mission_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrainMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Post Message Commander V1 Missions  Mission Id  Messages Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Message"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/situation": {
+      "get": {
+        "operationId": "get_situation_commander_v1_missions__mission_id__situation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Situation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Situation"
+      }
+    },
+    "/commander/v1/skills": {
+      "get": {
+        "operationId": "get_skills_commander_v1_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SkillSpecPublic"
+                  },
+                  "title": "Response Get Skills Commander V1 Skills Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Skills"
+      }
+    }
+  }
+}
