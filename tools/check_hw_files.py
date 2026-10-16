@@ -170,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     for err in errors:
         print(f"::error::{annotation(err)}")
     if errors:
-        print(f"{len(errors)} fil(er) under hardware/ saknar automatisk kontroll.")
+        print(f"{len(errors)} hårdvarufil(er) saknar automatisk kontroll.")
         return 1
     checked = [p for s, _, p in entries if s != "D" and in_scope(p)]
     print(f"Hårdvarufilerna godkända ({len(checked)} ändrade, alla har en kontroll).")

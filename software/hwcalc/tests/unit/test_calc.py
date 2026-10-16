@@ -122,3 +122,12 @@ def test_duplicate_key_is_rejected(tmp_path: Path) -> None:
     bad.write_text(text + "frame_mass_kg: 0.1\n", encoding="utf-8")
     with pytest.raises(yaml.YAMLError, match="duplicate key"):
         load_drone(bad)
+
+
+def test_unhashable_key_is_rejected(tmp_path: Path) -> None:
+    from sd_hwcalc.model import load_drone
+
+    bad = tmp_path / "drone.yaml"
+    bad.write_text("? [a]\n: 1\n", encoding="utf-8")
+    with pytest.raises(yaml.YAMLError, match="unhashable key"):
+        load_drone(bad)

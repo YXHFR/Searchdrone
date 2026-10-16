@@ -116,7 +116,7 @@ def test_newline_in_file_name_cannot_inject_workflow_commands(
     hw_repo.commit()
     code, out = run(hw_repo, capsys)
     assert code == 1
-    assert all(line.startswith(("::error::", "1 fil")) for line in out.splitlines())
+    assert all(line.startswith(("::error::", "1 hårdvarufil")) for line in out.splitlines())
 
 
 def test_only_merge_base_diff_counts(hw_repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> None:
