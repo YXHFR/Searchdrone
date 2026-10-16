@@ -478,6 +478,44 @@ async def test_a_slow_burst_after_a_dropout_stays_refused() -> None:
     await task
 
 
+@pytest.mark.parametrize("hz", [10, 20])
+async def test_a_stick_stream_after_a_dropout_does_not_block_hand_back(hz: int) -> None:
+    clock = FakeClock()
+    g, v = transport_pair()
+    vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
+    task = asyncio.ensure_future(vehicle.run())
+    await clock.advance(3.1)  # a dropout in manual mode
+    period = 1 / hz
+    for i in range(round(2.0 * hz)):  # the panel keeps streaming sticks for 2 s
+        await g.send(frame_from(sticks(i), "ground", clock, ttl_ms=1000))
+        await clock.advance(period)
+    await g.send(frame_from(takeover(active=False), "ground", clock))
+    await clock.advance(0.01)
+    names = [type(m.body).__name__ for m in app_messages(vehicle.events_nowait())]
+    assert "ManualTakeover" in names  # the hand-back gets through
+    vehicle.abort()
+    await task
+
+
+async def test_the_stale_window_is_capped() -> None:
+    clock = FakeClock()
+    g, v = transport_pair()
+    vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
+    task = asyncio.ensure_future(vehicle.run())
+    await clock.advance(3.1)
+    for _ in range(80):  # 4 s of back-to-back frames
+        await g.send(frame_from(stop_notice(), "ground", clock))
+        await clock.advance(0.05)
+    vehicle.events_nowait()
+    await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
+    await clock.advance(0.01)
+    assert [type(m.body).__name__ for m in app_messages(vehicle.events_nowait())] == [
+        "SkillCommand"
+    ]
+    vehicle.abort()
+    await task
+
+
 async def test_orders_right_after_a_dropout_are_refused_stop_still_delivered() -> None:
     clock = FakeClock()
     g, v = transport_pair()

@@ -64,6 +64,7 @@ from sd_link.constants import (
     MAX_PENDING_RELIABLE,
     STALE_BURST_GAP_S,
     STALE_GAP_S,
+    STALE_WINDOW_MAX_S,
     STALE_WINDOW_S,
     TICK_S,
     WRITE_TIMEOUT_S,
@@ -212,6 +213,7 @@ class LinkSession:
         self._manual_quarantine_until = now
         self._last_manual: float | None = None
         self._stale_until = float("-inf")  # no dropout yet
+        self._stale_cap = float("-inf")
         self._last_heartbeat = now - heartbeat_s  # first heartbeat on the first tick
         self._close_code: int | None = None
         self._close_reason = ""
@@ -463,9 +465,7 @@ class LinkSession:
         gap = now - self._last_inbound
         if gap >= STALE_GAP_S:
             self._stale_until = now + STALE_WINDOW_S
-        elif now < self._stale_until + STALE_BURST_GAP_S and gap < STALE_BURST_GAP_S:
-            # Still the same back-to-back burst: keep the window open until it ends.
-            self._stale_until = max(self._stale_until, now + STALE_BURST_GAP_S)
+            self._stale_cap = now + STALE_WINDOW_MAX_S
         self._last_inbound = now
         if self._state is LinkState.DEGRADED:
             self._set_state(LinkState.UP)
@@ -489,6 +489,8 @@ class LinkSession:
             if envelope.reliable:
                 await self._reject(envelope.msg_id, SCHEMA_INVALID)
             return
+        if gap < STALE_BURST_GAP_S and not isinstance(body, Heartbeat | ManualControl):
+            self._extend_stale_window(now)
         if isinstance(body, Heartbeat):
             return
         if isinstance(body, Ack):
@@ -512,6 +514,15 @@ class LinkSession:
                 return
             await self._ack_received(envelope)
         self._put(inbound)
+
+    def _extend_stale_window(self, now: float) -> None:
+        """Still the same back-to-back burst of queued frames: keep the window open until
+        it ends, but never past the cap. The steady stick stream and heartbeats do not
+        extend it, so a pilot streaming sticks can still hand back or resume."""
+        if now < self._stale_until + STALE_BURST_GAP_S:
+            self._stale_until = min(
+                max(self._stale_until, now + STALE_BURST_GAP_S), self._stale_cap
+            )
 
     def _deliver_manual(self, inbound: Inbound, now: float) -> None:
         if self._last_manual is None or now - self._last_manual >= MANUAL_STALL_GAP_S:

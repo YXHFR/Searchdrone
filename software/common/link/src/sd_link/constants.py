@@ -36,6 +36,7 @@ __all__ = [
     "SDLINK_RESEND_S",
     "STALE_BURST_GAP_S",
     "STALE_GAP_S",
+    "STALE_WINDOW_MAX_S",
     "STALE_WINDOW_S",
     "TICK_S",
     "TOKEN_BYTES",
@@ -66,7 +67,8 @@ APP_DRAIN_S: Final = 2.0  # on_session must return this soon after Closed, or is
 # within STALE_WINDOW_S after such a gap are answered Ack(expired, LINK_STALE).
 STALE_GAP_S: Final = LINK_LOSS_DETECT_S
 STALE_WINDOW_S: Final = 1.0  # extended while the burst keeps arriving back-to-back
-STALE_BURST_GAP_S: Final = 0.1  # frames closer than this belong to the same burst
+STALE_BURST_GAP_S: Final = 0.1  # closer frames are one burst (sticks and heartbeats never count)
+STALE_WINDOW_MAX_S: Final = 3.0  # the window never stays open longer than this after a gap
 
 # Manual control (stick values, 10-20 Hz): never replay a stalled burst
 MANUAL_STALL_GAP_S: Final = 0.5  # no stick value for this long = the stream stalled
