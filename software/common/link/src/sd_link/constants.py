@@ -1,8 +1,9 @@
 """SD-link timing and size constants.
 
-``LINK_LOSS_DETECT_S`` and ``LINK_LOST_S`` also live in ``sd_safety.constants`` once
-the safety package has them; ``tests/unit/test_constants_and_tokens.py`` checks that
-the values agree. None of these come from config or the environment.
+``LINK_LOSS_DETECT_S`` also lives in ``sd_safety.constants`` (and ``LINK_LOST_S`` and
+the resend values once the safety package has them);
+``tests/unit/test_constants_and_tokens.py`` checks that the values agree. None of these
+come from config or the environment.
 """
 
 from __future__ import annotations

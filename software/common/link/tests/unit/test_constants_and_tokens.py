@@ -52,9 +52,8 @@ def test_constants_agree_with_the_safety_package() -> None:
         safety = importlib.import_module("sd_safety.constants")
     except ModuleNotFoundError:
         pytest.skip("sd_safety.constants not built yet")
-    for name in ("LINK_LOSS_DETECT_S", "LINK_LOST_S"):  # both packages must have these
-        assert getattr(safety, name) == getattr(constants, name), name
-    for name in ("SDLINK_RESEND_S", "SDLINK_MAX_RESENDS", "HEARTBEAT_INTERVAL_S"):
+    assert safety.LINK_LOSS_DETECT_S == constants.LINK_LOSS_DETECT_S  # both must have it
+    for name in ("LINK_LOST_S", "SDLINK_RESEND_S", "SDLINK_MAX_RESENDS", "HEARTBEAT_INTERVAL_S"):
         if hasattr(safety, name):
             assert getattr(safety, name) == getattr(constants, name), name
 
