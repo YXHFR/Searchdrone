@@ -18,7 +18,10 @@ can set a trusted label; a status can also be written by a workflow added in a p
 request, which the reviewers must catch (the same limit as gate/review). A pull request
 whose file list GitHub truncates fails, since its protected paths cannot be verified.
 Moving or deleting a file under ``hardware/`` counts as a change.
-This check says nothing about the hardware simulations: ``hardware-ok`` must pass too.
+If a run is skipped in the queue and an old ``owner-ok`` stays on the pull request after
+new commits, remove the label and set it again to approve the new head (adding a label
+that is already there sends no event). This check says nothing about the hardware
+simulations: ``hardware-ok`` must pass too.
 
 Standard library only: owner-gate.yml runs it from the base branch with the system
 Python and never runs code from the pull request.
@@ -38,7 +41,7 @@ LABEL = "owner-ok"
 CONTEXT = "gate/owner"
 ACTIONS_BOT = "github-actions[bot]"
 MAX_FILES = 3000  # GitHub lists at most this many files of a pull request
-PROTECTED = (re.compile(r"^hardware/"), re.compile(r"^\.github/CODEOWNERS$"))
+PROTECTED = (re.compile(r"^hardware/", re.IGNORECASE), re.compile(r"^\.github/CODEOWNERS$"))
 
 
 @dataclass(frozen=True)

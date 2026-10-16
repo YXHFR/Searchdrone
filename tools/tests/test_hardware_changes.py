@@ -37,6 +37,11 @@ def changes(repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> str:
         ("software/panel/src/App.tsx", "false"),
         ("README.md", "false"),
         ("tools/other.py", "false"),
+        ("justfile", "true"),
+        ("uv.lock", "true"),
+        ("tools/ci_aggregate.jq", "true"),
+        (".github/actions/setup/action.yml", "true"),
+        ("electronics/board.kicad_pcb", "true"),
         ("hardware/drone.yaml", "true"),
         ("hardware/electronics/test.kicad_sch", "true"),
         ("software/hwcalc/src/sd_hwcalc/calc.py", "true"),
@@ -96,7 +101,7 @@ def test_workflow_runs_always_without_path_filter() -> None:
 
 
 def test_filter_matches_spec_paths_and_workflow_uses_script() -> None:
-    assert set(chf.FILTER) == {
+    assert set(chf.FILTER) >= {
         "hardware/**",
         "software/hwcalc/**",
         "tools/check_hw_files.py",

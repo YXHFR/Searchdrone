@@ -76,6 +76,11 @@ def test_hover_time_scales_with_battery() -> None:
         {"frame_mass_kg": "0.55"},  # strings are not numbers
         {"motors__count": True},  # booleans are not counts
         {"propulsion__efficiency_total": 1.2},
+        {"propulsion__efficiency_total": 0.81},  # above the plausibility bound
+        {"environment__air_density_kg_m3": 1000.0},
+        {"environment__air_density_kg_m3": 0.5},
+        {"battery__capacity_mah": 30000},  # 648 Wh in 0.87 kg
+        {"schema_version": True},
         {"battery__usable_fraction": 0},
         {"environment__air_density_kg_m3": float("nan")},
         {"schema_version": 2},
@@ -97,3 +102,23 @@ def test_missing_field_is_rejected() -> None:
 def test_limits_reject_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         HardwareLimits.model_validate({**raw("limits.yaml"), "max_takeoff_mass": 3})
+
+
+def test_non_finite_result_fails_closed() -> None:
+    # Inputs that pass the schema but overflow in the formula must never pass.
+    d = drone().model_copy(
+        update={"battery": drone().battery.model_copy(update={"capacity_mah": 1.0e308})}
+    )
+    report = check(d, LIMITS)
+    assert not report.passed
+    assert [f.limit for f in report.failures] == ["finite_values"]
+
+
+def test_duplicate_key_is_rejected(tmp_path: Path) -> None:
+    from sd_hwcalc.model import load_drone
+
+    text = (HARDWARE / "drone.yaml").read_text(encoding="utf-8")
+    bad = tmp_path / "drone.yaml"
+    bad.write_text(text + "frame_mass_kg: 0.1\n", encoding="utf-8")
+    with pytest.raises(yaml.YAMLError, match="duplicate key"):
+        load_drone(bad)

@@ -3,8 +3,9 @@
     python3 tools/check_hw_files.py --base <sha> --head <sha>
     python3 tools/check_hw_files.py --changes --base <sha> --head <sha> [--github-output F]
 
-The first form goes through every file under ``hardware/`` that is added, changed or
-renamed between the merge base of ``base`` and ``head``. A file passes only if it matches
+The first form goes through every file under ``hardware/`` (any letter case), and every
+hardware design file anywhere (``HARDWARE_SUFFIXES``), that is added, changed or renamed
+between the merge base of ``base`` and ``head``. A file passes only if it matches
 a row in ``CHECKED``, and every row names the CI job that checks that kind of file. Any
 other file fails closed: a KiCad board, a CAD model or an FEA deck cannot be merged until
 its automatic check exists. Deleted files pass. Symlinks and submodules never pass.
@@ -36,13 +37,26 @@ CHECKED: dict[str, str] = {
     # "hardware/mechanical/fea/*.inp": "fea" and "hardware/electronics/**/*.kicad_pro": "kicad"
 }
 
-# Paths that make the hardware jobs run (the `changes` job).
+# Paths that make the hardware jobs run (the `changes` job): the hardware itself and
+# everything that decides what hw-files, hw-calc and hardware-ok run.
 FILTER: tuple[str, ...] = (
     "hardware/**",
     "software/hwcalc/**",
     "tools/check_hw_files.py",
+    "tools/ci_aggregate.jq",
     ".github/workflows/hardware.yml",
+    ".github/actions/setup/**",
+    "justfile",
+    "uv.lock",
 )
+
+# Hardware design files fail closed anywhere in the repository, not only under hardware/
+# (simulation meshes such as .stl or .dae stay allowed for the simulator).
+HARDWARE_SUFFIXES = (
+    ".kicad_sch", ".kicad_pcb", ".kicad_pro", ".kicad_sym", ".kicad_mod",
+    ".step", ".stp", ".fcstd", ".inp", ".frd", ".gbr",
+)  # fmt: skip
+HARDWARE_DIR_RE = re.compile(r"^hardware/", re.IGNORECASE)
 
 ZERO_SHA_RE = re.compile(r"^0+$")
 REGULAR_MODES = {"100644", "100755"}
@@ -112,10 +126,15 @@ def changed_entries(base: str, head: str, pathspec: tuple[str, ...]) -> list[tup
     return entries
 
 
+def in_scope(path: str) -> bool:
+    """Under hardware/ (any letter case) or a hardware design file anywhere."""
+    return bool(HARDWARE_DIR_RE.match(path)) or path.lower().endswith(HARDWARE_SUFFIXES)
+
+
 def problems(entries: list[tuple[str, str, str]]) -> list[str]:
     errors = []
     for status, mode, path in entries:
-        if status == "D":
+        if status == "D" or not in_scope(path):
             continue
         if mode not in REGULAR_MODES:
             errors.append(f"{path} är inte en vanlig fil (symlänk eller undermodul); godtas inte.")
@@ -137,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.changes:
         touched = [p for _, _, p in changed_entries(args.base, args.head, ())]
-        run = "true" if any(matches(p, FILTER) for p in touched) else "false"
+        hit = any(matches(p, FILTER) or in_scope(p) for p in touched)
+        run = "true" if hit else "false"
         line = f"run={run}"
         print(line)
         if args.github_output:
@@ -145,14 +165,14 @@ def main(argv: list[str] | None = None) -> int:
                 f.write(line + "\n")
         return 0
 
-    entries = changed_entries(args.base, args.head, ("hardware/",))
+    entries = changed_entries(args.base, args.head, ())
     errors = problems(entries)
     for err in errors:
         print(f"::error::{annotation(err)}")
     if errors:
         print(f"{len(errors)} fil(er) under hardware/ saknar automatisk kontroll.")
         return 1
-    checked = [p for s, _, p in entries if s != "D"]
+    checked = [p for s, _, p in entries if s != "D" and in_scope(p)]
     print(f"Hårdvarufilerna godkända ({len(checked)} ändrade, alla har en kontroll).")
     return 0
 

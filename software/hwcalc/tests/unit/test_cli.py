@@ -59,3 +59,11 @@ def test_missing_file_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path
     code, report, _ = run(capsys, tmp_path / "nope.yaml", HARDWARE / "limits.yaml")
     assert code == 1
     assert report["pass"] is False
+
+
+def test_non_utf8_file_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    bad = tmp_path / "drone.yaml"
+    bad.write_bytes(b"name: \xff\xfe\n")
+    code, report, _ = run(capsys, bad, HARDWARE / "limits.yaml")
+    assert code == 1
+    assert report["pass"] is False

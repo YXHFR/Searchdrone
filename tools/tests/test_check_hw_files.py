@@ -57,6 +57,26 @@ def test_unchecked_file_fails(
     assert f"Ingen automatisk kontroll för {rel} ännu" in out
 
 
+@pytest.mark.parametrize(
+    "rel",
+    ["electronics/board.kicad_pcb", "docs/x.FCStd", "cad/frame.STEP", "Hardware/frame.step"],
+)
+def test_hardware_design_file_outside_hardware_fails(
+    hw_repo: GitRepo, capsys: pytest.CaptureFixture[str], rel: str
+) -> None:
+    hw_repo.write(rel)
+    hw_repo.commit()
+    assert run(hw_repo, capsys)[0] == 1
+
+
+def test_simulation_mesh_outside_hardware_passes(
+    hw_repo: GitRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hw_repo.write("simulation/models/sd_quad14/meshes/arm.stl")
+    hw_repo.commit()
+    assert run(hw_repo, capsys)[0] == 0
+
+
 def test_deleted_file_passes(hw_repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> None:
     (hw_repo.path / "hardware" / "limits.yaml").unlink()
     hw_repo.commit()

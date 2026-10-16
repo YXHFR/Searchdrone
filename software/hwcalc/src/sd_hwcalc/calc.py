@@ -79,9 +79,21 @@ def compute(drone: Drone) -> Performance:
 
 
 def check(drone: Drone, limits: HardwareLimits) -> Report:
+    """Every limit passes only when its value is finite and on the good side (fail closed)."""
     perf = compute(drone)
     failures: list[Failure] = []
-    if perf.total_mass_kg > limits.max_takeoff_mass_kg:
+    bad = [name for name, value in vars(perf).items() if not math.isfinite(value)]
+    if bad:
+        failures.append(
+            Failure(
+                "finite_values",
+                math.nan,
+                math.nan,
+                f"Beräkningen gav ogiltiga värden ({', '.join(bad)}); kontrollera drone.yaml.",
+            )
+        )
+        return Report(perf, tuple(failures))
+    if not perf.total_mass_kg <= limits.max_takeoff_mass_kg:
         failures.append(
             Failure(
                 "max_takeoff_mass_kg",
@@ -91,7 +103,7 @@ def check(drone: Drone, limits: HardwareLimits) -> Report:
                 f"{limits.max_takeoff_mass_kg} kg.",
             )
         )
-    if perf.hover_time_min < limits.min_hover_time_min:
+    if not perf.hover_time_min >= limits.min_hover_time_min:
         failures.append(
             Failure(
                 "min_hover_time_min",
@@ -101,7 +113,7 @@ def check(drone: Drone, limits: HardwareLimits) -> Report:
                 f"{limits.min_hover_time_min} min.",
             )
         )
-    if perf.hover_thrust_fraction > limits.max_hover_thrust_fraction:
+    if not perf.hover_thrust_fraction <= limits.max_hover_thrust_fraction:
         failures.append(
             Failure(
                 "max_hover_thrust_fraction",
@@ -111,7 +123,7 @@ def check(drone: Drone, limits: HardwareLimits) -> Report:
                 f"{limits.max_hover_thrust_fraction:.0%}.",
             )
         )
-    if perf.thrust_to_weight < limits.min_thrust_to_weight:
+    if not perf.thrust_to_weight >= limits.min_thrust_to_weight:
         failures.append(
             Failure(
                 "min_thrust_to_weight",

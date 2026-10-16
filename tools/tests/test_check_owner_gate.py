@@ -46,7 +46,13 @@ def test_no_protected_path_is_success() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["hardware/drone.yaml", "hardware/README.md", "hardware/a/b.step", ".github/CODEOWNERS"],
+    [
+        "hardware/drone.yaml",
+        "hardware/README.md",
+        "hardware/a/b.step",
+        "Hardware/x.step",
+        ".github/CODEOWNERS",
+    ],
 )
 def test_protected_paths_need_approval(name: str) -> None:
     assert cog.decide(event("opened"), pr(), [{"filename": name}], []).state == "failure"
