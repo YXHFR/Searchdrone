@@ -1,0 +1,71 @@
+# The three reviewer roles (architecture, security, flight safety) review every pull
+# request before it is pushed and post their verdicts as PR comments. This job reads
+# those comments and writes the commit status `gate/review` on the PR's head commit:
+# success only when all three approved exactly that commit. A new push needs new
+# reviews. The logic is in tools/check_review_comments.py, always taken from the base
+# branch; no code from the pull request is checked out or run.
+name: review-gate
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] statuses on head SHA; no PR code is executed
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions: {}
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate-review:
+    name: gate/review
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check out the gate script from the base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/check_review_comments.py
+          sparse-checkout-cone-mode: false
+      - name: Evaluate the reviewers' comments
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha" > "$RUNNER_TEMP/commit.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            > "$RUNNER_TEMP/comments.json"
+          python3 tools/check_review_comments.py --head-sha "$head_sha" \
+            --commit "$RUNNER_TEMP/commit.json" --comments "$RUNNER_TEMP/comments.json" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Publish gate/review
+        # Always runs: if the evaluation failed, the status becomes "error" so an older
+        # success on the same commit cannot stay in place.
+        if: ${{ always() && steps.gate.outputs.head_sha != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.gate.outputs.head_sha }}
+          OUTCOME: ${{ steps.gate.outcome }}
+          STATE: ${{ steps.gate.outputs.state }}
+          DESC: ${{ steps.gate.outputs.description }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" != success ] || [ -z "$STATE" ]; then
+            STATE=error
+            DESC="Review gate could not evaluate the comments; see the run"
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$STATE" -f context="gate/review" -f description="$DESC" \
+            -f target_url="$RUN_URL"

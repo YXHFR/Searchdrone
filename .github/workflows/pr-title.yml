@@ -1,0 +1,39 @@
+# The PR title becomes the squash commit message, so it must follow Conventional
+# Commits. Writes the commit status `gate/pr-title` on the PR's head commit.
+name: pr-title
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] statuses on head SHA; no PR code is executed
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Check the title and publish gate/pr-title
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ github.event.pull_request.title }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          re='^(feat|fix|perf|refactor|test|build|ci|docs|chore|revert|hw)(\([a-z0-9-]+\))?!?: .{3,100}$'
+          if [[ $TITLE =~ $re ]]; then
+            state=success
+            desc="Conventional Commits title"
+          else
+            state=failure
+            desc="Use type(scope): description, e.g. feat(safety): B1-03 safety gate"
+          fi
+          echo "gate/pr-title: $state"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$state" -f context="gate/pr-title" -f description="$desc"
+          [ "$state" = success ]

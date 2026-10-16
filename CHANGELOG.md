@@ -15,3 +15,7 @@ All notable changes to this project are listed here. The format follows
 - `tools/bootstrap.sh` and `tools/setup/wsl-setup.sh` for a fresh WSL2 Ubuntu 24.04.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.
+- CI on every pull request and push to `main`: lint, type checks, unit and contract tests,
+  license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
+  Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
+  `gate/pr-title` and `gate/review`, Dependabot and a pull request template.

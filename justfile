@@ -18,7 +18,7 @@ unbuilt := "db-up db-down db-check migrate gen gen-check test-panel-e2e panel-bu
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
-unbuilt_tools := "check_forbidden_mavlink check_versions check_compose_ports check_commit_emails check_coverage check_safety_manifest"
+unbuilt_tools := "check_forbidden_mavlink check_coverage check_safety_manifest"
 
 _just := just_executable() + " --justfile " + quote(justfile()) + " --working-directory " + quote(justfile_directory())
 
@@ -73,7 +73,7 @@ lint:
         echo "hoppar över zizmor (inte byggt än)"
     fi
     if [ -n "${SD_BASE_SHA:-}" ]; then
-        if [[ " {{unbuilt_tools}} " == *" check_commit_emails "* ]]; then echo "hoppar över check_commit_emails (inte byggt än)"; else uv run tools/check_commit_emails.py --since "$SD_BASE_SHA"; fi
+        if [[ " {{unbuilt_tools}} " == *" check_commit_emails "* ]]; then echo "hoppar över check_commit_emails (inte byggt än)"; else uv run tools/check_commit_emails.py --since "$SD_BASE_SHA" --head "${SD_HEAD_SHA:-HEAD}"; fi
     fi
 
 # Type-check Python (pyright) and TypeScript (tsc)
