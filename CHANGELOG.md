@@ -38,3 +38,7 @@ All notable changes to this project are listed here. The format follows
   license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
   Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
   `gate/pr-title` and `gate/review`, Dependabot and a pull request template.
+- Safety gate (`sd_safety.evaluate`): every rule for orders from the AI and the operator,
+  exact route and area checks against concave charter areas, geodesic distances, limits
+  with an outer cap and the matching flight-controller fence, manual control and the
+  flight-controller fence radius as reasons to reject.
