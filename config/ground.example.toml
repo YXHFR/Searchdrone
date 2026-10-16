@@ -11,6 +11,9 @@ host = "127.0.0.1"        # API for the AI commander; always loopback
 port = 7700
 
 [db]
+# Postgres + PostGIS from compose.yaml (`just db-up`), loopback only.
+# Roles: sd_owner runs migrations (password SD_GROUND__DB_PASSWORD in .env),
+# sd_app is used by the running server (password SD_GROUND__DB_APP_PASSWORD in .env).
 host = "127.0.0.1"
 port = 5433
 name = "searchdrone"

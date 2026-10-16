@@ -1,0 +1,86 @@
+"""compose.yaml: no remote access in v0.1.0, and the db service stays local and pinned."""
+
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+COMPOSE = ROOT / "compose.yaml"
+DOCKER = shutil.which("docker")
+# Dummy values so `docker compose config` can render without a real .env.
+DUMMY_ENV = {
+    "SD_GROUND__DB_PASSWORD": "x",
+    "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "x",
+    "SD_UID": "1000",
+    "SD_GID": "1000",
+}
+
+
+def _services() -> dict[str, Any]:
+    data = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    return data["services"]
+
+
+def test_no_remote_profile_or_tunnel_static() -> None:
+    for name, svc in _services().items():
+        assert "remote" not in svc.get("profiles", []), name
+        assert "cloudflared" not in name, name
+        assert "cloudflared" not in str(svc.get("image", "")), name
+
+
+@pytest.mark.skipif(DOCKER is None, reason="docker is not installed")
+def test_no_remote_profile_rendered(tmp_path: Path) -> None:
+    env = tmp_path / "env"
+    values = {**DUMMY_ENV, "SD_DATA_DIR": str(tmp_path / "data")}
+    env.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    assert DOCKER is not None
+    profiles = subprocess.run(
+        [DOCKER, "compose", "--env-file", str(env), "-f", str(COMPOSE), "config", "--profiles"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert profiles.returncode == 0, profiles.stderr
+    assert "remote" not in profiles.stdout.split()
+    images = subprocess.run(
+        [
+            DOCKER,
+            "compose",
+            "--env-file",
+            str(env),
+            "-f",
+            str(COMPOSE),
+            "--profile",
+            "*",
+            "config",
+            "--images",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert images.returncode == 0, images.stderr
+    assert "cloudflared" not in images.stdout
+
+
+def test_db_service() -> None:
+    db = _services()["db"]
+    assert re.fullmatch(r"postgis/postgis:18-3\.6@sha256:[0-9a-f]{64}", db["image"])
+    assert db["ports"] == ["127.0.0.1:5433:5432"]
+    assert db["volumes"] == ["sd-pgdata:/var/lib/postgresql"]
+    assert "network_mode" not in db
+    # The password comes from .env and compose refuses to start without it.
+    assert db["environment"]["POSTGRES_PASSWORD"].startswith("${SD_GROUND__DB_PASSWORD:?")
+
+
+def test_env_example_db_passwords_empty() -> None:
+    lines = (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+    for key in ("SD_GROUND__DB_PASSWORD", "SD_GROUND__DB_APP_PASSWORD"):
+        assert f"{key}=" in lines, key

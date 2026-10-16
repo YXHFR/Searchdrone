@@ -1,0 +1,29 @@
+# Local services for the ground station. Started with `just db-up` (never by hand with
+# the shell environment): docker compose reads secrets with --env-file .env.
+# Every published port binds to 127.0.0.1 only. Image tags are pinned by digest and are
+# at least two weeks old when pinned. Each ticket adds its own service block.
+name: searchdrone
+
+services:
+  # --- db: Postgres 18 + PostGIS 3.6 (B0-04) ---
+  db:
+    # postgis/postgis:18-3.6, pushed 2026-08-31 (multi-arch index digest)
+    image: postgis/postgis:18-3.6@sha256:60f6ad1d21ea86a67d47780b9a0d1e1d200500f62b19293fa834d0dea80b8677
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: searchdrone
+      POSTGRES_USER: sd_owner
+      POSTGRES_PASSWORD: ${SD_GROUND__DB_PASSWORD:?saknas i .env, kör just setup-config}
+    ports: ["127.0.0.1:5433:5432"]
+    # Postgres 18 images keep data under /var/lib/postgresql/<major>/docker, so the
+    # volume is mounted one level up (not on /var/lib/postgresql/data).
+    volumes: [sd-pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sd_owner -d searchdrone"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 256mb
+
+volumes:
+  sd-pgdata:

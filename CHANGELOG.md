@@ -15,3 +15,6 @@ All notable changes to this project are listed here. The format follows
 - `tools/bootstrap.sh` and `tools/setup/wsl-setup.sh` for a fresh WSL2 Ubuntu 24.04.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.
+- Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
+  digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
+  ground station tables, append-only guards and the restricted `sd_app` role.

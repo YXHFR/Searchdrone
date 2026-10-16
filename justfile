@@ -14,7 +14,7 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "db-up db-down db-check migrate gen gen-check test-panel-e2e panel-build"
+unbuilt := "migrate gen gen-check test-panel-e2e panel-build"
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
@@ -132,14 +132,17 @@ gen-check: (_not-built "B0-03")
 
 # --- database and services -----------------------------------------------------------
 
-# Start Postgres + PostGIS on 127.0.0.1:5433
-db-up: (_not-built "B0-04")
+# Start Postgres + PostGIS on 127.0.0.1:5433 and wait until it is healthy
+db-up: _env-file
+    docker compose --env-file .env up -d --wait db
 
-# Stop the database
-db-down: (_not-built "B0-04")
+# Stop the database (the data volume is kept)
+db-down: _env-file
+    docker compose --env-file .env down db
 
 # Show the PostGIS version of the running database
-db-check: (_not-built "B0-04")
+db-check: _env-file
+    docker compose --env-file .env exec -T db psql -U sd_owner -d searchdrone -v ON_ERROR_STOP=1 -tAc 'SELECT postgis_full_version()'
 
 # Create or upgrade the database schema
 migrate: (_not-built "B1-05")
@@ -239,6 +242,10 @@ release-prep VERSION: (_not-built "B1-18")
 [private]
 _not-built ticket:
     @echo "inte byggt än ({{ticket}})"; exit 2
+
+[private]
+_env-file:
+    @[ -f .env ] || { echo "Filen .env saknas. Kör: just setup-config"; exit 1; }
 
 [private]
 _step recipe:
