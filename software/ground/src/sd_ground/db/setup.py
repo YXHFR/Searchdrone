@@ -19,6 +19,8 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import URL, make_url
 
+from sd_ground.db.repo import ensure_app_role
+
 __all__ = [
     "ALEMBIC_INI",
     "alembic_config",
@@ -86,14 +88,7 @@ async def wait_for_db(url: URL, timeout_s: float) -> bool:
 async def _ensure_app_role(owner_url: URL, app_password: str) -> bool:
     conn = await asyncpg.connect(**_asyncpg_args(owner_url))  # type: ignore[arg-type]
     try:
-        if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = 'sd_app'"):
-            return False
-        quoted = await conn.fetchval("SELECT quote_literal($1)", scram_verifier(app_password))
-        await conn.execute(
-            "CREATE ROLE sd_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS "
-            f"NOREPLICATION PASSWORD {quoted}"
-        )
-        return True
+        return await ensure_app_role(conn, scram_verifier(app_password))
     finally:
         await conn.close()
 

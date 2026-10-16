@@ -11,7 +11,13 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import HTTPConnection
 
-from sd_ground.auth import SESSION_HEADROOM, Principal, SessionRecord
+from sd_ground.auth import (
+    SESSION_HEADROOM,
+    Principal,
+    SessionRecord,
+    principal_for,
+    session_for,
+)
 from sd_ground.context import Ground
 from sd_ground.db.repo import Repo
 
@@ -117,37 +123,17 @@ def not_built(ticket: str) -> ApiStatusError:
     return ApiStatusError(501, "NOT_BUILT", f"Den här delen är inte byggd än ({ticket}).")
 
 
-def _bearer(conn: HTTPConnection) -> str | None:
-    scheme, _, value = conn.headers.get("authorization", "").partition(" ")
-    return value.strip() if scheme.lower() == "bearer" and value.strip() else None
-
-
 def session_of(conn: HTTPConnection) -> SessionRecord | None:
-    g = ground(conn)
-    token = _bearer(conn)
-    if token is not None:
-        rec = g.sessions.lookup(token)
-        return rec if rec is not None and rec.kind == "token" else None
-    cookie = conn.cookies.get(COOKIE)
-    if cookie:
-        rec = g.sessions.lookup(cookie)
-        return rec if rec is not None and rec.kind == "session" else None
-    return None
+    return session_for(
+        ground(conn).sessions,
+        authorization=conn.headers.get("authorization", ""),
+        cookie=conn.cookies.get(COOKIE),
+    )
 
 
 def principal_from(conn: HTTPConnection) -> Principal | None:
     rec = session_of(conn)
-    if rec is None:
-        return None
-    via = "lan" if conn.scope.get("sd_listener") == "lan" else "local"
-    return Principal(
-        role=rec.role,
-        issuer_ref=rec.issuer_ref,
-        auth_mode=rec.auth_mode,
-        via=via,
-        session_id=rec.id,
-        display_name=rec.issuer_ref.split(":", 1)[-1],
-    )
+    return None if rec is None else principal_for(rec, conn.scope.get("sd_listener"))
 
 
 def require(role: Literal["pilot", "observer"]) -> Callable[[Request], Principal]:

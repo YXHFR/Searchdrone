@@ -258,6 +258,8 @@ class SessionStore:
         self._on_extended = on_extended
         self._lock = threading.Lock()
         self._by_hash: dict[str, SessionRecord] = {}
+        self._revoked: set[str] = set()  # logged out; never brought back by load()
+        self._revoked_saved: set[str] = set()
 
     def create_session(
         self, *, role: Literal["pilot", "observer"], issuer_ref: str, auth_mode: AuthMode
@@ -283,7 +285,7 @@ class SessionStore:
     def load(self, records: Iterable[SessionRecord]) -> None:
         """Replace what the database knows; keep sessions not yet persisted."""
         with self._lock:
-            fresh = {r.token_sha256: r for r in records}
+            fresh = {r.token_sha256: r for r in records if r.token_sha256 not in self._revoked}
             for key, old in self._by_hash.items():
                 if key in fresh:
                     keep = fresh[key]
@@ -305,8 +307,18 @@ class SessionStore:
                 self._by_hash[token_sha256] = replace(rec, pending_persist=False)
 
     def revoke(self, token_sha256: str) -> None:
+        """Ends a session now. Stays ended even if the database still lists it."""
         with self._lock:
             self._by_hash.pop(token_sha256, None)
+            self._revoked.add(token_sha256)
+
+    def unsaved_revocations(self) -> list[str]:
+        with self._lock:
+            return list(self._revoked - self._revoked_saved)
+
+    def revocation_saved(self, token_sha256: str) -> None:
+        with self._lock:
+            self._revoked_saved.add(token_sha256)
 
     def _valid(self, rec: SessionRecord, now: dt.datetime) -> tuple[bool, bool]:
         """(valid, extended_by_flight)."""
@@ -386,3 +398,35 @@ def parse_duration(text: str) -> dt.timedelta:
     if len(text) < 2 or text[-1] not in units or not text[:-1].isdigit():
         raise ValueError(f"ogiltig tid {text!r} (t.ex. 30m, 24h, 7d)")
     return dt.timedelta(**{units[text[-1]]: int(text[:-1])})
+
+
+def bearer_of(authorization: str) -> str | None:
+    """The token of an ``Authorization: Bearer <token>`` header."""
+    scheme, _, value = authorization.partition(" ")
+    return value.strip() if scheme.lower() == "bearer" and value.strip() else None
+
+
+def session_for(
+    store: SessionStore, *, authorization: str, cookie: str | None
+) -> SessionRecord | None:
+    """A Bearer header counts only for CLI tokens, the cookie only for panel sessions."""
+    token = bearer_of(authorization)
+    if token is not None:
+        rec = store.lookup(token)
+        return rec if rec is not None and rec.kind == "token" else None
+    if cookie:
+        rec = store.lookup(cookie)
+        return rec if rec is not None and rec.kind == "session" else None
+    return None
+
+
+def principal_for(rec: SessionRecord, listener: object) -> Principal:
+    """The caller of a request on ``listener`` (``"lan"`` or the local listener)."""
+    return Principal(
+        role=rec.role,
+        issuer_ref=rec.issuer_ref,
+        auth_mode=rec.auth_mode,
+        via="lan" if listener == "lan" else "local",
+        session_id=rec.id,
+        display_name=rec.issuer_ref.split(":", 1)[-1],
+    )

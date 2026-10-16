@@ -18,6 +18,8 @@ import json
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from typing import Any
 
+from sd_ground.auth import bearer_of
+
 __all__ = [
     "COMMANDER_BODY_LIMIT",
     "PANEL_BODY_LIMIT",
@@ -80,9 +82,7 @@ def _headers(scope: Scope) -> dict[str, str]:
 
 
 def _bearer(headers: dict[str, str]) -> str | None:
-    auth = headers.get("authorization", "")
-    scheme, _, value = auth.partition(" ")
-    return value.strip() if scheme.lower() == "bearer" and value.strip() else None
+    return bearer_of(headers.get("authorization", ""))
 
 
 async def _reject_http(send: Send, status: int, code: str, detail_sv: str) -> None:

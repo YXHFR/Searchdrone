@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import unicodedata
 from pathlib import Path
 from typing import Annotated, Any
@@ -69,6 +70,14 @@ router = APIRouter(prefix="/commander/v1")
 _UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 IdPath = Annotated[str, PathParam(pattern=_UUID)]
 VehiclePath = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9-]{2,31}$")]
+
+
+def _uuid_or_none(value: object) -> str | None:
+    """Only a well-formed UUID from the AI reaches the panel's event stream."""
+    try:
+        return str(UUID(str(value))) if value is not None else None
+    except ValueError:
+        return None
 
 
 def clean_text(value: str) -> str:
@@ -308,18 +317,23 @@ async def post_decision(mission_id: IdPath, request: Request, g: G, _: Commander
     mid, vehicle_id = await _open_mission(g, mission_id)
     stored = body.model_dump(mode="json", exclude={"prompt_json"})
     stored["prompt_file"] = None
+    target: Path | None = None
     if body.prompt_json is not None:
-        target, rel = _prompt_path(g, mid, str(body.turn_id))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(body.prompt_json, ensure_ascii=False), encoding="utf-8")
-        stored["prompt_file"] = rel
-    await repo_of(g).add_decision(
+        target, stored["prompt_file"] = _prompt_path(g, mid, str(body.turn_id))
+        if target.exists():  # the audit file of an earlier turn is never rewritten
+            raise ApiStatusError(409, "TURN_EXISTS", "Det finns redan en promptfil för turen.")
+    created = await repo_of(g).add_decision(
         decision_id=str(body.id),
         mission_id=mid,
         vehicle_id=vehicle_id,
         turn_id=str(body.turn_id),
         body=stored,
     )
+    if created and target is not None and body.prompt_json is not None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(body.prompt_json, ensure_ascii=False))
     return Response(status_code=204)
 
 
@@ -522,7 +536,7 @@ class CommanderHub:
                         "chat.brain_status",
                         {"state": g.brain_state, "typing": bool(body.get("active"))},
                         ts=g.now(),
-                        mission_id=body.get("mission_id"),
+                        mission_id=_uuid_or_none(body.get("mission_id")),
                     )
                 elif kind == "brain.pong":
                     self.last_heartbeat = g.clock.monotonic()

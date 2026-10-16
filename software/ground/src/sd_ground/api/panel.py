@@ -18,28 +18,29 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 
+from sd_ground import emergency
 from sd_ground.api.deps import (
     COOKIE,
     ApiStatusError,
     ground,
     not_built,
-    principal_from,
     repo_of,
     require,
     require_headroom,
     require_interactive,
+    session_of,
 )
 from sd_ground.auth import LoginError, Principal, hash_token
 from sd_ground.config import limit_caps
 from sd_ground.context import Ground
-from sd_ground.logging import REDACTOR, get_logger
+from sd_ground.emergency import EmergencyRefusedError
+from sd_ground.logging import get_logger
 from sd_ground.services import health
 from sd_ground.sources import EmergencyUnavailableError
 from sd_schemas.api import (
     AbsoluteLimits,
     ActionDispatched,
     ActionDispatchedAll,
-    ActionDispatchedVehicle,
     ActionOutcome,
     ActionRequest,
     AiToggleRequest,
@@ -156,7 +157,6 @@ async def post_session(body: LoginRequest, request: Request, response: Response,
     token, rec = g.sessions.create_session(
         role="pilot", issuer_ref=f"operator:{OPERATOR_ALIAS}", auth_mode=mode
     )
-    REDACTOR.add(token)
     if g.repo is not None and g.db_ok:
         try:
             await g.repo.save_session(rec)
@@ -166,7 +166,9 @@ async def post_session(body: LoginRequest, request: Request, response: Response,
     response.set_cookie(
         COOKIE,
         token,
-        max_age=43200,
+        # No Max-Age: a browser-session cookie. The server alone decides when the session
+        # ends (12 h idle, 7 days, never during a flight), so the browser cannot drop it
+        # mid-flight.
         httponly=True,
         samesite="strict",
         secure=request.url.scheme == "https",
@@ -177,10 +179,16 @@ async def post_session(body: LoginRequest, request: Request, response: Response,
 
 @router.get("/session", response_model=Session)
 async def get_session(request: Request, g: G) -> Session:
-    if principal_from(request) is None:
+    rec = session_of(request)
+    if rec is None:
         raise ApiStatusError(401, "UNAUTHENTICATED", "Logga in först.")
-    token = request.cookies.get(COOKIE) or request.headers.get("authorization", "")[7:].strip()
-    return _session_model(g, token)
+    return Session(
+        role=rec.role,
+        issuer_ref=rec.issuer_ref,
+        display_name=rec.issuer_ref.split(":", 1)[-1],
+        auth_mode=rec.auth_mode,
+        expires_at=g.sessions.expires_at(rec),
+    )
 
 
 @router.post("/session/logout", status_code=204, response_class=Response)
@@ -190,7 +198,11 @@ async def post_logout(request: Request, g: G, _: Observer) -> Response:
         sha = hash_token(token)
         g.sessions.revoke(sha)
         if g.repo is not None and g.db_ok:
-            await g.repo.revoke_session(sha)
+            try:
+                await g.repo.revoke_session(sha)
+                g.sessions.revocation_saved(sha)
+            except Exception as exc:  # saved by the next database check
+                log.warning("session.revoke_deferred", error=type(exc).__name__)
     response = Response(status_code=204)
     response.delete_cookie(COOKIE, path="/", httponly=True, samesite="strict")
     return response
@@ -213,16 +225,20 @@ async def get_vehicle_state(vehicle_id: VehiclePath, g: G, _: Observer) -> Vehic
 def dispatch_emergency(
     g: Ground,
     action: Literal["stop", "return_home"],
-    vehicle_id: VehiclePath,
+    vehicle_id: str | None,
     body: ActionRequest,
     who: Principal,
-) -> ActionDispatched:
-    """Shared by the ingress thread and the main app. Never touches the database."""
+) -> Any:
+    """In production the ingress thread answers these routes (``sd_ground.ingress``).
+
+    The routes here document them in OpenAPI and, if ever reached, use the same rule and
+    dispatch (``sd_ground.emergency``), so the two cannot differ.
+    """
     try:
-        return g.emergency.dispatch(
-            action, vehicle_id, client_action_id=str(body.client_action_id), via="button", by=who
-        )
-    except EmergencyUnavailableError as exc:
+        if vehicle_id is None:
+            return emergency.dispatch_all(g.emergency, action, str(body.client_action_id), who)
+        return emergency.dispatch(g.emergency, action, vehicle_id, str(body.client_action_id), who)
+    except (EmergencyRefusedError, EmergencyUnavailableError) as exc:
         raise ApiStatusError(exc.status, exc.code, exc.detail_sv) from None
 
 
@@ -230,8 +246,9 @@ def dispatch_emergency(
     "/vehicles/{vehicle_id}/actions/stop", status_code=202, response_model=ActionDispatched
 )
 async def post_stop(
-    vehicle_id: VehiclePath, body: ActionRequest, g: G, who: Pilot
+    vehicle_id: VehiclePath, body: ActionRequest, g: G, who: Observer
 ) -> ActionDispatched:
+    """Every logged-in user may press STOP (observers too); RETURN HOME is for the pilot."""
     return dispatch_emergency(g, "stop", vehicle_id, body, who)
 
 
@@ -256,24 +273,14 @@ async def get_action(vehicle_id: VehiclePath, action_id: IdPath, _: Observer) ->
     raise not_built(EMERGENCY)
 
 
-def _all(
-    g: Ground, action: Literal["stop", "return_home"], body: ActionRequest, who: Principal
-) -> ActionDispatchedAll:
-    out = []
-    for vid in g.emergency.vehicles():
-        d = dispatch_emergency(g, action, vid, body, who)
-        out.append(ActionDispatchedVehicle(**d.model_dump(), vehicle_id=vid))
-    return ActionDispatchedAll(actions=out)
-
-
 @router.post("/actions/stop_all", status_code=202, response_model=ActionDispatchedAll)
-async def post_stop_all(body: ActionRequest, g: G, who: Pilot) -> ActionDispatchedAll:
-    return _all(g, "stop", body, who)
+async def post_stop_all(body: ActionRequest, g: G, who: Observer) -> ActionDispatchedAll:
+    return dispatch_emergency(g, "stop", None, body, who)
 
 
 @router.post("/actions/return_home_all", status_code=202, response_model=ActionDispatchedAll)
 async def post_return_home_all(body: ActionRequest, g: G, who: Pilot) -> ActionDispatchedAll:
-    return _all(g, "return_home", body, who)
+    return dispatch_emergency(g, "return_home", None, body, who)
 
 
 # --- missions -----------------------------------------------------------------------

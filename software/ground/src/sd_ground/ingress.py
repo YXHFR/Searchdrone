@@ -20,10 +20,12 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from sd_ground.auth import Principal, SessionStore
+from sd_ground import emergency
+from sd_ground.auth import Principal, SessionStore, principal_for, session_for
+from sd_ground.emergency import EmergencyRefusedError
 from sd_ground.sources import EmergencyPath, EmergencyUnavailableError
 from sd_ground.web import error_body
-from sd_schemas.api import ActionDispatchedAll, ActionDispatchedVehicle, ActionRequest
+from sd_schemas.api import ActionRequest
 
 __all__ = ["IngressApp", "IngressThread", "MainLoopBridge"]
 
@@ -38,6 +40,7 @@ _ONE = re.compile(
 )
 _ALL = re.compile(r"^/api/v1/actions/(?P<action>stop|return_home)_all$")
 _MAX_BODY = 4096
+SESSION_COOKIE = "sd_session"
 
 
 class MainLoopBridge:
@@ -86,7 +89,10 @@ async def _respond(send: Send, status: int, payload: bytes) -> None:
 
 
 class IngressApp:
-    """STOP / RETURN HOME here; everything else to ``forward`` (the bridge)."""
+    """STOP / RETURN HOME here; everything else to ``forward`` (the bridge).
+
+    Any logged-in user (pilot or observer) may press STOP; RETURN HOME needs the pilot.
+    """
 
     def __init__(
         self, *, sessions: SessionStore, emergency: EmergencyPath, forward: ASGIApp
@@ -99,31 +105,19 @@ class IngressApp:
         headers = {
             k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
         }
-        scheme, _, bearer = headers.get("authorization", "").partition(" ")
-        rec = None
-        if scheme.lower() == "bearer" and bearer.strip():
-            rec = self.sessions.lookup(bearer.strip())
-            rec = rec if rec is not None and rec.kind == "token" else None
-        elif "cookie" in headers:
+        cookie = None
+        if "cookie" in headers:
             jar: SimpleCookie = SimpleCookie()
             try:
                 jar.load(headers["cookie"])
             except Exception:
                 return None
-            morsel = jar.get("sd_session")
-            if morsel is not None and morsel.value:
-                rec = self.sessions.lookup(morsel.value)
-                rec = rec if rec is not None and rec.kind == "session" else None
-        if rec is None:
-            return None
-        via: Literal["local", "lan"] = "lan" if scope.get("sd_listener") == "lan" else "local"
-        return Principal(
-            role=rec.role,
-            issuer_ref=rec.issuer_ref,
-            auth_mode=rec.auth_mode,
-            via=via,
-            session_id=rec.id,
+            morsel = jar.get(SESSION_COOKIE)
+            cookie = morsel.value if morsel is not None else None
+        rec = session_for(
+            self.sessions, authorization=headers.get("authorization", ""), cookie=cookie
         )
+        return None if rec is None else principal_for(rec, scope.get("sd_listener"))
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope.get("method") != "POST":
@@ -151,11 +145,6 @@ class IngressApp:
         if who is None:
             await _respond(send, 401, error_body(401, "UNAUTHENTICATED", "Logga in först."))
             return
-        if who.role != "pilot":
-            await _respond(
-                send, 403, error_body(403, "FORBIDDEN_ROLE", "Bara piloten får göra det här.")
-            )
-            return
         try:
             req = ActionRequest.model_validate(json.loads(body or b"{}"))
         except (ValidationError, json.JSONDecodeError):
@@ -169,30 +158,17 @@ class IngressApp:
         )
         try:
             if one is not None:
-                result = self.emergency.dispatch(
-                    action,
-                    one["vid"],
-                    client_action_id=str(req.client_action_id),
-                    via="button",
-                    by=who,
+                result = emergency.dispatch(
+                    self.emergency, action, one["vid"], str(req.client_action_id), who
                 )
                 payload = result.model_dump_json().encode()
             else:
-                out = [
-                    ActionDispatchedVehicle(
-                        **self.emergency.dispatch(
-                            action,
-                            vid,
-                            client_action_id=str(req.client_action_id),
-                            via="button",
-                            by=who,
-                        ).model_dump(),
-                        vehicle_id=vid,
-                    )
-                    for vid in self.emergency.vehicles()
-                ]
-                payload = ActionDispatchedAll(actions=out).model_dump_json().encode()
-        except EmergencyUnavailableError as exc:
+                payload = (
+                    emergency.dispatch_all(self.emergency, action, str(req.client_action_id), who)
+                    .model_dump_json()
+                    .encode()
+                )
+        except (EmergencyRefusedError, EmergencyUnavailableError) as exc:
             await _respond(send, exc.status, error_body(exc.status, exc.code, exc.detail_sv))
             return
         await _respond(send, 202, payload)

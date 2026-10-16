@@ -239,7 +239,16 @@ def test_observer_cannot_change(ground: Ground, panel: TestClient, clock: FakeCl
     auth = {"Authorization": "Bearer observer-token-xyz"}
     assert panel.get("/api/v1/system/status", headers=auth).status_code == 200
     res = panel.post("/api/v1/vehicles/sim-01/actions/stop", json=STOP, headers={**H, **auth})
-    assert res.status_code == 403
+    assert res.status_code == 202  # every logged-in user may press STOP
+    home = panel.post(
+        "/api/v1/vehicles/sim-01/actions/return_home", json=STOP, headers={**H, **auth}
+    )
+    assert home.status_code == 403  # RETURN HOME is for the pilot only
+    home_all = panel.post("/api/v1/actions/return_home_all", json=STOP, headers={**H, **auth})
+    assert home_all.status_code == 403
+    assert (
+        panel.post("/api/v1/actions/stop_all", json=STOP, headers={**H, **auth}).status_code == 202
+    )
     res = panel.put(
         "/api/v1/missions/0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f/ai",
         json={"enabled": False},

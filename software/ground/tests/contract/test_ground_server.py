@@ -470,6 +470,37 @@ async def test_commander_memory_and_decisions(migrated_db: Db, tmp_path: Path) -
     assert json.loads(prompt.read_text()) == {"messages": ["hej"]}
 
 
+async def test_prompt_file_is_never_rewritten(migrated_db: Db, tmp_path: Path) -> None:
+    mission = await asyncio.to_thread(_mission, migrated_db)
+    g = await _ground(migrated_db, tmp_path)
+    turn = "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a41"
+    base = {
+        "turn_id": turn,
+        "trigger": "operator_message",
+        "backend": "scripted",
+        "ai_config_hash": "abc",
+        "prompt_sha256": "0" * 64,
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "latency_ms": 5,
+        "rounds": 1,
+        "repairs": 0,
+        "tool_calls": [],
+        "command_id": None,
+        "gate_decision": None,
+        "error": None,
+    }
+    async with _clients(g) as (_, commander):
+        url = f"/commander/v1/missions/{mission}/decisions"
+        first = {**base, "id": "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a42", "prompt_json": {"v": 1}}
+        assert (await commander.post(url, json=first)).status_code == 204
+        second = {**base, "id": "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a43", "prompt_json": {"v": 2}}
+        res = await commander.post(url, json=second)
+        assert res.status_code == 409 and res.json()["code"] == "TURN_EXISTS"
+    prompt = tmp_path / "data" / "missions" / mission / "brain" / f"{turn}.json"
+    assert json.loads(prompt.read_text()) == {"v": 1}
+
+
 async def test_closed_mission_refuses_commander_text(migrated_db: Db, tmp_path: Path) -> None:
     mission = await asyncio.to_thread(_mission, migrated_db, "CLOSED")
     g = await _ground(migrated_db, tmp_path)

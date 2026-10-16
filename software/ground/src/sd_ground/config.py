@@ -302,6 +302,10 @@ def check(loaded: Loaded) -> list[str]:
         )
     elif not _private_mode(token):
         errors.append(f"{cfg.auth.brain_token_file} kan läsas av andra. Kör: chmod 600 på filen")
+    try:
+        limit_caps(loaded)
+    except ConfigError as exc:
+        errors += exc.errors
     index = loaded.path(cfg.http.static_dir) / "index.html"
     if (
         cfg.profile != "sim"

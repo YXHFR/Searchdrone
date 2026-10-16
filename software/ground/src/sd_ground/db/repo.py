@@ -23,7 +23,7 @@ from sd_schemas.commander import MissionMemory
 from sd_schemas.mission import OperatorLatch
 from sd_schemas.safety import SafetyLimits
 
-__all__ = ["EventRow", "Repo", "TelemetryRow", "VehicleRow"]
+__all__ = ["EventRow", "Repo", "TelemetryRow", "VehicleRow", "ensure_app_role", "new_event"]
 
 EventRow = dict[str, Any]
 TelemetryRow = dict[str, Any]
@@ -445,6 +445,21 @@ class Repo:
             body=json.dumps(body),
         )
         return count == 1
+
+
+async def ensure_app_role(conn: Any, verifier: str) -> bool:
+    """Create the role ``sd_app`` (as ``sd_owner``) if missing. True when it was created.
+
+    ``conn`` is a raw asyncpg connection; ``verifier`` a SCRAM verifier, never a password.
+    """
+    if await conn.fetchval("SELECT 1 FROM pg_roles WHERE rolname = 'sd_app'"):
+        return False
+    quoted = await conn.fetchval("SELECT quote_literal($1)", verifier)
+    await conn.execute(
+        "CREATE ROLE sd_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS "
+        f"NOREPLICATION PASSWORD {quoted}"
+    )
+    return True
 
 
 def new_event(

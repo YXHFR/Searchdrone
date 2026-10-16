@@ -75,7 +75,7 @@ class Ground:
         )
         self.sessions = SessionStore(
             self.clock,
-            airborne_since=self.vehicle_link.airborne_since,
+            airborne_since=lambda: self.vehicle_link.airborne_since(),  # follows a swapped link
             on_extended=self._session_extended,
         )
 

@@ -156,6 +156,12 @@ class Background:
         if not was_ok:
             log.info("system.db_up")
             g.add_event("system.db_up")
+        for sha in g.sessions.unsaved_revocations():
+            try:
+                await g.repo.revoke_session(sha)
+                g.sessions.revocation_saved(sha)
+            except Exception:  # noqa: S112 - retried on the next tick
+                continue
         for rec in g.sessions.pending():
             try:
                 await g.repo.save_session(rec)
@@ -216,6 +222,8 @@ def _uvicorn(app: Any, bind: str, **extra: Any) -> uvicorn.Server:
         log_level="warning",
         access_log=False,
         server_header=False,
+        proxy_headers=False,  # nothing sits in front of this server; never trust X-Forwarded-*
+        forwarded_allow_ips=[],
         date_header=False,
         **extra,
     )

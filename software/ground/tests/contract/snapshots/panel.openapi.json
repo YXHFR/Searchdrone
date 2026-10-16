@@ -5303,6 +5303,7 @@
     },
     "/api/v1/vehicles/{vehicle_id}/actions/stop": {
       "post": {
+        "description": "Every logged-in user may press STOP (observers too); RETURN HOME is for the pilot.",
         "operationId": "post_stop_api_v1_vehicles__vehicle_id__actions_stop_post",
         "parameters": [
           {
