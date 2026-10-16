@@ -237,16 +237,19 @@ class Stack:
             "linksim eller mavtap svarar inte.",
         )
 
-    def sitl_argv(self) -> list[str]:
+    def sitl_layout(self) -> SitlLayout:
         extra: tuple[Path, ...] = ()
         if self.cfg.qgc and self.cfg.instance == 0:
             extra = (write_qgc_params(self.inst_dir),)
-        layout = SitlLayout(
+        return SitlLayout(
             arducopter=paths.arducopter_bin(),
             ardupilot_home=paths.ardupilot_home(),
             repo=self.repo,
             extra_defaults=extra,
         )
+
+    def sitl_argv(self) -> list[str]:
+        layout = self.sitl_layout()
         opts = SitlOptions(
             instance=self.cfg.instance,
             physics=self.cfg.physics,

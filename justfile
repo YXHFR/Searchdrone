@@ -14,7 +14,7 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "ci-sitl"
+unbuilt := ""
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
@@ -220,8 +220,27 @@ sim-smoke *args:
 test-sitl *args:
     uv run --package sd-sim python -m sd_sim.testrun "$@"
 
-# Run the CI SITL job locally in the same container
-ci-sitl: (_not-built "B0-08")
+# Run the CI SITL job locally in the same container (keys as test-sitl, e.g. shard=1 shards=4)
+ci-sitl *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image="${SD_SITL_IMAGE:-$(bash tools/sitl_image_tag.sh --image)}"
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        docker pull "$image" || docker build -f simulation/docker/sitl.Dockerfile -t "$image" .
+    fi
+    # The container runs as the calling user so files in runs/ and build/ stay theirs;
+    # its virtualenv lives in the container, never in the checkout's .venv.
+    # The Docker socket gives the container control of the host's Docker, so it is only
+    # mounted for tests that start their own database container (private_db=true).
+    sock=()
+    if [[ " $* " == *" private_db=true "* ]]; then
+        sock=(-v /var/run/docker.sock:/var/run/docker.sock \
+            --group-add "$(stat -c %g /var/run/docker.sock)")
+    fi
+    docker run --rm --network host --user "$(id -u):$(id -g)" "${sock[@]}" \
+        -v "$PWD:/w" -w /w -e SD_SIM__HEADLESS=1 -e HOME=/tmp/home \
+        -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL \
+        "$image" bash -lc 'uv sync --all-packages --frozen && uv run --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
 
 # Full demo locked to the public CMAC home (keys: lan, record, ...)
 demo *args:

@@ -1,0 +1,13 @@
+# gitleaks rules for scanning the SITL image's file system before it is pushed.
+# The repository's own rules plus a narrow allow-list for files that Ubuntu packages
+# ship unchanged and that look like keys to the generic rule. Every entry names one
+# file; never a whole directory. Run gitleaks from the repository root: the extend
+# path below is resolved from the working directory.
+
+[extend]
+path = ".gitleaks.toml"
+
+[[allowlists]]
+description = "Perl's C header from Ubuntu's perl package: a macro name, not a key"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)usr/lib/x86_64-linux-gnu/perl/[0-9.]+/CORE/cop\.h$''']

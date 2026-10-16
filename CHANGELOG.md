@@ -54,3 +54,9 @@ All notable changes to this project are listed here. The format follows
   time and thrust margins, and the required check `hardware-ok`. Every other file under
   `hardware/` fails closed until its own check exists. Changes to `hardware/` and
   `.github/CODEOWNERS` also need the owner's OK on the exact head commit (`gate/owner`).
+- Flight tests in CI without graphics: `sitl.yml` runs the SITL scenario tests (builtin
+  physics) in the SITL image on every pull request, summed up in the required check
+  `sitl-ok`, plus nightly suites and a Gazebo server run. `sitl-image.yml` builds the image,
+  scans its file system for secrets and only then pushes it to GHCR from `main`. The image
+  tag comes from `tools/sitl_image_tag.sh`. `just test-sitl` runs the scenario tests,
+  `just ci-sitl` runs them in the image like CI; the first scenario is the SC00 smoke test.

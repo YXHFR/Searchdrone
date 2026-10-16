@@ -11,11 +11,6 @@ def test_testrun_dry_echoes_args(capsys: pytest.CaptureFixture[str]) -> None:
     assert json.loads(capsys.readouterr().out) == {"args": args}
 
 
-def test_testrun_not_built(capsys: pytest.CaptureFixture[str]) -> None:
-    assert testrun.main(["sc=SC00"]) == 2
-    assert "inte byggt än (B0-08)" in capsys.readouterr().out
-
-
 @pytest.mark.parametrize(
     "bad",
     [["foo=1"], ["--physics=builtin"], ["qgc=true"], ["qgc=yes"], ["qgc=on"], ["qgc=TRUE "]],
