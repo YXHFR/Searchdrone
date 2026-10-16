@@ -21,7 +21,9 @@ What the package gives both sides:
   that the stale frame can never arrive later (the socket is reset, so the kernel drops
   its send queue too). As a second guard the receiver answers orders, clearances,
   releases, charters and takeovers that arrive right after a 3 s dropout with
-  `Ack(expired, LINK_STALE)`; STOP/HOME notices always go through. Nothing is resent
+  `Ack(expired, LINK_STALE)` (re-issue later with a new id); STOP/HOME notices always
+  go through. `LINK_NO_ACK`/`LINK_RECONNECT` mean the outcome is unknown: resynchronise
+  from the vehicle's state instead of assuming the order did not run. Nothing is resent
   on a new connection;
   unacknowledged messages are handed back when a session ends. Delivery order holds
   when the application waits for an Ack before the next order.

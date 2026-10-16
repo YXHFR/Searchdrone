@@ -460,6 +460,24 @@ async def test_a_burst_of_old_stick_values_after_a_stall_is_dropped(stall_s: flo
     await task
 
 
+async def test_a_slow_burst_after_a_dropout_stays_refused() -> None:
+    clock = FakeClock()
+    g, v = transport_pair()
+    vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
+    task = asyncio.ensure_future(vehicle.run())
+    await clock.advance(3.1)
+    for _ in range(30):  # the queued bytes trickle in over 1.5 s
+        await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
+        await clock.advance(0.05)
+    assert app_messages(vehicle.events_nowait()) == []
+    await clock.advance(0.5)  # the burst has ended
+    await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
+    await clock.advance(0.05)
+    assert len(app_messages(vehicle.events_nowait())) == 1
+    vehicle.abort()
+    await task
+
+
 async def test_orders_right_after_a_dropout_are_refused_stop_still_delivered() -> None:
     clock = FakeClock()
     g, v = transport_pair()

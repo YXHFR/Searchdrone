@@ -62,6 +62,7 @@ from sd_link.constants import (
     MAX_EVENT_BACKLOG,
     MAX_INVALID_FRAMES,
     MAX_PENDING_RELIABLE,
+    STALE_BURST_GAP_S,
     STALE_GAP_S,
     STALE_WINDOW_S,
     TICK_S,
@@ -131,7 +132,8 @@ class Inbound:
 @dataclass(frozen=True, slots=True)
 class Expired:
     """A reliable message we sent got no Ack in time (``reason`` = ``LINK_NO_ACK``).
-    The connection is aborted right after, so the message cannot arrive later."""
+    The connection is aborted right after, so the message cannot arrive later. The
+    outcome is unknown: the peer may already have acted (only its Acks may be lost)."""
 
     envelope: Envelope
     reason: str
@@ -209,7 +211,7 @@ class LinkSession:
         self._last_inbound = now
         self._manual_quarantine_until = now
         self._last_manual: float | None = None
-        self._stale_until = now
+        self._stale_until = float("-inf")  # no dropout yet
         self._last_heartbeat = now - heartbeat_s  # first heartbeat on the first tick
         self._close_code: int | None = None
         self._close_reason = ""
@@ -458,8 +460,12 @@ class LinkSession:
 
     async def _on_frame(self, frame: str | bytes) -> None:
         now = self._clock.now()
-        if now - self._last_inbound >= STALE_GAP_S:
+        gap = now - self._last_inbound
+        if gap >= STALE_GAP_S:
             self._stale_until = now + STALE_WINDOW_S
+        elif now < self._stale_until + STALE_BURST_GAP_S and gap < STALE_BURST_GAP_S:
+            # Still the same back-to-back burst: keep the window open until it ends.
+            self._stale_until = max(self._stale_until, now + STALE_BURST_GAP_S)
         self._last_inbound = now
         if self._state is LinkState.DEGRADED:
             self._set_state(LinkState.UP)

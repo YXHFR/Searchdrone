@@ -146,7 +146,7 @@ class LinkClient:
         self._backoff = Backoff(rng or random.Random())  # noqa: S311  # jitter, not crypto
         self._lost_after = lost_after_s
         self._dedup = DedupCache()  # one per peer, kept across reconnects
-        self._closing_task: asyncio.Future[None] | None = None
+        self._background: set[asyncio.Future[None]] = set()
         self.last_close_code: int | None = None
         if not _is_safe_url(url):
             log.warning("sdlink token sent in clear to a non-loopback host; use wss://")
@@ -216,15 +216,16 @@ class LinkClient:
             )
             if not done:
                 app.cancel()
+            await asyncio.gather(*self._background, return_exceptions=True)
 
     def _app_done(self, task: asyncio.Future[None], session: LinkSession) -> None:
         """A failed handler closes the session, so the ground sees it and we reconnect."""
         if task.cancelled() or task.exception() is None:
             return
         log.error("sdlink session handler failed: %r", task.exception())
-        self._closing_task = asyncio.ensure_future(
-            session.close(CloseCode.GOING_AWAY, "handler failed")
-        )
+        closing = asyncio.ensure_future(session.close(CloseCode.GOING_AWAY, "handler failed"))
+        self._background.add(closing)
+        closing.add_done_callback(self._background.discard)
 
     async def _sleep_unless(self, stop: asyncio.Event, seconds: float) -> None:
         await first_or_timeout(self._clock, stop.wait, seconds)
