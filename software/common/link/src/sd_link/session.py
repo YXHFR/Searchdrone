@@ -15,11 +15,20 @@ Safety rules the session keeps:
   next connection. Nothing is ever resent on a new connection.
 * **Liveness never waits for writes.** Link state and expiry are evaluated by their
   own task. A write blocked longer than ``WRITE_TIMEOUT_S`` aborts the connection.
+* **Late frames are refused.** Abort also discards the kernel send queue (RST). As a
+  second guard, orders, clearances, releases, charters and takeovers that arrive within
+  ``STALE_WINDOW_S`` after an inbound gap of ``STALE_GAP_S`` (the only case in which the
+  sender may already have expired them) are answered ``Ack(expired, LINK_STALE)`` and
+  not delivered. STOP/HOME notices are always delivered.
 * **Stick values are never replayed.** ``ManualControl`` is sent best-effort with
   :meth:`LinkSession.offer` (dropped unless the link is up and the writer free). On
   receipt only the newest value is kept for the application, and values arriving
-  within ``MANUAL_QUARANTINE_S`` after a stall (no frame for ``MANUAL_STALL_GAP_S``)
-  are dropped, because they are an old burst.
+  within ``MANUAL_QUARANTINE_S`` after a stall (no stick value for
+  ``MANUAL_STALL_GAP_S``, also at the start of a stream) are dropped.
+
+A duplicate is answered with the exact Ack frame sent the first time, even on a later
+connection (its seq then belongs to the earlier connection; the peer's own dedup
+recognises it).
 
 Delivery order holds when the application waits for an Ack before sending the next
 order (the ground sends one movement order at a time); a resend can overtake.
@@ -41,10 +50,11 @@ from typing import Final
 
 from sd_link.clock import Clock, first_or_timeout
 from sd_link.close_codes import CloseCode
-from sd_link.codes import LINK_NO_ACK, SCHEMA_INVALID
+from sd_link.codes import LINK_NO_ACK, LINK_STALE, SCHEMA_INVALID
 from sd_link.constants import (
     CLOSE_TIMEOUT_S,
     HEARTBEAT_INTERVAL_S,
+    INVALID_WINDOW_S,
     LINK_LOSS_DETECT_S,
     LINK_LOST_S,
     MANUAL_QUARANTINE_S,
@@ -52,6 +62,8 @@ from sd_link.constants import (
     MAX_EVENT_BACKLOG,
     MAX_INVALID_FRAMES,
     MAX_PENDING_RELIABLE,
+    STALE_GAP_S,
+    STALE_WINDOW_S,
     TICK_S,
     WRITE_TIMEOUT_S,
 )
@@ -89,6 +101,11 @@ log = logging.getLogger("sd_link")
 
 _HANDSHAKE_KINDS: Final = frozenset({"Hello", "HelloAck"})
 _BEST_EFFORT_ONLY: Final = frozenset({"ManualControl"})
+# Kinds refused when they arrive right after a dropout (OperatorOverrideNotice is not:
+# a late STOP/HOME notice only makes the vehicle safer).
+_STALE_GUARDED: Final = frozenset(
+    {"SkillCommand", "ClearanceConfirmation", "OperatorRelease", "CharterInstall", "ManualTakeover"}
+)
 
 
 class LinkState(StrEnum):
@@ -186,10 +203,13 @@ class LinkSession:
         self._latest_manual: Inbound | None = None
         self._backlog = 0  # Inbound/Expired events not yet read
         self._invalid = 0
+        self._invalid_since = clock.now()
         self._state = LinkState.UP
         now = clock.now()
         self._last_inbound = now
         self._manual_quarantine_until = now
+        self._last_manual: float | None = None
+        self._stale_until = now
         self._last_heartbeat = now - heartbeat_s  # first heartbeat on the first tick
         self._close_code: int | None = None
         self._close_reason = ""
@@ -303,6 +323,7 @@ class LinkSession:
         corr_id: uuid.UUID | None,
         *,
         budget: bool,
+        track: bool = True,
     ) -> Envelope:
         kind = kind_of(body)
         if not may_send(self.side, kind) or kind in _HANDSHAKE_KINDS:
@@ -322,7 +343,7 @@ class LinkSession:
                 corr_id=corr_id,
             )
             text = encode(envelope)
-            if envelope.reliable:
+            if envelope.reliable and track:
                 if budget and len(self._pending) >= MAX_PENDING_RELIABLE:
                     raise LinkBusyError(f"{len(self._pending)} messages without Ack")
                 self._pending.track(envelope, self._clock.now())
@@ -437,8 +458,8 @@ class LinkSession:
 
     async def _on_frame(self, frame: str | bytes) -> None:
         now = self._clock.now()
-        if now - self._last_inbound >= MANUAL_STALL_GAP_S:
-            self._manual_quarantine_until = now + MANUAL_QUARANTINE_S
+        if now - self._last_inbound >= STALE_GAP_S:
+            self._stale_until = now + STALE_WINDOW_S
         self._last_inbound = now
         if self._state is LinkState.DEGRADED:
             self._set_state(LinkState.UP)
@@ -466,23 +487,30 @@ class LinkSession:
             return
         if isinstance(body, Ack):
             self._pending.ack(body.ref_id)
-        if envelope.reliable:
-            if self._seen.seen(envelope):
-                await self._repeat_ack(envelope)
-                return
-            self._seen.remember(envelope)
-            await self._ack_received(envelope)
+        if envelope.reliable and self._seen.seen(envelope):
+            await self._repeat_ack(envelope)
+            return
         inbound = Inbound(envelope, body, now, inbound_deadline(now, envelope.ttl_ms))
         if isinstance(body, ManualControl):
             self._deliver_manual(inbound, now)
             return
-        if self._backlog >= MAX_EVENT_BACKLOG:
+        if self._backlog >= MAX_EVENT_BACKLOG:  # before acking: never ack and drop
             log.critical("sdlink events not consumed; closing: vehicle=%s", self.vehicle_id)
             await self.close(CloseCode.POLICY_VIOLATION, "event backlog")
             return
+        if envelope.reliable:
+            self._seen.remember(envelope)
+            if envelope.kind in _STALE_GUARDED and now < self._stale_until:
+                log.warning("sdlink late %s after a dropout refused", envelope.kind)
+                await self._answer(envelope, "expired", LINK_STALE)
+                return
+            await self._ack_received(envelope)
         self._put(inbound)
 
     def _deliver_manual(self, inbound: Inbound, now: float) -> None:
+        if self._last_manual is None or now - self._last_manual >= MANUAL_STALL_GAP_S:
+            self._manual_quarantine_until = now + MANUAL_QUARANTINE_S
+        self._last_manual = now
         if now < self._manual_quarantine_until:
             log.info("sdlink stick value after a stall dropped: vehicle=%s", self.vehicle_id)
             return
@@ -491,6 +519,9 @@ class LinkSession:
         self._latest_manual = inbound  # only the newest value waits for the application
 
     async def _count_invalid(self) -> bool:
+        now = self._clock.now()
+        if now - self._invalid_since >= INVALID_WINDOW_S:
+            self._invalid, self._invalid_since = 0, now
         self._invalid += 1
         if self._invalid > MAX_INVALID_FRAMES:
             log.critical("sdlink too many invalid frames; closing: vehicle=%s", self.vehicle_id)
@@ -515,7 +546,18 @@ class LinkSession:
 
     async def _reject(self, msg_id: uuid.UUID, reason: str) -> None:
         await self._send_quietly(
-            Ack(ref_id=msg_id, stage="rejected", reason_codes=[reason]), corr_id=msg_id
+            Ack(ref_id=msg_id, stage="rejected", reason_codes=[reason]), corr_id=msg_id, track=False
+        )
+
+    async def _answer(self, envelope: Envelope, stage: AckStage, reason: str) -> None:
+        """A link-generated terminal Ack. Not tracked: if it is lost, the sender's own
+        expiry covers it, and an unanswered housekeeping Ack never tears the link down."""
+        ref = ack_keys(envelope)[-1]
+        await self._send_quietly(
+            Ack(ref_id=ref, stage=stage, reason_codes=[reason]),
+            corr_id=ref,
+            mission_id=envelope.mission_id,
+            track=False,
         )
 
     # --- helpers -----------------------------------------------------------------
@@ -526,10 +568,11 @@ class LinkSession:
         *,
         corr_id: uuid.UUID | None = None,
         mission_id: uuid.UUID | None = None,
+        track: bool = True,
     ) -> None:
         """Link-generated messages: not counted against the application's budget."""
         try:
-            await self._send(body, mission_id, None, corr_id, budget=False)
+            await self._send(body, mission_id, None, corr_id, budget=False, track=track)
         except (LinkClosedError, TransportClosedError, ValueError) as exc:
             log.debug("sdlink could not send %s: %s", type(body).__name__, exc)
 

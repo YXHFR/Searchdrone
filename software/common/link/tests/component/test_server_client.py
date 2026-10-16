@@ -423,3 +423,46 @@ async def test_plain_ws_to_a_lan_host_warns(caplog: pytest.LogCaptureFixture) ->
             clock=MonotonicClock(),
         )
         assert ("in clear" in caplog.text) is warns, url
+
+
+def test_set_linger_zero_on_a_real_socket() -> None:
+    import socket
+    import struct
+
+    from sd_link.transport import set_linger_zero
+
+    a, b = socket.socketpair()
+    try:
+        set_linger_zero(a)
+        assert struct.unpack("ii", a.getsockopt(socket.SOL_SOCKET, socket.SO_LINGER, 8)) == (1, 0)
+    finally:
+        a.close()
+        b.close()
+    set_linger_zero(None)  # no socket: nothing to do
+    set_linger_zero(a)  # already closed: ignored
+
+
+async def test_abort_resets_the_tcp_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import struct
+
+    import sd_link.transport as transport_mod
+    from sd_link.transport import WebSocketTransport
+
+    seen: list[tuple[int, int]] = []
+    real = transport_mod.set_linger_zero
+
+    def spy(sock: socket.socket | None) -> None:
+        real(sock)
+        assert sock is not None
+        seen.append(struct.unpack("ii", sock.getsockopt(socket.SOL_SOCKET, socket.SO_LINGER, 8)))
+
+    monkeypatch.setattr(transport_mod, "set_linger_zero", spy)
+    async with FakeGround() as ground:
+        ws = await connect(
+            ground.url, additional_headers={"Authorization": f"Bearer {ground.token}"}
+        )
+        WebSocketTransport(ws).abort()
+        assert seen == [(1, 0)]
+        with pytest.raises(ConnectionClosed):
+            await asyncio.wait_for(ws.recv(), 2)

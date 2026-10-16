@@ -18,12 +18,17 @@ What the package gives both sides:
   `up` → `degraded` (3 s silent) → `lost` (10 s, closed with 1001). Liveness and expiry
   run in their own task and never wait for a write; a write blocked for 2 s aborts the
   connection. When a reliable message expires, the connection is aborted at once so
-  that the stale frame can never arrive later. Nothing is resent on a new connection;
+  that the stale frame can never arrive later (the socket is reset, so the kernel drops
+  its send queue too). As a second guard the receiver answers orders, clearances,
+  releases, charters and takeovers that arrive right after a 3 s dropout with
+  `Ack(expired, LINK_STALE)`; STOP/HOME notices always go through. Nothing is resent
+  on a new connection;
   unacknowledged messages are handed back when a session ends. Delivery order holds
   when the application waits for an Ack before the next order.
 - **Stick values** (`ManualControl`) go through `LinkSession.offer`: best-effort, only
   while the link is up, never queued or resent. The receiver keeps only the newest
-  value and drops values that arrive in a burst right after a stall.
+  value and drops values for 1 s at the start of a stream and after a 0.5 s stall, so
+  an old burst is never replayed.
 - **Server** (`sd_link.server.LinkServer`, ground) and **client**
   (`sd_link.client.LinkClient`, onboard, reconnects with backoff).
 - **Tokens** (`sd_link.tokens`): 32 random bytes; the ground stores only the SHA-256 and

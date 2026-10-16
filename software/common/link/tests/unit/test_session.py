@@ -374,25 +374,48 @@ async def test_a_crashing_loop_aborts_the_session(monkeypatch: pytest.MonkeyPatc
 # --- manual control ---------------------------------------------------------------
 
 
+async def _stream(session: LinkSession, clock: FakeClock, seconds: float, start: int) -> int:
+    """Offer stick values at 20 Hz for ``seconds``; returns the next input_seq."""
+    n = start
+    for _ in range(round(seconds / 0.05)):
+        assert await session.offer(sticks(n), ttl_ms=1000)
+        n += 1
+        await clock.advance(0.05)
+    return n
+
+
 async def test_stick_values_are_best_effort_never_tracked_or_resent() -> None:
     clock = FakeClock()
     async with FakeLink(clock) as link:
         await link.ground.send(takeover())
-        for i in range(10):
-            assert await link.ground.offer(sticks(i), ttl_ms=1000)
-        assert link.ground.pending_count <= 1  # at most the ManualTakeover
         first = await next_inbound(link.vehicle)
         assert isinstance(first.body, ManualTakeover)
+        n = await _stream(link.ground, clock, 1.2, 0)  # the start of a stream is quarantined
+        link.vehicle.events_nowait()
+        for i in range(10):  # a burst faster than the consumer reads
+            assert await link.ground.offer(sticks(n + i), ttl_ms=1000)
+        assert link.ground.pending_count == 0  # stick values are never tracked
         latest = await next_inbound(link.vehicle, ManualControl)
-        assert latest.body.input_seq == 9  # type: ignore[union-attr]  # coalesced to the newest
+        assert latest.body.input_seq == n + 9  # type: ignore[union-attr]  # only the newest
         assert latest.deadline == pytest.approx(latest.received_at + 1.0)
         assert not latest.expired(clock.now()) and latest.expired(clock.now() + 1.0)
+        sent = kinds(link.ground_transport.sent).count("ManualControl")
         await clock.advance(5.0)
-        assert kinds(link.ground_transport.sent).count("ManualControl") == 10
+        assert kinds(link.ground_transport.sent).count("ManualControl") == sent  # no resend
         with pytest.raises(ValueError, match="offer"):
             await link.ground.send(sticks(), ttl_ms=1000)
         with pytest.raises(ValueError, match="best-effort"):
             await link.ground.offer(stop_notice(), ttl_ms=None)
+
+
+async def test_the_start_of_a_stick_stream_is_quarantined() -> None:
+    clock = FakeClock()
+    async with FakeLink(clock) as link:
+        await _stream(link.ground, clock, 0.9, 0)
+        assert not app_messages(link.vehicle.events_nowait())
+        await _stream(link.ground, clock, 0.3, 100)
+        got = app_messages(link.vehicle.events_nowait())
+        assert got and all(m.body.input_seq >= 100 for m in got)  # type: ignore[union-attr]
 
 
 async def test_stick_values_are_dropped_unless_the_link_is_up() -> None:
@@ -410,24 +433,61 @@ async def test_stick_values_are_dropped_unless_the_link_is_up() -> None:
         assert await p.ground.offer(sticks(), ttl_ms=1000)
 
 
-async def test_a_burst_of_old_stick_values_after_a_stall_is_dropped() -> None:
+@pytest.mark.parametrize("stall_s", [0.6, 1.2, 2.0])
+async def test_a_burst_of_old_stick_values_after_a_stall_is_dropped(stall_s: float) -> None:
     clock = FakeClock()
     g, v = transport_pair()
     vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
     task = asyncio.ensure_future(vehicle.run())
-    await g.send(frame_from(sticks(1), "ground", clock, ttl_ms=1000))
-    await clock.advance(0.05)
-    assert len(app_messages(vehicle.events_nowait())) == 1
-    await clock.advance(2.0)  # the stream stalls (TCP holds the values)
-    for i in range(2, 30):  # ... then delivers them all at once
+
+    async def feed(first: int, count: int) -> None:
+        for i in range(first, first + count):
+            await g.send(frame_from(sticks(i), "ground", clock, ttl_ms=1000))
+            await clock.advance(0.05)
+
+    await feed(0, 30)  # 1.5 s of steady values: past the start-of-stream quarantine
+    assert app_messages(vehicle.events_nowait())
+    await clock.advance(stall_s)  # the stream stalls (TCP holds the values) ...
+    for i in range(100, 130):  # ... then delivers them all at once
         await g.send(frame_from(sticks(i), "ground", clock, ttl_ms=1000))
-    await clock.advance(0.05)
+    await clock.advance(0.01)
     assert app_messages(vehicle.events_nowait()) == []
     await clock.advance(1.0)
-    await g.send(frame_from(sticks(40), "ground", clock, ttl_ms=1000))
-    await clock.advance(0.05)
+    await feed(200, 30)  # a steady stream again: delivered once past the quarantine
     fresh = app_messages(vehicle.events_nowait())
-    assert [m.body.input_seq for m in fresh] == [40]  # type: ignore[union-attr]
+    assert fresh and all(m.body.input_seq >= 200 for m in fresh)  # type: ignore[union-attr]
+    vehicle.abort()
+    await task
+
+
+async def test_orders_right_after_a_dropout_are_refused_stop_still_delivered() -> None:
+    clock = FakeClock()
+    g, v = transport_pair()
+    vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
+    task = asyncio.ensure_future(vehicle.run())
+    await clock.advance(3.1)  # nothing from the ground for 3 s (a dropout)
+    late = goto()
+    for body, ttl in (
+        (late, 15_000),
+        (clearance(), 5000),
+        (takeover(), None),
+        (stop_notice(), None),
+    ):
+        await g.send(frame_from(body, "ground", clock, ttl_ms=ttl))
+    await clock.advance(0.05)
+    delivered = app_messages(vehicle.events_nowait())
+    assert [type(m.body).__name__ for m in delivered] == ["OperatorOverrideNotice"]
+    acks = bodies(v.sent, "Ack")
+    stale = [a for a in acks if a["stage"] == "expired"]
+    assert len(stale) == 3 and all(a["reason_codes"] == ["LINK_STALE"] for a in stale)
+    assert stale[0]["ref_id"] == str(late.command_id)
+    assert vehicle.pending_count == 0  # link-generated answers are not tracked
+    await clock.advance(1.0)  # after the window, orders flow again
+    await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
+    await clock.advance(0.05)
+    assert [type(m.body).__name__ for m in app_messages(vehicle.events_nowait())] == [
+        "SkillCommand"
+    ]
     vehicle.abort()
     await task
 
@@ -500,12 +560,16 @@ async def test_unread_events_beyond_the_backlog_close_the_connection(
     monkeypatch.setattr(mod, "MAX_EVENT_BACKLOG", 5)
     clock = FakeClock()
     async with FakeLink(clock) as link:
-        for _ in range(6):
+        for _ in range(5):
             pos = PilotPosition(lat=-35.36, lon=149.16, source="charter", accuracy_m=None)
             await link.ground.send(pos)
+        overflow = await link.ground.send(stop_notice())
         await clock.advance(0.1)
         assert link.vehicle.state is LinkState.CLOSED
         assert link.vehicle_transport.close_code == CloseCode.POLICY_VIOLATION
+        # The message that overflowed was neither acknowledged nor remembered.
+        assert not bodies(link.vehicle_transport.sent, "Ack")
+        assert not link.vehicle._seen.seen(overflow)
 
 
 async def test_sender_mismatch_closes_forbidden() -> None:

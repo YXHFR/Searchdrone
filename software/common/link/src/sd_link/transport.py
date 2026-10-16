@@ -6,12 +6,21 @@ transports in ``sd_link_testing``.
 
 from __future__ import annotations
 
+import contextlib
+import socket
+import struct
 from typing import Protocol
 
 from websockets.asyncio.connection import Connection
 from websockets.exceptions import ConnectionClosed
 
-__all__ = ["ABORT_CODE", "Transport", "TransportClosedError", "WebSocketTransport"]
+__all__ = [
+    "ABORT_CODE",
+    "Transport",
+    "TransportClosedError",
+    "WebSocketTransport",
+    "set_linger_zero",
+]
 
 ABORT_CODE = 1006  # what a connection reports after abort(): no close frame
 
@@ -64,11 +73,21 @@ class WebSocketTransport:
         await self._ws.close(code, reason)
 
     def abort(self) -> None:
+        set_linger_zero(self._ws.transport.get_extra_info("socket"))
         self._ws.transport.abort()
 
     @property
     def close_code(self) -> int | None:
         return self._ws.close_code
+
+
+def set_linger_zero(sock: socket.socket | None) -> None:
+    """Make close() send RST and discard the kernel send queue. Without this the kernel
+    keeps sending frames already queued, and an expired order could still arrive."""
+    if sock is None:
+        return
+    with contextlib.suppress(OSError):  # already closed
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
 
 
 def _code(exc: ConnectionClosed) -> int | None:

@@ -27,7 +27,7 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Final, Self
+from typing import Self
 
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.datastructures import Headers
@@ -36,6 +36,7 @@ from websockets.http11 import Request, Response
 from sd_link.clock import Clock, first_or_timeout
 from sd_link.close_codes import CloseCode
 from sd_link.constants import (
+    APP_DRAIN_S,
     CLOSE_TIMEOUT_S,
     HELLO_TIMEOUT_S,
     LINK_LOSS_DETECT_S,
@@ -54,7 +55,6 @@ from sd_link.wslog import WS_LOGGER
 from sd_schemas.link import SCHEMA_MAJOR, Hello, HelloAck
 
 __all__ = [
-    "APP_DRAIN_S",
     "HelloHandler",
     "LinkServer",
     "SessionHandler",
@@ -63,8 +63,6 @@ __all__ = [
 ]
 
 log = logging.getLogger("sd_link")
-
-APP_DRAIN_S: Final = 2.0
 
 HelloHandler = Callable[[str, Hello], Awaitable[HelloAck]]
 SessionHandler = Callable[[LinkSession, Hello], Awaitable[None]]
@@ -158,6 +156,7 @@ class LinkServer:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+        await asyncio.gather(*self._background, return_exceptions=True)
 
     async def __aenter__(self) -> Self:
         await self.start()

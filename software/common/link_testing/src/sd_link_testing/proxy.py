@@ -13,6 +13,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
 from sd_link.constants import MAX_FRAME_BYTES
+from sd_link.wslog import WS_LOGGER
 
 __all__ = ["LossyProxy"]
 
@@ -46,7 +47,12 @@ class LossyProxy:
 
     async def start(self) -> None:
         self._server = await serve(
-            self._handle, "127.0.0.1", 0, max_size=MAX_FRAME_BYTES, ping_interval=None
+            self._handle,
+            "127.0.0.1",
+            0,
+            max_size=MAX_FRAME_BYTES,
+            ping_interval=None,
+            logger=WS_LOGGER,
         )
         self.port = self._server.sockets[0].getsockname()[1]
 
@@ -81,6 +87,7 @@ class LossyProxy:
                 additional_headers=headers,
                 max_size=MAX_FRAME_BYTES,
                 ping_interval=None,
+                logger=WS_LOGGER,
             ) as up:
                 pair = (down, up)
                 self._pairs.add(pair)

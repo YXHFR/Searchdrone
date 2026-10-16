@@ -10,12 +10,14 @@ from __future__ import annotations
 from typing import Final
 
 __all__ = [
+    "APP_DRAIN_S",
     "AUTH_RETRY_S",
     "CLOSE_TIMEOUT_S",
     "DEDUP_WINDOW",
     "HEARTBEAT_INTERVAL_S",
     "HELLO_ACK_TIMEOUT_S",
     "HELLO_TIMEOUT_S",
+    "INVALID_WINDOW_S",
     "LINK_LOSS_DETECT_S",
     "LINK_LOST_S",
     "MANUAL_QUARANTINE_S",
@@ -32,6 +34,8 @@ __all__ = [
     "SDLINK_MAX_RESENDS",
     "SDLINK_PATH",
     "SDLINK_RESEND_S",
+    "STALE_GAP_S",
+    "STALE_WINDOW_S",
     "TICK_S",
     "TOKEN_BYTES",
     "WRITE_TIMEOUT_S",
@@ -53,14 +57,23 @@ TICK_S: Final = 0.05  # how often a session checks resends and liveness
 WRITE_TIMEOUT_S: Final = 2.0  # a write blocked longer than this aborts the connection
 CLOSE_TIMEOUT_S: Final = 1.0  # wait for the peer's close frame at most this long
 OPEN_TIMEOUT_S: Final = 5.0  # WebSocket opening handshake
+APP_DRAIN_S: Final = 2.0  # on_session must return this soon after Closed, or is cancelled
+
+# Late frames after a dropout. A sender expires a reliable message 4 s after sending it,
+# so a frame it may have given up on can only arrive after an inbound gap of at least
+# LINK_LOSS_DETECT_S. Orders, clearances, releases, charters and takeovers arriving
+# within STALE_WINDOW_S after such a gap are answered Ack(expired, LINK_STALE).
+STALE_GAP_S: Final = LINK_LOSS_DETECT_S
+STALE_WINDOW_S: Final = 1.0
 
 # Manual control (stick values, 10-20 Hz): never replay a stalled burst
-MANUAL_STALL_GAP_S: Final = 1.5  # no frame at all for this long = the stream stalled
+MANUAL_STALL_GAP_S: Final = 0.5  # no stick value for this long = the stream stalled
 MANUAL_QUARANTINE_S: Final = 1.0  # stick values arriving this soon after a stall are dropped
 
 # Abuse limits (per connection)
 MAX_EVENT_BACKLOG: Final = 4096  # undelivered events; more closes the connection (1008)
-MAX_INVALID_FRAMES: Final = 20  # invalid frames; more closes the connection (1008)
+MAX_INVALID_FRAMES: Final = 20  # invalid frames per window; more closes it (1008)
+INVALID_WINDOW_S: Final = 10.0
 
 # Handshake
 HELLO_TIMEOUT_S: Final = 5.0  # server: first message must be Hello within this

@@ -22,6 +22,7 @@ from websockets.exceptions import InvalidHandshake, InvalidURI
 from sd_link.clock import Clock, first_or_timeout
 from sd_link.close_codes import FATAL_CLOSE_CODES, CloseCode
 from sd_link.constants import (
+    APP_DRAIN_S,
     AUTH_RETRY_S,
     CLOSE_TIMEOUT_S,
     HELLO_ACK_TIMEOUT_S,
@@ -40,12 +41,11 @@ from sd_link.transport import Transport, TransportClosedError, WebSocketTranspor
 from sd_link.wslog import WS_LOGGER
 from sd_schemas.link import SCHEMA_MAJOR, Hello, HelloAck
 
-__all__ = ["APP_DRAIN_S", "Backoff", "ClientSessionHandler", "LinkClient", "handshake"]
+__all__ = ["Backoff", "ClientSessionHandler", "LinkClient", "handshake"]
 
 log = logging.getLogger("sd_link")
 
 ClientSessionHandler = Callable[[LinkSession, HelloAck], Awaitable[None]]
-APP_DRAIN_S = 2.0  # on_session must return this soon after Closed, or it is cancelled
 
 
 def _is_safe_url(url: str) -> bool:
@@ -146,6 +146,7 @@ class LinkClient:
         self._backoff = Backoff(rng or random.Random())  # noqa: S311  # jitter, not crypto
         self._lost_after = lost_after_s
         self._dedup = DedupCache()  # one per peer, kept across reconnects
+        self._closing_task: asyncio.Future[None] | None = None
         self.last_close_code: int | None = None
         if not _is_safe_url(url):
             log.warning("sdlink token sent in clear to a non-loopback host; use wss://")
@@ -206,6 +207,7 @@ class LinkClient:
             lost_after_s=self._lost_after,
         )
         app = asyncio.ensure_future(self._on_session(session, ack))
+        app.add_done_callback(lambda task: self._app_done(task, session))
         try:
             await session.run()
         finally:
@@ -214,6 +216,15 @@ class LinkClient:
             )
             if not done:
                 app.cancel()
+
+    def _app_done(self, task: asyncio.Future[None], session: LinkSession) -> None:
+        """A failed handler closes the session, so the ground sees it and we reconnect."""
+        if task.cancelled() or task.exception() is None:
+            return
+        log.error("sdlink session handler failed: %r", task.exception())
+        self._closing_task = asyncio.ensure_future(
+            session.close(CloseCode.GOING_AWAY, "handler failed")
+        )
 
     async def _sleep_unless(self, stop: asyncio.Event, seconds: float) -> None:
         await first_or_timeout(self._clock, stop.wait, seconds)

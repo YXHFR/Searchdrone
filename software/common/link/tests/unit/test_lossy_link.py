@@ -40,10 +40,7 @@ async def test_hundred_orders_in_order_and_acknowledged() -> None:
         # One movement order at a time: wait until an Ack stops its resends.
         for _ in range(200):
             await clock.advance(0.05)
-            while not ground._events.empty():
-                event = ground._events.get_nowait()
-                if isinstance(event, Expired):
-                    expired.append(event)
+            expired += [e for e in ground.events_nowait() if isinstance(e, Expired)]
             if ground.pending_count == 0:
                 acked += 1
                 break
