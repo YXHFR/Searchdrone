@@ -43,6 +43,7 @@ def _url() -> URL:
     return url if isinstance(url, URL) else _url_from_env()
 
 
+# Kept for `alembic revision --autogenerate` once sd_ground has models (later tickets).
 def include_object(
     obj: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
 ) -> bool:

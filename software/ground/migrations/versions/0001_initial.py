@@ -126,7 +126,8 @@ CREATE TABLE charters (
   fence_verified_at  timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   UNIQUE (mission_id, version),
-  CHECK (status <> 'approved' OR (approved_by IS NOT NULL AND autonomy_mode IS NOT NULL))
+  CHECK (status <> 'approved' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL
+                                   AND autonomy_mode IS NOT NULL))
 );
 CREATE UNIQUE INDEX charters_one_approved ON charters(mission_id) WHERE status = 'approved';
 CREATE INDEX charters_area_gist ON charters USING gist(area);
@@ -360,7 +361,8 @@ BEGIN RAISE EXCEPTION 'table % is append-only', TG_TABLE_NAME; END $$;
 
 -- The proposal as sent is frozen, including home and the pilot position that the range
 -- limit is measured from. Who approved and when cannot be rewritten, and a rejected or
--- superseded charter stays that way. (Autonomy mode is left to the mission flow.)
+-- superseded charter stays that way; an approved one never goes back to proposed.
+-- (Autonomy mode is left to the mission flow.)
 CREATE FUNCTION sd_charter_body_frozen() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.body IS DISTINCT FROM OLD.body OR NEW.area IS DISTINCT FROM OLD.area
@@ -375,6 +377,9 @@ BEGIN
   END IF;
   IF OLD.status IN ('rejected','superseded') AND NEW.status IS DISTINCT FROM OLD.status THEN
     RAISE EXCEPTION 'charter status % is final', OLD.status;
+  END IF;
+  IF OLD.status = 'approved' AND NEW.status = 'proposed' THEN
+    RAISE EXCEPTION 'an approved charter cannot go back to proposed';
   END IF;
   RETURN NEW;
 END $$;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -165,8 +166,8 @@ def test_charter_proposal_and_approval_frozen(migrated_db: Db) -> None:
     db.run("INSERT INTO vehicles (id, name, kind, mav_sysid) VALUES ('sim-02', 'Sim 02', 'sim', 2)")
     for column, value in (
         ("area", "ST_Expand(area, 0.01)"),
-        ("home", "ST_SetSRID(ST_MakePoint(149.17, -35.36, 600), 4326)"),
-        ("pilot_position", "ST_SetSRID(ST_MakePoint(149.17, -35.36), 4326)"),
+        ("home", f"ST_SetSRID(ST_MakePoint({LON}, {LAT}, 600), 4326)"),
+        ("pilot_position", f"ST_SetSRID(ST_MakePoint({LON + 0.001}, {LAT}), 4326)"),
         ("vehicle_id", "'sim-02'"),
         ("proposed_by", "'brain:other'"),
     ):
@@ -179,6 +180,8 @@ def test_charter_proposal_and_approval_frozen(migrated_db: Db) -> None:
     )
     with pytest.raises(asyncpg.RaiseError, match="approval is immutable"):
         db.run("UPDATE charters SET approved_by = 'operator:other'", role="sd_app")
+    with pytest.raises(asyncpg.RaiseError, match="back to proposed"):
+        db.run("UPDATE charters SET status = 'proposed'", role="sd_app")
     db.run("UPDATE charters SET status = 'superseded'", role="sd_app")
     with pytest.raises(asyncpg.RaiseError, match="final"):
         db.run("UPDATE charters SET status = 'approved'", role="sd_app")
@@ -245,13 +248,56 @@ def test_failed_upgrade_rolls_back(fresh_db: Db) -> None:
     assert not fresh_db.run("SELECT 1 FROM pg_tables WHERE tablename = 'alembic_version'")
 
 
-def test_migration_refuses_privileged_app_role(fresh_db: Db) -> None:
+def test_app_role_is_unprivileged(fresh_db: Db) -> None:
     rows = fresh_db.run(
         "SELECT rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolreplication "
         "FROM pg_roles WHERE rolname = 'sd_app'"
     )
     assert rows and not any(rows[0].values())
-    assert not fresh_db.run(
-        "SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member "
-        "WHERE r.rolname = 'sd_app'"
+
+
+def test_migration_refuses_privileged_app_role(fresh_db: Db) -> None:
+    # sd_app is cluster-wide: every change is undone in `finally`.
+    group = f"sd_test_grp_{os.getpid()}"
+    fresh_db.run(f"CREATE ROLE {group} NOLOGIN")
+    try:
+        fresh_db.run(f"GRANT {group} TO sd_app")
+        with pytest.raises(Exception, match="must not be a member"):
+            fresh_db.upgrade()
+    finally:
+        fresh_db.run(f"DROP ROLE {group}")
+    try:
+        fresh_db.run("ALTER ROLE sd_app CREATEDB")
+        with pytest.raises(Exception, match="must be NOSUPERUSER"):
+            fresh_db.upgrade()
+    finally:
+        fresh_db.run("ALTER ROLE sd_app NOCREATEDB")
+    fresh_db.upgrade()
+    assert _tables(fresh_db) == TABLES
+
+
+def test_one_approved_charter_and_one_active_clearance(migrated_db: Db) -> None:
+    db = migrated_db
+    mission = _seed(db)
+    charter = db.run("SELECT id::text FROM charters")[0]["id"]
+    db.run(
+        "INSERT INTO charters (mission_id, vehicle_id, version, status, body, area, home, "
+        "pilot_position, proposed_by) SELECT mission_id, vehicle_id, 2, 'proposed', body, "
+        "area, home, pilot_position, proposed_by FROM charters",
+        role="sd_app",
     )
+    approve = (
+        "UPDATE charters SET status = 'approved', approved_by = 'operator:demo', "
+        "approved_at = now(), autonomy_mode = 'APPROVE_EACH' WHERE version = $1"
+    )
+    db.run(approve, 1, role="sd_app")
+    with pytest.raises(asyncpg.UniqueViolationError):
+        db.run(approve, 2, role="sd_app")
+    clearance = (
+        "INSERT INTO clearances (mission_id, vehicle_id, charter_id, charter_version, status, "
+        "confirmed_by, valid_until) VALUES ($1::uuid, 'sim-01', $2::uuid, 1, 'active', "
+        "'operator:demo', now() + interval '120 seconds')"
+    )
+    db.run(clearance, mission, charter, role="sd_app")
+    with pytest.raises(asyncpg.UniqueViolationError):
+        db.run(clearance, mission, charter, role="sd_app")
