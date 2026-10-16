@@ -27,7 +27,9 @@ interface TestMap {
 test("the map draws the offline pack at zoom 12, 15 and 18", async ({ page, ground }) => {
   const errors: string[] = [];
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    // WebKit reports the viewport meta's interactive-widget key (for Chrome's keyboard
+    // handling) as unknown; that is not a map error.
+    if (m.type() === "error" && !/interactive-widget/.test(m.text())) errors.push(m.text());
   });
   page.on("pageerror", (e) => errors.push(e.message));
   ground.setConfig({ map: MAP });
