@@ -168,3 +168,25 @@ forbidden_modules =
     sd_ground
     sd_brain
     sd_sim
+
+[importlinter:contract:ingress-isolation]
+name = the ingress thread (STOP / RETURN HOME) does not reach the database or the main loop
+type = forbidden
+source_modules = sd_ground.ingress
+forbidden_modules =
+    sd_ground.db
+    sd_ground.services
+    sd_ground.api
+    sd_ground.context
+    sd_ground.app
+    sqlalchemy
+    asyncpg
+    alembic
+
+[importlinter:contract:brain-no-raw-sockets]
+name = the AI opens no raw sockets
+type = forbidden
+source_modules = sd_brain
+forbidden_modules =
+    socket
+allow_indirect_imports = True

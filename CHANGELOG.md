@@ -29,6 +29,13 @@ All notable changes to this project are listed here. The format follows
 - Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
   digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
   ground station tables, append-only guards and the restricted `sd_app` role.
+- Ground station server `sd-ground`: panel API and live WebSocket on `127.0.0.1:8080`
+  (TLS and PIN pairing on `:8443` only in LAN mode), commander API for the AI on
+  `127.0.0.1:7700`, one-time login links and PINs, sessions that never expire mid-flight,
+  browser protection (Host allow-list, CSRF header, Origin check, no CORS, security
+  headers, body limits), STOP / RETURN HOME handled in their own ingress thread, telemetry
+  to the panel at 5 Hz and into the database at 2 Hz, the `sd-ground` command line and
+  `just migrate` / `just ground`. Tests can only reach loopback.
 - Web panel shell (`software/panel`): chat, map, video, candidates, status and manual-control
   views that can be combined or shown in full screen, tabs and picture-in-picture on phones,
   and the always-visible STOP / RETURN HOME bar with honest acknowledgement, retries and
@@ -38,6 +45,10 @@ All notable changes to this project are listed here. The format follows
   license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
   Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
   `gate/pr-title` and `gate/review`, Dependabot and a pull request template.
+- Safety gate (`sd_safety.evaluate`): every rule for orders from the AI and the operator,
+  exact route and area checks against concave charter areas, geodesic distances, limits
+  with an outer cap and the matching flight-controller fence, manual control and the
+  flight-controller fence radius as reasons to reject.
 - Hardware gate: `hardware/drone.yaml` and `hardware/limits.yaml` (simulated quad, about
   2.3 kg and 33 min hover), `sd_hwcalc` with `just hw-check` for mass, hover power, hover
   time and thrust margins, and the required check `hardware-ok`. Every other file under
