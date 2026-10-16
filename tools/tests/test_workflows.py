@@ -34,6 +34,7 @@ def steps(doc: dict[Any, Any]) -> list[dict[str, Any]]:
 def test_files_exist() -> None:
     names = {p.name for p in WORKFLOWS}
     assert {"ci.yml", "pr-title.yml", "security.yml", "review-gate.yml"} <= names
+    assert {"sitl.yml", "sitl-image.yml"} <= names
     assert (ROOT / ".github" / "actions" / "setup" / "action.yml").is_file()
 
 
@@ -109,3 +110,92 @@ def test_target_workflows_never_check_out_pr_code(name: str) -> None:
             assert "head" not in ref and "pull_request" not in ref, name
         assert "uv sync" not in str(step.get("run", "")), name
         assert "pnpm install" not in str(step.get("run", "")), name
+
+
+def triggers(doc: dict[Any, Any]) -> dict[str, Any]:
+    # PyYAML reads the bare key `on` as the boolean True.
+    on = doc.get("on", doc.get(True))
+    assert isinstance(on, dict)
+    return on
+
+
+def test_sitl_runs_on_every_pull_request() -> None:
+    doc = load(ROOT / ".github" / "workflows" / "sitl.yml")
+    on = triggers(doc)
+    # No path filter on the workflow, or the required check would never report.
+    assert on["pull_request"] is None
+    assert on["push"] == {"branches": ["main"]}
+    assert "merge_group" in on
+    assert on["schedule"]
+    assert set(on["workflow_dispatch"]["inputs"]) == {"mode", "ref"}
+    assert on["workflow_dispatch"]["inputs"]["mode"]["options"] == ["pr", "nightly"]
+    assert "pull_request_target" not in on
+
+
+def test_sitl_jobs_and_aggregate() -> None:
+    jobs = load(ROOT / ".github" / "workflows" / "sitl.yml")["jobs"]
+    assert set(jobs) == {
+        "changes",
+        "sitl",
+        "sitl-ok",
+        "sitl-nightly",
+        "sitl-nightly-gz",
+        "sitl-e2e",
+    }
+    assert jobs["sitl-ok"]["if"] == "always()"
+    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl"}
+    assert "ci_aggregate.jq" in jobs["sitl-ok"]["steps"][-1]["run"]
+    assert jobs["sitl"]["if"] == "needs.changes.outputs.run == 'true'"
+    for name in ("sitl-nightly", "sitl-nightly-gz"):
+        assert "schedule" in jobs[name]["if"] and "nightly" in jobs[name]["if"], name
+    tests = [s for s in jobs["sitl"]["steps"] if "ci-sitl" in str(s.get("run", ""))]
+    assert len(tests) == 1
+    assert tests[0]["timeout-minutes"] <= 35
+    run = tests[0]["run"]
+    assert "physics=builtin" in run and "brain=scripted" in run
+
+
+def test_sitl_change_filter_covers_inputs() -> None:
+    jobs = load(ROOT / ".github" / "workflows" / "sitl.yml")["jobs"]
+    script = next(s["run"] for s in jobs["changes"]["steps"] if s.get("id") == "filter")
+    for glob in (
+        "software/*",
+        "simulation/*",
+        "config/*.example.toml",
+        "compose.yaml",
+        "pyproject.toml",
+        "uv.lock",
+        "justfile",
+        "hardware/drone.yaml",
+        ".github/workflows/sitl.yml",
+        ".github/actions/*",
+        "tools/*",
+    ):
+        assert glob in script, glob
+
+
+def test_package_write_only_when_pushing_from_main() -> None:
+    for path in WORKFLOWS:
+        for name, job in load(path)["jobs"].items():
+            perms = job.get("permissions") or {}
+            if perms.get("packages") == "write":
+                assert (path.name, name) == ("sitl-image.yml", "build-push"), (path.name, name)
+    jobs = load(ROOT / ".github" / "workflows" / "sitl-image.yml")["jobs"]
+    assert "refs/heads/main" in jobs["build-push"]["if"]
+    assert "pull_request" in jobs["build-push"]["if"]
+    assert jobs["build"]["permissions"] == {"contents": "read"}
+
+
+def test_image_scanned_before_push() -> None:
+    steps = load(ROOT / ".github" / "workflows" / "sitl-image.yml")["jobs"]["build-push"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    scan = next(i for i, n in enumerate(names) if "secrets" in n)
+    push = names.index("Push")
+    assert scan < push
+    assert "--exit-code 1" in steps[scan]["run"]
+    assert "docker push" not in "".join(str(s.get("run", "")) for s in steps[:push])
+
+
+def test_sitl_image_tag_from_script() -> None:
+    for name in ("sitl.yml", "sitl-image.yml"):
+        assert "tools/sitl_image_tag.sh" in (ROOT / ".github" / "workflows" / name).read_text()

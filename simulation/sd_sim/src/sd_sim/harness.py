@@ -175,6 +175,41 @@ class Harness:
     def takeoff(self, alt_m: float) -> None:
         self._command(mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt_m)
 
+    def read_all_params(self, timeout: float = 60.0) -> dict[str, float]:
+        """Read the flight controller's whole parameter list (read only, nothing is set).
+
+        Sends PARAM_REQUEST_LIST, then asks again for any index that did not arrive.
+        """
+        values: dict[int, tuple[str, float]] = {}
+        total: int | None = None
+        end = time.monotonic() + timeout
+        self._conn.mav.param_request_list_send(FC_SYSID, FC_COMPID)
+        quiet_since = time.monotonic()
+        while time.monotonic() < end:
+            if time.monotonic() >= self._next_heartbeat:
+                self._send_heartbeat()
+                self._next_heartbeat = time.monotonic() + 1.0
+            msg = self._conn.recv_match(blocking=True, timeout=0.2)
+            if msg is None:
+                if total is not None and time.monotonic() - quiet_since > 1.0:
+                    for index in [i for i in range(total) if i not in values][:20]:
+                        self._conn.mav.param_request_read_send(FC_SYSID, FC_COMPID, b"", index)
+                    quiet_since = time.monotonic()
+                continue
+            self._apply(msg)
+            if msg.get_type() != "PARAM_VALUE" or msg.get_srcSystem() != FC_SYSID:
+                continue
+            quiet_since = time.monotonic()
+            total = int(msg.param_count)
+            name = msg.param_id
+            if isinstance(name, bytes):
+                name = name.decode("ascii", errors="replace")
+            values[int(msg.param_index)] = (str(name).rstrip("\x00"), float(msg.param_value))
+            if len(values) >= total:
+                return dict(values.values())
+        got = f"{len(values)} av {total}" if total is not None else "inga"
+        raise InfraError(f"parameterlistan blev inte komplett inom {timeout:.0f} s ({got})")
+
 
 def observe(instance: int, state_file: Path) -> int:
     """Observer for the launcher (no flight commands); writes the state file until SIGTERM."""

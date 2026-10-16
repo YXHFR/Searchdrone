@@ -1,0 +1,271 @@
+# Flight tests in ArduPilot SITL with its builtin physics, headless, in the SITL image.
+# Runs on every pull request (no path filter on the workflow, so the required check
+# `sitl-ok` always reports); the `changes` job decides whether the tests are needed.
+# The scheduled and on-demand runs add the nightly suites.
+name: sitl
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "pr = the pull request suite, nightly = the nightly suites"
+        type: choice
+        options: [pr, nightly]
+        default: pr
+      ref:
+        description: "Commit SHA to test; must be the head of the branch the run starts on"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sitl-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Every flight runs in real time (SITL speedup 1).
+  SD_SIM__SPEEDUP: "1"
+  SHARDS: "1"
+  WORKERS: "4"
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Did anything the flight tests depend on change?
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        # Push to main, schedule and workflow_dispatch always run the tests.
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE"; head="$PR_HEAD" ;;
+            merge_group) base="$MG_BASE"; head="$MG_HEAD" ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          run=false
+          while IFS= read -r file; do
+            case "$file" in
+              software/*|simulation/*|config/*.example.toml|compose.yaml|pyproject.toml|uv.lock|\
+              justfile|hardware/drone.yaml|.github/workflows/sitl.yml|.github/actions/*|tools/*)
+                echo "berör SITL-testerna: $file"; run=true ;;
+            esac
+          done < <(git diff --name-only "$base...$head")
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  sitl:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    # The tests themselves have 35 minutes (step below); the rest is for building the
+    # image when it is not in the registry yet (a pull request that changes it).
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1]
+    steps:
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - &check-ref
+        name: The requested commit is the one checked out
+        env:
+          REF: ${{ inputs.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ -n "$REF" ] && [ "$REF" != "$SHA" ]; then
+            echo "ref=$REF är inte grenens senaste commit ($SHA). Starta körningen när den är det."
+            exit 1
+          fi
+      - &setup
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - &db
+        name: Start Postgres from compose.yaml
+        run: docker compose --env-file .env up -d --wait db
+      - &image
+        name: SITL image (pull, or build when the tag is not published)
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          image="$(bash tools/sitl_image_tag.sh --image)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin || true
+          if ! docker pull "$image"; then
+            echo "::notice::$image finns inte i registret; bygger den här (utan push)."
+            docker build -f simulation/docker/sitl.Dockerfile -t "$image" .
+          fi
+          docker logout ghcr.io
+      - &versions
+        name: ArduCopter in the image matches simulation/versions.lock
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          tag="$(python3 tools/versions.py ardupilot_tag)"
+          want="ArduCopter V${tag#Copter-}"
+          got="$(docker run --rm "$IMAGE" bash -c \
+            'grep -a -o -m1 "ArduCopter V[0-9][0-9.]*" "$SD_ARDUCOPTER_BIN" | head -n1')"
+          marker="$(docker run --rm "$IMAGE" cat /opt/ardupilot/.sd_version)"
+          echo "låst: $tag, binären: $got, märket: $marker"
+          [ "$got" = "$want" ] && [ "$marker" = "$tag" ]
+      - name: SITL tests (builtin physics, scripted commander)
+        timeout-minutes: 35
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          just ci-sitl physics=builtin brain=scripted "shard=$SHARD" "shards=$SHARDS" \
+            "workers=$WORKERS"
+      - &summary
+        name: Summary
+        if: always()
+        run: |
+          if [ -f runs/summary.md ]; then cat runs/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - &scan
+        name: No secrets in the test results
+        id: scan
+        if: always()
+        run: |
+          mkdir -p runs
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tgz}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" dir runs/ --config .gitleaks.toml --redact --exit-code 1
+      - &results
+        name: Upload results
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sitl-results-${{ github.job }}-${{ strategy.job-index }}
+          path: |
+            runs/**/result.json
+            runs/summary.md
+            !build/sim/**/secrets/**
+          if-no-files-found: warn
+          retention-days: 14
+      - &logs
+        name: Upload logs (only when a test failed)
+        if: failure() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sitl-logs-${{ github.job }}-${{ strategy.job-index }}
+          path: |
+            runs/**/*.tlog
+            runs/**/*.BIN
+            runs/**/*.log
+            !build/sim/**/secrets/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  sitl-ok:
+    if: always()
+    needs: [changes, sitl]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/ci_aggregate.jq
+          sparse-checkout-cone-mode: false
+      - name: All SITL shards succeeded, or none were needed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -e -f tools/ci_aggregate.jq
+
+  sitl-nightly:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *db
+      - *image
+      - *versions
+      - name: Nightly SITL suite
+        timeout-minutes: 45
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+        run: just ci-sitl mode=nightly physics=builtin brain=scripted "workers=$WORKERS"
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
+  sitl-nightly-gz:
+    # Gazebo as a server with headless rendering (no window, no GPU). Not required.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - name: Install ArduPilot SITL and Gazebo Harmonic (same script as on the owner's computer)
+        timeout-minutes: 60
+        run: bash tools/setup/wsl-setup.sh sim
+      - name: Smoke flight with Gazebo as a server (gz sim -s -r --headless-rendering)
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=gz gui=false
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
+  sitl-e2e:
+    # Panel against the simulator, logged in like a person. Not required in v0.1.0.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - name: End-to-end run
+        run: |
+          set +e
+          out="$(just e2e 2>&1)"; code=$?
+          echo "$out"
+          if [ "$code" -eq 2 ] && grep -q "inte byggt än" <<<"$out"; then
+            echo "::notice::Helhetstestet är inte byggt än; inget att köra."
+            exit 0
+          fi
+          exit "$code"

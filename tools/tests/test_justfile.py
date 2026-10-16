@@ -78,7 +78,6 @@ def test_all_recipes_listed() -> None:
         ("migrate", "B1-05"),
         ("hw-check", "B0-06"),
         ("models-fetch", "B1-10"),
-        ("ci-sitl", "B0-08"),
     ],
 )
 def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
