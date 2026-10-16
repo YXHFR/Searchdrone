@@ -1,0 +1,53 @@
+# Safety-relevant paths, one glob per line (`**` matches any depth, `*` one level).
+# A reviewer must read every changed file that matches a line here and list it under
+# "Reviewed files" in the verdict; an unread match makes the verdict request_changes.
+# Removing or narrowing a line weakens the review and is itself a blocking finding.
+# tools/tests/test_critical_paths.py checks that every line above the "planned" marker
+# matches at least one tracked file, so a move or rename cannot silently drop a path.
+
+# Safety gate, vehicle link and the shared safety-relevant schemas
+software/common/safety/**
+software/common/mav/**
+software/common/link/**
+software/common/schemas/src/sd_schemas/safety.py
+software/common/schemas/src/sd_schemas/skills.py
+software/common/schemas/src/sd_schemas/charter.py
+software/common/schemas/src/sd_schemas/gate.py
+software/common/schemas/src/sd_schemas/sv_commands.py
+software/common/schemas/src/sd_schemas/link.py
+
+# Ground server: access, STOP/RETURN HOME, the commander and panel APIs, services
+software/ground/src/sd_ground/auth.py
+software/ground/src/sd_ground/emergency.py
+software/ground/src/sd_ground/ingress.py
+software/ground/src/sd_ground/control_socket.py
+software/ground/src/sd_ground/api/commander.py
+software/ground/src/sd_ground/api/panel.py
+software/ground/src/sd_ground/services/**
+
+# Onboard computer, panel safety bar, hardware calculation
+software/onboard/**
+software/panel/src/safety/**
+software/hwcalc/**
+
+# Simulator flight tests, parameters and harness
+simulation/sitl/**
+simulation/tests/**
+simulation/sd_sim/**
+
+# Build, CI and the gates themselves
+compose.yaml
+config/*.example.toml
+.importlinter
+justfile
+.github/**
+tools/**
+
+# --- planned: paths whose files do not exist yet ---------------------------------------
+# Move a line above this marker in the pull request that creates its first file.
+# The test checks that nothing below matches a tracked file yet.
+software/ground/src/sd_ground/mav/**
+software/brain/src/sd_brain/skills/**
+simulation/scenarios/**
+config/mediamtx.yml
+**/ruff.toml

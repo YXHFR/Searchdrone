@@ -25,7 +25,7 @@ just check
 - One topic per pull request, on a branch, never directly on `main`.
 - Title in [Conventional Commits](https://www.conventionalcommits.org) form, for example `feat(ground): add mission endpoint` or `fix(safety): reject altitude above frame`.
 - Describe what changed, why, how you tested it, and the flight-safety impact ("None" is a valid answer).
-- Every pull request is reviewed by three AI reviewers (architecture, IT security, flight safety) and the automated checks. Changes under `hardware/` also need the maintainer's approval.
+- Every pull request is reviewed by three AI reviewers (architecture, IT security, flight safety) and the automated checks. The reviewers follow the instructions in [`.github/review/`](.github/review/) and post one comment each, starting with `review/<role>: approve` or `review/<role>: request_changes` and naming the reviewed commit; the check `gate/review` is green only when all three approved the latest commit. Changes under `hardware/` also need the maintainer's approval (`gate/owner`).
 - Squash merge only.
 
 ## Reporting bugs
