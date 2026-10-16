@@ -70,12 +70,12 @@ def test_login_code_ttl_allowed_in_test_rig(root: Path) -> None:
 
 
 def test_unknown_keys_stop_the_server(root: Path) -> None:
-    (root / "config" / "ground.toml").write_text("[auth]\nlocalhost_is_pilot = true\n")
+    (root / "config" / "ground.toml").write_text("[auth]\nskip_login = true\n")
     with pytest.raises(ConfigError) as exc:
         load(root, {})
-    assert any("auth.localhost_is_pilot" in e for e in exc.value.errors)
+    assert any("auth.skip_login" in e for e in exc.value.errors)
     with pytest.raises(ConfigError):
-        load(root, {"SD_GROUND__AUTH__LOCALHOST_IS_PILOT": "true"})
+        load(root, {"SD_GROUND__AUTH__SKIP_LOGIN": "true"})
 
 
 def test_env_overrides_toml(root: Path) -> None:

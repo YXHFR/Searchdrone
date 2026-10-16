@@ -13,6 +13,11 @@ All notable changes to this project are listed here. The format follows
 - Forbidden-file guard that blocks planning files, agent files, secrets, personal config,
   media, large files, coordinates outside public test sites and private search patterns.
 - `tools/bootstrap.sh` and `tools/setup/wsl-setup.sh` for a fresh WSL2 Ubuntu 24.04.
+- Simulator environment: `just sim-setup` installs ArduPilot SITL (Copter-4.7.1) and Gazebo
+  Harmonic, `just sim-doctor` checks the setup, `just sim-smoke` flies a take-off and landing.
+  Simulated radio link (`linksim`), MAVLink tap, test rig, SITL container image and
+  `simulation/ports.yaml`. Simulator ports listen on 127.0.0.1; the few sockets ArduPilot
+  and Gazebo bind to all addresses themselves are listed with their reasons and checked.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.
 - Shared message schemas (`sd_schemas`): ids, limits and their outer cap, mission charter,
@@ -31,3 +36,8 @@ All notable changes to this project are listed here. The format follows
   headers, body limits), STOP / RETURN HOME handled in their own ingress thread, telemetry
   to the panel at 5 Hz and into the database at 2 Hz, the `sd-ground` command line and
   `just migrate` / `just ground`. Tests can only reach loopback.
+- Web panel shell (`software/panel`): chat, map, video, candidates, status and manual-control
+  views that can be combined or shown in full screen, tabs and picture-in-picture on phones,
+  and the always-visible STOP / RETURN HOME bar with honest acknowledgement, retries and
+  polling. Placeholders for take-over, on-screen sticks, game controller and order buttons.
+  Playwright tests against a fake ground station; works fully offline.

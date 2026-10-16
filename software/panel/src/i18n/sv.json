@@ -1,0 +1,247 @@
+{
+  "app": {
+    "name": "Searchdrone",
+    "simulator": "SIMULATOR",
+    "noMission": "Inget aktivt uppdrag",
+    "skip": "Hoppa till innehållet"
+  },
+  "common": {
+    "loading": "Laddar…",
+    "yes": "Ja",
+    "no": "Nej"
+  },
+  "banner": {
+    "noGround": "Ingen kontakt med markstationen. Försöker igen… STOPP och FLYG HEM försöker ändå."
+  },
+  "safety": {
+    "region": "Säkerhetsknappar",
+    "stop": {
+      "label": "STOPP",
+      "sub": "Stannar och svävar"
+    },
+    "home": {
+      "label": "FLYG HEM",
+      "sub": "Flyger hem och landar",
+      "pilotOnly": "Bara piloten kan flyga hem"
+    },
+    "state": {
+      "sending": "Skickar…",
+      "retrying": "Inget svar – försöker igen… Använd RC om det dröjer",
+      "sent": "Skickat – väntar på drönaren",
+      "onboardReceived": "Ombord har tagit emot",
+      "acked": "Kvitterat ✓",
+      "unconfirmed": "Skickat – kvittens saknas. Kontrollera drönaren, använd RC",
+      "failed": "Misslyckades – tryck igen"
+    },
+    "error": {
+      "forbidden": "Du får inte styra drönaren med den här inloggningen",
+      "noPath": "Ingen förbindelse med drönaren – använd RC",
+      "session": "Inloggningen har gått ut – använd RC",
+      "noGround": "Ingen kontakt med markstationen – använd RC",
+      "vehicleFailed": "Misslyckades – drönaren svarar inte. Använd RC"
+    },
+    "dismiss": "Stäng meddelandet",
+    "notLoggedIn": "Inte inloggad – STOPP och FLYG HEM fungerar inte förrän du loggat in. Använd RC.",
+    "noVehicleContact": "Ingen kontakt med drönaren"
+  },
+  "resume": {
+    "button": "Fortsätt",
+    "held": "Drönaren svävar efter ett avbrott. Tryck Fortsätt för att låta AI:n fortsätta, eller FLYG HEM.",
+    "homeActive": "Tryck STOPP först för att avbryta hemflygningen.",
+    "onboardSilent": "Ombordsdatorn svarar inte – använd RC eller FLYG HEM"
+  },
+  "pills": {
+    "vehicle": {
+      "unknown": "Drönare: okänt",
+      "ground": "På marken",
+      "takeoff": "Lyfter",
+      "transit": "Flyger till punkt",
+      "survey": "Söker",
+      "hold": "Svävar",
+      "stopped": "Stoppad – svävar",
+      "homeByYou": "Flyger hem (du tog över)",
+      "manual": "Du styr",
+      "humanTookOver": "Människa har tagit över",
+      "rtl": "Flyger hem",
+      "land": "Landar",
+      "failsafe": "Failsafe",
+      "raw": "Okänt läge"
+    },
+    "battery": "Batteri {{v}} %",
+    "alt": "Höjd {{v}} m",
+    "stale": "(gammal)",
+    "link": {
+      "good": "Länk bra",
+      "weak": "Länk svag",
+      "lost": "Länk borta"
+    },
+    "mode": {
+      "a": "Läge A: du godkänner varje steg",
+      "b": "Läge B: AI:n flyger inom ramen"
+    },
+    "ai": {
+      "ready": "AI klar",
+      "busy": "AI tänker",
+      "down": "AI borta",
+      "unknown": "AI okänd"
+    },
+    "noContact": "Ingen kontakt"
+  },
+  "menu": {
+    "label": "Meny",
+    "themeLight": "Byt till dagsljus",
+    "themeDark": "Byt till mörkt tema",
+    "logout": "Logga ut"
+  },
+  "layout": {
+    "menu": "Layout",
+    "preset": {
+      "standard": "Standard",
+      "map_video": "Karta och video",
+      "chat_only": "Bara chatt",
+      "quad": "Fyra rutor",
+      "flight": "Flygning"
+    },
+    "maximize": "Helskärm: {{view}}",
+    "restore": "Avsluta helskärm: {{view}}",
+    "showHere": "Visa en annan vy i stället för {{view}}",
+    "showHereShort": "Visa här…",
+    "split": "Dela rutan {{view}}",
+    "splitShort": "Dela…",
+    "splitRight": "{{view}} till höger",
+    "splitBelow": "{{view}} under",
+    "close": "Stäng {{view}}",
+    "tabs": "Vyer",
+    "pipOn": "Visa {{view}} i en liten ruta",
+    "pipOff": "Stäng den lilla rutan",
+    "pipSwap": "Byt plats med {{view}}",
+    "corner": {
+      "tl": "Flytta rutan uppe till vänster",
+      "tr": "Flytta rutan uppe till höger",
+      "bl": "Flytta rutan nere till vänster",
+      "br": "Flytta rutan nere till höger"
+    }
+  },
+  "views": {
+    "chat": {
+      "title": "Chatt"
+    },
+    "map": {
+      "title": "Karta",
+      "noPack": "Ingen offlinekarta laddad",
+      "noWebgl": "Kartan kräver WebGL2, som den här webbläsaren saknar. Positionen står nedan och i Status.",
+      "noPosition": "Ingen position från drönaren ännu",
+      "position": "Drönaren: {{lat}}, {{lon}}"
+    },
+    "video": {
+      "title": "Video",
+      "none": "Ingen video. Videon visas när drönarens kamera är igång.",
+      "connecting": "Ansluter till videon…"
+    },
+    "candidates": {
+      "title": "Kandidater",
+      "stub": "Kandidatkön kommer i etapp 2.",
+      "onlyYou": "Bara du kan bekräfta att ett fynd är rätt person."
+    },
+    "status": {
+      "title": "Status"
+    },
+    "manual": {
+      "title": "Styr själv"
+    },
+    "crashed": "Vyn kunde inte visas.",
+    "reload": "Ladda om vyn"
+  },
+  "chat": {
+    "empty": "Inga meddelanden ännu. Skriv till AI-befälhavaren nedan.",
+    "inputLabel": "Meddelande till AI-befälhavaren",
+    "placeholder": "Skriv till AI-befälhavaren…",
+    "send": "Skicka",
+    "sending": "skickar…",
+    "failed": "kunde inte skickas",
+    "counter": "{{n}} av {{max}} tecken",
+    "observer": "Bara piloten kan skriva i chatten.",
+    "noMission": "Väntar på uppdraget…",
+    "role": {
+      "operator": "Du",
+      "brain": "AI-befälhavaren",
+      "system": "System"
+    }
+  },
+  "orders": {
+    "legend": "Snabbval",
+    "gotoPin": "Flyg till P1",
+    "survey": "Sök av området",
+    "land": "Landa",
+    "notYet": "Snabbvalen kopplas in i en senare version."
+  },
+  "manual": {
+    "takeover": "Ta över",
+    "notYet": "Manuell styrning kopplas in i en senare version.",
+    "pilotOnly": "Bara piloten kan styra för hand.",
+    "explain": "Ta över pausar AI:n och drönaren står still. Styr med spakarna eller en handkontroll. Släpper du spakarna står drönaren still. Lämna tillbaka ger AI:n kontrollen igen.",
+    "leftStick": "Vänster spak: höjd och vridning",
+    "rightStick": "Höger spak: framåt, bakåt och åt sidan",
+    "axes": "Roll {{roll}} · Pitch {{pitch}} · Gir {{yaw}} · Gas {{throttle}}",
+    "gamepad": "Handkontroll: {{name}}",
+    "noGamepad": "Ingen handkontroll ansluten",
+    "rcFirst": "En RC-sändare går alltid före panelen."
+  },
+  "status": {
+    "vehicle": {
+      "title": "Drönaren",
+      "state": "Läge",
+      "armed": "Armerad",
+      "mode": "Flygläge",
+      "position": "Position",
+      "alt": "Höjd",
+      "speed": "Fart",
+      "heading": "Kurs",
+      "gps": "GPS",
+      "gpsValue": "fix {{fix}}, {{sats}} satelliter",
+      "battery": "Batteri"
+    },
+    "links": {
+      "title": "Länkar",
+      "ground": "Markstation",
+      "mavlink": "MAVLink",
+      "sdlink": "SD-link",
+      "ai": "AI"
+    },
+    "ws": {
+      "connecting": "ansluter",
+      "up": "ansluten",
+      "down": "ingen kontakt"
+    },
+    "limits": {
+      "title": "Gränser",
+      "alt": "Max höjd",
+      "speed": "Max fart",
+      "range": "Max avstånd",
+      "battery": "Hem vid batteri",
+      "cap": "tak"
+    },
+    "log": {
+      "title": "Händelselogg",
+      "empty": "Inga händelser ännu."
+    }
+  },
+  "login": {
+    "title": "Logga in",
+    "reauthTitle": "Logga in igen",
+    "help": "Öppna länken som sd-ground skrev ut i terminalen på datorn. På mobilen: skanna QR-koden från sd-ground pair, eller skriv PIN-koden här.",
+    "pin": "PIN",
+    "submit": "Logga in",
+    "error": {
+      "wrong": "Fel kod, eller koden har gått ut.",
+      "invalidated": "Koden är spärrad – skapa en ny på datorn (sd-ground pair).",
+      "tooMany": "Vänta en stund och försök igen.",
+      "noContact": "Ingen kontakt med markstationen."
+    }
+  },
+  "emergency": {
+    "title": "Ingen kontakt med markstationen",
+    "body": "Ingen kontakt med markstationen – använd RC/QGroundControl. Panelen försöker igen av sig själv.",
+    "reload": "Ladda om panelen"
+  }
+}

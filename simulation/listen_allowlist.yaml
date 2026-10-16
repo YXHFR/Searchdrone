@@ -1,0 +1,42 @@
+# Listening sockets that may bind outside loopback while the simulator runs.
+# `just sim-doctor` and `just sim-smoke` fail on any other non-loopback listener on a
+# port from ports.yaml or owned by one of the simulator's processes.
+# Every entry needs a reason. Keep this list as short as possible.
+
+- port: sitl_rc_in
+  proto: udp
+  reason: >-
+    ArduPilot SITL binds its UDP RC input to 0.0.0.0 in its own code and has no option
+    for the address. Nothing in Searchdrone sends to it. It is reachable from outside
+    only if the WSL firewall lets inbound traffic in, which windows-check.ps1 forbids
+    (DefaultInboundAction = Block). Never used on a real vehicle.
+
+- port: gz_discovery_msg
+  proto: udp
+  reason: &gz >-
+    Gazebo Transport binds its discovery sockets to 0.0.0.0 in its own code, whatever
+    GZ_IP says; topic data itself stays on 127.0.0.1 (GZ_IP). A host on the network
+    could only reach discovery if the WSL firewall let inbound traffic in, which
+    windows-check.ps1 forbids. Simulator only.
+
+- port: gz_discovery_srv
+  proto: udp
+  reason: *gz
+
+# "port: ephemeral" allows only a random port that is not in ports.yaml, and only for
+# the named process.
+- port: ephemeral
+  process: arducopter
+  proto: udp
+  reason: >-
+    With Gazebo physics ArduPilot SITL sends to Gazebo from an unbound UDP socket, so
+    the kernel gives it a random port on 0.0.0.0, and SITL has no option for the
+    address. Same protection as above: the WSL firewall must block inbound traffic.
+
+- port: ephemeral
+  process: ruby   # the gz command-line tool runs Gazebo inside a Ruby process
+  proto: udp
+  reason: >-
+    ArduPilot's Gazebo camera plugin sends the video with a GStreamer udpsink, which
+    takes a random sending port on 0.0.0.0; the plugin has no option for the address.
+    It only sends to 127.0.0.1. Same protection as above.

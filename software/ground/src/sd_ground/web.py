@@ -40,12 +40,15 @@ COMMANDER_BODY_LIMIT = 2 * 1024 * 1024
 # Same values as software/common/schemas/security_headers.json (a test compares them).
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; worker-src 'self' blob:; connect-src 'self'; "
-        "media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'"
+        "default-src 'self'; script-src 'self'; worker-src 'self' blob:; "
+        "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+        "style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
+        "form-action 'self'; frame-ancestors 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), camera=(), microphone=(), payment=(), usb=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
 }
 _CHANGING = {"POST", "PUT", "PATCH", "DELETE"}
 _WHEP_TYPES = {"application/sdp", "application/trickle-ice-sdpfrag"}

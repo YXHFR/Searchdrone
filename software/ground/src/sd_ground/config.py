@@ -3,7 +3,7 @@
 Load order: code defaults < ``config/ground.example.toml`` < ``config/ground.toml`` <
 environment variables ``SD_GROUND__<SECTION>__<KEY>`` (top-level keys:
 ``SD_GROUND__<KEY>``). Unknown keys are errors, so a typo (or an invented switch such as
-``auth.localhost_is_pilot``) can never be silently ignored.
+``auth.skip_login``) can never be silently ignored.
 
 Secrets never live in the TOML files. The database and video passwords come from the
 environment or the repository's ``.env``; the commander token from ``auth.brain_token_file``.

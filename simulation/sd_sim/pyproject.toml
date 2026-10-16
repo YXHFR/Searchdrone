@@ -5,7 +5,10 @@ description = "Simulation tooling: SITL launcher, scenario runner and test helpe
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+  "pymavlink>=2.4.47",  # LGPL-3.0, used unmodified
+  "pyyaml>=6.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

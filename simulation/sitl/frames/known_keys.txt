@@ -1,0 +1,29 @@
+# Keys that ArduPilot Copter-4.7.1 reads from a SITL frame JSON file
+# (libraries/SITL/SIM_Frame.cpp, Frame::load_frame_params). A key that is not
+# listed here has no effect. motor*_ lines match motor1_ ... motorN_.
+battCapacityAh
+diagonal_size
+disc_area
+hoverThrOut
+mass
+maxVoltage
+mdrag_coef
+moment_inertia
+num_motors
+propExpo
+pwmMax
+pwmMin
+refAlt
+refAngle
+refBatRes
+refCurrent
+refRotRate
+refSpd
+refTempC
+refVoltage
+slew_max
+spin_max
+spin_min
+motor*_position
+motor*_vector
+motor*_yaw
