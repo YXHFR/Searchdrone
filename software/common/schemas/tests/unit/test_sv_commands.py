@@ -42,6 +42,9 @@ def test_classify_override_never_resume(text: str) -> None:
         ("stopp nu", "stop"),
         ("flyg hem", "return_home"),
         ("Flyg hem!", "return_home"),
+        ("Stopp, stopp!", "stop"),
+        ("stopp stopp stop", "stop"),
+        ("flyg hem, flyg hem", "return_home"),
         ("stanna inte", None),
         ("don't stop", None),
         ("inte hem", None),
@@ -103,6 +106,13 @@ def test_takeoff_request_yes(text: str) -> None:
         "Vilken sektor ska vi söka",
         "hej",
         "",
+        "sök efter en man i röd jacka",
+        "lyft fram kartan",
+        "vi ska starta om en timme",
+        "sök området senare",
+        "starta imorgon",
+        "flyg till P1 om en stund",
+        "Det är dags att lyfta blicken",
     ],
 )
 def test_takeoff_request_no(text: str) -> None:

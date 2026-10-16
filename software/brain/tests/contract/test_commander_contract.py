@@ -267,3 +267,24 @@ async def test_loop_over_http_queued_message_never_acts() -> None:
         assert [c.skill for c in fg.commands] == ["goto"]
         assert json.loads(fg.commands[0].model_dump_json())["params"]["alt_m"] == 40
         assert fg.decisions and all(d.ai_config_hash == "h" for d in fg.decisions)
+
+
+async def test_stream_ignores_environment_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The commander token never goes to a proxy from the environment."""
+    monkeypatch.setenv("http_proxy", "http://203.0.113.9:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://203.0.113.9:3128")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NO_PROXY", "")
+    fg = _fg()
+    async with MockCommander(fg) as mock, httpx.AsyncClient() as http:
+        task = asyncio.create_task(_consume(GroundClient(mock.url, TOKEN, http), [], []))
+        try:
+            for _ in range(150):
+                if mock.hellos:
+                    break
+                await asyncio.sleep(0.02)
+            assert mock.hellos, "the stream went somewhere else than loopback"
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

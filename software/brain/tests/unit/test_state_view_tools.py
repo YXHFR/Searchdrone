@@ -48,11 +48,10 @@ def _names(
     s: Any,
     *,
     request: bool = False,
-    policy: str = "request_then_clearance",
     reg: SkillRegistry = REG,
     **kw: Any,
 ) -> set[str]:
-    return {t.name for t in exposed_tools(reg, s, _mem(request), NOW, policy=policy, **kw)}  # type: ignore[arg-type]
+    return {t.name for t in exposed_tools(reg, s, _mem(request), NOW, **kw)}  # type: ignore[arg-type]
 
 
 AIR = {"takeoff_clearance_valid_until": None}
@@ -91,13 +90,6 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
         _cleared(),
         {},
         READ | {"report", "mark_location", "propose_charter_change"},
-    ),
-    (
-        "READY, clearance, no request, clearance_only",
-        "ready_charter_v1_modeB.json",
-        _cleared(),
-        {"policy": "clearance_only"},
-        READ | {"report", "mark_location", "propose_charter_change", "takeoff"},
     ),
     (
         "ACTIVE airborne",
@@ -260,7 +252,7 @@ def test_motion_block_and_limits() -> None:
 
 def test_takeoff_rule() -> None:
     s = situation("ready_charter_v1_modeB.json", **_cleared())
-    ok = {"policy": "request_then_clearance", "ttl_s": 120}
+    ok = {"ttl_s": 120}
     assert takeoff_ok(s, _mem(True), NOW, **ok)  # type: ignore[arg-type]
     assert not takeoff_ok(s, _mem(False), NOW, **ok)  # type: ignore[arg-type]
     old = _mem(True, NOW - dt.timedelta(seconds=300))
@@ -307,3 +299,24 @@ def test_adapt() -> None:
     nowhere = situation(vehicle={"lat": None, "lon": None})
     with pytest.raises(AdaptError):
         adapt("mark_location", {"label": "x"}, nowhere)
+
+
+def test_tool_tables_match_the_gate() -> None:
+    """The filter mirrors the gate: a change there must show up here."""
+    from sd_brain.tools import ALWAYS_ALLOWED, STATE_ALLOWS
+    from sd_safety import rules
+    from sd_safety.policy import ALLOWED_OUTSIDE_CHARTER_SKILLS
+
+    assert ALWAYS_ALLOWED == ALLOWED_OUTSIDE_CHARTER_SKILLS
+    for state in rules._GROUND_ONLY_STATES:  # pyright: ignore[reportPrivateUsage]
+        assert STATE_ALLOWS[state.value] == rules._NO_FLIGHT_SKILLS  # pyright: ignore[reportPrivateUsage]
+    assert STATE_ALLOWS["READY"] == rules._NO_FLIGHT_SKILLS | {"takeoff"}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_no_setting_drops_the_start_request() -> None:
+    from sd_brain.config import ConfigError, load_config
+
+    with pytest.raises(ConfigError):
+        load_config(None, {"SD_BRAIN__BEHAVIOUR__TAKEOFF_POLICY": "clearance_only"})
+    s = situation("ready_charter_v1_modeB.json", **_cleared())
+    assert "takeoff" not in _names(s)

@@ -37,7 +37,9 @@ call_timeout_s = 15
 retry_after_s = 60                    # after a cloud failure, use the local model this long
 
 [decide]                              # the decision interface (quick stop check)
-engines = ["jev", "openai_decisions", "local"]   # best first; needs SD_JEV_API_KEY / SD_OPENAI_API_KEY
+# Best first. A hosted engine is used only when its key is in .env (SD_JEV_API_KEY,
+# SD_OPENAI_API_KEY); it then receives the text of each pilot chat line (nothing else).
+engines = ["jev", "openai_decisions", "local"]
 stop_check = true
 stop_check_timeout_s = 0.5
 stop_threshold = 0.5
@@ -54,5 +56,5 @@ model = "gpt-6-luna"
 max_read_tool_rounds = 4
 max_repair_rounds = 1
 idle_airborne_tick_s = 60
-takeoff_policy = "request_then_clearance"   # request_then_clearance | clearance_only
+takeoff_policy = "request_then_clearance"   # the AI starts only when the operator asked
 rule_takeoff = true

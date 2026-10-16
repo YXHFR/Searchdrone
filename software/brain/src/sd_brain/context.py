@@ -33,11 +33,6 @@ _TAKEOFF_RULES = {
         "to start without the confirmation, answer: 'Bekräfta att det är fritt runt "
         "drönaren med knappen, så startar jag.'"
     ),
-    "clearance_only": (
-        "You may take off only when the charter is approved and a person has confirmed "
-        "'Fritt runt drönaren' with the button; then you decide when to start according "
-        "to your plan. The `takeoff` tool is only offered when that holds."
-    ),
 }
 
 _BLOCK_TEXT = {

@@ -246,7 +246,10 @@ class GroundClient:
         while True:
             try:
                 async with websockets.connect(
-                    self.ws_url(), additional_headers=self._headers, open_timeout=5
+                    self.ws_url(),
+                    additional_headers=self._headers,
+                    open_timeout=5,
+                    proxy=None,  # loopback only: never send the token through a proxy
                 ) as ws:
                     attempt = 0
                     async for evt in self._session(

@@ -108,14 +108,14 @@ def takeoff_ok(
     mem: MissionMemory,
     now: dt.datetime,
     *,
-    policy: Literal["request_then_clearance", "clearance_only"],
     ttl_s: float,
 ) -> bool:
     """Whether ``takeoff`` may be offered to the model in this turn.
 
     Approved and installed charter with ``takeoff`` allowed, a valid "clear around the
-    drone" from a person, the vehicle on the ground, and (by default) a fresh start
-    request from the operator. The gate checks all of it again.
+    drone" from a person, the vehicle on the ground, and a fresh start request from the
+    operator. There is no setting that drops any of these. The gate checks the charter
+    and the clearance again.
     """
     if s.mission_status != "READY" or s.charter is None:
         return False
@@ -127,6 +127,4 @@ def takeoff_ok(
     v = s.vehicle
     if not (v.landed and not v.armed and v.connected):
         return False
-    if policy == "request_then_clearance":
-        return fresh_request(s, mem, now, ttl_s) is not None
-    return True
+    return fresh_request(s, mem, now, ttl_s) is not None

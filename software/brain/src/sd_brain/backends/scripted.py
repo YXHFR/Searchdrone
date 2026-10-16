@@ -117,7 +117,7 @@ class Script(_Strict):
 def load_script(path: str | Path) -> tuple[Script, dict[str, Any] | None]:
     p = Path(path)
     try:
-        data = yaml.load(p.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506
+        data = yaml.load(p.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - a SafeLoader subclass
         script = Script.model_validate(data)
     except (OSError, yaml.YAMLError, ValueError) as exc:
         raise ScriptError(f"manuset {p} går inte att läsa: {exc}") from None
@@ -133,7 +133,7 @@ def load_script(path: str | Path) -> tuple[Script, dict[str, Any] | None]:
     if script.fixture:
         fpath = (p.parent / script.fixture).resolve()
         try:
-            fixture = yaml.load(fpath.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506
+            fixture = yaml.load(fpath.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - a SafeLoader subclass
         except (OSError, yaml.YAMLError) as exc:
             raise ScriptError(f"fixturen {fpath} går inte att läsa: {exc}") from None
     return script, fixture

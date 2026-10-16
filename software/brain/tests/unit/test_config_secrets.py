@@ -56,8 +56,8 @@ def test_config_with_dotenv_secrets(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "env",
     [
-        {"SD_BRAIN__GROUND__COMMANDER_URL": "http://192.168.1.5:7700/commander/v1"},
-        {"SD_BRAIN__LLM__ROOT_URL": "http://10.0.0.2:8091"},
+        {"SD_BRAIN__GROUND__COMMANDER_URL": "http://192.0.2.5:7700/commander/v1"},
+        {"SD_BRAIN__LLM__ROOT_URL": "http://198.51.100.2:8091"},
         {"SD_BRAIN__CLOUD__BASE_URL": "http://openrouter.ai/api/v1"},
         {"SD_BRAIN__BACKEND__KIND": "scripted", "SD_BRAIN__PROFILE": "field"},
         {"SD_BRAIN__UNKNOWN": "1"},
@@ -130,3 +130,17 @@ def test_secrets_are_masked_in_logs(tmp_path: Path, caplog: pytest.LogCaptureFix
     assert GOOD not in text
     assert "z" * 30 not in text
     assert mask(f"a {GOOD} b", [GOOD]) == "a *** b"
+
+
+def test_tracebacks_are_masked(tmp_path: Path) -> None:
+    secrets = load_secrets(_token(tmp_path, "t" * 43), {"SD_LLM_API_KEY": GOOD}, tmp_path / "x")
+    logger = logging.getLogger("sd_brain.test_mask_exc")
+    stream = __import__("io").StringIO()
+    handler = logging.StreamHandler(stream)
+    logger.addHandler(handler)
+    install_log_masking(secrets, logger)
+    try:
+        raise RuntimeError(f"failed with {GOOD}")
+    except RuntimeError:
+        logger.exception("oops", stack_info=True)
+    assert GOOD not in stream.getvalue() and "failed with ***" in stream.getvalue()

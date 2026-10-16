@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from sd_schemas.decide import (
     ChoiceAnswer,
@@ -40,8 +40,6 @@ __all__ = [
     "OpenAiDecisionsEngine",
     "QuestionEngine",
 ]
-
-_ANSWER = TypeAdapter[DecideAnswer](DecideAnswer)
 
 
 class DecideError(RuntimeError):
@@ -387,8 +385,3 @@ class OpenAiDecisionsEngine:
         model = (data.get("metadata") or {}).get("model") or self.model
         latency = int((time.monotonic() - start) * 1000)
         return EngineAnswer("openai_decisions", "cloud", answers, model, latency)
-
-
-def validate_answer(raw: Any) -> DecideAnswer:
-    """Validate one answer object (used by tests and the log reader)."""
-    return _ANSWER.validate_python(raw)

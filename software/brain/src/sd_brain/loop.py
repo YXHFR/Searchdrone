@@ -43,7 +43,7 @@ from sd_brain.ground_client import GroundApi, GroundError
 from sd_brain.health import HealthState
 from sd_brain.memory import PendingRequest, empty_memory, to_update, with_changes
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
-from sd_brain.sv import interpret
+from sd_brain.sv import height_m
 from sd_brain.toolcall_parse import truncate
 from sd_brain.tools import PROPOSAL_TOOL, AdaptError, adapt, exposed_tools
 from sd_brain.turn import (
@@ -412,7 +412,7 @@ class CommanderLoop:
         mem_before = mem
         # Rule: a start request is remembered before any model call.
         if op_msg is not None and pilot and s.vehicle.landed and is_takeoff_request(op_msg.text):
-            alt = _alt_from_text(op_msg.text)
+            alt = height_m(op_msg.text)
             mem = with_changes(
                 mem,
                 pending=PendingRequest(
@@ -435,7 +435,6 @@ class CommanderLoop:
                 s,
                 mem,
                 now,
-                policy=self.cfg.behaviour.takeoff_policy,
                 actions=trigger != "recovered",
                 pilot=pilot,
             )
@@ -529,13 +528,11 @@ class CommanderLoop:
                 ],
                 diagnostics=diag,
             )
-        if trigger == "takeoff_clearance" and b.takeoff_policy == "request_then_clearance":
-            req = fresh_request(s, mem, now, self._ttl())
+        if trigger == "takeoff_clearance":
+            req = fresh_request(s, mem, now, TAKEOFF_REQUEST_TTL_S)
             if req is None:
                 return TurnOutput(messages=[OutMessage(text=CLEARED_NO_REQUEST)], diagnostics=diag)
-            if b.rule_takeoff and takeoff_ok(
-                s, mem, now, policy=b.takeoff_policy, ttl_s=self._ttl()
-            ):
+            if b.rule_takeoff and takeoff_ok(s, mem, now, ttl_s=TAKEOFF_REQUEST_TTL_S):
                 alt = req.alt_m if req.alt_m is not None else current_limits(s).default_alt_agl_m
                 return TurnOutput(
                     action=AiAction(
@@ -550,14 +547,10 @@ class CommanderLoop:
             trigger == "charter_event"
             and s.charter is not None
             and s.mission_status == "READY"
-            and fresh_request(s, mem, now, self._ttl()) is not None
-            and b.takeoff_policy == "request_then_clearance"
+            and fresh_request(s, mem, now, TAKEOFF_REQUEST_TTL_S) is not None
         ):
             return TurnOutput(messages=[OutMessage(text=CHARTER_WITH_REQUEST)], diagnostics=diag)
         return None
-
-    def _ttl(self) -> float:
-        return TAKEOFF_REQUEST_TTL_S
 
     async def _decide(self, turn: TurnInput) -> TurnOutput:
         backend = self._active_backend()
@@ -1008,14 +1001,3 @@ def _what(action: AiAction, req: SkillRequest) -> str:
     if action.skill == "goto" and action.params.get("pin"):
         text = f"flyg till {action.params['pin']}"
     return text
-
-
-def _alt_from_text(text: str) -> float | None:
-    hint = interpret(text) or ""
-    for part in hint.split("; "):
-        if part.startswith("höjd="):
-            try:
-                return float(part.removeprefix("höjd=").removesuffix(" m").replace(",", "."))
-            except ValueError:
-                return None
-    return None

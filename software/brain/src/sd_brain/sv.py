@@ -10,7 +10,7 @@ import unicodedata
 
 from sd_schemas.sv_commands import parse_number_sv
 
-__all__ = ["interpret"]
+__all__ = ["height_m", "interpret"]
 
 _NUMBER_WORD = re.compile(r"\b([a-zåäö]+)\b")
 _ALT = re.compile(r"(?:på|till|i)\s+(\S+)\s*(?:meters?|metres?|m)\b(?!/)")
@@ -30,12 +30,17 @@ def _fmt(value: float) -> str:
     return f"{value:g}".replace(".", ",")
 
 
+def height_m(text: str) -> float | None:
+    """The height the operator named ("på 40 meter", "till sextio m"), or ``None``."""
+    m = _ALT.search(unicodedata.normalize("NFKC", text).lower())
+    return _num(m.group(1)) if m else None
+
+
 def interpret(text: str) -> str | None:
     """``"höjd=40 m; punkt=P1; ruta=100x100 m"``, or ``None`` when nothing is recognised."""
     t = unicodedata.normalize("NFKC", text).lower()
     parts: list[str] = []
-    m = _ALT.search(t)
-    if m and (alt := _num(m.group(1))) is not None:
+    if (alt := height_m(t)) is not None:
         parts.append(f"höjd={_fmt(alt)} m")
     m = _KMH.search(t)
     if m and (kmh := _num(m.group(1))) is not None:

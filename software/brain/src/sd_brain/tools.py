@@ -51,8 +51,6 @@ STATE_ALLOWS: dict[str, frozenset[str]] = {
     "CLOSED": frozenset(),
 }
 
-Policy = Literal["request_then_clearance", "clearance_only"]
-
 
 class AdaptError(ValueError):
     """The AI parameters do not resolve (unknown pin or sector); sent back to the model."""
@@ -191,7 +189,6 @@ def exposed_tools(
     mem: MissionMemory,
     now: dt.datetime,
     *,
-    policy: Policy = "request_then_clearance",
     ttl_s: float = TAKEOFF_REQUEST_TTL_S,
     actions: bool = True,
     pilot: bool = True,
@@ -224,7 +221,7 @@ def exposed_tools(
             continue
         if k.allowed_when == "airborne" and not s.vehicle.airborne:
             continue
-        if k.starts_flight and not takeoff_ok(s, mem, now, policy=policy, ttl_s=ttl_s):
+        if k.starts_flight and not takeoff_ok(s, mem, now, ttl_s=ttl_s):
             continue
         if k.name == "resume" and s.vehicle.executor_state != "HOLD":
             continue

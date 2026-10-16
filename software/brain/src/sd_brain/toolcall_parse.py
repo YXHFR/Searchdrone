@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from sd_brain.charter_draft import CharterDraft
 from sd_brain.runtime.base import ModelReply
 from sd_brain.state_view import Limits
-from sd_brain.tools import PROPOSAL_TOOL, AdaptError, adapt
+from sd_brain.tools import AdaptError, adapt
 from sd_brain.turn import ToolSpec
 from sd_schemas.commander import Situation
 from sd_schemas.skills import SkillRegistry
@@ -151,7 +151,3 @@ def parse_tool_calls(
         parsed.id = call_id
         out.append(parsed)
     return out, None
-
-
-def is_proposal(name: str) -> bool:
-    return name == PROPOSAL_TOOL

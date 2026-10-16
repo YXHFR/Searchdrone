@@ -70,14 +70,15 @@ def classify_override(text: str) -> OverrideIntent | None:
     """``"stop"`` or ``"return_home"`` when the whole line is the word, else ``None``.
 
     Exact match after normalisation and dropping the fillers ``nu``, ``direkt``,
-    ``genast`` and ``now``. Everything else (``stanna inte``, ``fortsätt``, longer
-    sentences) is ``None``. Never returns anything that releases a stop.
+    ``genast`` and ``now``; a repeated word ("stopp, stopp!") counts too. Everything
+    else (``stanna inte``, ``fortsätt``, longer sentences) is ``None``. Never returns
+    anything that releases a stop.
     """
     words = [w for w in normalize(text).split() if w not in _OVERRIDE_FILLERS]
-    line = " ".join(words)
-    if line in _STOP_WORDS:
+    if words and all(w in _STOP_WORDS for w in words):  # "stopp", "stopp stopp!"
         return "stop"
-    if line in _HOME_PHRASES:
+    line = " ".join(words)
+    if re.fullmatch(r"flyg hem(?: flyg hem)*", line):
         return "return_home"
     return None
 
@@ -91,14 +92,21 @@ def is_resume_request(text: str) -> bool:
     return line in _RESUME_PHRASES
 
 
+_AFTER_START = r"(?:$| (?:upp|nu|och|pa|till|direkt|dronaren)\b)"
 _TAKEOFF_RE = re.compile(
-    r"\b(starta|starta upp|lyft|lyft upp|kor igang|flyg till (p\d{1,3}|punkt \d+|nal \d+)"
-    r"|sok( av)?( sektor [a-z]{1,2}| omradet| rutan| [a-z])?)\b"
+    r"\b(?:starta|lyft)" + _AFTER_START + r"|\bkor igang\b"
+    r"|\b(?:flyg|ak) till (?:p ?\d{1,3}|punkt \d+|nal \d+)\b"
+    r"|\bsok(?: av)? (?:sektor [a-z]{1,2}|omradet|rutan|ytan)\b"
+)
+# Talk about a later start is not a request now ("vi ska starta om en timme").
+_LATER_RE = re.compile(
+    r"\b(?:senare|imorgon|i morgon|ikvall|om en (?:stund|timme|minut)|vi ska|ska vi)\b"
 )
 
 
 def is_takeoff_request(text: str) -> bool:
-    """An instruction to start: ``starta``, ``lyft``, ``kör igång``, ``flyg till P1``, ``sök …``.
+    """An instruction to start now: ``starta``, ``lyft``, ``kör igång``, ``flyg till P1``,
+    ``sök sektor A`` / ``sök området`` / ``sök rutan``.
 
     Not a question (ends with ``?`` or starts with a question word) and not negated
     (``inte``, ``ej``, ``aldrig``, ``vänta med``).
@@ -111,7 +119,7 @@ def is_takeoff_request(text: str) -> bool:
     if any(w in _NEGATIONS for w in words):
         return False
     line = " ".join(words)
-    if "vanta med" in line:
+    if "vanta med" in line or _LATER_RE.search(line):
         return False
     return _TAKEOFF_RE.search(line) is not None
 

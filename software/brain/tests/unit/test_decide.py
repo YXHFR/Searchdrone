@@ -19,7 +19,7 @@ from sd_brain.decide import (
     stop_check,
     stop_check_request,
 )
-from sd_brain.decide.engines import EngineAnswer, validate_answer
+from sd_brain.decide.engines import EngineAnswer
 from sd_schemas.base import new_id
 from sd_schemas.decide import (
     ChoiceAnswer,
@@ -287,7 +287,3 @@ async def test_stop_check() -> None:
             DecisionService([_Fake("jev", 0.0, None)]), "stanna", timeout_s=0.5, threshold=0.5
         )
     ).source == "none"
-
-
-def test_validate_answer() -> None:
-    assert validate_answer({"type": "noul", "p_true": 0.5}).type == "noul"

@@ -148,11 +148,21 @@ class _MaskingFilter(logging.Filter):
         message = record.getMessage()
         record.msg = mask(message, self._secrets)
         record.args = None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = mask(record.exc_text, self._secrets)
+        if record.stack_info:
+            record.stack_info = mask(record.stack_info, self._secrets)
         return True
 
 
 def install_log_masking(secrets: Secrets, logger: logging.Logger | None = None) -> None:
-    """Mask the secrets in every record that reaches ``logger``'s handlers."""
+    """Mask the secrets (message, traceback, stack) in every record ``logger`` handles.
+
+    Call it after the handlers are set up; the filter is added to the logger and to each
+    handler it has at that time.
+    """
     target = logger or logging.getLogger()
     flt = _MaskingFilter(secrets.values())
     target.addFilter(flt)

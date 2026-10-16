@@ -115,11 +115,11 @@ def test_prompt_contains_rules_and_budget() -> None:
     msgs = ctx.build(_turn())
     assert [m["role"] for m in msgs] == ["system", "user"]
     assert "MINNE: S" in msgs[1]["content"] and "PLAN: Plan: x" in msgs[1]["content"]
-    small = ContextBuilder(REG, takeoff_policy="clearance_only", prompt_budget_tokens=900)
+    small = ContextBuilder(REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=900)
     assert "MINNE" not in small.build(_turn())[1]["content"]
     assert ctx.count_tokens("abcdefg") == 2
     counted = ContextBuilder(
-        REG, takeoff_policy="clearance_only", prompt_budget_tokens=900, count_tokens=len
+        REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=900, count_tokens=len
     )
     assert counted.count_tokens("abc") == 3
 

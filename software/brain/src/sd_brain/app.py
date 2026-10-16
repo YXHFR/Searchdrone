@@ -129,7 +129,11 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
         if loop_ref:
             await loop_ref[0].log_decide(req, outcomes)
 
-    decide = DecisionService(_engines(cfg, secrets, http, cloud_http), on_answer=on_answer)
+    # Late answers are only logged; keep them short so the local model's single slot
+    # is free for the turn.
+    decide = DecisionService(
+        _engines(cfg, secrets, http, cloud_http), on_answer=on_answer, late_answer_s=1.0
+    )
     loop = CommanderLoop(
         ground,
         backend,

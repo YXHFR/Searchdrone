@@ -164,7 +164,7 @@ class BehaviourConfig(_Section):
     max_actions_per_turn: Literal[1] = 1
     idle_airborne_tick_s: float = Field(default=60, gt=0)
     language: Literal["sv"] = "sv"
-    takeoff_policy: Literal["request_then_clearance", "clearance_only"] = "request_then_clearance"
+    takeoff_policy: Literal["request_then_clearance"] = "request_then_clearance"
     rule_takeoff: bool = True
 
 
