@@ -55,6 +55,7 @@ from sd_schemas.vehicle import LandedState, VehicleState
 __all__ = [
     "ACK_ATTEMPTS",
     "MODE_FRESH_S",
+    "ControlNotAllowedError",
     "EventSink",
     "FcTelemetry",
     "ForbiddenMavlinkError",
@@ -162,7 +163,18 @@ class ForbiddenMavlinkError(Exception):
         self.reason = reason
 
 
+class ControlNotAllowedError(Exception):
+    """The owner of the link (the onboard executor) does not steer right now. Nothing
+    was sent; this is not a forbidden message, so no event is reported."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 EventSink = Callable[[str, dict[str, Any]], None]
+# Asked before every single write, retries included: a reason string closes the gate.
+SendGate = Callable[[SendOrigin], str | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +281,7 @@ class Vehicle:
         envelope: SendEnvelope | None = None,
         on_event: EventSink | None = None,
         heartbeat_allowed: Callable[[], bool] | None = None,
+        send_gate: SendGate | None = None,
     ) -> None:
         check_identity(role, transport.source_system, transport.source_component)
         if role is Role.ONBOARD and transport.source_system != fc_sysid:
@@ -282,6 +295,7 @@ class Vehicle:
         self._envelope = envelope or SendEnvelope()
         self._on_event = on_event
         self._heartbeat_allowed = heartbeat_allowed
+        self._send_gate = send_gate
         self._t = FcTelemetry()
         self._subscribers: list[Callable[[FcTelemetry], None]] = []
         self._waiters: list[_Waiter] = []
@@ -431,6 +445,10 @@ class Vehicle:
                 {"msg_type": msg.get_type(), "reason": reason, "origin": str(origin)},
             )
             raise ForbiddenMavlinkError(msg.get_type(), reason)
+        if self._send_gate is not None:
+            closed = self._send_gate(origin)
+            if closed is not None:
+                raise ControlNotAllowedError(closed)
         self._transport.write_message(msg)
         self.sent_count += 1
 

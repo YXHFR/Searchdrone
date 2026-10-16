@@ -18,6 +18,7 @@ from sd_mav.fake import FakeFlightController, FakeVehicle
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import (
     ONBOARD_STREAM_US,
+    ControlNotAllowedError,
     FcTelemetry,
     ForbiddenMavlinkError,
     MavResult,
@@ -575,6 +576,37 @@ def test_stale_heartbeat_never_counts_as_mode_reached() -> None:
             clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.SKILL)
         )
         assert result is MavResult.TIMEOUT  # never ACCEPTED from a stale HEARTBEAT
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_send_gate_is_asked_before_every_attempt() -> None:
+    """The owner's gate closes between two retries: the retry is never written."""
+
+    async def run() -> None:
+        closed: list[str] = []
+
+        def gate(origin: SendOrigin) -> str | None:
+            return closed[0] if closed and origin is SendOrigin.SKILL else None
+
+        clock, vehicle, events = await _started(send_gate=gate)
+        assert await run_with_clock(clock, vehicle.wait_connected(5.0), max_s=5.0)
+        vehicle.fc.drop_acks = 1  # the first answer is lost, so a retry would follow
+        before = len(vehicle.sent)
+        task = asyncio.ensure_future(vehicle.change_speed(5.0, origin=SendOrigin.SKILL))
+        await clock.run_for(0.2)
+        closed.append("held")
+        await clock.run_for(2.0)
+        with pytest.raises(ControlNotAllowedError, match="held"):
+            await task
+        speed = [m for m in vehicle.sent[before:] if m.get_type() == "COMMAND_LONG"]
+        assert len(speed) == 1  # the first attempt only
+        assert "mav.forbidden_mavlink_blocked" not in events.kinds()
+        # Startup traffic (heartbeat, streams) still passes the same gate.
+        await vehicle.request_message(
+            mavlink.MAVLINK_MSG_ID_HOME_POSITION, origin=SendOrigin.STARTUP
+        )
         await vehicle.close()
 
     asyncio.run(run())

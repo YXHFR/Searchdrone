@@ -101,15 +101,27 @@ class Plane:
     lat0: float
     lon0: float
 
-    def xy(self, lat: float, lon: float) -> Xy:
+    def _radii(self) -> tuple[float, float]:
+        """Metres per radian east and north at the reference point."""
         phi = math.radians(self.lat0)
         s = math.sin(phi)
         w = math.sqrt(1 - _E2 * s * s)
         n_radius = _A / w  # prime vertical
         m_radius = _A * (1 - _E2) / (w * w * w)  # meridian
-        east = math.radians(_wrap_lon(lon - self.lon0)) * n_radius * math.cos(phi)
-        north = math.radians(lat - self.lat0) * m_radius
+        return n_radius * math.cos(phi), m_radius
+
+    def xy(self, lat: float, lon: float) -> Xy:
+        east_r, north_r = self._radii()
+        east = math.radians(_wrap_lon(lon - self.lon0)) * east_r
+        north = math.radians(lat - self.lat0) * north_r
         return east, north
+
+    def latlon(self, east: float, north: float) -> tuple[float, float]:
+        """The exact inverse of :meth:`xy`: (lat, lon) of a point in the plane."""
+        east_r, north_r = self._radii()
+        lat = self.lat0 + math.degrees(north / north_r)
+        lon = _wrap_lon(self.lon0 + math.degrees(east / east_r))
+        return lat, lon
 
     def point(self, p: LatLon) -> Xy:
         return self.xy(p.lat, p.lon)

@@ -75,9 +75,15 @@ def test_exactly_the_18_skills() -> None:
     assert set(TABLE) == NAMES
 
 
-def test_all_are_stubs_until_built() -> None:
-    assert {k.status for k in SKILL_REGISTRY} == {"stub"}
-    assert all(k.allowed_from == frozenset() for k in SKILL_REGISTRY)
+ONBOARD_IMPLEMENTED = {"takeoff", "goto", "survey_sector", "hold", "resume", "return_home"}
+
+
+def test_only_built_skills_are_implemented() -> None:
+    """The onboard executor implements six skills; every other one is still a stub."""
+    implemented = {k.name for k in SKILL_REGISTRY if k.status == "implemented"}
+    assert implemented == ONBOARD_IMPLEMENTED
+    for k in SKILL_REGISTRY:
+        assert bool(k.allowed_from) is (k.name in ONBOARD_IMPLEMENTED), k.name
 
 
 @pytest.mark.parametrize("name", sorted(NAMES))

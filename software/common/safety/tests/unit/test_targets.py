@@ -97,3 +97,16 @@ def test_polygon_inside_polygon() -> None:
 def test_simple_polygons(corners: tuple[tuple[float, float], ...], simple: bool) -> None:
     assert Polygon(corners).is_simple() is simple
     assert L.is_simple()
+
+
+@pytest.mark.parametrize("east_north", [(0.0, 0.0), (250.0, -400.0), (-1500.0, 1200.0)])
+def test_plane_latlon_inverts_xy(east_north: tuple[float, float]) -> None:
+    lat, lon = PLANE.latlon(*east_north)
+    assert PLANE.xy(lat, lon) == pytest.approx(east_north, abs=1e-6)
+
+
+def test_plane_latlon_across_the_antimeridian() -> None:
+    plane = Plane(10.0, 179.999)
+    lat, lon = plane.latlon(500.0, 0.0)
+    assert lat == pytest.approx(10.0) and -180 <= lon < -179.99
+    assert plane.xy(lat, lon) == pytest.approx((500.0, 0.0), abs=1e-6)

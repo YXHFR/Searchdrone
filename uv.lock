@@ -1066,6 +1066,12 @@ source = { editable = "software/detector" }
 name = "sd-geo"
 version = "0.0.0"
 source = { editable = "software/common/geo" }
+dependencies = [
+    { name = "shapely" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "shapely", specifier = ">=2.1" }]
 
 [[package]]
 name = "sd-ground"
@@ -1187,6 +1193,28 @@ source = { editable = "software/common/obs" }
 name = "sd-onboard"
 version = "0.0.0"
 source = { editable = "software/onboard" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sd-geo" },
+    { name = "sd-link" },
+    { name = "sd-mav" },
+    { name = "sd-obs" },
+    { name = "sd-safety" },
+    { name = "sd-schemas" },
+    { name = "shapely" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-geo", editable = "software/common/geo" },
+    { name = "sd-link", editable = "software/common/link" },
+    { name = "sd-mav", editable = "software/common/mav" },
+    { name = "sd-obs", editable = "software/common/obs" },
+    { name = "sd-safety", editable = "software/common/safety" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
+    { name = "shapely", specifier = ">=2.1" },
+]
 
 [[package]]
 name = "sd-safety"

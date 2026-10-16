@@ -1,13 +1,19 @@
 # Onboard process (sd-onboard). Copied to config/onboard.toml by `just setup-config`.
-# Override any key with an environment variable SD_ONBOARD__<SECTION>__<KEY>.
+# Any key can be set with an environment variable SD_ONBOARD__<KEY>
+# (a key in a section: SD_ONBOARD__<SECTION>__<KEY>). There are no limits here: the hard
+# limits are constants in the code and the flight controller's fence.
 
-[vehicle]
 vehicle_id = "sim-01"
-profile = "sim"           # "sim" in v0.1; real hardware comes later
+profile = "sim"                                   # only "sim" in v0.1
+mav_url = "udpin:127.0.0.1:14563"                 # the simulator sets SD_ONBOARD__MAV_URL
+fc_sysid = 1                                      # the flight controller's MAV_SYSID, also ours
+own_compid = 191                                  # MAV_COMP_ID_ONBOARD_COMPUTER
+gcs_sysid = 250                                   # must equal MAV_GCS_SYSID in the .parm file
+sdlink_url = "ws://127.0.0.1:7601/sdlink/v1/control"
+link_token_file = "${SD_DATA_DIR}/secrets/onboard_link_token"  # outside the repository
+state_dir = ""                                    # empty = ${SD_DATA_DIR}/onboard/<vehicle_id>
+allow_companion_arm = true
+expected_param_files = ["simulation/sitl/params/searchdrone-safety.parm"]
 
-[mavlink]
-system_id = 1
-component_id = 191        # never 250 (ground station) or 255
-
-[link]
-token_file = "secrets/onboard_link_token"
+[test_hooks]                                      # only with profile "sim" and SD_TEST=1
+takeoff_delay_after_arm_s = 0.0
