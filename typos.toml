@@ -21,6 +21,10 @@ byt = "byt"
 vill = "vill"
 objekt = "objekt"
 tak = "tak"
+# Swedish (sd_ground: CLI help and error texts, B1-05)
+lokal = "lokal"
+adress = "adress"
+minut = "minut"
 # Swedish (panel texts in software/panel/src/i18n/sv.json; "gir" and "som" are below)
 meny = "meny"
 tema = "tema"

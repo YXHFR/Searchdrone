@@ -75,7 +75,7 @@ def test_all_recipes_listed() -> None:
     ("recipe", "ticket"),
     [
         ("brain-token", "B1-10"),
-        ("migrate", "B1-05"),
+        ("check-traceability", "B1-16"),
         ("hw-check", "B0-06"),
         ("models-fetch", "B1-10"),
     ],
@@ -87,9 +87,10 @@ def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
 
 
 def test_composite_skips_unbuilt() -> None:
-    step = just("_step", "migrate")
+    # Every composite step is built now; the skip itself still has to work.
+    step = just("--set", "unbuilt", "ci-sitl", "_step", "ci-sitl")
     assert step.returncode == 0
-    assert "hoppar över migrate (inte byggt än)" in step.stdout
+    assert "hoppar över ci-sitl (inte byggt än)" in step.stdout
 
 
 def _dump() -> dict[str, Any]:

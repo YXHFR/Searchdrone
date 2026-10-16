@@ -34,7 +34,7 @@ READY_LIMIT_S = 90.0
 STABLE_S = 30.0
 MIN_PARAMS = 500  # ArduCopter 4.7 has well over a thousand
 SECRET_ENV_KEY = re.compile(r"(PASSWORD|TOKEN|KEY)$")
-GROUND = "inte byggt än (B1-05)"
+GROUND = "inte byggt än: startaren startar inte markservern"
 SAFETY_PARAMS = "inte byggt än (B1-07)"
 # The onboard executor and the safety parameter file arrive together. Once the executor
 # exists, a missing safety file is an error, never "not built yet".
