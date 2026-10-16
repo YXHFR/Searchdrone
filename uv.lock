@@ -1071,7 +1071,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sd-schemas", editable = "software/common/schemas" },
     { name = "shapely", specifier = ">=2.1" },
-    { name = "websockets", specifier = ">=13" },
+    { name = "websockets", specifier = ">=15" },
 ]
 
 [[package]]
