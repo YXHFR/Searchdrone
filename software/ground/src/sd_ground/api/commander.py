@@ -33,6 +33,7 @@ from sd_ground.api.tasks import until_first_done
 from sd_ground.bus import BusEvent
 from sd_ground.context import Ground
 from sd_ground.logging import get_logger
+from sd_safety.constants import BRAIN_HEARTBEAT_TIMEOUT_S
 from sd_schemas.api import ChatMessage
 from sd_schemas.charter import CharterProposal
 from sd_schemas.commander import (
@@ -58,8 +59,6 @@ __all__ = [
     "to_commander",
 ]
 
-# Same value as sd_safety.constants.BRAIN_HEARTBEAT_TIMEOUT_S (the gate's constants).
-BRAIN_HEARTBEAT_TIMEOUT_S = 5.0
 BRAIN_PING_S = 5.0
 BRAIN_ISSUER = "brain:ground"
 MISSION_FLOW = "B1-12"

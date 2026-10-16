@@ -13,7 +13,6 @@ from collections.abc import Callable
 
 __all__ = ["LOOP_STALL_S", "LoopLiveness"]
 
-# Same value as sd_safety.constants.LOOP_STALL_S.
 LOOP_STALL_S = 8.0
 
 
