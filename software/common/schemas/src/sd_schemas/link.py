@@ -8,12 +8,19 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, field_validator
 
-from sd_schemas.base import Id, LatLonAlt, SdModel, VehicleId
+from sd_schemas.base import (
+    ISSUER_PATTERN,
+    VEHICLE_ID_PATTERN,
+    Id,
+    LatLonAlt,
+    SdModel,
+    VehicleId,
+)
 from sd_schemas.charter import MissionCharter
-from sd_schemas.executor import ExecutorState
-from sd_schemas.gate import GateDecision, StateRef
+from sd_schemas.executor import ExecutorState, HeldBy, HoldReason
+from sd_schemas.gate import CLEARANCE_VALID_MS, GateDecision, StateRef
 from sd_schemas.mission import LatchAction
 
 __all__ = [
@@ -43,6 +50,7 @@ __all__ = [
     "PilotPosition",
     "SkillCommand",
     "StateSnapshot",
+    "StickAxes",
     "is_reliable",
 ]
 
@@ -56,11 +64,14 @@ AckStage = Literal[
 ]
 
 
+_SENDER_PATTERN = "^(ground:main|vehicle:" + VEHICLE_ID_PATTERN.strip("^$") + ")$"
+
+
 class Envelope(SdModel):
     v: Literal[1] = 1
     msg_id: Id
-    kind: str  # the body class name, e.g. "SkillCommand"
-    sender: str = Field(pattern=r"^(ground:main|vehicle:[a-z0-9][a-z0-9-]{2,31})$")
+    kind: str  # the body class name, one of KIND_MODELS
+    sender: str = Field(pattern=_SENDER_PATTERN)
     vehicle_id: VehicleId
     mission_id: Id | None
     seq: int = Field(ge=0)  # per sender and connection, +1 per message
@@ -71,8 +82,15 @@ class Envelope(SdModel):
     sig: str | None = None  # reserved for HMAC; always None in the simulator
     body: dict[str, Any]  # validated against KIND_MODELS[kind]
 
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, value: str) -> str:
+        if value not in KIND_MODELS:
+            raise ValueError(f"unknown kind: {value[:64]}")
+        return value
+
     def parse_body(self) -> SdModel:
-        """The body as its typed model; KeyError for an unknown kind."""
+        """The body as its typed model; ValueError for a bad body."""
         return KIND_MODELS[self.kind].model_validate(self.body)
 
 
@@ -128,7 +146,7 @@ class SkillCommand(SdModel):
     command_id: Id
     skill: str
     params: dict[str, Any]
-    issuer: str  # "operator:<alias>" | "brain:ground"
+    issuer: str = Field(pattern=ISSUER_PATTERN)  # "operator:<alias>" | "brain:ground"
     rationale: str | None
     charter_version: int
     based_on: StateRef | None
@@ -156,8 +174,8 @@ class StateSnapshot(SdModel):
     state_epoch: int  # = boot_id
     last_transition_state_seq: int  # state_seq of the first snapshot with this executor_state
     executor_state: ExecutorState
-    hold_reason: str | None
-    held_by: str | None
+    hold_reason: HoldReason | None
+    held_by: HeldBy | None
     control_suspended: bool
     expected_mode: str | None
     flight_mode: str
@@ -215,7 +233,7 @@ class ClearanceConfirmation(SdModel):
     vehicle_id: VehicleId
     charter_id: Id
     charter_version: int
-    valid_for_ms: int = Field(gt=0)  # from receipt, onboard monotonic clock
+    valid_for_ms: int = Field(gt=0, le=CLEARANCE_VALID_MS)  # from receipt, onboard clock
     confirmed_by: str
     origin: Literal[
         "local", "lan", "remote"
@@ -253,15 +271,12 @@ class ManualTakeover(SdModel):
 
     takeover_id: Id
     active: bool
-    operator_id: str  # "operator:<alias>"; only the pilot role may steer
+    action_seq: int  # same per-vehicle sequence as latches; lower than the last seen is ignored
+    operator_id: str = Field(pattern=r"^operator:[a-z0-9][a-z0-9_-]{0,31}$")  # pilot role only
 
 
-class ManualControl(SdModel):
-    """Ground -> onboard, 10-20 Hz, not reliable. Stick values from the panel.
-
-    Axes are -1..1 (``throttle`` 0..1 with 0.5 = hold height, as in LOITER). Without a
-    new value for ``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.
-    """
+class StickAxes(SdModel):
+    """Stick values. Axes are -1..1; ``throttle`` 0..1 with 0.5 = hold height (LOITER)."""
 
     takeover_id: Id
     input_seq: int = Field(ge=0)  # +1 per value from the panel; older values are dropped
@@ -269,6 +284,11 @@ class ManualControl(SdModel):
     roll: float = Field(ge=-1, le=1)  # right +
     throttle: float = Field(ge=0, le=1)  # 0.5 = keep height
     yaw: float = Field(ge=-1, le=1)  # clockwise +
+
+
+class ManualControl(StickAxes):
+    """Ground -> onboard, 10-20 Hz, not reliable. Without a new value for
+    ``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still."""
 
 
 KIND_MODELS: dict[str, type[SdModel]] = {

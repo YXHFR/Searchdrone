@@ -34,11 +34,19 @@ class ExecutorState(StrEnum):
 
 
 HoldReason = Literal[
-    "ai_hold", "skill_done", "operator_released", "limit", "link_loss", "ai_silent", "startup"
+    "ai_hold",
+    "skill_done",
+    "operator_released",
+    "limit",
+    "link_loss",
+    "ai_silent",
+    "startup",
+    "manual_input_lost",  # no stick value for MANUAL_CONTROL_TIMEOUT_MS while steering by hand
 ]
 HeldBy = Literal[
     "operator_stop",
     "operator_home",
+    "operator_manual",  # the pilot steers by hand (Ta över); the AI's orders wait
     "system_battery",
     "system_watchdog",
     "external",

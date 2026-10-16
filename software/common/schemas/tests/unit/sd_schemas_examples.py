@@ -56,6 +56,7 @@ def _charter() -> s.MissionCharter:
         pilot_position=_ll(),
         allowed_skills=["takeoff", "goto", "survey_sector"],
         sectors=[s.Sector(sector_id="A", name="A", area=AREA, order_idx=0)],
+        autonomy_mode=s.AutonomyMode.WITHIN_CHARTER,
         fence_hash="ab12",
         approved_by="operator:demo",
         approved_at=T,
@@ -247,7 +248,7 @@ def _vehicle_summary() -> s.VehicleSummary:
         landed=False,
         airborne=True,
         flight_mode="GUIDED",
-        executor_state="TRANSIT",
+        executor_state=s.ExecutorState.TRANSIT,
         lat=HOME_LAT,
         lon=HOME_LON,
         alt_rel_home_m=40.0,
@@ -349,6 +350,8 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             phase="submit",
         ),
         s.ClearanceState(
+            clearance_id=OTHER,
+            origin="local",
             mission_id=MISSION,
             vehicle_id=VEHICLE,
             charter_id=CHARTER,
@@ -448,7 +451,7 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         s.PilotPosition(lat=HOME_LAT, lon=HOME_LON, source="charter", accuracy_m=None),
         s.OperatorPosition(lat=HOME_LAT, lon=HOME_LON, accuracy_m=5.0, t=T),
         s.CommanderStatus(connected=True, state="ready"),
-        s.ManualTakeover(takeover_id=OTHER, active=True, operator_id="operator:demo"),
+        s.ManualTakeover(takeover_id=OTHER, active=True, action_seq=7, operator_id="operator:demo"),
         s.ManualControl(takeover_id=OTHER, input_seq=1, pitch=0.5, roll=0, throttle=0.5, yaw=0),
         # panel API
         s.ApiErrorItem(code="less_than_equal", detail_sv="För högt.", loc=["body", "alt_m"]),
@@ -669,6 +672,9 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         s.CharterProposalResult(
             charter_id=CHARTER, approval_id=APPROVAL, validation=s.CharterValidationResult(ok=True)
         ),
+        s.MissionMemoryUpdate(
+            mission_id=MISSION, summary_sv="", plan_note="", summarized_up_to_seq=0
+        ),
         s.MissionMemory(
             mission_id=MISSION,
             summary_sv="",
@@ -677,6 +683,7 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             pending_operator_request=None,
             updated_at=None,
         ),
+        s.StickAxes(takeover_id=OTHER, input_seq=1, pitch=0, roll=0, throttle=0.5, yaw=0),
         s.DecisionLog(**_decision_log()),
         s.DecisionLogStored(**_decision_log(), prompt_file=None),
         # decision interface
@@ -685,7 +692,7 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             instructions="Vad vill operatören?", criteria={"stop": "Stoppa", "home": "Flyg hem"}
         ),
         s.ScoreQuestion(instructions="Hur bråttom är det?", max_score=4),
-        s.BoxQuestion(instructions="Var är personen?", image_ref="frame-1"),
+        s.BoxQuestion(instructions="Var är personen?", image_id=OTHER),
         s.DecideRequest(
             request_id=OTHER,
             purpose="stop_check",

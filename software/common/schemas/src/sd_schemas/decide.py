@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from sd_schemas.base import Id, SdModel
+from sd_schemas.base import Id, SdModel, json_bytes_at_most
 
 __all__ = [
     "BoxAnswer",
@@ -59,7 +59,7 @@ class BoxQuestion(SdModel):
 
     type: Literal["box"] = "box"
     instructions: str = Field(min_length=1, max_length=2000)
-    image_ref: str  # mission file id or path, never inline bytes in the log
+    image_id: Id  # a MissionFile id; never a path and never inline bytes
 
 
 DecideQuestion = Annotated[
@@ -70,8 +70,10 @@ DecideQuestion = Annotated[
 class DecideRequest(SdModel):
     request_id: Id
     purpose: str = Field(pattern=_NAME)  # e.g. "stop_check"
-    state: dict[str, Any]
-    questions: dict[Annotated[str, Field(pattern=_NAME)], DecideQuestion] = Field(min_length=1)
+    state: Annotated[dict[str, Any], json_bytes_at_most(32 * 1024)]
+    questions: dict[Annotated[str, Field(pattern=_NAME)], DecideQuestion] = Field(
+        min_length=1, max_length=64
+    )
 
 
 class NoulAnswer(SdModel):
@@ -82,7 +84,7 @@ class NoulAnswer(SdModel):
 class ChoiceAnswer(SdModel):
     type: Literal["choice"] = "choice"
     choice: str
-    probabilities: dict[str, float]
+    probabilities: dict[str, Annotated[float, Field(ge=0, le=1)]]
 
     @model_validator(mode="after")
     def _choice_listed(self) -> ChoiceAnswer:
@@ -94,7 +96,7 @@ class ChoiceAnswer(SdModel):
 class ScoreAnswer(SdModel):
     type: Literal["score"] = "score"
     score: int = Field(ge=0)
-    probabilities: list[float]  # index = score
+    probabilities: list[Annotated[float, Field(ge=0, le=1)]]  # index = score
 
 
 class BoxAnswer(SdModel):

@@ -8,6 +8,7 @@ from typing import Any
 
 import jsonschema
 import pytest
+from pydantic import ValidationError
 
 import sd_schemas
 from sd_schemas.link import KIND_MODELS, Envelope
@@ -70,5 +71,5 @@ def test_api_golden(path: Path, schema: dict[str, Any]) -> None:
 def test_schema_rejects_unknown_kind_body() -> None:
     data = _load(SDLINK[0])
     data["kind"] = "SkillOrder"  # an old name that no longer exists
-    with pytest.raises(KeyError):
-        Envelope.model_validate(data).parse_body()
+    with pytest.raises(ValidationError, match="unknown kind"):
+        Envelope.model_validate(data)

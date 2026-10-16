@@ -5,22 +5,28 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
-from sd_schemas.base import Id, LatLonAlt, SdModel, VehicleId
+from sd_schemas.base import ISSUER_PATTERN, Id, LatLonAlt, SdModel, VehicleId
 from sd_schemas.charter import AutonomyMode, MissionCharter
-from sd_schemas.mission import MissionState, OperatorLatch
+from sd_schemas.executor import ExecutorState
+from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.skills import SkillSpec
 from sd_schemas.vehicle import VehicleState
 
 __all__ = [
+    "CLEARANCE_VALID_MS",
     "ClearanceState",
     "GateContext",
     "GateDecision",
     "GateRequest",
     "StateRef",
 ]
+
+
+# "Clear around the drone" is valid at most this long after the click (or receipt onboard).
+CLEARANCE_VALID_MS = 120_000
 
 
 class StateRef(SdModel):
@@ -37,7 +43,7 @@ class GateRequest(SdModel):
     skill: str
     params: dict[str, Any]  # raw; validated by the rule R-SCHEMA
     issuer_kind: Literal["operator", "brain", "system"]
-    issuer_ref: str
+    issuer_ref: str = Field(pattern=ISSUER_PATTERN)
     charter_version: int | None
     based_on: StateRef | None
     phase: Literal["submit", "approve", "estimate", "onboard"]
@@ -46,19 +52,19 @@ class GateRequest(SdModel):
 
 
 class ClearanceState(SdModel):
+    clearance_id: Id
+    origin: Literal["local", "lan", "remote"]  # remote is never valid for a takeoff
     mission_id: Id
     vehicle_id: VehicleId
     charter_id: Id
     charter_version: int
     received_mono_ms: int  # monotonic time of the click (ground) or of receipt (onboard)
-    valid_for_ms: int
+    valid_for_ms: int = Field(gt=0, le=CLEARANCE_VALID_MS)
     consumed: bool
 
 
 class GateContext(SdModel):
     """Everything the gate may look at. Built by the caller; the gate does no I/O."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
     side: Literal["ground", "onboard"]
     now_mono_ms: int
@@ -69,19 +75,20 @@ class GateContext(SdModel):
     fence_verified: bool
     autonomy_mode: AutonomyMode | None  # = charter.autonomy_mode
     mission_state: MissionState | None  # ground; None onboard
-    paused_by: str | None
-    returning_cause: str | None
+    paused_by: PausedBy | None
+    returning_cause: ReturningCause | None
     ai_enabled: bool
     vehicle: VehicleState | None
     vehicle_age_ms: int | None
     snapshot_age_ms: int | None  # ground: age of the latest StateSnapshot; onboard 0
-    executor_state: str | None
+    executor_state: ExecutorState | None
     state_epoch: int | None
     last_transition_state_seq: int | None
     preflight_ok: bool | None
     sdlink_up: bool  # onboard: always True
     stop_latch: bool  # onboard: its stop_latch; ground: latch is not None
     latch: OperatorLatch | None  # ground
+    manual_control: bool  # the pilot steers by hand: every AI order that moves is rejected
     clearance: ClearanceState | None
     recent_brain_actions_mono_ms: tuple[int, ...]  # the last 60 s
     recent_brain_reports_mono_ms: tuple[int, ...]

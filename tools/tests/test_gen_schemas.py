@@ -51,8 +51,13 @@ def test_no_field_titles_and_no_ref_siblings() -> None:
             for v in node:
                 walk(v, False)
 
-    for body in gen_schemas.build_schema()["$defs"].values():
+    for body in gen_schemas.ts_input(gen_schemas.build_schema())["$defs"].values():
         walk(body, True)
+
+
+def test_committed_schema_keeps_defaults_next_to_refs() -> None:
+    props = gen_schemas.build_schema()["$defs"]["SurveyResumePoint"]["properties"]
+    assert props["kind"]["default"] == "survey"
 
 
 def test_committed_schema_matches_the_models() -> None:

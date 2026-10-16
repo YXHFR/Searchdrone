@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from sd_schemas.base import GeoJsonPoint, GeoJsonPolygon, Id, LatLon, SdModel, VehicleId
+from sd_schemas.base import (
+    SKILL_NAME_PATTERN,
+    GeoJsonPoint,
+    GeoJsonPolygon,
+    Id,
+    LatLon,
+    SdModel,
+    VehicleId,
+    json_bytes_at_most,
+)
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.gate import GateDecision, StateRef
-from sd_schemas.link import StateSnapshot
-from sd_schemas.mission import MissionState, OperatorLatch
+from sd_schemas.link import StateSnapshot, StickAxes
+from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.safety import LimitCaps, SafetyLimits
+from sd_schemas.sv_commands import OverrideIntent
 
 __all__ = [
     "CHAT_MAX_CHARS",
@@ -31,6 +41,7 @@ __all__ = [
     "Approval",
     "ApprovalDecisionRequest",
     "AutonomyRequest",
+    "Backend",
     "Charter",
     "ChatMessage",
     "ChatPost",
@@ -64,6 +75,8 @@ __all__ = [
 ]
 
 CHAT_MAX_CHARS = 4000
+
+Backend = Literal["llm", "grammar", "scripted", "rule", "cloud"]
 
 PartState = Literal["ok", "degraded", "down"]
 
@@ -292,16 +305,17 @@ class ActionOutcome(SdModel):
     detail_sv: str | None
     t: AwareDatetime
 
+    @model_validator(mode="after")
+    def _chat_only_stops(self) -> ActionOutcome:
+        # Chat may trigger STOP or FLY HOME, never Resume or a takeover.
+        if self.via == "chat" and self.action not in ("stop", "return_home"):
+            raise ValueError("only stop and return_home can come from chat")
+        return self
 
-class ManualControlInput(SdModel):
+
+class ManualControlInput(StickAxes):
     """Panel -> ground (WebSocket op "manual"), 10-20 Hz while the pilot steers."""
 
-    takeover_id: Id
-    input_seq: int = Field(ge=0)
-    pitch: float = Field(ge=-1, le=1)
-    roll: float = Field(ge=-1, le=1)
-    throttle: float = Field(ge=0, le=1)
-    yaw: float = Field(ge=-1, le=1)
     source: Literal["touch", "gamepad"]
 
 
@@ -313,8 +327,8 @@ class Mission(SdModel):
     vehicle_id: VehicleId
     title: str
     status: MissionState
-    paused_by: Literal["operator", "brain", "system"] | None
-    returning_cause: Literal["brain", "operator", "battery", "failsafe", "system"] | None
+    paused_by: PausedBy | None
+    returning_cause: ReturningCause | None
     state_seq: int
     limits: SafetyLimits
     active_charter_id: Id | None
@@ -394,7 +408,7 @@ class ApprovalDecisionRequest(SdModel):
     decision: Literal["approve", "reject"]
     subject_version: int
     confirmations: list[Literal["clear_around_drone"]] = Field(
-        default_factory=list[Literal["clear_around_drone"]]
+        default_factory=list[Literal["clear_around_drone"]], max_length=4
     )
     autonomy_mode: AutonomyMode | None = None
     reason: str | None = Field(default=None, max_length=500)
@@ -408,7 +422,7 @@ class Command(SdModel):
     params: dict[str, Any]
     issuer_kind: Literal["operator", "brain", "system"]
     issuer_ref: str
-    backend: Literal["llm", "grammar", "scripted", "rule", "cloud"] | None
+    backend: Backend | None
     rationale_sv: str | None
     in_reply_to: Id | None
     charter_version: int | None
@@ -425,8 +439,8 @@ class OperatorCommandRequest(SdModel):
     """An order from the pilot, e.g. an order button. Same gate and latch as the AI's orders."""
 
     client_command_id: Id
-    skill: str
-    params: dict[str, Any]
+    skill: str = Field(pattern=SKILL_NAME_PATTERN)
+    params: Annotated[dict[str, Any], json_bytes_at_most(16 * 1024)] = Field(max_length=32)
     rationale_sv: str | None = Field(default=None, max_length=500)
 
 
@@ -446,7 +460,7 @@ class ChatMessage(SdModel):
     in_reply_to: Id | None
     refs: dict[str, Any]
     author_role: Literal["pilot", "system"] | None  # set by the server from the session
-    parsed_intent: Literal["stop", "return_home"] | None  # never "resume"
+    parsed_intent: OverrideIntent | None  # never "resume"
     handled_by: Literal["ground"] | None
     delivery: Literal["n/a", "queued", "delivered", "summarized"]
     created_at: AwareDatetime
@@ -455,7 +469,7 @@ class ChatMessage(SdModel):
 class ChatPost(SdModel):
     client_msg_id: Id
     text: str = Field(min_length=1, max_length=CHAT_MAX_CHARS)
-    annotation_ids: list[Id] = Field(default_factory=list[Id])
+    annotation_ids: list[Id] = Field(default_factory=list[Id], max_length=20)
     in_reply_to: Id | None = None
 
 

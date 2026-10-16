@@ -101,7 +101,9 @@ export type Trigger =
   | "RESTART_FC_RETURNING"
   | "LANDED_DISARMED"
   | "CLOSE_AUTO"
-  | "CLOSE_MANUAL";
+  | "CLOSE_MANUAL"
+  | "MANUAL_TAKEOVER"
+  | "MANUAL_HANDBACK";
 
 export interface SdSchemas {
   [k: string]: unknown;
@@ -296,7 +298,15 @@ export interface Approval {
  */
 export interface ApprovalDecisionRequest {
   autonomy_mode?: AutonomyMode | null;
-  confirmations?: "clear_around_drone"[];
+  /**
+   * @maxItems 4
+   */
+  confirmations?:
+    | []
+    | ["clear_around_drone"]
+    | ["clear_around_drone", "clear_around_drone"]
+    | ["clear_around_drone", "clear_around_drone", "clear_around_drone"]
+    | ["clear_around_drone", "clear_around_drone", "clear_around_drone", "clear_around_drone"];
   decision: "approve" | "reject";
   reason?: string | null;
   subject_version: number;
@@ -333,7 +343,7 @@ export interface BoxAnswer {
  * via the `definition` "BoxQuestion".
  */
 export interface BoxQuestion {
-  image_ref: string;
+  image_id: string;
   instructions: string;
   type?: "box";
 }
@@ -385,6 +395,9 @@ export interface Charter {
  */
 export interface MissionCharter {
   ai_silent_timeout_s?: number;
+  /**
+   * @maxItems 32
+   */
   allowed_skills: string[];
   alt_max_agl_m?: number;
   alt_min_agl_m?: number;
@@ -393,7 +406,7 @@ export interface MissionCharter {
   area: {
     [k: string]: unknown;
   };
-  autonomy_mode?: AutonomyMode;
+  autonomy_mode: AutonomyMode;
   battery_rtl_pct?: number;
   charter_id: string;
   default_alt_agl_m?: number;
@@ -406,6 +419,9 @@ export interface MissionCharter {
   notes?: string | null;
   on_ai_silent?: "continue_plan" | "hold" | "return_home";
   pilot_position: LatLon;
+  /**
+   * @maxItems 52
+   */
   sectors: Sector[];
   vehicle_id: string;
   version: number;
@@ -459,8 +475,9 @@ export interface CharterInstall {
 /**
  * A new or changed charter from the pilot (panel) or the AI.
  *
- * It deliberately has no field for the autonomy mode, the limits, home or the pilot
- * position: sending one is rejected (unknown fields are forbidden).
+ * It has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot
+ * position: sending one is rejected (unknown fields are forbidden). Its own charter
+ * values are checked against the mission limits by the server before any card shows.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "CharterProposal".
@@ -536,7 +553,142 @@ export interface ChatMessage {
  * via the `definition` "ChatPost".
  */
 export interface ChatPost {
-  annotation_ids?: string[];
+  /**
+   * @maxItems 20
+   */
+  annotation_ids?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ];
   client_msg_id: string;
   in_reply_to?: string | null;
   text: string;
@@ -605,8 +757,10 @@ export interface ClearanceConfirmation {
 export interface ClearanceState {
   charter_id: string;
   charter_version: number;
+  clearance_id: string;
   consumed: boolean;
   mission_id: string;
+  origin: "local" | "lan" | "remote";
   received_mono_ms: number;
   valid_for_ms: number;
   vehicle_id: string;
@@ -753,7 +907,7 @@ export interface DecisionLog {
   completion_tokens: number;
   engine?: ("cloud" | "local") | null;
   error: ("deadline" | "timeout" | "http_error" | "parse_error" | "round_limit") | null;
-  gate_decision: string | null;
+  gate_decision: ("ALLOW" | "REJECT" | "PENDING_APPROVAL") | null;
   id: string;
   latency_ms: number;
   model_id?: string | null;
@@ -764,10 +918,16 @@ export interface DecisionLog {
   prompt_tokens: number;
   proposal_id?: string | null;
   proposal_ok?: boolean | null;
+  /**
+   * @maxItems 64
+   */
   reason_codes?: string[];
   repairs: number;
   retry_of?: string | null;
   rounds: number;
+  /**
+   * @maxItems 32
+   */
   tool_calls: {
     [k: string]: unknown;
   }[];
@@ -785,7 +945,7 @@ export interface DecisionLogStored {
   completion_tokens: number;
   engine?: ("cloud" | "local") | null;
   error: ("deadline" | "timeout" | "http_error" | "parse_error" | "round_limit") | null;
-  gate_decision: string | null;
+  gate_decision: ("ALLOW" | "REJECT" | "PENDING_APPROVAL") | null;
   id: string;
   latency_ms: number;
   model_id?: string | null;
@@ -797,10 +957,16 @@ export interface DecisionLogStored {
   prompt_tokens: number;
   proposal_id?: string | null;
   proposal_ok?: boolean | null;
+  /**
+   * @maxItems 64
+   */
   reason_codes?: string[];
   repairs: number;
   retry_of?: string | null;
   rounds: number;
+  /**
+   * @maxItems 32
+   */
   tool_calls: {
     [k: string]: unknown;
   }[];
@@ -865,6 +1031,8 @@ export interface Features {
   voice?: boolean;
 }
 /**
+ * Stage 2. Unresolved here: the operator's position is checked onboard.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "FindMeParams".
  */
@@ -873,6 +1041,8 @@ export interface FindMeParams {
   hover_offset_m: number;
 }
 /**
+ * Stage 2. Unresolved here: the operator's position is checked onboard.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "FollowMeParams".
  */
@@ -882,6 +1052,8 @@ export interface FollowMeParams {
   standoff_m: number;
 }
 /**
+ * Stage 2. The target moves; every set-point is checked onboard. Unresolved here.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "FollowTrackParams".
  */
@@ -914,8 +1086,10 @@ export interface GateRequest {
 /**
  * Where an order would take the vehicle. The gate checks every item against the limits.
  *
- * ``path`` holds the corner points of the route (current position first). The gate
- * samples it every 10 m with ``sd_geo`` before checking.
+ * ``path`` holds the corner points of the route (current position first); the gate
+ * samples it before checking. ``resolved = False`` means the targets could not be
+ * worked out (unknown sector, unknown position, a target that only exists onboard);
+ * the gate must then reject an order that moves the vehicle.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "GateTargets".
@@ -927,6 +1101,7 @@ export interface GateTargets {
   }[];
   path?: LatLon[];
   points?: LatLon[];
+  resolved?: boolean;
   speed_ms?: number | null;
 }
 /**
@@ -1026,6 +1201,8 @@ export interface HoldParams {
   reason?: string;
 }
 /**
+ * Stage 2. The detection's position exists only onboard: always unresolved here.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "InspectDetectionParams".
  */
@@ -1046,9 +1223,9 @@ export interface LandAtParams {
 /**
  * The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.
  *
- * Read by the ground station from its local settings file. The defaults are the
- * owner's chosen outer cap. A cap can never be set below the standard values, and
- * the battery floor and lowest height can never be loosened.
+ * Read by the ground station from its local settings file. A cap lies between the
+ * standard values and the hard ceilings; the battery floor and lowest height can
+ * never be loosened.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "LimitCaps".
@@ -1079,10 +1256,8 @@ export interface LoginRequest {
   pin?: string | null;
 }
 /**
- * Ground -> onboard, 10-20 Hz, not reliable. Stick values from the panel.
- *
- * Axes are -1..1 (``throttle`` 0..1 with 0.5 = hold height, as in LOITER). Without a
- * new value for ``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.
+ * Ground -> onboard, 10-20 Hz, not reliable. Without a new value for
+ * ``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ManualControl".
@@ -1134,6 +1309,7 @@ export interface ManualControlState {
  * via the `definition` "ManualTakeover".
  */
 export interface ManualTakeover {
+  action_seq: number;
   active: boolean;
   operator_id: string;
   takeover_id: string;
@@ -1169,6 +1345,8 @@ export interface MarkLocationAiParams {
   pin?: string | null;
 }
 /**
+ * A map marker on the ground; it does not move the vehicle.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "MarkLocationParams".
  */
@@ -1264,18 +1442,35 @@ export interface MissionFile {
   started_at: string | null;
 }
 /**
+ * What the server stores and returns.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "MissionMemory".
  */
 export interface MissionMemory {
   mission_id: string;
-  pending_operator_request: {
+  pending_operator_request?: {
     [k: string]: unknown;
   } | null;
   plan_note: string;
   summarized_up_to_seq: number;
   summary_sv: string;
   updated_at: string | null;
+}
+/**
+ * What sd-brain sends (PUT .../memory). The server adds ``updated_at``.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "MissionMemoryUpdate".
+ */
+export interface MissionMemoryUpdate {
+  mission_id: string;
+  pending_operator_request?: {
+    [k: string]: unknown;
+  } | null;
+  plan_note: string;
+  summarized_up_to_seq: number;
+  summary_sv: string;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1440,11 +1635,15 @@ export interface ReportParams {
   text_sv: string;
 }
 /**
+ * Continue the step interrupted by hold. The gate rechecks the remaining route.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ResumeParams".
  */
 export interface ResumeParams {}
 /**
+ * Always allowed geometrically: flying home must never be blocked by a missing target.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ReturnHomeParams".
  */
@@ -1490,13 +1689,13 @@ export interface Situation {
   mission_id: string;
   mission_status: MissionState;
   override: OperatorLatch | null;
-  paused_by: string | null;
+  paused_by: ("operator" | "brain" | "system") | null;
   pending_approvals: Approval[];
   pending_proposal: Charter | null;
   pilot: LatLon | null;
   pins: MapPin[];
   recent_events: Event[];
-  returning_cause: string | null;
+  returning_cause: ("brain" | "operator" | "battery" | "failsafe" | "system") | null;
   sectors: {
     [k: string]: unknown;
   }[];
@@ -1519,7 +1718,7 @@ export interface VehicleSummary {
   battery_to_reserve_s: number | null;
   connected: boolean;
   dist_to_pilot_m: number | null;
-  executor_state: string | null;
+  executor_state: ExecutorState | null;
   flight_mode: string;
   gnss_ok: boolean;
   groundspeed_ms: number | null;
@@ -1571,30 +1770,33 @@ export interface SkillRequest {
  * via the `definition` "SkillSpecPublic".
  */
 export interface SkillSpecPublic {
-  ai_allowed: boolean;
+  ai_allowed?: boolean;
   ai_params_schema: {
     [k: string]: unknown;
   } | null;
   allowed_from: ExecutorState[];
-  allowed_under_latch: boolean;
+  allowed_under_latch?: boolean;
   allowed_when: "on_ground" | "airborne" | "any";
   description_en: string;
-  ends_flight: boolean;
-  exempt_from_battery_rule: boolean;
+  ends_flight?: boolean;
+  exempt_from_battery_rule?: boolean;
   moves_vehicle: boolean;
   name: string;
   params_schema: {
     [k: string]: unknown;
   };
   rate_class: "action" | "report" | "none";
-  requires_approval_in_b: boolean;
+  requires_approval_in_b?: boolean;
   runs_on: "onboard" | "ground";
   stage: 1 | 2 | 3;
-  starts_flight: boolean;
+  starts_flight?: boolean;
   status: "implemented" | "stub";
-  synonyms_sv: string[];
+  /**
+   * @minItems 1
+   */
+  synonyms_sv: [string, ...string[]];
   title_sv: string;
-  ttl_s: number;
+  ttl_s?: number;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1633,8 +1835,30 @@ export interface StateSnapshot {
   flight_mode: string;
   groundspeed_ms: number;
   heading_deg: number;
-  held_by: string | null;
-  hold_reason: string | null;
+  held_by:
+    | (
+        | "operator_stop"
+        | "operator_home"
+        | "operator_manual"
+        | "system_battery"
+        | "system_watchdog"
+        | "external"
+        | "onboard_restart"
+        | "fc_silent"
+      )
+    | null;
+  hold_reason:
+    | (
+        | "ai_hold"
+        | "skill_done"
+        | "operator_released"
+        | "limit"
+        | "link_loss"
+        | "ai_silent"
+        | "startup"
+        | "manual_input_lost"
+      )
+    | null;
   last_transition_state_seq: number;
   limits_active: string[];
   manual_control?: boolean;
@@ -1654,11 +1878,27 @@ export interface StateSnapshot {
   tick_ms_p95: number;
 }
 /**
+ * Stick values. Axes are -1..1; ``throttle`` 0..1 with 0.5 = hold height (LOITER).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "StickAxes".
+ */
+export interface StickAxes {
+  input_seq: number;
+  pitch: number;
+  roll: number;
+  takeover_id: string;
+  throttle: number;
+  yaw: number;
+}
+/**
+ * Stop following and hover. A later ``resume`` goes through the gate on its own.
+ *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "StopFollowParams".
  */
 export interface StopFollowParams {
-  then?: "hold" | "resume";
+  then?: "hold";
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1686,7 +1926,7 @@ export interface SurveySectorAiParams {
   speed_ms?: number | null;
 }
 /**
- * Search a sector. The ground replaces ``sector_id`` with the sector's polygon.
+ * Search a polygon or a sector. The ground replaces ``sector_id`` with its polygon.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SurveySectorParams".
@@ -1731,6 +1971,7 @@ export interface TargetContext {
   charter: MissionCharter | null;
   home: LatLonAlt | null;
   position: LatLonAlt | null;
+  resume_point?: (SurveyResumePoint | GotoResumePoint) | null;
 }
 /**
  * From the ground station's own MAVLink channel.

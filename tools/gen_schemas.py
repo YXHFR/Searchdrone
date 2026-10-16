@@ -4,6 +4,9 @@
 2. One JSON Schema file with every export under ``$defs``, in validation mode.
 3. One ``json2ts`` run turns it into one TypeScript file, so shared types exist once.
 
+The schema is generated in validation mode, so a field with a default is optional in
+TypeScript even on responses where the server always fills it in.
+
 The output is byte-identical on every run; ``just gen-check`` relies on that.
 OpenAPI snapshots are added here when the ground station's API exists.
 """
@@ -16,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -41,22 +45,30 @@ def exported_types() -> list[type]:
     return out
 
 
-def _tidy(node: Any, *, top: bool) -> Any:
-    """Shape the schema so json2ts names only real types.
+def _drop_field_titles(node: Any, *, top: bool) -> Any:
+    """Drop the per-field ``title`` pydantic adds, so json2ts names only real types."""
+    if isinstance(node, dict):
+        return {
+            k: _drop_field_titles(v, top=False)
+            for k, v in node.items()
+            if not (k == "title" and not top and isinstance(v, str))
+        }
+    if isinstance(node, list):
+        return [_drop_field_titles(v, top=False) for v in node]
+    return node
 
-    Drops the per-field ``title`` pydantic adds, and a ``default`` next to a ``$ref``
-    (json2ts would otherwise emit a second copy of the referenced type).
+
+def ts_input(node: Any) -> Any:
+    """The copy json2ts reads: no ``default`` next to a ``$ref``.
+
+    json2ts would otherwise emit a second copy of the referenced type. The committed
+    JSON Schema keeps every default.
     """
     if isinstance(node, dict):
         has_ref = "$ref" in node
-        return {
-            k: _tidy(v, top=False)
-            for k, v in node.items()
-            if not (k == "title" and not top and isinstance(v, str))
-            and not (k == "default" and has_ref)
-        }
+        return {k: ts_input(v) for k, v in node.items() if not (k == "default" and has_ref)}
     if isinstance(node, list):
-        return [_tidy(v, top=False) for v in node]
+        return [ts_input(v) for v in node]
     return node
 
 
@@ -71,7 +83,9 @@ def build_schema() -> dict[str, Any]:
     for e in enums:
         if e.__name__ not in defs:
             defs[e.__name__] = TypeAdapter(e).json_schema(ref_template=REF_TEMPLATE)
-    schema["$defs"] = {name: _tidy(body, top=True) for name, body in sorted(defs.items())}
+    schema["$defs"] = {
+        name: _drop_field_titles(body, top=True) for name, body in sorted(defs.items())
+    }
     return schema
 
 
@@ -85,11 +99,18 @@ def write_text(path: Path, text: str) -> None:
         f.write(text)
 
 
-def run_json2ts() -> None:
+def run_json2ts(schema: dict[str, Any]) -> None:
     pnpm = shutil.which("pnpm")
     if pnpm is None:
         sys.exit("gen_schemas: pnpm saknas. Kör bash tools/bootstrap.sh.")
     TS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "sd_schemas.schema.json"
+        write_text(source, dump(ts_input(schema)))
+        _json2ts(pnpm, source)
+
+
+def _json2ts(pnpm: str, source: Path) -> None:
     cmd = [
         pnpm,
         "--silent",
@@ -98,7 +119,7 @@ def run_json2ts() -> None:
         "exec",
         "json2ts",
         "-i",
-        os.path.relpath(SCHEMA_FILE, TS_PACKAGE),
+        str(source),
         "-o",
         os.path.relpath(TS_FILE, TS_PACKAGE),
         "--unreachableDefinitions",
@@ -111,8 +132,9 @@ def run_json2ts() -> None:
 
 
 def main() -> int:
-    write_text(SCHEMA_FILE, dump(build_schema()))
-    run_json2ts()
+    schema = build_schema()
+    write_text(SCHEMA_FILE, dump(schema))
+    run_json2ts(schema)
     print(f"skrev {SCHEMA_FILE.relative_to(ROOT)} och {TS_FILE.relative_to(ROOT)}")
     return 0
 

@@ -696,7 +696,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic", specifier = ">=2.13" },
-    { name = "uuid-utils", specifier = ">=1.0" },
+    { name = "uuid-utils", specifier = ">=1.0,<2" },
 ]
 
 [[package]]

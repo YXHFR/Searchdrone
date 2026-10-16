@@ -5,7 +5,7 @@ Nothing here lets the AI approve, stop, change limits, autonomy mode or the fenc
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, Field
 
@@ -13,15 +13,17 @@ from sd_schemas.api import (
     CHAT_MAX_CHARS,
     Annotation,
     Approval,
+    Backend,
     Charter,
     Command,
     CommandStatus,
     Event,
 )
-from sd_schemas.base import Id, LatLon, SdModel, VehicleId
+from sd_schemas.base import SKILL_NAME_PATTERN, Id, LatLon, SdModel, VehicleId, json_bytes_at_most
 from sd_schemas.charter import AutonomyMode, CharterValidationResult, MissionCharter
+from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateDecision, StateRef
-from sd_schemas.mission import MissionState, OperatorLatch
+from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.safety import SafetyLimits
 
 __all__ = [
@@ -33,13 +35,19 @@ __all__ = [
     "EstimateResult",
     "MapPin",
     "MissionMemory",
+    "MissionMemoryUpdate",
     "Situation",
     "SkillRequest",
     "SkillSubmitResult",
     "VehicleSummary",
 ]
 
-Backend = Literal["llm", "grammar", "scripted", "rule", "cloud"]
+
+# Size caps on what the AI process sends; it is the least trusted caller.
+PARAMS_MAX_BYTES = 16 * 1024
+REFS_MAX_BYTES = 4 * 1024
+PROMPT_JSON_MAX_BYTES = 1024 * 1024
+_HASH = r"^[0-9a-zA-Z_.:-]{1,128}$"
 
 
 class MapPin(SdModel):
@@ -56,7 +64,7 @@ class VehicleSummary(SdModel):
     landed: bool
     airborne: bool
     flight_mode: str
-    executor_state: str | None
+    executor_state: ExecutorState | None
     lat: float | None
     lon: float | None
     alt_rel_home_m: float | None
@@ -76,8 +84,8 @@ class Situation(SdModel):
     snapshot_state_epoch: int | None
     snapshot_state_seq: int | None
     mission_status: MissionState
-    paused_by: str | None
-    returning_cause: str | None
+    paused_by: PausedBy | None
+    returning_cause: ReturningCause | None
     autonomy_mode: AutonomyMode | None
     ai_enabled: bool
     limits: SafetyLimits
@@ -105,19 +113,21 @@ class BrainMessage(SdModel):
     text: str = Field(min_length=1, max_length=CHAT_MAX_CHARS)
     kind: Literal["text", "question", "status", "proposal"] = "text"
     in_reply_to: Id | None = None
-    refs: dict[str, Any] = Field(default_factory=dict[str, Any])
+    refs: Annotated[dict[str, Any], json_bytes_at_most(REFS_MAX_BYTES)] = Field(
+        default_factory=dict[str, Any], max_length=16
+    )
 
 
 class SkillRequest(SdModel):
     command_id: Id  # created by sd-brain; idempotent
-    skill: str
-    params: dict[str, Any]
+    skill: str = Field(pattern=SKILL_NAME_PATTERN)
+    params: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] = Field(max_length=32)
     rationale_sv: str = Field(max_length=500)
     in_reply_to: Id | None
     based_on: StateRef | None  # the ground station never fills it in
     charter_version: int | None
     backend: Backend
-    ai_config_hash: str
+    ai_config_hash: str = Field(pattern=_HASH)
 
 
 class SkillSubmitResult(SdModel):
@@ -142,38 +152,50 @@ class CharterProposalResult(SdModel):
     validation: CharterValidationResult
 
 
-class MissionMemory(SdModel):
+class MissionMemoryUpdate(SdModel):
+    """What sd-brain sends (PUT .../memory). The server adds ``updated_at``."""
+
     mission_id: Id
     summary_sv: str = Field(max_length=1200)
     plan_note: str = Field(max_length=400)
-    summarized_up_to_seq: int
-    pending_operator_request: dict[str, Any] | None
+    summarized_up_to_seq: int = Field(ge=0)
+    pending_operator_request: (
+        Annotated[dict[str, Any], json_bytes_at_most(REFS_MAX_BYTES)] | None
+    ) = None
+
+
+class MissionMemory(MissionMemoryUpdate):
+    """What the server stores and returns."""
+
     updated_at: AwareDatetime | None  # *server*
 
 
 class DecisionLog(SdModel):
     id: Id
     turn_id: Id
-    trigger: str
+    trigger: str = Field(pattern=r"^[a-z][a-z0-9_.]{0,63}$")
     backend: Backend
     engine: Literal["cloud", "local"] | None = None  # which model answered
-    model_id: str | None = None
-    ai_config_hash: str
-    prompt_sha256: str
-    prompt_tokens: int
-    completion_tokens: int
-    latency_ms: int
-    rounds: int
-    repairs: int
-    tool_calls: list[dict[str, Any]]
+    model_id: str | None = Field(default=None, max_length=128)
+    ai_config_hash: str = Field(pattern=_HASH)
+    prompt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    latency_ms: int = Field(ge=0)
+    rounds: int = Field(ge=0)
+    repairs: int = Field(ge=0)
+    tool_calls: Annotated[list[dict[str, Any]], json_bytes_at_most(PARAMS_MAX_BYTES * 4)] = Field(
+        max_length=32
+    )
     command_id: Id | None
-    gate_decision: str | None
-    reason_codes: list[str] = Field(default_factory=list[str])
+    gate_decision: Literal["ALLOW", "REJECT", "PENDING_APPROVAL"] | None
+    reason_codes: list[str] = Field(default_factory=list[str], max_length=64)
     error: Literal["deadline", "timeout", "http_error", "parse_error", "round_limit"] | None
     retry_of: Id | None = None
     proposal_id: Id | None = None
     proposal_ok: bool | None = None
-    prompt_json: dict[str, Any] | None  # at most 1 MiB serialised; stored as a file
+    prompt_json: Annotated[dict[str, Any], json_bytes_at_most(PROMPT_JSON_MAX_BYTES)] | None
+    # stored as a file, never in the database
 
 
 class DecisionLogStored(DecisionLog):

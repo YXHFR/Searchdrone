@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from typing import Annotated, Any, cast
 
 import uuid_utils
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, WithJsonSchema
 
 __all__ = [
+    "ISSUER_PATTERN",
     "MAX_POLYGON_POINTS",
     "MIN_POLYGON_POINTS",
+    "SKILL_NAME_PATTERN",
     "VEHICLE_ID_PATTERN",
     "GeoJsonPoint",
     "GeoJsonPolygon",
@@ -20,26 +23,45 @@ __all__ = [
     "LatLonAlt",
     "SdModel",
     "VehicleId",
+    "json_bytes_at_most",
     "new_id",
 ]
 
 
 class SdModel(BaseModel):
-    """Base for every message: unknown fields are rejected and instances are immutable."""
+    """Base for every message: unknown fields are rejected, instances are immutable and
+    floats must be finite (no inf or NaN)."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
-Id = uuid.UUID
+_UUID7_PATTERN = (
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+
+
+def _require_v7(value: uuid.UUID) -> uuid.UUID:
+    if value.version != 7 or value.variant != uuid.RFC_4122:
+        raise ValueError("ids are UUIDv7")
+    return value
+
+
+Id = Annotated[
+    uuid.UUID,
+    AfterValidator(_require_v7),
+    WithJsonSchema({"type": "string", "format": "uuid", "pattern": _UUID7_PATTERN}),
+]
 """Every id is a UUIDv7 (time-ordered). Create new ones with :func:`new_id`."""
 
 
-def new_id() -> Id:
+def new_id() -> uuid.UUID:
     """Return a new UUIDv7 as a standard :class:`uuid.UUID`."""
     return uuid.UUID(bytes=uuid_utils.uuid7().bytes)
 
 
 VEHICLE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]{2,31}$"
+SKILL_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+ISSUER_PATTERN = r"^(operator:[a-z0-9][a-z0-9_-]{0,31}|brain:ground|system:ground|rule:onboard)$"
 VehicleId = Annotated[str, StringConstraints(pattern=VEHICLE_ID_PATTERN)]
 """Vehicle id such as ``sim-01``. Never a name that reveals a person or a place."""
 
@@ -113,3 +135,15 @@ GeoJsonPoint = Annotated[dict[str, Any], AfterValidator(_check_point)]
 
 GeoJsonPolygon = Annotated[dict[str, Any], AfterValidator(_check_polygon)]
 """GeoJSON Polygon with one closed outer ring of 4-201 positions and no holes."""
+
+
+def json_bytes_at_most(limit: int) -> AfterValidator:
+    """Reject a value whose compact JSON form is larger than ``limit`` bytes."""
+
+    def check(value: Any) -> Any:
+        size = len(json.dumps(value, separators=(",", ":"), default=str).encode())
+        if size > limit:
+            raise ValueError(f"too large: {size} bytes, at most {limit}")
+        return value
+
+    return AfterValidator(check)

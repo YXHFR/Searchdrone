@@ -9,6 +9,8 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final
 
+from sd_schemas.charter import SECTOR_MAX_AREA_M2
+
 __all__ = [
     "APPROVAL_OUTCOME_CODES",
     "CHARTER_VALIDATION_CODES",
@@ -35,6 +37,7 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "OPERATOR_OVERRIDE_ACTIVE": "Operatören har tagit över. AI:n får inte flytta drönaren.",
         "FAILSAFE_ACTIVE": "Flygkontrollerns nödläge eller batterihemflygning pågår.",
         "CONTROL_HELD": "Någon annan styr drönaren just nu.",
+        "MANUAL_CONTROL_ACTIVE": "Piloten styr för hand. AI:n får vänta.",
         "CHARTER_NOT_APPROVED": "Det finns ingen godkänd uppdragsram.",
         "CHARTER_NOT_INSTALLED": "Uppdragsramen är inte installerad i drönaren än.",
         "CHARTER_VERSION_MISMATCH": "Ordern gäller en annan version av uppdragsramen.",
@@ -78,17 +81,19 @@ CHARTER_VALIDATION_CODES: Final = MappingProxyType(
         "AREA_INVALID": "Sökområdet är ogiltigt eller för stort.",
         "HOME_OUTSIDE_AREA": "Hemplatsen ligger utanför sökområdet.",
         "SECTOR_OUTSIDE_AREA": "En sektor ligger utanför sökområdet.",
-        "SECTOR_TOO_LARGE": "En sektor är större än 250 000 m².",
+        "SECTOR_TOO_LARGE": f"En sektor är större än {SECTOR_MAX_AREA_M2:,.0f} m².".replace(
+            ",", " "
+        ),
         "AREA_BEYOND_RANGE": "Sökområdet ligger för långt från piloten.",
-        "AREA_BEYOND_FC_FENCE": "Området ligger för långt från hemplatsen för staketet.",
+        "AREA_BEYOND_FC_FENCE": GATE_REASON_CODES["AREA_BEYOND_FC_FENCE"],
         "BUFFER_INVALID": "Staketets marginal är ogiltig.",
         "ALT_BAND_INVALID": "Höjdbandet är ogiltigt.",
         "CHARTER_EXCEEDS_LIMITS": "Uppdragsramen är lösare än uppdragets gränser.",
-        "SKILL_UNKNOWN": "En färdighet i ramen finns inte.",
-        "SKILL_NOT_IMPLEMENTED": "En färdighet i ramen är inte byggd än.",
+        "SKILL_UNKNOWN": GATE_REASON_CODES["SKILL_UNKNOWN"],
+        "SKILL_NOT_IMPLEMENTED": GATE_REASON_CODES["SKILL_NOT_IMPLEMENTED"],
         "AREA_CHANGE_REQUIRES_LANDING": "Sökområdet kan bara krympa medan drönaren flyger.",
         "BASE_VERSION_STALE": "Förslaget bygger på en gammal version av ramen.",
-        "AUTONOMY_CHANGE_FORBIDDEN": "Bara operatören kan ändra autonomiläget.",
+        "AUTONOMY_CHANGE_FORBIDDEN": GATE_REASON_CODES["AUTONOMY_CHANGE_FORBIDDEN"],
         "LIMITS_CHANGE_FORBIDDEN": "Uppdragets gränser ändras bara av piloten.",
         "VALIDATION": "Fel i indata.",
     }

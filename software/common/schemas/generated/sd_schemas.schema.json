@@ -6,6 +6,7 @@
       "properties": {
         "max_alt_agl_m": {
           "default": 300.0,
+          "maximum": 300.0,
           "minimum": 120.0,
           "type": "number"
         },
@@ -16,22 +17,25 @@
         },
         "max_range_from_pilot_m": {
           "default": 2000.0,
+          "maximum": 2000.0,
           "minimum": 500.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 25.0,
+          "maximum": 25.0,
           "minimum": 15.0,
           "type": "number"
         },
         "min_alt_agl_m": {
           "default": 5.0,
+          "exclusiveMaximum": 120.0,
           "minimum": 5.0,
           "type": "number"
         },
         "min_battery_rtl_pct": {
           "default": 15.0,
-          "maximum": 90,
+          "maximum": 15.0,
           "minimum": 15.0,
           "type": "number"
         }
@@ -73,6 +77,7 @@
         },
         "ref_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "stage": {
@@ -101,6 +106,7 @@
       "properties": {
         "action_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "action_seq": {
@@ -151,6 +157,7 @@
       "properties": {
         "action_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "action_seq": {
@@ -203,6 +210,7 @@
         },
         "action_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "action_seq": {
@@ -303,6 +311,7 @@
       "properties": {
         "client_action_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -377,6 +386,7 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "kind": {
@@ -391,6 +401,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -579,6 +590,7 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "kind": {
@@ -591,6 +603,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "reason": {
@@ -629,6 +642,7 @@
         },
         "subject_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "subject_version": {
@@ -683,6 +697,7 @@
             "const": "clear_around_drone",
             "type": "string"
           },
+          "maxItems": 4,
           "type": "array"
         },
         "decision": {
@@ -720,6 +735,7 @@
       "properties": {
         "approval_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "command_hash": {
@@ -810,7 +826,9 @@
       "additionalProperties": false,
       "description": "Where in an image something is (stage 2; schema only).",
       "properties": {
-        "image_ref": {
+        "image_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "instructions": {
@@ -826,7 +844,7 @@
       },
       "required": [
         "instructions",
-        "image_ref"
+        "image_id"
       ],
       "title": "BoxQuestion",
       "type": "object"
@@ -836,12 +854,14 @@
       "properties": {
         "client_msg_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "in_reply_to": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -862,6 +882,7 @@
         },
         "refs": {
           "additionalProperties": true,
+          "maxProperties": 16,
           "type": "object"
         },
         "text": {
@@ -889,6 +910,7 @@
         "interval_s": {
           "default": 1.0,
           "exclusiveMinimum": 0,
+          "maximum": 60,
           "type": "number"
         }
       },
@@ -902,6 +924,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -960,6 +983,7 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "install_status": {
@@ -973,6 +997,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "proposed_by": {
@@ -1017,6 +1042,7 @@
         },
         "charter_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "charter_version": {
@@ -1052,14 +1078,16 @@
     },
     "CharterProposal": {
       "additionalProperties": false,
-      "description": "A new or changed charter from the pilot (panel) or the AI.\n\nIt deliberately has no field for the autonomy mode, the limits, home or the pilot\nposition: sending one is rejected (unknown fields are forbidden).",
+      "description": "A new or changed charter from the pilot (panel) or the AI.\n\nIt has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot\nposition: sending one is rejected (unknown fields are forbidden). Its own charter\nvalues are checked against the mission limits by the server before any card shows.",
       "properties": {
         "allowed_skills": {
           "anyOf": [
             {
               "items": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
                 "type": "string"
               },
+              "maxItems": 32,
               "type": "array"
             },
             {
@@ -1071,6 +1099,8 @@
         "alt_max_agl_m": {
           "anyOf": [
             {
+              "exclusiveMinimum": 5.0,
+              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -1081,6 +1111,8 @@
         },
         "alt_min_agl_m": {
           "default": 15,
+          "maximum": 300.0,
+          "minimum": 5.0,
           "type": "number"
         },
         "area": {
@@ -1099,6 +1131,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1121,6 +1154,8 @@
         "battery_rtl_pct": {
           "anyOf": [
             {
+              "maximum": 90,
+              "minimum": 15.0,
               "type": "number"
             },
             {
@@ -1131,6 +1166,8 @@
         },
         "default_alt_agl_m": {
           "default": 40,
+          "maximum": 300.0,
+          "minimum": 5.0,
           "type": "number"
         },
         "geofence_buffer_m": {
@@ -1142,6 +1179,8 @@
         "max_range_from_pilot_m": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
+              "maximum": 2000.0,
               "type": "number"
             },
             {
@@ -1153,6 +1192,8 @@
         "max_speed_ms": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
+              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -1171,6 +1212,7 @@
               "items": {
                 "$ref": "#/$defs/Sector"
               },
+              "maxItems": 52,
               "type": "array"
             },
             {
@@ -1193,6 +1235,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1204,6 +1247,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1227,9 +1271,11 @@
       "additionalProperties": false,
       "properties": {
         "code": {
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$",
           "type": "string"
         },
         "detail_sv": {
+          "maxLength": 500,
           "type": "string"
         },
         "field": {
@@ -1327,12 +1373,14 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "in_reply_to": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1351,6 +1399,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "parsed_intent": {
@@ -1413,18 +1462,22 @@
         "annotation_ids": {
           "items": {
             "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
             "type": "string"
           },
+          "maxItems": 20,
           "type": "array"
         },
         "client_msg_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "in_reply_to": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1454,6 +1507,8 @@
         },
         "probabilities": {
           "additionalProperties": {
+            "maximum": 1,
+            "minimum": 0,
             "type": "number"
           },
           "type": "object"
@@ -1507,6 +1562,7 @@
       "properties": {
         "charter_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "charter_version": {
@@ -1521,10 +1577,12 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "status": {
@@ -1565,6 +1623,7 @@
       "properties": {
         "charter_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "charter_version": {
@@ -1572,6 +1631,7 @@
         },
         "clearance_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "confirmed_by": {
@@ -1579,6 +1639,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "origin": {
@@ -1591,6 +1652,7 @@
         },
         "valid_for_ms": {
           "exclusiveMinimum": 0,
+          "maximum": 120000,
           "type": "integer"
         },
         "vehicle_id": {
@@ -1616,22 +1678,39 @@
       "properties": {
         "charter_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "charter_version": {
           "type": "integer"
+        },
+        "clearance_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
         },
         "consumed": {
           "type": "boolean"
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "local",
+            "lan",
+            "remote"
+          ],
           "type": "string"
         },
         "received_mono_ms": {
           "type": "integer"
         },
         "valid_for_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 120000,
           "type": "integer"
         },
         "vehicle_id": {
@@ -1640,6 +1719,8 @@
         }
       },
       "required": [
+        "clearance_id",
+        "origin",
         "mission_id",
         "vehicle_id",
         "charter_id",
@@ -1658,6 +1739,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1719,12 +1801,14 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "in_reply_to": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -1745,6 +1829,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "params": {
@@ -1814,6 +1899,7 @@
       "properties": {
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -1891,6 +1977,7 @@
           "type": "string"
         },
         "questions": {
+          "maxProperties": 64,
           "minProperties": 1,
           "patternProperties": {
             "^[a-z][a-z0-9_]{0,63}$": {
@@ -1923,6 +2010,7 @@
         },
         "request_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "state": {
@@ -2021,6 +2109,7 @@
         },
         "request_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -2040,6 +2129,7 @@
       "additionalProperties": false,
       "properties": {
         "ai_config_hash": {
+          "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
           "type": "string"
         },
         "backend": {
@@ -2056,6 +2146,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2064,6 +2155,7 @@
           ]
         },
         "completion_tokens": {
+          "minimum": 0,
           "type": "integer"
         },
         "engine": {
@@ -2101,6 +2193,11 @@
         "gate_decision": {
           "anyOf": [
             {
+              "enum": [
+                "ALLOW",
+                "REJECT",
+                "PENDING_APPROVAL"
+              ],
               "type": "string"
             },
             {
@@ -2110,14 +2207,17 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "latency_ms": {
+          "minimum": 0,
           "type": "integer"
         },
         "model_id": {
           "anyOf": [
             {
+              "maxLength": 128,
               "type": "string"
             },
             {
@@ -2138,15 +2238,18 @@
           ]
         },
         "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
         "prompt_tokens": {
+          "minimum": 0,
           "type": "integer"
         },
         "proposal_id": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2170,15 +2273,18 @@
           "items": {
             "type": "string"
           },
+          "maxItems": 64,
           "type": "array"
         },
         "repairs": {
+          "minimum": 0,
           "type": "integer"
         },
         "retry_of": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2188,6 +2294,7 @@
           "default": null
         },
         "rounds": {
+          "minimum": 0,
           "type": "integer"
         },
         "tool_calls": {
@@ -2195,13 +2302,16 @@
             "additionalProperties": true,
             "type": "object"
           },
+          "maxItems": 32,
           "type": "array"
         },
         "trigger": {
+          "pattern": "^[a-z][a-z0-9_.]{0,63}$",
           "type": "string"
         },
         "turn_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -2230,6 +2340,7 @@
       "additionalProperties": false,
       "properties": {
         "ai_config_hash": {
+          "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
           "type": "string"
         },
         "backend": {
@@ -2246,6 +2357,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2254,6 +2366,7 @@
           ]
         },
         "completion_tokens": {
+          "minimum": 0,
           "type": "integer"
         },
         "engine": {
@@ -2291,6 +2404,11 @@
         "gate_decision": {
           "anyOf": [
             {
+              "enum": [
+                "ALLOW",
+                "REJECT",
+                "PENDING_APPROVAL"
+              ],
               "type": "string"
             },
             {
@@ -2300,14 +2418,17 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "latency_ms": {
+          "minimum": 0,
           "type": "integer"
         },
         "model_id": {
           "anyOf": [
             {
+              "maxLength": 128,
               "type": "string"
             },
             {
@@ -2338,15 +2459,18 @@
           ]
         },
         "prompt_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
           "type": "string"
         },
         "prompt_tokens": {
+          "minimum": 0,
           "type": "integer"
         },
         "proposal_id": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2370,15 +2494,18 @@
           "items": {
             "type": "string"
           },
+          "maxItems": 64,
           "type": "array"
         },
         "repairs": {
+          "minimum": 0,
           "type": "integer"
         },
         "retry_of": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2388,6 +2515,7 @@
           "default": null
         },
         "rounds": {
+          "minimum": 0,
           "type": "integer"
         },
         "tool_calls": {
@@ -2395,13 +2523,16 @@
             "additionalProperties": true,
             "type": "object"
           },
+          "maxItems": 32,
           "type": "array"
         },
         "trigger": {
+          "pattern": "^[a-z][a-z0-9_.]{0,63}$",
           "type": "string"
         },
         "turn_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -2438,6 +2569,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2452,6 +2584,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2461,6 +2594,7 @@
         },
         "msg_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "reliable": {
@@ -2565,12 +2699,14 @@
       "properties": {
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "mission_id": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -2672,12 +2808,15 @@
     },
     "FindMeParams": {
       "additionalProperties": false,
+      "description": "Stage 2. Unresolved here: the operator's position is checked onboard.",
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
+          "maximum": 300.0,
           "type": "number"
         },
         "hover_offset_m": {
+          "maximum": 100,
           "minimum": 15,
           "type": "number"
         }
@@ -2691,9 +2830,11 @@
     },
     "FollowMeParams": {
       "additionalProperties": false,
+      "description": "Stage 2. Unresolved here: the operator's position is checked onboard.",
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
+          "maximum": 300.0,
           "type": "number"
         },
         "max_speed_ms": {
@@ -2717,21 +2858,26 @@
     },
     "FollowTrackParams": {
       "additionalProperties": false,
+      "description": "Stage 2. The target moves; every set-point is checked onboard. Unresolved here.",
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
+          "maximum": 300.0,
           "type": "number"
         },
         "max_speed_ms": {
           "exclusiveMinimum": 0,
+          "maximum": 25.0,
           "type": "number"
         },
         "standoff_m": {
+          "maximum": 200,
           "minimum": 15,
           "type": "number"
         },
         "track_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -2830,6 +2976,7 @@
         },
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "issuer_kind": {
@@ -2841,10 +2988,12 @@
           "type": "string"
         },
         "issuer_ref": {
+          "pattern": "^(operator:[a-z0-9][a-z0-9_-]{0,31}|brain:ground|system:ground|rule:onboard)$",
           "type": "string"
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "params": {
@@ -2899,7 +3048,7 @@
     },
     "GateTargets": {
       "additionalProperties": false,
-      "description": "Where an order would take the vehicle. The gate checks every item against the limits.\n\n``path`` holds the corner points of the route (current position first). The gate\nsamples it every 10 m with ``sd_geo`` before checking.",
+      "description": "Where an order would take the vehicle. The gate checks every item against the limits.\n\n``path`` holds the corner points of the route (current position first); the gate\nsamples it before checking. ``resolved = False`` means the targets could not be\nworked out (unknown sector, unknown position, a target that only exists onboard);\nthe gate must then reject an order that moves the vehicle.",
       "properties": {
         "alts_m": {
           "items": {
@@ -2925,6 +3074,10 @@
             "$ref": "#/$defs/LatLon"
           },
           "type": "array"
+        },
+        "resolved": {
+          "default": true,
+          "type": "boolean"
         },
         "speed_ms": {
           "anyOf": [
@@ -3017,6 +3170,7 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
+          "maximum": 300.0,
           "type": "number"
         },
         "lat": {
@@ -3033,6 +3187,7 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
+              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -3058,6 +3213,7 @@
         },
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "kind": {
@@ -3145,6 +3301,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -3224,6 +3381,7 @@
         },
         "server_epoch": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -3249,16 +3407,20 @@
     },
     "InspectDetectionParams": {
       "additionalProperties": false,
+      "description": "Stage 2. The detection's position exists only onboard: always unresolved here.",
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
+          "maximum": 300.0,
           "type": "number"
         },
         "detection_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "standoff_m": {
+          "maximum": 200,
           "minimum": 15,
           "type": "number"
         }
@@ -3383,31 +3545,35 @@
     },
     "LimitCaps": {
       "additionalProperties": false,
-      "description": "The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.\n\nRead by the ground station from its local settings file. The defaults are the\nowner's chosen outer cap. A cap can never be set below the standard values, and\nthe battery floor and lowest height can never be loosened.",
+      "description": "The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.\n\nRead by the ground station from its local settings file. A cap lies between the\nstandard values and the hard ceilings; the battery floor and lowest height can\nnever be loosened.",
       "properties": {
         "max_alt_agl_m": {
           "default": 300.0,
+          "maximum": 300.0,
           "minimum": 120.0,
           "type": "number"
         },
         "max_range_from_pilot_m": {
           "default": 2000.0,
+          "maximum": 2000.0,
           "minimum": 500.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 25.0,
+          "maximum": 25.0,
           "minimum": 15.0,
           "type": "number"
         },
         "min_alt_agl_m": {
           "default": 5.0,
+          "exclusiveMaximum": 120.0,
           "minimum": 5.0,
           "type": "number"
         },
         "min_battery_rtl_pct": {
           "default": 15.0,
-          "maximum": 90,
+          "maximum": 15.0,
           "minimum": 15.0,
           "type": "number"
         }
@@ -3497,7 +3663,7 @@
     },
     "ManualControl": {
       "additionalProperties": false,
-      "description": "Ground -> onboard, 10-20 Hz, not reliable. Stick values from the panel.\n\nAxes are -1..1 (``throttle`` 0..1 with 0.5 = hold height, as in LOITER). Without a\nnew value for ``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.",
+      "description": "Ground -> onboard, 10-20 Hz, not reliable. Without a new value for\n``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.",
       "properties": {
         "input_seq": {
           "minimum": 0,
@@ -3515,6 +3681,7 @@
         },
         "takeover_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "throttle": {
@@ -3566,6 +3733,7 @@
         },
         "takeover_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "throttle": {
@@ -3633,6 +3801,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -3655,20 +3824,26 @@
       "additionalProperties": false,
       "description": "Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).\n\nOn ``active = True`` the AI's orders pause and the vehicle goes to LOITER; stick\nvalues (``ManualControl``) are then forwarded as MAVLink MANUAL_CONTROL. Limits and\nthe geofence still apply. A physical RC transmitter always wins.",
       "properties": {
+        "action_seq": {
+          "type": "integer"
+        },
         "active": {
           "type": "boolean"
         },
         "operator_id": {
+          "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
           "type": "string"
         },
         "takeover_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
       "required": [
         "takeover_id",
         "active",
+        "action_seq",
         "operator_id"
       ],
       "title": "ManualTakeover",
@@ -3702,6 +3877,7 @@
       "properties": {
         "annotation_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "id": {
@@ -3795,6 +3971,7 @@
     },
     "MarkLocationParams": {
       "additionalProperties": false,
+      "description": "A map marker on the ground; it does not move the vehicle.",
       "properties": {
         "label": {
           "maxLength": 40,
@@ -3838,6 +4015,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -3892,6 +4070,7 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "landed_at": {
@@ -3994,20 +4173,27 @@
         "ai_silent_timeout_s": {
           "default": 10,
           "exclusiveMinimum": 0,
+          "maximum": 600,
           "type": "number"
         },
         "allowed_skills": {
           "items": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
             "type": "string"
           },
+          "maxItems": 32,
           "type": "array"
         },
         "alt_max_agl_m": {
           "default": 120.0,
+          "exclusiveMinimum": 5.0,
+          "maximum": 300.0,
           "type": "number"
         },
         "alt_min_agl_m": {
           "default": 15,
+          "maximum": 300.0,
+          "minimum": 5.0,
           "type": "number"
         },
         "approved_at": {
@@ -4040,14 +4226,19 @@
         },
         "battery_rtl_pct": {
           "default": 15.0,
+          "maximum": 90,
+          "minimum": 15.0,
           "type": "number"
         },
         "charter_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "default_alt_agl_m": {
           "default": 40,
+          "maximum": 300.0,
+          "minimum": 5.0,
           "type": "number"
         },
         "fence_hash": {
@@ -4071,19 +4262,25 @@
         },
         "max_range_from_pilot_m": {
           "default": 500.0,
+          "exclusiveMinimum": 0,
+          "maximum": 2000.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 15.0,
+          "exclusiveMinimum": 0,
+          "maximum": 25.0,
           "type": "number"
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "notes": {
           "anyOf": [
             {
+              "maxLength": 2000,
               "type": "string"
             },
             {
@@ -4108,6 +4305,7 @@
           "items": {
             "$ref": "#/$defs/Sector"
           },
+          "maxItems": 52,
           "type": "array"
         },
         "vehicle_id": {
@@ -4128,6 +4326,7 @@
         "home",
         "pilot_position",
         "allowed_skills",
+        "autonomy_mode",
         "sectors",
         "fence_hash",
         "approved_by",
@@ -4246,6 +4445,7 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "kind": {
@@ -4290,9 +4490,11 @@
     },
     "MissionMemory": {
       "additionalProperties": false,
+      "description": "What the server stores and returns.",
       "properties": {
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "pending_operator_request": {
@@ -4304,13 +4506,15 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "plan_note": {
           "maxLength": 400,
           "type": "string"
         },
         "summarized_up_to_seq": {
+          "minimum": 0,
           "type": "integer"
         },
         "summary_sv": {
@@ -4334,10 +4538,52 @@
         "summary_sv",
         "plan_note",
         "summarized_up_to_seq",
-        "pending_operator_request",
         "updated_at"
       ],
       "title": "MissionMemory",
+      "type": "object"
+    },
+    "MissionMemoryUpdate": {
+      "additionalProperties": false,
+      "description": "What sd-brain sends (PUT .../memory). The server adds ``updated_at``.",
+      "properties": {
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "pending_operator_request": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plan_note": {
+          "maxLength": 400,
+          "type": "string"
+        },
+        "summarized_up_to_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary_sv": {
+          "maxLength": 1200,
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_id",
+        "summary_sv",
+        "plan_note",
+        "summarized_up_to_seq"
+      ],
+      "title": "MissionMemoryUpdate",
       "type": "object"
     },
     "MissionPatch": {
@@ -4397,6 +4643,7 @@
         },
         "id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "status": {
@@ -4495,10 +4742,12 @@
       "properties": {
         "client_command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "params": {
           "additionalProperties": true,
+          "maxProperties": 32,
           "type": "object"
         },
         "rationale_sv": {
@@ -4514,6 +4763,7 @@
           "default": null
         },
         "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "type": "string"
         }
       },
@@ -4609,6 +4859,7 @@
         },
         "override_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         }
       },
@@ -4683,6 +4934,7 @@
       "properties": {
         "alt_m": {
           "exclusiveMinimum": 0,
+          "maximum": 300.0,
           "type": "number"
         },
         "lat": {
@@ -4865,8 +5117,10 @@
           "anyOf": [
             {
               "items": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
                 "type": "string"
               },
+              "maxItems": 32,
               "type": "array"
             },
             {
@@ -4878,6 +5132,8 @@
         "alt_max_agl_m": {
           "anyOf": [
             {
+              "exclusiveMinimum": 5.0,
+              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -4888,6 +5144,8 @@
         },
         "alt_min_agl_m": {
           "default": 15,
+          "maximum": 300.0,
+          "minimum": 5.0,
           "type": "number"
         },
         "area": {
@@ -4906,6 +5164,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -4928,6 +5187,8 @@
         "battery_rtl_pct": {
           "anyOf": [
             {
+              "maximum": 90,
+              "minimum": 15.0,
               "type": "number"
             },
             {
@@ -4938,6 +5199,8 @@
         },
         "default_alt_agl_m": {
           "default": 40,
+          "maximum": 300.0,
+          "minimum": 5.0,
           "type": "number"
         },
         "geofence_buffer_m": {
@@ -4949,6 +5212,8 @@
         "max_range_from_pilot_m": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
+              "maximum": 2000.0,
               "type": "number"
             },
             {
@@ -4960,6 +5225,8 @@
         "max_speed_ms": {
           "anyOf": [
             {
+              "exclusiveMinimum": 0,
+              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -4978,6 +5245,7 @@
               "items": {
                 "$ref": "#/$defs/Sector"
               },
+              "maxItems": 52,
               "type": "array"
             },
             {
@@ -5019,12 +5287,14 @@
     },
     "ResumeParams": {
       "additionalProperties": false,
+      "description": "Continue the step interrupted by hold. The gate rechecks the remaining route.",
       "properties": {},
       "title": "ResumeParams",
       "type": "object"
     },
     "ReturnHomeParams": {
       "additionalProperties": false,
+      "description": "Always allowed geometrically: flying home must never be blocked by a missing target.",
       "properties": {
         "reason": {
           "default": "",
@@ -5042,21 +5312,25 @@
         "battery_rtl_pct": {
           "default": 15.0,
           "maximum": 90,
+          "minimum": 15.0,
           "type": "number"
         },
         "max_alt_agl_m": {
           "default": 120.0,
           "exclusiveMinimum": 5.0,
+          "maximum": 300.0,
           "type": "number"
         },
         "max_range_from_pilot_m": {
           "default": 500.0,
           "exclusiveMinimum": 0,
+          "maximum": 2000.0,
           "type": "number"
         },
         "max_speed_ms": {
           "default": 15.0,
           "exclusiveMinimum": 0,
+          "maximum": 25.0,
           "type": "number"
         }
       },
@@ -5068,6 +5342,8 @@
       "properties": {
         "probabilities": {
           "items": {
+            "maximum": 1,
+            "minimum": 0,
             "type": "number"
           },
           "type": "array"
@@ -5124,6 +5400,8 @@
           "type": "object"
         },
         "name": {
+          "maxLength": 40,
+          "minLength": 1,
           "type": "string"
         },
         "order_idx": {
@@ -5277,6 +5555,7 @@
         },
         "mission_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "mission_status": {
@@ -5295,6 +5574,11 @@
         "paused_by": {
           "anyOf": [
             {
+              "enum": [
+                "operator",
+                "brain",
+                "system"
+              ],
               "type": "string"
             },
             {
@@ -5343,6 +5627,13 @@
         "returning_cause": {
           "anyOf": [
             {
+              "enum": [
+                "brain",
+                "operator",
+                "battery",
+                "failsafe",
+                "system"
+              ],
               "type": "string"
             },
             {
@@ -5461,9 +5752,11 @@
         },
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "issuer": {
+          "pattern": "^(operator:[a-z0-9][a-z0-9_-]{0,31}|brain:ground|system:ground|rule:onboard)$",
           "type": "string"
         },
         "params": {
@@ -5501,6 +5794,7 @@
       "additionalProperties": false,
       "properties": {
         "ai_config_hash": {
+          "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
           "type": "string"
         },
         "backend": {
@@ -5535,12 +5829,14 @@
         },
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "in_reply_to": {
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -5550,6 +5846,7 @@
         },
         "params": {
           "additionalProperties": true,
+          "maxProperties": 32,
           "type": "object"
         },
         "rationale_sv": {
@@ -5557,6 +5854,7 @@
           "type": "string"
         },
         "skill": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "type": "string"
         }
       },
@@ -5579,6 +5877,7 @@
       "description": "What ``GET /commander/v1/skills`` returns: a ``SkillSpec`` with JSON Schemas.",
       "properties": {
         "ai_allowed": {
+          "default": true,
           "type": "boolean"
         },
         "ai_params_schema": {
@@ -5599,6 +5898,7 @@
           "type": "array"
         },
         "allowed_under_latch": {
+          "default": false,
           "type": "boolean"
         },
         "allowed_when": {
@@ -5610,18 +5910,23 @@
           "type": "string"
         },
         "description_en": {
+          "maxLength": 200,
+          "minLength": 1,
           "type": "string"
         },
         "ends_flight": {
+          "default": false,
           "type": "boolean"
         },
         "exempt_from_battery_rule": {
+          "default": false,
           "type": "boolean"
         },
         "moves_vehicle": {
           "type": "boolean"
         },
         "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
           "type": "string"
         },
         "params_schema": {
@@ -5637,6 +5942,7 @@
           "type": "string"
         },
         "requires_approval_in_b": {
+          "default": false,
           "type": "boolean"
         },
         "runs_on": {
@@ -5655,6 +5961,7 @@
           "type": "integer"
         },
         "starts_flight": {
+          "default": false,
           "type": "boolean"
         },
         "status": {
@@ -5668,12 +5975,17 @@
           "items": {
             "type": "string"
           },
+          "minItems": 1,
           "type": "array"
         },
         "title_sv": {
+          "minLength": 1,
           "type": "string"
         },
         "ttl_s": {
+          "default": 15,
+          "exclusiveMinimum": 0,
+          "maximum": 300,
           "type": "integer"
         }
       },
@@ -5682,20 +5994,13 @@
         "stage",
         "status",
         "runs_on",
-        "ai_allowed",
-        "requires_approval_in_b",
-        "starts_flight",
-        "ends_flight",
         "moves_vehicle",
         "allowed_when",
-        "allowed_from",
-        "ttl_s",
-        "exempt_from_battery_rule",
-        "allowed_under_latch",
         "rate_class",
         "description_en",
         "synonyms_sv",
         "title_sv",
+        "allowed_from",
         "params_schema",
         "ai_params_schema"
       ],
@@ -5709,6 +6014,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -5718,6 +6024,7 @@
         },
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "decision": {
@@ -5783,6 +6090,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -5823,6 +6131,7 @@
           "anyOf": [
             {
               "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
               "type": "string"
             },
             {
@@ -5871,6 +6180,16 @@
         "held_by": {
           "anyOf": [
             {
+              "enum": [
+                "operator_stop",
+                "operator_home",
+                "operator_manual",
+                "system_battery",
+                "system_watchdog",
+                "external",
+                "onboard_restart",
+                "fc_silent"
+              ],
               "type": "string"
             },
             {
@@ -5881,6 +6200,16 @@
         "hold_reason": {
           "anyOf": [
             {
+              "enum": [
+                "ai_hold",
+                "skill_done",
+                "operator_released",
+                "limit",
+                "link_loss",
+                "ai_silent",
+                "startup",
+                "manual_input_lost"
+              ],
               "type": "string"
             },
             {
@@ -5979,15 +6308,58 @@
       "title": "StateSnapshot",
       "type": "object"
     },
+    "StickAxes": {
+      "additionalProperties": false,
+      "description": "Stick values. Axes are -1..1; ``throttle`` 0..1 with 0.5 = hold height (LOITER).",
+      "properties": {
+        "input_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "roll": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "takeover_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "throttle": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "yaw": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "takeover_id",
+        "input_seq",
+        "pitch",
+        "roll",
+        "throttle",
+        "yaw"
+      ],
+      "title": "StickAxes",
+      "type": "object"
+    },
     "StopFollowParams": {
       "additionalProperties": false,
+      "description": "Stop following and hover. A later ``resume`` goes through the gate on its own.",
       "properties": {
         "then": {
+          "const": "hold",
           "default": "hold",
-          "enum": [
-            "hold",
-            "resume"
-          ],
           "type": "string"
         }
       },
@@ -6005,6 +6377,7 @@
         },
         "command_id": {
           "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
         "interrupted_at": {
@@ -6099,12 +6472,13 @@
     },
     "SurveySectorParams": {
       "additionalProperties": false,
-      "description": "Search a sector. The ground replaces ``sector_id`` with the sector's polygon.",
+      "description": "Search a polygon or a sector. The ground replaces ``sector_id`` with its polygon.",
       "properties": {
         "alt_m": {
           "anyOf": [
             {
               "exclusiveMinimum": 0,
+              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -6128,6 +6502,7 @@
         },
         "pattern": {
           "default": "lawnmower",
+          "maxLength": 32,
           "type": "string"
         },
         "polygon": {
@@ -6171,6 +6546,7 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
+              "maximum": 25.0,
               "type": "number"
             },
             {
@@ -6242,6 +6618,7 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
+              "maximum": 300.0,
               "type": "number"
             },
             {
@@ -6286,6 +6663,31 @@
               "type": "null"
             }
           ]
+        },
+        "resume_point": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "goto": "#/$defs/GotoResumePoint",
+                  "survey": "#/$defs/SurveyResumePoint"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/SurveyResumePoint"
+                },
+                {
+                  "$ref": "#/$defs/GotoResumePoint"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -6433,7 +6835,9 @@
         "RESTART_FC_RETURNING",
         "LANDED_DISARMED",
         "CLOSE_AUTO",
-        "CLOSE_MANUAL"
+        "CLOSE_MANUAL",
+        "MANUAL_TAKEOVER",
+        "MANUAL_HANDBACK"
       ],
       "title": "Trigger",
       "type": "string"
@@ -6763,7 +7167,7 @@
         "executor_state": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/ExecutorState"
             },
             {
               "type": "null"

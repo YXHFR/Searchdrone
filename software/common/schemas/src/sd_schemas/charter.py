@@ -3,19 +3,33 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from sd_schemas.base import GeoJsonPolygon, Id, LatLon, LatLonAlt, SdModel, VehicleId
+from sd_schemas.base import (
+    SKILL_NAME_PATTERN,
+    GeoJsonPolygon,
+    Id,
+    LatLon,
+    LatLonAlt,
+    SdModel,
+    VehicleId,
+)
 from sd_schemas.safety import (
     DEFAULT_BATTERY_RTL_PCT,
     DEFAULT_MAX_ALT_AGL_M,
     DEFAULT_MAX_RANGE_FROM_PILOT_M,
     DEFAULT_MAX_SPEED_MS,
+    HARD_MAX_ALT_AGL_M,
+    HARD_MAX_RANGE_FROM_PILOT_M,
+    HARD_MAX_SPEED_MS,
+    MIN_ALT_AGL_M,
+    MIN_BATTERY_RTL_PCT,
 )
 
 __all__ = [
+    "MAX_SECTORS",
     "SECTOR_MAX_AREA_M2",
     "AutonomyMode",
     "CharterProposal",
@@ -26,6 +40,7 @@ __all__ = [
 ]
 
 SECTOR_MAX_AREA_M2 = 250_000.0  # largest area one survey_sector may cover
+MAX_SECTORS = 52
 
 
 class AutonomyMode(StrEnum):
@@ -37,7 +52,7 @@ class AutonomyMode(StrEnum):
 
 class Sector(SdModel):
     sector_id: str = Field(pattern=r"^[A-Z]{1,2}$")  # "A", "B", ... stable between versions
-    name: str  # display name, defaults to the sector_id
+    name: str = Field(min_length=1, max_length=40)  # display name, defaults to the sector_id
     area: GeoJsonPolygon  # entirely inside charter.area
     order_idx: int = Field(ge=0)
 
@@ -53,42 +68,60 @@ class MissionCharter(SdModel):
     geofence_buffer_m: float = Field(default=20, ge=5, le=50)
     home: LatLonAlt  # *server*: the vehicle's latest HOME_POSITION
     pilot_position: LatLon  # *server*: always = home in v1
-    alt_min_agl_m: float = 15
-    alt_max_agl_m: float = DEFAULT_MAX_ALT_AGL_M
-    default_alt_agl_m: float = 40
-    max_speed_ms: float = DEFAULT_MAX_SPEED_MS
-    max_range_from_pilot_m: float = DEFAULT_MAX_RANGE_FROM_PILOT_M
-    battery_rtl_pct: float = DEFAULT_BATTERY_RTL_PCT
-    allowed_skills: list[str]
+    alt_min_agl_m: float = Field(default=15, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
+    alt_max_agl_m: float = Field(
+        default=DEFAULT_MAX_ALT_AGL_M, gt=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M
+    )
+    default_alt_agl_m: float = Field(default=40, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
+    max_speed_ms: float = Field(default=DEFAULT_MAX_SPEED_MS, gt=0, le=HARD_MAX_SPEED_MS)
+    max_range_from_pilot_m: float = Field(
+        default=DEFAULT_MAX_RANGE_FROM_PILOT_M, gt=0, le=HARD_MAX_RANGE_FROM_PILOT_M
+    )
+    battery_rtl_pct: float = Field(default=DEFAULT_BATTERY_RTL_PCT, ge=MIN_BATTERY_RTL_PCT, le=90)
+    allowed_skills: list[Annotated[str, Field(pattern=SKILL_NAME_PATTERN)]] = Field(max_length=32)
     on_ai_silent: Literal["continue_plan", "hold", "return_home"] = "continue_plan"
-    ai_silent_timeout_s: float = Field(default=10, gt=0)
-    autonomy_mode: AutonomyMode = AutonomyMode.WITHIN_CHARTER  # *server*, set on approval
-    sectors: list[Sector]  # *server* when the proposal has none
+    ai_silent_timeout_s: float = Field(default=10, gt=0, le=600)
+    autonomy_mode: AutonomyMode  # *server*, set on approval; required so it is never implied
+    sectors: list[Sector] = Field(max_length=MAX_SECTORS)  # *server* when the proposal has none
     fence_hash: str | None  # *server*
     approved_by: str | None  # *server*
     approved_at: AwareDatetime | None  # *server*
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _altitude_band(self) -> MissionCharter:
+        if not self.alt_min_agl_m <= self.default_alt_agl_m <= self.alt_max_agl_m:
+            raise ValueError("need alt_min_agl_m <= default_alt_agl_m <= alt_max_agl_m")
+        if self.alt_min_agl_m >= self.alt_max_agl_m:
+            raise ValueError("alt_min_agl_m must be below alt_max_agl_m")
+        return self
 
 
 class CharterProposal(SdModel):
     """A new or changed charter from the pilot (panel) or the AI.
 
-    It deliberately has no field for the autonomy mode, the limits, home or the pilot
-    position: sending one is rejected (unknown fields are forbidden).
+    It has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot
+    position: sending one is rejected (unknown fields are forbidden). Its own charter
+    values are checked against the mission limits by the server before any card shows.
     """
 
     base_version: int | None = None  # None = the first charter
     area: GeoJsonPolygon | None = None
     area_annotation_id: Id | None = None  # a drawn area; exactly one of area / area_annotation_id
-    alt_min_agl_m: float = 15
-    alt_max_agl_m: float | None = None  # None = the mission's max_alt_agl_m
+    # The band itself (min < default <= max) is checked by the server (ALT_BAND_INVALID).
+    alt_min_agl_m: float = Field(default=15, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
+    alt_max_agl_m: float | None = Field(  # None = the mission limit
+        default=None, gt=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M
+    )
     geofence_buffer_m: float = Field(default=20, ge=5, le=50)
-    default_alt_agl_m: float = 40
-    max_speed_ms: float | None = None  # None = the limit
-    max_range_from_pilot_m: float | None = None  # None = the limit
-    battery_rtl_pct: float | None = None  # None = the limit
-    allowed_skills: list[str] | None = None  # None = the default
-    sectors: list[Sector] | None = None
+    default_alt_agl_m: float = Field(default=40, ge=MIN_ALT_AGL_M, le=HARD_MAX_ALT_AGL_M)
+    max_speed_ms: float | None = Field(default=None, gt=0, le=HARD_MAX_SPEED_MS)
+    max_range_from_pilot_m: float | None = Field(default=None, gt=0, le=HARD_MAX_RANGE_FROM_PILOT_M)
+    battery_rtl_pct: float | None = Field(default=None, ge=MIN_BATTERY_RTL_PCT, le=90)
+    allowed_skills: list[Annotated[str, Field(pattern=SKILL_NAME_PATTERN)]] | None = Field(
+        default=None, max_length=32
+    )  # None = the default
+    sectors: list[Sector] | None = Field(default=None, max_length=MAX_SECTORS)
     reason_sv: str = Field(max_length=500)
 
     @model_validator(mode="after")
@@ -99,8 +132,8 @@ class CharterProposal(SdModel):
 
 
 class CharterValidationError(SdModel):
-    code: str  # see sd_schemas.reason_codes.CHARTER_VALIDATION_CODES
-    detail_sv: str
+    code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,63}$")  # see reason_codes
+    detail_sv: str = Field(max_length=500)
     field: str | None = None
     limit: float | None = None
 

@@ -71,6 +71,7 @@ from sd_schemas.commander import (
     EstimateResult,
     MapPin,
     MissionMemory,
+    MissionMemoryUpdate,
     Situation,
     SkillRequest,
     SkillSubmitResult,
@@ -112,6 +113,7 @@ from sd_schemas.link import (
     PilotPosition,
     SkillCommand,
     StateSnapshot,
+    StickAxes,
 )
 from sd_schemas.mission import MissionState, OperatorLatch, Trigger
 from sd_schemas.safety import LimitCaps, SafetyLimits
@@ -235,6 +237,7 @@ __all__ = [
     "MissionEndRequest",
     "MissionFile",
     "MissionMemory",
+    "MissionMemoryUpdate",
     "MissionPatch",
     "MissionState",
     "MissionSummary",
@@ -267,6 +270,7 @@ __all__ = [
     "SkillSubmitResult",
     "StateRef",
     "StateSnapshot",
+    "StickAxes",
     "StopFollowParams",
     "SurveyResumePoint",
     "SurveySectorAiParams",

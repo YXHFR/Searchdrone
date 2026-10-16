@@ -75,6 +75,8 @@ class Trigger(StrEnum):
     LANDED_DISARMED = "LANDED_DISARMED"
     CLOSE_AUTO = "CLOSE_AUTO"
     CLOSE_MANUAL = "CLOSE_MANUAL"
+    MANUAL_TAKEOVER = "MANUAL_TAKEOVER"  # the pilot takes over (Ta över)
+    MANUAL_HANDBACK = "MANUAL_HANDBACK"  # the pilot hands back to the AI (Lämna tillbaka)
 
 
 class TransitionCtx(NamedTuple):

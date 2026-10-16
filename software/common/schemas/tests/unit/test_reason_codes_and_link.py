@@ -57,7 +57,8 @@ def test_mission_states_and_triggers() -> None:
         "LANDED",
         "CLOSED",
     ]
-    assert len(Trigger) == 25
+    assert len(Trigger) == 27
+    assert {"MANUAL_TAKEOVER", "MANUAL_HANDBACK"} <= {t.value for t in Trigger}
 
 
 def test_kind_models_cover_the_catalogue() -> None:
