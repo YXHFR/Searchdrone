@@ -1,0 +1,23 @@
+# Ground station (sd-ground). Copied to config/ground.toml by `just setup-config`.
+# Override any key with an environment variable SD_GROUND__<SECTION>__<KEY>.
+# Secrets are never stored here; they live in .env and secrets/ (both gitignored).
+
+[api]
+host = "127.0.0.1"        # panel API; never reachable from the internet
+port = 8080
+
+[commander]
+host = "127.0.0.1"        # API for the AI commander; always loopback
+port = 7700
+
+[db]
+host = "127.0.0.1"
+port = 5433
+name = "searchdrone"
+
+[lan]
+enabled = false           # `just demo lan=1` turns on the LAN panel with TLS and PIN pairing
+port = 8443
+
+[auth]
+brain_token_file = "secrets/brain_token"

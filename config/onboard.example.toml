@@ -1,0 +1,13 @@
+# Onboard process (sd-onboard). Copied to config/onboard.toml by `just setup-config`.
+# Override any key with an environment variable SD_ONBOARD__<SECTION>__<KEY>.
+
+[vehicle]
+vehicle_id = "sim-01"
+profile = "sim"           # "sim" in v0.1; real hardware comes later
+
+[mavlink]
+system_id = 1
+component_id = 191        # never 250 (ground station) or 255
+
+[link]
+token_file = "secrets/onboard_link_token"

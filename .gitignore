@@ -1,7 +1,88 @@
-# Internal planning, specs and research stay local — never committed.
-docs/
-planning/
-research/
-notes/
-.claude/
+# Directory names that can also be source directories (planning/, data/, missions/ ...)
+# are anchored to the root with a leading "/". Agent files are ignored everywhere.
+
+# --- Internal planning and agent files: never committed ---
+/docs/
+/planning/
+/research/
+/notes/
 CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
+AGENTS.local.md
+
+# --- Personal config and secrets ---
+# Under config/ only example files and the generic MediaMTX config are committed.
+/config/*
+!/config/*.example.toml
+!/config/mediamtx.yml
+*.local.*
+*.local.txt
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+*.p12
+*.crt
+!**/testdata/**/*.crt
+cloudflared/
+.cloudflared/
+
+# --- Mission data and logs (may contain locations) ---
+/missions/
+/data/
+/runs/
+/build/
+/logs/
+/terrain/
+*.tlog
+*.tlog.raw
+*.bin
+*.BIN
+*.ulg
+mav.parm
+eeprom.bin
+
+# --- Media (attached to Releases, never in git) ---
+/showcase/out/
+*.mp4
+*.webm
+*.mkv
+*.mov
+*.avi
+
+# --- Python ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.import_linter_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.json
+htmlcov/
+coverage.xml
+dist/
+*.egg-info/
+
+# --- Node ---
+node_modules/
+.pnpm-store/
+software/panel/dist/
+playwright-report/
+test-results/
+
+# --- Gazebo/SITL artefacts ---
+simulation/**/generated/
+simulation/sitl/work/
+
+# --- Editor/OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

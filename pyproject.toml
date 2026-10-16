@@ -1,0 +1,82 @@
+[project]
+name = "searchdrone-workspace"
+version = "0.0.0"          # every pyproject.toml and package.json starts at 0.0.0; `just release-prep` sets the release version
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+required-version = ">=0.11,<0.12"
+package = false
+default-groups = ["dev", "test"]
+
+[tool.uv.workspace]
+members = [
+  "software/common/schemas", "software/common/safety", "software/common/geo",
+  "software/common/mav", "software/common/link", "software/common/link_testing",
+  "software/common/obs", "software/detector", "software/onboard", "software/ground",
+  "software/brain", "software/hwcalc", "simulation/sd_sim",
+]
+
+[tool.uv.sources]
+sd-schemas = { workspace = true }
+sd-safety = { workspace = true }
+sd-geo = { workspace = true }
+sd-mav = { workspace = true }
+sd-link = { workspace = true }
+sd-link-testing = { workspace = true }
+sd-obs = { workspace = true }
+sd-detect = { workspace = true }
+sd-onboard = { workspace = true }
+sd-ground = { workspace = true }
+sd-brain = { workspace = true }
+sd-hwcalc = { workspace = true }
+sd-sim = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4", "pytest-asyncio>=1.0", "pytest-cov>=6.0", "hypothesis>=6.130",
+  "ruff>=0.16", "pyright>=1.1.400", "import-linter>=2.1", "reuse>=5.0",
+  "httpx>=0.28", "pillow>=11", "packaging>=24", "pyyaml>=6.0", "jsonschema>=4.23",
+]
+# Test-only workspace packages. Production packages never import these.
+test = ["sd-link-testing"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["**/generated/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PTH", "TID", "N", "C4", "DTZ", "T20"]
+# S = bandit rules (security), DTZ = timezone-aware datetimes, T20 = no print()
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "S105", "S106", "S603", "S607"]
+"tools/**" = ["T20"]
+"simulation/sd_sim/src/sd_sim/launch.py" = ["T20"]
+"simulation/sd_sim/src/sd_sim/testrun.py" = ["T20"]
+"simulation/sd_sim/src/sd_sim/_args.py" = ["T20"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sd_*"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+strict = ["software/common/schemas/src", "software/common/safety/src"]
+include = ["software", "simulation", "tools"]
+exclude = ["**/node_modules", "**/.venv", "**/generated", "**/__pycache__"]
+executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -ra --strict-markers"
+testpaths = ["software", "simulation/sd_sim", "tools/tests"]
+pythonpath = ["tools"]     # tools/tests import the scripts in tools/ (not a package)
+norecursedirs = ["node_modules", ".venv", "dist", "build", "generated"]
+asyncio_mode = "auto"
+markers = [
+  "contract: schema, API and boundary contracts (may need Postgres)",
+  "component: one process with faked neighbours",
+  "db: needs Postgres+PostGIS (started by just db-up)",
+  "sitl: needs ArduPilot SITL",
+  "slow: > 10 s",
+]

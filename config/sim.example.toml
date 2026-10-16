@@ -1,0 +1,28 @@
+# Simulator. Copied to config/sim.toml by `just setup-config`.
+# Override any key with an environment variable SD_SIM__<KEY>.
+# Home position is the public ArduPilot SITL site (CMAC) from the demo fixture.
+
+[sim]
+instance = 0
+physics = "gz"            # "gz" | "builtin"
+gui = true                # Gazebo window, only with physics = "gz"
+video = "camera"          # "camera" (gz only) | "test" | "off"
+world = "sd_lake_forest"
+vehicle = "sd_quad14"
+fixture = "simulation/scenarios/demo_fixture.yaml"
+speedup = 1
+wind_mps = 0
+qgc = false
+link_profile = "perfect"  # "perfect" | "field_typical" | "dead"
+dataflash_dir = "sitl/logs"
+
+[brain]
+kind = "llm_local"        # "llm_local" | "scripted" | "grammar" | "none"
+script = ""
+
+[open]
+browser = true
+
+[perf]
+gpu_name = ""
+ram_gb = 0
