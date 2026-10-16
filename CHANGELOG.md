@@ -41,3 +41,7 @@ All notable changes to this project are listed here. The format follows
   and the always-visible STOP / RETURN HOME bar with honest acknowledgement, retries and
   polling. Placeholders for take-over, on-screen sticks, game controller and order buttons.
   Playwright tests against a fake ground station; works fully offline.
+- CI on every pull request and push to `main`: lint, type checks, unit and contract tests,
+  license policy, REUSE, secret scanning and build, summed up in the required check `ci-ok`.
+  Code and dependency scanning (CodeQL, OSV-Scanner) in `security-ok`, the commit statuses
+  `gate/pr-title` and `gate/review`, Dependabot and a pull request template.
