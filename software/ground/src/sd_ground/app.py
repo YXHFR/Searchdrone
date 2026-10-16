@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from sd_ground.api import commander as commander_api
 from sd_ground.api import live as live_api
 from sd_ground.api import panel as panel_api
+from sd_ground.api import tiles as tiles_api
 from sd_ground.api.deps import install_error_handlers
 from sd_ground.auth import BrainToken
 from sd_ground.config import Loaded, check, parse_bind
@@ -70,6 +71,7 @@ def create_panel_app(g: Ground) -> FastAPI:
     install_error_handlers(app)
     app.include_router(panel_api.router)
     app.include_router(live_api.router)
+    app.include_router(tiles_api.router)
     static = g.loaded.path(g.config.http.static_dir)
     if (static / "index.html").is_file():
         app.mount("/", StaticFiles(directory=static, html=True), name="panel")

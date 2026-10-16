@@ -67,3 +67,6 @@ All notable changes to this project are listed here. The format follows
   scans its file system for secrets and only then pushes it to GHCR from `main`. The image
   tag comes from `tools/sitl_image_tag.sh`. `just test-sitl` runs the scenario tests,
   `just ci-sitl` runs them in the image like CI; the first scenario is the SC00 smoke test.
+- Review instructions for the three reviewer roles (architecture, IT security, flight
+  safety) in `.github/review/`, the list of safety-relevant paths every reviewer must read
+  (`critical_paths.txt`), and instructions for a retrospective review of merged code.

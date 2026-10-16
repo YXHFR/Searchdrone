@@ -3841,8 +3841,24 @@
     "MapConfig": {
       "additionalProperties": false,
       "properties": {
+        "assets_url": {
+          "default": "/tiles/assets",
+          "type": "string"
+        },
+        "attribution": {
+          "default": "© OpenStreetMap contributors, Protomaps",
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
         "center": {
           "$ref": "#/$defs/LatLon"
+        },
+        "maxzoom": {
+          "default": 15,
+          "maximum": 22,
+          "minimum": 0,
+          "type": "integer"
         },
         "pack_url": {
           "type": "string"

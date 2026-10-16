@@ -10,11 +10,13 @@ interface Call {
 
 type Reply = Response | "hang" | "neterr";
 
+// A real Response reads its body as a stream, which can take macrotasks under load, so
+// a fixed number of microtask flushes would be flaky. The body is answered at once.
 function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  const text = JSON.stringify(body);
+  const res = new Response(text, { status, headers: { "Content-Type": "application/json" } });
+  Object.defineProperty(res, "json", { value: () => Promise.resolve(JSON.parse(text)) });
+  return res;
 }
 
 const DISPATCHED = {

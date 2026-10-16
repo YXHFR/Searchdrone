@@ -1,0 +1,29 @@
+# Locked downloads for `just maps-fetch` (tools/maps/fetch.py). Changing a value is its own
+# pull request; new versions must be at least two weeks old when they are adopted.
+
+[go_pmtiles]
+# protomaps/go-pmtiles, BSD-3-Clause. Release v1.31.2 (tagged 2026-07-22).
+version = "1.31.2"
+url = "https://github.com/protomaps/go-pmtiles/releases/download/v1.31.2/go-pmtiles_1.31.2_Linux_x86_64.tar.gz"
+sha256 = "3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f"
+binary_sha256 = "a7e9ae10184d109c83f456ccdf6df4f3e2a64ba6cf69d9ed0f9f1840305055c1"
+
+[build]
+# Daily Protomaps basemap builds (tiles v4, ODbL data from OpenStreetMap).
+url_template = "https://build.protomaps.com/{build}.pmtiles"
+
+[assets]
+# protomaps/basemaps-assets: glyphs (Noto Sans, SIL OFL 1.1, licence in fonts/OFL.txt) and
+# sprites v4 (derived from the MIT-licensed tangrams/icons).
+repo = "https://github.com/protomaps/basemaps-assets"
+commit = "028c18f713baecad011301ff7a69acc39bcc2ae7"  # 2025-10-31
+# Only these paths are copied; the digest covers every file under them (see tree_digest).
+paths = [
+  "fonts/OFL.txt",
+  "fonts/Noto Sans Regular",
+  "fonts/Noto Sans Medium",
+  "fonts/Noto Sans Italic",
+  "sprites/v4",
+]
+files = 789
+sha256 = "c41a03e8d6d59ddba6e632e0333c2b2ccd60234e7ef95d660cd83f224ae282c7"

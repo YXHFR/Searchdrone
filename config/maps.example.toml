@@ -1,0 +1,16 @@
+# Offline map pack for the panel (`just maps-fetch`). Copied to config/maps.toml by
+# `just setup-config`; that copy is gitignored and may hold another centre.
+# The pack goes to <data_dir>/tiles/<name>.pmtiles, never into the repository.
+
+[maps]
+# A Protomaps build that is kept long: the last build of a patch version (here 4.15.1).
+# Daily builds disappear after a week; see https://maps.protomaps.com/builds
+protomaps_build = "20260811"
+# The build's ETag (HTTP header): `just maps-fetch` refuses an archive that has changed.
+protomaps_etag = "e4343a15fa4bf60f81112ba7784a3f73-512"
+name = "demo"
+maxzoom = 15
+# Centre of the area: the public ArduPilot SITL site (CMAC), the demo's home.
+center_lat = -35.363261
+center_lon = 149.165230
+half_size_m = 3000          # the pack covers centre ± 3 km
