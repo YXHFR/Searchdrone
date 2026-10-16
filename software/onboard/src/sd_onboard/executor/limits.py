@@ -175,6 +175,7 @@ class LimitMonitor:
         self.ai = _Edge()
         self._gps_good_since: int | None = None
         self._range_track: deque[tuple[int, float]] = deque()
+        self._range_rehold = False
         self._ai_timer_from_ms: int | None = None
         self._link_was_down = False
 
@@ -282,9 +283,13 @@ class LimitMonitor:
             return [
                 LimitAction("L-RANGE", "hold", "limit", "limit_range", {"distance_m": _r(dist)})
             ]
-        # Active: an inbound order may bring it back; it holds again if it keeps growing.
-        if x.inbound_order_active and growing:
-            self._range_track.clear()
+        # Active: an inbound order may bring it back; it holds again (once per order) if
+        # the distance grows for 2 s.
+        if not x.inbound_order_active:
+            self._range_rehold = False
+            return []
+        if growing and not self._range_rehold:
+            self._range_rehold = True
             return [
                 LimitAction("L-RANGE", "hold", "limit", "limit_range", {"distance_m": _r(dist)})
             ]

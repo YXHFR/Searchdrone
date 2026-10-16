@@ -698,7 +698,7 @@ class Executor:
     ) -> str | None:
         """The executor's own checks (beyond the shared gate), in order."""
         brain = cmd.issuer.startswith("brain:")
-        if self.state in (S.HELD, S.FAILSAFE) or self.control_suspended:
+        if self.state in (S.HELD, S.FAILSAFE) or self.control_suspended or self.over.manual:
             return "ONB_CONTROL_HELD"
         if self.state == S.RTL and spec.name != "return_home":
             return "ONB_RTL_ACTIVE"
@@ -889,7 +889,6 @@ class Executor:
             self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
             return
         if takeover.active:
-            self.auth.notice(self.now_ms())
             if self.state in AIRBORNE_CONTROLLED:
                 active = self.active
                 origin = active.origin if active else SendOrigin.SKILL
@@ -969,18 +968,17 @@ class Executor:
 
     async def on_charter(self, install: CharterInstall) -> None:
         charter = install.charter
+        if self.state in ON_GROUND:
+            # On the ground the flight controller's fence is read first: it decides the
+            # hard limits (a pilot may have raised them, and the fence with them).
+            await self._read_fence_limits()
         codes = self._charter_problems(charter)
-        if not codes:
-            if self.state in ON_GROUND:
-                await self._read_fence_limits()
-                codes = self._charter_problems(charter)
-            else:
-                old = self.charter
-                outcome = self.target_of(
-                    Trigger.CHARTER_INSTALL, old_charter=old, new_charter=charter
-                )
-                if isinstance(outcome, Refusal):
-                    codes = [outcome.code or "ONB_CHARTER_IN_FLIGHT"]
+        if not codes and self.state not in ON_GROUND:
+            outcome = self.target_of(
+                Trigger.CHARTER_INSTALL, old_charter=self.charter, new_charter=charter
+            )
+            if isinstance(outcome, Refusal):
+                codes = [outcome.code or "ONB_CHARTER_IN_FLIGHT"]
         accepted = not codes
         self.uplink.charter_ack(
             CharterAck(
@@ -1002,7 +1000,7 @@ class Executor:
 
     def _charter_problems(self, charter: MissionCharter) -> list[str]:
         if charter.vehicle_id != self.options.vehicle_id:
-            return ["ONB_CLEARANCE_MISMATCH"]
+            return ["MISSION_STATE_INVALID"]
         if charter_violations(charter, self.hard_limits):
             return ["ONB_CHARTER_EXCEEDS_HARD_LIMITS"]
         return []

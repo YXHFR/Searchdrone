@@ -16,7 +16,9 @@ from typing import Final
 __all__ = ["MASK", "SecretFilter", "setup_logging"]
 
 MASK: Final = "***"
-_KEYED: Final = re.compile(r"(?i)\b(token|authorization)(\W{1,3})(bearer\s+)?([^\s,'\"}]+)")
+_KEYED: Final = re.compile(
+    r"(?i)\b(token|authorization)(['\"]?\s*[:=]\s*['\"]?)(bearer\s+)?([^\s,'\"}]+)"
+)
 
 
 class SecretFilter(logging.Filter):

@@ -79,8 +79,16 @@ def test_lawnmower_concave_stays_inside() -> None:
 
 
 def test_concave_line_cut_in_two_flies_both_pieces() -> None:
-    u_shape = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (70.0, 100.0), (70.0, 30.0),
-               (30.0, 30.0), (30.0, 100.0), (0.0, 100.0)]  # fmt: skip
+    u_shape = [
+        (0.0, 0.0),
+        (100.0, 0.0),
+        (100.0, 100.0),
+        (70.0, 100.0),
+        (70.0, 30.0),
+        (30.0, 30.0),
+        (30.0, 100.0),
+        (0.0, 100.0),
+    ]
     points = lawnmower(u_shape, 20, 90, (0, 0))
     upper = [p for p in points if p[1] > 30]
     assert any(x < 30 for x, _ in upper) and any(x > 70 for x, _ in upper)

@@ -271,8 +271,13 @@ class Rig:
         out = []
         for msg in self.vehicle.sent[since:]:
             kind = msg.get_type()
-            if kind in ("HEARTBEAT", "PARAM_REQUEST_READ", "MISSION_REQUEST_LIST",
-                        "MISSION_REQUEST_INT", "MISSION_ACK"):  # fmt: skip
+            if kind in (
+                "HEARTBEAT",
+                "PARAM_REQUEST_READ",
+                "MISSION_REQUEST_LIST",
+                "MISSION_REQUEST_INT",
+                "MISSION_ACK",
+            ):
                 continue
             if kind == "COMMAND_LONG" and int(msg.command) in (
                 mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
