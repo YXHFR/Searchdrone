@@ -51,7 +51,11 @@ MAX_LICENSE_TEXT = 200
 # pip-licenses and its own dependencies are tools, not dependencies of our packages.
 IGNORED = {"pip-licenses", "prettytable", "wcwidth", "pip", "setuptools"}
 # "<package>": "<license according to its source>, checked <YYYY-MM-DD>"
-KNOWN_OK: dict[str, str] = {}
+KNOWN_OK: dict[str, str] = {
+    # via shapely (sd-brain's charter geometry): BSD-3-Clause, bundled parts under 0BSD,
+    # MIT, Zlib and CC0-1.0 (all permissive, no copyleft)
+    "numpy": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0, checked 2026-10-16",
+}
 
 
 @dataclass(frozen=True)
