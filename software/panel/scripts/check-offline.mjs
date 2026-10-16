@@ -14,7 +14,7 @@ const ALLOWED = [
   "https://wiki.openstreetmap.org/wiki/This_map_requires_WebGL", // MapLibre no-WebGL message
   "https://github.com/mapbox/mapbox-gl-js/issues/", // MapLibre comment link in an error text
 ];
-const FORBIDDEN = ["__sd", 'name="sd-build"', "navigator.geolocation"];
+const FORBIDDEN = ["__sd", 'name="sd-build"', "navigator.geolocation", '"crash"'];
 
 function files(dir) {
   return readdirSync(dir).flatMap((name) => {
@@ -26,7 +26,10 @@ function files(dir) {
 const problems = [];
 for (const file of files(DIST).filter((f) => /\.(js|css|html)$/.test(f))) {
   const text = readFileSync(file, "utf8");
-  for (const m of text.matchAll(/https?:\/\/[^\s"'`)<>]+/g)) {
+  // http(s) and ws(s) URLs, and protocol-relative "//host/..." string literals.
+  for (const m of text.matchAll(
+    /(?:https?|wss?):\/\/[^\s"'`)<>]+|(?<=["'`])\/\/[a-z0-9-]+\.[a-z0-9.-]+[^\s"'`)<>]*/gi,
+  )) {
     if (!ALLOWED.some((a) => m[0].startsWith(a))) problems.push(`${file}: external URL ${m[0]}`);
   }
   for (const f of FORBIDDEN) if (text.includes(f)) problems.push(`${file}: forbidden text ${f}`);

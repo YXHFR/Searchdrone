@@ -100,7 +100,18 @@ export class FakeGround {
     );
     await page.route(`${this.origin}/api/v1/**`, (route) => this.handle(route));
     await page.route(`${this.origin}/tiles/**`, (route) => route.fulfill({ status: 404 }));
-    await page.routeWebSocket(/\/ws\/v1\/live/, (ws) => this.onSocket(ws));
+    const host = new URL(this.origin).host;
+    await page.routeWebSocket(
+      (url) => url.host !== host,
+      (ws) => {
+        this.external.push(ws.url());
+        return ws.close();
+      },
+    );
+    await page.routeWebSocket(
+      (url) => url.host === host && url.pathname === "/ws/v1/live",
+      (ws) => this.onSocket(ws),
+    );
   }
 
   // --- control from tests ------------------------------------------------------------

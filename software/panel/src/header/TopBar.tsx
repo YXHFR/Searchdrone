@@ -109,7 +109,7 @@ export function TopBar() {
   const theme = useUiStore((s) => s.theme);
   return (
     <header className="topbar" data-testid="topbar">
-      <span className="brand">{t("app.name")}</span>
+      <h1 className="brand">{t("app.name")}</h1>
       {sim ? <span className="tag">{t("app.simulator")}</span> : null}
       <span className="mission-title" data-testid="mission-title">
         {title ?? t("app.noMission")}

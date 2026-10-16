@@ -17,6 +17,9 @@ export async function expectSafetyVisible(page: Page, label = ""): Promise<void>
     expect(box.x + box.width, `${label} ${id} right`).toBeLessThanOrEqual(vp.width + 0.5);
     expect(box.y + box.height, `${label} ${id} bottom`).toBeLessThanOrEqual(vp.height + 0.5);
     expect(box.height, `${label} ${id} height`).toBeGreaterThanOrEqual(56);
+    if (vp.width < 768)
+      expect(box.width, `${label} ${id} width`).toBeGreaterThanOrEqual(0.44 * vp.width - 0.5);
+    else expect(box.width, `${label} ${id} width`).toBeGreaterThanOrEqual(160);
     const hit = await page.evaluate(
       ([x, y, testId]) => {
         const el = document.elementFromPoint(x as number, y as number);

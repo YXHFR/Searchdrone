@@ -9,9 +9,11 @@ export const BOOT_TIMING = { emergencyAfterMs: 3_000, retryEveryMs: 2_000, reaut
 async function consumeLoginFragment(): Promise<void> {
   const m = /(?:^#|&)login=([^&]+)/.exec(window.location.hash);
   if (!m?.[1]) return;
-  const code = decodeURIComponent(m[1]);
+  const raw = m[1];
+  // Remove the code from the address bar and history first, whatever happens next.
   history.replaceState(null, "", window.location.pathname + window.location.search);
   try {
+    const code = decodeURIComponent(raw);
     await api<Session>(paths.session(), {
       method: "POST",
       body: { login_code: code },

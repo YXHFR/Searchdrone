@@ -1,5 +1,6 @@
 // Pure helpers for manual control. Axis values are in [-1, 1]; throttle 0 = hold altitude
 // (the flight controller holds height and position in LOITER when the sticks are released).
+// Sending these values is wired with take-over in B1-13; until then nothing leaves the panel.
 export const MANUAL_RATE_HZ = 15;
 export const DEADZONE = 0.08;
 

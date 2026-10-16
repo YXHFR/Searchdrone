@@ -137,6 +137,11 @@ export function replaceView(
   return normalize({ ...s, root, maximized: null, presetId: "custom" }, vp);
 }
 
+/** A pane can be split if the new split stays within the depth limit and the view budget. */
+export function canSplitAt(s: LayoutState, path: Path, vp: Viewport): boolean {
+  return path.length < MAX_SPLIT_DEPTH && leaves(s.root).length < MAX_VIEWS[vp];
+}
+
 export function splitView(
   s: LayoutState,
   path: Path,

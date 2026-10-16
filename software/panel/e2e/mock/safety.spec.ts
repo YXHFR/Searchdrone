@@ -1,4 +1,4 @@
-import { observerSession, outcome } from "../fixtures";
+import { observerSession, outcome, vehicleLive } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
 import { expectSafetyVisible, isMobile } from "../helpers/safety";
 
@@ -19,10 +19,12 @@ test.describe("safety bar is always visible", () => {
       await page.getByTestId("tab-chat").click();
       await page.getByTestId("pip-toggle").click();
       await expectSafetyVisible(page, "pip");
-      // The tab row and STOP keep a gap so a missed tab tap never hits a safety button.
+      // The tab row and the safety bar keep a gap with a divider, so a missed tab tap never
+      // hits a safety button.
       const tabs = await page.getByTestId("mobile-tabs").boundingBox();
-      const stop = await page.getByTestId("safety-stop").boundingBox();
-      expect((stop?.y ?? 0) - ((tabs?.y ?? 0) + (tabs?.height ?? 0))).toBeGreaterThanOrEqual(12);
+      const bar = await page.getByTestId("safety-bar").boundingBox();
+      expect((bar?.y ?? 0) - ((tabs?.y ?? 0) + (tabs?.height ?? 0))).toBeGreaterThanOrEqual(12);
+      await expect(page.locator(".tabs-gap")).toBeVisible();
       return;
     }
     for (const v of VIEWS) {
@@ -37,19 +39,11 @@ test.describe("safety bar is always visible", () => {
     await expectSafetyVisible(page, "layout menu open");
   });
 
-  test("with large desktop and phone sizes", async ({ page, ground }) => {
-    test.skip(
-      page.viewportSize()?.width !== 1280 && page.viewportSize()?.width !== 360,
-      "runs in desktop and phone-360",
-    );
-    for (const size of [
-      { width: 1920, height: 1080 },
-      { width: 390, height: 844 },
-    ]) {
-      await page.setViewportSize(size);
-      await ground.open();
-      await expectSafetyVisible(page, `${size.width}x${size.height}`);
-    }
+  test("while the panel is still loading", async ({ page, ground }) => {
+    ground.hangNext("GET /api/v1/session", 1);
+    await ground.open();
+    await expect(page.getByText("Laddar…")).toBeVisible();
+    await expectSafetyVisible(page, "loading");
   });
 
   test("with the chat field focused", async ({ page, ground }) => {
@@ -102,10 +96,11 @@ test.describe("safety bar is always visible", () => {
 
   test("STOP is visible and enabled within 1.5 s of loading", async ({ page, ground }) => {
     test.skip(page.viewportSize()?.width !== 1280, "desktop only");
-    const t0 = Date.now();
     await ground.open();
     await expect(page.getByTestId("safety-stop")).toBeEnabled();
-    expect(Date.now() - t0).toBeLessThanOrEqual(1_500);
+    // Time since navigation start, measured in the page (not the test runner's clock).
+    const ms = await page.evaluate(() => performance.now());
+    expect(ms).toBeLessThanOrEqual(1_500);
   });
 
   test("tab order: skip link, then STOP, then RETURN HOME", async ({ page, ground }) => {
@@ -265,5 +260,77 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
     await page.locator("body").press("Shift+H");
     await page.waitForTimeout(300);
     expect(ground.calls(/actions\/(stop|return_home)/)).toEqual([]);
+  });
+});
+
+test.describe("Resume and manual control", () => {
+  const held = (held_by: string) => ({
+    ...vehicleLive,
+    airborne: true,
+    snapshot: { executor_state: "HELD", held_by, resume_available: true },
+  });
+
+  test("Resume appears after a hold, is armed after 2 s and posts only to /actions/resume", async ({
+    page,
+    ground,
+  }) => {
+    await ground.open();
+    await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
+    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    ground.pushLive("vehicle", "vehicle.state", held("operator_stop"));
+    const resume = page.getByTestId("view-chat").getByTestId("resume");
+    await expect(resume).toBeVisible();
+    await expect(resume).toBeDisabled();
+    await expect(resume).toBeEnabled({ timeout: 3_000 });
+    await resume.click();
+    await expect.poll(() => ground.posts("/api/v1/vehicles/sim-01/actions/resume").length).toBe(1);
+    expect(ground.calls(/^POST .*\/chat$/)).toEqual([]);
+    // Resume is never in the safety bar.
+    await expect(page.getByTestId("safety-bar").getByTestId("resume")).toHaveCount(0);
+  });
+
+  test("Resume also after other interruptions, never during a return home", async ({
+    page,
+    ground,
+  }) => {
+    await ground.open();
+    await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
+    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    ground.pushLive("vehicle", "vehicle.state", held("onboard_restart"));
+    await expect(page.getByTestId("resume")).toBeVisible();
+    ground.pushLive("vehicle", "vehicle.state", held("operator_home"));
+    await expect(page.getByTestId("resume")).toHaveCount(0);
+    await expect(page.getByText("Tryck STOPP först för att avbryta hemflygningen.")).toBeVisible();
+  });
+
+  test("observers see no Resume and cannot take over", async ({ page, ground }) => {
+    ground.setSession(observerSession);
+    await ground.open();
+    await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
+    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    ground.pushLive("vehicle", "vehicle.state", held("operator_stop"));
+    await expect(page.getByTestId("resume-row")).toBeVisible();
+    await expect(page.getByTestId("resume")).toHaveCount(0);
+    if (isMobile(page)) await page.getByTestId("tab-manual").click();
+    else await page.locator("[data-view]").first().locator("select").first().selectOption("manual");
+    await expect(page.getByTestId("takeover")).toBeDisabled();
+    await expect(page.getByText("Bara piloten kan styra för hand.")).toBeVisible();
+  });
+
+  test("manual control and order buttons are placeholders that send nothing", async ({
+    page,
+    ground,
+  }) => {
+    await ground.open();
+    await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
+    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    for (const b of await page.getByTestId("order-button").all()) await expect(b).toBeDisabled();
+    if (isMobile(page)) await page.getByTestId("tab-manual").click();
+    else await page.locator("[data-view]").first().locator("select").first().selectOption("manual");
+    await expect(page.getByTestId("takeover")).toBeDisabled();
+    await expect(page.getByTestId("manual-axes")).toContainText("Gas 0.00");
+    const before = ground.requests.filter((r) => r.method !== "GET").length;
+    await page.mouse.click(10, 300);
+    expect(ground.requests.filter((r) => r.method !== "GET").length).toBe(before);
   });
 });

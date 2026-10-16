@@ -5,7 +5,7 @@ import { ErrorBoundary } from "../app/ErrorBoundary";
 import { shouldCrash } from "../lib/testHooks";
 import { useLayoutStore } from "../state/layoutStore";
 import { VIEW_REGISTRY, type ViewProps } from "../views/registry";
-import { type Path, VIEW_IDS, type ViewId, visibleViews } from "./layoutModel";
+import { canSplitAt, type Path, VIEW_IDS, type ViewId, visibleViews } from "./layoutModel";
 
 function Crash(): never {
   throw new Error("test crash");
@@ -48,7 +48,7 @@ export function ViewFrame({ view, path, vehicleId }: Props) {
   const maximized = layout.maximized === view;
   const shown = visibleViews({ ...layout, maximized: null });
   const others = VIEW_IDS.filter((v) => v !== view);
-  const canSplit = vp === "desktop" ? shown.length < 4 : shown.length < 2;
+  const canSplit = canSplitAt(layout, path, vp);
   const Icon = VIEW_REGISTRY[view].icon;
   const title = t(VIEW_REGISTRY[view].titleKey);
 

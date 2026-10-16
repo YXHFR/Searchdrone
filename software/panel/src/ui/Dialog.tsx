@@ -10,6 +10,7 @@ interface Props {
 /**
  * The only dialog component. It ends above the safety bar and never covers it.
  * window.confirm/alert/prompt are never used (they would cover the whole page).
+ * Not aria-modal on purpose: STOP and RETURN HOME must stay reachable for screen readers too.
  */
 export function Dialog({ title, children, onClose, testId }: Props) {
   const titleId = useId();
@@ -29,7 +30,6 @@ export function Dialog({ title, children, onClose, testId }: Props) {
         ref={ref}
         className="dialog"
         role="dialog"
-        aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
         data-testid={testId}

@@ -2,6 +2,8 @@
 // (same origin), never by a ticket or code in the URL.
 import { paths } from "./paths";
 
+// The live-feed envelope is typed here until the ground server's WebSocket models land in
+// sd_schemas with the live wiring (B1-13); then these local types are replaced by imports.
 export interface LiveEnvelope {
   seq: number | null;
   ts?: string;
@@ -11,6 +13,8 @@ export interface LiveEnvelope {
   mission_id?: string | null;
   data: unknown;
 }
+
+const OPEN = 1; // WebSocket.OPEN
 
 export const WS_TIMING = {
   pingEveryMs: 10_000,
@@ -88,20 +92,30 @@ export class LiveSocket {
     const ws = this.opts.createSocket ? this.opts.createSocket(url) : new WebSocket(url);
     this.ws = ws;
     ws.onmessage = (ev) => this.onMessage(ev.data);
-    ws.onclose = () => {
-      if (this.ws !== ws) return;
-      this.ws = null;
-      this.clearTimers();
-      this.h.onState("down");
-      if (!this.closed) {
-        this.retryTimer = setTimeout(
-          () => this.connect(),
-          backoffDelay(this.attempt, this.opts.random),
-        );
-        this.attempt += 1;
-      }
-    };
+    ws.onclose = () => this.lost(ws);
     this.armSilence();
+  }
+
+  /** Socket closed or silent: report down at once and schedule the next attempt. */
+  private lost(ws: WebSocket): void {
+    if (this.ws !== ws) return;
+    this.ws = null;
+    ws.onmessage = null;
+    ws.onclose = null;
+    this.clearTimers();
+    this.h.onState("down");
+    if (!this.closed) {
+      this.retryTimer = setTimeout(
+        () => this.connect(),
+        backoffDelay(this.attempt, this.opts.random),
+      );
+      this.attempt += 1;
+    }
+    try {
+      ws.close();
+    } catch {
+      // already closed
+    }
   }
 
   private onMessage(raw: unknown): void {
@@ -152,7 +166,7 @@ export class LiveSocket {
   }
 
   private send(msg: unknown): void {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    if (this.ws && this.ws.readyState === OPEN) this.ws.send(JSON.stringify(msg));
   }
 
   private startPing(): void {
@@ -162,7 +176,10 @@ export class LiveSocket {
 
   private armSilence(): void {
     if (this.silenceTimer) clearTimeout(this.silenceTimer);
-    this.silenceTimer = setTimeout(() => this.ws?.close(), WS_TIMING.silenceMs);
+    const ws = this.ws;
+    this.silenceTimer = setTimeout(() => {
+      if (ws) this.lost(ws);
+    }, WS_TIMING.silenceMs);
   }
 
   private clearTimers(): void {

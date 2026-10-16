@@ -65,7 +65,7 @@ function setup(replies: Reply[], pollReply: () => Response = () => json(200, out
     { calls: [] as [string, string][] },
   );
   const onUnauthorized = vi.fn();
-  const m = new VehicleActionMachine("sim-01", "stop", {
+  const m = new VehicleActionMachine(() => "sim-01", "stop", {
     fetch: fetchFn as typeof fetch,
     log,
     onUnauthorized,
@@ -263,6 +263,80 @@ describe("VehicleActionMachine", () => {
     expect(m.snapshot.state).toBe("idle");
   });
 
+  it("closing an unconfirmed message logs a critical event at once", async () => {
+    const { m, log } = setup([json(202, DISPATCHED)], () =>
+      json(200, outcome({ result: "dispatched" })),
+    );
+    m.trigger();
+    await flush();
+    await vi.advanceTimersByTimeAsync(TIMING.ackWaitMs + 10);
+    m.dismiss();
+    expect(log.calls.filter(([lvl]) => lvl === "critical")).toHaveLength(1);
+  });
+
+  it("a vehicle id that arrives mid-press does not cancel the press (emergency page → config loaded)", async () => {
+    let target: string | null = null;
+    const urls: string[] = [];
+    const bodies: string[] = [];
+    let n = 0;
+    const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(String(input));
+      if (init?.method !== "POST")
+        return Promise.resolve(json(200, outcome({ result: "dispatched" })));
+      bodies.push(JSON.parse(String(init.body)).client_action_id);
+      n += 1;
+      if (n === 1) return Promise.reject(new TypeError("ground down"));
+      return Promise.resolve(
+        json(202, { actions: [{ ...DISPATCHED, action_id: "a9", vehicle_id: "sim-01" }] }),
+      );
+    });
+    const log = vi.fn();
+    const m = new VehicleActionMachine(() => target, "stop", {
+      fetch: fetchFn as typeof fetch,
+      log,
+    });
+    m.trigger();
+    await flush();
+    expect(m.snapshot.state).toBe("retrying");
+    target = "sim-01"; // config arrives while the press is being retried
+    await vi.advanceTimersByTimeAsync(TIMING.retryDelayMs + 5);
+    await flush();
+    expect(m.snapshot.state).toBe("sent");
+    expect(urls.filter((u) => u.endsWith("stop_all"))).toHaveLength(2);
+    expect(new Set(bodies).size).toBe(1);
+    // The next press uses the vehicle id.
+    m.trigger();
+    await flush();
+    expect(urls.at(-1)).toBe("/api/v1/vehicles/sim-01/actions/stop");
+  });
+
+  it("a 202 whose body never arrives is retried, not left in 'sending'", async () => {
+    let n = 0;
+    const fetchFn = vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      n += 1;
+      if (n === 1) {
+        const stalled = new ReadableStream({
+          start(c) {
+            init?.signal?.addEventListener("abort", () =>
+              c.error(new DOMException("aborted", "AbortError")),
+            );
+          },
+        });
+        return Promise.resolve(new Response(stalled, { status: 202 }));
+      }
+      return Promise.resolve(json(202, DISPATCHED));
+    });
+    const m = new VehicleActionMachine(() => "sim-01", "stop", {
+      fetch: fetchFn as typeof fetch,
+      log: () => {},
+    });
+    m.trigger();
+    await vi.advanceTimersByTimeAsync(TIMING.attemptTimeoutMs + TIMING.retryDelayMs + 20);
+    await flush();
+    expect(n).toBe(2);
+    expect(m.snapshot.state).toBe("sent");
+  });
+
   it("without a vehicle id it uses stop_all and acks when every vehicle acked", async () => {
     const calls: string[] = [];
     const fetchFn = vi.fn((input: RequestInfo | URL) => {
@@ -276,7 +350,7 @@ describe("VehicleActionMachine", () => {
         }),
       );
     });
-    const m = new VehicleActionMachine(null, "stop", {
+    const m = new VehicleActionMachine(() => null, "stop", {
       fetch: fetchFn as typeof fetch,
       log: () => {},
     });

@@ -49,6 +49,27 @@ export default defineConfig({
         launchOptions: chromium,
       },
     },
+    // Extra sizes from the size list, for the safety-bar visibility matrix.
+    {
+      name: "desktop-xl",
+      testMatch: /safety\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1920, height: 1080 },
+        launchOptions: chromium,
+      },
+    },
+    {
+      name: "phone-390",
+      testMatch: /safety\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        launchOptions: chromium,
+      },
+    },
     {
       name: "phone-375",
       use: chromiumOnly

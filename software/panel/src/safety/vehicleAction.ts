@@ -5,7 +5,7 @@
 // result acked/already_active. A 202 means "sent", nothing more.
 import { MUTATION_HEADERS, readError } from "../api/http";
 import { paths, type VehicleAction } from "../api/paths";
-import type { ActionDispatched, ActionDispatchedAll, ActionOutcome } from "../api/types";
+import type { ActionDispatched, ActionDispatchedAll, ActionOutcome, ApiError } from "../api/types";
 import { uuidv7 } from "../lib/uuidv7";
 
 export type ActionState =
@@ -64,7 +64,11 @@ export interface MachineDeps {
 
 type Timer = ReturnType<typeof setTimeout>;
 
-/** One machine per (button, vehicle). `vehicleId === null` uses the *_all endpoints. */
+/**
+ * One long-lived machine per button. The target vehicle is read at each press and frozen for
+ * that press, so a vehicle id that arrives later (config loaded) never cancels a press in
+ * flight. A null target uses the *_all endpoints.
+ */
 export class VehicleActionMachine {
   private snap: ActionSnapshot = {
     state: "idle",
@@ -79,9 +83,11 @@ export class VehicleActionMachine {
   /** action_id → vehicle_id for the current press; value true once that vehicle acked. */
   private pending = new Map<string, { vehicleId: string; acked: boolean }>();
   private readonly now: () => number;
+  /** Target of the current press (null = all vehicles). */
+  private target: string | null = null;
 
   constructor(
-    private readonly vehicleId: string | null,
+    private readonly vehicleId: () => string | null,
     private readonly action: VehicleAction,
     private readonly deps: MachineDeps,
   ) {
@@ -99,10 +105,12 @@ export class VehicleActionMachine {
 
   /** New press: always sends, with a new client_action_id, even mid-attempt. */
   trigger(): void {
+    if (this.action === "resume" && this.vehicleId() === null) return; // Resume needs a vehicle
     this.clearTimers();
     this.generation += 1;
     this.pending.clear();
     this.pressedAt = this.now();
+    this.target = this.vehicleId();
     const id = uuidv7();
     this.set({
       state: "sending",
@@ -114,9 +122,10 @@ export class VehicleActionMachine {
     void this.attempt(this.generation, id);
   }
 
-  /** ✕ on unconfirmed/failed. */
+  /** ✕ on unconfirmed/failed. Closing the message is logged: the action was never confirmed. */
   dismiss(): void {
     if (this.snap.state !== "unconfirmed" && this.snap.state !== "failed") return;
+    this.deps.log("critical", `${this.action}: ej bekräftat – meddelandet stängdes`);
     this.clearTimers();
     this.generation += 1;
     this.pending.clear();
@@ -129,8 +138,7 @@ export class VehicleActionMachine {
     if (!entry) return; // older press or another client's action
     const st = this.snap.state;
     if (st !== "sent" && st !== "unconfirmed") return;
-    const sdlink = o.paths.sdlink as string | undefined;
-    if (sdlink === "sent" || sdlink === "acked") this.set({ ...this.snap, onboardReceived: true });
+    if (o.paths.sdlink === "sent") this.set({ ...this.snap, onboardReceived: true });
     if (FINAL_OK.has(o.result)) {
       entry.acked = true;
       if ([...this.pending.values()].every((e) => e.acked)) this.toAcked();
@@ -143,24 +151,21 @@ export class VehicleActionMachine {
     }
   }
 
-  /** Stops timers and ignores late answers. Listeners stay (React may re-subscribe). */
-  destroy(): void {
-    this.clearTimers();
-    this.generation += 1;
-  }
-
   // --- internals -------------------------------------------------------------------
 
   private url(): string {
-    if (this.vehicleId !== null) return paths.vehicleAction(this.vehicleId, this.action);
-    if (this.action === "resume") throw new Error("resume needs a vehicle id");
-    return paths.allVehiclesAction(this.action);
+    if (this.target !== null) return paths.vehicleAction(this.target, this.action);
+    // trigger() never starts a Resume without a vehicle, so this is stop or return_home.
+    return paths.allVehiclesAction(this.action as "stop" | "return_home");
   }
 
   private async attempt(gen: number, clientActionId: string): Promise<void> {
     const ctrl = new AbortController();
     const abort = this.after(TIMING.attemptTimeoutMs, () => ctrl.abort());
+    // The 3 s limit covers headers AND body: a stalled body is retried like a timeout
+    // (same client_action_id, so the server treats it as the same press).
     let res: Response;
+    let body: unknown = null;
     try {
       res = await this.deps.fetch(this.url(), {
         method: "POST",
@@ -170,6 +175,8 @@ export class VehicleActionMachine {
         body: JSON.stringify({ client_action_id: clientActionId }),
         signal: ctrl.signal,
       });
+      if (res.status === 202 || res.status === 200) body = await res.json();
+      else if (res.status !== 502 && res.status !== 504) body = await readError(res);
     } catch {
       this.cancel(abort);
       if (gen === this.generation) this.retryOrGiveUp(gen, clientActionId);
@@ -179,22 +186,14 @@ export class VehicleActionMachine {
     if (gen !== this.generation) return;
 
     if (res.status === 202 || res.status === 200) {
-      let body: ActionDispatched | ActionDispatchedAll | null = null;
-      try {
-        body = (await res.json()) as ActionDispatched | ActionDispatchedAll;
-      } catch {
-        body = null;
-      }
-      if (gen !== this.generation) return;
-      this.toSent(gen, body);
+      this.toSent(gen, body as ActionDispatched | ActionDispatchedAll | null);
       return;
     }
     if (res.status === 502 || res.status === 504) {
       this.retryOrGiveUp(gen, clientActionId);
       return;
     }
-    const err = await readError(res);
-    if (gen !== this.generation) return;
+    const err = body as Partial<ApiError> | null;
     if (res.status === 401) {
       this.deps.onUnauthorized?.();
       this.toFailed({ key: "safety.error.session" });
@@ -227,7 +226,7 @@ export class VehicleActionMachine {
       for (const a of body.actions)
         this.pending.set(a.action_id, { vehicleId: a.vehicle_id, acked: false });
     } else if (body && "action_id" in body) {
-      this.pending.set(body.action_id, { vehicleId: this.vehicleId ?? "", acked: false });
+      this.pending.set(body.action_id, { vehicleId: this.target ?? "", acked: false });
     }
     this.set({ ...this.snap, state: "sent", text: { key: "safety.state.sent" } });
     this.deps.log("info", `${this.action}: skickat`);

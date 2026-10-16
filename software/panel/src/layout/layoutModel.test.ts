@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canSplitAt,
   closeView,
   fixSizes,
   fromPreset,
@@ -98,6 +99,17 @@ describe("layoutModel", () => {
     const full = splitView(fromPreset("standard"), [0], "col", "status");
     expect(visibleViews(full)).toEqual(["chat", "status", "map", "video"]);
     checkRules(splitView(full, [0, 0], "row", "candidates"), "desktop");
+  });
+
+  it("splitting is offered only where it can add a view", () => {
+    const std = fromPreset("standard");
+    expect(canSplitAt(std, [0], "desktop")).toBe(true);
+    expect(canSplitAt(std, [1, 0], "desktop")).toBe(false); // would be a third level
+    expect(canSplitAt(fromPreset("quad"), [0, 0], "desktop")).toBe(false); // 4 views already
+    expect(canSplitAt(fromPreset("chat_only"), [], "tablet")).toBe(true);
+    expect(canSplitAt(fromPreset("map_video", "tablet"), [0], "tablet")).toBe(false);
+    const s = splitView(std, [0], "col", "status");
+    expect(leaves(s.root)).toContain("status");
   });
 
   it("closeView lets the sibling take the space and never empties the layout", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { VehicleAction } from "../api/paths";
 import { actionBus } from "../state/actionBus";
 import { useSessionStore } from "../state/sessionStore";
@@ -10,13 +10,20 @@ export interface UseVehicleAction extends ActionSnapshot {
   dismiss(): void;
 }
 
+/**
+ * One machine for the lifetime of the button. A changing vehicle id (for example config
+ * arriving after a press on the emergency page) only affects the NEXT press; a press in
+ * flight keeps its target, its retries and its status.
+ */
 export function useVehicleAction(
   vehicleId: string | null,
   action: VehicleAction,
 ): UseVehicleAction {
-  const machine = useMemo(
+  const idRef = useRef(vehicleId);
+  idRef.current = vehicleId;
+  const [machine] = useState(
     () =>
-      new VehicleActionMachine(vehicleId, action, {
+      new VehicleActionMachine(() => idRef.current, action, {
         fetch: (input, init) => fetch(input, init),
         log: (level, message) => useUiStore.getState().log(level, message),
         onUnauthorized: () => {
@@ -24,10 +31,8 @@ export function useVehicleAction(
           if (s.status === "ready") s.set({ needsReauth: true });
         },
       }),
-    [vehicleId, action],
   );
   useEffect(() => actionBus.subscribe((o) => machine.outcome(o)), [machine]);
-  useEffect(() => () => machine.destroy(), [machine]);
   const snap = useSyncExternalStore(
     (cb) => machine.subscribe(cb),
     () => machine.snapshot,

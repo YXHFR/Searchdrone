@@ -2,8 +2,7 @@
 # when typos flags a correct Swedish or domain word.
 
 [files]
-# The panel's Swedish UI texts live only in its translation file (B1-06).
-extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE", "software/panel/src/i18n/sv.json"]
+extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE"]
 
 [default.extend-words]
 # Domain
@@ -21,3 +20,10 @@ byt = "byt"
 vill = "vill"
 objekt = "objekt"
 tak = "tak"
+# Swedish (panel texts in software/panel/src/i18n/sv.json)
+meny = "meny"
+tema = "tema"
+vyer = "vyer"
+som = "som"
+manuell = "manuell"
+gir = "gir"
