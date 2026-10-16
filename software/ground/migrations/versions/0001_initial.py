@@ -21,7 +21,8 @@ down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Rows here are history: sd_app may only read and add, and triggers stop everyone else.
+# Rows here are history: sd_app may only read and add. Triggers also stop accidental
+# changes by the owner (a superuser can still disable them on purpose).
 APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions")
 
 # Drop order (children first; the missions <-> charters cycle is cut before). Must list
@@ -46,11 +47,20 @@ TABLES = (
     "vehicles",
 )
 
+# sd_app must exist and must not hold any power that would make the grants meaningless.
 REQUIRE_APP_ROLE = """
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sd_app') THEN
-    RAISE EXCEPTION 'role sd_app is missing: run just migrate (sd-ground db setup creates it)';
+    RAISE EXCEPTION 'role sd_app is missing: create it before migrating (sd-ground db setup)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sd_app'
+             AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls OR rolreplication)) THEN
+    RAISE EXCEPTION 'role sd_app must be NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member
+             WHERE r.rolname = 'sd_app') THEN
+    RAISE EXCEPTION 'role sd_app must not be a member of another role';
   END IF;
 END $$;
 """
@@ -109,7 +119,7 @@ CREATE TABLE charters (
   pilot_position     geometry(Point, 4326) NOT NULL,
   proposed_by        text NOT NULL,
   autonomy_mode      text CHECK (autonomy_mode IN ('APPROVE_EACH','WITHIN_CHARTER')),
-  approved_by        text CHECK (approved_by IS NULL OR approved_by LIKE 'operator:%'),
+  approved_by        text CHECK (approved_by IS NULL OR approved_by ~ '^operator:.+'),
   approved_at        timestamptz,
   install_status     text NOT NULL DEFAULT 'none' CHECK (install_status IN ('none','pending','installed','failed')),
   fence_hash         text,
@@ -185,9 +195,11 @@ CREATE TABLE approvals (
   requested_by           text NOT NULL,
   requested_at           timestamptz NOT NULL DEFAULT now(),
   expires_at             timestamptz,
-  decided_by             text CHECK (decided_by IS NULL OR decided_by LIKE 'operator:%'),
+  decided_by             text CHECK (decided_by IS NULL OR decided_by ~ '^operator:.+'),
   decided_at             timestamptz,
-  reason                 text
+  reason                 text,
+  -- Only a named operator can approve (B0-04 review: closes the NULL gap).
+  CHECK (status <> 'approved' OR (decided_by IS NOT NULL AND decided_at IS NOT NULL))
 );
 CREATE INDEX approvals_pending_idx ON approvals(mission_id) WHERE status = 'pending';
 ALTER TABLE commands ADD CONSTRAINT commands_approval_fk FOREIGN KEY (approval_id) REFERENCES approvals(id);
@@ -218,7 +230,7 @@ CREATE TABLE clearances (
   charter_id              uuid NOT NULL REFERENCES charters(id),
   charter_version         int NOT NULL,
   status                  text NOT NULL CHECK (status IN ('active','consumed','expired','invalidated')),
-  confirmed_by            text NOT NULL CHECK (confirmed_by LIKE 'operator:%'),
+  confirmed_by            text NOT NULL CHECK (confirmed_by ~ '^operator:.+'),
   confirmed_at            timestamptz NOT NULL DEFAULT now(),
   valid_until             timestamptz NOT NULL,           -- display only
   consumed_by_command_id  uuid REFERENCES commands(id),
@@ -265,7 +277,7 @@ CREATE TABLE chat_messages (
   refs            jsonb NOT NULL DEFAULT '{}',
   parsed_intent   text CHECK (parsed_intent IN ('stop','return_home')),   -- never 'resume'
   handled_by      text CHECK (handled_by IN ('ground')),
-  CHECK (handled_by IS NULL OR parsed_intent IN ('stop','return_home')),
+  CHECK (handled_by IS NULL OR parsed_intent IS NOT NULL),
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX chat_mission_seq_idx ON chat_messages(mission_id, seq);
@@ -346,11 +358,23 @@ GUARD_FUNCTIONS = """
 CREATE FUNCTION sd_forbid_change() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'table % is append-only', TG_TABLE_NAME; END $$;
 
+-- The proposal as sent is frozen, including home and the pilot position that the range
+-- limit is measured from. Who approved and when cannot be rewritten, and a rejected or
+-- superseded charter stays that way. (Autonomy mode is left to the mission flow.)
 CREATE FUNCTION sd_charter_body_frozen() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.body IS DISTINCT FROM OLD.body OR NEW.area IS DISTINCT FROM OLD.area
-     OR NEW.version IS DISTINCT FROM OLD.version OR NEW.mission_id IS DISTINCT FROM OLD.mission_id THEN
+     OR NEW.version IS DISTINCT FROM OLD.version OR NEW.mission_id IS DISTINCT FROM OLD.mission_id
+     OR NEW.home IS DISTINCT FROM OLD.home OR NEW.pilot_position IS DISTINCT FROM OLD.pilot_position
+     OR NEW.vehicle_id IS DISTINCT FROM OLD.vehicle_id OR NEW.proposed_by IS DISTINCT FROM OLD.proposed_by THEN
     RAISE EXCEPTION 'charter body is immutable';
+  END IF;
+  IF (OLD.approved_by IS NOT NULL AND NEW.approved_by IS DISTINCT FROM OLD.approved_by)
+     OR (OLD.approved_at IS NOT NULL AND NEW.approved_at IS DISTINCT FROM OLD.approved_at) THEN
+    RAISE EXCEPTION 'charter approval is immutable';
+  END IF;
+  IF OLD.status IN ('rejected','superseded') AND NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'charter status % is final', OLD.status;
   END IF;
   RETURN NEW;
 END $$;
@@ -390,9 +414,15 @@ def _run_script(sql: str) -> None:
     holds one command only, so the script goes straight to the asyncpg connection
     (simple query protocol). No bind parameters are involved.
     """
-    driver = op.get_bind().connection.driver_connection
+    bind = op.get_bind()
+    # SQLAlchemy's asyncpg adapter sends BEGIN lazily, on its first statement. Run one
+    # through it so the raw script below is inside that transaction (and rolls back with it).
+    bind.exec_driver_sql("SELECT 1")
+    driver = bind.connection.driver_connection
     if driver is None:
         raise RuntimeError("no database connection")
+    if not driver.is_in_transaction():
+        raise RuntimeError("migration script must run inside a transaction")
     await_only(driver.execute(sql))
 
 

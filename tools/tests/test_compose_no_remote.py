@@ -14,13 +14,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "compose.yaml"
 DOCKER = shutil.which("docker")
-# Dummy values so `docker compose config` can render without a real .env.
-DUMMY_ENV = {
-    "SD_GROUND__DB_PASSWORD": "x",
-    "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "x",
-    "SD_UID": "1000",
-    "SD_GID": "1000",
-}
+# Dummy values so `docker compose config` can render without a real .env. Tickets that
+# add services with required variables add them here.
+DUMMY_ENV = {"SD_GROUND__DB_PASSWORD": "x"}
 
 
 def _services() -> dict[str, Any]:
@@ -38,8 +34,7 @@ def test_no_remote_profile_or_tunnel_static() -> None:
 @pytest.mark.skipif(DOCKER is None, reason="docker is not installed")
 def test_no_remote_profile_rendered(tmp_path: Path) -> None:
     env = tmp_path / "env"
-    values = {**DUMMY_ENV, "SD_DATA_DIR": str(tmp_path / "data")}
-    env.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    env.write_text("".join(f"{k}={v}\n" for k, v in DUMMY_ENV.items()), encoding="utf-8")
     assert DOCKER is not None
     profiles = subprocess.run(
         [DOCKER, "compose", "--env-file", str(env), "-f", str(COMPOSE), "config", "--profiles"],

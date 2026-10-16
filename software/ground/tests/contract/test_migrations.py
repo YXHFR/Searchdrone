@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import asyncpg
@@ -156,3 +157,101 @@ def test_charter_body_frozen_status_free(migrated_db: Db) -> None:
         db.run("UPDATE charters SET version = 2", role="sd_app")
     db.run("UPDATE charters SET status = 'rejected'", role="sd_app")
     assert db.run("SELECT status FROM charters")[0]["status"] == "rejected"
+
+
+def test_charter_proposal_and_approval_frozen(migrated_db: Db) -> None:
+    db = migrated_db
+    _seed(db)
+    db.run("INSERT INTO vehicles (id, name, kind, mav_sysid) VALUES ('sim-02', 'Sim 02', 'sim', 2)")
+    for column, value in (
+        ("area", "ST_Expand(area, 0.01)"),
+        ("home", "ST_SetSRID(ST_MakePoint(149.17, -35.36, 600), 4326)"),
+        ("pilot_position", "ST_SetSRID(ST_MakePoint(149.17, -35.36), 4326)"),
+        ("vehicle_id", "'sim-02'"),
+        ("proposed_by", "'brain:other'"),
+    ):
+        with pytest.raises(asyncpg.RaiseError, match="immutable"):
+            db.run(f"UPDATE charters SET {column} = {value}", role="sd_app")  # noqa: S608
+    db.run(
+        "UPDATE charters SET status = 'approved', approved_by = 'operator:demo', "
+        "approved_at = now(), autonomy_mode = 'WITHIN_CHARTER'",
+        role="sd_app",
+    )
+    with pytest.raises(asyncpg.RaiseError, match="approval is immutable"):
+        db.run("UPDATE charters SET approved_by = 'operator:other'", role="sd_app")
+    db.run("UPDATE charters SET status = 'superseded'", role="sd_app")
+    with pytest.raises(asyncpg.RaiseError, match="final"):
+        db.run("UPDATE charters SET status = 'approved'", role="sd_app")
+
+
+def test_only_named_operators_approve(migrated_db: Db) -> None:
+    db = migrated_db
+    mission = _seed(db)
+    insert = (
+        "INSERT INTO approvals (mission_id, vehicle_id, kind, subject_id, status, summary_sv, "
+        "requested_by, decided_by, decided_at) "
+        "VALUES ($1::uuid, 'sim-01', 'resume', uuidv7(), $2, 'Fortsätt', 'system:ground', $3, $4)"
+    )
+    now = datetime.now(UTC)
+    for decided_by, decided_at in ((None, None), ("operator:demo", None), (None, now)):
+        with pytest.raises(asyncpg.CheckViolationError):
+            db.run(insert, mission, "approved", decided_by, decided_at, role="sd_app")
+    for who in ("brain:ground", "operator:", "system:ground"):
+        with pytest.raises(asyncpg.CheckViolationError):
+            db.run(insert, mission, "approved", who, now, role="sd_app")
+    db.run(insert, mission, "pending", None, None, role="sd_app")
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run("UPDATE approvals SET status = 'approved'", role="sd_app")
+    db.run(
+        "UPDATE approvals SET status = 'approved', decided_by = 'operator:demo', "
+        "decided_at = now()",
+        role="sd_app",
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run("UPDATE charters SET approved_by = 'brain:ground'", role="sd_app")
+
+
+def test_stop_intent_and_unique_rules(migrated_db: Db) -> None:
+    db = migrated_db
+    mission = _seed(db)
+    chat = (
+        "INSERT INTO chat_messages (id, mission_id, vehicle_id, role, author_ref, text, "
+        "parsed_intent, handled_by) VALUES (uuidv7(), $1::uuid, 'sim-01', 'operator', "
+        "'operator:demo', 'x', $2, $3)"
+    )
+    for intent, handled in (("resume", None), (None, "ground")):
+        with pytest.raises(asyncpg.CheckViolationError):
+            db.run(chat, mission, intent, handled, role="sd_app")
+    db.run(chat, mission, "stop", "ground", role="sd_app")
+    with pytest.raises(asyncpg.UniqueViolationError):
+        db.run(
+            "INSERT INTO missions (vehicle_id, title, limits, created_by, data_dir) "
+            "VALUES ('sim-01', 'Two', '{}', 'operator:demo', 'missions/y')",
+            role="sd_app",
+        )
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run("UPDATE missions SET status = 'PAUSED'", role="sd_app")
+
+
+def test_failed_upgrade_rolls_back(fresh_db: Db) -> None:
+    # A clashing function makes the second script fail after the tables were created.
+    fresh_db.run(
+        "CREATE FUNCTION sd_forbid_change() RETURNS trigger LANGUAGE plpgsql "
+        "AS $$ BEGIN RETURN NULL; END $$"
+    )
+    with pytest.raises(Exception, match="already exists"):
+        fresh_db.upgrade()
+    assert _tables(fresh_db) == set()
+    assert not fresh_db.run("SELECT 1 FROM pg_tables WHERE tablename = 'alembic_version'")
+
+
+def test_migration_refuses_privileged_app_role(fresh_db: Db) -> None:
+    rows = fresh_db.run(
+        "SELECT rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolreplication "
+        "FROM pg_roles WHERE rolname = 'sd_app'"
+    )
+    assert rows and not any(rows[0].values())
+    assert not fresh_db.run(
+        "SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member "
+        "WHERE r.rolname = 'sd_app'"
+    )

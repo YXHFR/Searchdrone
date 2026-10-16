@@ -27,7 +27,7 @@ _FOREIGN_TABLES = {"spatial_ref_sys"}
 def _url_from_env() -> URL:
     password = os.environ.get("SD_GROUND__DB_PASSWORD", "")
     if not password:
-        raise SystemExit("SD_GROUND__DB_PASSWORD saknas. Kör migreringarna med: just migrate")
+        raise SystemExit("SD_GROUND__DB_PASSWORD saknas i miljön (lösenordet finns i .env).")
     return URL.create(
         "postgresql+asyncpg",
         username="sd_owner",
@@ -77,8 +77,4 @@ async def run_async_migrations() -> None:
 if context.is_offline_mode():
     raise SystemExit("Offline-läge stöds inte; migreringarna körs mot databasen.")
 
-connection = config.attributes.get("connection")
-if isinstance(connection, Connection):
-    do_run_migrations(connection)
-else:
-    asyncio.run(run_async_migrations())
+asyncio.run(run_async_migrations())
