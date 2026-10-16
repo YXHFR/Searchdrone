@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 import shutil
 import subprocess
@@ -64,6 +65,7 @@ def load_allowlist(path: Path = paths.LISTEN_ALLOWLIST) -> set[tuple[str, str]]:
     return allowed
 
 
+@functools.cache
 def ephemeral_range() -> tuple[int, int]:
     """The kernel's range for random local ports."""
     try:

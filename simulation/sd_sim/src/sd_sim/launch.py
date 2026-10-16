@@ -22,7 +22,7 @@ from types import FrameType
 
 from sd_sim import _args, config, gazebo, paths, ports, procs
 from sd_sim.config import SimConfig
-from sd_sim.errors import InfraError
+from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
 from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
 
@@ -318,12 +318,9 @@ class Stack:
         self.group.stop_all()
 
 
-class StopRequestedError(Exception):
-    """Ctrl-C or ``just stop`` arrived; stop everything that was started."""
-
-
 def _raise_stop(_sig: int, _frame: FrameType | None) -> None:
-    raise StopRequestedError
+    if not procs.defer_stop():
+        raise StopRequestedError
 
 
 def _run_foreground(stack: Stack) -> int:

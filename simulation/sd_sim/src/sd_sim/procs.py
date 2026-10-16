@@ -18,7 +18,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sd_sim.errors import StopRequestedError
+
 STOP_GRACE_S = 5.0
+_starting = 0
+_stop_deferred = False
+
+
+def defer_stop() -> bool:
+    """Called by a stop-signal handler: True if a child is being started right now, in
+    which case the stop is raised as soon as the child is recorded."""
+    global _stop_deferred
+    if _starting:
+        _stop_deferred = True
+        return True
+    return False
+
+
 BASE_ENV_KEYS = ("PATH", "HOME", "USER", "LOGNAME", "TMPDIR")
 # Display and graphics variables a Gazebo window needs under WSLg.
 GRAPHICS_ENV_KEYS = (
@@ -72,13 +88,18 @@ class ProcessGroup:
     ) -> Proc:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         log = self.logs_dir / f"{name}.log"
-        # A stop signal must not land between starting the child and recording it, or
-        # the child would be left running unseen.
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        # A stop must not land between starting the child and recording it, or the child
+        # would be left running unseen. The stop is deferred (not blocked: a blocked mask
+        # would be inherited by the child, which could then not be stopped with SIGTERM).
+        global _starting, _stop_deferred
+        _starting += 1
         try:
             proc = self._spawn(name, argv, env=env, cwd=cwd, log=log)
         finally:
-            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+            _starting -= 1
+        if _stop_deferred and not _starting:
+            _stop_deferred = False
+            raise StopRequestedError
         return proc
 
     def _spawn(

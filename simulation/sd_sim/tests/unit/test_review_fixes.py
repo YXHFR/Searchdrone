@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from sd_sim import config, launch, netcheck, procs, smoke
+from sd_sim.errors import StopRequestedError
 from sd_sim.linksim import core
 from sd_sim.sitl import CMAC_HOME
 from sd_sim.udprelay import FROM_VEHICLE, UdpRelay
@@ -198,3 +199,39 @@ async def test_udp_in_flight_dropped_after_down() -> None:
         sender.close()
         target.close()
         relay.close()
+
+
+def test_started_child_can_be_stopped_with_sigterm(tmp_path: Path) -> None:
+    group = procs.ProcessGroup(tmp_path / "pids.json", tmp_path / "logs")
+    proc = group.start(
+        "sleeper", [sys.executable, "-c", "import time; time.sleep(60)"], env=procs.clean_env()
+    )
+    try:
+        status = Path(f"/proc/{proc.pid}/status").read_text()
+        blocked = int(
+            next(ln for ln in status.splitlines() if ln.startswith("SigBlk")).split()[1], 16
+        )
+        assert not blocked & ((1 << (signal.SIGINT - 1)) | (1 << (signal.SIGTERM - 1)))
+        start = time.monotonic()
+        group.stop_all()
+        assert time.monotonic() - start < procs.STOP_GRACE_S
+        assert proc.popen.poll() is not None
+    finally:
+        proc.popen.kill()
+
+
+def test_stop_during_start_is_deferred_until_recorded(tmp_path: Path) -> None:
+    group = procs.ProcessGroup(tmp_path / "pids.json", tmp_path / "logs")
+    real_spawn = group._spawn
+
+    def spawn_then_signal(*args, **kwargs):
+        proc = real_spawn(*args, **kwargs)
+        assert procs.defer_stop()  # a stop arrives while the child is being started
+        return proc
+
+    group._spawn = spawn_then_signal  # type: ignore[method-assign]
+    with pytest.raises(StopRequestedError):
+        group.start("sleeper", [sys.executable, "-c", "import time; time.sleep(60)"], env={})
+    assert len(group.procs) == 1  # recorded, so down() will stop it
+    group.stop_all()
+    assert not procs.defer_stop()
