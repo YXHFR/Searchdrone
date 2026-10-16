@@ -1,0 +1,14 @@
+# Spell checking. Swedish user-facing messages are allowed; add words here only
+# when typos flags a correct Swedish or domain word.
+
+[files]
+extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE"]
+
+[default.extend-words]
+# Domain
+sitl = "sitl"
+# Swedish
+varning = "varning"
+databas = "databas"
+formen = "formen"
+parm = "parm"

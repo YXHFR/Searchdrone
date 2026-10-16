@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Do not include personal data**: no home addresses, real
+        coordinates, network details, keys or passwords. Use the public ArduPilot SITL
+        site (CMAC) in examples. Security problems go through private reporting instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Commands (e.g. `just test-sitl sc=SC04`) and steps.
+    validations:
+      required: true
+  - type: dropdown
+    id: safety
+    attributes:
+      label: Could this affect what the drone does?
+      options:
+        - "No"
+        - "Yes - flight behaviour, STOP / RETURN HOME, geofence or failsafes"
+        - "Not sure"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS / WSL version, simulator or real hardware.

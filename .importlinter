@@ -1,0 +1,122 @@
+[importlinter]
+root_packages =
+    sd_schemas
+    sd_safety
+    sd_geo
+    sd_mav
+    sd_link
+    sd_link_testing
+    sd_obs
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_hwcalc
+    sd_sim
+include_external_packages = True
+
+[importlinter:contract:schemas-leaf]
+name = sd_schemas is a leaf
+type = forbidden
+source_modules = sd_schemas
+forbidden_modules =
+    sd_safety
+    sd_geo
+    sd_mav
+    sd_link
+    sd_obs
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_hwcalc
+    sd_sim
+
+[importlinter:contract:safety-pure]
+name = sd_safety is pure logic without I/O
+type = forbidden
+source_modules = sd_safety
+forbidden_modules =
+    sd_obs
+    sd_mav
+    sd_link
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_sim
+    httpx
+    fastapi
+    sqlalchemy
+    asyncpg
+    psycopg
+    pymavlink
+    websockets
+    serial
+
+[importlinter:contract:geo]
+name = sd_geo depends only on sd_schemas
+type = forbidden
+source_modules = sd_geo
+forbidden_modules = sd_safety, sd_mav, sd_link, sd_obs, sd_detect, sd_onboard, sd_ground, sd_brain, sd_sim
+
+[importlinter:contract:mav-link-obs-detect]
+name = common packages do not reach the process packages
+type = forbidden
+source_modules =
+    sd_mav
+    sd_link
+    sd_obs
+    sd_detect
+forbidden_modules =
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_sim
+
+[importlinter:contract:onboard]
+name = sd_onboard does not reach ground or AI
+type = forbidden
+source_modules = sd_onboard
+forbidden_modules = sd_ground, sd_brain, sd_sim
+
+[importlinter:contract:ground]
+name = sd_ground does not reach onboard or AI
+type = forbidden
+source_modules = sd_ground
+forbidden_modules = sd_onboard, sd_brain, sd_sim
+
+[importlinter:contract:brain-no-flight-link]
+name = the AI cannot talk to the flight controller
+type = forbidden
+source_modules = sd_brain
+forbidden_modules = sd_mav, sd_link, sd_onboard, sd_ground, sd_sim, pymavlink, serial, mavsdk, dronekit, MAVProxy
+
+[importlinter:contract:brain-isolation]
+name = the AI has no database, link or subprocess access
+type = forbidden
+source_modules = sd_brain
+forbidden_modules = asyncpg, sqlalchemy, psycopg, sd_ground, sd_link, pymavlink, subprocess
+
+[importlinter:contract:testing-isolation]
+name = test-only packages are never imported by production packages
+type = forbidden
+source_modules =
+    sd_schemas
+    sd_safety
+    sd_geo
+    sd_mav
+    sd_link
+    sd_obs
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_hwcalc
+forbidden_modules = sd_link_testing, sd_sim
+
+[importlinter:contract:hwcalc]
+name = sd_hwcalc is standalone
+type = forbidden
+source_modules = sd_hwcalc
+forbidden_modules = sd_safety, sd_geo, sd_mav, sd_link, sd_obs, sd_detect, sd_onboard, sd_ground, sd_brain, sd_sim

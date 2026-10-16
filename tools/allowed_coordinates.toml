@@ -1,0 +1,8 @@
+# Public test sites only. Coordinates in committed files must lie inside one of these
+# places, otherwise tools/check_forbidden_files.py fails. Never add a private location.
+
+[[place]]
+name = "CMAC (ArduPilot SITL default)"
+lat = -35.363261
+lon = 149.165230
+radius_m = 5000

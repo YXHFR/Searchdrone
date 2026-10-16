@@ -1,0 +1,12 @@
+[project]
+name = "sd-onboard"
+version = "0.0.0"
+description = "The onboard process sd-onboard: runs skills as state machines and talks MAVLink to the flight controller."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

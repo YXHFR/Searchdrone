@@ -1,0 +1,17 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "searchdrone-canary"
+description = "Canary token used to test secret scanning"
+regex = '''SDCANARY_[A-Z0-9]{32}'''
+
+[[rules]]
+id = "anthropic-key"
+description = "Anthropic API key or OAuth token"
+regex = '''sk-ant-(api|oat)\d{2}-[A-Za-z0-9_\-]{20,}'''
+
+[[rules]]
+id = "cloudflared-credentials"
+description = "cloudflared tunnel credentials"
+regex = '''"TunnelSecret"\s*:\s*"[A-Za-z0-9+/=]{20,}"'''

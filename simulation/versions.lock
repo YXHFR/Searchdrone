@@ -1,0 +1,16 @@
+# The single source of truth for tool and simulator versions.
+# Scripts, CI and sd_sim read this file (TOML). Changing a version is its own PR.
+# New versions must be at least two weeks old when they are adopted.
+
+ubuntu = "24.04"
+ardupilot_tag = "Copter-4.7.1"
+ardupilot_commit = "dbe792162d06cab66c3475fd5556bf7a120f119e"
+ardupilot_gazebo_commit = "082a0fe231f6e63bc8d1598f1cba461d9e2ea7f5"
+gz_distribution = "harmonic"
+just_version = "1.58.0"           # rust-just on PyPI
+uv_version = "0.11.33"
+uv_sha256 = "aa9fca823c03289fb6e3460b3dc864f3ea895cafaf9b99247701a67b17d1b018"  # uv-x86_64-unknown-linux-gnu.tar.gz
+pre_commit_version = "4.6.2"
+node_version = "24.21.0"          # major version also in .nvmrc and package.json engines
+sitl_image = "ghcr.io/yxhfr/searchdrone-sitl"
+pnpm_version = "10.34.6"           # also in package.json "packageManager"

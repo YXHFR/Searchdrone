@@ -1,0 +1,15 @@
+# AI mission commander (sd-brain). Copied to config/brain.toml by `just setup-config`.
+# Override any key with an environment variable SD_BRAIN__<SECTION>__<KEY>.
+# The best available engine decides: the cloud model when a key is set and it answers
+# in time, otherwise the local model takes over automatically in the same turn.
+
+[cloud]
+base_url = "https://openrouter.ai/api/v1"   # any OpenAI-compatible API
+model = ""                                  # choose a model; the key is SD_CLOUD_API_KEY in .env
+
+[local]
+base_url = "http://127.0.0.1:8091/v1"       # llama-server on loopback
+
+[ground]
+commander_url = "http://127.0.0.1:7700/commander/v1"
+token_file = "secrets/brain_token"

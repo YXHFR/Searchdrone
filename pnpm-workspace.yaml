@@ -1,0 +1,4 @@
+packages:
+  - software/panel
+  - software/common/ts-schemas
+onlyBuiltDependencies: []     # no postinstall scripts run unless listed here

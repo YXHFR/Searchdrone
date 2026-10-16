@@ -1,0 +1,12 @@
+[project]
+name = "sd-geo"
+version = "0.0.0"
+description = "Geometry helpers: local ENU projection, search patterns and polygon maths."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

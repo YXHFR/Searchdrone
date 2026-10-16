@@ -1,0 +1,63 @@
+# Hooks: `just setup` installs them for pre-commit and pre-push.
+# Never skip them (no --no-verify, no SKIP=). If a hook fails, fix the cause.
+exclude: '(^|/)generated/|^software/ground/tests/contract/snapshots/'
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10   # same version as uv.lock
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.50.3
+    hooks:
+      - id: typos
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: biome-check
+        name: biome check
+        entry: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true
+        language: system
+        types_or: [ts, tsx, json]
+      - id: forbidden-files
+        name: forbidden files and private patterns
+        entry: uv run tools/check_forbidden_files.py --staged --private-patterns config/local/private-patterns.txt
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: forbidden-files-push
+        name: forbidden files and private patterns (pushed commits)
+        entry: uv run tools/check_forbidden_files.py --range origin/main..HEAD --private-patterns config/local/private-patterns.txt
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: reuse
+        name: reuse lint
+        entry: uv run reuse lint
+        language: system
+        pass_filenames: false
+        always_run: true
