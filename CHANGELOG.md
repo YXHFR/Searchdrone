@@ -8,6 +8,14 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- AI mission commander `sd-brain`: chat and situation in, one gated order per turn out.
+  The cloud model (any OpenAI-compatible API, OpenRouter by default) decides when a key is
+  set, and the local Qwen3-VL-4B in llama-server takes over automatically in the same turn.
+  Charter proposals from the chat, the take-off rule (approved charter, "clear around the
+  drone" and the operator's request), a fixed Swedish command mode while the model is down,
+  a scripted commander for tests, the decision interface with a quick stop check on every
+  chat line (local model, Jev, OpenAI Decisions), 33 chat scenarios with an answer key,
+  `just models-fetch`, `just llm-up`, `just brain`, `just check-model` and `just brain-token`.
 - Monorepo skeleton: uv workspace for the Python packages, pnpm workspace for TypeScript,
   `justfile` with every recipe, pre-commit hooks, import contracts and example configuration.
 - Forbidden-file guard that blocks planning files, agent files, secrets, personal config,

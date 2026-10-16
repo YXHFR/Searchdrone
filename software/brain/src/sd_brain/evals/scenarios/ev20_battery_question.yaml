@@ -1,0 +1,12 @@
+id: EV-20
+title: Fråga om batteriet
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- operator: Hur mycket batteri har vi?
+  expect:
+    no_action: true
+    text_number_near:
+      value: 71
+      tol: 1
+    language: sv

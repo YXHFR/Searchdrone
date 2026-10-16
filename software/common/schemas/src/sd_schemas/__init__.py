@@ -80,6 +80,7 @@ from sd_schemas.commander import (
 from sd_schemas.decide import (
     BoxAnswer,
     BoxQuestion,
+    ChatIntentReport,
     ChoiceAnswer,
     ChoiceQuestion,
     DecideRequest,
@@ -179,6 +180,7 @@ __all__ = [
     "CharterProposalResult",
     "CharterValidationError",
     "CharterValidationResult",
+    "ChatIntentReport",
     "ChatMessage",
     "ChatPost",
     "ChoiceAnswer",

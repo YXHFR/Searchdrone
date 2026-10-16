@@ -34,6 +34,14 @@ manuell = "manuell"
 gir = "gir"
 som = "som"
 paket = "paket"
+# Swedish (sd_brain: chat texts, prompt examples and the command grammar, B1-10)
+klick = "klick"
+modell = "modell"
+absolut = "absolut"
+fram = "fram"
+lage = "lage"
+tre = "tre"
+tio = "tio"
 
 [default.extend-identifiers]
 # ArduPilot parameter and SITL frame names

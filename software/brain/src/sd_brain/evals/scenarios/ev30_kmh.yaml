@@ -1,0 +1,14 @@
+id: EV-30
+title: Fart i km/h
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- operator: Flyg till P1 i 36 km/h
+  expect:
+    tool: goto
+    params:
+      pin:
+        equals: P1
+      speed_ms:
+        approx: 10
+        tol: 0.5

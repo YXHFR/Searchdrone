@@ -74,9 +74,7 @@ def test_all_recipes_listed() -> None:
 @pytest.mark.parametrize(
     ("recipe", "ticket"),
     [
-        ("brain-token", "B1-10"),
         ("check-traceability", "B1-16"),
-        ("models-fetch", "B1-10"),
     ],
 )
 def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:

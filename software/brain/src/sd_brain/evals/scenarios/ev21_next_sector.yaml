@@ -1,0 +1,27 @@
+id: EV-21
+title: Nästa sektor enligt planen
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+memory:
+  plan_note: 'Plan: sök sektor A, sedan sektor B, sedan hem.'
+steps:
+- situation_patch:
+    sectors:
+    - sector_id: A
+      name: A
+      status: done
+      progress: 1
+    - sector_id: B
+      name: B
+      status: pending
+      progress: 0
+  event:
+    type: event.skill
+    body:
+      skill: survey_sector
+      status: done
+  expect:
+    tool: survey_sector
+    params:
+      sector:
+        equals: B

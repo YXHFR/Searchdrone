@@ -527,6 +527,26 @@ export interface CharterValidationError {
   limit?: number | null;
 }
 /**
+ * The stop check found that an operator's chat line means STOP or FLY HOME.
+ *
+ * Sent by ``sd-brain`` to ``POST /commander/v1/missions/{id}/chat-intents``. The ground
+ * station checks that ``message_id`` is a pilot's own, recent chat line in that mission
+ * and then runs the same emergency path as the buttons. It can only ever ask for a stop
+ * or a flight home, never release one.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "ChatIntentReport".
+ */
+export interface ChatIntentReport {
+  engine: ("local" | "jev" | "openai_decisions") | "rule";
+  intent: "stop" | "return_home";
+  latency_ms: number;
+  location: "cloud" | "local";
+  message_id: string;
+  probability: number;
+  request_id: string;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ChatMessage".
  */

@@ -1,0 +1,10 @@
+id: EV-22
+title: 'Inget att göra i luften: frågar eller flyger hem'
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- idle_tick: true
+  expect:
+    any_of:
+    - asks_question: true
+    - tool: return_home

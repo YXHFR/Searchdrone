@@ -25,5 +25,34 @@ services:
       retries: 20
     shm_size: 256mb
 
+
+  # --- llm: the local AI model in llama-server (B1-10), profile "ai" ---
+  # Start with `just llm-up`. The key comes from .env (SD_LLM_API_KEY); without it the
+  # service refuses to start. The port is published on loopback only and never tunnelled.
+  llm:
+    profiles: ["ai"]
+    # llama.cpp server-cuda12-b11347, built 2026-10-02 (digest from runtime.lock.toml)
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda12-b11347@sha256:d87b02aafa74797a2d599b281c50468704bd0bcdc57bfcf31b570d593f1d285b
+    restart: unless-stopped
+    ports: ["127.0.0.1:8091:8091"]
+    volumes: ["./models:/models:ro"]
+    environment:
+      LLAMA_API_KEY: ${SD_LLM_API_KEY:?SD_LLM_API_KEY saknas i .env, kör just setup-config}
+    command: ["-m", "/models/Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+              "--host", "0.0.0.0", "--port", "8091",
+              "--jinja", "-c", "8192", "-ngl", "99", "--parallel", "1",
+              "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0",
+              "--cache-reuse", "256", "--metrics"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8091/health || wget -qO- http://localhost:8091/health || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 60
+      start_period: 60s
+
 volumes:
   sd-pgdata:

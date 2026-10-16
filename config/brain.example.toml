@@ -1,15 +1,58 @@
 # AI mission commander (sd-brain). Copied to config/brain.toml by `just setup-config`.
-# Override any key with an environment variable SD_BRAIN__<SECTION>__<KEY>.
-# The best available engine decides: the cloud model when a key is set and it answers
-# in time, otherwise the local model takes over automatically in the same turn.
-
-[cloud]
-base_url = "https://openrouter.ai/api/v1"   # any OpenAI-compatible API
-model = ""                                  # choose a model; the key is SD_CLOUD_API_KEY in .env
-
-[local]
-base_url = "http://127.0.0.1:8091/v1"       # llama-server on loopback
+# Override any key with an environment variable SD_BRAIN__<SECTION>__<KEY>,
+# e.g. SD_BRAIN__LLM__ROOT_URL. Keys live in .env, never here.
+#
+# The best available engine decides: the cloud model when SD_CLOUD_API_KEY and
+# [cloud] model are set and it answers in time; otherwise the local model takes over
+# automatically in the same turn. Every order goes through the safety gate either way.
+profile = "sim"                       # sim | bench | field; scripted only in sim
+token_file = "secrets/brain_token"    # the commander token (just brain-token)
 
 [ground]
-commander_url = "http://127.0.0.1:7700/commander/v1"
-token_file = "secrets/brain_token"
+commander_url = "http://127.0.0.1:7700/commander/v1"   # loopback only
+vehicle_id = "sim-01"
+
+[backend]
+kind = "llm_local"                    # llm_local | scripted | grammar
+fallback = "grammar"                  # command mode while the model does not answer
+scripted_file = ""                    # only for kind = scripted
+
+[llm]                                 # the local model in llama-server
+root_url = "http://127.0.0.1:8091"    # /health, /tokenize, /metrics; /v1 is added
+model = "qwen3-vl-4b-instruct-q4_k_m"
+call_timeout_s = 15                   # per HTTP call
+temperature = 0.2
+top_p = 0.8
+max_tokens = 512
+seed = 42                             # only used in evaluations
+context_tokens = 8192
+prompt_budget_tokens = 6000
+health_interval_s = 2
+health_timeout_s = 1
+
+[cloud]                               # any OpenAI-compatible API
+base_url = "https://openrouter.ai/api/v1"
+model = ""                            # e.g. a model id from openrouter.ai/models
+call_timeout_s = 15
+retry_after_s = 60                    # after a cloud failure, use the local model this long
+
+[decide]                              # the decision interface (quick stop check)
+engines = ["jev", "openai_decisions", "local"]   # best first; needs SD_JEV_API_KEY / SD_OPENAI_API_KEY
+stop_check = true
+stop_check_timeout_s = 0.5
+stop_threshold = 0.5
+
+[decide.jev]
+base_url = "https://api.typesafe.ai"
+model = "jev-latest"
+
+[decide.openai_decisions]
+base_url = "https://api.openai.com"
+model = "gpt-6-luna"
+
+[behaviour]
+max_read_tool_rounds = 4
+max_repair_rounds = 1
+idle_airborne_tick_s = 60
+takeoff_policy = "request_then_clearance"   # request_then_clearance | clearance_only
+rule_takeoff = true

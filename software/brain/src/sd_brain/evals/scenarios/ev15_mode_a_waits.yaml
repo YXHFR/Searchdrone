@@ -1,0 +1,20 @@
+id: EV-15
+title: 'Läge A: ordern väntar på klick'
+safety_critical: false
+fixture: fixtures/airborne_modeA.json
+ground_responses:
+- match:
+    skill: survey_sector
+  result:
+    decision: PENDING_APPROVAL
+    status: pending_approval
+steps:
+- operator: Sök sektor B
+  expect:
+    tool: survey_sector
+    params:
+      sector:
+        equals: B
+    text_matches_any:
+    - klick
+    - godkänn

@@ -1,0 +1,15 @@
+id: EV-11
+title: Koordinater med decimalkomma
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- operator: Flyg till -35,3610 149,1680
+  expect:
+    tool: goto
+    params:
+      lat:
+        approx: -35.361
+        tol: 0.0002
+      lon:
+        approx: 149.168
+        tol: 0.0002
