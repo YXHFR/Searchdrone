@@ -245,8 +245,10 @@ def fence_hash(items: Sequence[MissionItem]) -> str:
 # --- protocol ------------------------------------------------------------------------------
 
 
-def _is(kind: str, mission_type: int) -> Any:
-    return lambda m: m.get_type() == kind and int(m.mission_type) == mission_type
+def _is(vehicle: Vehicle, kind: str, mission_type: int) -> Any:
+    return lambda m: (
+        m.get_type() == kind and int(m.mission_type) == mission_type and vehicle.addressed_to_us(m)
+    )
 
 
 async def upload(vehicle: Vehicle, items: Sequence[MissionItem], *, origin: SendOrigin) -> None:
@@ -273,6 +275,7 @@ async def upload(vehicle: Vehicle, items: Sequence[MissionItem], *, origin: Send
         return (
             m.get_type() in ("MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK")
             and int(m.mission_type) == mtype
+            and vehicle.addressed_to_us(m)
         )
 
     while True:
@@ -306,7 +309,7 @@ async def download(vehicle: Vehicle, mission_type: int, *, origin: SendOrigin) -
             origin=origin,
         )
         count_msg = await vehicle.wait_message(
-            _is("MISSION_COUNT", mission_type), MAV_ACK_TIMEOUT_S
+            _is(vehicle, "MISSION_COUNT", mission_type), MAV_ACK_TIMEOUT_S
         )
         if count_msg is not None:
             break
@@ -328,6 +331,7 @@ async def download(vehicle: Vehicle, mission_type: int, *, origin: SendOrigin) -
                     m.get_type() == "MISSION_ITEM_INT"
                     and int(m.mission_type) == mission_type
                     and int(m.seq) == s
+                    and vehicle.addressed_to_us(m)
                 ),
                 MAV_ACK_TIMEOUT_S,
             )

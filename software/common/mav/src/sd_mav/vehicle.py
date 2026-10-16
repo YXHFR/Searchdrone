@@ -30,7 +30,14 @@ from sd_mav.allowlist import (
     SendEnvelope,
     check,
 )
-from sd_mav.connection import GCS_COMPID, GCS_SYSID, ONBOARD_COMPID, MavTransport, Role
+from sd_mav.connection import (
+    GCS_COMPID,
+    GCS_SYSID,
+    ONBOARD_COMPID,
+    MavTransport,
+    Role,
+    check_identity,
+)
 from sd_mav.denylist import denied_reason
 from sd_mav.failsafe_signals import FailsafeSignal, signal_from
 from sd_mav.modes import GROUND_DISARM_MAX_ALT_M, CopterMode, mode_name
@@ -241,15 +248,11 @@ class Vehicle:
         on_event: EventSink | None = None,
         heartbeat_allowed: Callable[[], bool] | None = None,
     ) -> None:
-        if role is Role.ONBOARD and (
-            transport.source_system != fc_sysid or transport.source_component != ONBOARD_COMPID
-        ):
-            raise ValueError("the onboard computer sends as the flight controller's sysid/191")
-        if role is Role.GROUND and (
-            (transport.source_system, transport.source_component) != (GCS_SYSID, GCS_COMPID)
-        ):
-            raise ValueError("the ground station sends as 250/190")
+        check_identity(role, transport.source_system, transport.source_component)
+        if role is Role.ONBOARD and transport.source_system != fc_sysid:
+            raise ValueError("the onboard computer sends as the flight controller's sysid")
         self.role = role
+        self._event_prefix = "executor" if role is Role.ONBOARD else "mav"
         self.profile = Profile.ONBOARD if role is Role.ONBOARD else Profile.GROUND
         self.fc_sysid = fc_sysid
         self._transport = transport
@@ -278,16 +281,16 @@ class Vehicle:
     async def close(self) -> None:
         self._closed = True
         tasks = [*self._tasks, *([self._streams_task] if self._streams_task else [])]
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        for waiter in self._waiters:
-            if not waiter.future.done():
-                waiter.future.cancel()
-        self._waiters.clear()
-        self._transport.close()
+        try:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            for waiter in self._waiters:
+                if not waiter.future.done():
+                    waiter.future.cancel()
+            self._waiters.clear()
+            self._transport.close()
 
     async def __aenter__(self) -> Vehicle:
         await self.start()
@@ -387,9 +390,8 @@ class Vehicle:
         reason = denied_reason(msg) or check(msg, self._context(origin))
         if reason is not None:
             self.blocked_count += 1
-            prefix = "executor" if self.role is Role.ONBOARD else "mav"
             self._event(
-                f"{prefix}.forbidden_mavlink_blocked",
+                f"{self._event_prefix}.forbidden_mavlink_blocked",
                 {"msg_type": msg.get_type(), "reason": reason, "origin": str(origin)},
             )
             raise ForbiddenMavlinkError(msg.get_type(), reason)
@@ -416,6 +418,7 @@ class Vehicle:
                     lambda m: (
                         m.get_type() == "COMMAND_ACK"
                         and int(m.command) == command
+                        and self.addressed_to_us(m)
                         and int(m.result) != mavlink.MAV_RESULT_IN_PROGRESS
                     ),
                     MAV_ACK_TIMEOUT_S,
@@ -545,8 +548,11 @@ class Vehicle:
 
     async def _heartbeat_loop(self) -> None:
         while not self._closed:
-            if self._heartbeat_allowed is None or self._heartbeat_allowed():
-                self._check_and_write(self._our_heartbeat(), self._service_origin)
+            try:
+                if self._heartbeat_allowed is None or self._heartbeat_allowed():
+                    self._check_and_write(self._our_heartbeat(), self._service_origin)
+            except Exception as exc:  # keep beating; the next second tries again
+                self._event("mav.heartbeat_error", {"error": type(exc).__name__})
             await self._clock.sleep(_OUR_HEARTBEAT_S)
 
     async def _watch_loop(self) -> None:
@@ -561,8 +567,10 @@ class Vehicle:
                 if age >= timeout_ms:
                     self._t = replace(t, fc_connected=False)
                     self._connected_event.clear()
-                    self._event("mav.fc_lost", {"heartbeat_age_ms": age})
-                    self._notify()
+                    try:
+                        self._event("mav.fc_lost", {"heartbeat_age_ms": age})
+                    finally:
+                        self._notify()
 
     async def _request_streams(self) -> None:
         streams = GROUND_STREAM_US if self.role is Role.GROUND else ONBOARD_STREAM_US
@@ -580,11 +588,25 @@ class Vehicle:
                 await self.request_message(msg_id, origin=origin)
         self._event("mav.streams_requested", {"failed": failed})
 
+    def _streams_done(self, task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            self._event("mav.streams_failed", {"error": type(task.exception()).__name__})
+
     # --- receiving ---------------------------------------------------------------------
 
     def _notify(self) -> None:
         for callback in list(self._subscribers):
-            callback(self._t)
+            try:
+                callback(self._t)
+            except Exception as exc:  # a subscriber must never stop the link's own work
+                self._event("mav.subscriber_error", {"error": type(exc).__name__})
+
+    def addressed_to_us(self, msg: Any) -> bool:
+        """True when a reply names this channel's sender (or names nobody, as older
+        firmware does), so a reply meant for the other channel is never taken as ours."""
+        target = (int(getattr(msg, "target_system", 0)), int(getattr(msg, "target_component", 0)))
+        ours = self._transport.source_system
+        return target in ((ours, self._transport.source_component), (ours, 0), (0, 0))
 
     def _on_message(self, msg: Any) -> None:
         src = (msg.get_srcSystem(), msg.get_srcComponent())
@@ -608,7 +630,7 @@ class Vehicle:
         ):
             # Nothing is accepted as a command over MAVLink.
             self._event(
-                f"{'executor' if self.role is Role.ONBOARD else 'mav'}.inbound_command_ignored",
+                f"{self._event_prefix}.inbound_command_ignored",
                 {"sysid": src[0], "compid": src[1], "command": int(msg.command)},
             )
 
@@ -641,6 +663,7 @@ class Vehicle:
                     self._event("mav.fc_connected", {"mode": t.fc_mode})
                     if self._streams_task is None or self._streams_task.done():
                         self._streams_task = asyncio.ensure_future(self._request_streams())
+                        self._streams_task.add_done_callback(self._streams_done)
             case "GLOBAL_POSITION_INT":
                 vx, vy = int(msg.vx) / 100.0, int(msg.vy) / 100.0
                 hdg = int(msg.hdg)

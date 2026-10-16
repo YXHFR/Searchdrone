@@ -373,3 +373,48 @@ def test_origin_override_fallback_only_in_definition() -> None:
         text = path.read_text()
         if path.name != "vehicle.py":
             assert "SendOrigin.OVERRIDE_FALLBACK" not in text, path.name
+
+
+def test_a_failing_subscriber_never_stops_lost_link_detection() -> None:
+    async def run() -> None:
+        clock, vehicle, events = await _started()
+
+        def bad(t: FcTelemetry) -> None:
+            if not t.fc_connected:
+                raise RuntimeError("subscriber bug")
+
+        vehicle.subscribe(bad)
+        await clock.run_for(2.0)
+        for _ in range(2):  # lost, back, lost again: both losses are noticed
+            vehicle.fc.silent = True
+            await clock.run_for(3.2)
+            assert not vehicle.telemetry.fc_connected
+            vehicle.fc.silent = False
+            await clock.run_for(1.0)
+            assert vehicle.telemetry.fc_connected
+        assert "mav.subscriber_error" in events.kinds()
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_ack_for_another_channel_is_not_ours() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(2.0)
+        vehicle.fc.drop_acks = 3  # our own answers never come
+        task = asyncio.ensure_future(vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL))
+        await clock.run_for(0.1)
+        # The flight controller's answer to the ground station reaches this channel.
+        vehicle.link.receive(
+            bytes(
+                mavlink.MAVLink_command_ack_message(
+                    mavlink.MAV_CMD_DO_SET_MODE, 0, 0, 0, 250, 190
+                ).pack(mavlink.MAVLink(None, FC, 1))
+            )
+        )
+        result = await run_with_clock(clock, task)
+        assert result is MavResult.TIMEOUT
+        await vehicle.close()
+
+    asyncio.run(run())

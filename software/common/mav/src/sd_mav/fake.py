@@ -25,10 +25,10 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from sd_mav.allowlist import FC_COMPID
 from sd_mav.connection import GCS_COMPID, GCS_SYSID, ONBOARD_COMPID, Role
 from sd_mav.mission import FENCE, MISSION, MissionItem
-from sd_mav.modes import CopterMode
+from sd_mav.modes import AIRBORNE_ALT_M, CopterMode
 from sd_mav.vehicle import Vehicle
 from sd_obs.clock import Clock
-from sd_safety.constants import FC_SAFETY_EXPECTED
+from sd_safety.constants import EXECUTOR_DEFAULT_SPEED_MS, FC_SAFETY_EXPECTED
 from sd_safety.targets import distance_m
 
 __all__ = ["CMAC_HOME", "FakeFlightController", "FakeLink", "FakeVehicle", "Received"]
@@ -36,7 +36,6 @@ __all__ = ["CMAC_HOME", "FakeFlightController", "FakeLink", "FakeVehicle", "Rece
 CMAC_HOME: Final = (-35.363261, 149.165230, 584.0)  # the public ArduPilot SITL site
 _TICK_S: Final = 0.1
 _CLIMB_MS: Final = 2.5
-_DEFAULT_SPEED_MS: Final = 5.0
 _M_PER_DEG: Final = 111_320.0
 
 
@@ -126,7 +125,7 @@ class FakeFlightController:
         self.armed = False
         self.lat, self.lon, self.alt_rel = home[0], home[1], 0.0
         self.target: tuple[float, float, float] | None = None
-        self.speed_ms = _DEFAULT_SPEED_MS
+        self.speed_ms = EXECUTOR_DEFAULT_SPEED_MS
         self.battery_pct = 100.0
         self.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_OK
         self.system_status = mavlink.MAV_STATE_STANDBY
@@ -261,7 +260,7 @@ class FakeFlightController:
     def landed_state(self) -> int:
         if not self.armed:
             return mavlink.MAV_LANDED_STATE_ON_GROUND
-        if self.alt_rel < 0.3 and self.target is None:
+        if self.alt_rel < AIRBORNE_ALT_M and self.target is None:
             return mavlink.MAV_LANDED_STATE_ON_GROUND
         return mavlink.MAV_LANDED_STATE_IN_AIR
 
@@ -331,7 +330,12 @@ class FakeFlightController:
         if self.drop_acks > 0:
             self.drop_acks -= 1
             return
-        self._send(mavlink.MAVLink_command_ack_message(command, result), link)
+        self._send(
+            mavlink.MAVLink_command_ack_message(
+                command, result, 0, 0, link.source_system, link.source_component
+            ),
+            link,
+        )
 
     def _handle(self, link: FakeLink, msg: Any) -> None:
         kind = msg.get_type()
@@ -456,7 +460,9 @@ class FakeFlightController:
             items = self.missions.get(mtype, [])
             seq = int(msg.seq)
             if 0 <= seq < len(items):
-                self._send(items[seq].to_message(link.source_system), link)
+                reply = items[seq].to_message(link.source_system)
+                reply.target_component = link.source_component
+                self._send(reply, link)
 
     def _request_next(self, link: FakeLink) -> None:
         if self._upload is None:

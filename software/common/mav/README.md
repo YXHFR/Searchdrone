@@ -2,7 +2,7 @@
 
 The vehicle link: the Python layer that talks MAVLink to the flight controller
 (ArduCopter). Both the onboard computer and the ground station use it, each on its own
-channel and with its own identity. It is the only package that imports pymavlink.
+channel and with its own identity. It is the only production package that imports pymavlink.
 
 ```python
 from sd_mav import CopterMode, Role, SendOrigin, Vehicle, connect

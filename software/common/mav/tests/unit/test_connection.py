@@ -104,3 +104,40 @@ def test_udp_connection_receives_and_sends(tmp_path) -> None:  # type: ignore[no
         assert first is not None and first.get_srcSystem() == 1 and first.get_srcComponent() == 1
 
     asyncio.run(run())
+
+
+def test_read_errors_do_not_stop_the_reader() -> None:
+    """A failing read (an unplugged serial port) is retried and the port reopened."""
+
+    async def run() -> None:
+        port = _free_udp_port()
+        conn = connect(
+            f"udpin:127.0.0.1:{port}", role=Role.ONBOARD, source_system=1, source_component=191
+        )
+        conn.READ_RETRY_S = 0.05  # type: ignore[misc]
+        real = conn._conn.recv_match
+        calls = {"n": 0, "reset": 0}
+
+        def flaky(**kwargs):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            if calls["n"] <= 3:
+                raise OSError("device disconnected")
+            return real(**kwargs)
+
+        conn._conn.recv_match = flaky
+        conn._conn.reset = lambda: calls.__setitem__("reset", calls["reset"] + 1)
+        got: list[object] = []
+        conn.attach(got.append)
+        encoder = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        hb = mavlink.MAVLink_heartbeat_message(2, 3, 1, 5, 3, 3)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as fc_sock:
+            for _ in range(40):
+                fc_sock.sendto(bytes(hb.pack(encoder)), ("127.0.0.1", port))
+                await asyncio.sleep(0.05)
+                if got:
+                    break
+        conn.close()
+        assert got, "no message after the read errors"
+        assert conn.read_errors == 3 and calls["reset"] == 3
+
+    asyncio.run(run())

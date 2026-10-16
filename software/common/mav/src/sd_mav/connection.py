@@ -1,6 +1,8 @@
 """The MAVLink connection and who may use which identity on it.
 
-Only ``sd_mav`` imports pymavlink. A connection has a role: the onboard computer
+``sd_mav`` is the only production package that imports pymavlink; import it before
+anything else imports ``pymavlink.mavutil``, which reads ``MAVLINK20`` once (a check
+below refuses to run on MAVLink 1). A connection has a role: the onboard computer
 (sysid = the flight controller's, compid 191) or the ground station (250/190). The
 onboard computer can never pretend to be the ground station: only the ground station's
 HEARTBEAT keeps the flight controller's GCS failsafe away.
@@ -12,8 +14,10 @@ runs the allowlist before every message.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import struct
+import threading
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -86,9 +90,15 @@ class MavTransport(Protocol):
 class MavConnection:
     """A pymavlink connection (UDP, TCP or serial) with a checked identity.
 
-    ``url`` uses pymavlink's syntax, e.g. ``udpin:127.0.0.1:14563``. Received messages
-    are delivered from the running event loop as soon as the socket is readable.
+    ``url`` uses pymavlink's syntax, e.g. ``udpin:127.0.0.1:14563``. A reader thread
+    owns every receive call, so pymavlink's own reconnects (a new socket or serial
+    port, blocking retries) never run on the event loop; each message is handed to the
+    loop with ``call_soon_threadsafe``. A read error waits ``READ_RETRY_S`` and, for a
+    serial port, reopens it.
     """
+
+    READ_RETRY_S: Final = 0.5
+    _POLL_S: Final = 0.2
 
     def __init__(self, url: str, *, role: Role, source_system: int, source_component: int):
         check_identity(role, source_system, source_component)
@@ -107,10 +117,13 @@ class MavConnection:
             self._conn.close()
             raise RuntimeError("pymavlink did not select MAVLink 2")
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._fd: int | None = None
         self._handler: MessageHandler | None = None
+        self._reader: threading.Thread | None = None
+        self._stop = threading.Event()
         self._tlog: BinaryIO | None = None
         self._tlog_clock: Clock | None = None
+        self._tlog_lock = threading.Lock()
+        self.read_errors = 0
 
     @property
     def source_system(self) -> int:
@@ -126,24 +139,44 @@ class MavConnection:
     def attach(self, on_message: MessageHandler) -> None:
         self._handler = on_message
         self._loop = asyncio.get_running_loop()
-        self._fd = self._conn.fd
-        if self._fd is None:
-            raise RuntimeError(f"{self.url}: connection has no file descriptor")
-        self._loop.add_reader(self._fd, self._drain)
+        self._reader = threading.Thread(target=self._read_loop, name="mav-reader", daemon=True)
+        self._reader.start()
 
-    def _drain(self) -> None:
-        handler = self._handler
-        for _ in range(1000):  # bounded, so a flood cannot starve the loop
-            msg = self._conn.recv_msg()
-            if msg is None:
-                return
-            if msg.get_type() == "BAD_DATA":
+    def _read_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                msg = self._conn.recv_match(blocking=True, timeout=self._POLL_S)
+            except Exception:
+                self.read_errors += 1
+                self._stop.wait(self.READ_RETRY_S)
+                reset = getattr(self._conn, "reset", None)
+                if callable(reset) and not self._stop.is_set():
+                    with contextlib.suppress(Exception):
+                        reset()
                 continue
+            if msg is None or msg.get_type() == "BAD_DATA":
+                continue
+            self._log(msg)
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                return
+            try:
+                loop.call_soon_threadsafe(self._dispatch, msg)
+            except RuntimeError:  # the loop closed meanwhile
+                return
+
+    def _dispatch(self, msg: Any) -> None:
+        handler = self._handler
+        if handler is None:
+            return
+        with contextlib.suppress(Exception):  # one bad message must not stop the rest
+            handler(msg)
+
+    def _log(self, msg: Any) -> None:
+        with self._tlog_lock:
             if self._tlog is not None and self._tlog_clock is not None:
                 usec = int(self._tlog_clock.utc_now().timestamp() * 1e6) & ~3
                 self._tlog.write(struct.pack(">Q", usec) + msg.get_msgbuf())
-            if handler is not None:
-                handler(msg)
 
     def start_tlog(self, path: Path, clock: Clock) -> None:
         """Record every received message in a telemetry log (``flight.tlog``).
@@ -152,18 +185,22 @@ class MavConnection:
         before each message, so ``mavutil.mavlink_connection(path)`` reads it back.
         """
         self.stop_tlog()
-        self._tlog = path.open("wb")
-        self._tlog_clock = clock
+        with self._tlog_lock:
+            self._tlog = path.open("wb")
+            self._tlog_clock = clock
 
     def stop_tlog(self) -> None:
-        if self._tlog is not None:
-            self._tlog.close()
-            self._tlog = None
+        with self._tlog_lock:
+            if self._tlog is not None:
+                self._tlog.close()
+                self._tlog = None
 
     def close(self) -> None:
-        if self._loop is not None and self._fd is not None:
-            self._loop.remove_reader(self._fd)
-            self._fd = None
+        self._stop.set()
+        self._handler = None
+        if self._reader is not None:
+            self._reader.join(timeout=2 * self._POLL_S + self.READ_RETRY_S)
+            self._reader = None
         self.stop_tlog()
         self._conn.close()
 

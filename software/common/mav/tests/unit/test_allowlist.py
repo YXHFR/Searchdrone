@@ -408,3 +408,9 @@ def test_malformed_message_is_refused() -> None:
     msg = set_mode(CopterMode.GUIDED)
     msg.param2 = "GUIDED"  # type: ignore[assignment]
     assert check(msg, ctx()) is not None
+
+
+def test_origin_strings_match_send_origin() -> None:
+    from sd_mav import allowlist
+
+    assert {o.value for o in SendOrigin} == allowlist._ONBOARD_ORIGINS | {allowlist._GROUND}
