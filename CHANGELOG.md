@@ -16,6 +16,13 @@ All notable changes to this project are listed here. The format follows
   a scripted commander for tests, the decision interface with a quick stop check on every
   chat line (local model, Jev, OpenAI Decisions), 33 chat scenarios with an answer key,
   `just models-fetch`, `just llm-up`, `just brain`, `just check-model` and `just brain-token`.
+- Vehicle link (`sd_mav`): MAVLink to the flight controller for the onboard computer and
+  the ground station, behind a default-deny allowlist with number checks against the
+  mission's limits and a deny list of the most dangerous messages (no parameter writes,
+  no geofence switch, no forced arming). Telemetry, stream requests, lost-link detection
+  within 3 s, mission and fence upload with read-back hashes, failsafe signals and an
+  in-memory fake flight controller. SITL tests for connection, telemetry rate, missions
+  and link loss.
 - Monorepo skeleton: uv workspace for the Python packages, pnpm workspace for TypeScript,
   `justfile` with every recipe, pre-commit hooks, import contracts and example configuration.
 - Forbidden-file guard that blocks planning files, agent files, secrets, personal config,
