@@ -2,7 +2,8 @@
 # when typos flags a correct Swedish or domain word.
 
 [files]
-extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE"]
+# The panel's Swedish UI texts live only in its translation file (B1-06).
+extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE", "software/panel/src/i18n/sv.json"]
 
 [default.extend-words]
 # Domain
