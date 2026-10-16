@@ -46,6 +46,10 @@ cloudflared/
 mav.parm
 eeprom.bin
 
+# --- Offline map packs (OpenStreetMap data, large); only the synthetic test pack ---
+*.pmtiles
+!/software/panel/e2e/fixtures/fixture.pmtiles
+
 # --- Media (attached to Releases, never in git) ---
 /showcase/out/
 *.mp4

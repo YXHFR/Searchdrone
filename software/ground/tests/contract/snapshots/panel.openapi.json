@@ -1844,8 +1844,27 @@
       "MapConfig": {
         "additionalProperties": false,
         "properties": {
+          "assets_url": {
+            "default": "/tiles/assets",
+            "title": "Assets Url",
+            "type": "string"
+          },
+          "attribution": {
+            "default": "© OpenStreetMap contributors, Protomaps",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Attribution",
+            "type": "string"
+          },
           "center": {
             "$ref": "#/components/schemas/LatLon"
+          },
+          "maxzoom": {
+            "default": 15,
+            "maximum": 22.0,
+            "minimum": 0.0,
+            "title": "Maxzoom",
+            "type": "integer"
           },
           "pack_url": {
             "title": "Pack Url",
@@ -5655,6 +5674,39 @@
           }
         },
         "summary": "Whep Post"
+      }
+    },
+    "/tiles/{file}": {
+      "get": {
+        "description": "A map pack (HTTP Range supported), a glyph range or a sprite file.",
+        "operationId": "get_tile_file_tiles__file__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file",
+            "required": true,
+            "schema": {
+              "title": "File",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tile File"
       }
     }
   }

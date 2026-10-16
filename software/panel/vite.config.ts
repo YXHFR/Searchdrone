@@ -53,6 +53,8 @@ export default defineConfig(({ mode }) => {
     },
     preview: { host: "127.0.0.1", port: 4173, strictPort: true, headers: securityHeaders },
     // MapLibre (~1 MB) is its own lazy chunk; the main bundle limit is checked by check-bundle-size.
+    // MapLibre's worker is an ES module; it is bundled as a module worker (src/views/map).
+    worker: { format: "es" },
     build: { manifest: true, target: "es2022", sourcemap: false, chunkSizeWarningLimit: 1200 },
     test: {
       environment: "jsdom",
