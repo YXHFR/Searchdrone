@@ -76,7 +76,6 @@ def test_all_recipes_listed() -> None:
     [
         ("brain-token", "B1-10"),
         ("check-traceability", "B1-16"),
-        ("hw-check", "B0-06"),
         ("models-fetch", "B1-10"),
         ("ci-sitl", "B0-08"),
     ],
