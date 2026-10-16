@@ -1,12 +1,12 @@
 # Hooks: `just setup` installs them for pre-commit and pre-push.
 # Never skip them (no --no-verify, no SKIP=). If a hook fails, fix the cause.
-exclude: '(^|/)generated/|^software/ground/tests/contract/snapshots/'
+exclude: '(^|/)generated/|^software/ground/tests/contract/snapshots/|^LICENSES?(/|$)'
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -19,19 +19,19 @@ repos:
         args: [--maxkb=1024]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.10   # same version as uv.lock
+    rev: f12be1ebaa5351c1fc76472de98db2c3446c8253  # v0.16.10, same version as uv.lock
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.50.3
+    rev: 00f422f3b19c57bc6338715ebfe3316d38768461  # v1.50.3
     hooks:
       - id: typos
 
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.1
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # v8.30.1
     hooks:
       - id: gitleaks
 

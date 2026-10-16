@@ -81,6 +81,22 @@ FORBIDDEN_EXTENSIONS = {
     ".key",
     ".p12",
     ".crt",
+    # documents, archives and databases often carry personal data or floor plans
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".odt",
+    ".ods",
+    ".zip",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".sqlite",
+    ".db",
+    ".dwg",
+    ".dxf",
 }
 PANEL_PUBLIC = "software/panel/public/"
 PANEL_PUBLIC_OK = {".png", ".svg", ".ico"}
@@ -105,7 +121,7 @@ HOME_PATTERNS = (
     re.compile(r"SIM_HOME\s*=\s*\"?(-?\d+\.\d+),\s*(-?\d+\.\d+)"),
     re.compile(r"home=(-?\d+\.\d+),(-?\d+\.\d+)"),
 )
-FREE_PAIR = re.compile(r"(?<![\d.])(-?\d{1,2})\.(\d{3,})\s*,\s*(-?\d{1,3})\.(\d{3,})(?![\d])")
+FREE_PAIR = re.compile(r"(?<![\d.])(-?\d{1,3})\.(\d{3,})\s*,\s*(-?\d{1,3})\.(\d{3,})(?![\d])")
 DMS = re.compile(
     r"(\d{1,2})°\s*(\d{1,2})['\u2032]\s*(\d{1,2}(?:\.\d+)?)[\"\u2033]?\s*([NS])[,\s]+"
     r"(\d{1,3})°\s*(\d{1,2})['\u2032]\s*(\d{1,2}(?:\.\d+)?)[\"\u2033]?\s*([EW])"
@@ -185,7 +201,7 @@ def check_path(path: str) -> list[Finding]:
     if (
         parts
         and parts[0] == "config"
-        and not any(fnmatch.fnmatchcase(path, g) for g in CONFIG_ALLOWED)
+        and not (len(parts) == 2 and any(fnmatch.fnmatchcase(path, g) for g in CONFIG_ALLOWED))
     ):
         out.append(
             Finding(path, 0, "forbidden-path", "only config/*.example.toml and config/mediamtx.yml")
@@ -255,17 +271,17 @@ def _key_regex(key: str) -> re.Pattern[str]:
 _KEY_RE: dict[str, re.Pattern[str]] = {}
 
 
-def _keyed_values(lines: list[str], key: str, int_only: bool) -> list[tuple[int, float, bool]]:
+def _keyed_values(lines: list[str], key: str, int_only: bool) -> list[tuple[int, float]]:
     rx = _KEY_RE.setdefault(key, _key_regex(key))
-    found: list[tuple[int, float, bool]] = []
+    found: list[tuple[int, float]] = []
     for no, line in enumerate(lines, 1):
         for m in rx.finditer(line):
             value, decimals, is_int = _parse_num(m.group(1))
             digits = len(m.group(1).lstrip("-"))
             if is_int and digits >= 7:
-                found.append((no, value * 1e-7, False))
+                found.append((no, value * 1e-7))
             elif not int_only and not is_int and decimals >= 3:
-                found.append((no, value, decimals == 3))
+                found.append((no, value))
     return found
 
 
@@ -278,10 +294,10 @@ def find_coordinates(lines: list[str]) -> list[tuple[int, float, float]]:
             lats = _keyed_values(lines, lat_key, int_only)
             lons = [v for k in lon_keys for v in _keyed_values(lines, k, int_only)]
             if not int_only:
-                key_lines.update(n for n, _, _ in lats)
-                key_lines.update(n for n, _, _ in lons)
-            for lat_no, lat, _ in lats:
-                for lon_no, lon, _ in lons:
+                key_lines.update(n for n, _ in lats)
+                key_lines.update(n for n, _ in lons)
+            for lat_no, lat in lats:
+                for lon_no, lon in lons:
                     if abs(lat_no - lon_no) <= NEAR_LINES:
                         found.append((lat_no, lat, lon))
     for no, line in enumerate(lines, 1):
@@ -289,13 +305,15 @@ def find_coordinates(lines: list[str]) -> list[tuple[int, float, float]]:
             for m in rx.finditer(line):
                 found.append((no, float(m.group(1)), float(m.group(2))))
         for m in FREE_PAIR.finditer(line):
-            lat = float(f"{m.group(1)}.{m.group(2)}")
-            lon = float(f"{m.group(3)}.{m.group(4)}")
+            first = float(f"{m.group(1)}.{m.group(2)}")
+            second = float(f"{m.group(3)}.{m.group(4)}")
             three = len(m.group(2)) == 3 or len(m.group(4)) == 3
             near_key = any(abs(no - k) <= NEAR_LINES for k in key_lines)
             if three and not near_key:
                 continue
-            found.append((no, lat, lon))
+            # Both orders: "lat, lon" and GeoJSON-style "lon, lat".
+            found.append((no, first, second))
+            found.append((no, second, first))
         for m in DMS.finditer(line):
             lat = int(m.group(1)) + int(m.group(2)) / 60 + float(m.group(3)) / 3600
             lon = int(m.group(5)) + int(m.group(6)) / 60 + float(m.group(7)) / 3600
@@ -341,7 +359,9 @@ def check_private(
     out: list[Finding] = []
     for pat_no, matches in patterns:
         if matches(path):
-            out.append(Finding(path, 0, "private-pattern", f"matches pattern line {pat_no}"))
+            # The path itself contains the private text, so it is not printed.
+            msg = f"a file path matches pattern line {pat_no}"
+            out.append(Finding("<path hidden>", 0, "private-pattern", msg))
         for no, line in enumerate(lines, 1):
             if matches(line):
                 out.append(Finding(path, no, "private-pattern", f"matches pattern line {pat_no}"))
@@ -371,26 +391,69 @@ def _tree_reader(root: Path) -> Reader:
     return from_tree
 
 
-def list_files(root: Path, mode: str, rev_range: str | None) -> tuple[list[str], Reader]:
-    from_tree = _tree_reader(root)
+Item = tuple[str, Reader]
 
-    def from_rev(rev: str) -> Callable[[str], bytes | None]:
+
+class UnreadableError(Exception):
+    """A file git reported as changed could not be read; the check fails closed."""
+
+
+def list_files(root: Path, mode: str, rev_range: str | None) -> list[Item]:
+    """Return (path, reader) pairs to check.
+
+    Range mode checks every commit in the range, not only the tip, so a file that is
+    added and later deleted inside the pushed commits is still caught.
+    """
+
+    def from_rev(rev: str) -> Reader:
         def read(p: str) -> bytes | None:
             try:
                 return _git(root, "show", f"{rev}:{p}")
-            except subprocess.CalledProcessError:
-                return None
+            except subprocess.CalledProcessError as exc:
+                raise UnreadableError(p) from exc
 
         return read
 
     if mode == "staged":
-        names = _git(root, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR")
-        return _split(names), from_rev("")  # ":path" reads the index
+        names = _git(root, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT")
+        index = from_rev("")  # ":path" reads the index
+        return [(p, index) for p in _split(names)]
     if mode == "range" and rev_range:
-        names = _git(root, "diff", "--name-only", "-z", "--diff-filter=ACMR", rev_range)
-        tip = rev_range.split("..")[-1] or "HEAD"
-        return _split(names), from_rev(tip)
-    return _split(_git(root, "ls-files", "-z")), from_tree
+        if "..." in rev_range or ".." not in rev_range:
+            raise SystemExit(f"--range must be A..B, got {rev_range!r}")
+        items: list[Item] = []
+        try:
+            commits = _git(root, "rev-list", "--reverse", rev_range).decode().split()
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(
+                f"Kan inte läsa commit-intervallet {rev_range!r} (finns basen?)"
+            ) from exc
+        for commit in commits:
+            names = _git(
+                root,
+                "diff-tree",
+                "-r",
+                "--root",
+                "--no-commit-id",
+                "--name-only",
+                "-z",
+                "--diff-filter=ACMRT",
+                commit,
+            )
+            reader = from_rev(commit)
+            items += [(p, reader) for p in _split(names)]
+        return items
+    tree = _tree_reader(root)
+    return [(p, tree) for p in _split(_git(root, "ls-files", "-z"))]
+
+
+def push_range(rev_range: str | None) -> str | None:
+    """Use the refs pre-commit passes to the pre-push hook when they are set."""
+    from_ref = os.environ.get("PRE_COMMIT_FROM_REF", "")
+    to_ref = os.environ.get("PRE_COMMIT_TO_REF", "")
+    if from_ref and to_ref and set(from_ref) != {"0"}:
+        return f"{from_ref}..{to_ref}"
+    return rev_range
 
 
 def _split(raw: bytes) -> list[str]:
@@ -401,25 +464,34 @@ def _split(raw: bytes) -> list[str]:
 
 
 def check_files(
-    files: Iterable[str],
-    read: Callable[[str], bytes | None],
+    items: Iterable[Item],
     places: list[Place],
     patterns: list[tuple[int, Callable[[str], bool]]] | None,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    for path in files:
-        findings += check_path(path)
-        data = read(path)
-        if data is None:
-            continue
-        findings += check_size_and_exif(path, data)
-        if is_binary(data):
-            continue
-        lines = data.decode("utf-8", "replace").splitlines()
-        findings += check_secrets(path, lines)
-        findings += check_coordinates(path, lines, places)
-        if patterns:
-            findings += check_private(path, lines, patterns)
+    seen: set[Finding] = set()
+    for path, read in items:
+        found = check_path(path)
+        try:
+            data = read(path)
+        except UnreadableError:
+            found.append(Finding(path, 0, "unreadable", "could not read the file from git"))
+            data = None
+        if data is not None:
+            found += check_size_and_exif(path, data)
+            if is_binary(data):
+                # Binary files still get the secret and private-pattern checks.
+                lines = data.decode("latin-1").splitlines()
+            else:
+                lines = data.decode("utf-8", "replace").splitlines()
+                found += check_coordinates(path, lines, places)
+            found += check_secrets(path, lines)
+            if patterns:
+                found += check_private(path, lines, patterns)
+        for f in found:
+            if f not in seen:
+                seen.add(f)
+                findings.append(f)
     return findings
 
 
@@ -446,13 +518,20 @@ def main(argv: list[str] | None = None) -> int:
             exit_code = 1
 
     if args.files:
-        files, read = list(args.files), _tree_reader(root)
+        tree = _tree_reader(root)
+        items: list[Item] = [(p, tree) for p in args.files]
     else:
-        mode = "staged" if args.staged else "range" if args.rev_range else "all"
-        files, read = list_files(root, mode, args.rev_range)
+        rev_range = push_range(args.rev_range) if args.rev_range else None
+        mode = "staged" if args.staged else "range" if rev_range else "all"
+        items = list_files(root, mode, rev_range)
+        if mode == "all":
+            for p, _ in items:
+                if (root / p).is_symlink():
+                    print(Finding(p, 0, "symlink", "symbolic links are not committed"))
+                    exit_code = 1
 
     allowlist = args.allowlist if args.allowlist.is_absolute() else root / args.allowlist
-    findings = check_files(files, read, load_places(allowlist), patterns)
+    findings = check_files(items, load_places(allowlist), patterns)
     for f in findings:
         print(f)
     if findings:

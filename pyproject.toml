@@ -69,7 +69,7 @@ executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -ra --strict-markers"
-testpaths = ["software", "simulation/tests", "simulation/sd_sim", "tools/tests"]
+testpaths = ["software", "simulation/sd_sim", "tools/tests"]
 pythonpath = ["tools"]     # tools/tests import the scripts in tools/ (not a package)
 norecursedirs = ["node_modules", ".venv", "dist", "build", "generated"]
 asyncio_mode = "auto"

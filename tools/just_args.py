@@ -8,6 +8,9 @@ with settings are variadic and pass everything here unchanged:
 Unknown recipes or keys exit with code 2 and a Swedish explanation. ``dry=1`` prints
 the parsed arguments as JSON (used by the tests). A recipe whose ticket is not built
 yet prints ``inte byggt än (<ticket>)`` and exits with code 2.
+
+The simulation entry points have the same rules in ``sd_sim._args``; keep the
+messages of the two in step.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ RECIPES: dict[str, tuple[str, frozenset[str]]] = {
     "e2e": ("B1-16", frozenset({"runs", "offline"})),
     "accept": ("B1-16", frozenset({"phase", "sha"})),
     "perf": ("B1-17", frozenset({"runs"})),
-    "showcase": ("B1-18", frozenset({"brain"})),
+    "showcase": ("B1-18", frozenset({"stage", "brain"})),
 }
 
 

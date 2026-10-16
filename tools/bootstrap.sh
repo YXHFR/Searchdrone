@@ -57,8 +57,7 @@ if ! node --version 2>/dev/null | grep -q "^v${NODE_VERSION%%.*}\."; then
     tmp="$(mktemp -d)"
     txz="node-v${NODE_VERSION}-linux-x64.tar.xz"
     curl -fsSL -o "$tmp/$txz" "https://nodejs.org/dist/v${NODE_VERSION}/${txz}"
-    curl -fsSL -o "$tmp/SHASUMS256.txt" "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
-    (cd "$tmp" && grep " ${txz}\$" SHASUMS256.txt | sha256sum -c --quiet -) || { echo "Fel kontrollsumma för Node"; exit 1; }
+    echo "$(ver node_sha256)  $tmp/$txz" | sha256sum -c --quiet - || { echo "Fel kontrollsumma för Node"; exit 1; }
     dest="$HOME/.local/share/searchdrone"
     mkdir -p "$dest"
     rm -rf "$dest/node"

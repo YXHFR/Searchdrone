@@ -26,12 +26,16 @@ if ! docker info >/dev/null 2>&1; then
         sudo install -m 0755 -d /etc/apt/keyrings
         sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
         sudo chmod a+r /etc/apt/keyrings/docker.asc
+        # Docker's published signing key fingerprint (docs.docker.com)
+        gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | grep -q '^fpr:::::::::9DC858229FC7DD38854AE2D88D81803C0EBFCD88:' \
+            || { echo "Fel fingeravtryck på Dockers nyckel"; exit 1; }
         echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
             | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
         sudo apt-get update
         sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     fi
     if ! id -nG "$USER" | grep -qw docker; then
+        # Note: membership in the docker group gives root-equivalent access on this machine.
         sudo usermod -aG docker "$USER"
         echo "Kör wsl --shutdown i PowerShell, öppna Ubuntu och kör skriptet igen."
         exit 0   # the group applies only after a new login

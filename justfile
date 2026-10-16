@@ -5,13 +5,20 @@
 # after the recipe name (e.g. `just test-sitl physics=builtin sc=SC04`), never --flags.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
+# Recipe arguments reach the shell as "$@", never pasted into the command line.
+set positional-arguments
 
-typos_version := "1.50.3"
-zizmor_version := "1.30.1"
+typos_version := `python3 tools/versions.py typos_version`
+zizmor_version := `python3 tools/versions.py zizmor_version`
 
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
+# tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
 unbuilt := "db-up db-down db-check migrate gen gen-check test-panel-e2e panel-build"
+
+# Check scripts in tools/ that are not built yet. Composite recipes skip only these;
+# any other missing script fails. The test checks that none of them exists yet.
+unbuilt_tools := "check_forbidden_mavlink check_versions check_compose_ports check_commit_emails check_coverage check_safety_manifest"
 
 _just := just_executable() + " --justfile " + quote(justfile()) + " --working-directory " + quote(justfile_directory())
 
@@ -58,7 +65,7 @@ lint:
     [ -f config/local/private-patterns.txt ] && patterns=(--private-patterns config/local/private-patterns.txt)
     uv run tools/check_forbidden_files.py "${patterns[@]}"
     for step in check_forbidden_mavlink check_versions check_compose_ports; do
-        if [ -f "tools/${step}.py" ]; then uv run "tools/${step}.py"; else echo "hoppar över ${step} (inte byggt än)"; fi
+        if [[ " {{unbuilt_tools}} " == *" ${step} "* ]]; then echo "hoppar över ${step} (inte byggt än)"; else uv run "tools/${step}.py"; fi
     done
     if compgen -G ".github/workflows/*.yml" >/dev/null; then
         uvx "zizmor=={{zizmor_version}}" --offline .github
@@ -66,7 +73,7 @@ lint:
         echo "hoppar över zizmor (inte byggt än)"
     fi
     if [ -n "${SD_BASE_SHA:-}" ]; then
-        if [ -f tools/check_commit_emails.py ]; then uv run tools/check_commit_emails.py --since "$SD_BASE_SHA"; else echo "hoppar över check_commit_emails (inte byggt än)"; fi
+        if [[ " {{unbuilt_tools}} " == *" check_commit_emails "* ]]; then echo "hoppar över check_commit_emails (inte byggt än)"; else uv run tools/check_commit_emails.py --since "$SD_BASE_SHA"; fi
     fi
 
 # Type-check Python (pyright) and TypeScript (tsc)
@@ -90,10 +97,12 @@ test-contract:
       --cov-branch --cov-report=json:coverage.json --cov-report=term
     uv run lint-imports
     for step in check_coverage check_safety_manifest; do
-        if [ -f "tools/${step}.py" ]; then
-            if [ "$step" = check_coverage ]; then uv run tools/check_coverage.py coverage.json tools/thresholds.toml; else uv run "tools/${step}.py"; fi
-        else
+        if [[ " {{unbuilt_tools}} " == *" ${step} "* ]]; then
             echo "hoppar över ${step} (inte byggt än)"
+        elif [ "$step" = check_coverage ]; then
+            uv run tools/check_coverage.py coverage.json tools/thresholds.toml
+        else
+            uv run "tools/${step}.py"
         fi
     done
 
@@ -151,21 +160,21 @@ panel-build: (_not-built "B1-06")
 
 # Run the whole stack against a fake vehicle (keys: physics, gui, brain, instance)
 dev *args:
-    uv run --no-sync python tools/just_args.py dev {{args}}
+    uv run --no-sync python tools/just_args.py dev "$@"
 
 # Start the simulator stack with Gazebo (keys: physics, gui, video, brain, ...)
 sim *args:
-    uv run --package sd-sim python -m sd_sim.launch up {{args}}
+    uv run --package sd-sim python -m sd_sim.launch up "$@"
 
 alias sim-up := sim
 
 # Like `sim` but builtin physics and a test picture as video
 sim-headless *args:
-    SD_SIM__HEADLESS=1 uv run --package sd-sim python -m sd_sim.launch up video=test {{args}}
+    SD_SIM__HEADLESS=1 uv run --package sd-sim python -m sd_sim.launch up video=test "$@"
 
 # Stop everything this instance started
 stop *args:
-    uv run --package sd-sim python -m sd_sim.launch down {{args}}
+    uv run --package sd-sim python -m sd_sim.launch down "$@"
 
 alias sim-down := stop
 
@@ -177,26 +186,26 @@ sim-setup: (_not-built "B0-05")
 
 # GUIDED, arm, take off to 20 m, land (keys: physics, gui)
 sim-smoke *args:
-    uv run --no-sync python tools/just_args.py sim-smoke {{args}}
+    uv run --no-sync python tools/just_args.py sim-smoke "$@"
 
 # Scenario tests, headless (keys: sc, variant, physics, instance, shard, shards, ...)
 test-sitl *args:
-    uv run --package sd-sim python -m sd_sim.testrun {{args}}
+    uv run --package sd-sim python -m sd_sim.testrun "$@"
 
 # Run the CI SITL job locally in the same container
 ci-sitl: (_not-built "B0-08")
 
 # Full demo locked to the public CMAC home (keys: lan, record, ...)
 demo *args:
-    uv run --package sd-sim python -m sd_sim.launch up --demo {{args}}
+    uv run --package sd-sim python -m sd_sim.launch up --demo "$@"
 
 # Headless end-to-end run with the scripted commander (keys: runs, offline)
 e2e *args:
-    uv run --no-sync python tools/just_args.py e2e {{args}}
+    uv run --no-sync python tools/just_args.py e2e "$@"
 
 # Performance measurement on the owner's computer (keys: runs)
 perf *args:
-    uv run --no-sync python tools/just_args.py perf {{args}}
+    uv run --no-sync python tools/just_args.py perf "$@"
 
 alias bench := perf
 
@@ -213,14 +222,14 @@ hw-check: (_not-built "B0-06")
 
 # Acceptance checks for a release (keys: phase, sha)
 accept *args:
-    uv run --no-sync python tools/just_args.py accept {{args}}
+    uv run --no-sync python tools/just_args.py accept "$@"
 
-# Local traceability report between tests and the internal plan (local only)
+# Traceability report for the scenario tests (local only)
 check-traceability: (_not-built "B1-16")
 
 # Record the showcase GIF for a stage (keys: brain)
 showcase STAGE *args:
-    uv run --no-sync python tools/just_args.py showcase {{args}}
+    uv run --no-sync python tools/just_args.py showcase stage="$1" "${@:2}"
 
 # Set one version everywhere before a release
 release-prep VERSION: (_not-built "B1-18")

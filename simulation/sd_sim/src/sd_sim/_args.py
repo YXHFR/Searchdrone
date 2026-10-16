@@ -2,6 +2,7 @@
 
 just passes recipe arguments through unchanged (``just test-sitl sc=SC04``), so the
 parsing and the error messages live here. Unknown keys exit with code 2.
+``tools/just_args.py`` does the same for the non-simulation recipes; keep them in step.
 """
 
 from __future__ import annotations

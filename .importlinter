@@ -58,7 +58,17 @@ forbidden_modules =
 name = sd_geo depends only on sd_schemas
 type = forbidden
 source_modules = sd_geo
-forbidden_modules = sd_safety, sd_mav, sd_link, sd_obs, sd_detect, sd_onboard, sd_ground, sd_brain, sd_sim
+forbidden_modules =
+    sd_hwcalc
+    sd_safety
+    sd_mav
+    sd_link
+    sd_obs
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_sim
 
 [importlinter:contract:mav-link-obs-detect]
 name = common packages do not reach the process packages
@@ -78,25 +88,51 @@ forbidden_modules =
 name = sd_onboard does not reach ground or AI
 type = forbidden
 source_modules = sd_onboard
-forbidden_modules = sd_ground, sd_brain, sd_sim
+forbidden_modules =
+    sd_ground
+    sd_brain
+    sd_sim
 
 [importlinter:contract:ground]
 name = sd_ground does not reach onboard or AI
 type = forbidden
 source_modules = sd_ground
-forbidden_modules = sd_onboard, sd_brain, sd_sim
+forbidden_modules =
+    sd_onboard
+    sd_brain
+    sd_sim
 
 [importlinter:contract:brain-no-flight-link]
 name = the AI cannot talk to the flight controller
 type = forbidden
 source_modules = sd_brain
-forbidden_modules = sd_mav, sd_link, sd_onboard, sd_ground, sd_sim, pymavlink, serial, mavsdk, dronekit, MAVProxy
+forbidden_modules =
+    sd_mav
+    sd_link
+    sd_onboard
+    sd_ground
+    sd_sim
+    pymavlink
+    serial
+    mavsdk
+    dronekit
+    MAVProxy
 
 [importlinter:contract:brain-isolation]
 name = the AI has no database, link or subprocess access
 type = forbidden
 source_modules = sd_brain
-forbidden_modules = asyncpg, sqlalchemy, psycopg, sqlite3, aiosqlite, sd_ground, sd_link, pymavlink, subprocess, multiprocessing
+forbidden_modules =
+    asyncpg
+    sqlalchemy
+    psycopg
+    sqlite3
+    aiosqlite
+    sd_ground
+    sd_link
+    pymavlink
+    subprocess
+    multiprocessing
 
 [importlinter:contract:testing-isolation]
 name = test-only packages are never imported by production packages
@@ -113,10 +149,22 @@ source_modules =
     sd_ground
     sd_brain
     sd_hwcalc
-forbidden_modules = sd_link_testing, sd_sim
+forbidden_modules =
+    sd_link_testing
+    sd_sim
 
 [importlinter:contract:hwcalc]
 name = sd_hwcalc is standalone
 type = forbidden
 source_modules = sd_hwcalc
-forbidden_modules = sd_safety, sd_geo, sd_mav, sd_link, sd_obs, sd_detect, sd_onboard, sd_ground, sd_brain, sd_sim
+forbidden_modules =
+    sd_safety
+    sd_geo
+    sd_mav
+    sd_link
+    sd_obs
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_sim

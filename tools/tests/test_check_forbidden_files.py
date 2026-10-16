@@ -52,7 +52,7 @@ def findings(root: Path, rel: str) -> list[cff.Finding]:
         f = root / p
         return f.read_bytes() if f.is_file() else None
 
-    return cff.check_files([rel], read, PLACES, None)
+    return cff.check_files([(rel, read)], PLACES, None)
 
 
 # --- a) paths ------------------------------------------------------------------------
@@ -80,6 +80,8 @@ def findings(root: Path, rel: str) -> list[cff.Finding]:
         "software/x/settings.local.toml",
         "notes.local.txt",
         "cloudflared/config.yml",
+        "config/local/x.example.toml",
+        "docs/report.pdf",
         ".cloudflared/cert.json",
     ],
 )
@@ -304,3 +306,78 @@ def test_repository_itself_is_clean() -> None:
 def test_script_has_no_literal_marker() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     assert cff.check_secrets("tools/check_forbidden_files.py", text.splitlines()) == []
+
+
+def test_range_mode_checks_every_commit(repo: Path) -> None:
+    write(repo, "docs/plan.md", "internal\n")
+    _git(repo, "add", "docs/plan.md")
+    _git(repo, "commit", "-q", "-m", "add")
+    _git(repo, "rm", "-q", "docs/plan.md")
+    _git(repo, "commit", "-q", "-m", "remove")
+    res = run(repo, "--range", "HEAD~2..HEAD")
+    assert res.returncode == 1
+    assert "docs/plan.md:0: forbidden-path" in res.stdout
+
+
+def test_range_mode_uses_pre_commit_push_refs(repo: Path) -> None:
+    rel = write(repo, "software/x/a.txt", cff.SECRET_MARKERS[1] + "\n")
+    _git(repo, "add", rel)
+    _git(repo, "commit", "-q", "-m", "add")
+    env_res = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(repo), "--range", "HEAD..HEAD"],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "PRE_COMMIT_FROM_REF": "HEAD~1", "PRE_COMMIT_TO_REF": "HEAD"},
+        check=False,
+    )
+    assert env_res.returncode == 1
+    assert "secret-like" in env_res.stdout
+
+
+def test_three_dot_range_rejected(repo: Path) -> None:
+    res = run(repo, "--range", "HEAD~0...HEAD")
+    assert res.returncode != 0
+    assert "A..B" in res.stderr
+
+
+def test_binary_file_still_checked_for_private_patterns(tmp_path: Path) -> None:
+    secret_word = "zq" + "xvbinarymarker"
+    write(tmp_path, "p.txt", secret_word + "\n")
+    write(tmp_path, "blob.dat", b"\0\1\2" + secret_word.encode() + b"\n")
+    res = run(tmp_path, "--private-patterns", "p.txt", "blob.dat")
+    assert res.returncode == 1
+    assert "blob.dat:1: private-pattern" in res.stdout
+
+
+def test_private_pattern_in_path_hides_path(tmp_path: Path) -> None:
+    secret_word = "zq" + "xvpathmarker"
+    write(tmp_path, "p.txt", secret_word + "\n")
+    rel = write(tmp_path, f"software/{secret_word}.txt", "ok\n")
+    res = run(tmp_path, "--private-patterns", "p.txt", rel)
+    assert res.returncode == 1
+    assert "<path hidden>" in res.stdout
+    assert secret_word not in res.stdout + res.stderr
+
+
+def test_tracked_symlink_rejected(repo: Path) -> None:
+    (repo / "link").symlink_to("/etc/hostname")
+    _git(repo, "add", "link")
+    res = run(repo)
+    assert res.returncode == 1
+    assert "link:0: symlink" in res.stdout
+
+
+def test_geojson_lon_lat_with_large_longitude(tmp_path: Path) -> None:
+    lon, lat = "-122." + "4194", "37." + "7749"
+    rel = write(tmp_path, "software/x/a.geojson", f'{{"coordinates": [{lon}, {lat}]}}\n')
+    assert any(f.rule == "coordinate" for f in findings(tmp_path, rel))
+    rel = write(tmp_path, "software/x/b.geojson", f'{{"coordinates": [{NEAR_LON}, {NEAR_LAT}]}}\n')
+    assert findings(tmp_path, rel) == []
+
+
+def test_unreadable_git_content_fails_closed(tmp_path: Path) -> None:
+    def broken(p: str) -> bytes | None:
+        raise cff.UnreadableError(p)
+
+    found = cff.check_files([("software/x/a.py", broken)], PLACES, None)
+    assert [f.rule for f in found] == ["unreadable"]

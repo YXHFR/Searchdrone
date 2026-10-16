@@ -59,15 +59,10 @@ def defaults() -> dict[str, str]:
 
 def fill_env(root: Path) -> list[str]:
     example, env = root / ".env.example", root / ".env"
+    if env.is_symlink():
+        raise SystemExit(".env är en symbolisk länk. Ta bort länken och kör igen.")
     kinds = example_keys(example)
-    current: dict[str, str] = {}
-    lines: list[str] = []
-    if env.is_file():
-        lines = env.read_text(encoding="utf-8").splitlines()
-        for line in lines:
-            m = LINE.match(line.strip())
-            if m:
-                current[m.group(1)] = m.group(2)
+    lines = env.read_text(encoding="utf-8").splitlines() if env.is_file() else []
     changed: list[str] = []
     known = defaults()
     new_lines: list[str] = []
@@ -83,13 +78,21 @@ def fill_env(root: Path) -> list[str]:
     for key in kinds:
         if key not in seen:
             new_lines.append(f"{key}={_value(key, '', kinds, known, changed)}")
-    old_umask = os.umask(0o077)
-    try:
-        env.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    finally:
-        os.umask(old_umask)
-    env.chmod(0o600)
+    write_private(env, "\n".join(new_lines) + "\n")
     return changed
+
+
+def write_private(target: Path, text: str) -> None:
+    """Write a 0600 file atomically: a fresh temp file, then rename over the target."""
+    tmp = target.with_name(f".{target.name}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        tmp.replace(target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _value(
@@ -113,6 +116,7 @@ def copy_configs(root: Path) -> list[str]:
         target = example.with_name(example.name.replace(".example.toml", ".toml"))
         if not target.exists():
             shutil.copyfile(example, target)
+            target.chmod(0o600)  # owners may add local values here
             copied.append(target.name)
     return copied
 
@@ -125,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     for key in fill_env(root):
         print(f".env: fyllde i {key}")
     secrets_dir = root / "secrets"
+    if secrets_dir.is_symlink():
+        raise SystemExit("secrets/ är en symbolisk länk. Ta bort länken och kör igen.")
     secrets_dir.mkdir(mode=0o700, exist_ok=True)
     secrets_dir.chmod(0o700)
     print("setup-config klar")

@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -88,12 +89,34 @@ def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
 
 
 def test_composite_skips_unbuilt() -> None:
-    res = just("--dry-run", "test-contract")
-    # --dry-run prints the script; run the skipping helper for real instead.
-    assert res.returncode == 0
     step = just("_step", "db-up")
     assert step.returncode == 0
     assert "hoppar över db-up (inte byggt än)" in step.stdout
+
+
+def _dump() -> dict[str, Any]:
+    return json.loads(just("--dump", "--dump-format", "json").stdout)
+
+
+def test_unbuilt_list_matches_not_built_recipes() -> None:
+    dump = _dump()
+    not_built = {
+        name
+        for name, recipe in dump["recipes"].items()
+        if any(dep["recipe"] == "_not-built" for dep in recipe["dependencies"])
+    }
+    unbuilt = set(dump["assignments"]["unbuilt"]["value"].split())
+    # Every name the composite recipes skip must really be unbuilt (a built gate must
+    # never be skipped silently); the rest are recipes no composite recipe runs.
+    assert unbuilt <= not_built, unbuilt - not_built
+
+
+def test_unbuilt_tools_do_not_exist_yet() -> None:
+    names = _dump()["assignments"]["unbuilt_tools"]["value"].split()
+    for name in names:
+        assert not (ROOT / "tools" / f"{name}.py").exists(), (
+            f"tools/{name}.py exists: remove it from unbuilt_tools in the justfile"
+        )
 
 
 def test_test_sitl_passes_key_values_unchanged() -> None:
@@ -104,10 +127,19 @@ def test_test_sitl_passes_key_values_unchanged() -> None:
     }
 
 
-def test_dev_dry_run_shows_both_keys() -> None:
-    res = just("--dry-run", "dev", "physics=builtin", "gui=false")
-    assert res.returncode == 0
-    assert "physics=builtin gui=false" in res.stderr
+def test_dev_passes_both_keys() -> None:
+    res = just("dev", "physics=builtin", "gui=false", "dry=1")
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["args"] == ["physics=builtin", "gui=false", "dry=1"]
+
+
+def test_arguments_are_not_shell_evaluated() -> None:
+    res = just("test-sitl", "sc=$(echo hacked)", "dry=1")
+    assert res.returncode == 0, res.stderr
+    assert json.loads(res.stdout.strip().splitlines()[-1]) == {
+        "args": ["sc=$(echo hacked)", "dry=1"]
+    }
 
 
 def test_unknown_key_rejected() -> None:

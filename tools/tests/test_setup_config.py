@@ -2,6 +2,7 @@ import shutil
 import stat
 from pathlib import Path
 
+import pytest
 import setup_config
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,3 +59,21 @@ def test_idempotent(tmp_path: Path) -> None:
     first = _env(root)
     setup_config.main([str(root)])
     assert _env(root) == first
+
+
+def test_existing_world_readable_env_becomes_private(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    env = root / ".env"
+    env.write_text("SD_LLM_API_KEY=\n")
+    env.chmod(0o644)
+    setup_config.main([str(root)])
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    assert not list(root.glob(".*.tmp"))
+
+
+def test_symlinked_env_refused(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    (root / "elsewhere").write_text("")
+    (root / ".env").symlink_to(root / "elsewhere")
+    with pytest.raises(SystemExit):
+        setup_config.main([str(root)])
