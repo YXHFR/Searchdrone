@@ -21,3 +21,6 @@ All notable changes to this project are listed here. The format follows
   interface. Generated JSON Schema and TypeScript types (`@searchdrone/schemas`) via
   `just gen`, checked by `just gen-check`.
 - Skill registry with all 18 skills, every one a stub until its executor is built.
+- Local Postgres 18 + PostGIS 3.6 in `compose.yaml` (loopback port 5433, image pinned by
+  digest), `just db-up` / `db-down` / `db-check`, and the first Alembic migration with the
+  ground station tables, append-only guards and the restricted `sd_app` role.
