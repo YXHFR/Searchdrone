@@ -1,0 +1,25 @@
+{
+  "id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "vehicle_id": "sim-01",
+  "title": "Uppdrag 2026-10-15 12:30",
+  "status": "ACTIVE",
+  "paused_by": null,
+  "returning_cause": null,
+  "state_seq": 4,
+  "limits": {
+    "max_alt_agl_m": 120.0,
+    "max_speed_ms": 15.0,
+    "max_range_from_pilot_m": 500.0,
+    "battery_rtl_pct": 15.0
+  },
+  "active_charter_id": "0192f49e-1000-7000-8000-000000000001",
+  "autonomy_mode": "WITHIN_CHARTER",
+  "ai_enabled": true,
+  "created_by": "operator:demo",
+  "created_at": "2026-10-15T12:30:00Z",
+  "activated_at": "2026-10-15T12:30:00Z",
+  "landed_at": null,
+  "closed_at": null,
+  "closed_reason": null,
+  "notes": null
+}

@@ -15,3 +15,9 @@ All notable changes to this project are listed here. The format follows
 - `tools/bootstrap.sh` and `tools/setup/wsl-setup.sh` for a fresh WSL2 Ubuntu 24.04.
 - Project documents: package READMEs, security policy, contributing guide, code of conduct,
   issue templates and this changelog.
+- Shared message schemas (`sd_schemas`): ids, limits and their outer cap, mission charter,
+  gate input and output, mission states, SD-link messages (including manual stick control),
+  panel and commander API models, reason codes with Swedish texts, and the decision
+  interface. Generated JSON Schema and TypeScript types (`@searchdrone/schemas`) via
+  `just gen`, checked by `just gen-check`.
+- Skill registry with all 18 skills, every one a stub until its executor is built.

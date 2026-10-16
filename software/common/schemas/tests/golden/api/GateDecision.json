@@ -1,0 +1,11 @@
+{
+  "decision": "REJECT",
+  "reason_codes": ["ALT_ABOVE_LIMIT", "ALT_ABOVE_CHARTER"],
+  "rule_ids": ["R-ALT"],
+  "message_sv": "Höjden är över uppdragets gräns och 1 till.",
+  "details": {
+    "alt_m": 200
+  },
+  "required_confirmations": [],
+  "side": "ground"
+}

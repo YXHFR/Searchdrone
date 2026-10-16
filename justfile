@@ -14,7 +14,7 @@ zizmor_version := `python3 tools/versions.py zizmor_version`
 # Recipes whose ticket is not built yet. A direct call prints "inte byggt än (<ticket>)"
 # and exits 2; composite recipes skip them. Remove a name when its ticket lands.
 # tools/tests/test_justfile.py checks that this list matches the (_not-built ...) recipes.
-unbuilt := "db-up db-down db-check migrate gen gen-check test-panel-e2e panel-build"
+unbuilt := "db-up db-down db-check migrate test-panel-e2e panel-build"
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
@@ -123,12 +123,22 @@ build:
 # --- schemas -------------------------------------------------------------------------
 
 # Generate JSON Schema, TypeScript types and OpenAPI snapshots
-gen: (_not-built "B0-03")
+gen:
+    uv run --no-sync python tools/gen_schemas.py
 
 alias gen-schemas := gen
 
 # Fail if generated files are out of date
-gen-check: (_not-built "B0-03")
+gen-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{_just}} gen
+    changed="$(git status --porcelain -- software/common/schemas/generated \
+      software/common/ts-schemas/src/generated software/ground/tests/contract/snapshots)"
+    if [ -n "$changed" ]; then
+        echo "Genererade filer är inte i takt med källan. Kör 'just gen' och committa:"
+        echo "$changed"; git --no-pager diff --stat; exit 1
+    fi
 
 # --- database and services -----------------------------------------------------------
 

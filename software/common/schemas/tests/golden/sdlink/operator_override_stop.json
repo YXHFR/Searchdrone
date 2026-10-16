@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a2-0000-7000-8000-0000000000aa",
+  "kind": "OperatorOverrideNotice",
+  "sender": "ground:main",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 43,
+  "sent_utc": "2026-10-15T12:31:30.004Z",
+  "ttl_ms": null,
+  "reliable": true,
+  "corr_id": null,
+  "sig": null,
+  "body": {
+    "override_id": "0192f4a2-0000-7000-8000-0000000000ab",
+    "kind": "stop",
+    "operator_id": "operator:demo",
+    "action_seq": 5,
+    "issuer_kind": "operator"
+  }
+}

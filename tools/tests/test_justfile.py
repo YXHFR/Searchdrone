@@ -75,7 +75,7 @@ def test_all_recipes_listed() -> None:
     ("recipe", "ticket"),
     [
         ("db-up", "B0-04"),
-        ("gen", "B0-03"),
+        ("brain-token", "B1-10"),
         ("migrate", "B1-05"),
         ("hw-check", "B0-06"),
         ("models-fetch", "B1-10"),
