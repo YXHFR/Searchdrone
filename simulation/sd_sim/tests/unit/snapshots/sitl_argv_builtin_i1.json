@@ -8,7 +8,7 @@
   "-35.363261,149.165230,584.0,353",
   "--wipe",
   "--model",
-  "quad:<REPO>/simulation/sitl/frames/sd_quad14.json",
+  "quad:sd_quad14.json",
   "--defaults",
   "<ARDUPILOT>/Tools/autotest/default_params/copter.parm,<REPO>/simulation/sitl/params/searchdrone-safety.parm,<REPO>/simulation/sitl/params/sd_quad14-sim.parm",
   "--serial0",

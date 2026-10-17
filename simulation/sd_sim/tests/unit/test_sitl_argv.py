@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from sd_sim import ports
-from sd_sim.sitl import CMAC_HOME, SitlLayout, SitlOptions, build_sitl_argv
+from sd_sim.errors import InfraError
+from sd_sim.sitl import CMAC_HOME, FRAME_FILE, SitlLayout, SitlOptions, build_sitl_argv
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"
 
@@ -70,13 +71,42 @@ def test_qgc_only_instance_0(tmp_path: Path) -> None:
     assert "--serial5" not in argv
 
 
-def test_stock_vehicle_and_missing_files(tmp_path: Path) -> None:
-    ap = tmp_path / "ap"
-    layout = SitlLayout(arducopter=ap / "arducopter", ardupilot_home=ap, repo=tmp_path / "empty")
-    argv = build_sitl_argv(SitlOptions(), ports.for_instance(0), layout)
+def test_stock_vehicle(tmp_path: Path) -> None:
+    layout = fake_layout(tmp_path)
+    argv = build_sitl_argv(SitlOptions(vehicle="stock"), ports.for_instance(0), layout)
     assert argv[argv.index("--model") + 1] == "quad"
     defaults = argv[argv.index("--defaults") + 1].split(",")
-    assert defaults == [str(ap / "Tools" / "autotest" / "default_params" / "copter.parm")]
+    assert [Path(p).name for p in defaults] == [
+        "copter.parm",
+        "searchdrone-safety.parm",
+        "sd_quad14-sim.parm",
+    ]
+
+
+@pytest.mark.parametrize("missing", ["searchdrone-safety.parm", "sd_quad14-sim.parm"])
+def test_missing_parameter_layer_is_an_error(tmp_path: Path, missing: str) -> None:
+    layout = fake_layout(tmp_path)
+    (layout.repo / "simulation" / "sitl" / "params" / missing).unlink()
+    with pytest.raises(InfraError, match=missing):
+        build_sitl_argv(SitlOptions(), ports.for_instance(0), layout)
+
+
+def test_frame_is_staged_into_the_working_directory(tmp_path: Path) -> None:
+    layout = fake_layout(tmp_path)
+    argv = build_sitl_argv(SitlOptions(), ports.for_instance(0), layout)
+    # SITL opens the frame file relative to its working directory.
+    assert argv[argv.index("--model") + 1] == f"quad:{FRAME_FILE}"
+    staged = layout.stage_frame(tmp_path / "work")
+    assert staged == tmp_path / "work" / FRAME_FILE
+    assert staged.read_text() == "{}"
+    layout.frame_json.unlink()
+    with pytest.raises(InfraError, match="sd_quad14"):
+        layout.stage_frame(tmp_path / "work2")
+
+
+def test_unknown_vehicle(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        build_sitl_argv(SitlOptions(vehicle="x8"), ports.for_instance(0), fake_layout(tmp_path))
 
 
 def test_unknown_physics(tmp_path: Path) -> None:

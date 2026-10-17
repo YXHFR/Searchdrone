@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sd_sim import params
+from sd_sim import params, paths
 
 
 def test_parse_spaces_commas_and_comments() -> None:
@@ -38,18 +38,43 @@ def test_mismatches_tolerance_and_missing() -> None:
     assert out == ["B: 2.5 (väntat 2)", "C: saknas i flygkontrollen (väntat 3)"]
 
 
+SAFETY_FILE = paths.REPO / "simulation" / "sitl" / "params" / "searchdrone-safety.parm"
+
+
 def test_safety_rules() -> None:
-    good = {
-        "MAV_GCS_SYSID": 250.0,
-        "FENCE_ENABLE": 1.0,
-        "BATT_FS_LOW_ACT": 3.0,
-        "BATT_LOW_MAH": 1350.0,
-        "FS_GCS_ENABLE": 3.0,
-    }
+    good = {name: value for name, _, value in params.SAFETY_RULES}
     assert params.rule_violations(good) == []
-    bad = {**good, "FENCE_ENABLE": 0.0, "BATT_LOW_MAH": 0.0}
-    del bad["FS_GCS_ENABLE"]
+    bad = {**good, "FENCE_ENABLE": 0.0, "BATT_LOW_MAH": 0.0, "FS_GCS_ENABLE": 1.0}
+    del bad["FS_GCS_TIMEOUT"]
     out = params.rule_violations(bad)
-    assert len(out) == 3
+    assert len(out) == 4
     assert any(v.startswith("FENCE_ENABLE") for v in out)
-    assert "FS_GCS_ENABLE: saknas i flygkontrollen" in out
+    assert any(v.startswith("FS_GCS_ENABLE") for v in out)  # any other action is wrong too
+    assert "FS_GCS_TIMEOUT: saknas i flygkontrollen" in out
+
+
+def test_rule_operators() -> None:
+    rules = (("A", "!=", 0.0), ("B", ">", 1.0))
+    assert params.rule_violations({"A": 2.0, "B": 2.0}, rules) == []
+    assert len(params.rule_violations({"A": 0.0, "B": 1.0}, rules)) == 2
+
+
+def test_safety_file_satisfies_the_rules() -> None:
+    values = params.parse_parm(SAFETY_FILE.read_text(encoding="utf-8"))
+    assert params.rule_violations(values) == []
+
+
+def test_every_failsafe_fence_and_battery_line_has_a_rule() -> None:
+    values = params.parse_parm(SAFETY_FILE.read_text(encoding="utf-8"))
+    ruled = {name for name, _, _ in params.SAFETY_RULES}
+    unruled = [n for n in values if n.startswith(params.RULED_PREFIXES) and n not in ruled]
+    assert unruled == []
+
+
+def test_rules_agree_with_the_ground_station() -> None:
+    from sd_safety.constants import FC_SAFETY_EXPECTED
+
+    exact = {name: value for name, op, value in params.SAFETY_RULES if op == "=="}
+    for name, value in FC_SAFETY_EXPECTED.items():
+        assert name in exact, f"{name} saknar en exakt regel"
+        assert exact[name] == value, name

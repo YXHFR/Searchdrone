@@ -2,8 +2,9 @@
 
 Gazebo Transport carries its topics on loopback (``GZ_IP=127.0.0.1``; its discovery
 sockets bind all addresses by design, see listen_allowlist.yaml) and every instance gets
-its own partition, so two worlds never mix their topics. Until the Searchdrone world
-exists, ArduPilot's ``iris_runway`` world (iris with a gimbal camera) is used.
+its own partition, so two worlds never mix their topics. The launcher renders the
+Searchdrone world ``sd_lake_forest`` with ``sd_quad14`` before Gazebo starts
+(``sd_sim.world``); ``vehicle=stock`` uses ArduPilot's ``iris_runway`` world instead.
 """
 
 from __future__ import annotations

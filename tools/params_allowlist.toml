@@ -1,0 +1,5 @@
+# Names besides SIM_* that the simulator-only parameter file
+# simulation/sitl/params/sd_quad14-sim.parm may set. Checked by tools/params_check.py.
+# Every safety-relevant value (battery, fence, failsafes) belongs in the safety file
+# searchdrone-safety.parm instead; adding a name here weakens that rule and needs review.
+allowed = ["MOT_THST_HOVER"]

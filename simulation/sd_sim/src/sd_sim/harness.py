@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,10 @@ class VehicleState:
     gps_fix: int = 0
     rel_alt_m: float = 0.0
     max_rel_alt_m: float = 0.0
+    lat: float = 0.0
+    lon: float = 0.0
+    ground_speed_ms: float = 0.0
+    battery_current_a: float = -1.0  # -1: not reported yet
 
     @property
     def ready(self) -> bool:
@@ -67,6 +73,8 @@ class Harness:
         )
         self._next_heartbeat = 0.0
         self._streams_requested = False
+        # Called with (message type, state) after every flight-controller message.
+        self.listeners: list[Callable[[str, VehicleState], None]] = []
 
     @classmethod
     def for_instance(cls, instance: int) -> Harness:
@@ -113,6 +121,12 @@ class Harness:
         elif kind == "GLOBAL_POSITION_INT":
             s.rel_alt_m = msg.relative_alt / 1000.0
             s.max_rel_alt_m = max(s.max_rel_alt_m, s.rel_alt_m)
+            s.lat, s.lon = msg.lat / 1e7, msg.lon / 1e7
+            s.ground_speed_ms = math.hypot(msg.vx, msg.vy) / 100.0
+        elif kind == "SYS_STATUS" and msg.current_battery >= 0:
+            s.battery_current_a = msg.current_battery / 100.0
+        for listener in self.listeners:
+            listener(kind, s)
 
     def wait(self, predicate: Any, timeout: float, what: str) -> None:
         end = time.monotonic() + timeout
@@ -177,6 +191,61 @@ class Harness:
 
     def takeoff(self, alt_m: float) -> None:
         self._command(mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, alt_m)
+
+    def set_speed(self, speed_ms: float) -> None:
+        """Horizontal speed for GUIDED and AUTO legs (MAV_CMD_DO_CHANGE_SPEED, ground speed)."""
+        self._command(mavlink.MAV_CMD_DO_CHANGE_SPEED, 1, speed_ms, -1)
+
+    def goto(self, lat: float, lon: float, rel_alt_m: float) -> None:
+        """Fly to a point in GUIDED (position target, height above home)."""
+        mask = (
+            mavlink.POSITION_TARGET_TYPEMASK_VX_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_VY_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_VZ_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            | mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        )
+        self._conn.mav.set_position_target_global_int_send(
+            0,
+            FC_SYSID,
+            FC_COMPID,
+            mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            mask,
+            round(lat * 1e7),
+            round(lon * 1e7),
+            rel_alt_m,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+
+    def read_param(self, name: str, timeout: float = 5.0) -> float:
+        """Read one parameter (read only, nothing is set)."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            self._conn.mav.param_request_read_send(FC_SYSID, FC_COMPID, name.encode(), -1)
+            stop = min(end, time.monotonic() + 1.0)
+            while time.monotonic() < stop:
+                self._heartbeat_tick()
+                msg = self._conn.recv_match(blocking=True, timeout=0.2)
+                if msg is None:
+                    continue
+                self._apply(msg)
+                if msg.get_type() == "PARAM_VALUE" and msg.get_srcSystem() == FC_SYSID:
+                    got = msg.param_id
+                    if isinstance(got, bytes):
+                        got = got.decode("ascii", errors="replace")
+                    if str(got).rstrip("\x00") == name:
+                        return float(msg.param_value)
+        raise InfraError(f"parametern {name} lästes inte inom {timeout:.0f} s")
 
     def read_all_params(self, timeout: float = 60.0) -> dict[str, float]:
         """Read the flight controller's whole parameter list (read only, nothing is set).
