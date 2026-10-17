@@ -83,7 +83,9 @@ class EventBus:
         mission_id: str | None = None,
     ) -> BusEvent:
         seq: int | None = None
-        if topic != "telemetry":
+        # The periodic streams (telemetry 5 Hz, vehicle.state 2 Hz) carry no seq and stay
+        # out of the replay ring: the next sample replaces a missed one.
+        if topic != "telemetry" and type_ != "vehicle.state":
             self._seq += 1
             seq = self._seq
         event = BusEvent(seq, ts, topic, type_, vehicle_id, mission_id, data)

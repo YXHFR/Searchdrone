@@ -170,3 +170,25 @@ def test_manual_op_reaches_the_stick_path(logged_in: TestClient, ground: Ground)
         ws.send_json({"op": "ping"})
         assert ws.receive_json()["type"] == "pong"  # the socket stayed open
     assert sticks.got == [("sim-01", 0.5, "pilot")]
+
+
+async def test_vehicle_state_goes_live_at_2_hz(
+    ground: Ground, clock: FakeClock, vehicle_link: object
+) -> None:
+    """``vehicle.state`` (executor state, link, latch) every 0.5 s, without a seq."""
+    sub = ground.bus.subscribe(["vehicle"])
+    service = TelemetryService(ground)
+    task = asyncio.create_task(service.run())
+    await clock.run_for(10.0)
+    task.cancel()
+    got = []
+    while not sub.queue.empty():
+        event = sub.queue.get_nowait()
+        assert event is not None
+        got.append(event)
+    states = [e for e in got if e.type == "vehicle.state"]
+    assert 19 <= len(states) <= 21
+    assert all(e.seq is None for e in states)
+    assert states[-1].data["vehicle_id"] == "sim-01"
+    assert set(states[-1].data) >= {"snapshot", "link", "latch", "airborne", "telemetry"}
+    assert ground.bus.replay(ground.bus.server_epoch, 0) == []

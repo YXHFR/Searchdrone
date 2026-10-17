@@ -63,7 +63,12 @@ async function say(page: Page, text: string): Promise<void> {
 async function readyMission(page: Page): Promise<void> {
   await page.goto(stackUrl());
   await expect(page.getByTestId("mission-title")).toContainText("Uppdrag", { timeout: 30_000 });
-  await expect.poll(() => live<string>(page, "mission.status"), { timeout: 30_000 }).toBe("DRAFT");
+  // A mission left READY by an earlier test is used as it is; a landed one closes by itself
+  // and the panel opens a new one.
+  await expect
+    .poll(() => live<string>(page, "mission.status"), { timeout: 60_000 })
+    .toMatch(/^(DRAFT|READY)$/);
+  if ((await live<string>(page, "mission.status")) === "READY") return;
   await say(page, "Sök av rutan norr om hem.");
   const card = page.locator('[data-kind="charter"]').last();
   await expect(card.getByTestId("approve")).toBeEnabled({ timeout: 30_000 });
