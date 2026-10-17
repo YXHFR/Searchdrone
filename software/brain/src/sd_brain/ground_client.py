@@ -222,13 +222,14 @@ class GroundClient:
 
     async def report_chat_intent(self, mission_id: str, report: ChatIntentReport) -> IntentOutcome:
         """``acted`` (202), or ``refused`` when the ground does not take it for that line
-        (unknown, not a pilot's own, too old). Anything else is a ``GroundError``."""
+        (unknown, not a pilot's own, too old). Anything else is a ``GroundError``, also a
+        422: the ground could not read the report (builds that do not match)."""
         resp = await self._request(
             "POST", f"/missions/{mission_id}/chat-intents", json=report.model_dump(mode="json")
         )
         if resp.status_code in (200, 202):
             return "acted"
-        if resp.status_code in (403, 404, 409, 422):
+        if resp.status_code in (403, 404, 409):
             return "refused"
         raise GroundError(f"chat-intents gav HTTP {resp.status_code}", resp.status_code)
 

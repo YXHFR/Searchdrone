@@ -264,7 +264,7 @@ class CommanderLoop:
                 return
             else:
                 trigger = "operator_message"
-                self._start_stop_check(body)
+                self._start_stop_check(evt)
         elif kind == "event.skill":
             cid = str(body.get("command_id"))
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
@@ -808,9 +808,10 @@ class CommanderLoop:
 
     # --- the quick stop check -------------------------------------------------------------
 
-    def _start_stop_check(self, body: dict[str, Any]) -> None:
+    def _start_stop_check(self, evt: dict[str, Any]) -> None:
         if self.decide is None or not self.cfg.decide.stop_check:
             return
+        body: dict[str, Any] = evt.get("body") or {}
         if body.get("author_role") not in (None, "pilot"):
             return
         if body.get("handled_by") == "ground":
@@ -819,11 +820,11 @@ class CommanderLoop:
         message_id = body.get("message_id")
         if not text or message_id is None:
             return
-        task = asyncio.create_task(self._stop_check(str(message_id), text))
+        task = asyncio.create_task(self._stop_check(str(message_id), text, evt))
         self._side_tasks.add(task)
         task.add_done_callback(self._side_tasks.discard)
 
-    async def _stop_check(self, message_id: str, text: str) -> None:
+    async def _stop_check(self, message_id: str, text: str, evt: dict[str, Any]) -> None:
         mid = self.mission_id
         if mid is None or self.decide is None:
             return
@@ -857,6 +858,9 @@ class CommanderLoop:
             return
         if outcome == "refused":  # not a pilot's own recent line: the ground decides
             log.info("markstationen tog inte emot stoppkontrollen för rad %s", message_id)
+            # The line was dropped from the queue for the stop: answer it as usual.
+            self._queue.append(_Pending("operator_message", evt))
+            self._wake.set()
 
     async def _stop_fallback(self, mid: str, result: StopCheckResult) -> None:
         """The ground could not take the report: ask for the button and send a gated

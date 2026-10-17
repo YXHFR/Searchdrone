@@ -429,11 +429,14 @@ async def test_stop_check_fallback_when_ground_unreachable() -> None:
     assert [c.skill for c in fg2.commands] == ["hold"]
 
 
-async def test_stop_check_refused_by_ground_sends_nothing() -> None:
-    loop, fg, _ = make_loop(Steps(), decide=DecisionService([]), chat_intents="refused")
+async def test_stop_check_refused_by_ground_answers_the_line_as_usual() -> None:
+    backend = Steps(say("Jag står kvar."))
+    loop, fg, _ = make_loop(backend, decide=DecisionService([]), chat_intents="refused")
     loop.handle_event(fg.operator_message("Stopp!"))
     await loop.settle()
-    assert fg.intents and not fg.commands and not fg.posted
+    assert fg.intents and not fg.commands  # no order of its own
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
+    assert [m.text for m in fg.posted] == ["Jag står kvar."]
 
 
 async def test_stop_check_skips_lines_the_ground_handled() -> None:

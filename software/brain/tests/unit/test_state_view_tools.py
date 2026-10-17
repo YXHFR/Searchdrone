@@ -332,9 +332,11 @@ def test_no_setting_drops_the_start_request() -> None:
         ("TAKEOFF", {"return_home"}),
         ("RTL", {"return_home"}),
         ("LAND", set()),
+        ("PREFLIGHT", set()),  # takeoff only with the start rule (other tests)
+        (None, set()),  # the onboard state is unknown: nothing that moves the vehicle
     ],
 )
-def test_onboard_skills_only_from_their_executor_states(state: str, want: set[str]) -> None:
+def test_onboard_skills_only_from_their_executor_states(state: str | None, want: set[str]) -> None:
     s = situation(vehicle={"executor_state": state})
     moving = {k.name for k in REG if k.allowed_from}
     assert _names(s) & moving == want

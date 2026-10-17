@@ -144,9 +144,10 @@ async def test_rest_roundtrip() -> None:
         for status in (403, 404, 409):
             mock.chat_intent_status = status
             assert await g.report_chat_intent(mid, report) == "refused"
-        mock.chat_intent_status = 503
-        with pytest.raises(GroundError):
-            await g.report_chat_intent(mid, report)
+        for status in (422, 503):  # 422: the ground could not read it (builds differ)
+            mock.chat_intent_status = status
+            with pytest.raises(GroundError):
+                await g.report_chat_intent(mid, report)
         wrong = GroundClient(mock.url, "wrong-token-0123456789012345678901", http)
         with pytest.raises(GroundError) as exc:
             await wrong.skills()
