@@ -82,8 +82,10 @@ class Stack:
         *,
         observer: bool = True,
         repo: Path = paths.REPO,
+        param_layers: tuple[Path, ...] = (),
     ) -> None:
         self.cfg = cfg
+        self.param_layers = param_layers  # a test's own layers, loaded last
         self.run_dir = run_dir
         self.repo = repo
         self.observer = observer
@@ -248,6 +250,7 @@ class Stack:
             ardupilot_home=paths.ardupilot_home(),
             repo=self.repo,
             extra_defaults=extra,
+            test_layers=self.param_layers,
         )
 
     def sitl_argv(self) -> list[str]:

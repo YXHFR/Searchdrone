@@ -78,3 +78,23 @@ def test_rules_agree_with_the_ground_station() -> None:
     for name, value in FC_SAFETY_EXPECTED.items():
         assert name in exact, f"{name} saknar en exakt regel"
         assert exact[name] == value, name
+
+
+FIELD_FILE = SAFETY_FILE.with_name("searchdrone-safety.field.parm")
+
+
+def test_field_layer_requires_the_rc_transmitter() -> None:
+    """Real flight: the field layer on top of the safety file keeps every rule, but the
+    RC failsafe must act; the simulator file alone does not pass for real flight."""
+    sim = params.merge_layers([SAFETY_FILE])
+    real = params.merge_layers([SAFETY_FILE, FIELD_FILE])
+    assert params.rule_violations(real, params.FIELD_RULES) == []
+    assert any(
+        v.startswith("FS_THR_ENABLE") for v in params.rule_violations(sim, params.FIELD_RULES)
+    )
+    assert any(v.startswith("FS_THR_ENABLE") for v in params.rule_violations(real))
+    assert {n for n, _, _ in params.FIELD_RULES} == {n for n, _, _ in params.SAFETY_RULES}
+    # The field layer changes only rows the safety file has, and keeps the arming checks.
+    field = params.parse_parm(FIELD_FILE.read_text(encoding="utf-8"))
+    assert set(field) <= set(sim)
+    assert field["ARMING_SKIPCHK"] == 0.0

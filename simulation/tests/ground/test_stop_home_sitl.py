@@ -217,7 +217,11 @@ async def emergency(
             onboard,
             clock,
             link,
-            ExecutorOptions(vehicle_id=VID, expected_params=effective_params([PARM]), **options),
+            ExecutorOptions(
+                vehicle_id=VID,
+                expected_params=effective_params([PARM]),
+                **{"require_rc": False, **options},
+            ),
         )
         holder.append(ex)
         link.executor = ex

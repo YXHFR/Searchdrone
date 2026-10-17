@@ -37,7 +37,7 @@ from sd_ground.mav.thread import GroundMav, ThreadSafeMav
 from sd_ground.services.latches import Latches
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.telemetry import TelemetryService
-from sd_ground.services.vehicle_actions import VehicleActions
+from sd_ground.services.vehicle_actions import OperatorPresence, VehicleActions
 from sd_link.client import LinkClient
 from sd_link.session import Closed, Inbound, LinkSession
 from sd_link.tokens import TokenStore, generate_token, hash_token
@@ -93,6 +93,7 @@ class FakeOnboard:
     stop_latch: bool = False
     accept_charters: bool = True
     order_outcome: str = "done"  # or "running" (stays), "rejected"
+    rc_link: bool | None = None  # PF12 (None: not required, as in SITL and CI)
     boot_id: int = 1
     state_seq: int = 0
     last_transition_seq: int = 0
@@ -152,8 +153,8 @@ class FakeOnboard:
                 "charter_id": None if charter is None else charter.charter_id,
                 "charter_version": None if charter is None else charter.version,
                 "clearance_available": bool(self.clearances),
-                "preflight_ok": charter is not None,
-                "preflight": {},
+                "preflight_ok": charter is not None and self.rc_link is not False,
+                "preflight": {} if self.rc_link is None else {"PF12": self.rc_link},
                 "limits_active": [],
                 "stop_latch": self.stop_latch,
                 "battery_rtl_active": False,
@@ -256,6 +257,8 @@ class Rig:
     commander: httpx.AsyncClient
     clock: WallClock
     plane: Plane
+    # Set: the pilot has closed the panel (no live connection keeps the operator present).
+    operator_away: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
     def home(self) -> tuple[float, float]:
@@ -397,10 +400,12 @@ async def _harness_token(g: Ground) -> str:
     return token
 
 
-async def _operator_present(g: Ground) -> None:
-    """The pilot keeps the panel open: its live connection pings once a second."""
+async def _operator_present(g: Ground, away: asyncio.Event) -> None:
+    """The pilot keeps the panel open: its live connection pings once a second, until
+    ``away`` is set (the pilot closed the panel)."""
     while True:
-        g.operator_seen_mono = g.clock.monotonic()
+        if not away.is_set():
+            g.operator_seen_mono = g.clock.monotonic()
         await asyncio.sleep(1.0)
 
 
@@ -502,12 +507,14 @@ async def ground_stack(
     await flow.start()
     await link.start()
     side = onboard(clock, f"ws://127.0.0.1:{link.port}/sdlink/v1/control", token)
+    away = asyncio.Event()
     tasks = [
         asyncio.ensure_future(flow.run()),
         asyncio.ensure_future(actions.pump(g)),
+        asyncio.ensure_future(OperatorPresence(actions, mission_active=flow.mission_active).run(g)),
         asyncio.ensure_future(TelemetryService(g).run()),
         asyncio.ensure_future(_flush_events(g)),
-        asyncio.ensure_future(_operator_present(g)),
+        asyncio.ensure_future(_operator_present(g, away)),
     ]
     panel = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=panel_asgi(g, create_panel_app(g))),  # pyright: ignore[reportArgumentType]
@@ -541,6 +548,7 @@ async def ground_stack(
             commander,
             clock,
             Plane(home.lat, home.lon),
+            away,
         )
         await side.start(r.home)
         await r.until(lambda: link.up(VID), 30, "SD-link up")

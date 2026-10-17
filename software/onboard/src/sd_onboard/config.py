@@ -27,6 +27,7 @@ from sd_onboard.io.params import effective_params
 from sd_schemas.base import VEHICLE_ID_PATTERN
 
 __all__ = [
+    "ARMING_SKIP_RC_BIT",
     "MIN_TOKEN_BYTES",
     "ConfigError",
     "Loaded",
@@ -66,6 +67,9 @@ class OnboardConfig(BaseModel):
     link_token_file: str = "${SD_DATA_DIR}/secrets/onboard_link_token"  # noqa: S105  # a path
     state_dir: str = ""
     allow_companion_arm: bool = True
+    # Take-off needs a physical RC transmitter that the flight controller hears (PF12).
+    # Only SITL and CI turn it off; every other profile refuses to start without it.
+    require_rc: bool = True
     expected_param_files: list[str] = Field(
         default_factory=lambda: ["simulation/sitl/params/searchdrone-safety.parm"]
     )
@@ -117,7 +121,7 @@ def _env_layer(env: dict[str, str]) -> dict[str, Any]:
         value: Any = raw
         if parts[-1] in ("fc_sysid", "own_compid", "gcs_sysid"):
             value = int(raw)
-        elif parts[-1] == "allow_companion_arm":
+        elif parts[-1] in ("allow_companion_arm", "require_rc"):
             value = raw.strip().lower() in ("1", "true", "yes")
         elif parts[-1] == "takeoff_delay_after_arm_s":
             value = float(raw)
@@ -158,6 +162,10 @@ def check(loaded: Loaded) -> list[str]:
     cfg, errors = loaded.config, []
     if cfg.profile != "sim":
         errors.append("Bara profilen 'sim' finns i v0.1 / only the 'sim' profile exists in v0.1.")
+    if not cfg.require_rc and cfg.profile != "sim":
+        errors.append(
+            "require_rc = false gäller bara i simulatorn / require_rc = false is for SITL only."
+        )
     if not re.match(VEHICLE_ID_PATTERN, cfg.vehicle_id):
         errors.append(f"Ogiltigt vehicle_id / invalid vehicle_id: {cfg.vehicle_id!r}.")
     if cfg.fc_sysid in (cfg.gcs_sysid, BROADCAST_SYSID) or not 1 <= cfg.fc_sysid <= 249:
@@ -187,7 +195,23 @@ def check(loaded: Loaded) -> list[str]:
             errors.append("gcs_sysid stämmer inte med MAV_GCS_SYSID / gcs_sysid differs.")
         if "FS_GCS_ENABLE" not in params:
             errors.append("Säkerhetsparametrarna saknas / the safety parameters are missing.")
+        if cfg.profile != "sim":
+            errors += _rc_param_problems(params)
     return errors
+
+
+# ArduCopter 4.7's ARMING_SKIPCHK bit for the RC check (ARMING_CHECK_RC, 1 << 6).
+ARMING_SKIP_RC_BIT = 1 << 6
+
+
+def _rc_param_problems(params: dict[str, float]) -> list[str]:
+    """Real flight: the flight controller itself must require the RC transmitter."""
+    out = []
+    if int(params.get("ARMING_SKIPCHK", ARMING_SKIP_RC_BIT)) & ARMING_SKIP_RC_BIT:
+        out.append("ARMING_SKIPCHK hoppar över RC-kontrollen / the RC arming check is skipped.")
+    if params.get("FS_THR_ENABLE", 0.0) == 0.0:
+        out.append("FS_THR_ENABLE är av (ingen RC-failsafe) / the RC failsafe is off.")
+    return out
 
 
 def _token_problems(loaded: Loaded) -> list[str]:

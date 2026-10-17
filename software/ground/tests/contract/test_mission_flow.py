@@ -295,6 +295,30 @@ async def test_fence_params_wrong_blocks_takeoff(r: Rig) -> None:
     assert "FENCE_NOT_VERIFIED" in res.json()["reason_codes"]
 
 
+async def test_takeoff_refused_without_the_rc_transmitter(r: Rig) -> None:
+    """The onboard computer requires an RC transmitter and hears none (PF12 false): the
+    gate refuses the take-off with its own reason, and the order never goes onboard."""
+    mid = await r.ready_mission()
+    r.onboard.rc_link = False
+    await r.until(
+        lambda: (s := r.flow.snapshot(VID)[0]) is not None and s.preflight.get("PF12") is False,
+        5,
+        "PF12 false in the snapshot",
+    )
+    await r.clearance(mid)
+    d = driver(r, mid)
+    res = await d.order("takeoff", {"alt_m": 40})
+    body = res.json()
+    assert body["decision"] == "REJECT", body
+    assert body["reason_codes"][0] == "RC_LINK_DOWN"
+    assert not [o for o in r.onboard.orders if o.skill == "takeoff"]
+    r.onboard.rc_link = True  # switched on: the same take-off now passes
+    await r.until(lambda: r.flow.snapshot(VID)[0].preflight_ok, 5, "preflight ok")
+    await asyncio.sleep(3.1)  # the gate's rate limit: one AI action per 3 s
+    res = await d.order("takeoff", {"alt_m": 40})
+    assert res.json()["decision"] == "ALLOW", res.text
+
+
 async def test_raised_limits_move_the_fence(r: Rig) -> None:
     mid = await r.open_mission()
     res = await r.panel.put(

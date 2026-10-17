@@ -533,3 +533,50 @@ async def test_unknown_skill_from_backend_is_refused() -> None:
 
 async def test_registry_is_the_foundation_one() -> None:
     assert "goto" in REG and REG.get("goto").status == "implemented"
+
+
+async def test_skill_end_waits_for_the_snapshot_after_it() -> None:
+    """The end of the search arrives before the snapshot that shows the vehicle holding:
+    the next order is based on the newer snapshot, not on the one the onboard computer
+    would refuse as STATE_CHANGED."""
+    backend = Steps(act("return_home"))
+    loop, fg, _ = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    calls = 0
+    situation = fg.situation
+
+    async def lagging(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 3:  # the newer snapshot: holding, nothing active
+            fg.sit["active_command"] = None
+            fg.sit["snapshot_state_seq"] = 1005
+        return await situation(mission_id)
+
+    fg.situation = lagging  # type: ignore[method-assign]
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    await loop.settle()
+    assert calls >= 3
+    assert len(fg.commands) == 1
+    assert fg.commands[0].based_on is not None and fg.commands[0].based_on.state_seq == 1005
+
+
+async def test_skill_end_waits_only_so_long() -> None:
+    backend = Steps(act("return_home"))
+    loop, fg, clock = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    start = clock.monotonic()
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    await loop.settle()
+    assert clock.monotonic() - start <= 2.0  # the stale snapshot is used after 1.5 s
+    assert len(backend.turns) == 1

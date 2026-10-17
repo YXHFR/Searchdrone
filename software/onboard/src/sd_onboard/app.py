@@ -70,6 +70,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         ExecutorOptions(
             vehicle_id=cfg.vehicle_id,
             allow_companion_arm=cfg.allow_companion_arm,
+            require_rc=cfg.require_rc,
             takeoff_delay_after_arm_s=cfg.test_hooks.takeoff_delay_after_arm_s,
             expected_params=effective_params(loaded.param_files()),
         ),

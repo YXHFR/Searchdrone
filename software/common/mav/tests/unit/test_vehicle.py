@@ -24,6 +24,7 @@ from sd_mav.vehicle import (
     MavResult,
     SendOrigin,
     Vehicle,
+    rc_link_ok,
 )
 from sd_schemas.base import LatLon
 from sd_schemas.link import StickAxes
@@ -110,6 +111,37 @@ def test_lost_connection_detected_within_3s() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_rc_link_seen_from_rc_channels_and_sys_status() -> None:
+    """A physical RC transmitter counts only while the flight controller reports a healthy
+    RC receiver and live stick channels; it goes down within 1.5 s when they stop."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        assert not rc_link_ok(vehicle.telemetry, clock.monotonic_ms())  # no RC at all
+        vehicle.fc.rc_mode_pwm = 1500  # channels without a healthy receiver: not enough
+        await clock.run_for(2.0)
+        assert not rc_link_ok(vehicle.telemetry, clock.monotonic_ms())
+        vehicle.fc.rc_link = True
+        await clock.run_for(2.0)
+        assert rc_link_ok(vehicle.telemetry, clock.monotonic_ms())
+        vehicle.fc.rc_link = False
+        vehicle.fc.rc_mode_pwm = None
+        await clock.run_for(2.0)
+        assert not rc_link_ok(vehicle.telemetry, clock.monotonic_ms())
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_rc_link_ok_needs_fresh_channels() -> None:
+    t = FcTelemetry(rc_receiver_healthy=True, rc_mono_ms=10_000)
+    assert rc_link_ok(t, 11_500)
+    assert not rc_link_ok(t, 11_501)
+    assert not rc_link_ok(FcTelemetry(rc_receiver_healthy=True), 0)
+    assert not rc_link_ok(FcTelemetry(rc_receiver_healthy=False, rc_mono_ms=0), 0)
 
 
 def test_command_ack_retries_with_rising_confirmation() -> None:

@@ -35,7 +35,7 @@ env:
   SD_SIM__SPEEDUP: "1"
   # A missing simulator binary fails the tests instead of skipping them.
   SD_SIM__REQUIRE_SITL: "1"
-  SHARDS: "1"
+  SHARDS: "4"
   WORKERS: "4"
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1]
+        shard: [1, 2, 3, 4]
     steps:
       - &checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -13,6 +13,8 @@ sdlink_url = "ws://127.0.0.1:7601/sdlink/v1/control"
 link_token_file = "${SD_DATA_DIR}/secrets/onboard_link_token"  # outside the repository
 state_dir = ""                                    # empty = ${SD_DATA_DIR}/onboard/<vehicle_id>
 allow_companion_arm = true
+require_rc = true                                 # take-off needs an RC transmitter with link;
+                                                  # the simulator sets SD_ONBOARD__REQUIRE_RC=false
 expected_param_files = ["simulation/sitl/params/searchdrone-safety.parm"]
 
 [test_hooks]                                      # only with profile "sim" and SD_TEST=1

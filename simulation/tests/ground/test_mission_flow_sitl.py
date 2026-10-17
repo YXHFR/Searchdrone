@@ -82,7 +82,15 @@ P1 = (100.0, 50.0)  # east, north of home (m)
 class SitlOnboard:
     """The onboard executor on 1/191 against SITL, with SD-link to the ground's server."""
 
-    def __init__(self, sim: Sim, url: str, token: str) -> None:
+    def __init__(
+        self,
+        sim: Sim,
+        url: str,
+        token: str,
+        *,
+        param_layers: tuple[Path, ...] = (),
+        **options: Any,
+    ) -> None:
         self.clock = MonotonicClock()
         holder: list[Executor] = []
         self.vehicle = _vehicle(
@@ -97,7 +105,11 @@ class SitlOnboard:
             self.vehicle,
             self.clock,
             self.link,
-            ExecutorOptions(vehicle_id=VID, expected_params=effective_params([PARM])),
+            ExecutorOptions(
+                vehicle_id=VID,
+                expected_params=effective_params([PARM, *param_layers]),
+                **{"require_rc": False, **options},  # no RC transmitter in SITL and CI
+            ),
         )
         holder.append(self.ex)
         self.link.executor = self.ex

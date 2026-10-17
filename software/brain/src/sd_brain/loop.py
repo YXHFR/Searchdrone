@@ -29,6 +29,7 @@ from sd_brain.config import BrainConfig
 from sd_brain.constants import (
     BRAIN_TURN_DEADLINE_S,
     CHAT_TAIL,
+    FRESH_SNAPSHOT_WAIT_S,
     MAX_ACTIONS_PER_MINUTE,
     MESSAGE_MAX_CHARS,
     MIN_ACTION_INTERVAL_S,
@@ -403,6 +404,8 @@ class CommanderLoop:
         self._last_turn_at = self._busy_since
         now = self.clock.utc_now()
         s = await self.ground.situation(mid)
+        if trigger == "skill_event":
+            s = await self._after_skill_event(mid, s, events)
         chat = await self.ground.chat(mid, 0, 200)
         try:
             mem = await self.ground.memory(mid)
@@ -718,6 +721,25 @@ class CommanderLoop:
                 record.texts = [text]
                 await self._say(OutMessage(text=text), reply_to)
         return mem
+
+    async def _after_skill_event(
+        self, mid: str, s: Situation, events: list[dict[str, Any]]
+    ) -> Situation:
+        """The situation once its snapshot no longer shows the order that just ended as
+        active (at most ``FRESH_SNAPSHOT_WAIT_S``). An order based on the older snapshot
+        would be refused onboard as ``STATE_CHANGED``: the vehicle has moved on."""
+        body = (events[-1].get("body") or {}) if events else {}
+        ended = body.get("command_id")
+        end = self.clock.monotonic() + FRESH_SNAPSHOT_WAIT_S
+        while (
+            ended is not None
+            and s.active_command is not None
+            and str(s.active_command.id) == str(ended)
+            and self.clock.monotonic() < end
+        ):
+            await self.clock.sleep(0.1)
+            s = await self.ground.situation(mid)
+        return s
 
     def _skill_request(
         self, action: AiAction, s: Situation, reply_to: Any, out: TurnOutput

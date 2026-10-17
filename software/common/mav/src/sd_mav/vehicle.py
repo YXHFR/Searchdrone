@@ -55,6 +55,7 @@ from sd_schemas.vehicle import LandedState, VehicleState
 __all__ = [
     "ACK_ATTEMPTS",
     "MODE_FRESH_S",
+    "RC_LINK_FRESH_S",
     "RC_MODE_CHANNEL",
     "ControlNotAllowedError",
     "EventSink",
@@ -63,10 +64,15 @@ __all__ = [
     "MavResult",
     "SendOrigin",
     "Vehicle",
+    "rc_link_ok",
 ]
 
 ACK_ATTEMPTS: Final = 3
 RC_MODE_CHANNEL: Final = 5  # ArduCopter's FLTMODE_CH default: the RC flight-mode switch
+# RC_CHANNELS comes at 4 Hz; older than this, the RC transmitter's link counts as down.
+RC_LINK_FRESH_S: Final = 1.5
+_RC_MIN_CHANNELS: Final = 4  # roll, pitch, throttle, yaw
+_RC_THROTTLE_CHANNEL: Final = 3
 MODE_FRESH_S: Final = 1.5  # a HEARTBEAT older than this does not tell the current mode
 _OUR_HEARTBEAT_S: Final = 1.0
 _WATCH_S: Final = 0.05
@@ -215,6 +221,8 @@ class FcTelemetry:
     last_failsafe_mono_ms: int | None = None  # any failsafe signal, repeated ones too
     failsafe_onset_mono_ms: int | None = None  # a signal that was not active just before
     rc_mode_pwm: int | None = None  # the RC mode-switch channel; None without an RC receiver
+    rc_mono_ms: int | None = None  # last RC_CHANNELS with live sticks from an RC receiver
+    rc_receiver_healthy: bool | None = None  # SYS_STATUS: RC receiver present and healthy
 
     @property
     def fc_mode(self) -> str:
@@ -257,6 +265,16 @@ class FcTelemetry:
                 "pilot_position_source": pilot_position_source,
             }
         )
+
+
+def rc_link_ok(t: FcTelemetry, now_mono_ms: int) -> bool:
+    """A physical RC transmitter is on and the flight controller hears it: fresh
+    ``RC_CHANNELS`` with live sticks and a healthy RC receiver in ``SYS_STATUS``."""
+    return (
+        t.rc_receiver_healthy is True
+        and t.rc_mono_ms is not None
+        and now_mono_ms - t.rc_mono_ms <= RC_LINK_FRESH_S * 1000
+    )
 
 
 def _text(value: Any) -> str:
@@ -829,6 +847,10 @@ class Vehicle:
                     battery_voltage_v=None if volts == 65535 else volts / 1000.0,
                 )
             case "SYS_STATUS":
+                rc_bit = mavlink.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
+                present = bool(int(msg.onboard_control_sensors_present) & rc_bit)
+                healthy = bool(int(msg.onboard_control_sensors_health) & rc_bit)
+                t = replace(t, rc_receiver_healthy=present and healthy)
                 if t.battery_voltage_v is None and int(msg.voltage_battery) != 65535:
                     t = replace(t, battery_voltage_v=int(msg.voltage_battery) / 1000.0)
             case "GPS_RAW_INT":
@@ -853,6 +875,9 @@ class Vehicle:
                 raw = int(getattr(msg, f"chan{RC_MODE_CHANNEL}_raw", 0))
                 usable = count >= RC_MODE_CHANNEL and 800 <= raw <= 2200
                 t = replace(t, rc_mode_pwm=raw if usable else None)
+                throttle = int(getattr(msg, f"chan{_RC_THROTTLE_CHANNEL}_raw", 0))
+                if count >= _RC_MIN_CHANNELS and 800 <= throttle <= 2200:
+                    t = replace(t, rc_mono_ms=now)
             case "MISSION_CURRENT":
                 t = replace(t, mission_seq_current=int(msg.seq))
             case "HOME_POSITION":

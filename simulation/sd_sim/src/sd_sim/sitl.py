@@ -36,6 +36,8 @@ class SitlLayout:
     ardupilot_home: Path
     repo: Path
     extra_defaults: tuple[Path, ...] = field(default_factory=tuple)
+    # Per-test layers (``simulation/sitl/params/tests/<test>.parm``), loaded last.
+    test_layers: tuple[Path, ...] = field(default_factory=tuple)
 
     @property
     def frame_json(self) -> Path:
@@ -62,7 +64,20 @@ class SitlLayout:
             )
         layers.extend(self.extra_defaults)
         layers.extend(self.project_layers())
+        layers.extend(self.checked_test_layers())
         return layers
+
+    def checked_test_layers(self) -> list[Path]:
+        """A test's own parameter layer must live in ``simulation/sitl/params/tests/``
+        (where ``tools/params_check.py`` checks it), and exist."""
+        tests = (self.repo / "simulation" / "sitl" / "params" / "tests").resolve()
+        out = []
+        for path in self.test_layers:
+            p = path.resolve()
+            if p.parent != tests or not p.is_file():
+                raise InfraError(f"Testets parameterlager måste ligga i {tests}: {path}")
+            out.append(p)
+        return out
 
     def project_layers(self) -> list[Path]:
         """The project's own parameter files in load order (later wins). Every one must

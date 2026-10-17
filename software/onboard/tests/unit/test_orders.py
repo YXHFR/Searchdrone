@@ -101,6 +101,33 @@ async def test_takeoff_preconditions() -> None:
         assert _arms(r) == 0
 
 
+async def test_takeoff_needs_the_rc_transmitter() -> None:
+    """With ``require_rc`` (the default outside SITL), PF12 needs a physical RC
+    transmitter that the flight controller hears; without it the take-off is refused
+    with its own reason, and nothing is armed."""
+    async with rig(options={"require_rc": True}) as r:
+        await r.install()
+        r.clearance()
+        await r.run(1.5)
+        assert r.ex.preflight["PF12"] is False
+        cmd = await r.send(r.order("takeoff", {"alt_m": 40}))
+        assert r.up.codes(cmd.command_id) == ("ONB_RC_LINK_DOWN",)
+        assert _arms(r) == 0
+        r.fc.rc_link = True  # the pilot switches the RC transmitter on
+        await r.run(1.5)
+        assert r.ex.preflight["PF12"] is True and r.ex.preflight_ok()
+        r.fc.rc_link = False  # and off again: the link counts as down within 1.5 s
+        await r.run(2.0)
+        assert r.ex.preflight["PF12"] is False and not r.ex.preflight_ok()
+
+
+async def test_takeoff_without_require_rc_has_no_pf12() -> None:
+    async with rig() as r:
+        await r.install()
+        await r.run(1.5)
+        assert "PF12" not in r.ex.preflight
+
+
 async def test_takeoff_not_allowed_in_profile() -> None:
     async with rig(options={"allow_companion_arm": False}) as r:
         await r.install()

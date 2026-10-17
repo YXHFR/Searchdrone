@@ -35,6 +35,7 @@ MARKERS = (
     "private_db: the instance gets its own Postgres container",
     "param_override(file): extra SITL parameter layer for one test",
     "lan: needs lan=1 (local only)",
+    "brain: flies with an AI commander (skipped with brain=none)",
 )
 MAX_INSTANCE = 7
 # A shard's estimated work per worker must fit in this many seconds, and no single
@@ -115,7 +116,9 @@ def _int_option(config: pytest.Config, name: str) -> int:
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("searchdrone simulator")
     group.addoption("--physics", choices=("builtin", "gz"), default="builtin")
-    group.addoption("--brain", default="scripted")
+    group.addoption(
+        "--brain", choices=("scripted", "grammar", "llm_local", "none"), default="scripted"
+    )
     group.addoption("--shard-id", type=int, default=1, help="1-based shard number")
     group.addoption("--num-shards", type=int, default=1)
 

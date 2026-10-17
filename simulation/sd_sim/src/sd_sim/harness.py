@@ -55,6 +55,7 @@ class VehicleState:
     lon: float = 0.0
     ground_speed_ms: float = 0.0
     battery_current_a: float = -1.0  # -1: not reported yet
+    battery_pct: int = -1  # SYS_STATUS battery_remaining; -1: not reported yet
 
     @property
     def ready(self) -> bool:
@@ -123,8 +124,10 @@ class Harness:
             s.max_rel_alt_m = max(s.max_rel_alt_m, s.rel_alt_m)
             s.lat, s.lon = msg.lat / 1e7, msg.lon / 1e7
             s.ground_speed_ms = math.hypot(msg.vx, msg.vy) / 100.0
-        elif kind == "SYS_STATUS" and msg.current_battery >= 0:
-            s.battery_current_a = msg.current_battery / 100.0
+        elif kind == "SYS_STATUS":
+            if msg.current_battery >= 0:
+                s.battery_current_a = msg.current_battery / 100.0
+            s.battery_pct = int(msg.battery_remaining)
         for listener in self.listeners:
             listener(kind, s)
 
@@ -227,6 +230,50 @@ class Harness:
             0,
         )
 
+    # --- fault injection (the only writes to the flight controller from test code) ---
+
+    def set_sim_param(self, name: str, value: float, timeout: float = 5.0) -> None:
+        """``PARAM_SET`` for a simulator parameter (``SIM_*`` only), e.g. ``SIM_RC_FAIL``
+        or the wind. Waits until the flight controller reports the new value."""
+        if not name.startswith("SIM_"):
+            raise InfraError(f"harnessen får bara ändra SIM_*-parametrar, inte {name}")
+        self._conn.mav.param_set_send(
+            FC_SYSID, FC_COMPID, name.encode(), float(value), mavlink.MAV_PARAM_TYPE_REAL32
+        )
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if abs(self.read_param(name, timeout=max(0.5, end - time.monotonic())) - value) < 1e-3:
+                return
+        raise InfraError(f"{name} blev inte {value:g}")
+
+    def battery_set_remaining(self, pct: float) -> None:
+        """``MAV_CMD_BATTERY_RESET`` (battery mask 1): the pack shows ``pct`` % left, the
+        capacity stays, so the flight controller's mAh thresholds work as with a real pack.
+
+        ArduCopter 4.7.1 takes the new failsafe level at the reset without acting on it
+        (``reset_remaining`` sets the state directly), so a test sets a level just above a
+        threshold and lets the pack cross it, as a real one does."""
+        try:
+            self._command(mavlink.MAV_CMD_BATTERY_RESET, 1, pct)
+        except VehicleError as exc:
+            raise InfraError(f"batteriet gick inte att ställa till {pct:g} %: {exc}") from exc
+
+    def guided_velocity(
+        self, vx: float, vy: float, vz: float, duration_s: float, stop: Callable[[], bool]
+    ) -> None:
+        """GUIDED and a velocity target (north, east, down m/s) twice a second for
+        ``duration_s``. Stops at once when the flight controller leaves GUIDED (a failsafe
+        took over) or ``stop()`` says so. Only for the fence test: it flies past the gate."""
+        self.set_mode("GUIDED")
+        mask = 0x0DC7  # velocity only
+        end = time.monotonic() + duration_s
+        while time.monotonic() < end and self.state.mode == "GUIDED" and not stop():
+            self._conn.mav.set_position_target_local_ned_send(
+                0, FC_SYSID, FC_COMPID, mavlink.MAV_FRAME_LOCAL_NED, mask,
+                0, 0, 0, vx, vy, vz, 0, 0, 0, 0, 0,
+            )  # fmt: skip
+            self.pump(0.5)
+
     def read_param(self, name: str, timeout: float = 5.0) -> float:
         """Read one parameter (read only, nothing is set)."""
         end = time.monotonic() + timeout
@@ -246,6 +293,18 @@ class Harness:
                     if str(got).rstrip("\x00") == name:
                         return float(msg.param_value)
         raise InfraError(f"parametern {name} lästes inte inom {timeout:.0f} s")
+
+    def safety_violations(self, layer: dict[str, float] | None = None) -> list[str]:
+        """Read every parameter that ``sd_sim.params.SAFETY_RULES`` names and return the
+        rules the flight controller breaks (read only). Every SITL flight test calls it
+        before it flies: a weakened safety parameter fails the test, it is never retried.
+        ``layer`` is a test's own parameter layer: its values are then the exact rule."""
+        from sd_sim.params import SAFETY_RULES, rule_violations
+
+        own = layer or {}
+        rules = [(n, "==", own[n]) if n in own else (n, op, v) for n, op, v in SAFETY_RULES]
+        actual = {name: self.read_param(name) for name, _, _ in rules}
+        return rule_violations(actual, rules)
 
     def read_all_params(self, timeout: float = 60.0) -> dict[str, float]:
         """Read the flight controller's whole parameter list (read only, nothing is set).

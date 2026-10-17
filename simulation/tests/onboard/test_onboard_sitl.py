@@ -156,24 +156,34 @@ class RcSticks:
             self._sock.sendto(packet, self._addr)
 
 
-@pytest.fixture
-def sim() -> Iterator[Sim]:
+@contextlib.contextmanager
+def sim_stack(name: str = "onboard", layers: tuple[Path, ...] = ()) -> Iterator[Sim]:
+    """SITL with the project's parameter layers (and a test's own ``layers``, loaded
+    last), checked strictly before anything flies, with the pilot's RC transmitter."""
     instance = worker_instance()
     cfg = config.load(
         {"physics": "builtin", "gui": "false", "video": "off", "instance": str(instance)}
     )
     cfg.home, cfg.personal_home = CMAC_HOME, False
-    st = Stack(cfg, new_run_dir(instance, "onboard"), observer=False)
+    st = Stack(cfg, new_run_dir(instance, name), observer=False, param_layers=layers)
     harness = Harness(st.ports["harness_mavlink"])
     try:
         st.up()
         harness.wait(lambda s: s.heartbeat, 60, "HEARTBEAT från flygkontrollen")
         harness.wait(lambda s: s.ready, READY_S, "position från EKF och GPS")
+        broken = harness.safety_violations(effective_params(list(layers)) if layers else None)
+        assert not broken, f"flygkontrollens säkerhetsparametrar: {broken}"
         with RcSticks(st.ports["sitl_rc_in"]) as rc:
             yield Sim(st, harness, rc)
     finally:
         harness.close()
         st.down()
+
+
+@pytest.fixture
+def sim() -> Iterator[Sim]:
+    with sim_stack() as s:
+        yield s
 
 
 @dataclass
@@ -312,7 +322,10 @@ async def flight(sim: Sim) -> AsyncIterator[Flight]:
         link = OnboardLink(url=proxy.url, token=fake.token, vehicle_id="sim-01", clock=clock)
         params = effective_params([PARM])
         ex = Executor(
-            onboard, clock, link, ExecutorOptions(vehicle_id="sim-01", expected_params=params)
+            onboard,
+            clock,
+            link,
+            ExecutorOptions(vehicle_id="sim-01", expected_params=params, require_rc=False),
         )
         holder.append(ex)
         link.executor = ex

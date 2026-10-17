@@ -323,7 +323,13 @@ async def rig(
         send_gate=lambda o: holder[0].send_gate(o) if holder else "starting",
     )
     ground = FakeVehicle(clock, role=Role.GROUND, fc=fc)
-    opts = {"vehicle_id": "sim-01", "expected_params": EXPECTED_PARAMS, **(options or {})}
+    # No RC transmitter in these tests, as in SITL and CI (test_orders turns it on).
+    opts = {
+        "vehicle_id": "sim-01",
+        "expected_params": EXPECTED_PARAMS,
+        "require_rc": False,
+        **(options or {}),
+    }
     ex = Executor(vehicle, clock, up, ExecutorOptions(**opts))
     holder.append(ex)
     stop = asyncio.Event()

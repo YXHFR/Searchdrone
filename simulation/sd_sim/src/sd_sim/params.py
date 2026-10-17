@@ -35,11 +35,25 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("BATT_FS_LOW_ACT", "==", 3.0),
     ("BATT_FS_CRT_ACT", "==", 1.0),
     ("LOIT_SPEED_MS", "==", 15.0),
+    ("ARMING_SKIPCHK", "==", 0.0),  # every arming check on, the RC check included
     ("ARMING_RUDDER", "==", 0.0),
+    ("DISARM_DELAY", "==", 10.0),
     ("RC_OVERRIDE_TIME", "==", 1.0),
+    ("RTL_ALT_M", "==", 30.0),
+    ("RTL_SPEED_MS", "==", 8.0),
+    ("RTL_LOIT_TIME", "==", 0.0),
+    ("SRTL_POINTS", "==", 300.0),
+    ("SCR_ENABLE", "==", 0.0),
 )
 # Prefixes whose every line in the safety file must have a rule above.
-RULED_PREFIXES = ("FS_", "FENCE_", "BATT_")
+RULED_PREFIXES = ("FS_", "FENCE_", "BATT_", "ARMING_", "DISARM_", "RC_", "RTL_", "SRTL_", "SCR_")
+
+# Real flight (searchdrone-safety.parm + searchdrone-safety.field.parm): the same rules,
+# except that the RC transmitter is required, so its failsafe must act.
+FIELD_RULES: tuple[tuple[str, str, float], ...] = tuple(
+    ("FS_THR_ENABLE", "!=", 0.0) if name == "FS_THR_ENABLE" else (name, op, value)
+    for name, op, value in SAFETY_RULES
+)
 
 
 class ParamFileError(ValueError):

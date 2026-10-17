@@ -94,12 +94,29 @@ def test_exit_codes(
     assert (runs / "summary.md").is_file()
 
 
-def test_brain_warning(
+@pytest.mark.parametrize(
+    ("brain", "marks"),
+    [
+        ("scripted", "sitl and not gz and not llm and not nightly"),
+        ("grammar", "sitl and not gz and not llm and not nightly"),
+        ("llm_local", "sitl and not gz and not nightly"),
+        ("none", "sitl and not gz and not llm and not nightly and not brain"),
+    ],
+)
+def test_brain_reaches_pytest(brain: str, marks: str) -> None:
+    argv = testrun.pytest_argv({"brain": brain})
+    assert argv[argv.index("-m", 2) + 1] == marks
+    assert argv[argv.index("--brain") + 1] == brain
+
+
+def test_brain_is_not_ignored(
     runs: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(subprocess, "run", FakeRun(0))
     testrun.main(["brain=scripted"])
-    assert "inte byggt än (B1-10)" in capsys.readouterr().out
+    assert "inte byggt än" not in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        testrun.pytest_argv({"brain": "cloud"})
 
 
 def test_summary_lists_new_results(tmp_path: Path) -> None:

@@ -437,7 +437,9 @@ def _takeoff(f: Facts) -> list[Finding]:
             why.append("battery_low")
     if f.ctx.preflight_ok is not True:
         why.append("preflight_not_ok")
-    return _one(bool(why), "TAKEOFF_PRECONDITION", takeoff=why)
+    return _one(f.ctx.rc_link_ok is False, "RC_LINK_DOWN") + _one(
+        bool(why), "TAKEOFF_PRECONDITION", takeoff=why
+    )
 
 
 # --- battery --------------------------------------------------------------------------------
