@@ -8,7 +8,7 @@ owns are already here, with their final paths, bodies and role checks, and answe
   emergency path (``services.vehicle_actions``); Resume, takeover and hand-back and the
   action outcomes are answered here from the same service.
 - The mission flow (open, limits, autonomy, clearance, charters, approvals, orders, chat
-  posts, map pins, sectors, track, files) comes with the mission services.
+  posts, map pins, sectors, track, files) is ``services.missions.MissionFlow``.
 - Video comes with its own part. The offline map is ``sd_ground.api.tiles``.
 """
 
@@ -18,6 +18,7 @@ import datetime as dt
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi.responses import FileResponse
 
 from sd_ground import emergency
 from sd_ground.api import tiles
@@ -37,7 +38,15 @@ from sd_ground.config import limit_caps
 from sd_ground.context import Ground
 from sd_ground.emergency import EmergencyRefusedError
 from sd_ground.logging import get_logger
+from sd_ground.services import annotations as annotations_service
+from sd_ground.services import approvals as approvals_service
+from sd_ground.services import charters as charter_rules
+from sd_ground.services import chat as chat_service
+from sd_ground.services import clearance as clearance_service
+from sd_ground.services import commands as commands_service
+from sd_ground.services import files as files_service
 from sd_ground.services import health
+from sd_ground.services.missions import MissionFlow
 from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_ground.sources import EmergencyUnavailableError
 from sd_schemas.api import (
@@ -95,8 +104,15 @@ Pilot = Annotated[Principal, Depends(require("pilot"))]
 Interactive = Annotated[Principal, Depends(require_interactive)]
 G = Annotated[Ground, Depends(ground)]
 
-MISSION_FLOW = "B1-12"
 EMERGENCY = "B1-08"
+
+
+def _flow(g: Ground) -> MissionFlow:
+    """The mission flow; 503 while the database is down (it holds the mission)."""
+    repo_of(g)
+    if g.flow is None:
+        raise ApiStatusError(503, "DB_DOWN", "Uppdragsflödet är inte igång just nu.")
+    return g.flow
 
 
 async def _mission_or_404(g: Ground, mission_id: IdPath) -> Mission:
@@ -292,7 +308,10 @@ async def post_resume(
     vehicle_id: VehiclePath, body: ActionRequest, g: G, who: Pilot
 ) -> ActionDispatched:
     """The pilot's Resume: lifts the latch and tells the onboard computer. Never MAVLink."""
-    return _pilot_action(g, "resume", vehicle_id, body, who)
+    reply = _pilot_action(g, "resume", vehicle_id, body, who)
+    if g.flow is not None:
+        await g.flow.record_resume(vehicle_id, reply, who.issuer_ref)
+    return reply
 
 
 @router.post(
@@ -340,9 +359,9 @@ async def post_return_home_all(body: ActionRequest, g: G, who: Pilot) -> ActionD
 
 @router.post("/vehicles/{vehicle_id}/missions/open", response_model=Mission)
 async def post_mission_open(
-    vehicle_id: VehiclePath, _: Pilot, body: dict[str, Any] | None = None
+    vehicle_id: VehiclePath, g: G, who: Pilot, body: dict[str, Any] | None = None
 ) -> Mission:
-    raise not_built(MISSION_FLOW)
+    return await _flow(g).open_mission(vehicle_id, who.issuer_ref)
 
 
 @router.get("/missions/active", response_model=Mission, responses={204: {"description": "none"}})
@@ -364,8 +383,8 @@ async def get_missions(
 
 
 @router.get("/missions/{mission_id}", response_model=MissionDetail)
-async def get_mission(mission_id: IdPath, _: Observer) -> MissionDetail:
-    raise not_built(MISSION_FLOW)
+async def get_mission(mission_id: IdPath, g: G, _: Observer) -> MissionDetail:
+    return await _flow(g).detail(mission_id)
 
 
 @router.patch("/missions/{mission_id}", response_model=Mission)
@@ -382,13 +401,14 @@ async def patch_mission(mission_id: IdPath, body: MissionPatch, g: G, who: Pilot
 
 
 @router.put("/missions/{mission_id}/limits", response_model=Mission)
-async def put_limits(mission_id: IdPath, body: SafetyLimits, _: Pilot) -> Mission:
-    raise not_built(MISSION_FLOW)
+async def put_limits(mission_id: IdPath, body: SafetyLimits, g: G, who: Pilot) -> Mission:
+    """Stricter, or raised by click up to the outer cap (``config/local/limits.toml``)."""
+    return await _flow(g).put_limits(mission_id, body, who.issuer_ref)
 
 
 @router.put("/missions/{mission_id}/autonomy", response_model=Mission)
-async def put_autonomy(mission_id: IdPath, body: AutonomyRequest, _: Pilot) -> Mission:
-    raise not_built(MISSION_FLOW)
+async def put_autonomy(mission_id: IdPath, body: AutonomyRequest, g: G, who: Pilot) -> Mission:
+    return await _flow(g).put_autonomy(mission_id, body.mode, who.issuer_ref)
 
 
 @router.put("/missions/{mission_id}/ai", response_model=Mission)
@@ -420,39 +440,61 @@ async def put_ai(mission_id: IdPath, body: AiToggleRequest, g: G, who: Pilot) ->
     dependencies=[Depends(require_headroom)],
 )
 async def post_clearance(
-    mission_id: IdPath, _: Interactive, body: dict[str, Any] | None = None
+    mission_id: IdPath, g: G, who: Interactive, body: dict[str, Any] | None = None
 ) -> Clearance:
-    raise not_built(MISSION_FLOW)
+    """ "Fritt runt drönaren": its origin is the listener that took the click."""
+    flow = _flow(g)
+    mission = await flow.open_mission_of(mission_id)
+    return await clearance_service.confirm(flow, mission, by=who.issuer_ref, origin=who.via)
 
 
 @router.post("/missions/{mission_id}/end", response_model=Mission)
-async def post_end(mission_id: IdPath, body: MissionEndRequest, _: Pilot) -> Mission:
-    raise not_built(MISSION_FLOW)
+async def post_end(mission_id: IdPath, body: MissionEndRequest, g: G, who: Pilot) -> Mission:
+    return await _flow(g).end(mission_id, body.reason, who.issuer_ref)
 
 
 # --- charters, sectors, approvals ---------------------------------------------------
 
 
+def _invalid(exc: charter_rules.CharterInvalidError) -> ApiStatusError:
+    """422 with every reason the proposal cannot be shown (no card appears)."""
+    return ApiStatusError(
+        422,
+        exc.errors[0].code,
+        "Förslaget till uppdragsram håller inte.",
+        [e.model_dump(mode="json") for e in exc.errors],
+    )
+
+
 @router.get("/missions/{mission_id}/charters", response_model=list[Charter])
-async def get_charters(mission_id: IdPath, _: Observer) -> list[Charter]:
-    raise not_built(MISSION_FLOW)
+async def get_charters(mission_id: IdPath, g: G, _: Observer) -> list[Charter]:
+    await _flow(g).mission(mission_id)
+    return await _flow(g).repo.charters(mission_id)
 
 
 @router.post("/missions/{mission_id}/charters", status_code=201, response_model=Charter)
-async def post_charter(mission_id: IdPath, body: CharterProposal, _: Pilot) -> Charter:
-    raise not_built(MISSION_FLOW)
+async def post_charter(mission_id: IdPath, body: CharterProposal, g: G, who: Pilot) -> Charter:
+    try:
+        charter, _card = await approvals_service.propose(
+            _flow(g), mission_id, body, by=who.issuer_ref
+        )
+    except charter_rules.CharterInvalidError as exc:
+        raise _invalid(exc) from None
+    return charter
 
 
 @router.get("/missions/{mission_id}/sectors")
-async def get_sectors(mission_id: IdPath, _: Observer) -> dict[str, Any]:
-    raise not_built(MISSION_FLOW)
+async def get_sectors(mission_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
+    await _flow(g).mission(mission_id)
+    return await _flow(g).sectors_geojson(mission_id)
 
 
 @router.get("/missions/{mission_id}/approvals", response_model=list[Approval])
 async def get_approvals(
-    mission_id: IdPath, _: Observer, status: Annotated[str | None, Query()] = None
+    mission_id: IdPath, g: G, _: Observer, status: Annotated[str | None, Query()] = None
 ) -> list[Approval]:
-    raise not_built(MISSION_FLOW)
+    await _flow(g).mission(mission_id)
+    return await _flow(g).repo.approvals(mission_id, status)
 
 
 @router.post(
@@ -461,9 +503,13 @@ async def get_approvals(
     dependencies=[Depends(require_headroom)],
 )
 async def post_decision(
-    approval_id: IdPath, body: ApprovalDecisionRequest, _: Interactive
+    approval_id: IdPath, body: ApprovalDecisionRequest, g: G, who: Interactive
 ) -> Approval:
-    raise not_built(MISSION_FLOW)
+    """Only a pilot's click approves a charter or an order (never the AI, never a script
+    outside the test rig)."""
+    return await approvals_service.decide(
+        _flow(g), approval_id, body, by=who.issuer_ref, origin=who.via
+    )
 
 
 # --- orders -------------------------------------------------------------------------
@@ -471,23 +517,37 @@ async def post_decision(
 
 @router.get("/missions/{mission_id}/commands", response_model=list[Command])
 async def get_commands(
-    mission_id: IdPath, _: Observer, status: Annotated[str | None, Query()] = None
+    mission_id: IdPath, g: G, _: Observer, status: Annotated[str | None, Query()] = None
 ) -> list[Command]:
-    raise not_built(MISSION_FLOW)
+    await _flow(g).mission(mission_id)
+    return await _flow(g).repo.commands(mission_id, status)
 
 
 @router.post("/missions/{mission_id}/commands", status_code=201, response_model=CommandResult)
 async def post_command(
-    mission_id: IdPath, body: OperatorCommandRequest, request: Request, _: Pilot
+    mission_id: IdPath, body: OperatorCommandRequest, request: Request, g: G, who: Pilot
 ) -> CommandResult:
+    """An order button: the same gate and latch as the AI's orders."""
     if body.skill == "takeoff":
         require_headroom(request)
-    raise not_built(MISSION_FLOW)
+    done = await commands_service.submit(
+        _flow(g),
+        mission_id,
+        command_id=str(body.client_command_id),
+        skill=body.skill,
+        params=body.params,
+        issuer_kind="operator",
+        issuer_ref=who.issuer_ref,
+        rationale_sv=body.rationale_sv,
+    )
+    return CommandResult(command=done.command, gate=done.gate)
 
 
 @router.post("/commands/{command_id}/cancel", status_code=202, response_model=Command)
-async def post_cancel(command_id: IdPath, _: Pilot, body: dict[str, Any] | None = None) -> Command:
-    raise not_built(MISSION_FLOW)
+async def post_cancel(
+    command_id: IdPath, g: G, _: Pilot, body: dict[str, Any] | None = None
+) -> Command:
+    return await commands_service.cancel(_flow(g), command_id, brain_only=False)
 
 
 # --- chat and map -------------------------------------------------------------------
@@ -509,8 +569,10 @@ async def get_chat(
 
 
 @router.post("/missions/{mission_id}/chat", status_code=201, response_model=ChatMessage)
-async def post_chat(mission_id: IdPath, body: ChatPost, _: Pilot) -> ChatMessage:
-    raise not_built(MISSION_FLOW)
+async def post_chat(mission_id: IdPath, body: ChatPost, g: G, who: Pilot) -> ChatMessage:
+    """A pilot's exact "stopp", "stop" or "flyg hem" acts like the button, before the
+    line is stored and without the AI. "Fortsätt" never releases a stop."""
+    return await chat_service.post_operator(_flow(g), mission_id, body, who)
 
 
 @router.get("/missions/{mission_id}/annotations", response_model=list[Annotation])
@@ -520,13 +582,16 @@ async def get_annotations(mission_id: IdPath, g: G, _: Observer) -> list[Annotat
 
 
 @router.post("/missions/{mission_id}/annotations", status_code=201, response_model=Annotation)
-async def post_annotation(mission_id: IdPath, body: AnnotationCreate, _: Pilot) -> Annotation:
-    raise not_built(MISSION_FLOW)
+async def post_annotation(
+    mission_id: IdPath, body: AnnotationCreate, g: G, who: Pilot
+) -> Annotation:
+    return await annotations_service.add(_flow(g), mission_id, body, who.issuer_ref)
 
 
 @router.delete("/annotations/{annotation_id}", status_code=204, response_class=Response)
-async def delete_annotation(annotation_id: IdPath, _: Pilot) -> Response:
-    raise not_built(MISSION_FLOW)
+async def delete_annotation(annotation_id: IdPath, g: G, _: Pilot) -> Response:
+    await annotations_service.delete(_flow(g), annotation_id)
+    return Response(status_code=204)
 
 
 # --- data, files, video, stubs ------------------------------------------------------
@@ -535,11 +600,20 @@ async def delete_annotation(annotation_id: IdPath, _: Pilot) -> Response:
 @router.get("/missions/{mission_id}/track")
 async def get_track(
     mission_id: IdPath,
+    g: G,
     _: Observer,
     since: Annotated[dt.datetime | None, Query()] = None,
     max_points: Annotated[int, Query(ge=2, le=50_000)] = 5000,
 ) -> dict[str, Any]:
-    raise not_built(MISSION_FLOW)
+    await _flow(g).mission(mission_id)
+    points = await _flow(g).repo.track(mission_id, since)
+    step = max(1, -(-len(points) // max_points))
+    coords = [[p["lon"], p["lat"], p["alt_rel_home_m"]] for p in points[::step]]
+    return {
+        "type": "Feature",
+        "geometry": {"type": "LineString", "coordinates": coords},
+        "properties": {"points": len(coords)},
+    }
 
 
 @router.get("/missions/{mission_id}/events", response_model=list[Event])
@@ -557,9 +631,10 @@ async def get_events(
 
 @router.get("/missions/{mission_id}/gate_decisions", response_model=list[GateDecision])
 async def get_gate_decisions(
-    mission_id: IdPath, _: Observer, command_id: Annotated[str | None, Query()] = None
+    mission_id: IdPath, g: G, _: Observer, command_id: Annotated[str | None, Query()] = None
 ) -> list[GateDecision]:
-    raise not_built(MISSION_FLOW)
+    await _flow(g).mission(mission_id)
+    return await _flow(g).repo.gate_decisions(mission_id, 500, command_id)
 
 
 @router.get("/missions/{mission_id}/files", response_model=list[MissionFile])
@@ -569,8 +644,19 @@ async def get_files(mission_id: IdPath, g: G, _: Observer) -> list[MissionFile]:
 
 
 @router.get("/missions/{mission_id}/files/{file_id}")
-async def get_file(mission_id: IdPath, file_id: IdPath, _: Observer) -> Response:
-    raise not_built(MISSION_FLOW)
+async def get_file(mission_id: IdPath, file_id: IdPath, g: G, _: Observer) -> Response:
+    """Only files recorded for the mission, only inside its folder."""
+    flow = _flow(g)
+    await flow.mission(mission_id)
+    found = next((f for f in await repo_of(g).files(mission_id) if str(f.id) == file_id), None)
+    path = (
+        None
+        if found is None
+        else files_service.resolve_file(flow.mission_dir(mission_id), found.rel_path)
+    )
+    if path is None:
+        raise ApiStatusError(404, "FILE_NOT_FOUND", "Filen finns inte.")
+    return FileResponse(path, filename=path.name)
 
 
 @router.get("/missions/{mission_id}/candidates")

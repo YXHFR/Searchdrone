@@ -3,9 +3,10 @@
 ``check(msg, ctx)`` is default-deny. A message passes only when its type, its command,
 the listed parameters and the number checks match a row below for the sender's
 profile (onboard computer or ground station) and origin. Everything else gives a
-reason string, and ``Vehicle.send`` refuses to send it. No row writes a parameter, so no
-code path in Searchdrone can change a flight-controller parameter or switch off the
-geofence.
+reason string, and ``Vehicle.send`` refuses to send it. One row writes parameters: the
+ground station may move the fence's height, radius and LOITER speed outward when the
+pilot raised the mission's limits (never below the standard fence, never in the air).
+No other parameter can change and nothing can switch off the geofence.
 
 Onboard (sysid 1, compid 191):
 
@@ -34,7 +35,10 @@ What                                   Allowed
 Ground station (sysid 250, compid 190): ``HEARTBEAT`` as a GCS, ``DO_SET_MODE`` to the
 STOP and FLY HOME steps, disarm only when standing on the ground, ``SET_MESSAGE_INTERVAL``,
 ``PARAM_REQUEST_READ``, the fence protocol (mission type 1, polygon inclusion vertices
-only, only while the vehicle stands disarmed on the ground) and ``MANUAL_CONTROL``: the
+only, only while the vehicle stands disarmed on the ground), ``PARAM_SET`` of
+``FENCE_ALT_MAX``, ``FENCE_RADIUS`` and ``LOIT_SPEED_MS`` only (as a 32-bit float, at or
+above the standard fence and within what the flight controller can hold, only while the
+vehicle stands disarmed on the ground) and ``MANUAL_CONTROL``: the
 pilot's sticks (origin ``manual``), only while the flight controller is in LOITER and
 the vehicle armed in the air, no buttons. ArduCopter takes sticks only from its GCS
 system id, so they never come from the onboard computer.
@@ -54,13 +58,19 @@ from typing import Any, Final
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
+from sd_mav.denylist import FENCE_LIMIT_PARAMS, param_name
 from sd_mav.modes import (
     HOME_MODES,
     ONBOARD_MODES,
     STOP_MODES,
     CopterMode,
 )
-from sd_safety.constants import MISSION_MAX_ITEMS
+from sd_safety.constants import (
+    FC_FENCE_ALT_MAX_RANGE_M,
+    FC_FENCE_RADIUS_RANGE_M,
+    FC_LOIT_SPEED_RANGE_MS,
+    MISSION_MAX_ITEMS,
+)
 from sd_safety.limits import DEFAULT_CAPS, DEFAULT_LIMITS, check_limits, fc_fence_params
 from sd_safety.targets import distance_m
 from sd_schemas.safety import LimitCaps, SafetyLimits
@@ -538,6 +548,32 @@ def _param_read(msg: Any, ctx: SendContext) -> str | None:
     return _origin_for("read", ctx)
 
 
+_FENCE_FLOOR: Final = fc_fence_params(DEFAULT_LIMITS)  # the standard fence
+_FENCE_CEILING: Final = {
+    "FENCE_ALT_MAX": FC_FENCE_ALT_MAX_RANGE_M[1],
+    "FENCE_RADIUS": FC_FENCE_RADIUS_RANGE_M[1],
+    "LOIT_SPEED_MS": FC_LOIT_SPEED_RANGE_MS[1],
+}
+
+
+def _param_set(msg: Any, ctx: SendContext) -> str | None:
+    """Only the ground station moves the fence outward, on the ground and disarmed."""
+    if ctx.profile is not Profile.GROUND:
+        return "only the ground station sets the fence parameters"
+    bad = _target_ok(msg, ctx)
+    if bad:
+        return bad
+    name = param_name(msg)
+    if name not in FENCE_LIMIT_PARAMS:
+        return f"parameter {name} may not be written"
+    if int(msg.param_type) != mavlink.MAV_PARAM_TYPE_REAL32:
+        return "fence parameters are written as 32-bit floats"
+    value = float(msg.param_value)
+    if not _finite(value) or not _FENCE_FLOOR[name] <= value <= _FENCE_CEILING[name]:
+        return f"{name} = {value} outside {_FENCE_FLOOR[name]}..{_FENCE_CEILING[name]}"
+    return _fence_ground_state(ctx) or _origin_for("fly", ctx)
+
+
 def _manual_control(msg: Any, ctx: SendContext) -> str | None:
     if ctx.profile is not Profile.GROUND:
         return "MANUAL_CONTROL is sent by the ground station (the GCS system id)"
@@ -575,6 +611,7 @@ _MESSAGES: Final = {
     "MISSION_ACK": _mission_read,
     "MISSION_SET_CURRENT": _mission_set_current,
     "PARAM_REQUEST_READ": _param_read,
+    "PARAM_SET": _param_set,
     "MANUAL_CONTROL": _manual_control,
 }
 

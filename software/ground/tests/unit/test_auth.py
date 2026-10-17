@@ -157,7 +157,7 @@ def test_session_expiring_blocks_takeoff(
         clock.advance(10 * 3600)
         assert logged_in.get("/api/v1/session").status_code == 200
     ok = logged_in.post(f"/api/v1/missions/{mission}/commands", json=body, headers=H)
-    assert ok.status_code == 501  # 8 h left: passes the session check (the order flow is B1-12)
+    assert ok.status_code == 503  # 8 h left: passes the session check (no database here)
     clock.advance(6.5 * 3600)
     assert ground.sessions.headroom(ground.sessions.all()[0]) < dt.timedelta(hours=2)
     res = logged_in.post(f"/api/v1/missions/{mission}/commands", json=body, headers=H)

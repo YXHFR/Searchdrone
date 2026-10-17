@@ -375,22 +375,29 @@ def test_to_vehicle_state() -> None:
 
 
 def test_no_parameter_write_in_the_api() -> None:
-    """No public name, and no line of the package outside the deny list, writes a parameter."""
+    """No general parameter write: the one exception is ``Vehicle.set_fence_limit``, whose
+    message the allowlist checks row by row. No other line of the package names a
+    parameter write, a fence switch or flight termination."""
     for cls in (Vehicle, FakeVehicle):
         for name, _ in inspect.getmembers(cls):
             assert not re.search(
                 r"param_set|set_param|write_param|fence_enable", name, re.IGNORECASE
             ), name
     pattern = re.compile(
-        r"\b(PARAM_SET|PARAM_EXT_SET|param_set_send|MAV_CMD_DO_SET_PARAMETER|DO_FENCE_ENABLE|MAV_CMD_DO_FENCE_ENABLE|21196|MAV_CMD_DO_FLIGHTTERMINATION)\b"
+        r"\b(PARAM_EXT_SET|param_set_send|MAV_CMD_DO_SET_PARAMETER|DO_FENCE_ENABLE|MAV_CMD_DO_FENCE_ENABLE|21196|MAV_CMD_DO_FLIGHTTERMINATION)\b"
     )
+    param_set = re.compile(r"\bPARAM_SET\b|param_set_message")
+    # The fence-limit row: denied by name everywhere else, checked by the allowlist,
+    # sent by set_fence_limit, answered by the fake flight controller.
+    may_name_param_set = {"denylist.py", "allowlist.py", "vehicle.py", "fake.py"}
     for path in SRC.glob("*.py"):
-        if path.name == "denylist.py":
-            continue
-        hits = [
-            n for n, line in enumerate(path.read_text().splitlines(), 1) if pattern.search(line)
-        ]
-        assert not hits, (path.name, hits)
+        lines = path.read_text().splitlines()
+        if path.name != "denylist.py":
+            hits = [n for n, line in enumerate(lines, 1) if pattern.search(line)]
+            assert not hits, (path.name, hits)
+        if path.name not in may_name_param_set:
+            hits = [n for n, line in enumerate(lines, 1) if param_set.search(line)]
+            assert not hits, (path.name, hits)
 
 
 def test_origin_override_fallback_only_in_definition() -> None:

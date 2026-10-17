@@ -14,7 +14,7 @@ import json
 import os
 import unicodedata
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import (
@@ -26,16 +26,22 @@ from fastapi import (
     WebSocket,
 )
 from fastapi import Path as PathParam
-from pydantic import ValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from sd_ground.api.deps import ApiStatusError, ground, not_built, repo_of
+from sd_ground.api.deps import ApiStatusError, ground, repo_of
 from sd_ground.api.tasks import until_first_done
 from sd_ground.bus import BusEvent
 from sd_ground.context import Ground
 from sd_ground.logging import get_logger
+from sd_ground.services import approvals as approvals_service
+from sd_ground.services import charters as charter_rules
+from sd_ground.services import chat as chat_service
+from sd_ground.services import commands as commands_service
+from sd_ground.services.missions import MissionFlow
 from sd_safety.constants import BRAIN_HEARTBEAT_TIMEOUT_S
-from sd_schemas.api import ChatMessage
-from sd_schemas.charter import CharterProposal
+from sd_schemas.api import ActionDispatched, ChatMessage
+from sd_schemas.charter import CharterProposal, CharterValidationResult
 from sd_schemas.commander import (
     PROMPT_JSON_MAX_BYTES,
     BrainMessage,
@@ -49,6 +55,7 @@ from sd_schemas.commander import (
     SkillSubmitResult,
 )
 from sd_schemas.skills import SKILL_REGISTRY, SkillSpecPublic
+from sd_schemas.sv_commands import OverrideIntent
 
 __all__ = [
     "BRAIN_HEARTBEAT_TIMEOUT_S",
@@ -61,7 +68,6 @@ __all__ = [
 
 BRAIN_PING_S = 5.0
 BRAIN_ISSUER = "brain:ground"
-MISSION_FLOW = "B1-12"
 log = get_logger("sd_ground.commander")
 
 router = APIRouter(prefix="/commander/v1")
@@ -131,6 +137,13 @@ Commander = Annotated[None, Depends(require_commander)]
 G = Annotated[Ground, Depends(ground)]
 
 
+def _flow(g: Ground) -> MissionFlow:
+    repo_of(g)
+    if g.flow is None:
+        raise ApiStatusError(503, "DB_DOWN", "Uppdragsflödet är inte igång just nu.")
+    return g.flow
+
+
 async def _open_mission(g: Ground, mission_id: IdPath) -> tuple[str, str]:
     mission = await repo_of(g).mission(mission_id)
     if mission is None:
@@ -155,8 +168,9 @@ async def get_active(g: G, _: Commander, vehicle_id: Annotated[str | None, Query
 
 
 @router.get("/missions/{mission_id}/situation", response_model=Situation)
-async def get_situation(mission_id: IdPath, _: Commander) -> Situation:
-    raise not_built(MISSION_FLOW)
+async def get_situation(mission_id: IdPath, g: G, _: Commander) -> Situation:
+    situation: Situation = await _flow(g).situation(mission_id)
+    return situation
 
 
 @router.get("/missions/{mission_id}/chat", response_model=list[ChatMessage])
@@ -220,30 +234,133 @@ async def post_message(mission_id: IdPath, request: Request, g: G, _: Commander)
     return {"message_id": str(msg.id)}
 
 
-@router.post("/missions/{mission_id}/commands", status_code=201, response_model=SkillSubmitResult)
-async def post_command(mission_id: IdPath, body: SkillRequest, _: Commander) -> SkillSubmitResult:
-    raise not_built(MISSION_FLOW)
+@router.post(
+    "/missions/{mission_id}/commands",
+    status_code=201,
+    response_model=SkillSubmitResult,
+    responses={200: {"description": "the same command_id again: the first answer"}},
+)
+async def post_command(
+    mission_id: IdPath, body: SkillRequest, response: Response, g: G, _: Commander
+) -> SkillSubmitResult:
+    """Every order of the AI goes through the ground's gate (201 for every gate outcome)."""
+    done = await commands_service.submit(
+        _flow(g),
+        mission_id,
+        command_id=str(body.command_id),
+        skill=body.skill,
+        params=body.params,
+        issuer_kind="brain",
+        issuer_ref=BRAIN_ISSUER,
+        rationale_sv=clean_text(body.rationale_sv),
+        in_reply_to=None if body.in_reply_to is None else str(body.in_reply_to),
+        based_on=body.based_on,
+        charter_version=body.charter_version,
+        backend=body.backend,
+        ai_config_hash=body.ai_config_hash,
+    )
+    if not done.created:
+        response.status_code = 200
+    return done.result()
 
 
 @router.post("/missions/{mission_id}/estimate", response_model=EstimateResult)
-async def post_estimate(mission_id: IdPath, body: SkillRequest, _: Commander) -> EstimateResult:
-    raise not_built(MISSION_FLOW)
+async def post_estimate(
+    mission_id: IdPath, body: SkillRequest, g: G, _: Commander
+) -> EstimateResult:
+    return await commands_service.estimate(
+        _flow(g),
+        mission_id,
+        skill=body.skill,
+        params=body.params,
+        based_on=body.based_on,
+        charter_version=body.charter_version,
+    )
 
 
 @router.post("/missions/{mission_id}/commands/{command_id}/cancel", status_code=202)
-async def post_cancel(mission_id: IdPath, command_id: IdPath, _: Commander) -> dict[str, Any]:
-    raise not_built(MISSION_FLOW)
+async def post_cancel(mission_id: IdPath, command_id: IdPath, g: G, _: Commander) -> dict[str, Any]:
+    """Only orders the AI itself gave (404 otherwise)."""
+    cmd = await commands_service.cancel(_flow(g), command_id, brain_only=True)
+    if str(cmd.mission_id) != str(UUID(mission_id)):
+        raise ApiStatusError(404, "COMMAND_NOT_FOUND", "Ordern finns inte.")
+    return {"command_id": str(cmd.id), "status": str(cmd.status)}
+
+
+_FORBIDDEN_PROPOSAL_FIELDS = {
+    "autonomy_mode": ("AUTONOMY_CHANGE_FORBIDDEN", "AI:n kan inte ändra autonomiläget."),
+    "limits": ("LIMITS_CHANGE_FORBIDDEN", "AI:n kan inte ändra uppdragets gränser."),
+}
 
 
 @router.post(
     "/missions/{mission_id}/charter-proposals",
     status_code=201,
     response_model=CharterProposalResult,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"schema": {"$ref": "#/components/schemas/CharterProposal"}}
+            },
+            "required": True,
+        }
+    },
 )
-async def post_charter_proposal(
-    mission_id: IdPath, body: CharterProposal, _: Commander
-) -> CharterProposalResult:
-    raise not_built(MISSION_FLOW)
+async def post_charter_proposal(mission_id: IdPath, request: Request, g: G, _: Commander) -> Any:
+    """A proposal only: the pilot's click on the card is the only way it is approved."""
+    raw = await _body(request)
+    if isinstance(raw, dict):
+        for key, (code, text) in _FORBIDDEN_PROPOSAL_FIELDS.items():
+            if key in raw:
+                raise ApiStatusError(422, code, text)
+    body = _validate(CharterProposal, raw)
+    try:
+        charter, card = await approvals_service.propose(_flow(g), mission_id, body, by=BRAIN_ISSUER)
+    except charter_rules.CharterInvalidError as exc:
+        result = CharterProposalResult(
+            charter_id=None,
+            approval_id=None,
+            validation=CharterValidationResult(ok=False, errors=exc.errors),
+        )
+        return JSONResponse(result.model_dump(mode="json"), status_code=422)
+    return CharterProposalResult(
+        charter_id=charter.id,
+        approval_id=card.id,
+        validation=CharterValidationResult(ok=True, errors=[]),
+    )
+
+
+class ChatIntentReport(BaseModel):
+    """The AI's stop check found that a pilot's chat line means STOP or FLY HOME."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: UUID
+    message_id: UUID
+    intent: OverrideIntent
+    probability: float = Field(ge=0, le=1)
+    engine: Literal["local", "jev", "openai_decisions", "rule"]
+    location: Literal["cloud", "local"]
+    latency_ms: int = Field(ge=0)
+
+
+@router.post(
+    "/missions/{mission_id}/chat-intents", status_code=202, response_model=ActionDispatched
+)
+async def post_chat_intent(
+    mission_id: IdPath, body: ChatIntentReport, g: G, _: Commander
+) -> ActionDispatched:
+    """Only for a pilot's own line in this mission, at most 10 s old; the pilot is the
+    line's author. A model's reading only ever stops the vehicle where it is; the exact
+    words act like the button. Never a release."""
+    return await chat_service.report_intent(
+        _flow(g),
+        mission_id,
+        message_id=str(body.message_id),
+        intent=body.intent,
+        engine=body.engine,
+        probability=body.probability,
+    )
 
 
 @router.get("/missions/{mission_id}/memory", response_model=MissionMemory)

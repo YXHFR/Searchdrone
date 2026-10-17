@@ -187,9 +187,8 @@ async def test_operator_absent_holds_once() -> None:
         s.fly()
         await s.run(1.0)
         s.g.operator_seen_mono = s.clock.monotonic()
-        presence = OperatorPresence(
-            s.actions, absent_s=30.0, action="hold", mission_active=lambda _v: True
-        )
+        presence = OperatorPresence(s.actions, mission_active=lambda _v: True)
+        assert presence.absent_s == 30.0
         presence.tick(s.g)
         await s.run(29.9)
         presence.tick(s.g)
@@ -204,32 +203,39 @@ async def test_operator_absent_holds_once() -> None:
         assert s.g.types().count("vehicle.operator_absent") == 1
 
 
-async def test_operator_absent_variants() -> None:
+async def test_operator_absent_is_always_a_hold() -> None:
+    """Owner decision: 30 s without a pilot always gives the alarm and a hold."""
     async with stack() as s:
         s.fly()
         await s.run(1.0)
-        presence = OperatorPresence(
-            s.actions, absent_s=30.0, action="return_home", mission_active=lambda _v: True
-        )
+        presence = OperatorPresence(s.actions, mission_active=lambda _v: True)
         presence.tick(s.g)  # nobody has been seen at all
         await s.run(1.5)
-        assert s.fc.mode in HOME_MODES
-        assert s.latches.get(VID).action == "watchdog_rtl"  # type: ignore[union-attr]
-    async with stack() as s:
-        s.fly()
-        await s.run(1.0)
-        presence = OperatorPresence(
-            s.actions, absent_s=30.0, action="off", mission_active=lambda _v: True
-        )
-        presence.tick(s.g)
-        await s.run(1.0)
-        assert s.latches.get(VID) is None and "vehicle.operator_absent" in s.g.types()
+        assert s.fc.mode == CopterMode.BRAKE
+        assert s.latches.get(VID).action == "watchdog_stop"  # type: ignore[union-attr]
     async with stack() as s:  # no active mission: nothing at all
-        presence = OperatorPresence(
-            s.actions, absent_s=30.0, action="hold", mission_active=lambda _v: False
-        )
+        presence = OperatorPresence(s.actions, mission_active=lambda _v: False)
         presence.tick(s.g)
         assert "vehicle.operator_absent" not in s.g.types()
+
+
+def test_operator_absence_cannot_be_configured_away() -> None:
+    from pydantic import ValidationError
+
+    from sd_ground.config import GateConfig
+
+    assert GateConfig().operator_absent_s == 30.0
+    for bad in (
+        {"operator_absent_action": "off"},
+        {"operator_absent_action": "return_home"},
+        {"operator_absent_s": 300},
+        {"operator_absent_s": 1e9},
+    ):
+        try:
+            GateConfig.model_validate(bad)
+        except ValidationError:
+            continue
+        raise AssertionError(f"accepted {bad}")
 
 
 def test_vehicle_events_are_throttled_per_kind() -> None:

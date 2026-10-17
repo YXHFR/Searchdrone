@@ -3585,6 +3585,7 @@
     },
     "/api/v1/approvals/{approval_id}/decision": {
       "post": {
+        "description": "Only a pilot's click approves a charter or an order (never the AI, never a script\noutside the test rig).",
         "operationId": "post_decision_api_v1_approvals__approval_id__decision_post",
         "parameters": [
           {
@@ -4386,6 +4387,7 @@
         "summary": "Get Chat"
       },
       "post": {
+        "description": "A pilot's exact \"stopp\", \"stop\" or \"flyg hem\" acts like the button, before the\nline is stored and without the AI. \"Fortsätt\" never releases a stop.",
         "operationId": "post_chat_api_v1_missions__mission_id__chat_post",
         "parameters": [
           {
@@ -4436,6 +4438,7 @@
     },
     "/api/v1/missions/{mission_id}/clearance": {
       "post": {
+        "description": "\"Fritt runt drönaren\": its origin is the listener that took the click.",
         "operationId": "post_clearance_api_v1_missions__mission_id__clearance_post",
         "parameters": [
           {
@@ -4552,6 +4555,7 @@
         "summary": "Get Commands"
       },
       "post": {
+        "description": "An order button: the same gate and latch as the AI's orders.",
         "operationId": "post_command_api_v1_missions__mission_id__commands_post",
         "parameters": [
           {
@@ -4828,6 +4832,7 @@
     },
     "/api/v1/missions/{mission_id}/files/{file_id}": {
       "get": {
+        "description": "Only files recorded for the mission, only inside its folder.",
         "operationId": "get_file_api_v1_missions__mission_id__files__file_id__get",
         "parameters": [
           {
@@ -4936,6 +4941,7 @@
     },
     "/api/v1/missions/{mission_id}/limits": {
       "put": {
+        "description": "Stricter, or raised by click up to the outer cap (``config/local/limits.toml``).",
         "operationId": "put_limits_api_v1_missions__mission_id__limits_put",
         "parameters": [
           {

@@ -36,7 +36,7 @@ fc_endpoint = ""                        # empty = lock to the first valid HEARTB
 
 [gate]
 operator_absent_s = 30
-operator_absent_action = "hold"         # hold | return_home | off
+operator_absent_action = "hold"         # fixed: 30 s without a pilot -> alarm and hold
 
 [auth]
 cli_may_confirm = false                 # only the test rig sets true

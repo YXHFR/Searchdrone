@@ -107,6 +107,7 @@ LIMITS_CODES: Final = MappingProxyType(
     {
         "LIMIT_ABOVE_ABSOLUTE": "Gränsen är över det yttre taket.",
         "LIMITS_BELOW_ACTIVE_CHARTER": "Den aktiva uppdragsramen ryms inte inom de nya gränserna.",
+        "LIMITS_CHANGE_REQUIRES_LANDING": "Gränser över standardvärdena kan bara höjas på marken.",
     }
 )
 

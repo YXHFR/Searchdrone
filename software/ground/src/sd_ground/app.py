@@ -29,17 +29,20 @@ from sd_ground.api import panel as panel_api
 from sd_ground.api import tiles as tiles_api
 from sd_ground.api.deps import install_error_handlers
 from sd_ground.auth import BrainToken
-from sd_ground.config import Loaded, check, parse_bind
+from sd_ground.config import Loaded, check, limit_caps, parse_bind
 from sd_ground.context import Ground, lan_addresses
 from sd_ground.control_socket import ControlSocket, socket_path
 from sd_ground.db.engine import make_engine, with_password
+from sd_ground.db.flow import FlowRepo
 from sd_ground.db.repo import Repo
 from sd_ground.db.setup import head_revision
 from sd_ground.ingress import IngressApp, IngressThread, MainLoopBridge
+from sd_ground.link import GroundLink
 from sd_ground.liveness import LoopLiveness
 from sd_ground.logging import get_logger, setup_logging
 from sd_ground.mav.thread import GroundMav, HeartbeatGate, MavThread, vehicle_events
 from sd_ground.services.latches import Latches
+from sd_ground.services.missions import MissionFlow
 from sd_ground.services.telemetry import TelemetryService
 from sd_ground.services.vehicle_actions import OperatorPresence, VehicleActions
 from sd_ground.web import COMMANDER_BODY_LIMIT, LoopbackGuard, PanelGuard
@@ -263,20 +266,16 @@ async def _serve(loaded: Loaded) -> int:
     except BaseException:
         main_beat.cancel()
         raise
-    g.repo = Repo(
-        make_engine(with_password(cfg.db.url, loaded.secret("SD_GROUND__DB_APP_PASSWORD")))
-    )
+    engine = make_engine(with_password(cfg.db.url, loaded.secret("SD_GROUND__DB_APP_PASSWORD")))
+    g.repo = Repo(engine)
     await _start_db(g)
+    link, flow = await start_mission_flow(g, FlowRepo(engine), actions, mav_thread)
     background = Background(g, liveness)
     tasks = [*background.tasks(), main_beat]
-    presence = OperatorPresence(
-        actions,
-        absent_s=cfg.gate.operator_absent_s,
-        action=cfg.gate.operator_absent_action,
-        mission_active=lambda _vid: False,  # the mission flow tells it (B1-12)
-    )
+    presence = OperatorPresence(actions, mission_active=flow.mission_active)
     tasks.append(asyncio.create_task(actions.pump(g), name="vehicle-actions"))
     tasks.append(asyncio.create_task(presence.run(g), name="operator-presence"))
+    tasks.append(asyncio.create_task(flow.run(), name="mission-flow"))
     main_loop = asyncio.get_running_loop()
 
     control = ControlSocket(
@@ -331,6 +330,8 @@ async def _serve(loaded: Loaded) -> int:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     control.stop()
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(link.stop(), 5)
     await g.repo.close()
     await asyncio.to_thread(mav_thread.stop)  # the GCS heartbeat ends last
     return 0
@@ -385,6 +386,38 @@ async def start_emergency_path(
     g.emergency = actions
     g.vehicle_actions = actions
     return mav_thread, actions
+
+
+async def start_mission_flow(
+    g: Ground, repo: FlowRepo, actions: VehicleActions, mav_thread: MavThread
+) -> tuple[GroundLink, MissionFlow]:
+    """SD-link to the onboard computer and the mission flow. The link only listens on
+    loopback; the emergency path sends its notices through it from now on."""
+    cfg = g.config
+    link = GroundLink.from_file(
+        g.loaded.path(cfg.sdlink.link_tokens_file),
+        clock=g.clock,
+        latches=actions.latches,
+        vehicle_ids=[cfg.default_vehicle_id],
+        bind=cfg.sdlink.bind,
+        commander_state=lambda: g.brain_state,
+        on_event=lambda t, sev, vid, p: actions.on_event(t, sev, {"vehicle_id": vid, **p}),
+    )
+    flow = MissionFlow(
+        g,
+        repo,
+        caps=limit_caps(g.loaded),
+        link=link,
+        mav=mav_thread.mav,
+        actions=actions,
+    )
+    link.handler = flow
+    actions.notices = link
+    g.sdlink = link
+    g.flow = flow
+    await flow.start()
+    await link.start()
+    return link, flow
 
 
 def serve(loaded: Loaded) -> int:

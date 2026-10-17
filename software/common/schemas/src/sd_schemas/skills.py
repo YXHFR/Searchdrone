@@ -610,7 +610,7 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="report",
         stage=1,
-        status="stub",
+        status="implemented",
         runs_on="ground",
         params_model=ReportParams,
         moves_vehicle=False,
@@ -625,7 +625,7 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="mark_location",
         stage=1,
-        status="stub",
+        status="implemented",
         runs_on="ground",
         params_model=MarkLocationParams,
         ai_params_model=MarkLocationAiParams,
@@ -641,7 +641,7 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="propose_charter_change",
         stage=1,
-        status="stub",
+        status="implemented",
         runs_on="ground",
         params_model=ProposeCharterChangeParams,
         requires_approval_in_b=True,

@@ -363,9 +363,11 @@ class FakeFlightController:
             self._ack(link, int(msg.command), self._command(link, msg))
         elif kind == "SET_POSITION_TARGET_GLOBAL_INT" and self.mode == CopterMode.GUIDED:
             self.target = (msg.lat_int / 1e7, msg.lon_int / 1e7, float(msg.alt))
-        elif kind == "PARAM_REQUEST_READ":
+        elif kind in ("PARAM_REQUEST_READ", "PARAM_SET"):
             name = msg.param_id if isinstance(msg.param_id, str) else msg.param_id.decode()
             name = name.rstrip("\x00")
+            if kind != "PARAM_REQUEST_READ" and name in self.params:
+                self.params[name] = float(msg.param_value)  # a real FC echoes PARAM_VALUE
             if name in self.params:
                 self._send(
                     mavlink.MAVLink_param_value_message(
