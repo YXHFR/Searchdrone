@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import datetime as dt
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
@@ -90,7 +91,6 @@ class ModeAction:
     vehicle_id: str
     kind: LatchAction
     action_seq: int
-    clicked_mono: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,18 +140,37 @@ _VEHICLE_EVENTS: Final = {
 }
 
 
-def vehicle_events(sink: EventSink) -> Callable[[str, dict[str, Any]], None]:
+EVENTS_PER_KIND_S: Final = 1.0  # at most one event per kind and second from the link
+
+
+def vehicle_events(
+    sink: EventSink, now: Callable[[], float] | None = None
+) -> Callable[[str, dict[str, Any]], None]:
     """The ``Vehicle``'s events that the ground station keeps; status texts at warning
-    level or worse become ``fc.statustext``."""
+    level or worse become ``fc.statustext``. At most one per kind and second (the rest
+    are counted in the next one), so a flood on the MAVLink channel cannot fill the
+    main loop's queue."""
+    clock = now or time.monotonic
+    last: dict[str, float] = {}
+    dropped: dict[str, int] = {}
+
+    def emit(kind: str, severity: str, details: dict[str, Any]) -> None:
+        t = clock()
+        if t - last.get(kind, -EVENTS_PER_KIND_S) < EVENTS_PER_KIND_S:
+            dropped[kind] = dropped.get(kind, 0) + 1
+            return
+        last[kind] = t
+        skipped = dropped.pop(kind, 0)
+        sink(kind, severity, {**details, "skipped": skipped} if skipped else details)
 
     def on_event(kind: str, details: dict[str, Any]) -> None:
         if kind == "mav.statustext":
             if int(details.get("severity", 7)) <= 4:  # MAV_SEVERITY_WARNING
-                sink("fc.statustext", "warning", details)
+                emit("fc.statustext", "warning", details)
             return
         mapped = _VEHICLE_EVENTS.get(kind)
         if mapped is not None:
-            sink(mapped[0], mapped[1], details)
+            emit(mapped[0], mapped[1], details)
 
     return on_event
 
@@ -210,7 +229,10 @@ class GroundMav:
         self.vehicle_id = vehicle_id
         self.latches = latches
         self._on_report = on_report
-        self._on_event = on_event
+        # Every event names the vehicle, so the event log and the panel can tell them apart.
+        self._on_event: EventSink = lambda t, sev, p: on_event(
+            t, sev, {"vehicle_id": vehicle_id, **p}
+        )
         self._system_action = system_action
         self._rtl_pct = rtl_pct
         self.watchdog = CompanionWatchdog(clock.monotonic_ms())
@@ -296,12 +318,15 @@ class GroundMav:
         if action.vehicle_id != self.vehicle_id:
             return
         self._manual = None  # STOP and FLY HOME end steering by hand
-        self._spawn(self._run_action(action))
+        # The 10 s watch counts from here, on this thread's own clock.
+        self._spawn(self._run_action(action, self.clock.monotonic()))
 
     def _superseded(self, action: ModeAction) -> bool:
-        return self.latches.latest_seq(self.vehicle_id) != action.action_seq
+        """A newer STOP, FLY HOME, system action or Resume stops this chain (a takeover
+        or hand-back does not)."""
+        return self.latches.override_seq(self.vehicle_id) != action.action_seq
 
-    async def _run_action(self, action: ModeAction) -> None:
+    async def _run_action(self, action: ModeAction, clicked_mono: float) -> None:
         which = chain_of(action.kind)
         if not self.vehicle.telemetry.fc_connected:
             # Still try: the link may be back any moment. The result says what happened.
@@ -314,7 +339,7 @@ class GroundMav:
                 self.vehicle,
                 which,
                 confirmed,
-                clicked_mono=action.clicked_mono,
+                clicked_mono=clicked_mono,
                 aborted=lambda: self._superseded(action),
                 on_resend=lambda mode: self._on_event(
                     "vehicle.override_reasserted",
@@ -439,6 +464,7 @@ class GroundMav:
                 fc_mode=fresh_mode if snap.connected else None,
                 in_flight=snap.in_flight,
                 operator_override=latch is not None and latch.action in ("stop", "return_home"),
+                manual=snap.manual,
                 battery_latch=latch is not None
                 and (latch.action == "battery_rtl" or latch.underlying == "battery_rtl"),
             )

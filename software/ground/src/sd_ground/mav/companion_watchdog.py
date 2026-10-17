@@ -11,9 +11,11 @@ says what to do; the thread sends it the same way as STOP and FLY HOME.
   vehicle is airborne in GUIDED, AUTO or LOITER with the watchdog idle, or the watchdog
   stopped it itself and it still stands in BRAKE or LOITER: FLY HOME's steps, latch
   ``watchdog_rtl``, phase ``rtl``.
-* It never acts while the operator's STOP or FLY HOME stands (then only the alarm
-  ``ONBOARD_SILENT``), while the battery latch stands, on the ground, or in a mode it
-  did not set itself (BRAKE, LOITER, RTL, SMART_RTL, LAND, ALT_HOLD, STABILIZE, ...).
+* It never acts while the operator's STOP or FLY HOME stands or the pilot steers by hand
+  (then only the alarm ``ONBOARD_SILENT``), while the battery latch stands, or on the
+  ground. Step 1 acts only in GUIDED; besides LOITER (step 2 above) and its own BRAKE
+  it never acts in a mode someone else chose (RTL, SMART_RTL, LAND, ALT_HOLD,
+  STABILIZE, ...).
 * The phase goes back to idle when the heartbeat returns or the vehicle has landed.
 """
 
@@ -43,6 +45,7 @@ class WatchInput:
     in_flight: bool
     operator_override: bool  # the operator's STOP or FLY HOME stands
     battery_latch: bool
+    manual: bool = False  # the pilot steers by hand (Ta över)
 
 
 class CompanionWatchdog:
@@ -62,7 +65,7 @@ class CompanionWatchdog:
             self.alarm_active = False
             return None
         self.alarm_active = True
-        if inp.operator_override or inp.battery_latch or inp.fc_mode is None:
+        if inp.operator_override or inp.battery_latch or inp.manual or inp.fc_mode is None:
             return None
         mode = inp.fc_mode
         if self.phase == "idle" and mode == CopterMode.GUIDED and silent < _RTL_MS:

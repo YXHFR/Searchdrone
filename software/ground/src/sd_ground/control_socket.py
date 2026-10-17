@@ -217,7 +217,18 @@ def _new_id() -> str:
 
 
 def call(path: Path, request: dict[str, Any], timeout: float = 5.0) -> dict[str, Any] | None:
-    """Send one request to a running server. ``None`` when no server is running."""
+    """Send one request to a running server. ``None`` when no server is running.
+
+    A ``BUSY`` answer (every client slot taken) is tried again for up to ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        reply = _call_once(path, request, timeout)
+        if reply is None or reply.get("error") != "BUSY" or time.monotonic() >= deadline:
+            return reply
+        time.sleep(0.05)
+
+
+def _call_once(path: Path, request: dict[str, Any], timeout: float) -> dict[str, Any] | None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(timeout)

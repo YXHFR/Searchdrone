@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from stop_helpers import VID, stack
+from stop_helpers import PILOT, VID, stack
 
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.services.vehicle_actions import OperatorPresence
@@ -37,7 +37,7 @@ def test_watchdog_phases_pure() -> None:
     assert w.phase == "idle" and not w.alarm_active
 
 
-def test_watchdog_never_acts_in_modes_it_did_not_set() -> None:
+def test_watchdog_modes() -> None:
     for mode in (
         CopterMode.BRAKE,
         CopterMode.LOITER,
@@ -68,6 +68,36 @@ def test_watchdog_respects_the_operator_and_the_ground() -> None:
     w = CompanionWatchdog(0)
     assert w.tick(_inp(5.0, CopterMode.GUIDED, in_flight=False)) is None
     assert not w.alarm_active
+    w = CompanionWatchdog(0)  # the pilot steers by hand: only the alarm
+    assert w.tick(_inp(5.0, CopterMode.GUIDED, manual=True)) is None
+    assert w.tick(_inp(25.0, CopterMode.LOITER, manual=True)) is None
+    assert w.alarm_active
+
+
+async def test_watchdog_leaves_the_pilots_manual_control_alone() -> None:
+    async with stack() as s:
+        s.fly()
+        await s.run(1.0)
+        s.actions.takeover(VID, client_action_id="t1", by=PILOT)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.LOITER
+        s.onboard_alive[0] = False
+        await s.run(25.0)
+        assert s.fc.mode == CopterMode.LOITER and s.latches.get(VID) is None
+        assert "alarm.ONBOARD_SILENT" in s.g.types()
+
+
+async def test_battery_guard_also_after_the_operators_stop() -> None:
+    """Low battery flies home also after STOP (the battery latch then replaces it)."""
+    async with stack(rtl_pct=20.0) as s:
+        s.fly()
+        await s.run(1.0)
+        s.stop()
+        await s.run(1.0)
+        s.fc.battery_pct = 19.0
+        await s.run(1.5)
+        assert s.fc.mode in HOME_MODES
+        assert s.latches.get(VID).action == "battery_rtl"  # type: ignore[union-attr]
 
 
 async def test_watchdog_escalates_after_own_stop() -> None:
@@ -200,3 +230,23 @@ async def test_operator_absent_variants() -> None:
         )
         presence.tick(s.g)
         assert "vehicle.operator_absent" not in s.g.types()
+
+
+def test_vehicle_events_are_throttled_per_kind() -> None:
+    from sd_ground.mav.thread import vehicle_events
+
+    now = [0.0]
+    seen: list[tuple[str, dict[str, object]]] = []
+    on = vehicle_events(lambda t, _s, p: seen.append((t, p)), now=lambda: now[0])
+    for _ in range(100):
+        on("mav.inbound_command_ignored", {"command": 1})
+    on("mav.statustext", {"severity": 6, "text": "info only"})  # below warning: dropped
+    on("mav.statustext", {"severity": 4, "text": "warning"})
+    now[0] = 1.5
+    on("mav.inbound_command_ignored", {"command": 1})
+    assert [t for t, _ in seen] == [
+        "mav.inbound_command_ignored",
+        "fc.statustext",
+        "mav.inbound_command_ignored",
+    ]
+    assert seen[-1][1]["skipped"] == 99

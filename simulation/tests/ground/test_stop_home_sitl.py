@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "onboard"))
 
@@ -48,7 +49,8 @@ from test_onboard_sitl import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_ground.auth import Principal
-from sd_ground.mav.thread import GroundMav, ThreadSafeMav
+from sd_ground.liveness import LoopLiveness
+from sd_ground.mav.thread import GroundMav, HeartbeatGate, ThreadSafeMav
 from sd_ground.services.latches import Latches
 from sd_ground.services.vehicle_actions import VehicleActions
 from sd_link.session import LinkSession
@@ -157,7 +159,13 @@ class _Pump:
 
 
 @contextlib.asynccontextmanager
-async def emergency(sim: Sim, **options: Any) -> AsyncIterator[Emergency]:
+async def emergency(
+    sim: Sim,
+    *,
+    rtl_pct: list[float] | None = None,
+    liveness: LoopLiveness | None = None,
+    **options: Any,
+) -> AsyncIterator[Emergency]:
     clock = MonotonicClock()
     ports = sim.ports
     holder: list[Executor] = []
@@ -176,7 +184,12 @@ async def emergency(sim: Sim, **options: Any) -> AsyncIterator[Emergency]:
         write(msg)
 
     onboard._transport.write_message = recording  # type: ignore[method-assign]
-    ground: Vehicle = _vehicle(f"udpin:127.0.0.1:{ports['ground_mavlink']}", Role.GROUND)
+    ground: Vehicle = _vehicle(
+        f"udpin:127.0.0.1:{ports['ground_mavlink']}",
+        Role.GROUND,
+        heartbeat_allowed=None if liveness is None else HeartbeatGate(liveness),
+    )
+    level = rtl_pct if rtl_pct is not None else [15.0]
     latches = Latches(clock)
     sink = SessionSink()
     actions = VehicleActions(clock, latches, vehicle_ids=[VID], notices=sink)
@@ -188,6 +201,7 @@ async def emergency(sim: Sim, **options: Any) -> AsyncIterator[Emergency]:
         on_report=actions.on_report,
         on_event=actions.on_event,
         system_action=actions.system,
+        rtl_pct=lambda: level[0],
     )
     actions.mav = ThreadSafeMav(core, asyncio.get_running_loop())
     await core.start()
@@ -452,6 +466,85 @@ def test_ground_kill_gcs_failsafe(sim: Sim) -> None:
             assert e.f.ex.state == S.FAILSAFE
             assert e.f.steering_since(index) == []
             assert e.f.onboard.telemetry.fc_mode in {m.name for m in HOME_MODES | STOP_MODES}
+
+    asyncio.run(run())
+
+
+# --- the 10 s watch, the battery guard and a hung ground station -------------------------
+
+
+@pytest.mark.budget_s(240)
+def test_stop_mode_race(sim: Sim) -> None:
+    """A late GUIDED from 1/191, 50 ms after STOP (injected by the test, past the onboard
+    gate): the flight controller is in a STOP mode at 2 s and stays there for 10 s."""
+
+    async def run() -> None:
+        async with emergency(sim) as e:
+            await _airborne_goto(e, 120, 4)
+            t0 = time.monotonic()
+            e.stop()
+            await asyncio.sleep(0.05)
+            late = mavlink.MAVLink_command_long_message(
+                1, 1, 176, 0, mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 4, 0, 0, 0, 0, 0
+            )
+            e.f.onboard._transport.write_message(late)  # pyright: ignore[reportPrivateUsage]
+            await asyncio.sleep(2.0 - (time.monotonic() - t0))
+            assert e.mode() in {m.name for m in STOP_MODES}
+            for _ in range(100):
+                await asyncio.sleep(0.1)
+                assert e.mode() in {m.name for m in STOP_MODES}, e.mode()
+
+    asyncio.run(run())
+
+
+@pytest.mark.budget_s(240)
+def test_battery_guard_flies_home(sim: Sim) -> None:
+    """The ground's battery guard: the level is crossed in flight (here the guard's level
+    is raised above the battery), SMART_RTL/RTL within 1 s and the battery latch."""
+
+    async def run() -> None:
+        level = [0.0]
+        async with emergency(sim, rtl_pct=level) as e:
+            await _airborne_goto(e, 60, 4)
+            assert e.fc.battery_pct is not None
+            level[0] = e.fc.battery_pct + 1.0  # the battery is now below the level
+            took = await e.wait(lambda: e.mode() in ("SMART_RTL", "RTL"), 1.5, "battery home")
+            assert took <= 1.5  # the crossing is seen at 2 Hz, then within 1 s
+            latch = e.actions.latches.get(VID)
+            assert latch is not None and latch.action == "battery_rtl"
+
+    asyncio.run(run())
+
+
+@pytest.mark.budget_s(240)
+def test_hung_ground_station_lets_the_gcs_failsafe_act(sim: Sim) -> None:
+    """The main loop stops beating: after 8 s no GCS heartbeat goes out, so the flight
+    controller's GCS failsafe flies home (8 s + 20 s)."""
+
+    async def run() -> None:
+        liveness = LoopLiveness()
+        beating = [True]
+
+        async def beat() -> None:
+            while True:
+                if beating[0]:
+                    liveness.beat("main")
+                await asyncio.sleep(0.5)
+
+        beater = asyncio.ensure_future(beat())
+        try:
+            async with emergency(sim, liveness=liveness) as e:
+                await _airborne_goto(e, 200, 3)
+                beating[0] = False  # the main loop hangs from here
+                hung = time.monotonic()
+                await e.f.until(
+                    lambda: e.f.onboard.telemetry.fc_mode in ("SMART_RTL", "RTL"),
+                    35,
+                    "GCS failsafe",
+                )
+                assert time.monotonic() - hung >= 8.0 + 15.0  # not before the stall + timeout
+        finally:
+            beater.cancel()
 
     asyncio.run(run())
 

@@ -9,6 +9,9 @@ STOP steps, ``HOME_MODES`` for the FLY HOME steps) within
 1/191 with ``SendOrigin.OVERRIDE_FALLBACK`` (the only user of that origin), with the same
 rules as the ground (``sd_mav.chain``).
 
+* Only while the flight controller still flies a mode this computer can command
+  (``sd_mav.chain.late_order``): a mode chosen with an RC transmitter, or a failsafe
+  that just began, is left alone.
 * Only when ``override_phase(...)`` says airborne. On the ground nothing is sent: the
   onboard computer never disarms, and ArduPilot disarms by itself after landing.
 * The newest action wins: before every send the chain checks that its notice is still
@@ -25,7 +28,13 @@ import contextlib
 from collections.abc import Callable
 from typing import Any, Final
 
-from sd_mav.chain import mode_shown, set_mode_with_fallback
+from sd_mav.chain import (
+    failsafe_began_recently,
+    heartbeat_fresh,
+    late_order,
+    mode_shown,
+    set_mode_with_fallback,
+)
 from sd_mav.modes import (
     HOME_MODES,
     HOME_STEPS,
@@ -34,7 +43,7 @@ from sd_mav.modes import (
     OverridePhase,
     override_phase,
 )
-from sd_mav.vehicle import MODE_FRESH_S, SendOrigin, Vehicle
+from sd_mav.vehicle import SendOrigin, Vehicle
 from sd_obs.clock import Clock
 from sd_safety.constants import OVERRIDE_ONBOARD_FALLBACK_S
 
@@ -78,11 +87,7 @@ class OverrideFallback:
 
     def _airborne(self) -> bool:
         t = self.vehicle.telemetry
-        now = self.clock.monotonic_ms()
-        fresh = t.fc_heartbeat_mono_ms is not None and now - t.fc_heartbeat_mono_ms <= (
-            MODE_FRESH_S * 1000
-        )
-        if not fresh:
+        if not heartbeat_fresh(self.vehicle):
             return False  # nothing to send to: the flight controller is not heard
         return override_phase(t.armed, t.landed_state, t.alt_rel_home_m) is OverridePhase.AIRBORNE
 
@@ -93,8 +98,10 @@ class OverrideFallback:
         if not self._current(action_seq):
             return
         shown = mode_shown(self.vehicle)
-        if shown is not None and shown in targets:
-            return  # the ground's MAVLink got through
+        if shown is None or shown in targets:
+            return  # the ground's MAVLink got through (or nothing to judge from)
+        if not late_order(shown, targets) or failsafe_began_recently(self.vehicle):
+            return  # a person with an RC transmitter, or the flight controller, decided
         if not self._airborne():
             return
         self.used += 1

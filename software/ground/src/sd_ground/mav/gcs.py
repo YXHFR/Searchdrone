@@ -19,10 +19,11 @@ A chain that needs its LAND step raises the alarm ``STOP_PATH_FAILED`` or
 is not fresh counts as airborne, so a stale picture never skips the mode steps.
 
 ``guard_override`` watches for ``OVERRIDE_MAX_S`` after the click: whenever the HEARTBEAT
-shows a mode outside the target set (a late order from the onboard computer, for
-example) the target mode is sent again. For STOP a failsafe signal seen within
-``OVERRIDE_NOTICE_WINDOW_S`` of the change lets the flight controller's own failsafe
-stand, and the watch ends there.
+shows a late order (a mode outside the target set that the onboard computer can
+command, ``sd_mav.chain.late_order``) the target mode is sent again. A mode only a
+person with an RC transmitter or the flight controller can choose ends the watch: the RC
+transmitter goes before everything. For STOP a failsafe that began within
+``OVERRIDE_NOTICE_WINDOW_S`` also stands and ends the watch.
 """
 
 from __future__ import annotations
@@ -34,7 +35,15 @@ from typing import Final, Literal
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
 from sd_mav.allowlist import FC_COMPID
-from sd_mav.chain import POLL_S, STEP_CONFIRM_S, mode_shown, set_mode_with_fallback
+from sd_mav.chain import (
+    POLL_S,
+    STEP_CONFIRM_S,
+    failsafe_began_recently,
+    heartbeat_fresh,
+    late_order,
+    mode_shown,
+    set_mode_with_fallback,
+)
 from sd_mav.modes import (
     HOME_MODES,
     HOME_STEPS,
@@ -53,7 +62,7 @@ from sd_mav.vehicle import (
     SendOrigin,
     Vehicle,
 )
-from sd_safety.constants import OVERRIDE_MAX_S, OVERRIDE_NOTICE_WINDOW_S, OVERRIDE_RESEND_MS
+from sd_safety.constants import OVERRIDE_MAX_S, OVERRIDE_RESEND_MS
 
 __all__ = [
     "PATH_FAILED_ALARM",
@@ -94,30 +103,23 @@ def phase_of(vehicle: Vehicle) -> OverridePhase:
     t = vehicle.telemetry
     now = vehicle.clock.monotonic_ms()
     fresh_ms = MODE_FRESH_S * 1000
+    beat = heartbeat_fresh(vehicle)
     fresh = (
-        t.fc_heartbeat_mono_ms is not None
-        and now - t.fc_heartbeat_mono_ms <= fresh_ms
+        beat
         and t.landed_mono_ms is not None
         and now - t.landed_mono_ms <= fresh_ms
         and t.position_mono_ms is not None
         and now - t.position_mono_ms <= fresh_ms
     )
     if not fresh:
-        heartbeat_fresh = (
-            t.fc_heartbeat_mono_ms is not None and now - t.fc_heartbeat_mono_ms <= fresh_ms
-        )
-        if heartbeat_fresh and not t.armed:
+        if beat and not t.armed:
             return OverridePhase.ON_GROUND_DISARMED
         return OverridePhase.AIRBORNE
     return override_phase(t.armed, t.landed_state, t.alt_rel_home_m)
 
 
 def _armed_shown(vehicle: Vehicle) -> bool | None:
-    t = vehicle.telemetry
-    now = vehicle.clock.monotonic_ms()
-    if t.fc_heartbeat_mono_ms is None or now - t.fc_heartbeat_mono_ms > MODE_FRESH_S * 1000:
-        return None
-    return t.armed
+    return vehicle.telemetry.armed if heartbeat_fresh(vehicle) else None
 
 
 def _disarm_msg(vehicle: Vehicle) -> object:
@@ -216,7 +218,9 @@ async def guard_override(
             return resent  # landed and disarmed: nothing left to hold
         shown = mode_shown(vehicle)
         if shown is not None and shown not in targets:
-            if _failsafe_stands(vehicle, action):
+            if not late_order(shown, targets):
+                return resent  # a person (RC transmitter) or the flight controller chose it
+            if action == "stop" and failsafe_began_recently(vehicle):
                 return resent  # the flight controller's own failsafe decided: it stands
             if on_resend is not None:
                 on_resend(mode_name(shown))
@@ -227,12 +231,3 @@ async def guard_override(
             continue
         await clock.sleep(POLL_S)
     return resent
-
-
-def _failsafe_stands(vehicle: Vehicle, action: OverrideAction) -> bool:
-    if action != "stop":
-        return False
-    t = vehicle.telemetry
-    if t.last_failsafe_mono_ms is None:
-        return False
-    return vehicle.clock.monotonic_ms() - t.last_failsafe_mono_ms <= OVERRIDE_NOTICE_WINDOW_S * 1000

@@ -36,8 +36,7 @@ def test_resume_and_outcome(logged_in: TestClient, ground: Ground, clock: FakeCl
     other = "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a99"
     assert logged_in.get(f"/api/v1/vehicles/{VID}/actions/{other}").status_code == 404
     # Under FLY HOME, Resume is refused with 409.
-    seq = actions.latches.next_seq(VID)
-    actions.latches.set(VID, "return_home", seq, "operator:demo")
+    actions.latches.start(VID, "return_home", "operator:demo")
     again = {"client_action_id": "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a22"}
     res = logged_in.post(f"/api/v1/vehicles/{VID}/actions/resume", json=again, headers=H)
     assert res.status_code == 409 and res.json()["code"] == "RETURN_HOME_ACTIVE"
@@ -64,3 +63,35 @@ def test_commander_token_cannot_resume(
         headers={**H, "Authorization": f"Bearer {brain_token}"},
     )
     assert res.status_code in (401, 403)
+
+
+def test_observer_may_stop_but_not_resume_or_steer(
+    panel: TestClient, ground: Ground, clock: FakeClock
+) -> None:
+    import datetime as dt
+
+    from sd_ground.auth import SessionRecord, hash_token, new_token
+
+    _wire(ground, clock)
+    token = new_token()
+    now = clock.utc_now()
+    ground.sessions.load(
+        [
+            SessionRecord(
+                id="o1",
+                kind="token",
+                role="observer",
+                issuer_ref="operator:guest",
+                auth_mode="cli",
+                token_sha256=hash_token(token),
+                created_at=now,
+                last_used_at=now,
+                expires_at=now + dt.timedelta(hours=1),
+                name="guest",
+            )
+        ]
+    )
+    auth = {**H, "Authorization": f"Bearer {token}"}
+    for route in ("resume", "takeover", "handback", "return_home"):
+        res = panel.post(f"/api/v1/vehicles/{VID}/actions/{route}", json=BODY, headers=auth)
+        assert res.status_code == 403, (route, res.text)

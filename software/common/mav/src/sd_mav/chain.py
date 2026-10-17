@@ -11,6 +11,13 @@ the fallback origin), so both sides follow exactly the same rules:
   ``STEP_CONFIRM_S`` after the step's first send; then the next step goes at once;
 * ``aborted()`` is asked before every single send: a newer action for the vehicle stops
   this chain, so an older action never sends anything late.
+
+After the steps, a mode outside the target set is undone only when it is a **late
+order** (``late_order``): a mode the onboard computer itself can command. Any other mode
+(ALT_HOLD, STABILIZE, POSHOLD, ...) can only come from a person with an RC transmitter
+or from the flight controller, and the RC transmitter goes before everything, so it is
+left alone. For STOP a failsafe that began within ``OVERRIDE_NOTICE_WINDOW_S`` also
+stands (``failsafe_began_recently``).
 """
 
 from __future__ import annotations
@@ -22,7 +29,7 @@ from typing import Final, Literal
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
 from sd_mav.allowlist import FC_COMPID
-from sd_mav.modes import CopterMode
+from sd_mav.modes import ONBOARD_MODES, CopterMode
 from sd_mav.vehicle import (
     MODE_FRESH_S,
     ControlNotAllowedError,
@@ -31,9 +38,18 @@ from sd_mav.vehicle import (
     SendOrigin,
     Vehicle,
 )
-from sd_safety.constants import OVERRIDE_RESEND_MS
+from sd_safety.constants import OVERRIDE_NOTICE_WINDOW_S, OVERRIDE_RESEND_MS
 
-__all__ = ["POLL_S", "STEP_CONFIRM_S", "ChainResult", "mode_shown", "set_mode_with_fallback"]
+__all__ = [
+    "POLL_S",
+    "STEP_CONFIRM_S",
+    "ChainResult",
+    "failsafe_began_recently",
+    "heartbeat_fresh",
+    "late_order",
+    "mode_shown",
+    "set_mode_with_fallback",
+]
 
 STEP_CONFIRM_S: Final = 1.0  # a step whose mode the HEARTBEAT does not show by then failed
 POLL_S: Final = 0.02
@@ -48,13 +64,32 @@ class ChainResult:
     steps_used: int  # 1 = the first step was enough
 
 
+def heartbeat_fresh(vehicle: Vehicle) -> bool:
+    """A HEARTBEAT from the flight controller within ``MODE_FRESH_S``: its mode and its
+    armed flag can be trusted."""
+    t = vehicle.telemetry
+    seen = t.fc_heartbeat_mono_ms
+    return seen is not None and vehicle.clock.monotonic_ms() - seen <= MODE_FRESH_S * 1000
+
+
+def late_order(mode: int, targets: frozenset[CopterMode]) -> bool:
+    """``mode`` is outside ``targets`` and one the onboard computer can command."""
+    return mode not in targets and mode in ONBOARD_MODES
+
+
+def failsafe_began_recently(vehicle: Vehicle) -> bool:
+    """A failsafe signal that was quiet before began within ``OVERRIDE_NOTICE_WINDOW_S``
+    (a failsafe that has been repeating for a while does not count)."""
+    onset = vehicle.telemetry.failsafe_onset_mono_ms
+    return (
+        onset is not None
+        and vehicle.clock.monotonic_ms() - onset <= OVERRIDE_NOTICE_WINDOW_S * 1000
+    )
+
+
 def mode_shown(vehicle: Vehicle) -> int | None:
     """The flight controller's mode in a fresh HEARTBEAT, else ``None``."""
-    t = vehicle.telemetry
-    now = vehicle.clock.monotonic_ms()
-    if t.fc_heartbeat_mono_ms is None or now - t.fc_heartbeat_mono_ms > MODE_FRESH_S * 1000:
-        return None
-    return t.fc_custom_mode
+    return vehicle.telemetry.fc_custom_mode if heartbeat_fresh(vehicle) else None
 
 
 def _set_mode_msg(vehicle: Vehicle, mode: CopterMode) -> object:

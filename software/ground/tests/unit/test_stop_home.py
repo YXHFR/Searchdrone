@@ -503,3 +503,109 @@ async def test_broken_stop_check_does_not_break_the_chat() -> None:
             stop_check=broken,  # type: ignore[arg-type]
         )
         assert out is None
+
+
+# --- review fixes: what may stop a chain, and what the watch leaves alone ------------------
+
+
+async def test_handback_during_fly_home_does_not_stop_the_chain() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.refuse_modes = {int(CopterMode.SMART_RTL)}
+        s.fc.drop_acks = 1000  # slow answers: the hand-back lands mid-chain
+        await s.run(0.5)
+        s.home()
+        await s.run(0.1)
+        s.actions.handback(VID, client_action_id="h9", by=PILOT)
+        await s.run(2.5)
+        assert s.fc.mode == CopterMode.RTL
+
+
+async def test_takeover_during_stop_does_not_stop_the_chain() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.refuse_modes = {int(CopterMode.BRAKE), int(CopterMode.LOITER)}
+        await s.run(0.5)
+        s.stop()
+        await s.run(0.1)
+        s.actions.takeover(VID, client_action_id="t9", by=PILOT)
+        await s.run(3.0)
+        assert s.fc.mode == CopterMode.LAND
+        assert "alarm.STOP_PATH_FAILED" in s.g.types()
+
+
+@pytest.mark.parametrize("person_mode", [CopterMode.ALT_HOLD, CopterMode.STABILIZE])
+@pytest.mark.parametrize("action", ["stop", "return_home"])
+async def test_watch_leaves_an_rc_mode_change_alone(action: str, person_mode: CopterMode) -> None:
+    """The RC transmitter goes before everything: a mode only a person can choose ends
+    the watch instead of being undone."""
+    async with stack() as s:
+        s.fly()
+        await s.run(0.5)
+        s.stop() if action == "stop" else s.home()
+        await s.run(1.0)
+        mark = len(s.fc.received)
+        s.fc.set_mode_external(person_mode)
+        await s.run(5.0)
+        assert s.fc.mode == person_mode
+        assert ground_modes(s.fc, mark) == []
+
+
+async def test_a_repeating_low_battery_does_not_switch_the_stop_watch_off() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_LOW  # repeated at 2 Hz
+        await s.run(3.0)  # the signal began well before the STOP
+        s.stop()
+        await s.run(1.0)
+        s.fc.set_mode_external(CopterMode.GUIDED)  # a late order from onboard
+        await s.run(1.0)
+        assert s.fc.mode in STOP_MODES
+
+
+async def test_a_new_failsafe_after_stop_stands() -> None:
+    async with stack() as s:
+        s.fly()
+        await s.run(0.5)
+        s.stop()
+        await s.run(1.0)
+        s.fc.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_LOW  # begins now
+        await s.run(0.6)
+        s.fc.set_mode_external(CopterMode.SMART_RTL)
+        await s.run(2.0)
+        assert s.fc.mode == CopterMode.SMART_RTL
+
+
+async def test_dispatch_from_many_threads_keeps_latch_and_numbers_in_step() -> None:
+    import threading
+
+    async with stack() as s:
+        s.fly()
+        await s.run(0.5)
+        replies: list[int] = []
+        lock = threading.Lock()
+
+        def press(kind: str, n: int) -> None:
+            for i in range(40):
+                r = s.actions.dispatch(
+                    kind,  # type: ignore[arg-type]
+                    VID,
+                    client_action_id=f"{kind}-{n}-{i}",
+                    via="button",
+                    by=PILOT,
+                )
+                with lock:
+                    replies.append(r.action_seq)
+
+        threads = [
+            threading.Thread(target=press, args=(k, n))
+            for n, k in enumerate(("stop", "return_home") * 3)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(set(replies)) == len(replies) == 240
+        latch = s.latches.get(VID)
+        assert latch is not None
+        assert latch.action_seq == max(replies) == s.latches.override_seq(VID)

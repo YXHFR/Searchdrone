@@ -116,3 +116,29 @@ async def test_no_fallback_on_the_ground() -> None:
         await r.run(4)
         assert r.steering_sent(before) == []
         assert "executor.override_fallback_used" not in r.up.kinds()
+
+
+async def test_fallback_leaves_an_rc_mode_change_alone() -> None:
+    """A mode only a person with an RC transmitter can choose is never overridden."""
+    async with rig() as r:
+        await _in_goto(r)
+        before = len(r.vehicle.sent)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.5)
+        r.fc.set_mode_external(CopterMode.ALT_HOLD)
+        await r.run(3)
+        assert _modes(r.vehicle.sent[before:]) == []
+        assert r.fc.mode == CopterMode.ALT_HOLD
+
+
+async def test_fallback_lets_a_new_failsafe_stand() -> None:
+    from pymavlink.dialects.v20 import ardupilotmega as mavlink
+
+    async with rig() as r:
+        await _in_goto(r)
+        before = len(r.vehicle.sent)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.8)
+        r.fc.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_LOW  # begins now
+        await r.run(3)
+        assert _modes(r.vehicle.sent[before:]) == []

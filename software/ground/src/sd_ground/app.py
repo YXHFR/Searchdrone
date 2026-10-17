@@ -186,8 +186,6 @@ class Background:
     async def run_db(self) -> None:
         while True:
             await self.db_tick()
-            if self.liveness is not None:
-                self.liveness.beat("main")
             await self.g.clock.sleep(DB_CHECK_S)
 
     def tasks(self) -> list[asyncio.Task[None]]:
@@ -260,7 +258,11 @@ async def _serve(loaded: Loaded) -> int:
         g.lan_hosts = lan_addresses()
     liveness = LoopLiveness()
     main_beat = asyncio.create_task(_beat(liveness, "main"), name="main-liveness")
-    mav_thread, actions = start_emergency_path(g, liveness)
+    try:
+        mav_thread, actions = await start_emergency_path(g, liveness)
+    except BaseException:
+        main_beat.cancel()
+        raise
     g.repo = Repo(
         make_engine(with_password(cfg.db.url, loaded.secret("SD_GROUND__DB_APP_PASSWORD")))
     )
@@ -334,7 +336,9 @@ async def _serve(loaded: Loaded) -> int:
     return 0
 
 
-def start_emergency_path(g: Ground, liveness: LoopLiveness) -> tuple[MavThread, VehicleActions]:
+async def start_emergency_path(
+    g: Ground, liveness: LoopLiveness
+) -> tuple[MavThread, VehicleActions]:
     """Start the MAVLink thread and wire STOP / FLY HOME into ``g``. Exit 1 on failure."""
     from sd_mav.connection import GCS_COMPID, GCS_SYSID, Role, connect
     from sd_mav.vehicle import Vehicle
@@ -371,9 +375,10 @@ def start_emergency_path(g: Ground, liveness: LoopLiveness) -> tuple[MavThread, 
 
     mav_thread = MavThread(make_core)
     mav_thread.start()
-    mav_thread.ready.wait(10)
+    await asyncio.to_thread(mav_thread.ready.wait, 10)
     if mav_thread.mav is None:
-        log.error("mav.start_failed", error=type(mav_thread.error).__name__)
+        error = "timeout" if mav_thread.error is None else type(mav_thread.error).__name__
+        log.error("mav.start_failed", error=error)
         raise SystemExit("MAVLink-tråden kunde inte starta. Kontrollera [mavlink] listen.")
     actions.mav = mav_thread.mav
     g.vehicle_link = mav_thread.mav

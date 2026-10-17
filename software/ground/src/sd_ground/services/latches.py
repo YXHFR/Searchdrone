@@ -56,15 +56,20 @@ class Latches:
         self._lock = threading.Lock()
         self._latch: dict[str, OperatorLatch] = {}
         self._seq: dict[str, int] = {}
+        self._override: dict[str, int] = {}
         self.changes: queue.SimpleQueue[LatchChange] = queue.SimpleQueue()
 
     # --- action numbers ---------------------------------------------------------------
 
+    def _take(self, vehicle_id: str) -> int:
+        seq = max(self._seq.get(vehicle_id, 0) + 1, self._epoch_ms())
+        self._seq[vehicle_id] = seq
+        return seq
+
     def next_seq(self, vehicle_id: str) -> int:
+        """A number for an action that sets or lifts no latch (takeover, hand-back)."""
         with self._lock:
-            seq = max(self._seq.get(vehicle_id, 0) + 1, self._epoch_ms())
-            self._seq[vehicle_id] = seq
-            return seq
+            return self._take(vehicle_id)
 
     def raise_seq(self, vehicle_id: str, seen: int) -> None:
         """After a restart or an onboard ``Hello``: the next number is above ``seen``."""
@@ -75,14 +80,22 @@ class Latches:
         with self._lock:
             return self._seq.get(vehicle_id, 0)
 
+    def override_seq(self, vehicle_id: str) -> int:
+        """The number of the newest STOP, FLY HOME, system action or Resume. A mode chain
+        stops once this is not its own number; a takeover or hand-back never stops one."""
+        with self._lock:
+            return self._override.get(vehicle_id, 0)
+
     # --- the latch --------------------------------------------------------------------
 
     def get(self, vehicle_id: str) -> OperatorLatch | None:
         with self._lock:
             return self._latch.get(vehicle_id)
 
-    def set(self, vehicle_id: str, action: LatchAction, action_seq: int, by: str) -> OperatorLatch:
+    def start(self, vehicle_id: str, action: LatchAction, by: str) -> OperatorLatch:
+        """Take the next number and set the latch, in one step (any thread)."""
         with self._lock:
+            seq = self._take(vehicle_id)
             old = self._latch.get(vehicle_id)
             underlying: Literal["battery_rtl"] | None = None
             under_battery = old is not None and "battery_rtl" in (old.action, old.underlying)
@@ -92,14 +105,15 @@ class Latches:
                 vehicle_id=vehicle_id,
                 action=action,
                 underlying=underlying,
-                action_seq=action_seq,
+                action_seq=seq,
                 set_by=by,
                 set_at=self._clock.utc_now(),
                 set_mono_ms=self._clock.monotonic_ms(),
             )
             self._latch[vehicle_id] = latch
-            self._seq[vehicle_id] = max(self._seq.get(vehicle_id, 0), action_seq)
-        self.changes.put(LatchChange("set", vehicle_id, latch, action_seq))
+            self._override[vehicle_id] = seq
+            # Queued under the lock, so the main loop sees the changes in number order.
+            self.changes.put(LatchChange("set", vehicle_id, latch, seq))
         return latch
 
     def check_release(self, vehicle_id: str) -> OperatorLatch | None:
@@ -108,15 +122,17 @@ class Latches:
         _refuse_while_home(latch)
         return latch
 
-    def release(self, vehicle_id: str, action_seq: int) -> OperatorLatch | None:
-        """Lift the latch (Resume); raises like ``check_release``."""
+    def release(self, vehicle_id: str) -> tuple[int, OperatorLatch | None]:
+        """Resume: take the next number and lift the latch, in one step. Raises
+        ``LatchRefusedError`` while flying home."""
         with self._lock:
             latch = self._latch.get(vehicle_id)
             _refuse_while_home(latch)
+            seq = self._take(vehicle_id)
             self._latch.pop(vehicle_id, None)
-            self._seq[vehicle_id] = max(self._seq.get(vehicle_id, 0), action_seq)
-        self.changes.put(LatchChange("released", vehicle_id, latch, action_seq))
-        return latch
+            self._override[vehicle_id] = seq
+            self.changes.put(LatchChange("released", vehicle_id, latch, seq))
+        return seq, latch
 
     def landed(self, vehicle_id: str) -> OperatorLatch | None:
         with self._lock:

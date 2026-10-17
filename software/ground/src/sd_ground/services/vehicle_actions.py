@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
 from sd_ground.auth import Principal
+from sd_ground.bus import EventBus
 from sd_ground.logging import get_logger
 from sd_ground.mav.thread import ActionReport, MavSnapshot, ModeAction
 from sd_ground.services.latches import LatchChange, Latches, LatchRefusedError
@@ -48,6 +49,7 @@ __all__ = [
     "OUTCOMES_MAX",
     "PUMP_S",
     "ActionRefusedError",
+    "GroundView",
     "MavBackend",
     "NoNoticeSink",
     "NoticeSink",
@@ -114,6 +116,30 @@ class NoNoticeSink:
         return False
 
 
+class GroundView(Protocol):
+    """What the main loop's part needs from ``sd_ground.context.Ground`` (kept apart so
+    the emergency path never imports the shared context)."""
+
+    @property
+    def clock(self) -> Clock: ...
+
+    @property
+    def bus(self) -> EventBus: ...
+
+    @property
+    def operator_seen_mono(self) -> float | None: ...
+
+    def add_event(
+        self,
+        type_: str,
+        *,
+        severity: str = "info",
+        mission_id: str | None = None,
+        vehicle_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None: ...
+
+
 class StopCheck(Protocol):
     """The quick stop check of the decision interface: "stop", "return_home" or ``None``."""
 
@@ -156,6 +182,7 @@ class VehicleActions:
         self.notices: NoticeSink = notices or NoNoticeSink()
         self.mav: MavBackend | None = None  # set once the MAVLink thread runs
         self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
         self._outcomes: OrderedDict[str, ActionOutcome] = OrderedDict()
         self._by_client: OrderedDict[tuple[str, str, str], ActionDispatched] = OrderedDict()
         self.post: queue.SimpleQueue[_Post | _Report | _Event] = queue.SimpleQueue()
@@ -209,6 +236,18 @@ class VehicleActions:
         by: str,
         issuer_kind: Literal["operator", "system"],
     ) -> ActionDispatched:
+        with self._start_lock:  # one action at a time: dedupe, number, latch, hand-off
+            return self._start_locked(kind, vehicle_id, client_action_id, via, by, issuer_kind)
+
+    def _start_locked(
+        self,
+        kind: LatchAction,
+        vehicle_id: str,
+        client_action_id: str,
+        via: Via,
+        by: str,
+        issuer_kind: Literal["operator", "system"],
+    ) -> ActionDispatched:
         key = (vehicle_id, kind, client_action_id)
         with self._lock:
             seen = self._by_client.get(key)
@@ -225,11 +264,12 @@ class VehicleActions:
                 "Ingen väg till drönaren just nu. Använd RC-sändaren; flygkontrollens egen "
                 "failsafe tar hem den om markstationen är borta.",
             )
-        seq = self.latches.next_seq(vehicle_id)
-        self.latches.set(vehicle_id, kind, seq, by)
+        seq = self.latches.start(vehicle_id, kind, by).action_seq
         action_id = str(new_id())
-        if self.mav is not None:
-            self.mav.submit(ModeAction(action_id, vehicle_id, kind, seq, self.clock.monotonic()))
+        submitted = self.mav is not None and self.mav.submit(
+            ModeAction(action_id, vehicle_id, kind, seq)
+        )
+        mav_ok = mav_ok and submitted
         paths: dict[str, Literal["queued", "unavailable"]] = {
             "mavlink": "queued" if mav_ok else "unavailable",
             "sdlink": "queued" if sd_ok else "unavailable",
@@ -245,12 +285,15 @@ class VehicleActions:
             issuer_kind=issuer_kind,
             operator_id=by,
         )
+        self._remember(key, reply)
+        self.post.put(_Post(outcome, notice))
+        return reply
+
+    def _remember(self, key: tuple[str, str, str], reply: ActionDispatched) -> None:
         with self._lock:
             self._by_client[key] = reply
             while len(self._by_client) > OUTCOMES_MAX:
                 self._by_client.popitem(last=False)
-        self.post.put(_Post(outcome, notice))
-        return reply
 
     def _outcome(
         self,
@@ -302,7 +345,9 @@ class VehicleActions:
         self.post.put(_Report(report))
 
     def on_event(self, type_: str, severity: str, payload: dict[str, Any]) -> None:
-        self.post.put(_Event(type_, severity, None, payload))
+        """An event from the MAVLink thread; ``payload["vehicle_id"]`` names the vehicle."""
+        vid = payload.get("vehicle_id")
+        self.post.put(_Event(type_, severity, vid if isinstance(vid, str) else None, payload))
 
     # --- Resume and steering by hand (pilot only; the routes check the role) -----------
 
@@ -331,6 +376,16 @@ class VehicleActions:
     ) -> ActionDispatched:
         if by.role != "pilot":
             raise ActionRefusedError(403, "FORBIDDEN_ROLE", "Bara piloten får göra det.")
+        with self._start_lock:
+            return self._pilot_locked(action, vehicle_id, client_action_id, by)
+
+    def _pilot_locked(
+        self,
+        action: Literal["resume", "takeover", "handback"],
+        vehicle_id: str,
+        client_action_id: str,
+        by: Principal,
+    ) -> ActionDispatched:
         key = (vehicle_id, action, client_action_id)
         with self._lock:
             seen = self._by_client.get(key)
@@ -340,19 +395,19 @@ class VehicleActions:
             self._known(vehicle_id)
         except EmergencyUnavailableError as exc:
             raise ActionRefusedError(exc.status, exc.code, exc.detail_sv) from None
-        try:
-            self.latches.check_release(vehicle_id)
-        except LatchRefusedError as exc:
-            if action != "handback":
-                raise ActionRefusedError(409, exc.code, exc.detail_sv) from None
-        seq = self.latches.next_seq(vehicle_id)
         action_id = str(new_id())
         notice: SdModel
+        try:
+            if action == "resume":
+                seq, _lifted = self.latches.release(vehicle_id)  # number and lift in one step
+            elif action == "takeover":
+                self.latches.check_release(vehicle_id)  # not while flying home
+                seq = self.latches.next_seq(vehicle_id)
+            else:  # hand-back is always allowed; it stops no running chain
+                seq = self.latches.next_seq(vehicle_id)
+        except LatchRefusedError as exc:
+            raise ActionRefusedError(409, exc.code, exc.detail_sv) from None
         if action == "resume":
-            try:
-                self.latches.release(vehicle_id, seq)
-            except LatchRefusedError as exc:  # a flight home began just now
-                raise ActionRefusedError(409, exc.code, exc.detail_sv) from None
             notice = OperatorRelease(action_seq=seq, operator_id=by.issuer_ref)
         else:
             notice = ManualTakeover.model_validate(
@@ -381,8 +436,7 @@ class VehicleActions:
         outcome = self._outcome(
             action_id, vehicle_id, action, seq, "button", by.issuer_ref, dict(paths)
         )
-        with self._lock:
-            self._by_client[key] = reply
+        self._remember(key, reply)
         self.post.put(_Post(outcome, notice))
         return reply
 
@@ -436,7 +490,7 @@ class VehicleActions:
 
     # --- the main loop's part ---------------------------------------------------------
 
-    async def pump(self, g: Any) -> None:
+    async def pump(self, g: GroundView) -> None:
         """Runs in the main loop: notices, events and WebSocket updates."""
         while True:
             try:
@@ -445,7 +499,7 @@ class VehicleActions:
                 log.error("actions.pump_failed", error=type(exc).__name__)
             await self.clock.sleep(PUMP_S)
 
-    async def drain(self, g: Any) -> None:
+    async def drain(self, g: GroundView) -> None:
         while True:
             try:
                 change = self.latches.changes.get_nowait()
@@ -471,7 +525,7 @@ class VehicleActions:
                 if item.type.startswith(("alarm.", "vehicle.")):
                     _publish(g, "vehicle", item.type, item.payload, item.vehicle_id)
 
-    async def _handle_post(self, g: Any, item: _Post) -> None:
+    async def _handle_post(self, g: GroundView, item: _Post) -> None:
         o = item.outcome
         vid = str(o.vehicle_id)
         if item.notice is not None and self.notices.up(vid):
@@ -495,7 +549,7 @@ class VehicleActions:
         )
         _publish(g, "vehicle", "vehicle.action", o.model_dump(mode="json"), vid)
 
-    def _handle_report(self, g: Any, r: ActionReport) -> None:
+    def _handle_report(self, g: GroundView, r: ActionReport) -> None:
         with self._lock:
             o = self._outcomes.get(r.action_id)
         if o is None:
@@ -536,11 +590,13 @@ class VehicleActions:
         _publish(g, "vehicle", "vehicle.action", o.model_dump(mode="json"), r.vehicle_id)
 
 
-def _publish(g: Any, topic: str, type_: str, data: dict[str, Any], vehicle_id: str | None) -> None:
+def _publish(
+    g: GroundView, topic: str, type_: str, data: dict[str, Any], vehicle_id: str | None
+) -> None:
     g.bus.publish(topic, type_, data, ts=g.clock.utc_now(), vehicle_id=vehicle_id)
 
 
-def _latch_event(g: Any, change: LatchChange) -> None:
+def _latch_event(g: GroundView, change: LatchChange) -> None:
     latch = change.latch
     payload: dict[str, Any] = {"action_seq": change.action_seq}
     if latch is not None:
@@ -571,7 +627,7 @@ class OperatorPresence:
         self.mission_active = mission_active
         self._fired: set[str] = set()
 
-    def tick(self, g: Any) -> None:
+    def tick(self, g: GroundView) -> None:
         now = g.clock.monotonic()
         seen = g.operator_seen_mono
         for vid in self.actions.vehicle_ids:
@@ -590,7 +646,7 @@ class OperatorPresence:
             elif self.action == "return_home":
                 self.actions.system(vid, "watchdog_rtl")
 
-    async def run(self, g: Any, every_s: float = 0.1) -> None:
+    async def run(self, g: GroundView, every_s: float = 0.1) -> None:
         while True:
             try:
                 self.tick(g)
