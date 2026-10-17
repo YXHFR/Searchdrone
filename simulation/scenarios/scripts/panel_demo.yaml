@@ -26,8 +26,8 @@ turns:
     say: ["Sökningen är klar. Flyger hem."]
     action: {skill: return_home}
     once: false
-  - on: operator_override          # the pilot's Resume released the stop (no latch left)
-    when: {action: null}
+  - on: operator_message           # after STOP and Resume the pilot asks to go on
+    match: '(?is).*\bfortsätt\b.*'
     say: ["Fortsätter sökningen."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
     once: false

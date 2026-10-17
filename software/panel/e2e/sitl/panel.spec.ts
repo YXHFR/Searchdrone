@@ -172,6 +172,10 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
   await expect
     .poll(() => live<string>(page, "vehicle.snapshot.executor_state"), { timeout: 15_000 })
     .not.toBe("HELD");
+  // The pilot asks the AI to go on once the mission is active again (an order sent while
+  // the stop is still being released is refused by the gate).
+  await untilStatus(page, "ACTIVE", 15_000);
+  await say(page, "Fortsätt sökningen.");
 
   // PS-2: the search finishes, the AI flies home and lands.
   await untilSearched(page, 360_000);
