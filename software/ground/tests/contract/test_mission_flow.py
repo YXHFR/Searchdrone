@@ -24,6 +24,7 @@ from script_driver import ScriptDriver  # pyright: ignore[reportMissingImports]
 
 from sd_ground.services import approvals as approvals_service
 from sd_ground.services.latches import ADOPTED_BY
+from sd_mav.allowlist import FENCE_GROUND_STATE
 from sd_mav.mission import FENCE
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState
@@ -227,6 +228,52 @@ async def test_fence_read_back_must_match(r: Rig) -> None:
     await r.clearance(mid)
     res = await d.order("takeoff", {"alt_m": 40})
     assert "FENCE_NOT_VERIFIED" in res.json()["reason_codes"]
+
+
+def _state_unknown_for(r: Rig, refusals: int | None) -> list[str]:
+    """The ground's allowlist sees the vehicle's state as unknown (late telemetry) for the
+    next ``refusals`` fence uploads (``None``: for good); what it refused is recorded."""
+    vehicle = r.core.vehicle
+    real = vehicle.would_refuse
+    seen: list[str] = []
+
+    def would_refuse(msg: Any, *, origin: Any) -> str | None:
+        if msg.get_type() == "MISSION_COUNT" and (refusals is None or len(seen) < refusals):
+            seen.append(msg.get_type())
+            return FENCE_GROUND_STATE
+        return real(msg, origin=origin)
+
+    vehicle.would_refuse = would_refuse  # type: ignore[method-assign]
+    return seen
+
+
+async def test_fence_upload_waits_out_late_telemetry(r: Rig) -> None:
+    """A moment of late telemetry refuses the fence upload (nothing sent); once fresh
+    telemetry shows the vehicle disarmed on the ground again it is uploaded and READY."""
+    seen = _state_unknown_for(r, 1)
+    mid = await r.open_mission()
+    d = driver(r, mid)
+    proposal = (await d.charter("box")).json()
+    assert (await r.approve(proposal["approval_id"], 1)).status_code == 200
+    await r.wait_status(mid, "READY", 30)
+    assert seen == ["MISSION_COUNT"]  # refused once (nothing sent), then uploaded
+    detail = await r.mission(mid)
+    assert detail["charter"]["fence_verified_at"] is not None
+    assert "alert" not in r.bus_types()
+
+
+async def test_fence_upload_never_sent_while_state_stays_unknown(r: Rig) -> None:
+    seen = _state_unknown_for(r, None)
+    mid = await r.open_mission()
+    d = driver(r, mid)
+    proposal = (await d.charter("box")).json()
+    assert (await r.approve(proposal["approval_id"], 1)).status_code == 200
+    await r.until(lambda: "alert" in r.bus_types(), 15, "alarm")
+    detail = await r.mission(mid)
+    assert detail["charter"]["fence_verified_at"] is None
+    assert detail["mission"]["status"] != "READY"
+    assert r.fc is not None and not r.fc.missions[FENCE]  # nothing reached the controller
+    assert seen  # it was asked, and refused, every time
 
 
 async def test_fence_params_wrong_blocks_takeoff(r: Rig) -> None:
