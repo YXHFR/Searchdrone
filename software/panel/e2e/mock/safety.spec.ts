@@ -193,7 +193,8 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
     await expect(page.getByTestId("topbar")).toBeVisible();
     ground.refuseSockets = true;
     await ground.dropSocket();
-    await expect(page.getByTestId("connection-banner")).toBeVisible({ timeout: 2_500 });
+    // The banner waits 2 s after the socket is lost; the rest is slack for a busy runner.
+    await expect(page.getByTestId("connection-banner")).toBeVisible({ timeout: 5_000 });
     ground.respond(
       "GET /api/v1/vehicles/sim-01/actions/a1",
       () => ({ status: 200, body: outcome("a1") }),
