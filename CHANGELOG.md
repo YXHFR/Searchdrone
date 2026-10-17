@@ -25,15 +25,6 @@ All notable changes to this project are listed here. The format follows
 - `sd_geo`: the lawnmower search pattern (concave areas too) and the coverage measure.
 - `sd_testing`: a test-only package with the project's one fake clock.
 
-### Changed
-
-- One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
-  clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
-- The SD-link client refuses to send its token over `ws://` to anything but loopback.
-- `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
-  executor) asks before every single write, retries included.
-- The six onboard skills of the foundation are `implemented` in the skill registry.
-
 - Vehicle link (`sd_mav`): MAVLink to the flight controller for the onboard computer and
   the ground station, behind a default-deny allowlist with number checks against the
   mission's limits and a deny list of the most dangerous messages (no parameter writes,
@@ -96,3 +87,12 @@ All notable changes to this project are listed here. The format follows
 - Review instructions for the three reviewer roles (architecture, IT security, flight
   safety) in `.github/review/`, the list of safety-relevant paths every reviewer must read
   (`critical_paths.txt`), and instructions for a retrospective review of merged code.
+
+### Changed
+
+- One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
+  clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
+- The SD-link client refuses to send its token over `ws://` to anything but loopback.
+- `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
+  executor) asks before every single write, retries included.
+- The six onboard skills of the foundation are `implemented` in the skill registry.

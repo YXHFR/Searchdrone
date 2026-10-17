@@ -174,6 +174,7 @@ class Rig:
     charter: MissionCharter | None = None
     background: list[asyncio.Task[None]] = field(default_factory=list)
     link: bool = True
+    commander: bool = True  # the AI's status from the ground (CommanderStatus)
     _seq: int = 1000
 
     async def run(self, seconds: float, step: float = 0.02) -> None:
@@ -342,7 +343,8 @@ def _keep_link(r: Rig) -> None:
         while not r.stop.is_set():
             if r.link:
                 r.ex.on_link(True, r.clock.monotonic_ms())
-                r.ex.on_commander_status(CommanderStatus(connected=True, state="ready"))
+                if r.commander:
+                    r.ex.on_commander_status(CommanderStatus(connected=True, state="ready"))
             else:
                 r.ex.on_link(False, None)
             await r.clock.sleep(0.5)

@@ -11,7 +11,7 @@ FS_GCS_ENABLE 3          # no ground station heartbeat -> SmartRTL, else RTL
 FS_GCS_TIMEOUT 20        # seconds; equals FS_GCS_TIMEOUT_S in sd_safety.constants
 FS_OPTIONS 8             # bit 3 only: keep landing if a landing is already under way
 FS_EKF_ACTION 1          # bad position estimate -> LAND (no pilot with sticks in sim)
-FS_THR_ENABLE 0          # no RC transmitter in the simulator; 4 with a real RC link
+FS_THR_ENABLE 0          # RC-loss failsafe off in the simulator profile; 4 with a real RC link
 
 # --- battery (9000 mAh pack, see hardware/drone.yaml) -----------------------------------
 BATT_MONITOR 4           # voltage and current

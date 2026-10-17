@@ -2,7 +2,7 @@
 
 A handler plans (a pure function the onboard gate checks), then runs its procedure
 through ``ExecutorIO``, the only way from a handler to MAVLink. Every write goes through
-the executor's compare-and-set (§ "who steers") inside ``sd_mav.Vehicle.send``; when the
+the executor's compare-and-set inside ``sd_mav.Vehicle.send``; when the
 executor is not in control the write raises ``ControlNotAllowedError`` and nothing is sent.
 
 Stage 2 and 3 skills build on these types. New methods may be added; existing ones are
@@ -151,7 +151,7 @@ class SkillHandler(Protocol):
     name: ClassVar[str]
     TRANSITIONS_EXTRA: ClassVar[dict[Any, Any]]
 
-    def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan: ...  # pure
+    def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan: ...  # no I/O
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None: ...  # runs until done
     def on_tick(self, ctx: TickContext) -> SkillStatus: ...  # 10 Hz, progress only
     async def cancel(self, io: ExecutorIO) -> None: ...  # leaves the vehicle in LOITER

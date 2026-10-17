@@ -7,8 +7,9 @@ without sending anything and the executor goes to HELD. Only an explicit
 ``OperatorRelease`` (the pilot's Resume click) hands control back; no chat text can.
 
 ``OVERRIDE_KINDS`` is the one table of what each kind does onboard. The fallback path
-for when the ground's MAVLink does not reach the flight controller is separate
-(``override_fallback.py``), the only user of ``SendOrigin.OVERRIDE_FALLBACK``.
+for when the ground's MAVLink does not reach the flight controller (sending the same
+mode steps from onboard) is not built yet; it will be the only user of
+``SendOrigin.OVERRIDE_FALLBACK``.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ class KindRule:
     held_by: HeldBy
     sets_stop_latch: bool
     battery_rtl: bool  # Resume is refused until LANDED
-    fallback_steps: str  # "stop" (BRAKE, LOITER, LAND) or "home" (SMART_RTL, RTL, LAND)
+    steps: str  # the ground's mode chain: "stop" (BRAKE, LOITER, LAND) or "home" (SMART_RTL, ...)
 
 
 OVERRIDE_KINDS: Final = MappingProxyType(

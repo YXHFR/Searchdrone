@@ -85,6 +85,21 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         asyncio.ensure_future(executor.run(stop)),
         asyncio.ensure_future(link.run(stop)),
     ]
+    failed: list[BaseException] = []
+
+    def supervise(task: asyncio.Future[None]) -> None:
+        # A dead executor or link must never look alive: stop the whole process, so our
+        # HEARTBEAT ends and the ground station's watchdog takes over.
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None or not stop.is_set():
+            log.critical("sd-onboard stops: a main task ended (%r)", exc)
+            failed.append(exc or RuntimeError("main task ended"))
+            stop.set()
+
+    for task in tasks:
+        task.add_done_callback(supervise)
     try:
         await stop.wait()
     finally:
@@ -93,7 +108,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         await asyncio.gather(*tasks, return_exceptions=True)
         await executor.close()
         await vehicle.close()
-    return 0
+    return 1 if failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:

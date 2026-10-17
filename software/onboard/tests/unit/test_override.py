@@ -42,16 +42,14 @@ async def test_override_notice_kinds(kind: str) -> None:
         await r.run(5)
         assert r.steering_sent(before) == []  # nothing that steers after the notice
         # The ground's MAVLink put the vehicle into the first step of its chain.
-        r.fc.set_mode_external(
-            CopterMode.BRAKE if rule.fallback_steps == "stop" else CopterMode.SMART_RTL
-        )
+        r.fc.set_mode_external(CopterMode.BRAKE if rule.steps == "stop" else CopterMode.SMART_RTL)
         await r.run(1)
         ref = _release(r)
         await r.run(0.5)
         if rule.battery_rtl:
             assert r.up.codes(ref) == ("ONB_BATTERY_RTL_ACTIVE",)
             assert r.ex.state == S.HELD
-        elif rule.fallback_steps == "stop":
+        elif rule.steps == "stop":
             assert r.ex.state == S.HOLD and not r.ex.over.stop_latch
             await r.run(3)
             assert r.fc.mode == CopterMode.LOITER  # out of BRAKE as the first own action
@@ -223,3 +221,25 @@ async def test_takeover_pauses_the_ai_and_sends_nothing() -> None:
         assert r.ex.state == S.HOLD and not r.ex.over.manual
         resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
         assert "running" in r.up.stages(resume.command_id)
+
+
+async def test_return_home_refused_is_retried_until_it_flies_home() -> None:
+    """SmartRTL and RTL refused: no dead end in RTL; the executor keeps asking."""
+    async with rig() as r:
+        await _in_goto(r)
+        r.fc.refuse_modes = {int(CopterMode.SMART_RTL), int(CopterMode.RTL)}
+        cmd = await r.send(r.order("return_home"), 1)
+        assert r.ex.state == S.RTL
+        await r.run(3)
+        assert r.up.codes(cmd.command_id) == ("ONB_MODE_CHANGE_TIMEOUT",)
+        assert "executor.return_home_failed" in r.up.kinds()
+        # A new order is not answered "done" while the vehicle does not fly home.
+        again = await r.send(r.order("return_home"), 1)
+        assert r.up.stages(again.command_id)[-1] != "done"
+        r.fc.refuse_modes = set()
+        await r.run(8)
+        assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
+        assert "executor.return_home_retry" in r.up.kinds() or "running" in r.up.stages(
+            again.command_id
+        )
+        await r.until(lambda: r.ex.state == S.LANDED, 300, step=0.05)

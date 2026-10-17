@@ -10,6 +10,12 @@ station (``sd_link_testing.FakeGround``, no ground gate), through a proxy that c
   only allowed MAVLink from 1/191 and exactly one ARM;
 * a mode change from outside makes the executor let go and stay quiet;
 * SD-link lost for 10 s changes nothing; lost for 60 s: hold at 23 s, home at 53 s.
+* a silent AI ends in a hold (never home); a lowered height limit makes it sink below it,
+  a shrunken area sends it home;
+* STOP holds everything onboard until Resume, which leaves BRAKE for LOITER.
+
+A simulated RC transmitter (throttle down on the ground, centred in the air) stands in
+for the pilot: without RC the simulator's throttle is zero and LOITER sinks.
 """
 
 from __future__ import annotations
@@ -63,6 +69,8 @@ from sd_schemas.link import (
     CharterInstall,
     ClearanceConfirmation,
     CommanderStatus,
+    OperatorOverrideNotice,
+    OperatorRelease,
     SkillCommand,
 )
 from sd_sim import config, paths
@@ -179,6 +187,7 @@ class Flight:
     sent: list[Any] = field(default_factory=list)  # everything 1/191 wrote
     track: list[tuple[float, float, float, float]] = field(default_factory=list)  # t, lat, lon, alt
     acks: dict[Any, list[Ack]] = field(default_factory=dict)
+    commander: bool = True  # whether the test ground reports the AI as connected
     tasks: list[asyncio.Future[Any]] = field(default_factory=list)
 
     def at(self, east: float, north: float) -> tuple[float, float]:
@@ -252,7 +261,7 @@ async def _read_acks(f: Flight, session: LinkSession) -> None:
 
 async def _commander(f: Flight) -> None:
     while True:
-        if f.session is not None:
+        if f.session is not None and f.commander:
             with contextlib.suppress(Exception):
                 await f.session.send(CommanderStatus(connected=True, state="ready"))
         await asyncio.sleep(1.0)
@@ -440,7 +449,7 @@ def test_params_loaded(sim: Sim) -> None:
 
 @pytest.mark.budget_s(600)
 def test_demo_flight(sim: Sim) -> None:
-    """D5-D9: 40 m within 30 s, P1 within 5 m, >= 95 % coverage, home within 3 m.
+    """The demo flight: 40 m within 30 s, P1 within 5 m, >= 95 % coverage, home within 3 m.
     Also test_no_forbidden_mavlink: everything 1/191 sent is allowed, exactly one ARM."""
 
     async def run() -> None:
@@ -569,5 +578,102 @@ def test_sdlink_loss_60s(sim: Sim) -> None:
             await f.until(lambda: f.ex.state == S.LANDED, 240, "landed")
             t = f.onboard.telemetry
             assert math.dist(f.plane.xy(t.lat, t.lon), (0, 0)) <= 3
+
+    asyncio.run(run())
+
+
+# --- the limits in the air ------------------------------------------------------------------
+
+
+async def _new_version(f: Flight, **changes: Any) -> None:
+    assert f.session is not None and f.charter is not None
+    new = f.charter.model_copy(update={"version": f.charter.version + 1, **changes})
+    await f.session.send(CharterInstall(charter=new))
+    await f.until(lambda: f.ex.charter == new, 10, f"charter version {new.version}")
+    f.charter = new
+
+
+@pytest.mark.budget_s(420)
+def test_limits_in_flight(sim: Sim) -> None:
+    """A silent AI never sends the vehicle home: the step finishes and it holds. A lower
+    height limit makes it sink below it; a smaller area beyond its buffer sends it home."""
+
+    async def run() -> None:
+        async with flight(sim) as f:
+            await _install(f, on_ai_silent="return_home", ai_silent_timeout_s=5)
+            await _takeoff(f, 40)
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
+            lat, lon = f.at(80, 0)
+            goto = await f.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 4})
+            f.commander = False  # the AI falls silent during the step
+            ack = await f.stage(goto, {"done"}, 120)
+            assert ack.stage == "done", ack
+            await asyncio.sleep(10)
+            assert f.ex.state == S.HOLD and f.ex.hold_reason == "ai_silent"
+            assert f.onboard.telemetry.fc_mode == CopterMode.LOITER.name
+            f.commander = True
+            # The pilot lowers the height limit in the air: down to 5 m below it.
+            await _new_version(f, alt_max_agl_m=30, default_alt_agl_m=25)
+            await f.until(lambda: f.ex.state == S.TRANSIT, 15, "descent starts")
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "descent done")
+            assert f.ex.hold_reason == "limit"
+            assert abs(f.onboard.telemetry.alt_rel_home_m - 25) <= 2
+            # The area shrinks around home: the vehicle is now outside it and flies home.
+            await _new_version(f, area=f.square(40))
+            await f.until(lambda: f.ex.state == S.RTL, 15, "home after leaving the area")
+            await f.until(
+                lambda: f.onboard.telemetry.fc_mode in ("SMART_RTL", "RTL"), 5, "home mode"
+            )
+            await f.until(lambda: f.ex.state == S.LANDED, 240, "landed")
+            t = f.onboard.telemetry
+            assert math.dist(f.plane.xy(t.lat, t.lon), (0, 0)) <= 3
+
+    asyncio.run(run())
+
+
+# --- STOP and Resume --------------------------------------------------------------------------
+
+
+@pytest.mark.budget_s(240)
+def test_stop_then_release_out_of_brake(sim: Sim) -> None:
+    """STOP: the ground's BRAKE and the notice; nothing steers from onboard until Resume,
+    whose first own action is LOITER out of BRAKE."""
+
+    async def run() -> None:
+        async with flight(sim) as f:
+            await _install(f)
+            await _takeoff(f, 30)
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
+            lat, lon = f.at(120, 0)
+            await f.order("goto", {"lat": lat, "lon": lon, "alt_m": 30, "speed_ms": 4})
+            await f.until(lambda: f.ex.state == S.TRANSIT, 10, "transit")
+            assert f.session is not None
+            result = await f.ground.set_mode(CopterMode.BRAKE, origin=SendOrigin.GROUND)
+            assert result.name == "ACCEPTED"
+            await f.session.send(
+                OperatorOverrideNotice(
+                    override_id=new_id(),
+                    kind="stop",
+                    action_seq=1,
+                    issuer_kind="operator",
+                    operator_id="operator:pilot",
+                )
+            )
+            await f.until(lambda: f.ex.state == S.HELD, 5, "held")
+            index = len(f.sent)
+            resume = await f.order("resume")
+            ack = await f.stage(resume, {"rejected"}, 10)
+            assert ack.reason_codes == ["ONB_CONTROL_HELD"]
+            await asyncio.sleep(10)
+            assert f.steering_since(index) == []
+            assert f.onboard.telemetry.fc_mode == CopterMode.BRAKE.name
+            await f.session.send(OperatorRelease(action_seq=1, operator_id="operator:pilot"))
+            await f.until(lambda: f.ex.state == S.HOLD, 10, "released")
+            await f.until(
+                lambda: f.onboard.telemetry.fc_mode == CopterMode.LOITER.name, 10, "LOITER"
+            )
+            resume = await f.order("resume")
+            ack = await f.stage(resume, {"done"}, 120)
+            assert ack.stage == "done", ack
 
     asyncio.run(run())

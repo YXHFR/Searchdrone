@@ -30,7 +30,7 @@ from sd_mav.mission import (
     mission_hash,
     upload,
 )
-from sd_mav.modes import CopterMode
+from sd_mav.modes import HOME_MODES, CopterMode
 from sd_mav.vehicle import (
     ControlNotAllowedError,
     ForbiddenMavlinkError,
@@ -140,6 +140,7 @@ _SAVE_EVERY_MS: Final = 1000
 _PREFLIGHT_EVERY_MS: Final = 1000
 _ALT_GOTO_SPEED_MS: Final = 3.0
 _ALT_GOTO_BELOW_M: Final = 5.0
+_RTL_RETRY_MS: Final = 3000
 _LOOP_ALIVE_MS: Final = 1500  # our HEARTBEAT stops when the tick has not run for this long
 _MIN_GPS_SATS: Final = 8
 _CRITICAL: Final = frozenset(
@@ -153,6 +154,8 @@ _CRITICAL: Final = frozenset(
         "link_loss_rtl",
         "forbidden_mavlink_blocked",
         "gate_disagreement",
+        "return_home_failed",
+        "return_home_retry",
     }
 )
 _WARNING: Final = frozenset(
@@ -318,6 +321,7 @@ class Executor:
         self.ai_silent_after_step = False
         self.flown = False  # airborne seen since the takeoff began
         self._landed_ms: int | None = None
+        self._rtl_retry_ms: int | None = None
         self._last_tick_ms: int | None = None
         self._last_save_ms = -_SAVE_EVERY_MS
         self._last_preflight_ms = -_PREFLIGHT_EVERY_MS
@@ -594,6 +598,12 @@ class Executor:
         )
         if active.ack_done:
             self._ack(active.command_id, "failed", (exc.code,), detail_sv=exc.detail_sv or None)
+        if self.state == S.RTL:
+            # No way out of RTL: the tick asks for SmartRTL/RTL again until it flies home.
+            self.emit(
+                "return_home_failed", {"code": exc.code, "fc_mode": self.vehicle.telemetry.fc_mode}
+            )
+            return
         target = self.target_of(key)
         if isinstance(target, Refusal):
             return
@@ -664,8 +674,9 @@ class Executor:
                 gate=decision,
             )
             return
-        if self.state == S.RTL:  # T11: already flying home
-            self._ack(cmd.command_id, "accepted")
+        home_running = self.active is None or self.active.skill == "return_home"
+        if self.state == S.RTL and self._flying_home() and home_running:
+            self._ack(cmd.command_id, "accepted")  # T11: already flying home
             self._ack(cmd.command_id, "done")
             return
         self._accept(cmd, spec, handler, plan, target)
@@ -965,7 +976,12 @@ class Executor:
             # hard limits (a pilot may have raised them, and the fence with them).
             await self._read_fence_limits()
         codes = self._charter_problems(charter)
-        if not codes and self.state not in ON_GROUND:
+        if not codes and self.state not in ON_GROUND and self.charter is None:
+            # After a restart in the air: the first charter is taken only when it names
+            # the fence that is in the flight controller.
+            if not await self._fence_matches(charter):
+                codes = ["ONB_CHARTER_IN_FLIGHT"]
+        elif not codes and self.state not in ON_GROUND:
             outcome = self.target_of(
                 Trigger.CHARTER_INSTALL, old_charter=self.charter, new_charter=charter
             )
@@ -1017,6 +1033,8 @@ class Executor:
     def on_commander_status(self, s: CommanderStatus) -> None:
         self.commander_connected = s.connected
         self.commander_status_ms = self.now_ms()
+        if s.connected and not self.limits.ai_silent:
+            self.ai_silent_after_step = False  # the AI is back
 
     def on_link(self, up: bool, last_inbound_ms: int | None) -> None:
         if up and not self.link_up and self.link_last_inbound_ms is not None:
@@ -1080,6 +1098,13 @@ class Executor:
             )
         except (MissionError, ForbiddenMavlinkError, ControlNotAllowedError):
             self.fence_ok = False
+
+    async def _fence_matches(self, charter: MissionCharter) -> bool:
+        try:
+            items = await download(self.vehicle, FENCE, origin=SendOrigin.STARTUP)
+        except (MissionError, ForbiddenMavlinkError, ControlNotAllowedError):
+            return False
+        return charter.fence_hash is not None and fence_hash(items) == charter.fence_hash
 
     async def _read_param(self, name: str) -> float | None:
         return await self.vehicle.read_param(name, origin=SendOrigin.STARTUP)
@@ -1199,6 +1224,7 @@ class Executor:
         if t.fc_connected:
             self._watch_landing()
             self._classify(now)
+            self._keep_flying_home(now)
         if self.state in MOVING and self.charter is not None and t.fc_connected:
             if self.state == S.TAKEOFF and is_airborne(self.vehicle_state()):
                 self.flown = True
@@ -1219,6 +1245,25 @@ class Executor:
             self._save()
         self._tick_ms.append((self.clock.monotonic() - started) * 1000)
         del self._tick_ms[:-100]
+
+    def _flying_home(self) -> bool:
+        t = self.vehicle.telemetry
+        return t.fc_custom_mode is not None and CopterMode(t.fc_custom_mode) in HOME_MODES
+
+    def _keep_flying_home(self, now: int) -> None:
+        """RTL means the flight controller flies home. If it does not (SmartRTL and RTL
+        were refused or never confirmed), ask again every few seconds."""
+        if self.state != S.RTL or self.active is not None or self._flying_home():
+            return
+        if not is_airborne(self.vehicle_state()):
+            return
+        if self._rtl_retry_ms is not None and now - self._rtl_retry_ms < _RTL_RETRY_MS:
+            return
+        self._rtl_retry_ms = now
+        self.emit("return_home_retry", {"fc_mode": self.vehicle.telemetry.fc_mode})
+        handler = ReturnHomeHandler()
+        plan = handler.plan(HOME_PARAMS, self._plan_context(new_id()))
+        self._internal("return_home", handler, plan, SendOrigin.LIMIT)
 
     def _take(self, key: Trigger, *, held_by: str, event: str) -> None:
         target = self.target_of(key)

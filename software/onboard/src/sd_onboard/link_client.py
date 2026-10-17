@@ -77,6 +77,8 @@ class OnboardLink:
         self._wake = asyncio.Event()
         self.manual_values_ignored = 0
         self.dropped_events = 0
+        self.dropped_acks = 0
+        self._charter_task: asyncio.Task[None] | None = None
 
     def __repr__(self) -> str:  # never show the token
         return f"OnboardLink({self._client!r})"
@@ -93,6 +95,8 @@ class OnboardLink:
         gate: GateDecision | None = None,
     ) -> None:
         codes = list(reason_codes)
+        if len(self._acks) == MAX_ACKS:
+            self.dropped_acks += 1
         self._acks.append(
             lambda s: s.ack(ref_id, stage, reason_codes=codes, detail_sv=detail_sv, gate=gate)
         )
@@ -173,7 +177,9 @@ class OnboardLink:
             case ClearanceConfirmation():
                 ex.on_clearance(body, env.msg_id)
             case CharterInstall():
-                await ex.on_charter(body)
+                # Reading the fence takes a while; STOP notices behind it must not wait.
+                previous = self._charter_task
+                self._charter_task = asyncio.ensure_future(self._install(previous, body))
             case PilotPosition():
                 ex.on_pilot_position(body)
             case CommanderStatus():
@@ -184,6 +190,11 @@ class OnboardLink:
                 self.manual_values_ignored += 1
             case _:
                 pass
+
+    async def _install(self, previous: asyncio.Task[None] | None, body: CharterInstall) -> None:
+        if previous is not None:
+            await asyncio.gather(previous, return_exceptions=True)  # keep the order
+        await self._ex().on_charter(body)
 
     async def _snapshots(self, session: LinkSession) -> None:
         ex = self._ex()

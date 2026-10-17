@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from sd_mav.modes import CopterMode
+from sd_onboard.skills._common import is_airborne
 from sd_safety.targets import Plane, polygon_from_geojson
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState, ResumePoint
@@ -19,8 +20,6 @@ from sd_schemas.vehicle import VehicleState
 __all__ = ["GUARDS", "GuardInput", "Refusal", "is_airborne", "run_guard"]
 
 S = ExecutorState
-_AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
-_AIRBORNE_ALT_M: Final = 0.5
 _HOLD_MODES: Final = frozenset({CopterMode.BRAKE.name, CopterMode.LOITER.name})
 _HOME_MODES: Final = frozenset({CopterMode.SMART_RTL.name, CopterMode.RTL.name})
 
@@ -45,13 +44,6 @@ class GuardInput:
 
 
 Outcome = ExecutorState | Refusal
-
-
-def is_airborne(v: VehicleState | None) -> bool:
-    """In the air for the executor: the flight controller says so, or armed above 0.5 m."""
-    if v is None:
-        return False
-    return v.landed_state in _AIRBORNE_STATES or (v.armed and v.alt_rel_home_m > _AIRBORNE_ALT_M)
 
 
 def _only(g: GuardInput) -> Outcome:

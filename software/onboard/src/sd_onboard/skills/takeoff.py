@@ -13,8 +13,8 @@ from typing import Any, ClassVar, Final
 
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import MavResult
-from sd_onboard.executor.guards import is_airborne
 from sd_onboard.skills import register_handler
+from sd_onboard.skills._common import is_airborne
 from sd_onboard.skills.base import (
     ExecutorIO,
     MavAction,

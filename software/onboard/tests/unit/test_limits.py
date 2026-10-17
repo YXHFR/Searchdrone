@@ -321,6 +321,7 @@ async def test_ai_silent_hold() -> None:
         await _hovering(r, on_ai_silent="hold", ai_silent_timeout_s=5)
         lat, lon = at(150, 0)
         await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 3}))
+        r.commander = False
         r.ex.on_commander_status(CommanderStatus(connected=False, state="down"))
         await r.run(1)
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "ai_silent"
@@ -329,6 +330,7 @@ async def test_ai_silent_hold() -> None:
 async def _ai_quiet_during_goto(r: Rig) -> None:
     lat, lon = at(60, 0)
     goto = await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 5}))
+    r.commander = False
     r.ex.on_commander_status(CommanderStatus(connected=False, state="down"))
     await r.run(2)
     assert r.ex.state == S.TRANSIT  # the step goes on
@@ -362,3 +364,15 @@ async def test_pilot_position_from_the_ground_is_used() -> None:
         await r.run(6)
         assert r.ex.vehicle_state().pilot_position == r.charter.pilot_position  # type: ignore[union-attr]
         assert r.up.kinds().count("executor.pilot_position_stale") == 1
+
+
+async def test_ai_back_clears_the_silent_label() -> None:
+    async with rig() as r:
+        await _hovering(r, on_ai_silent="continue_plan", ai_silent_timeout_s=5)
+        await _ai_quiet_during_goto(r)
+        r.commander = True
+        await r.run(5)
+        lat, lon = at(0, 30)
+        goto = await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 5}))
+        await r.until(lambda: r.up.stages(goto.command_id)[-1] == "done", 60)
+        assert r.ex.hold_reason == "skill_done"

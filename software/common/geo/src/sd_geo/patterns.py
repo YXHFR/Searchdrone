@@ -3,7 +3,9 @@
 Lines run in the direction ``heading_deg`` (compass degrees: 0 = north, 90 = east,
 clockwise). They are ``spacing_m`` apart, the outer ones half a spacing inside the
 polygon, and every second line is flown backwards. Concave polygons can cut a line in
-several pieces; they are flown in order along the line.
+several pieces; they are flown in order along the line, so the leg between two pieces
+can cross a notch. The onboard gate checks the whole route and refuses such a survey
+rather than flying it.
 """
 
 from __future__ import annotations

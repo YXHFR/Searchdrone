@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sd_link.client import is_safe_url
 from sd_mav.connection import BROADCAST_SYSID, GCS_COMPID
+from sd_onboard.io.params import effective_params
 from sd_schemas.base import VEHICLE_ID_PATTERN
 
 __all__ = [
@@ -174,9 +175,18 @@ def check(loaded: Loaded) -> list[str]:
     hooks_set = cfg.test_hooks != TestHooks()
     if hooks_set and not (cfg.profile == "sim" and loaded.env.get("SD_TEST") == "1"):
         errors.append("[test_hooks] gäller bara i tester (SD_TEST=1) / test hooks need SD_TEST=1.")
-    for path in loaded.param_files():
-        if not path.is_file():
-            errors.append(f"Parameterfilen saknas / parameter file missing: {path.name}.")
+    files = loaded.param_files()
+    if not files:
+        errors.append("expected_param_files får inte vara tom / no parameter file given.")
+    missing = [p for p in files if not p.is_file()]
+    for path in missing:
+        errors.append(f"Parameterfilen saknas / parameter file missing: {path.name}.")
+    if files and not missing:
+        params = effective_params(files)
+        if params.get("MAV_GCS_SYSID") != float(cfg.gcs_sysid):
+            errors.append("gcs_sysid stämmer inte med MAV_GCS_SYSID / gcs_sysid differs.")
+        if "FS_GCS_ENABLE" not in params:
+            errors.append("Säkerhetsparametrarna saknas / the safety parameters are missing.")
     return errors
 
 
