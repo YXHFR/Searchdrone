@@ -15,7 +15,7 @@ export const NO_VIDEO_MS = 10_000;
 export const STALL_MS = 3000;
 const POLL_MS = 250;
 
-type Mode = "connecting" | "webrtc" | "hls" | "none";
+export type Mode = "connecting" | "webrtc" | "hls" | "none";
 
 interface Info {
   width: number;
@@ -56,7 +56,7 @@ function startHls(el: HTMLVideoElement, url: string): boolean {
  * picture stands still for 3 s or the WebRTC connection is lost. Returns a function that
  * stops everything (and ends the WHEP session).
  */
-function connect(
+export function connect(
   el: HTMLVideoElement,
   whepUrl: string,
   hlsUrl: string | null,
