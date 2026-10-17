@@ -78,3 +78,19 @@ def test_rules_agree_with_the_ground_station() -> None:
     for name, value in FC_SAFETY_EXPECTED.items():
         assert name in exact, f"{name} saknar en exakt regel"
         assert exact[name] == value, name
+
+
+FLIGHT_FILE = SAFETY_FILE.with_name("searchdrone-safety-flight.parm")
+
+
+def test_flight_profile_requires_the_rc_transmitter() -> None:
+    sim = params.parse_parm(SAFETY_FILE.read_text(), SAFETY_FILE.name)
+    flight = params.parse_parm(FLIGHT_FILE.read_text(), FLIGHT_FILE.name)
+    assert params.rule_violations(sim) == []
+    assert params.rule_violations(flight, params.FLIGHT_SAFETY_RULES) == []
+    # Same parameters; only the RC failsafe differs between simulator and real flight.
+    assert set(sim) == set(flight)
+    assert {k for k in sim if sim[k] != flight[k]} == params.PROFILE_DIFFERENCES
+    assert flight["FS_THR_ENABLE"] != 0
+    rc_check = 1 << 6  # ArduPilot's arming check bit for the RC channels
+    assert int(flight["ARMING_SKIPCHK"]) & rc_check == 0

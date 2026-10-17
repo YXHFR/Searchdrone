@@ -25,7 +25,13 @@ from types import FrameType
 from sd_sim import _args, config, gazebo, paths, ports, procs, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
-from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
+from sd_sim.sitl import (
+    SAFETY_PARAM_FILE,
+    SitlLayout,
+    SitlOptions,
+    build_sitl_argv,
+    write_qgc_params,
+)
 from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
 
 ALLOWED_KEYS = (
@@ -104,8 +110,10 @@ class Stack:
         *,
         observer: bool = True,
         repo: Path = paths.REPO,
+        safety_file: str = SAFETY_PARAM_FILE,
     ) -> None:
         self.cfg = cfg
+        self.safety_file = safety_file
         self.run_dir = run_dir
         self.repo = repo
         self.observer = observer
@@ -270,6 +278,7 @@ class Stack:
             ardupilot_home=paths.ardupilot_home(),
             repo=self.repo,
             extra_defaults=extra,
+            safety_file=self.safety_file,
         )
 
     def sitl_argv(self) -> list[str]:

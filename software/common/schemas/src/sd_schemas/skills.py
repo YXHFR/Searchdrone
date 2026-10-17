@@ -6,6 +6,7 @@ handler onboard and tests. The gate and the ground station need no change.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, Literal
@@ -134,6 +135,24 @@ def _here(ctx: TargetContext) -> LatLon | None:
     if ctx.position is None:
         return None
     return LatLon(lat=ctx.position.lat, lon=ctx.position.lon)
+
+
+_CIRCLE_CORNERS = 24
+_EARTH_RADIUS_M = 6_371_008.8
+
+
+def _circle_polygon(centre: LatLon, radius_m: float) -> dict[str, Any]:
+    """A closed GeoJSON polygon around a circle: its edges touch the circle from outside
+    (corner distance ``radius / cos(pi / n)``), so the polygon contains the whole circle."""
+    reach = radius_m / math.cos(math.pi / _CIRCLE_CORNERS)
+    dlat = math.degrees(reach / _EARTH_RADIUS_M)
+    dlon = dlat / math.cos(math.radians(centre.lat))
+    ring = []
+    for i in range(_CIRCLE_CORNERS):
+        a = 2 * math.pi * i / _CIRCLE_CORNERS
+        ring.append([centre.lon + dlon * math.sin(a), centre.lat + dlat * math.cos(a)])
+    ring.append(ring[0])
+    return {"type": "Polygon", "coordinates": [ring]}
 
 
 def _first_corner(polygon: dict[str, Any]) -> LatLon:
@@ -297,9 +316,18 @@ class OrbitParams(SkillParams):
     turns: int = Field(default=1, ge=1, le=3)
 
     def gate_targets(self, ctx: TargetContext) -> GateTargets:
-        # The circle itself is sampled by the gate around the centre (radius_m).
+        # The whole circle is an area the gate checks (charter, pilot distance), as a
+        # polygon drawn just outside it, so no part of the flown circle is left out.
         centre = LatLon(lat=self.lat, lon=self.lon)
-        return _route(ctx, centre, alt_m=self.alt_m, speed_ms=None)
+        circle = _circle_polygon(centre, self.radius_m)
+        return _route(
+            ctx,
+            _first_corner(circle),
+            points=[centre],
+            areas=[circle],
+            alt_m=self.alt_m,
+            speed_ms=None,
+        )
 
 
 class InspectDetectionParams(SkillParams):

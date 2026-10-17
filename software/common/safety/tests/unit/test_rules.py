@@ -332,6 +332,26 @@ def test_stub_is_not_implemented_even_after_approval() -> None:
     assert "SKILL_NOT_IMPLEMENTED" in codes(approved, ctx())
 
 
+def _orbit(east: float, north: float, radius_m: float) -> dict[str, Any]:
+    lat, lon = latlon(east, north)
+    return {"lat": lat, "lon": lon, "radius_m": radius_m, "alt_m": 40}
+
+
+def test_orbit_circle_is_checked_not_only_its_centre() -> None:
+    # Once orbit is built, the whole circle must stay in the charter area: the centre at
+    # 250 m east is inside (the area ends at 300 m), a 60 m circle around it is not.
+    built = ctx(registry=registry_with(spec("orbit", status="implemented")))
+    assert "OUTSIDE_CHARTER" not in codes(req("orbit", _orbit(250, 0, 40)), built)
+    assert "OUTSIDE_CHARTER" in codes(req("orbit", _orbit(250, 0, 60)), built)
+    # The circle also counts for the distance from the pilot (500 m): centre at 460 m.
+    wide = CHARTER.model_copy(
+        update={"area": polygon((-600, -600), (600, -600), (600, 600), (-600, 600))}
+    )
+    far = ctx(registry=registry_with(spec("orbit", status="implemented")), charter=wide)
+    assert "PILOT_DISTANCE" not in codes(req("orbit", _orbit(0, 460, 30)), far)
+    assert "PILOT_DISTANCE" in codes(req("orbit", _orbit(0, 460, 50)), far)
+
+
 @pytest.mark.parametrize("name", ["set_param", "arm", "disable_fence", "no_such_skill"])
 def test_unknown_and_forbidden_names(name: str) -> None:
     d = decide(req(name, {}), ctx())

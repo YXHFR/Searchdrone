@@ -72,6 +72,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
             allow_companion_arm=cfg.allow_companion_arm,
             takeoff_delay_after_arm_s=cfg.test_hooks.takeoff_delay_after_arm_s,
             expected_params=effective_params(loaded.param_files()),
+            require_rc=cfg.require_rc,
         ),
         StateStore(loaded.state_dir, clock),
     )

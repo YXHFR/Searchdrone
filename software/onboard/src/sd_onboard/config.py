@@ -66,6 +66,8 @@ class OnboardConfig(BaseModel):
     link_token_file: str = "${SD_DATA_DIR}/secrets/onboard_link_token"  # noqa: S105  # a path
     state_dir: str = ""
     allow_companion_arm: bool = True
+    # Take off only with a live RC transmitter link. Only the simulator may turn it off.
+    require_rc: bool = True
     expected_param_files: list[str] = Field(
         default_factory=lambda: ["simulation/sitl/params/searchdrone-safety.parm"]
     )
@@ -117,7 +119,7 @@ def _env_layer(env: dict[str, str]) -> dict[str, Any]:
         value: Any = raw
         if parts[-1] in ("fc_sysid", "own_compid", "gcs_sysid"):
             value = int(raw)
-        elif parts[-1] == "allow_companion_arm":
+        elif parts[-1] in ("allow_companion_arm", "require_rc"):
             value = raw.strip().lower() in ("1", "true", "yes")
         elif parts[-1] == "takeoff_delay_after_arm_s":
             value = float(raw)
@@ -187,6 +189,16 @@ def check(loaded: Loaded) -> list[str]:
             errors.append("gcs_sysid stämmer inte med MAV_GCS_SYSID / gcs_sysid differs.")
         if "FS_GCS_ENABLE" not in params:
             errors.append("Säkerhetsparametrarna saknas / the safety parameters are missing.")
+        if cfg.require_rc and not params.get("FS_THR_ENABLE"):
+            errors.append(
+                "require_rc kräver RC-failsafe (FS_THR_ENABLE ≠ 0) i parameterfilen "
+                "/ require_rc needs the RC failsafe on in the parameter file."
+            )
+    if not cfg.require_rc and cfg.profile != "sim":
+        errors.append(
+            "require_rc = false gäller bara i simulatorn / require_rc = false is for the "
+            "simulator only."
+        )
     return errors
 
 

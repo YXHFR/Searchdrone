@@ -1,0 +1,65 @@
+# Searchdrone safety parameters for ArduCopter Copter-4.7.1 (real flight profile).
+# The same as searchdrone-safety.parm (the simulator profile) except the RC transmitter:
+# the flight controller must have a live RC link to arm, and losing it is a failsafe.
+# The pilot's RC transmitter goes before everything (AI, panel, ground station).
+# Nothing in Searchdrone writes these at run time; the onboard computer reads them back
+# before every takeoff and refuses to fly if one differs. Format: NAME VALUE.
+
+# --- who is the ground station --------------------------------------------------------
+MAV_GCS_SYSID 250        # only sd-ground (250/190) keeps the GCS failsafe away
+
+# --- lost ground station --------------------------------------------------------------
+FS_GCS_ENABLE 3          # no ground station heartbeat -> SmartRTL, else RTL
+FS_GCS_TIMEOUT 20        # seconds; equals FS_GCS_TIMEOUT_S in sd_safety.constants
+FS_OPTIONS 8             # bit 3 only: keep landing if a landing is already under way
+FS_EKF_ACTION 1          # bad position estimate -> LAND (no pilot with sticks in sim)
+FS_THR_ENABLE 4          # RC link lost -> SmartRTL, else RTL (as the other failsafes)
+
+# --- battery (9000 mAh pack, see hardware/drone.yaml) -----------------------------------
+BATT_MONITOR 4           # voltage and current
+BATT_CAPACITY 9000       # mAh
+BATT_LOW_MAH 1350        # 15 % of the capacity left -> low battery failsafe
+BATT_CRT_MAH 630         # 7 % left -> critical battery failsafe
+BATT_LOW_VOLT 0          # voltage limits off in the simulator (its pack is not 6S)
+BATT_CRT_VOLT 0
+BATT_FS_LOW_ACT 3        # low battery -> SmartRTL, else RTL
+BATT_FS_CRT_ACT 1        # critical battery -> LAND
+
+# --- geofence: always on, just outside the hard limits ---------------------------------
+FENCE_ENABLE 1
+FENCE_TYPE 7             # maximum height + circle around home + the mission polygon
+FENCE_ACTION 3           # SmartRTL, else RTL, else LAND
+FENCE_ALT_MAX 125        # m above home = 120 m limit + 5 m
+FENCE_RADIUS 530         # m from home = 500 m limit + 30 m
+FENCE_MARGIN 5           # m
+
+# --- flying home ----------------------------------------------------------------------
+RTL_ALT_M 30             # m above home on the way back (flat demo area)
+RTL_SPEED_MS 8           # m/s for RTL and SmartRTL, so they never inherit WP_SPD
+RTL_LOIT_TIME 0          # no wait above home before landing
+SRTL_POINTS 300          # SmartRTL track buffer
+
+# --- navigation -----------------------------------------------------------------------
+WP_RADIUS_M 2            # m; a mission waypoint counts as reached within this radius
+WP_SPD 5                 # m/s default in AUTO and GUIDED (not a cap; missions set speed)
+LOIT_SPEED_MS 15         # m/s, the fastest LOITER may fly (= the 15 m/s limit)
+GUID_TIMEOUT 3           # s; GUIDED velocity orders stop when they are not renewed
+
+# --- arming and manual control ----------------------------------------------------------
+ARMING_SKIPCHK 0         # every arming check on, the RC check included
+ARMING_RUDDER 0          # sticks can never arm or disarm (also not via MANUAL_CONTROL yaw)
+DISARM_DELAY 10          # s; the flight controller disarms by itself after landing
+RC_OVERRIDE_TIME 1       # s; stick values older than this are dropped (vehicle holds)
+
+# --- RC mode switch (simulator profile) --------------------------------------------------
+# The same modes as ArduPilot's SITL defaults, so no default file decides them. The mapping
+# for real flight is set together with the RC transmitter.
+FLTMODE1 7               # CIRCLE
+FLTMODE2 9               # LAND
+FLTMODE3 6               # RTL
+FLTMODE4 3               # AUTO
+FLTMODE5 5               # LOITER
+FLTMODE6 0               # STABILIZE
+
+# --- scripting ------------------------------------------------------------------------
+SCR_ENABLE 0             # no Lua scripts in v0.1

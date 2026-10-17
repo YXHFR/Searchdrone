@@ -110,6 +110,34 @@ async def test_takeoff_not_allowed_in_profile() -> None:
         assert _arms(r) == 0
 
 
+async def test_takeoff_needs_the_rc_transmitter() -> None:
+    async with rig() as r:
+        r.fc.rc_link = False  # the pilot's RC transmitter is off
+        await r.install()
+        r.clearance()
+        await r.run(1.5)
+        assert r.ex.preflight["PF12"] is False
+        cmd = await r.send(r.order("takeoff", {"alt_m": 40}))
+        assert r.up.codes(cmd.command_id) == ("ONB_RC_MISSING",)
+        assert _arms(r) == 0
+        r.fc.rc_link = True
+        await r.run(1.5)
+        assert r.ex.preflight["PF12"] is True
+        again = await r.send(r.order("takeoff", {"alt_m": 40}))
+        assert "running" in r.up.stages(again.command_id)
+
+
+async def test_takeoff_without_rc_when_not_required() -> None:
+    async with rig(options={"require_rc": False}) as r:
+        r.fc.rc_link = False
+        await r.install()
+        r.clearance()
+        await r.run(1.5)
+        assert r.ex.preflight["PF12"] is True
+        cmd = await r.send(r.order("takeoff", {"alt_m": 40}))
+        assert "running" in r.up.stages(cmd.command_id)
+
+
 async def test_clearance_remote_rejected() -> None:
     async with rig() as r:
         await r.install()

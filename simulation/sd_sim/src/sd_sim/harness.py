@@ -227,6 +227,32 @@ class Harness:
             0,
         )
 
+    # --- fault injection (07 §8.4): the only writes to the flight controller ----------
+
+    def set_sim_param(self, name: str, value: float, timeout: float = 5.0) -> None:
+        """Set a simulator parameter (``SIM_*`` only: wind, RC failure, ...). Never a
+        flight parameter; the flight controller's echo confirms it."""
+        if not name.startswith("SIM_"):
+            raise InfraError(f"harnessen sätter bara SIM_*-parametrar, inte {name}")
+        end = time.monotonic() + timeout
+        got = None
+        while time.monotonic() < end:  # an old PARAM_VALUE may still be queued: ask again
+            self._conn.mav.param_set_send(
+                FC_SYSID, FC_COMPID, name.encode(), value, mavlink.MAV_PARAM_TYPE_REAL32
+            )
+            got = self.read_param(name, max(1.0, end - time.monotonic()))
+            if abs(got - value) <= 1e-4:
+                return
+        raise InfraError(f"{name} blev {got}, inte {value:g}")
+
+    def battery_set_remaining(self, pct: float) -> None:
+        """``MAV_CMD_BATTERY_RESET`` (battery mask 1, remaining ``pct``): the capacity
+        stays, so the remaining mAh is realistic. Not acknowledged is an ``InfraError``."""
+        try:
+            self._command(mavlink.MAV_CMD_BATTERY_RESET, 1, pct)
+        except VehicleError as exc:
+            raise InfraError(f"BATTERY_RESET kvitterades inte: {exc}") from exc
+
     def read_param(self, name: str, timeout: float = 5.0) -> float:
         """Read one parameter (read only, nothing is set)."""
         end = time.monotonic() + timeout

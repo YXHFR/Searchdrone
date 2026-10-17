@@ -17,6 +17,7 @@ from sd_onboard.logs import MASK, SecretFilter
 REPO = Path(__file__).resolve().parents[4]
 EXAMPLE = REPO / "config" / "onboard.example.toml"
 PARM = REPO / "simulation/sitl/params/searchdrone-safety.parm"
+FLIGHT = REPO / "simulation/sitl/params/searchdrone-safety-flight.parm"
 
 
 @pytest.fixture
@@ -77,6 +78,29 @@ def test_good_config_starts(root: Path, env: dict[str, str]) -> None:
 )
 def test_startup_checks(root: Path, env: dict[str, str], key: str, value: str) -> None:
     assert check(load(root, {**env, key: value}))
+
+
+def test_require_rc_is_on_by_default_and_off_only_in_the_simulator(
+    root: Path, env: dict[str, str]
+) -> None:
+    from sd_onboard.config import OnboardConfig
+
+    assert OnboardConfig().require_rc is True
+    assert load(root, env).config.require_rc is False  # the simulator profile's example
+    flight = root / "simulation/sitl/params" / FLIGHT.name
+    shutil.copy(FLIGHT, flight)
+    with_rc = {
+        **env,
+        "SD_ONBOARD__REQUIRE_RC": "true",
+        "SD_ONBOARD__EXPECTED_PARAM_FILES": f"simulation/sitl/params/{FLIGHT.name}",
+    }
+    assert check(load(root, with_rc)) == []
+    # The RC link cannot be judged without the flight controller's RC failsafe.
+    errors = check(load(root, {**env, "SD_ONBOARD__REQUIRE_RC": "true"}))
+    assert any("FS_THR_ENABLE" in e for e in errors)
+    # Outside the simulator the RC transmitter is never optional.
+    errors = check(load(root, {**env, "SD_ONBOARD__PROFILE": "field"}))
+    assert any("require_rc" in e for e in errors)
 
 
 def test_test_hooks_rejected_outside_test(root: Path, env: dict[str, str]) -> None:

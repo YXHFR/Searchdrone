@@ -208,6 +208,8 @@ class ExecutorOptions:
     allow_companion_arm: bool = True
     takeoff_delay_after_arm_s: float = 0.0  # test hook (sim and SD_TEST=1 only)
     expected_params: Mapping[str, float] = field(default_factory=dict[str, float])  # PF6
+    # PF12: take off only with a live RC transmitter link (real flight); off in SITL/CI.
+    require_rc: bool = True
     registry: SkillRegistry = SKILL_REGISTRY
 
 
@@ -771,7 +773,11 @@ class Executor:
 
     def _takeoff_problem(self) -> str | None:
         charter = self.charter
-        if self.state != S.PREFLIGHT or not self.preflight_ok():
+        if self.state != S.PREFLIGHT:
+            return "ONB_PREFLIGHT_NOT_OK"
+        if self.options.require_rc and not self.vehicle.telemetry.rc_ok:
+            return "ONB_RC_MISSING"  # the pilot's transmitter must be on before any takeoff
+        if not self.preflight_ok():
             return "ONB_PREFLIGHT_NOT_OK"
         if charter is None or charter.approved_at is None or charter.approved_by is None:
             return "CHARTER_VERSION_MISMATCH"
@@ -1194,6 +1200,7 @@ class Executor:
             <= charter.max_range_from_pilot_m,
             "PF10": area.contains(plane.xy(charter.home.lat, charter.home.lon)),
             "PF11": area_reach_from_home_m(charter) <= fc_area_max_from_home_m(self.hard_limits),
+            "PF12": not self.options.require_rc or t.rc_ok,
         }
         if checks != self.preflight:
             changed = {k: v for k, v in checks.items() if self.preflight.get(k) != v}

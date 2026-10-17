@@ -21,6 +21,9 @@ QGC_SERIAL = "--serial5"
 # parameters (failsafes, fence, battery) and the sim-only parameters. Both are required:
 # a missing layer stops the start instead of silently flying without it.
 SAFETY_PARAM_FILE = "searchdrone-safety.parm"
+# The real flight profile (RC transmitter required); a SITL test may load it in place of
+# the simulator profile to prove the RC rules.
+FLIGHT_SAFETY_PARAM_FILE = "searchdrone-safety-flight.parm"
 SIM_PARAM_FILE = "sd_quad14-sim.parm"
 PROJECT_PARAM_FILES = (SAFETY_PARAM_FILE, SIM_PARAM_FILE)
 # SITL strips the leading "/" from a frame file path and opens it relative to its working
@@ -36,6 +39,7 @@ class SitlLayout:
     ardupilot_home: Path
     repo: Path
     extra_defaults: tuple[Path, ...] = field(default_factory=tuple)
+    safety_file: str = SAFETY_PARAM_FILE  # or FLIGHT_SAFETY_PARAM_FILE
 
     @property
     def frame_json(self) -> Path:
@@ -68,7 +72,9 @@ class SitlLayout:
         """The project's own parameter files in load order (later wins). Every one must
         exist; a missing layer raises instead of being skipped."""
         params = self.repo / "simulation" / "sitl" / "params"
-        layers = [params / name for name in PROJECT_PARAM_FILES]
+        if self.safety_file not in (SAFETY_PARAM_FILE, FLIGHT_SAFETY_PARAM_FILE):
+            raise InfraError(f"Okänt säkerhetsparameterlager: {self.safety_file}")
+        layers = [params / self.safety_file, params / SIM_PARAM_FILE]
         missing = [p.name for p in layers if not p.is_file()]
         if missing:
             raise InfraError(f"Parameterlager saknas i {params}: {', '.join(missing)}")

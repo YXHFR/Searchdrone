@@ -215,6 +215,10 @@ class FcTelemetry:
     last_failsafe_mono_ms: int | None = None  # any failsafe signal, repeated ones too
     failsafe_onset_mono_ms: int | None = None  # a signal that was not active just before
     rc_mode_pwm: int | None = None  # the RC mode-switch channel; None without an RC receiver
+    # The RC receiver has a live link to a transmitter (SYS_STATUS: present, enabled and
+    # healthy). ArduPilot clears the health bit on an RC failsafe, so this is only
+    # meaningful with the RC failsafe on (FS_THR_ENABLE != 0).
+    rc_ok: bool = False
 
     @property
     def fc_mode(self) -> str:
@@ -831,6 +835,16 @@ class Vehicle:
             case "SYS_STATUS":
                 if t.battery_voltage_v is None and int(msg.voltage_battery) != 65535:
                     t = replace(t, battery_voltage_v=int(msg.voltage_battery) / 1000.0)
+                rc = mavlink.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
+                rc_ok = all(
+                    int(field) & rc
+                    for field in (
+                        msg.onboard_control_sensors_present,
+                        msg.onboard_control_sensors_enabled,
+                        msg.onboard_control_sensors_health,
+                    )
+                )
+                t = replace(t, rc_ok=rc_ok)
             case "GPS_RAW_INT":
                 sats = int(msg.satellites_visible)
                 t = replace(

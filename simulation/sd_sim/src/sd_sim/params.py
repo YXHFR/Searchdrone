@@ -36,8 +36,17 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("BATT_FS_CRT_ACT", "==", 1.0),
     ("LOIT_SPEED_MS", "==", 15.0),
     ("ARMING_RUDDER", "==", 0.0),
+    ("ARMING_SKIPCHK", "==", 0.0),  # no arming check skipped (the RC check included)
     ("RC_OVERRIDE_TIME", "==", 1.0),
 )
+# The real flight profile (searchdrone-safety-flight.parm): the same rules, but the RC
+# transmitter is required, so losing its link is a failsafe (SmartRTL, else RTL).
+FLIGHT_SAFETY_RULES: tuple[tuple[str, str, float], ...] = tuple(
+    ("FS_THR_ENABLE", "==", 4.0) if name == "FS_THR_ENABLE" else (name, op, value)
+    for name, op, value in SAFETY_RULES
+)
+# The only parameters in which the two profiles may differ.
+PROFILE_DIFFERENCES = frozenset({"FS_THR_ENABLE"})
 # Prefixes whose every line in the safety file must have a rule above.
 RULED_PREFIXES = ("FS_", "FENCE_", "BATT_")
 

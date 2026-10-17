@@ -139,6 +139,7 @@ class FakeFlightController:
         self.silent = False  # no heartbeat or telemetry, no answers
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
+        self.rc_link: bool = True  # SYS_STATUS reports a healthy RC receiver
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -315,8 +316,21 @@ class FakeFlightController:
         return mavlink.MAVLink_ekf_status_report_message(flags, 0, 0, 0, 0, 0)
 
     def _sys_status(self) -> Any:
+        rc = mavlink.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
         return mavlink.MAVLink_sys_status_message(
-            0, 0, 0, 0, 16000, -1, round(self.battery_pct), 0, 0, 0, 0, 0, 0
+            rc,
+            rc,
+            rc if self.rc_link else 0,
+            0,
+            16000,
+            -1,
+            round(self.battery_pct),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
         )
 
     def _home_position(self) -> Any:

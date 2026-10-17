@@ -120,6 +120,9 @@ ONBOARD_REASON_CODES: Final = MappingProxyType(
         "ONB_CLEARANCE_REMOTE": "Bekräftelsen kom inte från platsen.",
         "ONB_NOT_ON_GROUND": "Drönaren står inte desarmerad på marken.",
         "ONB_ARM_NOT_ALLOWED_IN_PROFILE": "Ombordsdatorn får inte armera i den här profilen.",
+        "ONB_RC_MISSING": (
+            "RC-sändaren har ingen kontakt med flygkontrollern. Slå på den före start."
+        ),
         "ONB_ARM_REFUSED": "Flygkontrollern vägrade armera.",
         "ONB_TAKEOFF_TIMEOUT": "Starten tog för lång tid.",
         "ONB_MODE_CHANGE_TIMEOUT": "Flygkontrollern bytte inte läge i tid.",

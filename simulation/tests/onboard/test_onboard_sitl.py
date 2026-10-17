@@ -77,7 +77,7 @@ from sd_sim import config, paths
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.pytest_plugin import worker_instance
-from sd_sim.sitl import CMAC_HOME
+from sd_sim.sitl import CMAC_HOME, SAFETY_PARAM_FILE
 from sd_sim.util import new_run_dir
 
 pytestmark = [
@@ -156,14 +156,15 @@ class RcSticks:
             self._sock.sendto(packet, self._addr)
 
 
-@pytest.fixture
-def sim() -> Iterator[Sim]:
+@contextlib.contextmanager
+def simulator(safety_file: str = SAFETY_PARAM_FILE) -> Iterator[Sim]:
+    """A fresh SITL with linksim and mavtap, ready to fly, with the RC sticks held."""
     instance = worker_instance()
     cfg = config.load(
         {"physics": "builtin", "gui": "false", "video": "off", "instance": str(instance)}
     )
     cfg.home, cfg.personal_home = CMAC_HOME, False
-    st = Stack(cfg, new_run_dir(instance, "onboard"), observer=False)
+    st = Stack(cfg, new_run_dir(instance, "onboard"), observer=False, safety_file=safety_file)
     harness = Harness(st.ports["harness_mavlink"])
     try:
         st.up()
@@ -174,6 +175,12 @@ def sim() -> Iterator[Sim]:
     finally:
         harness.close()
         st.down()
+
+
+@pytest.fixture
+def sim() -> Iterator[Sim]:
+    with simulator() as s:
+        yield s
 
 
 @dataclass
@@ -281,7 +288,7 @@ def _vehicle(url: str, role: Role, **kw: Any) -> Vehicle:
 
 
 @contextlib.asynccontextmanager
-async def flight(sim: Sim) -> AsyncIterator[Flight]:
+async def flight(sim: Sim, parm: Path = PARM, **options: Any) -> AsyncIterator[Flight]:
     clock = MonotonicClock()
     ports = sim.ports
     holder: list[Executor] = []
@@ -310,9 +317,12 @@ async def flight(sim: Sim) -> AsyncIterator[Flight]:
     plane = Plane(home.lat, home.lon)
     async with FakeGround(clock=clock) as fake, LossyProxy(fake.url) as proxy:
         link = OnboardLink(url=proxy.url, token=fake.token, vehicle_id="sim-01", clock=clock)
-        params = effective_params([PARM])
+        params = effective_params([parm])
         ex = Executor(
-            onboard, clock, link, ExecutorOptions(vehicle_id="sim-01", expected_params=params)
+            onboard,
+            clock,
+            link,
+            ExecutorOptions(vehicle_id="sim-01", expected_params=params, **options),
         )
         holder.append(ex)
         link.executor = ex
