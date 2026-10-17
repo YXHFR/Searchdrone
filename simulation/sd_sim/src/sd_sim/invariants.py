@@ -1,4 +1,4 @@
-"""The invariants checked after every scenario (07 §10.3), on a recorded timeline.
+"""The invariants checked after every scenario, on a recorded timeline.
 
 A scenario test records what happened (``Timeline``): the vehicle's track, every MAVLink
 message the three senders wrote to the flight controller, the ground station's audit

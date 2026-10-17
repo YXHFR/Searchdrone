@@ -1,4 +1,4 @@
-"""Values the scenario tests compare with, read from their source at run time (07 §10.1.3).
+"""Values the scenario tests compare with, read from their source at run time.
 
 No scenario writes a mode number or a failsafe time itself: the modes come from
 ``sd_mav.modes``, the times and actions from the safety parameter file. A value missing
@@ -69,7 +69,7 @@ def fs_chain(param: str) -> tuple[CopterMode, ...]:
     return chain
 
 
-# --- the limits table (07 §10.2): the only source of numbers for the scenario tests ---
+# --- the limits table: the only source of numbers for the scenario tests ---
 # host = the host's monotonic clock, sim = the simulator's own time (real time here).
 L_STOP_ACK_S: Final = 1.0  # STOP/HOME call -> COMMAND_ACK(DO_SET_MODE) (host)
 L_STOP_HB_S: Final = 2.0  # STOP/HOME call -> a HEARTBEAT shows the mode (host)

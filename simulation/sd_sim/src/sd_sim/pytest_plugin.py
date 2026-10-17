@@ -35,6 +35,7 @@ MARKERS = (
     "private_db: the instance gets its own Postgres container",
     "param_override(file): extra SITL parameter layer for one test",
     "lan: needs lan=1 (local only)",
+    "local: runs only on the owner's computer (never in CI), e.g. needs its own database container",
     "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
 )
 MAX_INSTANCE = 7

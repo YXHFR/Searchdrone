@@ -1,4 +1,4 @@
-"""The scenario framework (07 §10.1) on ArduCopter SITL with builtin physics.
+"""The scenario framework on ArduCopter SITL with builtin physics.
 
 Everything runs for real except the language model: ``sd-ground``'s mission flow with
 its database, the gate and the emergency path; the simulated radio (``linksim``) carries
@@ -387,7 +387,7 @@ class Scenario:
         await self.until(lambda: abs(self.tel.alt_rel_home_m - 40) <= 2, 30, "40 m över hem")
         await self.r.wait_status(self.mission_id, "ACTIVE", 10)
 
-    # --- faults (07 §8.4) ---------------------------------------------------------
+    # --- faults ---------------------------------------------------------
 
     def _linksim(self, path: str, body: dict[str, Any]) -> None:
         req = urllib.request.Request(

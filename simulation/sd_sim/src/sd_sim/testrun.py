@@ -6,11 +6,11 @@ Runs the simulator tests with pytest and the ``sd_sim.pytest_plugin`` plugin:
         --shard-id <shard> --num-shards <shards> --reruns 1 --only-rerun InfraError
         --physics <physics> --brain <brain> simulation/tests/ simulation/sd_sim/tests/sitl/
 
-``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly`` (with
-``physics=gz`` the Gazebo tests are included); ``mode=nightly`` selects
-``sitl and nightly``. ``sc=`` and ``variant=`` narrow the run by test name. Only
-test-rig failures (``InfraError``) are retried, once. Afterwards ``runs/summary.md``
-lists every result written during the run.
+``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly and not
+local`` (with ``physics=gz`` the Gazebo tests are included); ``mode=nightly`` selects
+``sitl and nightly``; ``mode=local`` the tests that run only on the owner's computer.
+``sc=`` and ``variant=`` narrow the run by test name. Only test-rig failures (``InfraError``) are
+retried, once. Afterwards ``runs/summary.md`` lists every result written during the run.
 """
 
 from __future__ import annotations
@@ -50,10 +50,12 @@ FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
 
 def selection(mode: str, physics: str) -> str:
     if mode == "nightly":
-        return "sitl and nightly"
+        return "sitl and nightly and not local"
+    if mode == "local":
+        return "sitl and local"
     if physics == "gz":
-        return "sitl and not llm and not nightly"
-    return "sitl and not gz and not llm and not nightly"
+        return "sitl and not llm and not nightly and not local"
+    return "sitl and not gz and not llm and not nightly and not local"
 
 
 def _int(values: dict[str, str], key: str, default: int, low: int, high: int) -> int:
@@ -69,8 +71,8 @@ def _int(values: dict[str, str], key: str, default: int, low: int, high: int) ->
 
 def pytest_argv(values: dict[str, str]) -> list[str]:
     mode = values.get("mode", "pr")
-    if mode not in ("pr", "nightly"):
-        _args.fail("sd_sim.testrun: mode= ska vara pr eller nightly")
+    if mode not in ("pr", "nightly", "local"):
+        _args.fail("sd_sim.testrun: mode= ska vara pr, nightly eller local")
     physics = values.get("physics", "builtin")
     if physics not in ("builtin", "gz"):
         _args.fail("sd_sim.testrun: physics= ska vara builtin eller gz")

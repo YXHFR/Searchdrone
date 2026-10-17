@@ -227,7 +227,7 @@ class Harness:
             0,
         )
 
-    # --- fault injection (07 §8.4): the only writes to the flight controller ----------
+    # --- fault injection: the only writes to the flight controller ---------------------
 
     def set_sim_param(self, name: str, value: float, timeout: float = 5.0) -> None:
         """Set a simulator parameter (``SIM_*`` only: wind, RC failure, ...). Never a
