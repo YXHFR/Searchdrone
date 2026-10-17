@@ -46,6 +46,7 @@ brain_token_file = "secrets/brain_token"
 max_area_km2 = 4.0
 
 [video]
+enabled = true                          # false: no video server (MediaMTX) on this machine
 mediamtx_api = "http://127.0.0.1:9997"
 mediamtx_whep = "http://127.0.0.1:8889"
 mediamtx_hls = "http://127.0.0.1:8888"

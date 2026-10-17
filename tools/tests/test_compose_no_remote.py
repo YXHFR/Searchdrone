@@ -16,7 +16,15 @@ COMPOSE = ROOT / "compose.yaml"
 DOCKER = shutil.which("docker")
 # Dummy values so `docker compose config` can render without a real .env. Tickets that
 # add services with required variables add them here.
-DUMMY_ENV = {"SD_GROUND__DB_PASSWORD": "x", "SD_LLM_API_KEY": "x"}
+DUMMY_ENV = {
+    "SD_GROUND__DB_PASSWORD": "x",
+    "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "x",
+    "SD_GROUND__VIDEO_API_PASSWORD": "x",
+    "SD_LLM_API_KEY": "x",
+    "SD_UID": "1000",
+    "SD_GID": "1000",
+    "SD_DATA_DIR": "/srv/sd-data",  # only rendered, never created
+}
 
 
 def _services() -> dict[str, Any]:
@@ -79,3 +87,29 @@ def test_env_example_db_passwords_empty() -> None:
     lines = (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
     for key in ("SD_GROUND__DB_PASSWORD", "SD_GROUND__DB_APP_PASSWORD"):
         assert f"{key}=" in lines, key
+
+
+def test_mediamtx_service() -> None:
+    """B1-09: pinned image, signalling on loopback, the password required from .env."""
+    mtx = _services()["mediamtx"]
+    assert re.fullmatch(r"bluenviron/mediamtx:1\.21\.1@sha256:[0-9a-f]{64}", mtx["image"])
+    assert mtx["network_mode"] == "host"
+    assert "ports" not in mtx
+    env = mtx["environment"]
+    assert env["MTX_WEBRTCADDRESS"] == "127.0.0.1:8889"  # fixed, also in LAN mode
+    assert env["MTX_HLSADDRESS"] == "127.0.0.1:8888"
+    assert env["MTX_RTSPADDRESS"] == "127.0.0.1:8554"
+    assert env["MTX_APIADDRESS"] == "127.0.0.1:9997"
+    assert env["MTX_WEBRTCLOCALUDPADDRESS"] == "${SD_VIDEO_BIND:-127.0.0.1}:8189"
+    assert env["MTX_AUTHINTERNALUSERS_0_PASS"].startswith("${SD_GROUND__VIDEO_PUBLISH_PASSWORD:?")
+    assert env["MTX_AUTHINTERNALUSERS_2_PASS"].startswith("${SD_GROUND__VIDEO_API_PASSWORD:?")
+    assert "./config/mediamtx.yml:/mediamtx.yml:ro" in mtx["volumes"]
+
+
+def test_mediamtx_config_has_no_real_password() -> None:
+    data = yaml.safe_load((ROOT / "config" / "mediamtx.yml").read_text(encoding="utf-8"))
+    users = data["authInternalUsers"]
+    assert [u.get("pass") for u in users] == ["CHANGE_ME", None, "CHANGE_ME"]
+    # The user without a password may only read; the control API needs a password.
+    assert [p["action"] for p in users[1]["permissions"]] == ["read"]
+    assert [p["action"] for p in users[2]["permissions"]] == ["api"]

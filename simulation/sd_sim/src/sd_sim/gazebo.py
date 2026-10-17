@@ -115,30 +115,3 @@ def enable_camera(instance: int, timeout: float = CAMERA_WAIT_S) -> str:
     if res.returncode != 0:
         raise InfraError(f"Kunde inte slå på kameran: {res.stderr.strip()}")
     return topics[0]
-
-
-def test_video_argv(port: int) -> list[str]:
-    """GStreamer test picture as H.264 RTP to the camera's port (the same as Gazebo's)."""
-    return [
-        "gst-launch-1.0",
-        "-q",
-        "videotestsrc",
-        "is-live=true",
-        "pattern=ball",
-        "!",
-        "video/x-raw,width=640,height=480,framerate=15/1",
-        "!",
-        "x264enc",
-        "tune=zerolatency",
-        "bitrate=800",
-        "key-int-max=15",
-        "speed-preset=ultrafast",
-        "!",
-        "rtph264pay",
-        "pt=96",
-        "config-interval=1",
-        "!",
-        "udpsink",
-        "host=127.0.0.1",
-        f"port={port}",
-    ]

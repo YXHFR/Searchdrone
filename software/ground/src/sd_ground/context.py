@@ -20,6 +20,7 @@ from sd_ground.sources import (
     NoEmergencyPath,
     NoSdLink,
     NoVehicleLink,
+    PartState,
     SdLink,
     VehicleLink,
 )
@@ -65,6 +66,7 @@ class Ground:
     version: str = field(default_factory=lambda: version("sd-ground"))
     db_ok: bool = False
     brain_state: str = "down"
+    video_state: PartState = "down"  # set by services.video.VideoMonitor
     operator_seen_mono: float | None = None
     pilot_ws: int = 0
     _events: deque[EventRow] = field(

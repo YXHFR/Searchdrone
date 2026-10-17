@@ -1,0 +1,75 @@
+# MediaMTX for the simulator's live video and per-mission recordings (`just video-up`).
+# Committed and generic: the two passwords below are placeholders that compose.yaml
+# always overrides from .env (SD_GROUND__VIDEO_PUBLISH_PASSWORD for publishing,
+# SD_GROUND__VIDEO_API_PASSWORD for the control API; compose refuses to start without
+# them). Reading without a password is allowed only from 127.0.0.1, and only reading:
+# the control API can change the configuration at runtime, so it needs its own user. Every listener is on 127.0.0.1; the panel reaches the video only
+# through the ground station's proxy. Only the WebRTC media port (UDP 8189) moves to the
+# LAN address in LAN mode, through MTX_WEBRTCLOCALUDPADDRESS in compose.yaml.
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: 127.0.0.1:9997
+metrics: no
+metricsAddress: 127.0.0.1:9998
+pprof: no
+pprofAddress: 127.0.0.1:9999
+playback: no
+playbackAddress: 127.0.0.1:9996
+
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]          # no RTP/RTCP UDP ports (8000/8001) are opened
+rtspEncryption: "no"
+rtspsAddress: 127.0.0.1:8322
+rtpAddress: 127.0.0.1:8000
+rtcpAddress: 127.0.0.1:8001
+srtpAddress: 127.0.0.1:8004
+srtcpAddress: 127.0.0.1:8005
+rtmp: no
+rtmpAddress: 127.0.0.1:1935
+rtmpsAddress: 127.0.0.1:1936
+srt: no
+srtAddress: 127.0.0.1:8890
+moq: no                        # Media over QUIC (new in 1.21) listens on every interface otherwise
+moqHTTP2Address: 127.0.0.1:8892
+moqHTTP3Address: 127.0.0.1:8892
+moqQUICAddress: 127.0.0.1:8893
+
+webrtc: yes                    # the addresses are set through MTX_* in compose.yaml
+webrtcAddress: 127.0.0.1:8889
+webrtcAllowOrigins: []
+webrtcLocalUDPAddress: 127.0.0.1:8189
+webrtcLocalTCPAddress: ""
+webrtcICEServers2: []
+hls: yes                       # fallback when WebRTC does not work
+hlsAddress: 127.0.0.1:8888
+hlsAllowOrigins: []
+hlsVariant: lowLatency
+
+authMethod: internal
+authInternalUsers:
+  - user: publisher            # the password comes from MTX_AUTHINTERNALUSERS_0_PASS
+    pass: CHANGE_ME
+    ips: ["127.0.0.1/32"]
+    permissions: [{action: publish}]
+  - user: any
+    pass:
+    ips: ["127.0.0.1/32"]      # reading only through the ground station's proxy
+    permissions: [{action: read}]
+  - user: ground               # the password comes from MTX_AUTHINTERNALUSERS_2_PASS
+    pass: CHANGE_ME
+    ips: ["127.0.0.1/32"]      # the ground station and the simulator: health and recordings
+    permissions: [{action: api}]
+
+pathDefaults:
+  record: no
+paths:
+  "~^drone/[a-z0-9][a-z0-9-]{2,31}/main$":
+    source: publisher
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordSegmentDuration: 60s
+    recordDeleteAfter: 0s

@@ -5676,8 +5676,8 @@
       }
     },
     "/api/v1/video/{vehicle_id}/main/whep": {
-      "delete": {
-        "operationId": "whep_delete_api_v1_video__vehicle_id__main_whep_delete",
+      "post": {
+        "operationId": "whep_offer_api_v1_video__vehicle_id__main_whep_post",
         "parameters": [
           {
             "in": "path",
@@ -5686,6 +5686,54 @@
             "schema": {
               "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
               "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Whep Offer"
+      }
+    },
+    "/api/v1/video/{vehicle_id}/main/whep/{session}": {
+      "delete": {
+        "operationId": "whep_delete_api_v1_video__vehicle_id__main_whep__session__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Session",
               "type": "string"
             }
           }
@@ -5713,7 +5761,7 @@
         "summary": "Whep Delete"
       },
       "patch": {
-        "operationId": "whep_patch_api_v1_video__vehicle_id__main_whep_patch",
+        "operationId": "whep_patch_api_v1_video__vehicle_id__main_whep__session__patch",
         "parameters": [
           {
             "in": "path",
@@ -5722,6 +5770,16 @@
             "schema": {
               "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
               "title": "Vehicle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Session",
               "type": "string"
             }
           }
@@ -5747,42 +5805,6 @@
           }
         },
         "summary": "Whep Patch"
-      },
-      "post": {
-        "operationId": "whep_post_api_v1_video__vehicle_id__main_whep_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "vehicle_id",
-            "required": true,
-            "schema": {
-              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
-              "title": "Vehicle Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Whep Post"
       }
     },
     "/tiles/{file}": {

@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -135,20 +136,35 @@ def test_dev_proxy_header(make_ground: Callable[..., Ground]) -> None:
                 assert res.json()["code"] == "DEV_PROXY_FORBIDDEN"
 
 
-def test_whep_content_types(logged_in: TestClient) -> None:
+def test_whep_content_types(logged_in: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sd_ground.api import video_proxy
+
+    session = "0d0a7c48-1b8b-4c4e-9a7c-6d4b0f1f2e3a"
+    answer = httpx.Response(201, headers={"Location": f"/drone/sim-01/main/whep/{session}"})
+    monkeypatch.setattr(
+        video_proxy,
+        "_transport",
+        httpx.MockTransport(lambda r: answer if r.method == "POST" else httpx.Response(204)),
+    )
     base = "/api/v1/video/sim-01/main/whep"
     no_header = logged_in.post(base, content="v=0", headers={"Content-Type": "application/sdp"})
     assert no_header.status_code == 403
     sdp = logged_in.post(
         base, content="v=0", headers={"X-SD-Client": "panel", "Content-Type": "application/sdp"}
     )
-    assert sdp.status_code == 501  # passes the guard; the video proxy itself comes with B1-09
+    assert sdp.status_code == 201  # passes the guard to the video proxy
     frag = logged_in.patch(
-        base,
+        f"{base}/{session}",
         content="a=x",
         headers={"X-SD-Client": "panel", "Content-Type": "application/trickle-ice-sdpfrag"},
     )
-    assert frag.status_code == 501
+    assert frag.status_code == 204
+    elsewhere = logged_in.post(
+        "/api/v1/session/logout",
+        content="v=0",
+        headers={"X-SD-Client": "panel", "Content-Type": "application/sdp"},
+    )
+    assert elsewhere.status_code == 403  # SDP is only accepted on the video paths
 
 
 def test_body_over_256_kib_is_413(logged_in: TestClient) -> None:

@@ -43,6 +43,7 @@ SECRET_ENV_KEYS = (
     "SD_GROUND__DB_PASSWORD",
     "SD_GROUND__DB_APP_PASSWORD",
     "SD_GROUND__VIDEO_PUBLISH_PASSWORD",
+    "SD_GROUND__VIDEO_API_PASSWORD",
 )
 _OTHER_ENV_KEYS = ("SD_UID", "SD_GID", "SD_DATA_DIR")
 _PREFIX = "SD_GROUND__"
@@ -105,6 +106,7 @@ class CharterConfig(_Section):
 
 
 class VideoConfig(_Section):
+    enabled: bool = True  # false: no video server (instances other than 0, CI scenarios)
     mediamtx_api: str = "http://127.0.0.1:9997"
     mediamtx_whep: str = "http://127.0.0.1:8889"
     mediamtx_hls: str = "http://127.0.0.1:8888"
@@ -276,6 +278,11 @@ def _is_loopback(bind: str) -> bool:
         return False
 
 
+def _is_loopback_url(url: str) -> bool:
+    match = re.match(r"^http://([^/:]+|\[[^\]]+\]):(\d{1,5})/?$", url)
+    return match is not None and _is_loopback(f"{match.group(1)}:{match.group(2)}")
+
+
 def _private_mode(path: Path) -> bool:
     return stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
 
@@ -290,6 +297,13 @@ def check(loaded: Loaded) -> list[str]:
     ):
         if not _is_loopback(bind):
             errors.append(f"{name} = {bind} är inte loopback. Bara 127.0.0.1 är tillåtet.")
+    for name in ("mediamtx_api", "mediamtx_whep", "mediamtx_hls"):
+        url = getattr(cfg.video, name)
+        if not _is_loopback_url(url):
+            errors.append(
+                f"video.{name} = {url} är inte http://127.0.0.1:<port>. "
+                "Videoservern nås bara på loopback."
+            )
     if cfg.profile != "sim":
         errors.append(f"profile = {cfg.profile!r}: bara profilen sim finns i v0.1.0.")
     if cfg.remote.enabled:
