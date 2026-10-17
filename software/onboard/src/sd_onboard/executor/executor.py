@@ -50,6 +50,7 @@ from sd_onboard.executor.limits import (
     inside_charter,
 )
 from sd_onboard.executor.override import OverrideState
+from sd_onboard.executor.override_fallback import OverrideFallback
 from sd_onboard.executor.state import (
     AIRBORNE_CONTROLLED,
     MOVING,
@@ -299,6 +300,12 @@ class Executor:
         self.control_suspended = False
         self.auth = Authority()
         self.over = OverrideState()
+        self.fallback = OverrideFallback(
+            vehicle,
+            clock,
+            still_active=lambda: self.over.last_kind is not None,
+            emit=self.emit,
+        )
         self.limits = LimitMonitor()
         self.pilot = PilotTracker()
         self.charter: MissionCharter | None = None
@@ -883,6 +890,8 @@ class Executor:
         rule = self.over.apply_notice(notice)
         if rule is None:
             return
+        # Only sends if the ground's MAVLink does not get through (override_fallback.py).
+        self.fallback.start(notice.kind, notice.action_seq, rule.steps)
         now = self.now_ms()
         self.auth.notice(now)
         if rule.sets_stop_latch and self.state in ON_GROUND:
@@ -1514,6 +1523,7 @@ class Executor:
             log.error("could not save the executor state: %s", exc)
 
     async def close(self) -> None:
+        await self.fallback.close()
         self._drop_active(stage=None)
         tasks = [*self._side_tasks, *([self._preflight_task] if self._preflight_task else [])]
         for task in tasks:

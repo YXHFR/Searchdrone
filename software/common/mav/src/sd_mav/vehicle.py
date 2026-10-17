@@ -132,7 +132,7 @@ class SendOrigin(StrEnum):
     LIMIT = "limit"  # a limit monitor (issuer = rule:onboard)
     STARTUP = "startup"  # stream requests, REQUEST_MESSAGE, PARAM_REQUEST_READ, HEARTBEAT
     OVERRIDE_FALLBACK = "override_fallback"  # only executor/override.py
-    MANUAL = "manual"  # the pilot's sticks (Ta över), forwarded as MANUAL_CONTROL in LOITER
+    MANUAL = "manual"  # the pilot's sticks (Ta över): MANUAL_CONTROL from the ground, LOITER only
     GROUND = "ground"  # everything the ground station sends
 
 

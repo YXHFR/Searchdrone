@@ -7,6 +7,7 @@ session until those parts exist; ``FakeEmergency`` records STOP / RETURN HOME ca
 from __future__ import annotations
 
 import datetime as dt
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,8 @@ from sd_schemas.api import ActionDispatched, LinkStatus, Telemetry
 from sd_schemas.base import new_id
 from sd_schemas.link import StateSnapshot
 from sd_testing import FakeClock
+
+sys.path.insert(0, str(Path(__file__).parent))  # stop_helpers
 
 BRAIN_TOKEN = "brain-token-for-tests-0123456789abcdef"
 PANEL = "http://127.0.0.1:8080"
@@ -127,6 +130,11 @@ def make_loaded(tmp_path: Path, **sections: dict[str, Any]) -> Loaded:
     data: dict[str, Any] = {"data_dir": str(tmp_path / "data")}
     data.update(sections)
     return Loaded(config=GroundConfig.model_validate(data), root=tmp_path, env={})
+
+
+@pytest.fixture
+def brain_token() -> str:
+    return BRAIN_TOKEN
 
 
 @pytest.fixture

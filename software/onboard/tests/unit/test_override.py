@@ -5,9 +5,9 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-from onboard_helpers import Rig, at, rig
+from onboard_helpers import Rig, at, is_fallback_step, rig
 
-from sd_mav.modes import CopterMode
+from sd_mav.modes import HOME_STEPS, STOP_STEPS, CopterMode
 from sd_onboard.executor.override import OVERRIDE_KINDS
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
@@ -39,10 +39,20 @@ async def test_override_notice_kinds(kind: str) -> None:
         assert r.ex.state == S.HELD
         assert r.ex.held_by == rule.held_by
         assert r.ex.over.stop_latch is rule.sets_stop_latch
-        await r.run(5)
+        await r.run(1.4)
         assert r.steering_sent(before) == []  # nothing that steers after the notice
-        # The ground's MAVLink put the vehicle into the first step of its chain.
-        r.fc.set_mode_external(CopterMode.BRAKE if rule.steps == "stop" else CopterMode.SMART_RTL)
+        # The ground's MAVLink did not get through (the flight controller kept its mode):
+        # after 1.5 s the fallback sends the first step of the kind's chain itself.
+        await r.run(3)
+        first = STOP_STEPS[0] if rule.steps == "stop" else HOME_STEPS[0]
+        sent = r.steering_sent(before)
+        assert sent and all(is_fallback_step(m) for m in sent)
+        assert {int(m.param2) for m in sent} == {int(first)}
+        assert r.fc.mode == first
+        assert ("executor.override_fallback_used", kind) in [
+            (e, d.get("kind")) for e, _s, d in r.up.events
+        ]
+        assert r.ex.state == S.HELD  # the executor stays held
         await r.run(1)
         ref = _release(r)
         await r.run(0.5)

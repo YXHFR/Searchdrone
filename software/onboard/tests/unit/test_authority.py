@@ -192,7 +192,9 @@ async def _restart_rig_case(ops: list[str]) -> None:
             await r.run(0.1)
         await r.run(1)
         assert r.ex.state in (S.HELD, S.FAILSAFE)
-        assert r.steering_sent(before) == []
+        # Only the emergency fallback's mode steps (the ground's MAVLink is not part of
+        # this rig, so the flight controller never shows the target mode by itself).
+        assert r.steering_sent(before, allow_fallback=True) == []
         # Only Resume hands back; then steering is possible again (when the mode allows).
         r.fc.set_mode_external(CopterMode.LOITER)
         await r.run(0.5)

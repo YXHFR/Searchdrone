@@ -194,8 +194,15 @@ def test_flight_helpers_work_end_to_end() -> None:
 
 
 def test_manual_control_scales_sticks_in_loiter_only() -> None:
+    """The ground station (250/190) sends the sticks; the onboard computer never can."""
+
     async def run() -> None:
-        clock, vehicle, _ = await _started()
+        clock = FakeClock()
+        fc = FakeFlightController(clock)
+        ground = FakeVehicle(clock, fc=fc, role=Role.GROUND)
+        onboard = FakeVehicle(clock, fc=fc)
+        await ground.start()
+        await onboard.start()
         await clock.run_for(2.0)
         axes = StickAxes.model_validate(
             {
@@ -208,35 +215,39 @@ def test_manual_control_scales_sticks_in_loiter_only() -> None:
             }
         )
         with pytest.raises(ForbiddenMavlinkError):
-            await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)  # STABILIZE
-        await run_with_clock(clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.MANUAL))
+            await ground.manual_control(axes, origin=SendOrigin.MANUAL)  # STABILIZE
+        await run_with_clock(clock, ground.set_mode(CopterMode.LOITER, origin=SendOrigin.GROUND))
         await clock.run_for(0.5)
         with pytest.raises(ForbiddenMavlinkError):  # in LOITER, but on the ground
-            await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)
+            await ground.manual_control(axes, origin=SendOrigin.MANUAL)
 
         async def climb() -> None:
-            await vehicle.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL)
-            await vehicle.arm(origin=SendOrigin.SKILL)
-            await vehicle.takeoff(10.0, origin=SendOrigin.SKILL)
+            await onboard.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+            await onboard.arm(origin=SendOrigin.SKILL)
+            await onboard.takeoff(10.0, origin=SendOrigin.SKILL)
 
         await run_with_clock(clock, climb())
         await clock.run_for(6.0)
-        await run_with_clock(clock, vehicle.set_mode(CopterMode.LOITER, origin=SendOrigin.MANUAL))
+        await run_with_clock(clock, ground.set_mode(CopterMode.LOITER, origin=SendOrigin.GROUND))
         await clock.run_for(0.6)
         with pytest.raises(ForbiddenMavlinkError):
-            await vehicle.manual_control(axes, origin=SendOrigin.SKILL)
-        await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)
+            await ground.manual_control(axes, origin=SendOrigin.GROUND)
+        for origin in SendOrigin:  # the onboard computer: refused for every origin
+            with pytest.raises(ForbiddenMavlinkError):
+                await onboard.manual_control(axes, origin=origin)
+        await ground.manual_control(axes, origin=SendOrigin.MANUAL)
         await clock.run_for(0.1)
-        sticks = vehicle.fc.sticks
+        sticks = fc.sticks
         assert sticks is not None
         assert (sticks.x, sticks.y, sticks.z, sticks.r, sticks.buttons) == (400, -1000, 500, 250, 0)
-        assert sticks.get_srcSystem() == FC and sticks.get_srcComponent() == 191
+        assert (sticks.get_srcSystem(), sticks.get_srcComponent()) == (250, 190)
         # A HEARTBEAT older than 1.5 s does not tell the mode: sticks are refused.
-        vehicle.fc.silent = True
+        fc.silent = True
         await clock.run_for(1.6)
         with pytest.raises(ForbiddenMavlinkError):
-            await vehicle.manual_control(axes, origin=SendOrigin.MANUAL)
-        await vehicle.close()
+            await ground.manual_control(axes, origin=SendOrigin.MANUAL)
+        await ground.close()
+        await onboard.close()
 
     asyncio.run(run())
 

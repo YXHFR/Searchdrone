@@ -8,8 +8,8 @@ without sending anything and the executor goes to HELD. Only an explicit
 
 ``OVERRIDE_KINDS`` is the one table of what each kind does onboard. The fallback path
 for when the ground's MAVLink does not reach the flight controller (sending the same
-mode steps from onboard) is not built yet; it will be the only user of
-``SendOrigin.OVERRIDE_FALLBACK``.
+mode steps from onboard) is ``override_fallback.py``, the only user of the fallback
+send origin.
 """
 
 from __future__ import annotations

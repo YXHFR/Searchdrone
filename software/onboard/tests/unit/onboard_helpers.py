@@ -17,7 +17,7 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from sd_mav.connection import Role
 from sd_mav.fake import CMAC_HOME, FakeFlightController, FakeVehicle
 from sd_mav.mission import FENCE, MISSION, fence_hash, fence_items
-from sd_mav.modes import CopterMode
+from sd_mav.modes import HOME_STEPS, STOP_STEPS, CopterMode
 from sd_onboard.executor.executor import Executor, ExecutorOptions
 from sd_safety.constants import FC_SAFETY_EXPECTED, GOTO_ARRIVE_RADIUS_M
 from sd_safety.targets import Plane
@@ -267,10 +267,16 @@ class Rig:
             operator_id="operator:pilot",
         )
 
-    def steering_sent(self, since: int = 0) -> list[Any]:
-        """Messages from 1/191 that steer (everything but startup traffic)."""
+    def steering_sent(self, since: int = 0, *, allow_fallback: bool = False) -> list[Any]:
+        """Messages from 1/191 that steer (everything but startup traffic).
+
+        ``allow_fallback`` leaves out the STOP / FLY HOME mode steps that the emergency
+        fallback sends when the ground's MAVLink does not reach the flight controller
+        (the one documented exception to "nothing that steers while held")."""
         out = []
         for msg in self.vehicle.sent[since:]:
+            if allow_fallback and is_fallback_step(msg):
+                continue
             kind = msg.get_type()
             if kind in (
                 "HEARTBEAT",
@@ -287,6 +293,14 @@ class Rig:
                 continue
             out.append(msg)
         return out
+
+
+def is_fallback_step(msg: Any) -> bool:
+    return (
+        msg.get_type() == "COMMAND_LONG"
+        and int(msg.command) == mavlink.MAV_CMD_DO_SET_MODE
+        and int(msg.param2) in {int(m) for m in (*STOP_STEPS, *HOME_STEPS)}
+    )
 
 
 @asynccontextmanager

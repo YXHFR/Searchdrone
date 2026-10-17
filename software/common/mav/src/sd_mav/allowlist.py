@@ -29,20 +29,20 @@ What                                   Allowed
 ``SET_MESSAGE_INTERVAL`` (511)         the telemetry streams, 1-100 Hz
 ``REQUEST_MESSAGE`` (512)              ``HOME_POSITION``, ``AUTOPILOT_VERSION``
 ``PARAM_REQUEST_READ``                 read one parameter by name
-``MANUAL_CONTROL``                     the pilot's sticks (origin ``manual``), only while
-                                       the flight controller is in LOITER and the
-                                       vehicle armed in the air, no buttons
 =====================================  ==================================================
 
 Ground station (sysid 250, compid 190): ``HEARTBEAT`` as a GCS, ``DO_SET_MODE`` to the
 STOP and FLY HOME steps, disarm only when standing on the ground, ``SET_MESSAGE_INTERVAL``,
-``PARAM_REQUEST_READ`` and the fence protocol (mission type 1, polygon inclusion
-vertices only, only while the vehicle stands disarmed on the ground).
+``PARAM_REQUEST_READ``, the fence protocol (mission type 1, polygon inclusion vertices
+only, only while the vehicle stands disarmed on the ground) and ``MANUAL_CONTROL``: the
+pilot's sticks (origin ``manual``), only while the flight controller is in LOITER and
+the vehicle armed in the air, no buttons. ArduCopter takes sticks only from its GCS
+system id, so they never come from the onboard computer.
 
 Origins (``sd_mav.vehicle.SendOrigin``): ``startup`` may only read and ask for streams;
 ``skill`` and ``limit`` may fly; ``override_fallback`` may only change to the STOP and
-FLY HOME modes; ``manual`` may only send sticks and LOITER; ``ground`` is the ground
-station's only origin.
+FLY HOME modes; ``ground`` is the ground station's origin for everything except the
+sticks, which only the ground station's ``manual`` origin sends.
 """
 
 from __future__ import annotations
@@ -140,7 +140,8 @@ _FALLBACK: Final = "override_fallback"
 _MANUAL: Final = "manual"
 _GROUND: Final = "ground"
 _FLYING_ORIGINS: Final = frozenset({_SKILL, _LIMIT})
-_ONBOARD_ORIGINS: Final = frozenset({_SKILL, _LIMIT, _STARTUP, _FALLBACK, _MANUAL})
+_ONBOARD_ORIGINS: Final = frozenset({_SKILL, _LIMIT, _STARTUP, _FALLBACK})
+_GROUND_ORIGINS: Final = frozenset({_GROUND, _MANUAL})
 
 
 class Profile(StrEnum):
@@ -273,8 +274,6 @@ def _set_mode(p: list[float], ctx: SendContext) -> str | None:
         return f"mode {mode} is not allowed onboard"
     if ctx.origin == _FALLBACK:
         return None if mode in _GROUND_MODES else f"mode {mode} is not a fallback step"
-    if ctx.origin == _MANUAL:
-        return None if mode == CopterMode.LOITER else "manual control may only ask for LOITER"
     if mode in _FALLBACK_ONLY_MODES:
         return f"mode {mode} only from the emergency fallback"
     return _origin_for("fly", ctx)
@@ -538,8 +537,8 @@ def _param_read(msg: Any, ctx: SendContext) -> str | None:
 
 
 def _manual_control(msg: Any, ctx: SendContext) -> str | None:
-    if ctx.profile is Profile.GROUND:
-        return "MANUAL_CONTROL is sent by the onboard computer"
+    if ctx.profile is not Profile.GROUND:
+        return "MANUAL_CONTROL is sent by the ground station (the GCS system id)"
     if ctx.origin != _MANUAL:
         return "MANUAL_CONTROL only for the pilot's sticks"
     if int(msg.target) != ctx.target_system:

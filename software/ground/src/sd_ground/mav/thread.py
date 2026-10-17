@@ -1,0 +1,605 @@
+"""The MAVLink thread: the ground station's own channel to the flight controller.
+
+``MavThread`` is a daemon thread with its own event loop. It owns the connection
+(``sd_mav.Vehicle`` as 250/190), so STOP, FLY HOME, the companion watchdog, the battery
+guard and the pilot's sticks keep working while the main loop, the database or the AI
+hang. ``GroundMav`` is the part that runs inside that loop; tests drive it directly on
+their own loop with a fake flight controller and a fake clock.
+
+* **In:** ``submit(ModeAction)``, ``takeover``, ``handback`` and ``sticks`` are safe to
+  call from any thread (``ThreadSafeMav``).
+* **Out:** ``on_report`` gets each action's result (``ActionReport``), ``on_event`` the
+  alarms and events (``vehicle.onboard_silent``, ``loop_stall``, ...); both are called
+  in this thread and must only queue. ``snapshot`` is a thread-safe copy for the
+  ingress thread and the main loop.
+* **GCS heartbeat** 1 Hz from ``Vehicle``, gated by ``HeartbeatGate``: when the main
+  loop or the ingress loop has not beaten for ``LOOP_STALL_S`` no heartbeat goes out,
+  so the flight controller's GCS failsafe takes over from a hung ground station. The
+  emergency path in this thread is not affected.
+* **Sticks** (the pilot's "Ta över"): ``MANUAL_CONTROL`` from 250/190, only in LOITER,
+  armed and in the air (the allowlist checks). Without a new value from the panel for
+  ``MANUAL_CONTROL_TIMEOUT_MS`` nothing more is sent; the flight controller's
+  ``RC_OVERRIDE_TIME`` then ends the override and LOITER holds the position.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import datetime as dt
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Final, Literal
+
+from sd_ground.liveness import LoopLiveness
+from sd_ground.logging import get_logger
+from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
+from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
+from sd_ground.services.latches import HOME_LATCHES, Latches
+from sd_ground.sources import PartState
+from sd_mav.chain import mode_shown, set_mode_with_fallback
+from sd_mav.modes import CopterMode
+from sd_mav.vehicle import (
+    MODE_FRESH_S,
+    ControlNotAllowedError,
+    FcTelemetry,
+    ForbiddenMavlinkError,
+    SendOrigin,
+    Vehicle,
+)
+from sd_obs.clock import Clock
+from sd_safety.constants import COMPANION_WATCHDOG_S, FC_HEARTBEAT_TIMEOUT_S
+from sd_safety.limits import DEFAULT_LIMITS
+from sd_schemas.api import Telemetry
+from sd_schemas.base import LatLon
+from sd_schemas.link import MANUAL_CONTROL_TIMEOUT_MS, StickAxes
+from sd_schemas.mission import LatchAction
+
+__all__ = [
+    "BATTERY_CONFIRM_S",
+    "TICK_S",
+    "ActionReport",
+    "GroundMav",
+    "HeartbeatGate",
+    "MavSnapshot",
+    "MavThread",
+    "ModeAction",
+    "ThreadSafeMav",
+    "vehicle_events",
+]
+
+TICK_S: Final = 0.05
+STICK_RESEND_S: Final = 0.1  # 10 Hz while the panel's values are fresh
+BATTERY_CONFIRM_S: Final = 0.5  # two BATTERY_STATUS at 2 Hz
+_IN_AIR: Final = frozenset({"in_air", "takeoff", "landing"})
+_FLYING_HOME: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL, CopterMode.LAND})
+log = get_logger("sd_ground.mav")
+
+EventSink = Callable[[str, str, dict[str, Any]], None]  # (type, severity, payload)
+
+
+def chain_of(kind: LatchAction) -> OverrideAction:
+    """Which steps a latch kind uses: STOP's or FLY HOME's."""
+    return "stop" if kind in ("stop", "watchdog_stop") else "return_home"
+
+
+@dataclass(frozen=True, slots=True)
+class ModeAction:
+    action_id: str
+    vehicle_id: str
+    kind: LatchAction
+    action_seq: int
+    clicked_mono: float
+
+
+@dataclass(frozen=True, slots=True)
+class ActionReport:
+    action_id: str
+    vehicle_id: str
+    kind: LatchAction
+    action_seq: int
+    result: Literal["acked", "already_active", "failed", "aborted"]
+    mode_requested: str | None
+    mode_confirmed: str | None
+    alarm: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MavSnapshot:
+    """A copy of what the MAVLink thread knows, for the other threads."""
+
+    vehicle_id: str
+    connected: bool  # a flight-controller HEARTBEAT within FC_HEARTBEAT_TIMEOUT_S
+    telemetry: FcTelemetry
+    now_mono_ms: int
+    in_flight: bool
+    onboard_alive: bool
+    airborne_since: dt.datetime | None
+    manual: bool
+    watchdog_phase: str
+
+    @property
+    def fc_mode(self) -> CopterMode | None:
+        mode = self.telemetry.fc_custom_mode
+        try:
+            return None if mode is None else CopterMode(mode)
+        except ValueError:
+            return None
+
+
+def in_flight(t: FcTelemetry) -> bool:
+    """The wide definition used by the emergency path (start and landing count)."""
+    return t.landed_state in _IN_AIR or (t.armed and t.alt_rel_home_m > 0.5)
+
+
+_VEHICLE_EVENTS: Final = {
+    "mav.forbidden_mavlink_blocked": ("mav.forbidden_mavlink_blocked", "critical"),
+    "mav.inbound_command_ignored": ("mav.inbound_command_ignored", "warning"),
+    "mav.retry_cancelled": ("mav.retry_cancelled", "warning"),
+}
+
+
+def vehicle_events(sink: EventSink) -> Callable[[str, dict[str, Any]], None]:
+    """The ``Vehicle``'s events that the ground station keeps; status texts at warning
+    level or worse become ``fc.statustext``."""
+
+    def on_event(kind: str, details: dict[str, Any]) -> None:
+        if kind == "mav.statustext":
+            if int(details.get("severity", 7)) <= 4:  # MAV_SEVERITY_WARNING
+                sink("fc.statustext", "warning", details)
+            return
+        mapped = _VEHICLE_EVENTS.get(kind)
+        if mapped is not None:
+            sink(mapped[0], mapped[1], details)
+
+    return on_event
+
+
+class HeartbeatGate:
+    """Our GCS heartbeat goes out only while both event loops are alive."""
+
+    def __init__(self, liveness: LoopLiveness, on_event: EventSink | None = None) -> None:
+        self._liveness = liveness
+        self._on_event = on_event
+        self.stalled = False
+
+    def __call__(self) -> bool:
+        stalled = self._liveness.stalled()
+        if stalled and not self.stalled:
+            log.critical("loop_stall", loops=stalled)
+            if self._on_event is not None:
+                self._on_event("system.loop_stall", "critical", {"loops": stalled})
+        elif not stalled and self.stalled and self._on_event is not None:
+            self._on_event("system.loop_recovered", "warning", {})
+        self.stalled = bool(stalled)
+        return not stalled
+
+
+@dataclass
+class _Manual:
+    takeover_id: str
+    axes: StickAxes | None = None
+    received_mono: float = 0.0
+    sent_mono: float = 0.0
+    sent_seq: int = -1
+
+
+@dataclass
+class _Tracks:
+    tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
+
+
+class GroundMav:
+    """The emergency path and the guards, inside the MAVLink thread's event loop."""
+
+    def __init__(
+        self,
+        vehicle: Vehicle,
+        clock: Clock,
+        *,
+        vehicle_id: str,
+        latches: Latches,
+        on_report: Callable[[ActionReport], None],
+        on_event: EventSink,
+        system_action: Callable[[str, LatchAction], object],
+        rtl_pct: Callable[[], float] = lambda: DEFAULT_LIMITS.battery_rtl_pct,
+    ) -> None:
+        self.vehicle = vehicle
+        self.clock = clock
+        self.vehicle_id = vehicle_id
+        self.latches = latches
+        self._on_report = on_report
+        self._on_event = on_event
+        self._system_action = system_action
+        self._rtl_pct = rtl_pct
+        self.watchdog = CompanionWatchdog(clock.monotonic_ms())
+        self._lock = threading.Lock()
+        self._snap: MavSnapshot | None = None
+        self._tracks = _Tracks()
+        self._tick_task: asyncio.Task[None] | None = None
+        self._manual: _Manual | None = None
+        self._airborne_since: dt.datetime | None = None
+        self._flown = False
+        self._battery_low_since: float | None = None
+        self._was_connected = False
+        self.sticks_sent = 0
+        self._closed = False
+
+    # --- lifecycle --------------------------------------------------------------------
+
+    async def start(self) -> None:
+        await self.vehicle.start()
+        self._publish()
+        self._tick_task = asyncio.ensure_future(self._tick_loop())
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        tasks = [*self._tracks.tasks, *([self._tick_task] if self._tick_task else [])]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await self.vehicle.close()
+
+    def _spawn(self, coro: Any) -> None:
+        task = asyncio.ensure_future(coro)
+        self._tracks.tasks.add(task)
+        task.add_done_callback(self._done)
+
+    def _done(self, task: asyncio.Task[Any]) -> None:
+        self._tracks.tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.error("mav.task_failed", error=type(task.exception()).__name__)
+
+    # --- the picture ------------------------------------------------------------------
+
+    def snapshot(self) -> MavSnapshot | None:
+        with self._lock:
+            return self._snap
+
+    def _publish(self) -> None:
+        t = self.vehicle.telemetry
+        now = self.clock.monotonic_ms()
+        connected = (
+            t.fc_heartbeat_mono_ms is not None
+            and now - t.fc_heartbeat_mono_ms <= FC_HEARTBEAT_TIMEOUT_S * 1000
+        )
+        flying = connected and in_flight(t)
+        if flying and self._airborne_since is None:
+            self._airborne_since = self.clock.utc_now()
+        elif not flying and connected:
+            self._airborne_since = None
+        onboard = (
+            t.onboard_seen_mono_ms is not None
+            and now - t.onboard_seen_mono_ms <= COMPANION_WATCHDOG_S * 1000
+        )
+        snap = MavSnapshot(
+            vehicle_id=self.vehicle_id,
+            connected=connected,
+            telemetry=t,
+            now_mono_ms=now,
+            in_flight=flying,
+            onboard_alive=onboard,
+            airborne_since=self._airborne_since,
+            manual=self._manual is not None,
+            watchdog_phase=self.watchdog.phase,
+        )
+        with self._lock:
+            self._snap = snap
+
+    # --- actions ----------------------------------------------------------------------
+
+    def submit(self, action: ModeAction) -> None:
+        """Start an action's steps now (loop thread only)."""
+        if action.vehicle_id != self.vehicle_id:
+            return
+        self._manual = None  # STOP and FLY HOME end steering by hand
+        self._spawn(self._run_action(action))
+
+    def _superseded(self, action: ModeAction) -> bool:
+        return self.latches.latest_seq(self.vehicle_id) != action.action_seq
+
+    async def _run_action(self, action: ModeAction) -> None:
+        which = chain_of(action.kind)
+        if not self.vehicle.telemetry.fc_connected:
+            # Still try: the link may be back any moment. The result says what happened.
+            log.warning("mav.override_without_fc", kind=action.kind)
+        result = await run_override(self.vehicle, which, aborted=lambda: self._superseded(action))
+        self._report(action, result)
+        if result.result == "acked" and result.mode_confirmed not in (None, "DISARMED"):
+            confirmed = CopterMode[result.mode_confirmed]
+            await guard_override(
+                self.vehicle,
+                which,
+                confirmed,
+                clicked_mono=action.clicked_mono,
+                aborted=lambda: self._superseded(action),
+                on_resend=lambda mode: self._on_event(
+                    "vehicle.override_reasserted",
+                    "warning",
+                    {"kind": action.kind, "seen_mode": mode, "action_seq": action.action_seq},
+                ),
+            )
+
+    def _report(self, action: ModeAction, result: OverrideResult) -> None:
+        if result.alarm is not None:
+            self._on_event(
+                f"alarm.{result.alarm}",
+                "critical",
+                {"kind": action.kind, "action_seq": action.action_seq},
+            )
+        self._on_report(
+            ActionReport(
+                action.action_id,
+                action.vehicle_id,
+                action.kind,
+                action.action_seq,
+                result.result,
+                result.mode_requested,
+                result.mode_confirmed,
+                result.alarm,
+            )
+        )
+
+    # --- steering by hand -------------------------------------------------------------
+
+    def takeover(self, takeover_id: str) -> None:
+        self._manual = _Manual(takeover_id)
+        seq = self.latches.latest_seq(self.vehicle_id)
+
+        async def loiter() -> None:
+            await set_mode_with_fallback(
+                self.vehicle,
+                [CopterMode.LOITER],
+                origin=SendOrigin.GROUND,
+                aborted=lambda: self.latches.latest_seq(self.vehicle_id) != seq,
+            )
+
+        self._spawn(loiter())
+
+    def handback(self) -> None:
+        self._manual = None
+
+    def sticks(self, axes: StickAxes) -> None:
+        m = self._manual
+        if m is None or str(axes.takeover_id) != m.takeover_id:
+            return
+        if m.axes is not None and axes.input_seq <= m.axes.input_seq:
+            return  # older or repeated values are dropped
+        m.axes = axes
+        m.received_mono = self.clock.monotonic()
+
+    async def _send_sticks(self) -> None:
+        m = self._manual
+        if m is None or m.axes is None:
+            return
+        now = self.clock.monotonic()
+        if now - m.received_mono > MANUAL_CONTROL_TIMEOUT_MS / 1000:
+            return  # the 1 s watchdog: no fresh value from the panel, nothing is sent
+        fresh_value = m.axes.input_seq != m.sent_seq
+        if not fresh_value and now - m.sent_mono < STICK_RESEND_S:
+            return
+        if mode_shown(self.vehicle) != CopterMode.LOITER:
+            return
+        m.sent_mono, m.sent_seq = now, m.axes.input_seq
+        with contextlib.suppress(ForbiddenMavlinkError, ControlNotAllowedError):
+            await self.vehicle.manual_control(m.axes, origin=SendOrigin.MANUAL)
+            self.sticks_sent += 1
+
+    # --- the guards -------------------------------------------------------------------
+
+    async def _tick_loop(self) -> None:
+        while True:
+            try:
+                await self._tick()
+            except Exception as exc:  # the guards must keep running
+                log.error("mav.tick_failed", error=type(exc).__name__)
+            await self.clock.sleep(TICK_S)
+
+    async def _tick(self) -> None:
+        self._publish()
+        snap = self.snapshot()
+        if snap is None:
+            return
+        if snap.connected != self._was_connected:
+            self._was_connected = snap.connected
+            self._on_event(
+                "vehicle.mavlink_up" if snap.connected else "alarm.MAVLINK_LOST",
+                "info" if snap.connected else "critical",
+                {},
+            )
+        # Landed: it has flown since the last landing and now stands disarmed.
+        if snap.connected and snap.in_flight:
+            self._flown = True
+        if snap.connected and self._flown and not snap.in_flight and not snap.telemetry.armed:
+            self._flown = False
+            self._landed()
+        self._watchdog(snap)
+        self._battery(snap)
+        await self._send_sticks()
+
+    def _landed(self) -> None:
+        self._manual = None
+        self._battery_low_since = None
+        latch = self.latches.landed(self.vehicle_id)
+        self._on_event(
+            "vehicle.landed", "info", {"latch": latch.action if latch is not None else None}
+        )
+
+    def _watchdog(self, snap: MavSnapshot) -> None:
+        latch = self.latches.get(self.vehicle_id)
+        was_alarm = self.watchdog.alarm_active
+        fresh_mode = mode_shown(self.vehicle)
+        action = self.watchdog.tick(
+            WatchInput(
+                now_ms=snap.now_mono_ms,
+                onboard_seen_ms=snap.telemetry.onboard_seen_mono_ms,
+                fc_mode=fresh_mode if snap.connected else None,
+                in_flight=snap.in_flight,
+                operator_override=latch is not None and latch.action in ("stop", "return_home"),
+                battery_latch=latch is not None
+                and (latch.action == "battery_rtl" or latch.underlying == "battery_rtl"),
+            )
+        )
+        if self.watchdog.alarm_active and not was_alarm:
+            self._on_event("alarm.ONBOARD_SILENT", "critical", {"phase": self.watchdog.phase})
+        if action == "watchdog_stop":
+            self._on_event("vehicle.onboard_silent", "warning", {})
+            self._system_action(self.vehicle_id, action)
+        elif action == "watchdog_rtl":
+            self._on_event("vehicle.onboard_silent_rtl", "critical", {})
+            self._system_action(self.vehicle_id, action)
+
+    def _battery(self, snap: MavSnapshot) -> None:
+        t = snap.telemetry
+        latch = self.latches.get(self.vehicle_id)
+        mode = snap.fc_mode
+        low = t.battery_pct is not None and t.battery_pct <= self._rtl_pct()
+        blocked = (
+            not snap.connected
+            or not snap.in_flight
+            or mode in _FLYING_HOME
+            or (latch is not None and latch.action in ("battery_rtl", *HOME_LATCHES))
+            or (latch is not None and latch.underlying == "battery_rtl")
+        )
+        if not low or blocked:
+            self._battery_low_since = None if not low else self._battery_low_since
+            return
+        now = self.clock.monotonic()
+        if self._battery_low_since is None:
+            self._battery_low_since = now
+        if now - self._battery_low_since < BATTERY_CONFIRM_S:
+            return
+        self._battery_low_since = None
+        self._on_event(
+            "vehicle.battery_rtl",
+            "critical",
+            {"battery_pct": t.battery_pct, "alarm": "BATTERY_RTL"},
+        )
+        self._system_action(self.vehicle_id, "battery_rtl")
+
+
+class ThreadSafeMav:
+    """Calls into a ``GroundMav`` from any thread; the work runs in its own loop."""
+
+    def __init__(self, core: GroundMav, loop: asyncio.AbstractEventLoop) -> None:
+        self.core = core
+        self.loop = loop
+
+    def _call(self, fn: Callable[..., None], *args: Any) -> bool:
+        try:
+            self.loop.call_soon_threadsafe(fn, *args)
+        except RuntimeError:  # the loop is closed
+            return False
+        return True
+
+    def submit(self, action: ModeAction) -> bool:
+        return self._call(self.core.submit, action)
+
+    def takeover(self, takeover_id: str) -> bool:
+        return self._call(self.core.takeover, takeover_id)
+
+    def handback(self) -> bool:
+        return self._call(self.core.handback)
+
+    def sticks(self, axes: StickAxes) -> bool:
+        return self._call(self.core.sticks, axes)
+
+    def snapshot(self) -> MavSnapshot | None:
+        return self.core.snapshot()
+
+    # --- sd_ground.sources.VehicleLink ------------------------------------------------
+
+    def state(self) -> PartState:
+        snap = self.snapshot()
+        return "ok" if snap is not None and snap.connected else "down"
+
+    def connected(self, vehicle_id: str) -> bool:
+        snap = self.snapshot()
+        return snap is not None and snap.vehicle_id == vehicle_id and snap.connected
+
+    def in_flight(self, vehicle_id: str) -> bool:
+        snap = self.snapshot()
+        return snap is not None and snap.vehicle_id == vehicle_id and snap.in_flight
+
+    def airborne_since(self) -> dt.datetime | None:
+        snap = self.snapshot()
+        return None if snap is None else snap.airborne_since
+
+    def onboard_state(self) -> PartState:
+        snap = self.snapshot()
+        return "ok" if snap is not None and snap.onboard_alive else "down"
+
+    def telemetry(self, vehicle_id: str) -> Telemetry | None:
+        snap = self.snapshot()
+        if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
+            return None
+        return to_telemetry(snap, self.core.clock.utc_now())
+
+
+def to_telemetry(snap: MavSnapshot, now: dt.datetime) -> Telemetry:
+    t = snap.telemetry
+    fresh = (
+        t.fc_heartbeat_mono_ms is not None
+        and snap.now_mono_ms - t.fc_heartbeat_mono_ms <= MODE_FRESH_S * 1000
+    )
+    return Telemetry(
+        t=now,
+        time_boot_ms=t.position_mono_ms or 0,
+        lat=t.lat,
+        lon=t.lon,
+        alt_amsl_m=t.alt_amsl_m,
+        alt_rel_home_m=t.alt_rel_home_m,
+        heading_deg=t.heading_deg,
+        groundspeed_ms=t.groundspeed_ms,
+        climb_ms=t.climb_ms,
+        battery_pct=t.battery_pct,
+        battery_v=t.battery_voltage_v,
+        flight_mode=t.fc_mode if fresh else "UNKNOWN",
+        armed=t.armed,
+        landed_state=t.landed_state,
+        gps_fix=t.gps_fix_type,
+        gps_sats=t.gps_satellites,
+        home=None if t.home is None else LatLon(lat=t.home.lat, lon=t.home.lon),
+        dist_to_pilot_m=None,
+    )
+
+
+class MavThread(threading.Thread):
+    """Runs a ``GroundMav`` in its own thread and event loop."""
+
+    def __init__(self, make_core: Callable[[], GroundMav]) -> None:
+        super().__init__(name="sd-ground-mavlink", daemon=True)
+        self._make_core = make_core
+        self.ready = threading.Event()
+        self.mav: ThreadSafeMav | None = None
+        self._stop_event: asyncio.Event | None = None
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            asyncio.run(self._main())
+        except BaseException as exc:  # reported to the starter; never silent
+            self.error = exc
+            self.ready.set()
+
+    async def _main(self) -> None:
+        loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+        core = self._make_core()
+        await core.start()
+        self.mav = ThreadSafeMav(core, loop)
+        self.ready.set()
+        try:
+            await self._stop_event.wait()
+        finally:
+            await core.close()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        mav, ev = self.mav, self._stop_event
+        if mav is not None and ev is not None:
+            with contextlib.suppress(RuntimeError):
+                mav.loop.call_soon_threadsafe(ev.set)
+        self.join(timeout)
