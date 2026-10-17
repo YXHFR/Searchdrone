@@ -184,6 +184,7 @@ class CommanderLoop:
         self._followups: list[tuple[Trigger, dict[str, Any]]] = []
         self._backlog: list[ChatMessage] = []
         self._turn_task: asyncio.Task[None] | None = None
+        self._turn_events: list[dict[str, Any]] = []  # what the running turn answers
         self._side_tasks: set[asyncio.Task[Any]] = set()
         self._worker: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
@@ -357,12 +358,14 @@ class CommanderLoop:
             if self._followups and not self._queue:
                 trigger, extra = self._followups.pop(0)
                 events = [extra] if extra.get("type") else []
+                self._turn_events = events
                 task = asyncio.create_task(self._turn(trigger, events, extra))
             else:
                 pending, self._queue = self._queue, []
                 order = {t: i for i, t in enumerate(TRIGGER_PRIORITY)}
                 trigger: Trigger = min((p.trigger for p in pending), key=lambda t: order.get(t, 99))
-                task = asyncio.create_task(self._turn(trigger, [p.event for p in pending], {}))
+                self._turn_events = [p.event for p in pending]
+                task = asyncio.create_task(self._turn(trigger, self._turn_events, {}))
             self._turn_task = task
             try:
                 await task
@@ -373,6 +376,7 @@ class CommanderLoop:
                 log.info("turen avbröts av operatörens beslut")
             finally:
                 self._turn_task = None
+                self._turn_events = []
                 self._busy_since = None
 
     async def settle(self) -> None:
@@ -846,6 +850,10 @@ class CommanderLoop:
             location=result.location,
             latency_ms=result.latency_ms,
         )
+        # Was this line still waiting for its answer (queued, or in the running turn)?
+        dropped = any(p.event is evt for p in self._queue) or (
+            self._turn_task is not None and any(e is evt for e in self._turn_events)
+        )
         if self._turn_task is not None:
             self._turn_task.cancel()  # the operator wants to stop: drop the running turn
         self._queue = [p for p in self._queue if p.trigger != "operator_message"]
@@ -858,9 +866,11 @@ class CommanderLoop:
             return
         if outcome == "refused":  # not a pilot's own recent line: the ground decides
             log.info("markstationen tog inte emot stoppkontrollen för rad %s", message_id)
-            # The line was dropped from the queue for the stop: answer it as usual.
-            self._queue.append(_Pending("operator_message", evt))
-            self._wake.set()
+            # The stop check took the line from the queue: answer it as usual, once, and
+            # only in the mission it was written in.
+            if dropped and self.mission_id == mid:
+                self._queue.append(_Pending("operator_message", evt))
+                self._wake.set()
 
     async def _stop_fallback(self, mid: str, result: StopCheckResult) -> None:
         """The ground could not take the report: ask for the button and send a gated

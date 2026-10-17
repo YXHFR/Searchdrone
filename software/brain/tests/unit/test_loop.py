@@ -15,7 +15,8 @@ from sd_brain.decide.engines import EngineAnswer
 from sd_brain.decide.service import DecisionService
 from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
-from sd_schemas.decide import ChoiceAnswer, DecideRequest, DecisionEngine
+from sd_schemas.base import new_id
+from sd_schemas.decide import ChatIntentReport, ChoiceAnswer, DecideRequest, DecisionEngine
 
 REJECT = {
     "decision": "REJECT",
@@ -437,6 +438,40 @@ async def test_stop_check_refused_by_ground_answers_the_line_as_usual() -> None:
     assert fg.intents and not fg.commands  # no order of its own
     assert [t.trigger for t in backend.turns] == ["operator_message"]
     assert [m.text for m in fg.posted] == ["Jag står kvar."]
+
+
+class _SlowStopEngine(_StopEngine):
+    async def answer(self, req: DecideRequest, timeout_s: float) -> EngineAnswer:
+        await asyncio.sleep(0.2)  # the turn answers the line first
+        return await super().answer(req, timeout_s)
+
+
+async def test_refused_line_already_answered_gets_no_second_answer() -> None:
+    backend = Steps(say("Svar."))
+    cfg = BrainConfig.model_validate({"decide": {"stop_check_timeout_s": 1.0}})
+    svc = DecisionService([_SlowStopEngine()])
+    loop, fg, _ = make_loop(backend, cfg=cfg, decide=svc, chat_intents="refused")
+    loop.handle_event(fg.operator_message("vänta lite"))
+    await loop.settle()
+    await asyncio.sleep(0.4)
+    await loop.settle()
+    assert fg.intents  # the report went out and was refused
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
+
+
+async def test_refused_line_is_not_answered_in_another_mission() -> None:
+    backend = Steps(say("Svar."))
+    loop, fg, _ = make_loop(backend, decide=DecisionService([]), chat_intents="refused")
+    report = fg.report_chat_intent
+
+    async def mission_changes(mission_id: str, r: ChatIntentReport) -> Any:
+        loop.mission_id = str(new_id())  # a new mission while the report was in flight
+        return await report(mission_id, r)
+
+    fg.report_chat_intent = mission_changes  # type: ignore[method-assign]
+    loop.handle_event(fg.operator_message("Stopp!"))
+    await loop.settle()
+    assert fg.intents and not backend.turns
 
 
 async def test_stop_check_skips_lines_the_ground_handled() -> None:
