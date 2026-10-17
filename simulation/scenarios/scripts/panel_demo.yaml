@@ -36,7 +36,7 @@ turns:
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
     once: false
   - on: skill_event                # sent on "done" before the onboard state reached HOLD
-    when: {skill: survey_sector, status: rejected_onboard, status_reason: STATE_CHANGED}
+    when: {skill: survey_sector, status: rejected_onboard}
     say: ["Försöker igen med det nya läget."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
     once: false
