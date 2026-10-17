@@ -17,6 +17,7 @@ from sd_schemas.link import (
     CharterInstall,
     ClearanceConfirmation,
     Envelope,
+    ManualTakeover,
     OperatorOverrideNotice,
     SkillCommand,
 )
@@ -43,6 +44,9 @@ class _Executor:
 
     def on_override(self, notice: Any) -> None:
         self.calls.append("notice")
+
+    def on_takeover(self, takeover: Any, ref: Any) -> None:
+        self.calls.append("take_over" if takeover.active else "hand_back")
 
     async def on_skill_command(self, cmd: Any, *, deadline_ms: int | None) -> None:
         self.calls.append(f"order:{cmd.skill}")
@@ -124,6 +128,32 @@ async def test_a_failing_install_is_reported_and_the_queue_goes_on() -> None:
         failed = [e for e in link._events if e.type == "executor.inbound_failed"]
         assert failed and failed[0].data["kind"] == "CharterInstall"
         assert failed[0].severity == "critical"
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+async def test_take_over_is_at_once_and_a_hand_back_waits_its_turn() -> None:
+    """A hand-back lets go of HELD, so it must not overtake an older queued order."""
+    link, ex = _link()
+    worker = asyncio.ensure_future(link._handle_in_order())
+    try:
+        await link._dispatch(_inbound(CharterInstall(charter=charter())))
+        await _settle()
+        await link._dispatch(_inbound(SkillCommand.model_construct(skill="goto")))
+        await link._dispatch(_inbound(ManualTakeover.model_construct(active=True)))
+        await link._dispatch(_inbound(ManualTakeover.model_construct(active=False)))
+        await _settle()
+        assert ex.calls == ["charter:1:start", "take_over"]
+        ex.fence_read.set()
+        await _settle()
+        assert ex.calls == [
+            "charter:1:start",
+            "take_over",
+            "charter:1:done",
+            "order:goto",
+            "hand_back",
+        ]
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)

@@ -78,6 +78,8 @@ def test_numpy_is_known_ok() -> None:
     lic = "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
     assert not cl.license_allowed(lic)  # the word list alone does not cover it
     assert cl.violations([P("numpy", "2.5.3", lic)]) == []
+    newer = P("numpy", "2.6.0", lic)
+    assert cl.violations([newer]) == [newer]  # a new release is read again
 
 
 def test_tools_are_ignored() -> None:

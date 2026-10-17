@@ -6,11 +6,11 @@ Stick values (``ManualControl``) are never forwarded from here: the ground stati
 the pilot's sticks to the flight controller itself (as 250/190, the way STOP goes), so
 they are only counted onboard.
 
-Inbound order: charters, clearances, orders, cancels and releases are handled one at a
-time in the order they arrived (a charter install reads the fence first, which takes a
-while). STOP/FLY HOME notices, takeovers, the pilot's position and the AI's status do
-not wait behind them: a notice that overtakes a queued order can only make that order
-be refused, never let one through.
+Inbound order: charters, clearances, orders, cancels, releases and hand-backs are
+handled one at a time in the order they arrived (a charter install reads the fence
+first, which takes a while). STOP/FLY HOME notices, "take over", the pilot's position
+and the AI's status do not wait behind them: what overtakes a queued order can only
+make that order be refused, never let one through.
 """
 
 from __future__ import annotations
@@ -193,8 +193,10 @@ class OnboardLink:
                 ex.on_pilot_position(body)
             case CommanderStatus():
                 ex.on_commander_status(body)
-            case ManualTakeover():
+            case ManualTakeover() if body.active:
                 ex.on_takeover(body, env.msg_id)
+            case ManualTakeover():
+                self._ordered.put_nowait(inbound)  # a hand-back lets go of HELD: in order
             case ManualControl():
                 if self.manual_values_ignored == 0:
                     log.warning("stick values over SD-link are ignored onboard")
@@ -232,6 +234,8 @@ class OnboardLink:
                 ex.on_clearance(body, env.msg_id)
             case CharterInstall():
                 await ex.on_charter(body)
+            case ManualTakeover():
+                ex.on_takeover(body, env.msg_id)
             case _:
                 pass
 

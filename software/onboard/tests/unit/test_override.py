@@ -240,4 +240,6 @@ async def test_return_home_refused_is_retried_until_it_flies_home() -> None:
         await r.run(8)
         assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
         assert "executor.return_home_retry" in r.up.kinds()
+        attempts = [d["attempt"] for t, _, d in r.up.events if t == "executor.return_home_retry"]
+        assert attempts == list(range(1, len(attempts) + 1))
         await r.until(lambda: r.ex.state == S.LANDED, 300, step=0.05)
