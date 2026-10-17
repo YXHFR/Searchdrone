@@ -22,9 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 from flow_rig import VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 from script_driver import ScriptDriver  # pyright: ignore[reportMissingImports]
 
+from sd_ground.services import approvals as approvals_service
+from sd_ground.services.latches import ADOPTED_BY
 from sd_mav.mission import FENCE
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState
+from sd_schemas.link import SCHEMA_MAJOR, Hello, LatchRef
 
 if TYPE_CHECKING:
     from conftest import Db
@@ -362,6 +365,99 @@ async def test_command_card_lifecycle(r: Rig) -> None:
     await r.until(lambda: r.onboard.orders, 5, "order onboard")
     sent = r.onboard.orders[-1]
     assert sent.approval is not None and str(sent.approval.approval_id) == out["approval_id"]
+
+
+async def test_card_click_after_expiry_or_twice_sends_nothing(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The click itself refuses an expired or already answered card (the expiry tick is
+    held back here, so only the click's own check can stop the order)."""
+
+    async def no_expiry(_flow: Any) -> None:
+        return None
+
+    monkeypatch.setattr(approvals_service, "expire", no_expiry)
+    mid = await r.ready_mission()
+    put = await r.panel.put(
+        f"/api/v1/missions/{mid}/autonomy", json={"mode": "APPROVE_EACH"}, headers=H
+    )
+    assert put.status_code == 200
+    d = driver(r, mid)
+    await r.clearance(mid)
+    out = (await d.order("takeoff", {"alt_m": 40})).json()
+    assert out["decision"] == "PENDING_APPROVAL", out
+    r.clock.skew_s = 61
+    late = await r.approve(out["approval_id"], 1)
+    r.clock.skew_s = 0
+    assert late.status_code == 409 and late.json()["code"] == "APPROVAL_TIMEOUT", late.text
+    await asyncio.sleep(0.5)
+    assert r.onboard.orders == []
+    assert await _status_of(r, mid, out["command_id"], "pending_approval")
+    rej = await r.panel.post(
+        f"/api/v1/approvals/{out['approval_id']}/decision",
+        json={"decision": "reject", "subject_version": 1},
+        headers=H,
+    )
+    assert rej.status_code == 200, rej.text
+    # Two clicks at once on a fresh card: exactly one order goes out.
+    await asyncio.sleep(3.1)  # the gate's rate limit
+    out = (await d.order("takeoff", {"alt_m": 40})).json()
+    assert out["decision"] == "PENDING_APPROVAL", out
+    both = await asyncio.gather(r.approve(out["approval_id"], 1), r.approve(out["approval_id"], 1))
+    assert sorted(b.status_code for b in both) == [200, 409]
+    await r.until(lambda: r.onboard.orders, 5, "order onboard")
+    await asyncio.sleep(0.5)
+    assert len(r.onboard.orders) == 1
+
+
+async def test_unknown_air_state_fails_closed(r: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """READY on the ground, but no MAVLink telemetry: the ground treats the vehicle as
+    maybe flying for the checks only the ground may pass."""
+    mid = await r.ready_mission()
+    monkeypatch.setattr(r.flow, "mav_snapshot", lambda _vid: None)
+    raised = (await r.mission(mid))["mission"]["limits"] | {"max_alt_agl_m": 200}
+    res = await r.panel.put(f"/api/v1/missions/{mid}/limits", json=raised, headers=H)
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "LIMITS_CHANGE_REQUIRES_LANDING"
+    res = await r.clearance(mid)
+    assert res.status_code == 409 and res.json()["code"] == "AIRBORNE", res.text
+    d = driver(r, mid)
+    bigger = await d.charter(r.square(200))
+    assert bigger.status_code == 422, bigger.text
+    codes = {e["code"] for e in bigger.json()["validation"]["errors"]}
+    assert "AREA_CHANGE_REQUIRES_LANDING" in codes
+
+
+async def test_adopted_latch_pauses_for_the_system(r: Rig) -> None:
+    """A STOP only the onboard computer remembers (ground restarted): the mission becomes
+    PAUSED by the system, and only the operator's Resume brings it back."""
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    await r.wait_status(mid, "ACTIVE")
+    far = r.actions.latches.latest_seq(VID) + 1000
+    hello = Hello(
+        schema_major=SCHEMA_MAJOR,
+        boot_id=1,
+        executor_state=ExecutorState.HELD,
+        charter_id=None,
+        charter_version=None,
+        fc_firmware=None,
+        operator_latch=LatchRef(action="stop", action_seq=far),
+        last_action_seq=far,
+    )
+    await r.link._on_hello(VID, hello)  # pyright: ignore[reportPrivateUsage]
+    latch = r.actions.latches.get(VID)
+    assert latch is not None and latch.set_by == ADOPTED_BY
+    await r.wait_status(mid, "PAUSED")
+    assert (await r.mission(mid))["mission"]["paused_by"] == "system"
+    res = await r.panel.post(
+        f"/api/v1/vehicles/{VID}/actions/resume",
+        json={"client_action_id": str(new_id())},
+        headers=H,
+    )
+    assert res.status_code == 202, res.text
+    await r.wait_status(mid, "ACTIVE")
 
 
 async def _status_of(r: Rig, mid: str, command_id: str, want: str) -> bool:

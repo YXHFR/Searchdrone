@@ -125,8 +125,7 @@ def test_base_version_and_in_air_growth() -> None:
 
 def test_huge_area_refused_before_splitting() -> None:
     """A polygon over several degrees is refused at once, not cut into millions of cells."""
-    ring = [[149.0, -36.0], [152.0, -36.0], [152.0, -33.0], [149.0, -33.0], [149.0, -36.0]]
-    huge = {"type": "Polygon", "coordinates": [ring]}
+    huge = square(150_000)  # 300 km across, around the example home
     start = time.monotonic()
     with pytest.raises(ValueError, match="too large"):
         charters.split_sectors(huge, PLANE)

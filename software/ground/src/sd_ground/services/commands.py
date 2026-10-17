@@ -633,6 +633,9 @@ async def decide(
         )
         await set_status(flow, str(cmd.id), "rejected_by_operator", "APPROVAL_DENIED")
         return await _card(flow, card)
+    if card.expires_at is not None and card.expires_at <= now:
+        # before the clearance below is recorded (checked again under the lock)
+        raise FlowError(409, "APPROVAL_TIMEOUT", "Kortet har gått ut. Ordern skickas inte.")
     confirmations: list[str] = list(req.confirmations)
     if "clear_around_drone" in card.required_confirmations:
         if "clear_around_drone" in confirmations:
