@@ -72,6 +72,17 @@ class _NoTools:
         return {"situation": "LÄGE ..."}
 
 
+async def test_scripted_when_matches_any_event_of_the_turn(tmp_path: Path) -> None:
+    """A skill event and the alert it raised come in one turn, the alert last."""
+    b = ScriptedBackend.from_file(_script(tmp_path))
+    ev = [
+        {"type": "event.skill", "body": {"skill": "goto", "status": "done"}},
+        {"type": "event.alert", "body": {"code": "GATE_MISMATCH", "level": "warning"}},
+    ]
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.skill == "survey_sector"
+
+
 @pytest.mark.parametrize(
     ("text", "skill", "params"),
     [
