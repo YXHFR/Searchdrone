@@ -153,17 +153,18 @@ async def _browser_done(limit_s: float) -> int:
     return int(json.loads(done.read_text(encoding="utf-8")).get("code", 1))
 
 
-async def _report(r: Rig) -> None:
+async def _report(r: Rig, port: int) -> None:
     """What the AI and the ground did, for a failed run (chat, orders, cards per mission)."""
     out = [f"onboard snapshot: {r.flow.snapshot(VID)[0]!r}"]
-    listed = await r.panel.get("/api/v1/missions")
+    host = {"Host": f"127.0.0.1:{port}"}  # the panel listener's own port
+    listed = await r.panel.get("/api/v1/missions", headers=host)
     out.append(f"missions: {listed.status_code} {listed.text[:500]}")
     missions = listed.json() if listed.status_code == 200 else []
     for m in missions if isinstance(missions, list) else []:
         mid = m["id"]
         out.append(f"--- uppdrag {m['title']} {m['status']}")
         for path in ("chat", "commands", "approvals", "charters", "events"):
-            res = await r.panel.get(f"/api/v1/missions/{mid}/{path}")
+            res = await r.panel.get(f"/api/v1/missions/{mid}/{path}", headers=host)
             out.append(f"{path}: {res.text[:4000]}")
     sys.stderr.write("\n".join(out) + "\n")
 
@@ -224,7 +225,7 @@ async def test_panel_in_a_browser_on_sitl(sim: Sim, migrated_db: Any, tmp_path: 
             path.chmod(0o600)
             result = await _browser_done(BROWSER_LIMIT_S)
             if result != 0:
-                await _report(r)
+                await _report(r, panel_port)
             assert result == 0, (
                 f"the browser test failed (exit {result}); see software/panel/test-results"
             )
