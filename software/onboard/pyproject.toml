@@ -5,7 +5,14 @@ description = "The onboard process sd-onboard: runs skills as state machines and
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+  "sd-schemas", "sd-safety", "sd-mav", "sd-link", "sd-obs", "sd-geo",
+  "pydantic>=2.9",
+  "shapely>=2.1",  # BSD-3-Clause
+]
+
+[project.scripts]
+sd-onboard = "sd_onboard.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

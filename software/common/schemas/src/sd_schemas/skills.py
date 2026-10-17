@@ -513,11 +513,15 @@ class SkillRegistry:
         return [spec.public() for spec in self._specs.values()]
 
 
+# The executor states a new airborne order may start from (the onboard transition table).
+_MOVING_FROM = frozenset({ExecutorState.HOLD, ExecutorState.TRANSIT, ExecutorState.SURVEY})
+
 _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="takeoff",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=frozenset({ExecutorState.PREFLIGHT}),
         runs_on="onboard",
         params_model=TakeoffParams,
         starts_flight=True,
@@ -531,7 +535,8 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="goto",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=GotoParams,
         ai_params_model=GotoAiParams,
@@ -545,7 +550,8 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="survey_sector",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=SurveySectorParams,
         ai_params_model=SurveySectorAiParams,
@@ -559,7 +565,8 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="hold",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=HoldParams,
         moves_vehicle=False,
@@ -573,7 +580,8 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="resume",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=frozenset({ExecutorState.HOLD}),
         runs_on="onboard",
         params_model=ResumeParams,
         moves_vehicle=True,
@@ -586,7 +594,8 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="return_home",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=frozenset({ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.RTL}),
         runs_on="onboard",
         params_model=ReturnHomeParams,
         ends_flight=True,
@@ -773,4 +782,5 @@ _SPECS: tuple[SkillSpec, ...] = (
 )
 
 SKILL_REGISTRY = SkillRegistry(_SPECS)
-"""All 18 skills. Every one is a stub until its executor and tests exist."""
+"""All 18 skills. A skill stays a stub until its executor and tests exist; the six
+onboard skills of the foundation are implemented by ``sd_onboard``."""

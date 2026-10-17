@@ -50,8 +50,16 @@ DENIED_RE = re.compile(
 MAX_LICENSE_TEXT = 200
 # pip-licenses and its own dependencies are tools, not dependencies of our packages.
 IGNORED = {"pip-licenses", "prettytable", "wcwidth", "pip", "setuptools"}
-# "<package>": "<license according to its source>, checked <YYYY-MM-DD>"
-KNOWN_OK: dict[str, str] = {}
+# "<package>" or "<package>==<version>": "<license according to its source>, checked
+# <YYYY-MM-DD>". With a version the entry covers only that release: a new one is read again.
+KNOWN_OK: dict[str, str] = {
+    # Pulled in by shapely (sd_geo). The expression is all permissive licenses, but
+    # 0BSD, Zlib and CC0-1.0 are not on the word list above.
+    "numpy==2.5.3": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+    " (License-Expression); the wheel bundles OpenBLAS (BSD-3-Clause), LAPACK"
+    " (BSD-3-Clause-Open-MPI), libgfortran (GPL-3.0-or-later WITH GCC-exception-3.1)"
+    " and libquadmath (LGPL-2.1-or-later), checked 2026-10-17",
+}
 
 
 @dataclass(frozen=True)
@@ -89,7 +97,10 @@ def license_allowed(license_text: str) -> bool:
 def violations(packages: Iterable[Package]) -> list[Package]:
     bad = []
     for pkg in packages:
-        if pkg.name.lower() in IGNORED or pkg.name in KNOWN_OK:
+        if (
+            pkg.name.lower() in IGNORED
+            or {pkg.name, f"{pkg.name}=={pkg.version}"} & KNOWN_OK.keys()
+        ):
             continue
         if pkg.license.strip().upper() in {"", "UNKNOWN"} or not license_allowed(pkg.license):
             bad.append(pkg)

@@ -12,7 +12,8 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from sd_mav.connection import MavConnection, Role, check_identity, connect
 from sd_mav.fake import FakeFlightController
 from sd_mav.vehicle import SendOrigin, Vehicle
-from sd_obs.clock import FakeClock, MonotonicClock
+from sd_obs.clock import MonotonicClock
+from sd_testing import FakeClock
 
 
 @pytest.mark.parametrize(

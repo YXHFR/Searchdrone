@@ -11,11 +11,19 @@ from importlib.metadata import version
 from sd_mav.allowlist import Profile, SendContext, SendEnvelope
 from sd_mav.connection import MavConnection, Role, connect
 from sd_mav.modes import CopterMode
-from sd_mav.vehicle import FcTelemetry, ForbiddenMavlinkError, MavResult, SendOrigin, Vehicle
+from sd_mav.vehicle import (
+    ControlNotAllowedError,
+    FcTelemetry,
+    ForbiddenMavlinkError,
+    MavResult,
+    SendOrigin,
+    Vehicle,
+)
 
 __version__ = version("sd-mav")
 
 __all__ = [
+    "ControlNotAllowedError",
     "CopterMode",
     "FcTelemetry",
     "ForbiddenMavlinkError",

@@ -17,6 +17,7 @@ members = [
     "sd-safety",
     "sd-schemas",
     "sd-sim",
+    "sd-testing",
     "searchdrone-workspace",
 ]
 constraints = [
@@ -1065,6 +1066,12 @@ source = { editable = "software/detector" }
 name = "sd-geo"
 version = "0.0.0"
 source = { editable = "software/common/geo" }
+dependencies = [
+    { name = "shapely" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "shapely", specifier = ">=2.1" }]
 
 [[package]]
 name = "sd-ground"
@@ -1127,12 +1134,14 @@ name = "sd-link"
 version = "0.0.0"
 source = { editable = "software/common/link" }
 dependencies = [
+    { name = "sd-obs" },
     { name = "sd-schemas" },
     { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "sd-obs", editable = "software/common/obs" },
     { name = "sd-schemas", editable = "software/common/schemas" },
     { name = "websockets", specifier = ">=15" },
 ]
@@ -1143,6 +1152,7 @@ version = "0.0.0"
 source = { editable = "software/common/link_testing" }
 dependencies = [
     { name = "sd-link" },
+    { name = "sd-obs" },
     { name = "sd-schemas" },
     { name = "websockets" },
 ]
@@ -1150,6 +1160,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "sd-link", editable = "software/common/link" },
+    { name = "sd-obs", editable = "software/common/obs" },
     { name = "sd-schemas", editable = "software/common/schemas" },
     { name = "websockets", specifier = ">=15" },
 ]
@@ -1182,6 +1193,28 @@ source = { editable = "software/common/obs" }
 name = "sd-onboard"
 version = "0.0.0"
 source = { editable = "software/onboard" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sd-geo" },
+    { name = "sd-link" },
+    { name = "sd-mav" },
+    { name = "sd-obs" },
+    { name = "sd-safety" },
+    { name = "sd-schemas" },
+    { name = "shapely" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-geo", editable = "software/common/geo" },
+    { name = "sd-link", editable = "software/common/link" },
+    { name = "sd-mav", editable = "software/common/mav" },
+    { name = "sd-obs", editable = "software/common/obs" },
+    { name = "sd-safety", editable = "software/common/safety" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
+    { name = "shapely", specifier = ">=2.1" },
+]
 
 [[package]]
 name = "sd-safety"
@@ -1229,6 +1262,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "sd-testing"
+version = "0.0.0"
+source = { editable = "software/common/testing" }
+dependencies = [
+    { name = "sd-obs" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "sd-obs", editable = "software/common/obs" }]
+
+[[package]]
 name = "searchdrone-workspace"
 version = "0.0.0"
 source = { virtual = "." }
@@ -1257,6 +1301,7 @@ dev = [
 ]
 test = [
     { name = "sd-link-testing" },
+    { name = "sd-testing" },
 ]
 
 [package.metadata]
@@ -1283,7 +1328,10 @@ dev = [
     { name = "ruff", specifier = ">=0.16" },
     { name = "shapely", specifier = ">=2.1" },
 ]
-test = [{ name = "sd-link-testing", editable = "software/common/link_testing" }]
+test = [
+    { name = "sd-link-testing", editable = "software/common/link_testing" },
+    { name = "sd-testing", editable = "software/common/testing" },
+]
 
 [[package]]
 name = "segno"

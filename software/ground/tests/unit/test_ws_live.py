@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sd_ground.bus import RING_SIZE, EventBus
 from sd_ground.context import Ground
 from sd_ground.services.telemetry import TelemetryService
-from sd_obs.clock import FakeClock
+from sd_testing import FakeClock
 
 URL = "ws://127.0.0.1:8080/ws/v1/live"
 
@@ -57,7 +57,7 @@ def test_other_epoch_or_old_seq_needs_resync(logged_in: TestClient, ground: Grou
 
 
 def test_ring_keeps_2000() -> None:
-    from sd_obs.clock import FakeClock
+    from sd_testing import FakeClock
 
     bus, clock = EventBus(), FakeClock()
     for i in range(RING_SIZE + 10):
@@ -70,7 +70,7 @@ def test_ring_keeps_2000() -> None:
 
 
 def test_telemetry_has_no_seq() -> None:
-    from sd_obs.clock import FakeClock
+    from sd_testing import FakeClock
 
     bus = EventBus()
     before = bus.last_seq

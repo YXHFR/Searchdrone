@@ -20,10 +20,10 @@ from sd_ground.auth import BrainToken, Principal
 from sd_ground.config import GroundConfig, Loaded
 from sd_ground.context import Ground
 from sd_ground.sources import PartState
-from sd_obs.clock import FakeClock
 from sd_schemas.api import ActionDispatched, LinkStatus, Telemetry
 from sd_schemas.base import new_id
 from sd_schemas.link import StateSnapshot
+from sd_testing import FakeClock
 
 BRAIN_TOKEN = "brain-token-for-tests-0123456789abcdef"
 PANEL = "http://127.0.0.1:8080"

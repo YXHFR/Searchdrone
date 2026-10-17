@@ -43,7 +43,7 @@ too many invalid frames or events not consumed.
 The `websockets` library logs through `sd_link.ws`, which is pinned to INFO and redacts
 Bearer tokens.
 
-All timing goes through an injected `Clock`; tests use `sd_link_testing.FakeClock`.
+All timing goes through the injected `sd_obs.clock.Clock`; tests use `sd_testing.FakeClock`.
 
 Part of the [Searchdrone](../../../README.md) monorepo. Licensed under Apache-2.0.
 

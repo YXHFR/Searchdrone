@@ -7,6 +7,7 @@ root_packages =
     sd_link
     sd_link_testing
     sd_obs
+    sd_testing
     sd_detect
     sd_onboard
     sd_ground
@@ -151,6 +152,7 @@ source_modules =
     sd_hwcalc
 forbidden_modules =
     sd_link_testing
+    sd_testing
     sd_sim
 
 [importlinter:contract:hwcalc]

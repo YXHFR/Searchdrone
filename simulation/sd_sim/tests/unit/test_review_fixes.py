@@ -52,8 +52,18 @@ def start_sleeper() -> subprocess.Popen[bytes]:
     )
 
 
+def started(proc: subprocess.Popen[bytes], limit_s: float = 10.0) -> subprocess.Popen[bytes]:
+    """Wait until the new process runs its own program: right after the start its
+    command line can still be empty or the parent's."""
+    end = time.monotonic() + limit_s
+    while "time.sleep(60)" not in procs.identity(proc.pid)["cmd"]:
+        assert time.monotonic() < end, "the sleeper did not start"
+        time.sleep(0.01)
+    return proc
+
+
 def test_stop_recorded_skips_reused_pid(tmp_path: Path) -> None:
-    proc = start_sleeper()
+    proc = started(start_sleeper())
     try:
         row = {"name": "x", **procs.identity(proc.pid)}
         assert procs.still_same(row)

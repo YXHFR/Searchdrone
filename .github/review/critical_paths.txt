@@ -11,6 +11,8 @@ software/common/mav/**
 software/common/link/**
 software/common/schemas/src/sd_schemas/**
 software/common/schemas/tests/**
+# The search pattern and coverage the executor flies (B1-07)
+software/common/geo/**
 
 # Ground server: access, STOP/RETURN HOME, the commander and panel APIs, services
 software/ground/src/sd_ground/auth.py

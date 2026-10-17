@@ -1,0 +1,12 @@
+[project]
+name = "sd-testing"
+version = "0.0.0"
+description = "Test-only helpers shared by every package (the fake clock)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["sd-obs"]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

@@ -8,6 +8,22 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Onboard computer `sd-onboard` (`sd_onboard`): the executor that takes skill orders over
+  SD-link, checks them again onboard (the shared safety gate on the handler's own route,
+  plus its own checks: stale orders, approvals, the stop latch, takeoff preconditions with
+  a fresh "clear around the drone") and flies them through `sd_mav`. Implemented skills:
+  `takeoff`, `goto`, `survey_sector` (lawnmower), `hold`, `resume` and `return_home`. A
+  state machine with compare-and-set on the flight mode: a mode change from outside, a
+  flight-controller failsafe or a STOP/FLY HOME notice makes it let go at once and send
+  nothing that steers until the pilot's Resume. Limit monitors in the air (battery,
+  range, area, navigation, height, speed, SD-link loss, a silent AI), preflight checks,
+  restart safety (HELD when armed or in the air) and a state snapshot at 2 Hz. SITL tests
+  for the demo flight, an outside mode change and SD-link loss.
+- ArduCopter safety parameters (`simulation/sitl/params/searchdrone-safety.parm`):
+  failsafes, battery thresholds, the fence just outside the hard limits, no stick arming
+  (`ARMING_RUDDER 0`) and stick values that expire after 1 s (`RC_OVERRIDE_TIME 1`).
+- `sd_geo`: the lawnmower search pattern (concave areas too) and the coverage measure.
+- `sd_testing`: a test-only package with the project's one fake clock.
 - Vehicle link (`sd_mav`): MAVLink to the flight controller for the onboard computer and
   the ground station, behind a default-deny allowlist with number checks against the
   mission's limits and a deny list of the most dangerous messages (no parameter writes,
@@ -70,3 +86,12 @@ All notable changes to this project are listed here. The format follows
 - Review instructions for the three reviewer roles (architecture, IT security, flight
   safety) in `.github/review/`, the list of safety-relevant paths every reviewer must read
   (`critical_paths.txt`), and instructions for a retrospective review of merged code.
+
+### Changed
+
+- One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
+  clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
+- The SD-link client refuses to send its token over `ws://` to anything but loopback.
+- `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
+  executor) asks before every single write, retries included.
+- The six onboard skills of the foundation are `implemented` in the skill registry.
