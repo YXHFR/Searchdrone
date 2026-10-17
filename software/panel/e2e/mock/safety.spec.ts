@@ -127,6 +127,7 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
     }) => {
       await ground.open();
       await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
+      await ground.resynced();
       const before = ground.requests.length;
       await page.getByTestId(testId).click();
       await expect.poll(() => ground.posts(path).length).toBe(1);
@@ -318,22 +319,5 @@ test.describe("Resume and manual control", () => {
     else await page.locator("[data-view]").first().locator("select").first().selectOption("manual");
     await expect(page.getByTestId("takeover")).toBeDisabled();
     await expect(page.getByText("Bara piloten kan styra för hand.")).toBeVisible();
-  });
-
-  test("manual control and order buttons are placeholders that send nothing", async ({
-    page,
-    ground,
-  }) => {
-    await ground.open();
-    await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
-    if (isMobile(page)) await page.getByTestId("tab-chat").click();
-    for (const b of await page.getByTestId("order-button").all()) await expect(b).toBeDisabled();
-    if (isMobile(page)) await page.getByTestId("tab-manual").click();
-    else await page.locator("[data-view]").first().locator("select").first().selectOption("manual");
-    await expect(page.getByTestId("takeover")).toBeDisabled();
-    await expect(page.getByTestId("manual-axes")).toContainText("Gas 0.00");
-    const before = ground.requests.filter((r) => r.method !== "GET").length;
-    await page.mouse.click(10, 300);
-    expect(ground.requests.filter((r) => r.method !== "GET").length).toBe(before);
   });
 });

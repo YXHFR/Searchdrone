@@ -4,8 +4,10 @@ import {
   axesFromSticks,
   clamp1,
   deadzone,
+  isNeutral,
   NEUTRAL,
   stickFromPointer,
+  toWire,
 } from "./sticks";
 
 describe("manual control helpers", () => {
@@ -44,5 +46,18 @@ describe("manual control helpers", () => {
   it("reads a standard gamepad (mode 2)", () => {
     const a = axesFromGamepad([1, -1, -1, 1]);
     expect(a).toEqual({ yaw: 1, throttle: 1, roll: -1, pitch: -1 });
+  });
+
+  it("sends throttle 0..1 with 0.5 = hold height, released sticks are neutral", () => {
+    expect(toWire(NEUTRAL)).toEqual({ roll: 0, pitch: 0, yaw: 0, throttle: 0.5 });
+    expect(toWire({ roll: 2, pitch: -1, yaw: 0.5, throttle: 1 })).toEqual({
+      roll: 1,
+      pitch: -1,
+      yaw: 0.5,
+      throttle: 1,
+    });
+    expect(toWire({ ...NEUTRAL, throttle: -1 }).throttle).toBe(0);
+    expect(isNeutral(NEUTRAL)).toBe(true);
+    expect(isNeutral({ ...NEUTRAL, yaw: 0.1 })).toBe(false);
   });
 });

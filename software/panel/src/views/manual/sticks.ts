@@ -1,6 +1,6 @@
 // Pure helpers for manual control. Axis values are in [-1, 1]; throttle 0 = hold altitude
 // (the flight controller holds height and position in LOITER when the sticks are released).
-// Sending these values is wired with take-over in B1-13; until then nothing leaves the panel.
+// The ground expects throttle 0..1 with 0.5 = hold height (toWire).
 export const MANUAL_RATE_HZ = 15;
 export const DEADZONE = 0.08;
 
@@ -56,4 +56,18 @@ export function axesFromSticks(
 export function axesFromGamepad(axes: readonly number[]): Axes {
   const a = (i: number): number => deadzone(axes[i] ?? 0);
   return axesFromSticks({ x: a(0), y: -a(1) }, { x: a(2), y: -a(3) });
+}
+
+export function isNeutral(a: Axes): boolean {
+  return a.roll === 0 && a.pitch === 0 && a.yaw === 0 && a.throttle === 0;
+}
+
+/** Panel axes → the ground's ManualControlInput axes (throttle 0..1, 0.5 = hold height). */
+export function toWire(a: Axes): { roll: number; pitch: number; yaw: number; throttle: number } {
+  return {
+    roll: clamp1(a.roll),
+    pitch: clamp1(a.pitch),
+    yaw: clamp1(a.yaw),
+    throttle: (clamp1(a.throttle) + 1) / 2,
+  };
 }

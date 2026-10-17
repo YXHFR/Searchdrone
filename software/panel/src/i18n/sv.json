@@ -134,7 +134,22 @@
       "noWebgl": "Kartan kräver WebGL2, som den här webbläsaren saknar. Positionen står nedan och i Status.",
       "failed": "Kartan kunde inte starta. Positionen står nedan och i Status.",
       "noPosition": "Ingen position från drönaren ännu",
-      "position": "Drönaren: {{lat}}, {{lon}}"
+      "position": "Drönaren: {{lat}}, {{lon}}",
+      "tools": "Kartverktyg",
+      "centreDrone": "Centrera på drönaren",
+      "centreHome": "Centrera på hem",
+      "showCharter": "Visa hela ramen",
+      "layers": "Lager",
+      "layer": {
+        "charter-preview": "Väntande ram",
+        "sectors": "Sektorer",
+        "pilot-range": "Pilotens räckvidd",
+        "home": "Hem",
+        "target": "Aktuellt mål",
+        "track": "Flugen bana",
+        "areas": "Ritade områden",
+        "pins": "Nålar"
+      }
     },
     "video": {
       "title": "Video",
@@ -192,7 +207,6 @@
   },
   "manual": {
     "takeover": "Ta över",
-    "notYet": "Manuell styrning kopplas in i en senare version.",
     "pilotOnly": "Bara piloten kan styra för hand.",
     "explain": "Ta över pausar AI:n och drönaren står still. Styr med spakarna eller en handkontroll. Släpper du spakarna står drönaren still. Lämna tillbaka ger AI:n kontrollen igen.",
     "leftStick": "Vänster spak: höjd och vridning",
@@ -200,7 +214,14 @@
     "axes": "Roll {{roll}} · Pitch {{pitch}} · Gir {{yaw}} · Gas {{throttle}}",
     "gamepad": "Handkontroll: {{name}}",
     "noGamepad": "Ingen handkontroll ansluten",
-    "rcFirst": "En RC-sändare går alltid före panelen."
+    "rcFirst": "En RC-sändare går alltid före panelen.",
+    "handback": "Lämna tillbaka",
+    "steering": "Du styr. Släpp spakarna så står drönaren still.",
+    "otherActive": "Manuell styrning pågår från en annan flik eller enhet.",
+    "ready": "AI:n styr. Tryck Ta över för att styra själv.",
+    "tookOver": "Du tog över styrningen",
+    "handedBack": "Styrningen lämnades tillbaka till AI:n",
+    "failed": "Det gick inte att byta styrning."
   },
   "status": {
     "vehicle": {
@@ -450,5 +471,18 @@
     "follow_me": "Följ mig",
     "find_me": "Hitta mig"
   },
-  "reasons": {}
+  "reasons": {},
+  "draw": {
+    "polygon": "Rita område",
+    "rectangle": "Rita rektangel",
+    "pin": "Sätt nål",
+    "polygonHint": "Klicka på kartan för varje hörn ({{n}} hittills). Tryck Klar när du är nöjd.",
+    "rectangleHint": "Klicka på två motsatta hörn.",
+    "pinHint": "Klicka där nålen ska sitta.",
+    "done": "Klar",
+    "selfIntersects": "Området korsar sig självt",
+    "tooBig": "Området är större än {{cap}} km²",
+    "saved": "Område {{label}} sparat ({{ha}} ha). Skriv t.ex. \"sök området jag ritade\".",
+    "failed": "Det gick inte att spara på kartan."
+  }
 }
