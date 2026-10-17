@@ -45,6 +45,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 
 from sd_safety.constants import FENCE_ALT_MARGIN_M
 from sd_safety.limits import ABSOLUTE_MAX_ALT_AGL_M, ABSOLUTE_MAX_SPEED_MS
+from sd_schemas.base import new_id
 from sd_sim.params import merge_layers
 from sd_sim.sitl import SAFETY_PARAM_FILE
 
@@ -395,35 +396,50 @@ async def test_sc18_api_guards(sim: Any, migrated_db: Any, tmp_path: Path) -> No
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await sc.ready()
         commands_before = await sc.commands()
-        mutating = [
-            ("POST", f"/api/v1/missions/{sc.mid}/clearance"),
-            ("PUT", f"/api/v1/missions/{sc.mid}/autonomy"),
-            ("PUT", f"/api/v1/missions/{sc.mid}/limits"),
-            ("POST", f"/api/v1/missions/{sc.mid}/commands"),
-            ("POST", f"/api/v1/missions/{sc.mid}/end"),
-            ("POST", f"/api/v1/vehicles/{VID}/actions/return_home"),
-            ("POST", f"/api/v1/vehicles/{VID}/actions/resume"),
-            ("POST", f"/api/v1/vehicles/{VID}/actions/takeover"),
+        action = {"client_action_id": str(new_id())}
+        # Every changing route with a valid body, so a refusal is the role check, never
+        # the body's validation.
+        mutating: list[tuple[str, str, dict[str, Any]]] = [
+            ("POST", f"/api/v1/missions/{sc.mid}/clearance", {}),
+            ("PUT", f"/api/v1/missions/{sc.mid}/autonomy", {"mode": "APPROVE_EACH"}),
+            (
+                "PUT",
+                f"/api/v1/missions/{sc.mid}/limits",
+                {
+                    "max_alt_agl_m": 60,
+                    "max_speed_ms": 10,
+                    "max_range_from_pilot_m": 300,
+                    "battery_rtl_pct": 20,
+                },
+            ),
+            (
+                "POST",
+                f"/api/v1/missions/{sc.mid}/commands",
+                {"client_command_id": str(new_id()), "skill": "hold", "params": {}},
+            ),
+            ("POST", f"/api/v1/missions/{sc.mid}/end", {}),
+            ("POST", f"/api/v1/vehicles/{VID}/actions/return_home", action),
+            ("POST", f"/api/v1/vehicles/{VID}/actions/resume", action),
+            ("POST", f"/api/v1/vehicles/{VID}/actions/takeover", action),
         ]
         anon = dict(H)
-        for method, path in mutating:
+        for method, path, body in mutating:
             res = await sc.r.panel.request(
-                method, path, json={}, headers={**anon, "Authorization": ""}
+                method, path, json=body, headers={**anon, "Authorization": ""}
             )
             assert res.status_code == 401, (path, res.status_code)
             res = await sc.r.panel.request(
-                method, path, json={}, headers={**anon, "Authorization": "Bearer wrong-token"}
+                method, path, json=body, headers={**anon, "Authorization": "Bearer wrong-token"}
             )
             assert res.status_code == 401, (path, res.status_code)
         res = await sc.r.panel.get("/api/v1/missions", headers={"Authorization": ""})
         assert res.status_code == 401
         brain = {**anon, "Authorization": sc.r.commander.headers["Authorization"]}
         observer = {**anon, "Authorization": f"Bearer {sc.observer_token}"}
-        for method, path in mutating:
+        for method, path, body in mutating:
             for who in (brain, observer):
-                res = await sc.r.panel.request(method, path, json={}, headers=who)
-                assert res.status_code in (403, 422), (path, res.status_code)
-                assert res.status_code == 403 or who is observer, (path, res.text)
+                res = await sc.r.panel.request(method, path, json=body, headers=who)
+                assert res.status_code == 403, (path, res.status_code, res.text)
         res = await sc.r.panel.post(
             f"/api/v1/missions/{sc.mid}/clearance", json={}, headers={**H, "Host": "evil.example"}
         )
