@@ -1079,6 +1079,16 @@ requires-dist = [
 name = "sd-detect"
 version = "0.0.0"
 source = { editable = "software/detector" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sd-schemas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
+]
 
 [[package]]
 name = "sd-geo"
