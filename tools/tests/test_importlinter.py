@@ -39,15 +39,17 @@ def _tree(tmp_path: Path, imports: dict[str, str]) -> Path:
         d = tmp_path / pkg
         d.mkdir()
         (d / "__init__.py").write_text(imports.get(pkg, ""), encoding="utf-8")
-    # Contracts may name submodules (e.g. sd_ground.ingress); give them empty modules.
+    # Contracts may name submodules (e.g. sd_ground.ingress, sd_ground.services.latches);
+    # give each an empty package, so a name and its children can both be listed.
     for section in cfg.sections():
         for key in ("source_modules", "forbidden_modules"):
             for name in cfg[section].get(key, "").split():
                 parts = name.split(".")
                 if len(parts) > 1 and parts[0] in roots:
-                    module = tmp_path.joinpath(*parts[:-1]) / f"{parts[-1]}.py"
-                    module.parent.mkdir(parents=True, exist_ok=True)
-                    module.touch()
+                    for depth in range(2, len(parts) + 1):
+                        package = tmp_path.joinpath(*parts[:depth])
+                        package.mkdir(parents=True, exist_ok=True)
+                        (package / "__init__.py").touch()
     shutil.copyfile(ROOT / ".importlinter", tmp_path / ".importlinter")
     return tmp_path
 

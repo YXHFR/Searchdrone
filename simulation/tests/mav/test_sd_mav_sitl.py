@@ -9,7 +9,8 @@ the ground station's through linksim, exactly like the full system:
 * three missions and a fence go up and come back with the same hash;
 * a cut ground link is noticed within 3 s, and streams come back after it;
 * the flight helpers fly (arm, take off, goto, speed, LOITER, LAND), the ground station
-  disarms only on the ground, and onboard sticks are ignored by ArduCopter today.
+  disarms only on the ground, and the pilot's sticks work from the ground station (the
+  onboard computer may not send them: ArduCopter takes sticks only from its GCS id).
 """
 
 from __future__ import annotations
@@ -314,10 +315,11 @@ def _metres(t: Any, lat: float, lon: float) -> float:
 
 
 @pytest.mark.budget_s(180)
-def test_flight_helpers_and_onboard_sticks(sim: Sim) -> None:
+def test_flight_helpers_and_ground_sticks(sim: Sim) -> None:
     """arm, take off, goto, speed, LOITER and LAND through the allowlist; the ground may
-    disarm only on the ground. Also pins today's ArduCopter behaviour that MANUAL_CONTROL
-    from the onboard computer (1/191) is ignored: it accepts sticks only from its GCS id."""
+    disarm only on the ground. The pilot's sticks go as MANUAL_CONTROL from the ground
+    station (250/190) and move the vehicle; when they stop it stands still in LOITER.
+    The onboard computer's allowlist refuses sticks for every origin."""
 
     async def run() -> None:
         events: list[tuple[str, dict[str, Any]]] = []
@@ -359,11 +361,10 @@ def test_flight_helpers_and_onboard_sticks(sim: Sim) -> None:
                     break
                 await asyncio.sleep(0.5)
             assert _metres(onboard.telemetry, *target) < 2.0
-            assert await onboard.set_mode(CopterMode.LOITER, origin=SendOrigin.MANUAL) is (
+            assert await ground.set_mode(CopterMode.LOITER, origin=SendOrigin.GROUND) is (
                 MavResult.ACCEPTED
             )
             await asyncio.sleep(0.6)
-            t0 = onboard.telemetry
             axes = StickAxes.model_validate(
                 {
                     "takeover_id": "0192f4a3-0000-7000-8000-0000000000c0",
@@ -374,13 +375,23 @@ def test_flight_helpers_and_onboard_sticks(sim: Sim) -> None:
                     "yaw": 0.0,
                 }
             )
-            for _ in range(30):
-                if onboard.telemetry.landed_state not in ("in_air", "takeoff", "landing"):
-                    break
-                await onboard.manual_control(axes, origin=SendOrigin.MANUAL)
+            for origin in SendOrigin:  # never from the onboard computer
+                with pytest.raises(ForbiddenMavlinkError):
+                    await onboard.manual_control(axes, origin=origin)
+            t0 = onboard.telemetry
+            for _ in range(30):  # 3 s of forward stick at 10 Hz
+                await ground.manual_control(axes, origin=SendOrigin.MANUAL)
                 await asyncio.sleep(0.1)
             moved = _metres(onboard.telemetry, t0.lat, t0.lon)
-            assert moved < 3.0, f"sticks from 1/191 moved the vehicle {moved:.1f} m"
+            assert moved > 3.0, f"sticks from 250/190 moved the vehicle only {moved:.1f} m"
+            assert onboard.telemetry.fc_mode == "LOITER"
+            # No more sticks: LOITER brakes and holds (RC_OVERRIDE_TIME ends the override).
+            await asyncio.sleep(4.0)
+            t1 = onboard.telemetry
+            await asyncio.sleep(3.0)
+            drift = _metres(onboard.telemetry, t1.lat, t1.lon)
+            assert drift < 2.0, f"drifted {drift:.1f} m after the sticks stopped"
+            events.clear()  # the refused onboard sticks above are expected
             assert await onboard.set_mode(CopterMode.GUIDED, origin=SendOrigin.SKILL) is (
                 MavResult.ACCEPTED
             )

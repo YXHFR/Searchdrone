@@ -138,6 +138,7 @@ class FakeFlightController:
         self.drop_commands = 0  # the next n COMMAND_LONGs are lost on the way
         self.silent = False  # no heartbeat or telemetry, no answers
         self.sticks: Any | None = None  # last MANUAL_CONTROL
+        self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -188,6 +189,8 @@ class FakeFlightController:
             self._send(self._position())
             if tick % 2 == 0:
                 self._send(self.heartbeat())
+                if self.rc_mode_pwm is not None:
+                    self._send(self._rc_channels())
             if tick % 5 == 0:
                 for msg in (
                     self._extended_state(),
@@ -257,6 +260,19 @@ class FakeFlightController:
             0,
             0,
         )
+
+    def _rc_channels(self) -> Any:
+        mode = self.rc_mode_pwm or 0  # channel 5, the mode switch; the others centred
+        c = 1500
+        return mavlink.MAVLink_rc_channels_message(
+            0, 8, c, c, c, c, mode, c, c, c, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255
+        )
+
+    def rc_mode_switch(self, pwm: int, mode: CopterMode) -> None:
+        """A person flips the RC mode switch: the channel moves and the mode follows."""
+        self.rc_mode_pwm = pwm
+        self._send(self._rc_channels())
+        self.set_mode_external(mode)
 
     def landed_state(self) -> int:
         if not self.armed:

@@ -14,6 +14,7 @@ from sd_ground.bus import EventBus
 from sd_ground.config import Loaded, parse_bind
 from sd_ground.db.repo import EventRow, Repo, new_event
 from sd_ground.logging import REDACTOR, get_logger
+from sd_ground.services.vehicle_actions import VehicleActions
 from sd_ground.sources import (
     EmergencyPath,
     NoEmergencyPath,
@@ -54,6 +55,7 @@ class Ground:
     vehicle_link: VehicleLink = field(default_factory=NoVehicleLink)
     sdlink: SdLink = field(default_factory=NoSdLink)
     emergency: EmergencyPath = field(default_factory=NoEmergencyPath)
+    vehicle_actions: VehicleActions | None = None  # the emergency path once wired
     bus: EventBus = field(default_factory=EventBus)
     lan_hosts: list[str] = field(default_factory=list[str])
     version: str = field(default_factory=lambda: version("sd-ground"))

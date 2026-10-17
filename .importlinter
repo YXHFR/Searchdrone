@@ -185,6 +185,22 @@ forbidden_modules =
     asyncpg
     alembic
 
+[importlinter:contract:emergency-path-isolation]
+name = the emergency path (MAVLink thread, latches, STOP / FLY HOME) does not reach the database or the main loop
+type = forbidden
+source_modules =
+    sd_ground.mav
+    sd_ground.services.latches
+    sd_ground.services.vehicle_actions
+forbidden_modules =
+    sd_ground.db
+    sd_ground.api
+    sd_ground.context
+    sd_ground.app
+    sqlalchemy
+    asyncpg
+    alembic
+
 [importlinter:contract:brain-no-raw-sockets]
 name = the AI opens no raw sockets
 type = forbidden

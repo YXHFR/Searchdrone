@@ -24,6 +24,8 @@ software/ground/src/sd_ground/control_socket.py
 software/ground/src/sd_ground/api/commander.py
 software/ground/src/sd_ground/api/panel.py
 software/ground/src/sd_ground/services/**
+software/ground/src/sd_ground/mav/**
+software/ground/src/sd_ground/app.py
 software/ground/tests/**
 
 # Onboard computer, the panel's safety bar and everything that can cover it, manual
@@ -53,7 +55,6 @@ tools/**
 # --- planned: paths whose files do not exist yet ---------------------------------------
 # Move a line above this marker in the pull request that creates its first file.
 # The test checks that nothing below matches a tracked file yet.
-software/ground/src/sd_ground/mav/**
 software/brain/src/sd_brain/skills/**
 simulation/scenarios/**
 config/mediamtx.yml

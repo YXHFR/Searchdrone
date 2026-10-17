@@ -5220,8 +5220,60 @@
         "summary": "Get Vehicles"
       }
     },
+    "/api/v1/vehicles/{vehicle_id}/actions/handback": {
+      "post": {
+        "description": "Lämna tillbaka: no more sticks.",
+        "operationId": "post_handback_api_v1_vehicles__vehicle_id__actions_handback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatched"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Handback"
+      }
+    },
     "/api/v1/vehicles/{vehicle_id}/actions/resume": {
       "post": {
+        "description": "The pilot's Resume: lifts the latch and tells the onboard computer. Never MAVLink.",
         "operationId": "post_resume_api_v1_vehicles__vehicle_id__actions_resume_post",
         "parameters": [
           {
@@ -5369,6 +5421,57 @@
           }
         },
         "summary": "Post Stop"
+      }
+    },
+    "/api/v1/vehicles/{vehicle_id}/actions/takeover": {
+      "post": {
+        "description": "Ta över: LOITER, the AI's orders pause, the sticks go from the ground station.",
+        "operationId": "post_takeover_api_v1_vehicles__vehicle_id__actions_takeover_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{2,31}$",
+              "title": "Vehicle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDispatched"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Takeover"
       }
     },
     "/api/v1/vehicles/{vehicle_id}/actions/{action_id}": {

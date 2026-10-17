@@ -5,7 +5,8 @@ owns are already here, with their final paths, bodies and role checks, and answe
 501 ``NOT_BUILT`` until that part lands:
 
 - STOP / RETURN HOME run in the ingress thread (``sd_ground.ingress``) and call the
-  emergency path; Resume, action outcomes and the battery guard come with that path.
+  emergency path (``services.vehicle_actions``); Resume, takeover and hand-back and the
+  action outcomes are answered here from the same service.
 - The mission flow (open, limits, autonomy, clearance, charters, approvals, orders, chat
   posts, map pins, sectors, track, files) comes with the mission services.
 - Video comes with its own part. The offline map is ``sd_ground.api.tiles``.
@@ -37,6 +38,7 @@ from sd_ground.context import Ground
 from sd_ground.emergency import EmergencyRefusedError
 from sd_ground.logging import get_logger
 from sd_ground.services import health
+from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_ground.sources import EmergencyUnavailableError
 from sd_schemas.api import (
     AbsoluteLimits,
@@ -262,16 +264,65 @@ async def post_return_home(
     return dispatch_emergency(g, "return_home", vehicle_id, body, who)
 
 
+def _actions(g: Ground) -> VehicleActions:
+    if g.vehicle_actions is None:
+        raise not_built(EMERGENCY)
+    return g.vehicle_actions
+
+
+def _pilot_action(
+    g: Ground,
+    action: Literal["resume", "takeover", "handback"],
+    vehicle_id: str,
+    body: ActionRequest,
+    who: Principal,
+) -> ActionDispatched:
+    actions = _actions(g)
+    run = {"resume": actions.resume, "takeover": actions.takeover, "handback": actions.handback}
+    try:
+        return run[action](vehicle_id, client_action_id=str(body.client_action_id), by=who)
+    except ActionRefusedError as exc:
+        raise ApiStatusError(exc.status, exc.code, exc.detail_sv) from None
+
+
 @router.post(
     "/vehicles/{vehicle_id}/actions/resume", status_code=202, response_model=ActionDispatched
 )
-async def post_resume(vehicle_id: VehiclePath, body: ActionRequest, _: Pilot) -> ActionDispatched:
-    raise not_built(EMERGENCY)
+async def post_resume(
+    vehicle_id: VehiclePath, body: ActionRequest, g: G, who: Pilot
+) -> ActionDispatched:
+    """The pilot's Resume: lifts the latch and tells the onboard computer. Never MAVLink."""
+    return _pilot_action(g, "resume", vehicle_id, body, who)
+
+
+@router.post(
+    "/vehicles/{vehicle_id}/actions/takeover", status_code=202, response_model=ActionDispatched
+)
+async def post_takeover(
+    vehicle_id: VehiclePath, body: ActionRequest, g: G, who: Pilot
+) -> ActionDispatched:
+    """Ta över: LOITER, the AI's orders pause, the sticks go from the ground station."""
+    return _pilot_action(g, "takeover", vehicle_id, body, who)
+
+
+@router.post(
+    "/vehicles/{vehicle_id}/actions/handback", status_code=202, response_model=ActionDispatched
+)
+async def post_handback(
+    vehicle_id: VehiclePath, body: ActionRequest, g: G, who: Pilot
+) -> ActionDispatched:
+    """Lämna tillbaka: no more sticks."""
+    return _pilot_action(g, "handback", vehicle_id, body, who)
 
 
 @router.get("/vehicles/{vehicle_id}/actions/{action_id}", response_model=ActionOutcome)
-async def get_action(vehicle_id: VehiclePath, action_id: IdPath, _: Observer) -> ActionOutcome:
-    raise not_built(EMERGENCY)
+async def get_action(
+    vehicle_id: VehiclePath, action_id: IdPath, g: G, _: Observer
+) -> ActionOutcome:
+    found = _actions(g).outcome(vehicle_id, action_id)
+    if found is None:
+        raise ApiStatusError(404, "ACTION_NOT_FOUND", "Åtgärden finns inte (eller är för gammal).")
+    return found
 
 
 @router.post("/actions/stop_all", status_code=202, response_model=ActionDispatchedAll)

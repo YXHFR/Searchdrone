@@ -39,9 +39,36 @@ STOP and RETURN HOME are handled in a thread of their own (the ingress thread), 
 not wait for the database, the AI or the rest of the server. A logged-in pilot session does
 not expire while a vehicle is in the air.
 
-Parts that other components fill in (the MAVLink link, SD-link, the emergency path, the
-mission flow, video) already have their routes; until they are built those answer
-`501 NOT_BUILT` (STOP / RETURN HOME: `503 NO_PATH`), and `/api/v1/health` reports
+## The emergency path
+
+The ground station has its own MAVLink channel to the flight controller (as 250/190,
+`[mavlink] listen`), owned by the MAVLink thread (`sd_ground.mav.thread`). It keeps
+working when the main loop, the database, the AI or the onboard computer hang:
+
+- **STOP** (every logged-in user): BRAKE, then LOITER, then LAND if a step is refused;
+  armed on the ground it disarms instead. **FLY HOME** (pilot): SMART_RTL, then RTL, then
+  LAND. The first command goes out at once, is resent every 200 ms until the heartbeat
+  shows the mode, and for 10 s a late order (a mode the onboard computer can command) is
+  undone; a mode only an RC transmitter can choose is left alone. The onboard
+  computer is told over SD-link and lets go; if the ground's MAVLink is cut it sends the
+  same steps itself.
+- A latch per vehicle that only the pilot's **Resume** lifts (never the chat, never the
+  AI); not during a flight home. `GET /api/v1/vehicles/{id}/actions/{action_id}` shows
+  the result.
+- The **companion watchdog**: no heartbeat from the onboard computer for 3 s in GUIDED
+  gives STOP's steps, for 20 s FLY HOME's; never while the pilot's STOP or FLY HOME
+  stands or the pilot steers by hand. The **battery guard** flies home at the mission's
+  level, also after a STOP (but not against a STOP pressed during its own flight home).
+- **Steering by hand** (`actions/takeover`, `actions/handback`, pilot only): LOITER, and
+  the pilot's sticks go as MAVLink `MANUAL_CONTROL` from here, only in LOITER and in the
+  air. Without a new stick value for 1 s nothing more is sent and the vehicle holds.
+- The GCS heartbeat stops when an event loop has hung for 8 s, so the flight controller's
+  own GCS failsafe takes over from a hung ground station.
+- `sd-ground action stop|home` goes through the Unix socket (each client in its own
+  thread with a 2 s read limit, so a stuck client never blocks a STOP).
+
+Parts that other components fill in (SD-link, the mission flow, video) already have their
+routes; until they are built those answer `501 NOT_BUILT`, and `/api/v1/health` reports
 `ready = false`.
 
 ## Command line
