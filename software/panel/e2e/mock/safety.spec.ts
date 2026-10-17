@@ -277,6 +277,7 @@ test.describe("Resume and manual control", () => {
     await ground.open();
     await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
     if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await ground.liveConnected();
     ground.pushLive("vehicle", "vehicle.state", held("operator_stop"));
     const resume = page.getByTestId("view-chat").getByTestId("resume");
     await expect(resume).toBeVisible();
@@ -296,6 +297,7 @@ test.describe("Resume and manual control", () => {
     await ground.open();
     await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
     if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await ground.liveConnected();
     ground.pushLive("vehicle", "vehicle.state", held("onboard_restart"));
     await expect(page.getByTestId("resume")).toBeVisible();
     ground.pushLive("vehicle", "vehicle.state", held("operator_home"));
@@ -308,6 +310,7 @@ test.describe("Resume and manual control", () => {
     await ground.open();
     await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
     if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await ground.liveConnected();
     ground.pushLive("vehicle", "vehicle.state", held("operator_stop"));
     await expect(page.getByTestId("resume-row")).toBeVisible();
     await expect(page.getByTestId("resume")).toHaveCount(0);
