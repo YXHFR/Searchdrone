@@ -98,3 +98,19 @@ def test_field_layer_requires_the_rc_transmitter() -> None:
     field = params.parse_parm(FIELD_FILE.read_text(encoding="utf-8"))
     assert set(field) <= set(sim)
     assert field["ARMING_SKIPCHK"] == 0.0
+
+
+def test_field_rules_pin_the_rc_failsafe_value() -> None:
+    real = params.merge_layers([SAFETY_FILE, FIELD_FILE])
+    assert params.rule_violations({**real, "FS_THR_ENABLE": 2.0}, params.FIELD_RULES)
+
+
+def test_a_test_layer_can_only_make_the_rules_stricter() -> None:
+    rules = {n: (op, v) for n, op, v in params.layer_rules({"FS_THR_ENABLE": 4.0})}
+    assert rules["FS_THR_ENABLE"] == ("==", 4.0)
+    assert rules["FENCE_ENABLE"] == ("==", 1.0)  # every other rule still applies
+    assert params.layer_rules({"SIM_WIND_SPD": 3.0}) == list(params.SAFETY_RULES)
+    with pytest.raises(params.ParamFileError, match="FENCE_ALT_MAX"):
+        params.layer_rules({"FENCE_ALT_MAX": 500.0})
+    with pytest.raises(params.ParamFileError, match="FS_THR_ENABLE"):
+        params.layer_rules({"FS_THR_ENABLE": 2.0})

@@ -16,6 +16,7 @@ from pydantic import Field, model_validator
 from sd_schemas.base import SKILL_NAME_PATTERN, GeoJsonPolygon, Id, LatLon, LatLonAlt, SdModel
 from sd_schemas.charter import CharterProposal, MissionCharter
 from sd_schemas.executor import ExecutorState, GotoResumePoint, ResumePoint
+from sd_schemas.geo import plane_offset
 from sd_schemas.safety import MIN_ALT_AGL_M
 
 __all__ = [
@@ -306,25 +307,18 @@ class OrbitParams(SkillParams):
         return _route(ctx, centre, areas=[circle], alt_m=self.alt_m, speed_ms=None)
 
 
-_WGS84_A = 6_378_137.0
-_WGS84_E2 = (1 / 298.257223563) * (2 - 1 / 298.257223563)
 _CIRCLE_CORNERS = 16
 
 
 def circle_polygon(centre: LatLon, radius_m: float) -> dict[str, Any]:
     """A GeoJSON polygon with ``_CIRCLE_CORNERS`` corners that contains the circle around
-    ``centre`` (its edges touch the circle from outside). Offsets use the WGS84 radii of
-    curvature at the centre, the same tangent plane the gate measures in."""
+    ``centre`` (its edges touch the circle from outside), in the gate's own tangent plane
+    (``sd_schemas.geo``)."""
     outer = radius_m / math.cos(math.pi / _CIRCLE_CORNERS)
-    phi = math.radians(centre.lat)
-    w = math.sqrt(1 - _WGS84_E2 * math.sin(phi) ** 2)
-    n_radius, m_radius = _WGS84_A / w, _WGS84_A * (1 - _WGS84_E2) / w**3
     ring: list[list[float]] = []
     for i in range(_CIRCLE_CORNERS):
         a = 2 * math.pi * i / _CIRCLE_CORNERS
-        north, east = outer * math.cos(a), outer * math.sin(a)
-        lat = centre.lat + math.degrees(north / m_radius)
-        lon = centre.lon + math.degrees(east / (n_radius * math.cos(phi)))
+        lat, lon = plane_offset(centre.lat, centre.lon, outer * math.sin(a), outer * math.cos(a))
         ring.append([lon, lat])
     ring.append(ring[0])
     return {"type": "Polygon", "coordinates": [ring[::-1]]}  # counter-clockwise

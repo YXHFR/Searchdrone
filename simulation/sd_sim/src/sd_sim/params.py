@@ -48,12 +48,29 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
 # Prefixes whose every line in the safety file must have a rule above.
 RULED_PREFIXES = ("FS_", "FENCE_", "BATT_", "ARMING_", "DISARM_", "RC_", "RTL_", "SRTL_", "SCR_")
 
+# The RC failsafe of real flight: RC link lost in the air -> SmartRTL, else RTL.
+FIELD_RC_FAILSAFE = 4.0
 # Real flight (searchdrone-safety.parm + searchdrone-safety.field.parm): the same rules,
 # except that the RC transmitter is required, so its failsafe must act.
 FIELD_RULES: tuple[tuple[str, str, float], ...] = tuple(
-    ("FS_THR_ENABLE", "!=", 0.0) if name == "FS_THR_ENABLE" else (name, op, value)
+    ("FS_THR_ENABLE", "==", FIELD_RC_FAILSAFE) if name == "FS_THR_ENABLE" else (name, op, value)
     for name, op, value in SAFETY_RULES
 )
+# What a test's own parameter layer may change in the strict rules, and to which value:
+# only the real-flight values (stricter than the simulator's). Anything else is refused.
+TEST_LAYER_OVERRIDES: dict[str, frozenset[float]] = {
+    "FS_THR_ENABLE": frozenset({FIELD_RC_FAILSAFE}),
+}
+
+
+def layer_rules(layer: dict[str, float]) -> list[tuple[str, str, float]]:
+    """``SAFETY_RULES`` with a test layer's values as exact rules. A layer may only set a
+    ruled name to a value ``TEST_LAYER_OVERRIDES`` allows, so it can never loosen them."""
+    ruled = {name for name, _, _ in SAFETY_RULES}
+    for name, value in layer.items():
+        if name in ruled and value not in TEST_LAYER_OVERRIDES.get(name, frozenset()):
+            raise ParamFileError(f"testlagret får inte ändra {name} till {value:g}")
+    return [(n, "==", layer[n]) if n in layer else (n, op, v) for n, op, v in SAFETY_RULES]
 
 
 class ParamFileError(ValueError):

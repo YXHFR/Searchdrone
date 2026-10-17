@@ -212,7 +212,7 @@ def test_field_file_values() -> None:
     sim = effective_params([PARM])
     real = effective_params([PARM, FIELD])
     assert int(real["ARMING_SKIPCHK"]) & ARMING_SKIP_RC_BIT == 0
-    assert real["FS_THR_ENABLE"] in (1.0, 3.0, 4.0, 5.0)  # an RC failsafe that acts
+    assert real["FS_THR_ENABLE"] == 4.0  # RC lost in the air -> SmartRTL, else RTL
     assert sim["FS_THR_ENABLE"] == 0.0  # the simulator may leave it off
     # The field file only changes rows the safety file already has.
     assert set(effective_params([FIELD])) <= set(sim)
@@ -224,4 +224,5 @@ def test_rc_param_problems() -> None:
     assert _rc_param_problems({"ARMING_SKIPCHK": 0, "FS_THR_ENABLE": 4}) == []
     found = _rc_param_problems({"ARMING_SKIPCHK": 64, "FS_THR_ENABLE": 0})
     assert len(found) == 2
+    assert len(_rc_param_problems({"ARMING_SKIPCHK": 0, "FS_THR_ENABLE": 2})) == 1  # continue
     assert len(_rc_param_problems({})) == 2  # unset counts as unsafe

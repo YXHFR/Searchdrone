@@ -298,11 +298,14 @@ class Harness:
         """Read every parameter that ``sd_sim.params.SAFETY_RULES`` names and return the
         rules the flight controller breaks (read only). Every SITL flight test calls it
         before it flies: a weakened safety parameter fails the test, it is never retried.
-        ``layer`` is a test's own parameter layer: its values are then the exact rule."""
-        from sd_sim.params import SAFETY_RULES, rule_violations
+        ``layer`` is a test's own parameter layer: its values are then the exact rule, and
+        it may only make a rule stricter (``sd_sim.params.TEST_LAYER_OVERRIDES``)."""
+        from sd_sim.params import ParamFileError, layer_rules, rule_violations
 
-        own = layer or {}
-        rules = [(n, "==", own[n]) if n in own else (n, op, v) for n, op, v in SAFETY_RULES]
+        try:
+            rules = layer_rules(layer or {})
+        except ParamFileError as exc:
+            raise InfraError(str(exc)) from exc
         actual = {name: self.read_param(name) for name, _, _ in rules}
         return rule_violations(actual, rules)
 

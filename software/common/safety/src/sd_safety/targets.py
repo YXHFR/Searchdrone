@@ -20,6 +20,7 @@ from itertools import pairwise
 from typing import Any
 
 from sd_schemas.base import LatLon
+from sd_schemas.geo import WGS84_A, WGS84_E2, WGS84_F, plane_offset, tangent_radii, wrap_lon
 
 __all__ = [
     "Plane",
@@ -32,10 +33,10 @@ __all__ = [
 Xy = tuple[float, float]  # east, north in metres
 
 # WGS84
-_A = 6_378_137.0
-_F = 1 / 298.257223563
+_A = WGS84_A
+_F = WGS84_F
 _B = _A * (1 - _F)
-_E2 = _F * (2 - _F)
+_E2 = WGS84_E2
 
 _EPS_M = 1e-6  # a point this close to an edge counts as on it
 
@@ -90,8 +91,7 @@ def distance_m(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
     return math.inf  # nearly antipodal points: never near a drone, so too far
 
 
-def _wrap_lon(dlon: float) -> float:
-    return (dlon + 180.0) % 360.0 - 180.0
+_wrap_lon = wrap_lon
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,12 +103,7 @@ class Plane:
 
     def _radii(self) -> tuple[float, float]:
         """Metres per radian east and north at the reference point."""
-        phi = math.radians(self.lat0)
-        s = math.sin(phi)
-        w = math.sqrt(1 - _E2 * s * s)
-        n_radius = _A / w  # prime vertical
-        m_radius = _A * (1 - _E2) / (w * w * w)  # meridian
-        return n_radius * math.cos(phi), m_radius
+        return tangent_radii(self.lat0)
 
     def xy(self, lat: float, lon: float) -> Xy:
         east_r, north_r = self._radii()
@@ -118,10 +113,7 @@ class Plane:
 
     def latlon(self, east: float, north: float) -> tuple[float, float]:
         """The exact inverse of :meth:`xy`: (lat, lon) of a point in the plane."""
-        east_r, north_r = self._radii()
-        lat = self.lat0 + math.degrees(north / north_r)
-        lon = _wrap_lon(self.lon0 + math.degrees(east / east_r))
-        return lat, lon
+        return plane_offset(self.lat0, self.lon0, east, north)
 
     def point(self, p: LatLon) -> Xy:
         return self.xy(p.lat, p.lon)

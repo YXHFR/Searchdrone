@@ -202,6 +202,8 @@ def check(loaded: Loaded) -> list[str]:
 
 # ArduCopter 4.7's ARMING_SKIPCHK bit for the RC check (ARMING_CHECK_RC, 1 << 6).
 ARMING_SKIP_RC_BIT = 1 << 6
+# RC link lost in the air -> SmartRTL, else RTL (the real-flight safety layer's value).
+FIELD_RC_FAILSAFE = 4.0
 
 
 def _rc_param_problems(params: dict[str, float]) -> list[str]:
@@ -209,8 +211,8 @@ def _rc_param_problems(params: dict[str, float]) -> list[str]:
     out = []
     if int(params.get("ARMING_SKIPCHK", ARMING_SKIP_RC_BIT)) & ARMING_SKIP_RC_BIT:
         out.append("ARMING_SKIPCHK hoppar över RC-kontrollen / the RC arming check is skipped.")
-    if params.get("FS_THR_ENABLE", 0.0) == 0.0:
-        out.append("FS_THR_ENABLE är av (ingen RC-failsafe) / the RC failsafe is off.")
+    if params.get("FS_THR_ENABLE") != FIELD_RC_FAILSAFE:
+        out.append("FS_THR_ENABLE ska vara 4 (hem vid tappad RC) / the RC failsafe must fly home.")
     return out
 
 
