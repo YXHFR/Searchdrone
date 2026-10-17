@@ -47,8 +47,10 @@ class FakeMtx:
 def mtx() -> Iterator[FakeMtx]:
     fake = FakeMtx()
     video_proxy.set_transport(httpx.MockTransport(fake.handler))
+    video_proxy._sessions.clear()  # pyright: ignore[reportPrivateUsage]
     yield fake
     video_proxy.set_transport(None)
+    video_proxy._sessions.clear()  # pyright: ignore[reportPrivateUsage]
 
 
 def test_offer_is_forwarded_and_location_rewritten(logged_in: TestClient, mtx: FakeMtx) -> None:
@@ -68,6 +70,8 @@ def test_offer_is_forwarded_and_location_rewritten(logged_in: TestClient, mtx: F
 
 
 def test_patch_and_delete_go_to_the_session(logged_in: TestClient, mtx: FakeMtx) -> None:
+    assert logged_in.post(BASE, content=OFFER, headers=SDP_H).status_code == 201
+    mtx.calls.clear()
     patch = logged_in.patch(
         f"{BASE}/{SESSION}", content="a=candidate:1", headers={**FRAG_H, "If-Match": "*"}
     )
@@ -149,4 +153,31 @@ def test_hls_is_not_built(logged_in: TestClient) -> None:
     ],
 )
 def test_panel_location(upstream: str, expected: str | None) -> None:
-    assert video_proxy.panel_location("sim-01", upstream) == expected
+    found = video_proxy.panel_location("sim-01", upstream)
+    assert (None if found is None else found[0]) == expected
+
+
+def test_only_sessions_this_proxy_opened(logged_in: TestClient, mtx: FakeMtx) -> None:
+    """A made-up or already ended session never reaches MediaMTX."""
+    other = "11111111-2222-4333-8444-555555555555"
+    res = logged_in.request("DELETE", f"{BASE}/{other}", content="{}", headers=JSON_H)
+    assert res.status_code == 404
+    assert res.json()["code"] == "VIDEO_SESSION_UNKNOWN"
+    assert logged_in.post(BASE, content=OFFER, headers=SDP_H).status_code == 201
+    first = logged_in.request("DELETE", f"{BASE}/{SESSION}", content="{}", headers=JSON_H)
+    again = logged_in.request("DELETE", f"{BASE}/{SESSION}", content="{}", headers=JSON_H)
+    assert (first.status_code, again.status_code) == (204, 404)
+    assert [c.method for c in mtx.calls] == ["POST", "DELETE"]
+
+
+def test_other_vehicle_is_404(logged_in: TestClient, mtx: FakeMtx) -> None:
+    res = logged_in.post("/api/v1/video/sim-02/main/whep", content=OFFER, headers=SDP_H)
+    assert res.status_code == 404
+    assert mtx.calls == []
+
+
+def test_session_memory_is_bounded(logged_in: TestClient, mtx: FakeMtx) -> None:
+    for i in range(video_proxy.MAX_SESSIONS + 5):
+        mtx.location = f"/drone/sim-01/main/whep/{i:08x}-0000-4000-8000-000000000000"
+        assert logged_in.post(BASE, content=OFFER, headers=SDP_H).status_code == 201
+    assert len(video_proxy._sessions) == video_proxy.MAX_SESSIONS  # pyright: ignore[reportPrivateUsage]

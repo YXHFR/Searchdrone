@@ -4,7 +4,10 @@
 WebRTC listener on loopback (``[video] mediamtx_whep``, ``/drone/{vehicle_id}/main/whep``)
 and the SDP answer comes back. MediaMTX's ``Location`` for the session is rewritten to
 ``/api/v1/video/{vehicle_id}/main/whep/{session}``, where ``PATCH`` (trickle ICE) and
-``DELETE`` (end the session) are passed on in the same way. So the browser talks only
+``DELETE`` (end the session) are passed on in the same way. Nothing from the request
+goes into MediaMTX's URL: the vehicle must be the ground station's own (its configured
+id is used), and PATCH and DELETE reach only sessions this proxy opened, at the path
+MediaMTX itself gave for them. So the browser talks only
 to the panel's own origin, with the panel's session and CSRF checks (``web.PanelGuard``
 lets ``application/sdp`` and ``application/trickle-ice-sdpfrag`` through on these paths
 only), and MediaMTX's signalling never has to listen outside 127.0.0.1. Only the media
@@ -17,6 +20,7 @@ not to work on the phone (``PanelConfig.video.hls_url`` stays ``null`` until the
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -28,7 +32,7 @@ from sd_ground.api.panel import G, Observer, VehiclePath
 from sd_ground.logging import get_logger
 from sd_ground.services.video import stream_path
 
-__all__ = ["SESSION_RE", "TIMEOUT_S", "panel_location", "router"]
+__all__ = ["MAX_SESSIONS", "SESSION_RE", "TIMEOUT_S", "panel_location", "router"]
 
 log = get_logger("sd_ground.video_proxy")
 router = APIRouter(prefix="/api/v1/video")
@@ -42,6 +46,9 @@ SessionPath = Annotated[str, Path(pattern=SESSION_RE)]
 _PASS = ("content-type", "etag", "accept-patch")
 # Requests to MediaMTX carry only the body and these headers: never the panel's cookie.
 _transport: httpx.AsyncBaseTransport | None = None
+# Sessions this proxy opened: session id -> MediaMTX's own path for it (newest last).
+MAX_SESSIONS = 32
+_sessions: OrderedDict[str, str] = OrderedDict()
 
 
 def set_transport(transport: httpx.AsyncBaseTransport | None) -> None:
@@ -50,8 +57,9 @@ def set_transport(transport: httpx.AsyncBaseTransport | None) -> None:
     _transport = transport
 
 
-def panel_location(vehicle_id: str, upstream: str | None) -> str | None:
-    """MediaMTX's session ``Location`` as the panel's path, or ``None`` if unexpected."""
+def panel_location(vehicle_id: str, upstream: str | None) -> tuple[str, str, str] | None:
+    """MediaMTX's session ``Location`` as (panel path, session id, MediaMTX's path), or
+    ``None`` if it is not the expected shape."""
     if not upstream:
         return None
     path = urlsplit(upstream).path
@@ -61,7 +69,29 @@ def panel_location(vehicle_id: str, upstream: str | None) -> str | None:
     session = path[len(prefix) :]
     if not re.fullmatch(SESSION_RE, session):
         return None
-    return f"/api/v1/video/{vehicle_id}/main/whep/{session}"
+    return f"/api/v1/video/{vehicle_id}/main/whep/{session}", session, path
+
+
+def _own_vehicle(g: G, vehicle_id: str) -> str:
+    """The ground station's own vehicle id (from its config), or 404."""
+    own = g.config.default_vehicle_id
+    if vehicle_id != own:
+        raise ApiStatusError(404, "VIDEO_NOT_FOUND", "Ingen video för det fordonet.")
+    return own
+
+
+def _remember(session: str, upstream: str) -> None:
+    _sessions[session] = upstream
+    _sessions.move_to_end(session)
+    while len(_sessions) > MAX_SESSIONS:
+        _sessions.popitem(last=False)
+
+
+def _session_path(vehicle: str, session: str) -> str:
+    upstream = _sessions.get(session)
+    if upstream is None or not upstream.startswith(f"/{stream_path(vehicle)}/whep/"):
+        raise ApiStatusError(404, "VIDEO_SESSION_UNKNOWN", "Videosessionen finns inte.")
+    return upstream
 
 
 def _ctype(request: Request) -> str:
@@ -104,19 +134,22 @@ def _answer(res: httpx.Response, *, location: str | None = None) -> Response:
 async def whep_offer(vehicle_id: VehiclePath, request: Request, g: G, _: Observer) -> Response:
     if _ctype(request) != SDP:
         raise ApiStatusError(415, "UNSUPPORTED_MEDIA_TYPE", "Väntade application/sdp.")
+    vehicle = _own_vehicle(g, vehicle_id)
     res = await _forward(
         g,
         "POST",
-        f"/{stream_path(vehicle_id)}/whep",
+        f"/{stream_path(vehicle)}/whep",
         body=await request.body(),
         headers={"Content-Type": SDP},
     )
     if res.status_code != 201:
         return _answer(res)
-    location = panel_location(vehicle_id, res.headers.get("location"))
-    if location is None:
+    found = panel_location(vehicle, res.headers.get("location"))
+    if found is None:
         log.error("video.proxy_bad_location")
         raise ApiStatusError(502, "VIDEO_UPSTREAM", "Videoservern gav ett oväntat svar.")
+    location, session, upstream = found
+    _remember(session, upstream)
     return _answer(res, location=location)
 
 
@@ -126,13 +159,14 @@ async def whep_patch(
 ) -> Response:
     if _ctype(request) != SDP_FRAG:
         raise ApiStatusError(415, "UNSUPPORTED_MEDIA_TYPE", f"Väntade {SDP_FRAG}.")
+    upstream = _session_path(_own_vehicle(g, vehicle_id), session)
     headers = {"Content-Type": SDP_FRAG}
     if "if-match" in request.headers:
         headers["If-Match"] = request.headers["if-match"]
     res = await _forward(
         g,
         "PATCH",
-        f"/{stream_path(vehicle_id)}/whep/{session}",
+        upstream,
         body=await request.body(),
         headers=headers,
     )
@@ -141,9 +175,9 @@ async def whep_patch(
 
 @router.delete("/{vehicle_id}/main/whep/{session}")
 async def whep_delete(vehicle_id: VehiclePath, session: SessionPath, g: G, _: Observer) -> Response:
-    res = await _forward(
-        g, "DELETE", f"/{stream_path(vehicle_id)}/whep/{session}", body=b"", headers={}
-    )
+    upstream = _session_path(_own_vehicle(g, vehicle_id), session)
+    res = await _forward(g, "DELETE", upstream, body=b"", headers={})
+    _sessions.pop(session, None)
     return _answer(res)
 
 
