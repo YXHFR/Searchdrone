@@ -1,7 +1,8 @@
 # The scripted commander for the panel's browser test on SITL (`just test-panel-sitl`):
 # a search request in the chat gets the demo charter as a card; after the pilot's
 # approval, "Fritt runt drönaren" and "Starta" it takes off, searches sector A and flies
-# home. Every order goes through the ground's gate like the real AI's.
+# home. Every order goes through the ground's gate like the real AI's. Every turn may run
+# again (once: false): the browser test flies more than one mission.
 scenario: panel_demo
 fixture: ../demo_fixture.yaml
 turns:
@@ -9,15 +10,19 @@ turns:
     match: '(?is).*\bsök\b.*'
     say: ["Jag föreslår en ram runt rutan norr om hem. Granska kortet och godkänn om den stämmer."]
     charter_proposal: {from_fixture: charter_test}
+    once: false
   - on: operator_message
     match: '(?i)\s*starta\.?\s*'
     say: ["Lyfter till sökhöjden."]
     action: {skill: takeoff, params: {alt_m: 40}}
+    once: false
   - on: skill_event
     when: {skill: takeoff, status: done}
     say: ["Söker av sektor A."]
     action: {skill: survey_sector, params: {sector: "A", alt_m: 40}}
+    once: false
   - on: skill_event
     when: {skill: survey_sector, status: done}
     say: ["Sökningen är klar. Flyger hem."]
     action: {skill: return_home}
+    once: false

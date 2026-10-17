@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "onboard"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "software/ground/tests/helpers"))
 
 from brain_rig import free_port, run_brain, serve_commander  # pyright: ignore[reportMissingImports]
-from flow_rig import Rig, WallClock, ground_stack  # pyright: ignore[reportMissingImports]
+from flow_rig import VID, Rig, WallClock, ground_stack  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import (  # pyright: ignore[reportMissingImports]
     SitlOnboard,
     fresh_db,
@@ -155,13 +155,15 @@ async def _browser_done(limit_s: float) -> int:
 
 async def _report(r: Rig) -> None:
     """What the AI and the ground did, for a failed run (chat, orders, cards per mission)."""
+    out = [f"onboard snapshot: {r.flow.snapshot(VID)[0]!r}"]
     missions = (await r.panel.get("/api/v1/missions")).json()
     for m in missions if isinstance(missions, list) else []:
         mid = m["id"]
-        log.warning("uppdrag %s %s", m["title"], m["status"])
-        for path in ("chat", "commands", "approvals", "charters"):
+        out.append(f"--- uppdrag {m['title']} {m['status']}")
+        for path in ("chat", "commands", "approvals", "charters", "events"):
             res = await r.panel.get(f"/api/v1/missions/{mid}/{path}")
-            log.warning("%s: %s", path, res.text[:3000])
+            out.append(f"{path}: {res.text[:4000]}")
+    sys.stderr.write("\n".join(out) + "\n")
 
 
 @pytest.mark.budget_s(900)
