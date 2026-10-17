@@ -5,7 +5,10 @@ description = "The person-detector interface and a null detector."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+  "sd-schemas",
+  "pydantic>=2.9",
+]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
