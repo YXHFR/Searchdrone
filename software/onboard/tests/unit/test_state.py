@@ -1,4 +1,4 @@
-"""The transition table is the specification's, and every steered state answers the
+"""The transition table is the expected one, and every steered state answers the
 safety triggers."""
 
 from __future__ import annotations

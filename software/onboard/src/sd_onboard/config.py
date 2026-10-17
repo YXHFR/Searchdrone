@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from sd_link.client import is_safe_url
 from sd_mav.connection import BROADCAST_SYSID, GCS_COMPID
 from sd_schemas.base import VEHICLE_ID_PATTERN
 
@@ -162,6 +163,11 @@ def check(loaded: Loaded) -> list[str]:
         errors.append("fc_sysid måste vara 1..249 och inte markstationens / must be 1..249.")
     if cfg.own_compid == GCS_COMPID or not 1 <= cfg.own_compid <= 254:
         errors.append("own_compid måste vara 1..254 och inte 190 / must be 1..254, not 190.")
+    if not is_safe_url(cfg.sdlink_url):
+        errors.append(
+            "sdlink_url måste vara wss:// eller ws:// till den egna datorn "
+            "/ sdlink_url must be wss://, or ws:// to loopback."
+        )
     errors += _token_problems(loaded)
     if _inside(loaded.state_dir, loaded.root):
         errors.append("state_dir ligger i repot; flytta den / state_dir is inside the repository.")
@@ -184,11 +190,15 @@ def _token_problems(loaded: Loaded) -> list[str]:
     if _inside(path, loaded.root):
         return ["Tokenfilen ligger i repot / the token file is inside the repository."]
     try:
-        info = path.stat()
+        info = path.lstat()
         token = path.read_text(encoding="utf-8").strip()
     except OSError:
         return [f"Tokenfilen saknas / the token file is missing: {path}."]
     out = []
+    if stat.S_ISLNK(info.st_mode):
+        out.append("Tokenfilen får inte vara en symbolisk länk / no symbolic link.")
+    elif info.st_uid != os.getuid():
+        out.append("Tokenfilen ägs av en annan användare / owned by another user.")
     if stat.S_IMODE(info.st_mode) & 0o077:
         out.append("Tokenfilen får bara läsas av ägaren (chmod 600) / token file must be 600.")
     if len(token.encode()) < MIN_TOKEN_BYTES:

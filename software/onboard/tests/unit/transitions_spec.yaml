@@ -1,4 +1,4 @@
-# The executor's transition table, copied row by row from the specification.
+# The expected transition table of the executor, written out row by row.
 # test_transitions_table_matches_spec expands each row into (from, trigger) keys and
 # requires exactly these keys, targets and guard names in the code.
 - {id: T1, from: [IDLE, PREFLIGHT, LANDED], trigger: [charter_install], to: [PREFLIGHT], guard: always}

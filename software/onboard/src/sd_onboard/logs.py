@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -53,9 +54,13 @@ class _JsonFormatter(logging.Formatter):
 def setup_logging(state_dir: Path, *, secrets: Iterable[str]) -> SecretFilter:
     masker = SecretFilter(secrets)
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = state_dir / "onboard.jsonl"
+    # Positions and events: readable by the owner only, whatever the umask.
+    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
+    path.chmod(0o600)
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    for handler in (logging.FileHandler(state_dir / "onboard.jsonl"), logging.StreamHandler()):
+    for handler in (logging.FileHandler(path), logging.StreamHandler()):
         handler.addFilter(masker)
         handler.setFormatter(_JsonFormatter())
         root.addHandler(handler)

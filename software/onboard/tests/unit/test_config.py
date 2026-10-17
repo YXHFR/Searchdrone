@@ -72,6 +72,7 @@ def test_good_config_starts(root: Path, env: dict[str, str]) -> None:
         ("SD_ONBOARD__FC_SYSID", "250"),
         ("SD_ONBOARD__FC_SYSID", "255"),
         ("SD_ONBOARD__OWN_COMPID", "190"),
+        ("SD_ONBOARD__SDLINK_URL", "ws://192.0.2.10:7600/sdlink/v1/control"),
         ("SD_ONBOARD__TEST_HOOKS__TAKEOFF_DELAY_AFTER_ARM_S", "5"),
     ],
 )
@@ -149,3 +150,26 @@ def test_token_masked_in_logs() -> None:
     text = stream.getvalue()
     assert secret not in text and "abcdef123" not in text and "zzz999" not in text
     assert text.count(MASK) == 3
+
+
+def test_token_file_may_not_be_a_link(root: Path, env: dict[str, str]) -> None:
+    token = Path(env["SD_DATA_DIR"]) / "secrets" / "onboard_link_token"
+    link = token.with_name("link")
+    link.symlink_to(token)
+    errors = check(load(root, {**env, "SD_ONBOARD__LINK_TOKEN_FILE": str(link)}))
+    assert any("länk" in e for e in errors)
+
+
+def test_log_file_is_private(tmp_path: Path) -> None:
+    from sd_onboard.logs import setup_logging
+
+    root_logger = logging.getLogger()
+    before = list(root_logger.handlers)
+    try:
+        setup_logging(tmp_path / "state", secrets=("x" * 40,))
+        assert (tmp_path / "state" / "onboard.jsonl").stat().st_mode & 0o077 == 0
+    finally:
+        for h in root_logger.handlers[:]:
+            if h not in before:
+                root_logger.removeHandler(h)
+                h.close()
