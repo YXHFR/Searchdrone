@@ -58,7 +58,11 @@ class BBox(SdModel):
 
 
 class Detection(SdModel):
-    """Something that may be a person in one image. Never a decision: a person confirms."""
+    """Something that may be a person in one image. Never a decision: a person confirms.
+
+    ``embedding`` is a generic appearance vector for matching against a description. It is
+    never a face or other biometric identity vector.
+    """
 
     label: str
     score: float = Field(ge=0, le=1)

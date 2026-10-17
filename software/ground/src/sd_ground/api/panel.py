@@ -105,6 +105,9 @@ Interactive = Annotated[Principal, Depends(require_interactive)]
 G = Annotated[Ground, Depends(ground)]
 
 EMERGENCY = "B1-08"
+# Stage 2 stubs: always empty, never a find, and the header says the feature is not built.
+STAGE2_HEADER = "Sd-Not-Built"
+STAGE2_VALUE = "stage-2"
 
 
 def _flow(g: Ground) -> MissionFlow:
@@ -664,11 +667,6 @@ async def get_file(mission_id: IdPath, file_id: IdPath, g: G, _: Observer) -> Re
     if path is None:
         raise ApiStatusError(404, "FILE_NOT_FOUND", "Filen finns inte.")
     return FileResponse(path, filename=path.name)
-
-
-# Stage 2 stubs: always empty, never a find, and the header says the feature is not built.
-STAGE2_HEADER = "Sd-Not-Built"
-STAGE2_VALUE = "stage-2"
 
 
 @router.get("/missions/{mission_id}/candidates")

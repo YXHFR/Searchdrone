@@ -15,7 +15,7 @@ LOCKFILES = [
     *sorted((ROOT / "simulation").rglob("*.lock")),
     *sorted((ROOT / "software").rglob("*.lock.toml")),
 ]
-BANNED = re.compile(r"ultralytics|yolov8|yolo11", re.IGNORECASE)
+BANNED = re.compile(r"ultralytics|yolov5|yolov8|yolo11", re.IGNORECASE)
 
 
 def test_lockfiles_exist() -> None:
