@@ -1,7 +1,7 @@
 # The scripted commander for the panel's browser test on SITL (`just test-panel-sitl`):
 # a search request in the chat gets the demo charter as a card; after the pilot's
-# approval, "Fritt runt drönaren" and "Starta" it takes off, searches sector A and flies
-# home. Every order goes through the ground's gate like the real AI's. Every turn may run
+# approval and "Fritt runt drönaren" it takes off (the request was the operator's ask to
+# start; "Starta" also works), searches sector A and flies home. Every order goes through the ground's gate like the real AI's. Every turn may run
 # again (once: false): the browser test flies more than one mission.
 scenario: panel_demo
 fixture: ../demo_fixture.yaml
@@ -20,6 +20,7 @@ turns:
     when: {skill: takeoff, status: done}
     say: ["Söker av sektor A."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
+    delay_s: 3          # after the onboard state settles in HOLD (else STATE_CHANGED)
     once: false
   - on: skill_event
     when: {skill: survey_sector, status: done}

@@ -108,11 +108,8 @@ async function startFlight(page: Page): Promise<void> {
     .toBe(true);
   await cc.getByRole("checkbox").check();
   await cc.getByTestId("clearance-button").click();
-  await expect(page.locator(".chat").getByTestId("clearance")).toContainText("Klartecken gäller");
-  await expect
-    .poll(() => live<boolean>(page, "vehicle.snapshot.clearance_available"), { timeout: 15_000 })
-    .toBe(true);
-  await say(page, "Starta");
+  // The search request was the operator's ask to start: the AI takes off on the
+  // clearance (the take-off consumes it at once).
   await expect(page.getByTestId("pill-vehicle")).toHaveText("Lyfter", { timeout: 60_000 });
 }
 
@@ -150,9 +147,15 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
 });
 
 test("FLYG HEM med AI:n avstängd (PS-4)", async ({ page }) => {
-  await readyMission(page);
-  await startFlight(page);
-  await expect(page.getByTestId("pill-vehicle")).toHaveText(/Flyger till punkt|Söker/, {
+  await page.goto(stackUrl());
+  await expect(page.getByTestId("mission-title")).toContainText("Uppdrag", { timeout: 30_000 });
+  // A flight left in the air by the test before is used as it is; otherwise a new one.
+  const flying = (await live<boolean>(page, "telemetry.armed")) === true;
+  if (!flying) {
+    await readyMission(page);
+    await startFlight(page);
+  }
+  await expect(page.getByTestId("pill-vehicle")).toHaveText(/Flyger till punkt|Söker|Svävar/, {
     timeout: 120_000,
   });
 
