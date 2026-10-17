@@ -1291,6 +1291,7 @@ dependencies = [
     { name = "pymavlink" },
     { name = "pyyaml" },
     { name = "sd-hwcalc" },
+    { name = "sd-mav" },
     { name = "sd-safety" },
 ]
 
@@ -1300,6 +1301,7 @@ requires-dist = [
     { name = "pymavlink", specifier = ">=2.4.47" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sd-hwcalc", editable = "software/hwcalc" },
+    { name = "sd-mav", editable = "software/common/mav" },
     { name = "sd-safety", editable = "software/common/safety" },
 ]
 

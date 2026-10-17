@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from brain_helpers import REG, situation
 
 from sd_brain.backends import GrammarBackend, LlmCommander, ScriptedBackend
@@ -273,3 +274,23 @@ async def test_llm_runtime_error() -> None:
     cmd = LlmCommander(_Failing(), ctx, REG, BehaviourConfig(), Sampling())
     out = await cmd.decide(_turn("x"), _NoTools())
     assert out.diagnostics.error == "timeout"
+
+
+def test_fixture_charters_inherit_from_their_base() -> None:
+    from sd_brain.backends.scripted import _Fixture  # pyright: ignore[reportPrivateUsage]
+    from sd_schemas.safety import SafetyLimits
+
+    repo = Path(__file__).resolve().parents[4]
+    data = yaml.safe_load((repo / "simulation/scenarios/demo_fixture.yaml").read_text())
+    fx = _Fixture(data)
+    test = fx.charter("charter_test", "x")
+    batt = fx.charter("charter_batt25", "x")
+    assert batt.battery_rtl_pct == 25
+    assert batt.area == test.area and batt.alt_max_agl_m == test.alt_max_agl_m
+    over = fx.charter("charter_overcap", "x")
+    std = SafetyLimits()
+    assert over.alt_max_agl_m > std.max_alt_agl_m
+    assert over.max_speed_ms > std.max_speed_ms
+    assert over.max_range_from_pilot_m > std.max_range_from_pilot_m
+    toofar = fx.charter("charter_toofar", "x")
+    assert toofar.area != fx.charter("charter_wide", "x").area

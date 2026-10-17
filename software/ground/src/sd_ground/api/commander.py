@@ -525,6 +525,7 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             "previous": d.get("from"),
             "paused_by": d.get("paused_by"),
             "returning_cause": d.get("returning_cause"),
+            "created": bool(d.get("created")),  # a new mission: the AI takes it on
         }
     elif event.type == "annotation.created":
         geometry = d.get("geometry") or {}

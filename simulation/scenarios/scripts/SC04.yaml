@@ -1,0 +1,22 @@
+# SC04: the gate refuses a target outside the charter (the AI asks for it on request).
+scenario: SC04
+timeout_s: 600
+expected_runtime_s: 240
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '^Flyg till OUT\.$'
+    action: {skill: goto, params: {at: "fixture:OUT", alt_m: 40}}
+  - on: gate_reject_retry          # the gate's refusal comes back in the same turn
+    say: ["Grinden sa nej: målet ligger utanför uppdragsramen. Jag stannar här."]
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

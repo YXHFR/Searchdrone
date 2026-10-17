@@ -256,6 +256,8 @@ class Rig:
     commander: httpx.AsyncClient
     clock: WallClock
     plane: Plane
+    # Whether the pilot's panel is open (its live connection pings); a test closes it.
+    presence: list[bool] = field(default_factory=lambda: [True])
 
     @property
     def home(self) -> tuple[float, float]:
@@ -397,10 +399,11 @@ async def _harness_token(g: Ground) -> str:
     return token
 
 
-async def _operator_present(g: Ground) -> None:
+async def _operator_present(g: Ground, presence: list[bool]) -> None:
     """The pilot keeps the panel open: its live connection pings once a second."""
     while True:
-        g.operator_seen_mono = g.clock.monotonic()
+        if presence[0]:
+            g.operator_seen_mono = g.clock.monotonic()
         await asyncio.sleep(1.0)
 
 
@@ -452,6 +455,7 @@ async def ground_stack(
     mav_clock: Any,
     onboard: Callable[[WallClock, str, str], Onboard],
     fc: FakeFlightController | None = None,
+    sdlink_bind: str = "127.0.0.1:0",
     **config: Any,
 ) -> AsyncIterator[Rig]:
     """The ground station's mission flow on ``vehicle`` (250/190), with its database, the
@@ -487,7 +491,7 @@ async def ground_stack(
         latches=latches,
         tokens=TokenStore({VID: hash_token(token)}),
         vehicle_ids=[VID],
-        bind="127.0.0.1:0",
+        bind=sdlink_bind,
         commander_state=lambda: g.brain_state,
     )
     flow = MissionFlow(g, FlowRepo(engine), link=link, mav=mav, actions=actions)
@@ -501,13 +505,14 @@ async def ground_stack(
     await core.start()
     await flow.start()
     await link.start()
+    presence = [True]
     side = onboard(clock, f"ws://127.0.0.1:{link.port}/sdlink/v1/control", token)
     tasks = [
         asyncio.ensure_future(flow.run()),
         asyncio.ensure_future(actions.pump(g)),
         asyncio.ensure_future(TelemetryService(g).run()),
         asyncio.ensure_future(_flush_events(g)),
-        asyncio.ensure_future(_operator_present(g)),
+        asyncio.ensure_future(_operator_present(g, presence)),
     ]
     panel = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=panel_asgi(g, create_panel_app(g))),  # pyright: ignore[reportArgumentType]
@@ -541,6 +546,7 @@ async def ground_stack(
             commander,
             clock,
             Plane(home.lat, home.lon),
+            presence,
         )
         await side.start(r.home)
         await r.until(lambda: link.up(VID), 30, "SD-link up")

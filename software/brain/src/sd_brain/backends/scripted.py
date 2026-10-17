@@ -34,6 +34,7 @@ from sd_brain.backends.base import BackendCrashError, ToolExecutor
 from sd_brain.geo import from_enu
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.charter import CharterProposal
+from sd_schemas.safety import SafetyLimits
 
 __all__ = ["ScriptError", "ScriptedBackend", "load_script"]
 
@@ -162,6 +163,24 @@ class _Fixture:
         lon, lat = self.latlon(float(pin["east_m"]), float(pin["north_m"]))
         return lat, lon
 
+    def charter_spec(self, name: str) -> dict[str, Any]:
+        """A fixture charter with its ``base:`` chain resolved (the named one wins)."""
+        charters = self.data.get("charters", {})
+        chain: list[dict[str, Any]] = []
+        current: str | None = name
+        while current is not None:
+            c = charters.get(current)
+            if c is None:
+                raise ScriptError(f"okänd ram i fixturen: {current}")
+            if any(c is seen for seen in chain):
+                raise ScriptError(f"ramen {name} ärver av sig själv")
+            chain.append(c)
+            current = c.get("base")
+        out: dict[str, Any] = {}
+        for c in reversed(chain):
+            out.update({k: v for k, v in c.items() if k != "base"})
+        return out
+
     def polygon(self, name: str) -> dict[str, Any]:
         self._need()
         if name == "survey_box":
@@ -172,9 +191,9 @@ class _Fixture:
             w, h = (float(x) / 2 for x in box["size_m"])
             ring = [(cx - w, cy - h), (cx + w, cy - h), (cx + w, cy + h), (cx - w, cy + h)]
         else:
-            area = self.data.get("areas", {}).get(name) or self.data.get("charters", {}).get(
-                name, {}
-            )
+            area = self.data.get("areas", {}).get(name)
+            if area is None:
+                area = self.charter_spec(name) if name in self.data.get("charters", {}) else {}
             if "area_enu" not in area:
                 raise ScriptError(f"okänd yta i fixturen: {name}")
             ring = [(float(e), float(n)) for e, n in area["area_enu"]]
@@ -183,9 +202,9 @@ class _Fixture:
 
     def charter(self, name: str, reason: str) -> CharterProposal:
         self._need()
-        c = self.data.get("charters", {}).get(name)
-        if c is None:
-            raise ScriptError(f"okänd ram i fixturen: {name}")
+        c = self.charter_spec(name)
+        if c.get("exceed_limits"):
+            c = {**c, **_over_the_limits()}
         body: dict[str, Any] = {"area": self.polygon(name), "reason_sv": reason}
         for key in (
             "geofence_buffer_m",
@@ -200,6 +219,17 @@ class _Fixture:
             if key in c:
                 body[key] = c[key]
         return CharterProposal.model_validate(body)
+
+
+def _over_the_limits() -> dict[str, Any]:
+    """``exceed_limits: true`` in the fixture: a charter just past the standard limits
+    (counted from them at run time, so the test needs no numbers of its own)."""
+    std = SafetyLimits()
+    return {
+        "alt_max_agl_m": std.max_alt_agl_m + 1,
+        "max_speed_ms": std.max_speed_ms + 1,
+        "max_range_from_pilot_m": std.max_range_from_pilot_m + 1,
+    }
 
 
 def _resolve(params: dict[str, Any], fx: _Fixture) -> dict[str, Any]:
