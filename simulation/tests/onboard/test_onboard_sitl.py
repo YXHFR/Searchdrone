@@ -137,6 +137,7 @@ class RcSticks:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="rc-sticks", daemon=True)
         self.throttle = 1000
+        self.mode_pwm = 1500  # channel 5, ArduCopter's flight-mode switch
 
     def __enter__(self) -> RcSticks:
         self._thread.start()
@@ -149,7 +150,9 @@ class RcSticks:
 
     def _run(self) -> None:
         while not self._stop.wait(0.02):
-            packet = struct.pack("<8H", 1500, 1500, self.throttle, 1500, 1500, 1500, 1500, 1500)
+            packet = struct.pack(
+                "<8H", 1500, 1500, self.throttle, 1500, self.mode_pwm, 1500, 1500, 1500
+            )
             self._sock.sendto(packet, self._addr)
 
 

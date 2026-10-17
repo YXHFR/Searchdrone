@@ -6,6 +6,10 @@ import contract guards against direct use, and the real boundary is the file mod
 peer's user id, which needs the AI to run as its own OS user in the field profile) and
 STOP / RETURN HOME. Never Resume. The socket file is 600 in a 700 directory, and a peer
 with another user id (``SO_PEERCRED``) is disconnected. One bad request never stops it.
+
+Every connection is answered in its own short-lived thread (at most ``MAX_CLIENTS`` at
+once, each with a ``READ_TIMEOUT_S`` read timeout), so a client that connects and says
+nothing, or sends slowly, never holds up a STOP from the next one.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import os
 import socket
 import struct
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -24,9 +29,11 @@ from sd_ground.auth import Principal
 from sd_ground.logging import get_logger
 from sd_ground.sources import EmergencyPath, EmergencyUnavailableError
 
-__all__ = ["MAX_LINE", "ControlSocket", "call", "socket_path"]
+__all__ = ["MAX_CLIENTS", "MAX_LINE", "READ_TIMEOUT_S", "ControlSocket", "call", "socket_path"]
 
 MAX_LINE = 4096
+MAX_CLIENTS = 16
+READ_TIMEOUT_S = 2.0
 log = get_logger("sd_ground.control")
 _CLI = Principal(role="pilot", issuer_ref="operator:cli", auth_mode="cli", via="local")
 
@@ -61,6 +68,7 @@ class ControlSocket:
         self._sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._slots = threading.BoundedSemaphore(MAX_CLIENTS)
 
     def start(self) -> None:
         directory = self.path.parent
@@ -76,7 +84,7 @@ class ControlSocket:
         finally:
             os.umask(old)
         self.path.chmod(0o600)
-        sock.listen(8)
+        sock.listen(64)
         sock.settimeout(0.5)
         self._sock = sock
         self._thread = threading.Thread(target=self._serve, name="sd-ground-control", daemon=True)
@@ -101,27 +109,56 @@ class ControlSocket:
                 continue
             except OSError:
                 return
+            if not self._slots.acquire(blocking=False):
+                # Too many clients at once: refuse this one at once instead of queueing it.
+                with conn:
+                    conn.settimeout(0.2)
+                    with contextlib.suppress(OSError):
+                        conn.sendall(b'{"ok": false, "error": "BUSY"}\n')
+                continue
+            worker = threading.Thread(
+                target=self._answer, args=(conn,), name="sd-ground-control-client", daemon=True
+            )
+            try:
+                worker.start()
+            except RuntimeError:  # no thread available: answer here, still bounded
+                self._answer(conn)
+
+    def _answer(self, conn: socket.socket) -> None:
+        try:
             with conn:
-                conn.settimeout(2.0)
+                conn.settimeout(READ_TIMEOUT_S)
                 try:
                     if self._peer_uid(conn) != os.getuid():
-                        continue
-                    try:
-                        reply = self._handle(self._read_line(conn))
-                    except Exception as exc:  # one bad request never stops the CLI STOP path
-                        log.error("control.request_failed", error=type(exc).__name__)
-                        reply = {"ok": False, "error": "INTERNAL"}
+                        return
+                    line = self._read_line(conn)
+                except OSError:  # gone, or too slow (TimeoutError): just close
+                    return
+                try:
+                    reply = self._handle(line)
+                except Exception as exc:  # one bad request never stops the CLI STOP path
+                    log.error("control.request_failed", error=type(exc).__name__)
+                    reply = {"ok": False, "error": "INTERNAL"}
+                with contextlib.suppress(OSError):
                     conn.sendall((json.dumps(reply) + "\n").encode())
-                except OSError:
-                    continue
+        finally:
+            self._slots.release()
 
     @staticmethod
     def _read_line(conn: socket.socket) -> bytes | None:
-        """One line; ``None`` when it is longer than ``MAX_LINE`` (the rest is drained)."""
+        """One line; ``None`` when it is longer than ``MAX_LINE`` (the rest is drained).
+
+        The whole line must arrive within ``READ_TIMEOUT_S`` (``TimeoutError`` otherwise),
+        so a client sending one byte at a time cannot keep a slot."""
         data = b""
         total = 0
         too_long = False
+        deadline = time.monotonic() + READ_TIMEOUT_S
         while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("control socket: line not complete in time")
+            conn.settimeout(left)
             chunk = conn.recv(4096)
             if not chunk:
                 break
@@ -165,7 +202,11 @@ class ControlSocket:
                 )
             except EmergencyUnavailableError as exc:
                 return {"ok": False, "error": exc.code, "detail_sv": exc.detail_sv}
-            return {"ok": True, "action_id": str(result.action_id)}
+            return {
+                "ok": True,
+                "action_id": str(result.action_id),
+                "action_seq": result.action_seq,
+            }
         return {"ok": False, "error": "UNKNOWN_OP"}
 
 
@@ -176,7 +217,18 @@ def _new_id() -> str:
 
 
 def call(path: Path, request: dict[str, Any], timeout: float = 5.0) -> dict[str, Any] | None:
-    """Send one request to a running server. ``None`` when no server is running."""
+    """Send one request to a running server. ``None`` when no server is running.
+
+    A ``BUSY`` answer (every client slot taken) is tried again for up to ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        reply = _call_once(path, request, timeout)
+        if reply is None or reply.get("error") != "BUSY" or time.monotonic() >= deadline:
+            return reply
+        time.sleep(0.05)
+
+
+def _call_once(path: Path, request: dict[str, Any], timeout: float) -> dict[str, Any] | None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(timeout)

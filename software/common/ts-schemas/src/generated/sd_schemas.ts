@@ -1278,8 +1278,11 @@ export interface LoginRequest {
   pin?: string | null;
 }
 /**
- * Ground -> onboard, 10-20 Hz, not reliable. Without a new value for
- * ``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.
+ * Kept in the catalogue for compatibility; v0.1.0 never sends it over SD-link.
+ *
+ * The ground station sends the sticks straight to the flight controller and stops
+ * after ``MANUAL_CONTROL_TIMEOUT_MS`` without a new value, so the vehicle stands
+ * still in LOITER.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ManualControl".
@@ -1323,9 +1326,11 @@ export interface ManualControlState {
 /**
  * Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).
  *
- * On ``active = True`` the AI's orders pause and the vehicle goes to LOITER; stick
- * values (``ManualControl``) are then forwarded as MAVLink MANUAL_CONTROL. Limits and
- * the geofence still apply. A physical RC transmitter always wins.
+ * On ``active = True`` the AI's orders pause onboard (HELD). The ground station puts
+ * the vehicle in LOITER and sends the pilot's sticks itself as MAVLink MANUAL_CONTROL
+ * from the GCS id (250/190), the way STOP goes; the onboard computer forwards no
+ * sticks. The flight controller's limits and geofence still apply. A physical RC
+ * transmitter always wins.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ManualTakeover".

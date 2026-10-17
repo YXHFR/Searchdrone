@@ -1,10 +1,12 @@
 """Builds the apps and starts ``sd-ground serve`` in the order the safety design needs.
 
-Start order: config check, logging, database (wait up to 30 s; wrong schema version
-stops the server; no database = safe start mode with sessions in memory), background
-tasks, control socket, commander API (:7700, main loop), then the ingress thread with the
-panel listeners (:8080 and, in LAN mode, :8443 with TLS), and finally the login link.
-The MAVLink thread and the SD-link server plug in through ``sd_ground.sources``.
+Start order: config check, logging, the MAVLink thread (GCS heartbeat, STOP and FLY
+HOME, the companion watchdog, the battery guard; it runs before and without the
+database), database (wait up to 30 s; wrong schema version stops the server; no database
+= safe start mode with sessions in memory), background tasks, control socket, commander
+API (:7700, main loop), then the ingress thread with the panel listeners (:8080 and, in
+LAN mode, :8443 with TLS), and finally the login link. The MAVLink thread stops last.
+The SD-link server plugs in through ``sd_ground.sources``.
 """
 
 from __future__ import annotations
@@ -36,7 +38,10 @@ from sd_ground.db.setup import head_revision
 from sd_ground.ingress import IngressApp, IngressThread, MainLoopBridge
 from sd_ground.liveness import LoopLiveness
 from sd_ground.logging import get_logger, setup_logging
+from sd_ground.mav.thread import GroundMav, HeartbeatGate, MavThread, vehicle_events
+from sd_ground.services.latches import Latches
 from sd_ground.services.telemetry import TelemetryService
+from sd_ground.services.vehicle_actions import OperatorPresence, VehicleActions
 from sd_ground.web import COMMANDER_BODY_LIMIT, LoopbackGuard, PanelGuard
 
 __all__ = [
@@ -181,8 +186,6 @@ class Background:
     async def run_db(self) -> None:
         while True:
             await self.db_tick()
-            if self.liveness is not None:
-                self.liveness.beat("main")
             await self.g.clock.sleep(DB_CHECK_S)
 
     def tasks(self) -> list[asyncio.Task[None]]:
@@ -190,6 +193,13 @@ class Background:
             asyncio.create_task(self.run_db(), name="db"),
             asyncio.create_task(self.telemetry.run(), name="telemetry"),
         ]
+
+
+async def _beat(liveness: LoopLiveness, name: str) -> None:
+    """The main loop's sign of life for the MAVLink thread's heartbeat gate."""
+    while True:
+        liveness.beat(name)
+        await asyncio.sleep(1.0)
 
 
 async def _start_db(g: Ground) -> None:
@@ -246,13 +256,27 @@ async def _serve(loaded: Loaded) -> int:
     g = Ground(loaded=loaded, clock=MonotonicClock(), brain_token=BrainToken(token))
     if cfg.lan.enabled:
         g.lan_hosts = lan_addresses()
+    liveness = LoopLiveness()
+    main_beat = asyncio.create_task(_beat(liveness, "main"), name="main-liveness")
+    try:
+        mav_thread, actions = await start_emergency_path(g, liveness)
+    except BaseException:
+        main_beat.cancel()
+        raise
     g.repo = Repo(
         make_engine(with_password(cfg.db.url, loaded.secret("SD_GROUND__DB_APP_PASSWORD")))
     )
     await _start_db(g)
-    liveness = LoopLiveness()
     background = Background(g, liveness)
-    tasks = background.tasks()
+    tasks = [*background.tasks(), main_beat]
+    presence = OperatorPresence(
+        actions,
+        absent_s=cfg.gate.operator_absent_s,
+        action=cfg.gate.operator_absent_action,
+        mission_active=lambda _vid: False,  # the mission flow tells it (B1-12)
+    )
+    tasks.append(asyncio.create_task(actions.pump(g), name="vehicle-actions"))
+    tasks.append(asyncio.create_task(presence.run(g), name="operator-presence"))
     main_loop = asyncio.get_running_loop()
 
     control = ControlSocket(
@@ -308,7 +332,59 @@ async def _serve(loaded: Loaded) -> int:
     await asyncio.gather(*tasks, return_exceptions=True)
     control.stop()
     await g.repo.close()
+    await asyncio.to_thread(mav_thread.stop)  # the GCS heartbeat ends last
     return 0
+
+
+async def start_emergency_path(
+    g: Ground, liveness: LoopLiveness
+) -> tuple[MavThread, VehicleActions]:
+    """Start the MAVLink thread and wire STOP / FLY HOME into ``g``. Exit 1 on failure."""
+    from sd_mav.connection import GCS_COMPID, GCS_SYSID, Role, connect
+    from sd_mav.vehicle import Vehicle
+    from sd_obs.clock import MonotonicClock
+
+    cfg = g.config
+    latches = Latches(g.clock)
+    actions = VehicleActions(g.clock, latches, vehicle_ids=[cfg.default_vehicle_id])
+
+    def make_core() -> GroundMav:
+        clock = MonotonicClock()
+        conn = connect(
+            cfg.mavlink.listen,
+            role=Role.GROUND,
+            source_system=GCS_SYSID,
+            source_component=GCS_COMPID,
+        )
+        vehicle = Vehicle(
+            conn,
+            role=Role.GROUND,
+            clock=clock,
+            on_event=vehicle_events(actions.on_event, now=clock.monotonic),
+            heartbeat_allowed=HeartbeatGate(liveness, actions.on_event),
+        )
+        return GroundMav(
+            vehicle,
+            clock,
+            vehicle_id=cfg.default_vehicle_id,
+            latches=latches,
+            on_report=actions.on_report,
+            on_event=actions.on_event,
+            system_action=actions.system,
+        )
+
+    mav_thread = MavThread(make_core)
+    mav_thread.start()
+    await asyncio.to_thread(mav_thread.ready.wait, 10)
+    if mav_thread.mav is None:
+        error = "timeout" if mav_thread.error is None else type(mav_thread.error).__name__
+        log.error("mav.start_failed", error=error)
+        raise SystemExit("MAVLink-tråden kunde inte starta. Kontrollera [mavlink] listen.")
+    actions.mav = mav_thread.mav
+    g.vehicle_link = mav_thread.mav
+    g.emergency = actions
+    g.vehicle_actions = actions
+    return mav_thread, actions
 
 
 def serve(loaded: Loaded) -> int:

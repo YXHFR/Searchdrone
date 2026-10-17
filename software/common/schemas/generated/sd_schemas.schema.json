@@ -3717,7 +3717,7 @@
     },
     "ManualControl": {
       "additionalProperties": false,
-      "description": "Ground -> onboard, 10-20 Hz, not reliable. Without a new value for\n``MANUAL_CONTROL_TIMEOUT_MS`` the vehicle stands still.",
+      "description": "Kept in the catalogue for compatibility; v0.1.0 never sends it over SD-link.\n\nThe ground station sends the sticks straight to the flight controller and stops\nafter ``MANUAL_CONTROL_TIMEOUT_MS`` without a new value, so the vehicle stands\nstill in LOITER.",
       "properties": {
         "input_seq": {
           "minimum": 0,
@@ -3876,7 +3876,7 @@
     },
     "ManualTakeover": {
       "additionalProperties": false,
-      "description": "Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).\n\nOn ``active = True`` the AI's orders pause and the vehicle goes to LOITER; stick\nvalues (``ManualControl``) are then forwarded as MAVLink MANUAL_CONTROL. Limits and\nthe geofence still apply. A physical RC transmitter always wins.",
+      "description": "Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).\n\nOn ``active = True`` the AI's orders pause onboard (HELD). The ground station puts\nthe vehicle in LOITER and sends the pilot's sticks itself as MAVLink MANUAL_CONTROL\nfrom the GCS id (250/190), the way STOP goes; the onboard computer forwards no\nsticks. The flight controller's limits and geofence still apply. A physical RC\ntransmitter always wins.",
       "properties": {
         "action_seq": {
           "minimum": 0,
