@@ -163,9 +163,16 @@ async def _report(r: Rig, port: int) -> None:
     for m in missions if isinstance(missions, list) else []:
         mid = m["id"]
         out.append(f"--- uppdrag {m['title']} {m['status']}")
-        for path in ("chat", "commands", "approvals", "charters", "events"):
+        for path in ("chat", "commands", "approvals", "charters"):
             res = await r.panel.get(f"/api/v1/missions/{mid}/{path}", headers=host)
             out.append(f"{path}: {res.text[:4000]}")
+        res = await r.panel.get(f"/api/v1/missions/{mid}/events?limit=1000", headers=host)
+        events = res.json() if res.status_code == 200 else []
+        out.append(f"events: {res.status_code}")
+        out.extend(
+            f"  {e.get('t', '')[11:23]} {e.get('type')} {json.dumps(e.get('payload'))[:300]}"
+            for e in (events if isinstance(events, list) else [])
+        )
     sys.stderr.write("\n".join(out) + "\n")
 
 

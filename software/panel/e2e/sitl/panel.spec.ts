@@ -58,6 +58,33 @@ function metres(a: { lat: number; lon: number }, b: { lat: number; lon: number }
   return Math.hypot((a.lat - b.lat) * k, (a.lon - b.lon) * k * Math.cos((a.lat * Math.PI) / 180));
 }
 
+/** Every sector done; the vehicle's state goes to the log every 15 s while it searches. */
+async function untilSearched(page: Page, limitMs: number): Promise<void> {
+  const until = Date.now() + limitMs;
+  let logged = 0;
+  while (!(await sectorsDone(page))) {
+    if (Date.now() > until) throw new Error("the search did not finish in time");
+    if (Date.now() - logged >= 15_000) {
+      logged = Date.now();
+      const tel = await live<Tel | null>(page, "telemetry");
+      const ex = await live<string>(page, "vehicle.snapshot.executor_state");
+      const home = tel?.home ? Math.round(metres(tel, tel.home)) : "?";
+      console.log(
+        `söker: ${ex}, ${tel?.groundspeed_ms?.toFixed(1)} m/s, ${home} m från hem, ${await sectorSummary(page)}`,
+      );
+    }
+    await page.waitForTimeout(2_000);
+  }
+}
+
+const sectorSummary = (page: Page): Promise<string> =>
+  page.evaluate(() =>
+    (window as unknown as { __sd: Hooks }).__sd.missionStore
+      .getState()
+      .sectors.map((x) => `${x.properties.status} ${x.properties.progress.toFixed(2)}`)
+      .join(", "),
+  );
+
 async function say(page: Page, text: string): Promise<void> {
   const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
   await box.fill(text);
@@ -147,7 +174,7 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
     .not.toBe("HELD");
 
   // PS-2: the search finishes, the AI flies home and lands.
-  await expect.poll(() => sectorsDone(page), { timeout: 360_000, intervals: [2_000] }).toBe(true);
+  await untilSearched(page, 360_000);
   await expect(page.getByTestId("pill-vehicle")).toHaveText("På marken", { timeout: 240_000 });
   await expect.poll(() => live<boolean>(page, "telemetry.armed"), { timeout: 60_000 }).toBe(false);
   expect(errors).toEqual([]);
