@@ -2,7 +2,8 @@
 
 The preconditions (preflight, approved charter, a fresh clearance, standing disarmed on
 the ground, a profile that may arm) are checked by the executor before this runs. Done
-when the height has been within 1 m of ``alt_m`` for 1 s. Not in the air 15 s after
+when the height has been within 1 m of ``alt_m`` for 1 s and the flight controller
+reports the vehicle in the air. Not in the air 15 s after
 arming, or not at the height after 60 s: TAKEOFF_TIMEOUT.
 """
 
@@ -88,7 +89,9 @@ class TakeoffHandler:
             now = io.clock.monotonic()
             v = io.vehicle
             self._progress = max(0.0, min(100.0, 100 * v.alt_rel_home_m / self.alt_m))
-            if v.alt_rel_home_m >= self.alt_m - REACHED_TOL_M:
+            # Done only once the flight controller itself says "in the air", so the next
+            # order meets an airborne vehicle in the gate too.
+            if v.alt_rel_home_m >= self.alt_m - REACHED_TOL_M and v.landed_state == "in_air":
                 reached_since = now if reached_since is None else reached_since
                 if now - reached_since >= REACHED_FOR_S:
                     break

@@ -67,12 +67,12 @@ class AutoFc(FakeFlightController):
         self.loiter_until: float | None = None
         self.track: list[tuple[float, float, float]] = []  # lat, lon, alt while armed
 
-    def step(self, dt_s: float) -> None:
+    def step(self, dt: float) -> None:
         if self.armed and self.mode == CopterMode.AUTO:
-            self._auto(dt_s)
+            self._auto(dt)
         elif self.mode == CopterMode.LOITER and self.armed:
             self.target = None
-        super().step(dt_s)
+        super().step(dt)
         if self.armed:
             self.track.append((self.lat, self.lon, self.alt_rel))
         if self.missions[MISSION]:

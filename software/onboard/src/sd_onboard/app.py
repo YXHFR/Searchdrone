@@ -46,7 +46,9 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         return executor is not None and executor.loop_alive()
 
     def gate(origin: SendOrigin) -> str | None:
-        return "starting" if executor is None else executor.send_gate(origin)
+        if executor is None:  # nothing steers before the executor exists
+            return None if origin is SendOrigin.STARTUP else "starting"
+        return executor.send_gate(origin)
 
     conn = connect(
         cfg.mav_url, role=Role.ONBOARD, source_system=cfg.fc_sysid, source_component=cfg.own_compid

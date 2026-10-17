@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 from onboard_helpers import Rig, at, rig
 
@@ -20,7 +22,7 @@ async def _in_goto(r: Rig) -> None:
     assert r.ex.state == S.TRANSIT
 
 
-def _release(r: Rig, seq: int | None = None) -> object:
+def _release(r: Rig, seq: int | None = None) -> UUID:
     ref = new_id()
     rel = OperatorRelease(action_seq=r._seq if seq is None else seq, operator_id="operator:pilot")
     r.ex.on_release(rel, ref)
