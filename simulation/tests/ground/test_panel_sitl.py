@@ -156,7 +156,9 @@ async def _browser_done(limit_s: float) -> int:
 async def _report(r: Rig) -> None:
     """What the AI and the ground did, for a failed run (chat, orders, cards per mission)."""
     out = [f"onboard snapshot: {r.flow.snapshot(VID)[0]!r}"]
-    missions = (await r.panel.get("/api/v1/missions")).json()
+    listed = await r.panel.get("/api/v1/missions")
+    out.append(f"missions: {listed.status_code} {listed.text[:500]}")
+    missions = listed.json() if listed.status_code == 200 else []
     for m in missions if isinstance(missions, list) else []:
         mid = m["id"]
         out.append(f"--- uppdrag {m['title']} {m['status']}")

@@ -69,7 +69,28 @@ async function readyMission(page: Page): Promise<void> {
   await expect(card.getByTestId("approve")).toBeEnabled({ timeout: 30_000 });
   await expect(card.getByRole("radio", { name: /B – AI:n flyger fritt/ })).toBeChecked();
   await card.getByTestId("approve").click();
-  await expect.poll(() => live<string>(page, "mission.status"), { timeout: 90_000 }).toBe("READY");
+  await untilStatus(page, "READY", 90_000);
+}
+
+/** The panel's mission status reaches `want`; on a timeout say what the server has. */
+async function untilStatus(page: Page, want: string, limitMs: number): Promise<void> {
+  const until = Date.now() + limitMs;
+  while (Date.now() < until) {
+    if ((await live<string>(page, "mission.status")) === want) return;
+    await page.waitForTimeout(500);
+  }
+  const id = await live<string>(page, "mission.id");
+  const server = await page.evaluate(async (mid) => {
+    const r = await fetch(`/api/v1/missions/${mid}`);
+    const d = (await r.json()) as {
+      mission?: { status?: string };
+      charter?: { status?: string; install_status?: string };
+    };
+    return `${d.mission?.status} charter=${d.charter?.status}/${d.charter?.install_status}`;
+  }, id);
+  throw new Error(
+    `mission ${id}: panel ${await live<string>(page, "mission.status")}, server ${server}, ws ${await live<string>(page, "ws")}`,
+  );
 }
 
 async function startFlight(page: Page): Promise<void> {
