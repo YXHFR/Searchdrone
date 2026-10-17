@@ -20,7 +20,6 @@ turns:
     when: {skill: takeoff, status: done}
     say: ["Söker av sektor A."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
-    delay_s: 3          # after the onboard state settles in HOLD (else STATE_CHANGED)
     once: false
   - on: skill_event
     when: {skill: survey_sector, status: done}
@@ -31,5 +30,8 @@ turns:
     when: {action: null}
     say: ["Fortsätter sökningen."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
-    delay_s: 3
+    once: false
+  - on: gate_reject_retry          # an order right at a state change (STATE_CHANGED): once more
+    say: ["Försöker igen med det nya läget."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
     once: false
