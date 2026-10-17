@@ -39,10 +39,12 @@ software/panel/src/views/manual/**
 software/panel/e2e/**
 software/hwcalc/**
 
-# Simulator flight tests, parameters and harness
+# Simulator flight tests, parameters, harness, the flight model and the demo fixture
 simulation/sitl/**
 simulation/tests/**
 simulation/sd_sim/**
+simulation/gazebo/**
+simulation/scenarios/**
 
 # Build, CI and the gates themselves
 compose.yaml
@@ -56,6 +58,5 @@ tools/**
 # Move a line above this marker in the pull request that creates its first file.
 # The test checks that nothing below matches a tracked file yet.
 software/brain/src/sd_brain/skills/**
-simulation/scenarios/**
 config/mediamtx.yml
 **/ruff.toml

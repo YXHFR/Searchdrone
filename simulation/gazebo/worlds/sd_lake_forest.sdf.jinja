@@ -1,0 +1,220 @@
+<?xml version="1.0"?>
+<!--
+  sd_lake_forest: a flat 1.2 x 1.2 km world with a landing pad, a lake, a path and a band
+  of forest. Rendered per simulator instance by sd_sim.world (gen_world.py); do not edit
+  the rendered copy under build/. x is east and y is north of the landing pad.
+-->
+<sdf version="1.9">
+  <world name="{{ name }}">
+    <physics name="1ms" type="ignore">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu">
+    </plugin>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat">
+    </plugin>
+
+    <scene>
+      <ambient>1.0 1.0 1.0</ambient>
+      <background>0.8 0.8 0.8</background>
+      <sky></sky>
+      <shadows>false</shadows>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>{{ home.lat }}</latitude_deg>
+      <longitude_deg>{{ home.lon }}</longitude_deg>
+      <elevation>{{ home.alt_amsl_m }}</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>{{ ground_size }} {{ ground_size }}</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>{{ ground_size }} {{ ground_size }}</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.30 0.45 0.20 1</ambient>
+            <diffuse>0.30 0.45 0.20 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="landing_pad">
+      <static>true</static>
+      <link name="link">
+        <visual name="pad">
+          <pose>0 0 0.005 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>{{ pad_size }} {{ pad_size }} 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+{% for bar in [(-0.6, 0, 0.25, 1.8), (0.6, 0, 0.25, 1.8), (0, 0, 1.2, 0.25)] %}
+        <visual name="h_{{ loop.index0 }}">
+          <pose>{{ bar[0] }} {{ bar[1] }} 0.011 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>{{ bar[2] }} {{ bar[3] }} 0.002</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+{% endfor %}
+      </link>
+    </model>
+
+    <!-- The lake is a flat ellipse just above the ground, without collision. -->
+    <model name="lake">
+      <static>true</static>
+      <link name="link">
+        <visual name="water">
+          <pose>0 0 0.05 0 0 0</pose>
+          <geometry>
+            <polyline>
+{% for x, y in lake %}
+              <point>{{ x }} {{ y }}</point>
+{% endfor %}
+              <height>0.01</height>
+            </polyline>
+          </geometry>
+          <material>
+            <ambient>0.10 0.25 0.55 1</ambient>
+            <diffuse>0.10 0.25 0.55 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="path">
+      <static>true</static>
+      <link name="link">
+{% for seg in path %}
+        <visual name="segment_{{ loop.index0 }}">
+          <pose>{{ seg.x | round(3) }} {{ seg.y | round(3) }} 0.02 0 0 {{ seg.yaw | round(6) }}</pose>
+          <geometry>
+            <box>
+              <size>{{ seg.length | round(3) }} {{ path_width }} 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.55 0.50 0.40 1</ambient>
+            <diffuse>0.55 0.50 0.40 1</diffuse>
+          </material>
+        </visual>
+{% endfor %}
+      </link>
+    </model>
+
+    <!-- Spruces: a trunk with collision and two crown layers. Outside every test charter. -->
+    <model name="forest">
+      <static>true</static>
+{% for tree in trees %}
+      <link name="{{ tree.name }}">
+        <pose>{{ tree.x }} {{ tree.y }} 0 0 0 0</pose>
+        <collision name="trunk_collision">
+          <pose>0 0 {{ (tree.height / 2) | round(3) }} 0 0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>{{ trunk_radius }}</radius>
+              <length>{{ tree.height }}</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="trunk">
+          <pose>0 0 {{ (tree.height / 2) | round(3) }} 0 0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>{{ trunk_radius }}</radius>
+              <length>{{ tree.height }}</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.35 0.25 0.15 1</ambient>
+            <diffuse>0.35 0.25 0.15 1</diffuse>
+          </material>
+        </visual>
+        <visual name="crown_low">
+          <pose>0 0 {{ (tree.height * 0.45) | round(3) }} 0 0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>{{ (tree.height * 0.15) | round(3) }}</radius>
+              <length>{{ (tree.height * 0.4) | round(3) }}</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.10 0.30 0.15 1</ambient>
+            <diffuse>0.10 0.30 0.15 1</diffuse>
+          </material>
+        </visual>
+        <visual name="crown_high">
+          <pose>0 0 {{ (tree.height * 0.8) | round(3) }} 0 0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>{{ (tree.height * 0.08) | round(3) }}</radius>
+              <length>{{ (tree.height * 0.35) | round(3) }}</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.10 0.35 0.15 1</ambient>
+            <diffuse>0.10 0.35 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+{% endfor %}
+    </model>
+
+    <include>
+      <uri>{{ model_uri }}</uri>
+      <pose>0 0 0 0 0 {{ vehicle_yaw }}</pose>
+    </include>
+  </world>
+</sdf>

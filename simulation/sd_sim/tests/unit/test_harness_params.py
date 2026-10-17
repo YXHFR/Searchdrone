@@ -61,6 +61,7 @@ def make(conn: FakeConn) -> harness.Harness:
     h._conn = conn
     h._next_heartbeat = 0.0
     h._streams_requested = True
+    h.listeners = []
     return h
 
 
@@ -75,3 +76,38 @@ def test_timeout_is_infra_error() -> None:
     conn = FakeConn(5, drop={2}, answer_rereads=False)
     with pytest.raises(InfraError, match="4 av 5"):
         make(conn).read_all_params(timeout=1.5)
+
+
+def test_read_param_by_name() -> None:
+    conn = FakeConn(5, set(), answer_rereads=False)
+    conn.queue.extend([Msg(1, 5, "OTHER", 9.0), Msg(2, 5, "P2", 2.0)])
+    assert make(conn).read_param("P2", timeout=3) == 2.0
+
+
+def test_read_param_timeout_is_infra_error() -> None:
+    with pytest.raises(InfraError, match="MISSING"):
+        make(FakeConn(5, set(), answer_rereads=False)).read_param("MISSING", timeout=0.5)
+
+
+class Position:
+    relative_alt, lat, lon, vx, vy = 20_000, -353632610, 1491652300, 300, 400
+
+    def get_type(self) -> str:
+        return "GLOBAL_POSITION_INT"
+
+    def get_srcSystem(self) -> int:  # noqa: N802 - pymavlink's name
+        return 1
+
+    def get_srcComponent(self) -> int:  # noqa: N802 - pymavlink's name
+        return 1
+
+
+def test_position_speed_and_listeners() -> None:
+    h = make(FakeConn(1, set()))
+    seen: list[str] = []
+    h.listeners.append(lambda kind, _s: seen.append(kind))
+    h._apply(Position())
+    assert h.state.rel_alt_m == 20.0
+    assert (h.state.lat, h.state.lon) == (-35.363261, 149.16523)
+    assert h.state.ground_speed_ms == 5.0
+    assert seen == ["GLOBAL_POSITION_INT"]
