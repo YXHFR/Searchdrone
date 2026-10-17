@@ -1,7 +1,7 @@
 // The panel against the whole stack on ArduCopter SITL with the scripted commander:
 // step 1 of the demo from the panel (PS-2), STOP in the air and Resume (PS-3), and FLY
-// HOME with the AI process stopped (PS-4). Video (PS-1) and the ground-station restart
-// (PS-5) are not covered here.
+// HOME with the AI process stopped (PS-4). Video (PS-1) is e2e/video/panel.spec.ts, run by
+// `just test-video` with Google Chrome; the ground-station restart (PS-5) is not covered.
 import { expect, type Page, test } from "@playwright/test";
 import { stackUrl, stopBrain } from "./stack";
 

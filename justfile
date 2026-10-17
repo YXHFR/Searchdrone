@@ -186,6 +186,7 @@ test-video *args:
         esac
     done
     pnpm --filter @searchdrone/panel build
+    pnpm --filter @searchdrone/panel build:test  # PS-1 reads the test build's window.__sd
     uv run pytest -p sd_sim.pytest_plugin -m "$selection" simulation/tests/video
 
 # Start the ground station (prints the login link)

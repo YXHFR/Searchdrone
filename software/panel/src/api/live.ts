@@ -1,6 +1,7 @@
 // Wires LiveSocket to the stores: the resync over REST on every new server epoch, then the
 // live events. Events that arrive while a resync runs are held back and applied after it
 // in seq order, so a snapshot can never overwrite something newer.
+import { noteLive } from "../lib/testHooks";
 import { actionBus } from "../state/actionBus";
 import { lastChatSeq, useChatStore } from "../state/chatStore";
 import { useLiveStore } from "../state/liveStore";
@@ -189,6 +190,7 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
   const missionId = live.mission?.id ?? null;
   const forMission = e.mission_id == null || e.mission_id === missionId;
   live.patch({ lastWsRxAt: Date.now() });
+  noteLive(e.type === "telemetry" ? (e.data as Telemetry).t : undefined);
   // Dispatch on the type: the server's topic names are not part of what the panel relies on.
   switch (e.type) {
     case "telemetry": {
