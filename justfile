@@ -342,8 +342,16 @@ hw-check:
 accept *args:
     uv run --no-sync python tools/just_args.py accept "$@"
 
-# Traceability report for the scenario tests (local only)
-check-traceability: (_not-built "B1-16")
+# Traceability of the acceptance ids to tests (local only: the id file is not in the repo)
+check-traceability:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set +e
+    uv run --no-sync python tools/gen_traceability.py; code=$?
+    set -e
+    if [ "$code" -eq 2 ]; then echo "Spårbarhetsfilen finns bara i planeringsmappen."; exit 0; fi
+    uv run --no-sync python tools/check_traceability.py
+    exit "$code"
 
 # Record the showcase GIF for a stage (keys: brain)
 showcase STAGE *args:
