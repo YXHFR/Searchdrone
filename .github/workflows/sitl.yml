@@ -200,9 +200,56 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  video:
+    # Live video and recordings (B1-09): the synthetic camera with the time code strip
+    # (the builtin-physics picture) through the simulated radio and video_relay into
+    # MediaMTX from compose.yaml, then the ground station's WHEP proxy in Google Chrome
+    # (Playwright's Chromium does not decode H.264). No SITL needed, so it runs on the
+    # runner itself, next to the SITL job.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - *checkout
+      - *setup
+      - name: GStreamer and ffmpeg for the video processes and checks
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+            gstreamer1.0-rtsp python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            ffmpeg iproute2
+      - *db
+      - name: Database schema and MediaMTX
+        run: |
+          just migrate
+          just video-up
+      - name: Google Chrome is installed
+        run: google-chrome --version
+      - name: Video tests (MediaMTX required, never skipped)
+        timeout-minutes: 15
+        env:
+          SD_SIM__REQUIRE_VIDEO: "1"
+        run: just test-video
+      - *scan
+      - name: Upload video logs (only when a test failed)
+        if: failure() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: video-logs
+          path: |
+            runs/**/*.log
+            runs/**/*.json
+            !runs/**/secrets/**
+            !build/sim/**/secrets/**
+          if-no-files-found: ignore
+          retention-days: 14
+
   sitl-ok:
     if: always()
-    needs: [changes, sitl]
+    needs: [changes, sitl, video]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

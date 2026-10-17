@@ -8,6 +8,16 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
+  `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
+  to the LAN in LAN mode, Media over QUIC off) and publishing only with the password
+  from `.env`. The simulator's test picture carries a time code strip; `video_relay`
+  publishes the camera through the simulated radio. The ground station proxies WHEP
+  (`/api/v1/video/{vehicle_id}/main/whep`), reports the video server in `/health` and puts
+  each mission's video segments into its folder. The panel's video view plays WebRTC, falls
+  back to native HLS (Safari, iPhone) once the server serves HLS, and shows "no video"
+  with a retry. `just test-video` measures the delay in
+  Google Chrome from the strip.
 - AI mission commander `sd-brain`: chat and situation in, one gated order per turn out.
   The cloud model (any OpenAI-compatible API, OpenRouter by default) decides when a key is
   set, and the local Qwen3-VL-4B in llama-server takes over automatically in the same turn.

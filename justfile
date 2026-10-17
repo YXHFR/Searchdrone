@@ -158,6 +158,36 @@ db-check: _env-file
 migrate:
     uv run --package sd-ground sd-ground db setup
 
+# Start MediaMTX: live video and per-mission recordings, every port on 127.0.0.1 (B1-09)
+video-up: _env-file
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The recordings folder must exist before the container starts, or Docker creates
+    # it owned by root and MediaMTX (running as the owner's user) cannot write there.
+    data="$(sed -n 's/^SD_DATA_DIR=//p' .env | tail -n 1)"
+    [ -n "$data" ] || { echo "SD_DATA_DIR saknas i .env. Kör: just setup-config"; exit 1; }
+    mkdir -p "$data/video"
+    docker compose --env-file .env up -d --wait mediamtx
+
+# Stop MediaMTX (the recordings are kept)
+video-down: _env-file
+    docker compose --env-file .env down mediamtx
+
+# Video tests against MediaMTX (needs just video-up, db-up and migrate; keys: physics)
+test-video *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    selection="video and not gz"
+    for arg in "$@"; do
+        case "$arg" in
+            physics=builtin) ;;
+            physics=gz) selection="video" ;;
+            *) echo "test-video: okänd inställning '$arg' (physics=builtin eller physics=gz)"; exit 2 ;;
+        esac
+    done
+    pnpm --filter @searchdrone/panel build
+    uv run pytest -p sd_sim.pytest_plugin -m "$selection" simulation/tests/video
+
 # Start the ground station (prints the login link)
 ground:
     uv run --package sd-ground sd-ground serve

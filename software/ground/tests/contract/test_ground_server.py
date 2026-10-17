@@ -616,6 +616,7 @@ def test_serve_binds_loopback_only(migrated_db: Db, tmp_path: Path) -> None:
         "SD_DATA_DIR": str(data),
         "SD_GROUND__AUTH__BRAIN_TOKEN_FILE": str(token_file),
         "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "video-pass-for-tests",
+        "SD_GROUND__VIDEO_API_PASSWORD": "video-api-pass-for-tests",
         "XDG_RUNTIME_DIR": str(tmp_path),
     }
     proc = subprocess.Popen(
@@ -693,6 +694,7 @@ def test_serve_refuses_unmigrated_database(fresh_db: Db, tmp_path: Path) -> None
             "SD_DATA_DIR": str(data),
             "SD_GROUND__AUTH__BRAIN_TOKEN_FILE": str(token_file),
             "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "video-pass-for-tests",
+            "SD_GROUND__VIDEO_API_PASSWORD": "video-api-pass-for-tests",
             "SD_GROUND__HTTP__PANEL_BIND": f"127.0.0.1:{_free_port()}",
             "SD_GROUND__HTTP__COMMANDER_BIND": f"127.0.0.1:{_free_port()}",
             "XDG_RUNTIME_DIR": str(tmp_path),

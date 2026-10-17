@@ -58,7 +58,7 @@ export default defineConfig(({ mode }) => {
     build: { manifest: true, target: "es2022", sourcemap: false, chunkSizeWarningLimit: 1200 },
     test: {
       environment: "jsdom",
-      include: ["src/**/*.test.{ts,tsx}"],
+      include: ["src/**/*.test.{ts,tsx}", "e2e/helpers/**/*.test.ts"],
       setupFiles: ["src/test/setup.ts"],
     },
   };

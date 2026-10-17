@@ -28,6 +28,7 @@ from sd_ground.api import commander as commander_api
 from sd_ground.api import live as live_api
 from sd_ground.api import panel as panel_api
 from sd_ground.api import tiles as tiles_api
+from sd_ground.api import video_proxy as video_api
 from sd_ground.api.deps import install_error_handlers
 from sd_ground.auth import BrainToken
 from sd_ground.config import Loaded, check, limit_caps, parse_bind
@@ -46,6 +47,7 @@ from sd_ground.services.latches import Latches
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.telemetry import TelemetryService
 from sd_ground.services.vehicle_actions import OperatorPresence, VehicleActions
+from sd_ground.services.video import VideoMonitor
 from sd_ground.web import COMMANDER_BODY_LIMIT, LoopbackGuard, PanelGuard
 
 __all__ = [
@@ -81,6 +83,7 @@ def create_panel_app(g: Ground) -> FastAPI:
     app.include_router(panel_api.router)
     app.include_router(live_api.router)
     app.include_router(tiles_api.router)
+    app.include_router(video_api.router)
     static = g.loaded.path(g.config.http.static_dir)
     if (static / "index.html").is_file():
         app.mount("/", StaticFiles(directory=static, html=True), name="panel")
@@ -169,6 +172,7 @@ class Background:
         self.g = g
         self.liveness = liveness
         self.telemetry = TelemetryService(g)
+        self.video = VideoMonitor(g)
         self._next_reload = 0.0
 
     async def db_tick(self) -> None:
@@ -217,6 +221,7 @@ class Background:
         return [
             asyncio.create_task(self.run_db(), name="db"),
             asyncio.create_task(self.telemetry.run(), name="telemetry"),
+            asyncio.create_task(self.video.run(), name="video"),
         ]
 
 

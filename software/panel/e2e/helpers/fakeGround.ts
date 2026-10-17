@@ -259,8 +259,16 @@ export class FakeGround {
     expect(this.cspErrors, "CSP violations").toEqual([]);
     for (const r of this.requests.filter((x) => x.method !== "GET")) {
       expect(r.headers["x-sd-client"], `${r.method} ${r.path} X-SD-Client`).toBe("panel");
+      // WHEP signalling is SDP, on the video paths only (the server's guard allows just that).
+      const sdp = /^\/api\/v1\/video\/[^/]+\/main\/whep(\/[^/]+)?$/.test(r.path)
+        ? r.method === "POST"
+          ? "application/sdp"
+          : r.method === "PATCH"
+            ? "application/trickle-ice-sdpfrag"
+            : null
+        : null;
       expect(r.headers["content-type"], `${r.method} ${r.path} Content-Type`).toContain(
-        "application/json",
+        sdp ?? "application/json",
       );
       expect(r.headers["idempotency-key"], `${r.method} ${r.path} Idempotency-Key`).toBeUndefined();
     }

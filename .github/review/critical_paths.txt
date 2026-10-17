@@ -23,6 +23,7 @@ software/ground/src/sd_ground/ingress.py
 software/ground/src/sd_ground/control_socket.py
 software/ground/src/sd_ground/api/commander.py
 software/ground/src/sd_ground/api/panel.py
+software/ground/src/sd_ground/api/video_proxy.py
 software/ground/src/sd_ground/services/**
 software/ground/src/sd_ground/mav/**
 software/ground/src/sd_ground/app.py
@@ -57,6 +58,7 @@ software/brain/src/sd_brain/prompts/**
 # Build, CI and the gates themselves
 compose.yaml
 config/*.example.toml
+config/mediamtx.yml
 .importlinter
 justfile
 .github/**
@@ -66,5 +68,4 @@ tools/**
 # Move a line above this marker in the pull request that creates its first file.
 # The test checks that nothing below matches a tracked file yet.
 software/brain/src/sd_brain/skills/**
-config/mediamtx.yml
 **/ruff.toml
