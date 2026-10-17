@@ -93,6 +93,7 @@ class FakeOnboard:
     stop_latch: bool = False
     accept_charters: bool = True
     order_outcome: str = "done"  # or "running" (stays), "rejected"
+    reject_gate: Any = None  # with "rejected": the onboard gate's own decision
     boot_id: int = 1
     state_seq: int = 0
     last_transition_seq: int = 0
@@ -224,7 +225,14 @@ class FakeOnboard:
         elif isinstance(body, SkillCommand):
             self.orders.append(body)
             if self.order_outcome == "rejected":
-                await session.ack(body.command_id, "rejected", reason_codes=["ONB_STALE_ORDER"])
+                codes = (
+                    ["ONB_STALE_ORDER"]
+                    if self.reject_gate is None
+                    else self.reject_gate.reason_codes
+                )
+                await session.ack(
+                    body.command_id, "rejected", reason_codes=codes, gate=self.reject_gate
+                )
                 return
             await session.ack(body.command_id, "accepted")
             await session.ack(body.command_id, "running")
