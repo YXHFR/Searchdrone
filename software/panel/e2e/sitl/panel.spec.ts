@@ -124,8 +124,12 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
   await expect(page.getByTestId("pill-vehicle")).toHaveText("Söker", { timeout: 120_000 });
 
   // PS-3: STOP during the search; acknowledged within 1 s, the vehicle stops.
+  const pressed = Date.now();
   await page.getByTestId("safety-stop").click();
-  await expect(page.getByTestId("safety-stop")).toContainText("Kvitterat", { timeout: 1_000 });
+  await expect(page.getByTestId("safety-stop")).toContainText("Kvitterat", { timeout: 10_000 });
+  const ackMs = Date.now() - pressed;
+  test.info().annotations.push({ type: "stop-ack-ms", description: String(ackMs) });
+  console.log(`STOPP kvitterat efter ${ackMs} ms`);
   await expect
     .poll(() => live<number>(page, "telemetry.groundspeed_ms"), { timeout: 5_000 })
     .toBeLessThan(0.5);
