@@ -1,0 +1,2 @@
+{"step": 0, "call": 0, "reply": {"content": null, "tool_calls": [{"name": "propose_charter_change", "arguments": {"base_version": 1, "search_areas": [{"kind": "rect", "center_pin_id": "P1", "width_m": 100, "height_m": 100}], "battery_rtl_pct": 5, "reason_sv": "Operatören vill flyga hem först vid 5 %."}}]}}
+{"step": 0, "call": 1, "reply": {"content": "Det går inte. Hem vid 15 % är den lägsta gränsen.", "tool_calls": []}}

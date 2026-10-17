@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Jag har föreslagit en ram runt P1. Godkänn kortet.", "tool_calls": [{"name": "propose_charter_change", "arguments": {"search_areas": [{"kind": "rect", "center_pin_id": "P1", "width_m": 200, "height_m": 300}], "reason_sv": "Ruta 200 x 300 m runt P1."}}]}}

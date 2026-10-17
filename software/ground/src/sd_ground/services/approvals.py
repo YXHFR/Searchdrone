@@ -384,7 +384,7 @@ async def _fence(flow: MissionFlow, mission: Mission, row: Charter) -> bool:
         return failed("simplify")
     targets = fence_rules.fence_param_targets(mission.limits)
 
-    async def work(vehicle: Vehicle) -> tuple[str, dict[str, float | None]]:
+    async def once(vehicle: Vehicle) -> tuple[str, dict[str, float | None]]:
         current = await mav_fence.read_params(vehicle, targets)
         move = {k: v for k, v in targets.items() if current.get(k) != v}
         if move:
@@ -392,10 +392,28 @@ async def _fence(flow: MissionFlow, mission: Mission, row: Charter) -> bool:
         digest = await mav_fence.upload_fence(vehicle, corners)
         return digest, await mav_fence.read_params(vehicle, fence_rules.SAFETY_PARAMS)
 
+    async def work(vehicle: Vehicle) -> tuple[str, dict[str, float | None]]:
+        # Every message is checked against fresh telemetry ("disarmed on the ground").
+        # When telemetry is late for a moment the allowlist refuses and nothing is sent;
+        # then wait until fresh telemetry shows the vehicle disarmed on the ground again
+        # and start over (the upload restarts with MISSION_COUNT and is read back).
+        # Any other refusal, or a vehicle that does not show that in time, ends it.
+        for attempt in range(1, mav_fence.FENCE_ATTEMPTS + 1):
+            try:
+                return await once(vehicle)
+            except ForbiddenMavlinkError as exc:
+                if not mav_fence.state_refusal(exc) or attempt == mav_fence.FENCE_ATTEMPTS:
+                    raise
+                if not await mav_fence.fence_allowed_again(vehicle):
+                    raise
+                log.info("charter.fence_retry", charter_id=str(row.id), attempt=attempt + 1)
+        raise AssertionError("unreachable")
+
     try:
         digest, params = await flow.mav.call(work, 60.0)
     except (MissionError, ForbiddenMavlinkError, ControlNotAllowedError, TimeoutError) as exc:
-        return failed(type(exc).__name__)
+        reason = getattr(exc, "reason", None)
+        return failed(type(exc).__name__ if reason is None else f"{type(exc).__name__}: {reason}")
     violations = fence_rules.check_fc_safety_params(params, mission.limits)
     if violations:
         await flow.repo.set_fence(str(row.id), digest, None)

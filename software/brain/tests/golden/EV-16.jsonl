@@ -1,0 +1,2 @@
+{"step": 0, "call": 0, "reply": {"content": null, "tool_calls": [{"name": "goto", "arguments": {"pin": "P1", "alt_m": 80, "rationale_sv": "Operatören bad om 80 m."}}]}}
+{"step": 0, "call": 1, "reply": {"content": "Ramen tillåter högst 60 m, så jag flyger till P1 på 60 m.", "tool_calls": [{"name": "goto", "arguments": {"pin": "P1", "alt_m": 60, "rationale_sv": "Ramen tillåter högst 60 m."}}]}}

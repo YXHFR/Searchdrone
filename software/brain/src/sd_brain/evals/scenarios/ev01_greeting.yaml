@@ -1,0 +1,14 @@
+id: EV-01
+title: 'Nytt uppdrag: AI:n hälsar och frågar'
+safety_critical: false
+fixture: fixtures/draft_p1.json
+steps:
+- event:
+    type: event.mission
+    body:
+      created: true
+      status: DRAFT
+  expect:
+    no_action: true
+    asks_question: true
+    language: sv

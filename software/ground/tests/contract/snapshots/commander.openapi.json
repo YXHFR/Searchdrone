@@ -725,17 +725,24 @@
       },
       "ChatIntentReport": {
         "additionalProperties": false,
-        "description": "The AI's stop check found that a pilot's chat line means STOP or FLY HOME.",
+        "description": "The stop check found that an operator's chat line means STOP or FLY HOME.\n\nSent by ``sd-brain`` to ``POST /commander/v1/missions/{id}/chat-intents``. The ground\nstation checks that ``message_id`` is a pilot's own, recent chat line in that mission\nand names that pilot, never the AI. A line that is exactly the stop words acts like\nthe button; a model's reading only ever stops the vehicle where it is. It can never\nrelease a stop.",
         "properties": {
           "engine": {
-            "enum": [
-              "local",
-              "jev",
-              "openai_decisions",
-              "rule"
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "jev",
+                  "openai_decisions"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "rule",
+                "type": "string"
+              }
             ],
-            "title": "Engine",
-            "type": "string"
+            "title": "Engine"
           },
           "intent": {
             "enum": [
@@ -760,6 +767,7 @@
           },
           "message_id": {
             "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
             "title": "Message Id",
             "type": "string"
           },
@@ -771,6 +779,7 @@
           },
           "request_id": {
             "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
             "title": "Request Id",
             "type": "string"
           }

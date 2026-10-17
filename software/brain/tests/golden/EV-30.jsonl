@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Flyger till P1 i 10 m/s.", "tool_calls": [{"name": "goto", "arguments": {"pin": "P1", "speed_ms": 10, "rationale_sv": "36 km/h är 10 m/s."}}]}}

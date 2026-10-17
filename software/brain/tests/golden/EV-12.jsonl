@@ -1,0 +1,2 @@
+{"step": 1, "call": 0, "reply": {"content": "Du tryckte STOPP och drönaren står still. Tryck Fortsätt i panelen när det är säkert.", "tool_calls": []}}
+{"step": 3, "call": 0, "reply": {"content": "Fortsätter där jag var.", "tool_calls": [{"name": "resume", "arguments": {"rationale_sv": "Operatören släppte stoppet."}}]}}

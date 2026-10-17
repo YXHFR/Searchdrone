@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Markeringen spår är satt.", "tool_calls": [{"name": "mark_location", "arguments": {"label": "spår", "rationale_sv": "Operatören bad om en markering."}}]}}

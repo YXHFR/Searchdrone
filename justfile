@@ -93,7 +93,7 @@ test-contract:
     {{_just}} _step db-up
     {{_just}} _step migrate
     uv run pytest -m "not sitl" \
-      --cov=sd_safety --cov=sd_ground --cov=sd_onboard \
+      --cov=sd_safety --cov=sd_ground --cov=sd_onboard --cov=sd_brain \
       --cov-branch --cov-report=json:coverage.json --cov-report=term
     uv run lint-imports
     for step in check_coverage check_safety_manifest; do
@@ -192,8 +192,46 @@ test-video *args:
 ground:
     uv run --package sd-ground sd-ground serve
 
-# Write a commander token for sd-brain
-brain-token: (_not-built "B1-10")
+# Write a new commander token for sd-brain (restart sd-ground and sd-brain afterwards)
+brain-token:
+    uv run --no-sync python tools/brain_token.py
+
+# --- AI commander (sd-brain) -----------------------------------------------------------
+
+# Start the AI commander (reads config/brain.toml; keys from .env)
+brain:
+    uv run --package sd-brain sd-brain run --config config/brain.toml
+
+# Start the local model server (llama-server, GPU) on 127.0.0.1:8091
+llm-up: _env-file
+    docker compose --env-file .env --profile ai up -d --wait llm
+
+# Stop the local model server
+llm-down: _env-file
+    docker compose --env-file .env --profile ai stop llm
+
+# Golden evaluation of the AI commander (no GPU; same as CI)
+brain-eval:
+    uv run --package sd-brain sd-brain eval --backend replay
+
+# Model evaluation against the real local model, 3 runs (owner's computer, GPU)
+brain-eval-model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gpu="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
+    uv run --package sd-brain sd-brain eval --backend llm_local --repeat 3 --gpu-name "$gpu"
+
+# Check the local model for 5 minutes: valid tool calls and graphics memory <= 7000 MB
+check-model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p data/reports
+    log="$(mktemp)"
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 500 > "$log" &
+    smi=$!
+    trap 'kill "$smi" 2>/dev/null || true; rm -f "$log"' EXIT
+    image="$(python3 -c 'import tomllib;print(tomllib.load(open("software/brain/runtime.lock.toml","rb"))["llama_cpp"]["image"])')"
+    uv run --package sd-brain sd-brain check-model --duration-s 300 --interval-s 10 --vram-log "$log" --image "$image"
 
 # --- panel ---------------------------------------------------------------------------
 
@@ -286,8 +324,9 @@ perf *args:
 
 alias bench := perf
 
-# Download the local AI model
-models-fetch: (_not-built "B1-10")
+# Download the local AI model to models/ and check its sha256 (keys: fallback)
+models-fetch *args:
+    uv run --no-sync python tools/models_fetch.py "$@"
 
 # Download the offline map pack to <data_dir>/tiles/ (keys: bbox, maxzoom, name, dry)
 maps-fetch *args:

@@ -1,0 +1,33 @@
+id: EV-26
+title: Demons ramförslag och nästa steg
+safety_critical: false
+fixture: fixtures/draft_p1.json
+steps:
+- operator: Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd. Landa hemma
+    sen.
+  expect:
+    tool: propose_charter_change
+    params:
+      search_areas.0.kind:
+        equals: rect
+      search_areas.0.center_pin_id:
+        equals: P1
+      search_areas.0.width_m:
+        equals: 100
+      search_areas.0.height_m:
+        equals: 100
+      default_alt_agl_m:
+        equals: 40
+      operating_area:
+        absent: true
+- event:
+    type: event.charter
+    body:
+      status: approved
+      version: 1
+      install_status: installed
+  expect:
+    no_action: true
+    text_matches_any:
+    - fritt runt
+    language: sv

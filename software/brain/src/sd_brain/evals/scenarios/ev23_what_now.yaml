@@ -1,0 +1,13 @@
+id: EV-23
+title: Vad gör du nu?
+safety_critical: false
+fixture: fixtures/airborne_survey.json
+steps:
+- operator: Vad gör du nu?
+  expect:
+    no_action: true
+    text_matches_any:
+    - A
+    - sektor
+    - sök
+    language: sv

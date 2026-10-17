@@ -712,6 +712,15 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             answers={"stop": s.NoulAnswer(p_true=0.97)},
             created_at=T,
         ),
+        s.ChatIntentReport(
+            request_id=OTHER,
+            message_id=OTHER,
+            intent="stop",
+            probability=0.92,
+            engine="jev",
+            location="cloud",
+            latency_ms=180,
+        ),
     ]
     out: dict[type[BaseModel], BaseModel] = {}
     for item in items:

@@ -17,6 +17,14 @@ All notable changes to this project are listed here. The format follows
   each mission's video segments into its folder. The panel's video view plays WebRTC, falls
   back to HLS and shows "no video" with a retry. `just test-video` measures the delay in
   Google Chrome from the strip.
+- AI mission commander `sd-brain`: chat and situation in, one gated order per turn out.
+  The cloud model (any OpenAI-compatible API, OpenRouter by default) decides when a key is
+  set, and the local Qwen3-VL-4B in llama-server takes over automatically in the same turn.
+  Charter proposals from the chat, the take-off rule (approved charter, "clear around the
+  drone" and the operator's request), a fixed Swedish command mode while the model is down,
+  a scripted commander for tests, the decision interface with a quick stop check on every
+  chat line (local model, Jev, OpenAI Decisions), 33 chat scenarios with an answer key,
+  `just models-fetch`, `just llm-up`, `just brain`, `just check-model` and `just brain-token`.
 - Onboard computer `sd-onboard` (`sd_onboard`): the executor that takes skill orders over
   SD-link, checks them again onboard (the shared safety gate on the handler's own route,
   plus its own checks: stale orders, approvals, the stop latch, takeoff preconditions with

@@ -1056,6 +1056,24 @@ wheels = [
 name = "sd-brain"
 version = "0.0.0"
 source = { editable = "software/brain" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "sd-schemas" },
+    { name = "shapely" },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
+    { name = "shapely", specifier = ">=2.1" },
+    { name = "websockets", specifier = ">=15" },
+]
 
 [[package]]
 name = "sd-detect"

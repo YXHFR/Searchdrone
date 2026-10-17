@@ -12,10 +12,13 @@ from typing import Annotated, Any, Literal
 from pydantic import AwareDatetime, Field, model_validator
 
 from sd_schemas.base import Id, SdModel, json_bytes_at_most
+from sd_schemas.sv_commands import OverrideIntent
 
 __all__ = [
+    "STOP_CHECK_TARGET_S",
     "BoxAnswer",
     "BoxQuestion",
+    "ChatIntentReport",
     "ChoiceAnswer",
     "ChoiceQuestion",
     "DecideAnswer",
@@ -120,3 +123,26 @@ class DecideResult(SdModel):
     fallback_from: DecisionEngine | None = None  # set when a better engine failed first
     answers: dict[str, DecideAnswer]
     created_at: AwareDatetime
+
+
+# The quick stop check on every chat line aims to answer within this time.
+STOP_CHECK_TARGET_S = 0.5
+
+
+class ChatIntentReport(SdModel):
+    """The stop check found that an operator's chat line means STOP or FLY HOME.
+
+    Sent by ``sd-brain`` to ``POST /commander/v1/missions/{id}/chat-intents``. The ground
+    station checks that ``message_id`` is a pilot's own, recent chat line in that mission
+    and names that pilot, never the AI. A line that is exactly the stop words acts like
+    the button; a model's reading only ever stops the vehicle where it is. It can never
+    release a stop.
+    """
+
+    request_id: Id
+    message_id: Id
+    intent: OverrideIntent
+    probability: float = Field(ge=0, le=1)
+    engine: DecisionEngine | Literal["rule"]
+    location: Literal["cloud", "local"]
+    latency_ms: int = Field(ge=0)

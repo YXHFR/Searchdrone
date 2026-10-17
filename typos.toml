@@ -35,12 +35,17 @@ manuell = "manuell"
 gir = "gir"
 som = "som"
 paket = "paket"
-# Swedish (sd_onboard: reasons for the operator, B1-07)
-fram = "fram"
-# Swedish (sd_ground: mission-flow texts, B1-12)
+# Swedish (sd_brain: chat texts, prompt examples and the command grammar, B1-10)
+klick = "klick"
+modell = "modell"
+absolut = "absolut"
+fram = "fram"  # also sd_onboard reasons for the operator (B1-07)
+lage = "lage"
+tre = "tre"
+tio = "tio"
+# Swedish (sd_ground: mission-flow texts, B1-12; "klick" above too)
 ser = "ser"
 ges = "ges"
-klick = "klick"
 
 [default.extend-identifiers]
 # ArduPilot throttle failsafe (B1-07)
