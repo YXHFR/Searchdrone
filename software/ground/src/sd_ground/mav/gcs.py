@@ -206,13 +206,15 @@ async def guard_override(
     confirmed: CopterMode,
     *,
     clicked_mono: float,
+    rc_at_click: int | None,
     aborted: Callable[[], bool] = lambda: False,
     on_resend: Callable[[str], None] | None = None,
 ) -> int:
-    """Keep the target for ``OVERRIDE_MAX_S`` after the click; returns how often it resent."""
+    """Keep the target for ``OVERRIDE_MAX_S`` after the click; returns how often it resent.
+
+    ``rc_at_click`` is where the RC mode switch stood at the click (``None``: no RC)."""
     clock = vehicle.clock
     targets = target_modes(action)
-    rc_before = vehicle.telemetry.rc_mode_pwm  # where the RC mode switch stood
     resent = 0
     while clock.monotonic() - clicked_mono < OVERRIDE_MAX_S:
         if aborted():
@@ -221,7 +223,7 @@ async def guard_override(
             return resent  # landed and disarmed: nothing left to hold
         shown = mode_shown(vehicle)
         if shown is not None and shown not in targets:
-            if not late_order(shown, targets) or rc_switch_moved(vehicle, rc_before):
+            if not late_order(shown, targets) or rc_switch_moved(vehicle, rc_at_click):
                 return resent  # a person (RC transmitter) or the flight controller chose it
             if action == "stop" and failsafe_began_recently(vehicle):
                 return resent  # the flight controller's own failsafe decided: it stands

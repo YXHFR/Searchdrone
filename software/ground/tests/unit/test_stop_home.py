@@ -659,3 +659,21 @@ async def test_failed_takeover_raises_an_alarm() -> None:
         s.actions.takeover(VID, client_action_id="t5", by=PILOT)
         await s.run(2.0)
         assert "alarm.TAKEOVER_FAILED" in s.g.types()
+
+
+async def test_rc_switch_flipped_during_the_steps_stops_them() -> None:
+    """The pilot flips the RC switch while the chain still steps (BRAKE refused, no
+    answer): nothing more is sent, and the RC choice stands."""
+    async with stack() as s:
+        s.fly()
+        s.fc.rc_mode_pwm = 1100
+        s.fc.refuse_modes = {int(CopterMode.BRAKE)}
+        s.fc.drop_acks = 1000
+        await s.run(0.5)
+        s.stop()
+        await s.run(0.3)
+        s.fc.rc_mode_switch(1500, CopterMode.ALT_HOLD)
+        mark = len(s.fc.received)
+        await s.run(4.0)
+        assert ground_modes(s.fc, mark) == []
+        assert s.fc.mode == CopterMode.ALT_HOLD

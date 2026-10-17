@@ -39,7 +39,7 @@ from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.services.latches import HOME_LATCHES, Latches
 from sd_ground.sources import PartState
-from sd_mav.chain import mode_shown, set_mode_with_fallback
+from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import (
     MODE_FRESH_S,
@@ -319,19 +319,27 @@ class GroundMav:
             return
         self._manual = None  # STOP and FLY HOME end steering by hand
         # The 10 s watch counts from here, on this thread's own clock.
-        self._spawn(self._run_action(action, self.clock.monotonic()))
+        # So does the RC mode switch's position: a person moving it afterwards wins.
+        rc_at_click = self.vehicle.telemetry.rc_mode_pwm
+        self._spawn(self._run_action(action, self.clock.monotonic(), rc_at_click))
 
     def _superseded(self, action: ModeAction) -> bool:
         """A newer STOP, FLY HOME, system action or Resume stops this chain (a takeover
         or hand-back does not)."""
         return self.latches.override_seq(self.vehicle_id) != action.action_seq
 
-    async def _run_action(self, action: ModeAction, clicked_mono: float) -> None:
+    async def _run_action(
+        self, action: ModeAction, clicked_mono: float, rc_at_click: int | None
+    ) -> None:
         which = chain_of(action.kind)
         if not self.vehicle.telemetry.fc_connected:
             # Still try: the link may be back any moment. The result says what happened.
             log.warning("mav.override_without_fc", kind=action.kind)
-        result = await run_override(self.vehicle, which, aborted=lambda: self._superseded(action))
+
+        def stop_sending() -> bool:  # a newer action, or a person flipped the RC switch
+            return self._superseded(action) or rc_switch_moved(self.vehicle, rc_at_click)
+
+        result = await run_override(self.vehicle, which, aborted=stop_sending)
         self._report(action, result)
         if result.result == "acked" and result.mode_confirmed not in (None, "DISARMED"):
             confirmed = CopterMode[result.mode_confirmed]
@@ -340,6 +348,7 @@ class GroundMav:
                 which,
                 confirmed,
                 clicked_mono=clicked_mono,
+                rc_at_click=rc_at_click,
                 aborted=lambda: self._superseded(action),
                 on_resend=lambda mode: self._on_event(
                     "vehicle.override_reasserted",

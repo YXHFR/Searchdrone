@@ -626,3 +626,34 @@ def test_send_gate_is_asked_before_every_attempt() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_rc_mode_channel_parsing_and_switch_rule() -> None:
+    from sd_mav.chain import rc_switch_moved
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.rc_mode_pwm is None  # no RC receiver
+        assert not rc_switch_moved(vehicle, None)
+
+        async def feed(count: int, ch5: int) -> None:
+            c = 1500
+            msg = mavlink.MAVLink_rc_channels_message(
+                0, count, c, c, c, c, ch5, c, c, c, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255
+            )
+            vehicle.fc._send(msg)  # pyright: ignore[reportPrivateUsage]
+            await clock.run_for(0.05)
+
+        await feed(4, 1500)  # fewer than 5 channels: no mode switch
+        assert vehicle.telemetry.rc_mode_pwm is None
+        await feed(8, 0)  # channel not in use
+        assert vehicle.telemetry.rc_mode_pwm is None
+        await feed(8, 1100)
+        assert vehicle.telemetry.rc_mode_pwm == 1100
+        assert rc_switch_moved(vehicle, None)  # an RC receiver came on: a person
+        assert not rc_switch_moved(vehicle, 1150)  # noise
+        assert rc_switch_moved(vehicle, 1500)
+        await vehicle.close()
+
+    asyncio.run(run())
