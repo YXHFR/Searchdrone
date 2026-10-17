@@ -2,8 +2,9 @@
 says. Acks and events wait in a bounded queue while the link is down (events: the newest
 500, oldest sent first); the state snapshot goes out at 2 Hz while connected.
 
-Stick values (``ManualControl``) are not forwarded to the flight controller here: how
-sticks reach ArduCopter is decided separately, so they are only counted.
+Stick values (``ManualControl``) are never forwarded from here: the ground station sends
+the pilot's sticks to the flight controller itself (as 250/190, the way STOP goes), so
+they are only counted onboard.
 """
 
 from __future__ import annotations

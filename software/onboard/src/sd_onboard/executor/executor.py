@@ -883,39 +883,31 @@ class Executor:
         self.emit("control_taken", {"kind": notice.kind, "action_seq": notice.action_seq})
 
     def on_takeover(self, takeover: ManualTakeover, ref_id: UUID) -> None:
-        """The pilot takes over by hand (LOITER, the AI's orders wait) or hands back."""
+        """The pilot takes over by hand or hands back.
+
+        The ground station puts the vehicle in LOITER and sends the sticks itself (as
+        250/190, the way STOP goes). Onboard only the AI's orders pause: the running
+        order stops without sending anything and the executor goes to HELD
+        (``operator_manual``), following the flight controller through its telemetry.
+        """
         was_manual = self.over.manual
         if not self.over.apply_takeover(takeover):
             self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
             return
         if takeover.active:
-            if self.state in AIRBORNE_CONTROLLED:
-                active = self.active
-                origin = active.origin if active else SendOrigin.SKILL
+            self.auth.notice(self.now_ms())
+            target = self.target_of(Trigger.OPERATOR_OVERRIDE)
+            if not isinstance(target, Refusal):
                 self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
-                # Into LOITER first, while we still steer, then let go.
-                self._side(self._takeover_loiter(origin))
-            elif self.state == S.HELD:
-                self.held_by = "operator_manual"
-                self._save()
+                if self.state != S.FAILSAFE:
+                    self._enter(target, held_by="operator_manual", cause="takeover")
+            self._save()
             self._ack(ref_id, "done")
             return
         if was_manual and self.state == S.HELD and self.held_by == "operator_manual":
             self._release(ref_id, keep_latch=True)
             return
         self._ack(ref_id, "done")
-
-    async def _takeover_loiter(self, origin: SendOrigin) -> None:
-        try:
-            if self.vehicle.telemetry.fc_custom_mode != int(CopterMode.LOITER):
-                with contextlib.suppress(ControlNotAllowedError, ForbiddenMavlinkError):
-                    await self.set_mode(CopterMode.LOITER, origin)
-        finally:
-            if self.over.manual and self.state in AIRBORNE_CONTROLLED:
-                target = self.target_of(Trigger.OPERATOR_OVERRIDE)
-                if not isinstance(target, Refusal):
-                    self._enter(target, held_by="operator_manual", cause="takeover")
-                    self.auth.notice(self.now_ms())
 
     def on_release(self, release: OperatorRelease, ref_id: UUID) -> None:
         """The pilot's Resume click: the only way out of HELD (T21) and FAILSAFE (T22)."""

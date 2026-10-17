@@ -195,34 +195,31 @@ async def test_stop_on_the_ground_withdraws_the_clearance() -> None:
         assert r.up.codes(cmd.command_id) == ("ONB_CLEARANCE_MISSING",)
 
 
-async def test_takeover_loiters_then_waits_for_handback() -> None:
+async def test_takeover_pauses_the_ai_and_sends_nothing() -> None:
+    """The ground station switches to LOITER and sends the sticks; onboard only lets go."""
     async with rig() as r:
         await _in_goto(r)
         tid = new_id()
-        r.ex.on_takeover(
-            ManualTakeover(
-                takeover_id=tid, active=True, action_seq=r.next_seq(), operator_id="operator:pilot"
-            ),
-            new_id(),
+        before = len(r.vehicle.sent)
+        takeover = ManualTakeover(
+            takeover_id=tid, active=True, action_seq=r.next_seq(), operator_id="operator:pilot"
         )
-        await r.run(3)
-        assert r.fc.mode == CopterMode.LOITER
+        r.ex.on_takeover(takeover, new_id())
         assert r.ex.state == S.HELD and r.ex.held_by == "operator_manual"
         assert r.ex.snapshot().manual_control
+        r.fc.set_mode_external(CopterMode.LOITER)  # the ground station's mode change
+        await r.run(3)
+        assert r.ex.state == S.HELD and r.ex.held_by == "operator_manual"
         lat, lon = at(30, 0)
-        cmd = await r.send(
-            r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}, issuer="brain:ground")
-        )
+        goto = r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}, issuer="brain:ground")
+        cmd = await r.send(goto)
         assert r.up.codes(cmd.command_id) == ("ONB_CONTROL_HELD",)
-        before = len(r.vehicle.sent)
         await r.run(5)
         assert r.steering_sent(before) == []
-        r.ex.on_takeover(
-            ManualTakeover(
-                takeover_id=tid, active=False, action_seq=r.next_seq(), operator_id="operator:pilot"
-            ),
-            new_id(),
+        handback = ManualTakeover(
+            takeover_id=tid, active=False, action_seq=r.next_seq(), operator_id="operator:pilot"
         )
+        r.ex.on_takeover(handback, new_id())
         assert r.ex.state == S.HOLD and not r.ex.over.manual
         resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
         assert "running" in r.up.stages(resume.command_id)
