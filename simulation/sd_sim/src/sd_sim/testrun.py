@@ -8,9 +8,12 @@ Runs the simulator tests with pytest and the ``sd_sim.pytest_plugin`` plugin:
 
 ``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly`` (with
 ``physics=gz`` the Gazebo tests are included); ``mode=nightly`` selects
-``sitl and nightly``. ``sc=`` and ``variant=`` narrow the run by test name. Only
-test-rig failures (``InfraError``) are retried, once. Afterwards ``runs/summary.md``
-lists every result written during the run.
+``sitl and nightly``. ``brain=`` picks the AI commander the scenarios fly with:
+``scripted`` (default, the script per scenario), ``grammar`` (the fixed command mode),
+``llm_local`` (the local model on the owner's computer; adds the ``llm`` tests) or
+``none`` (no commander: only the tests that need none). ``sc=`` and ``variant=`` narrow
+the run by test name. Only test-rig failures (``InfraError``) are retried, once.
+Afterwards ``runs/summary.md`` lists every result written during the run.
 """
 
 from __future__ import annotations
@@ -46,14 +49,21 @@ PYTEST_NO_TESTS = 5
 # Settings that later parts of the stack read; accepted now so CI and local calls can
 # pass them already.
 FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
+BRAINS = ("scripted", "grammar", "llm_local", "none")
 
 
-def selection(mode: str, physics: str) -> str:
+def selection(mode: str, physics: str, brain: str = "scripted") -> str:
     if mode == "nightly":
-        return "sitl and nightly"
-    if physics == "gz":
-        return "sitl and not llm and not nightly"
-    return "sitl and not gz and not llm and not nightly"
+        base = "sitl and nightly"
+    elif physics == "gz":
+        base = "sitl and not llm and not nightly"
+    else:
+        base = "sitl and not gz and not llm and not nightly"
+    if brain == "llm_local":
+        base = base.replace(" and not llm", "")
+    elif brain == "none":
+        base += " and not brain"
+    return base
 
 
 def _int(values: dict[str, str], key: str, default: int, low: int, high: int) -> int:
@@ -77,8 +87,11 @@ def pytest_argv(values: dict[str, str]) -> list[str]:
     shards = _int(values, "shards", 1, 1, 64)
     shard = _int(values, "shard", 1, 1, shards)
     workers = _int(values, "workers", 1, 1, 8)
+    brain = values.get("brain", "scripted")
+    if brain not in BRAINS:
+        _args.fail(f"sd_sim.testrun: brain= ska vara en av {', '.join(BRAINS)}")
     argv = [sys.executable, "-m", "pytest", "-p", "sd_sim.pytest_plugin"]
-    argv += ["-m", selection(mode, physics)]
+    argv += ["-m", selection(mode, physics, brain)]
     names = [values[k] for k in ("sc", "variant") if values.get(k)]
     if names:
         argv += ["-k", " and ".join(names)]
@@ -86,7 +99,7 @@ def pytest_argv(values: dict[str, str]) -> list[str]:
         argv += ["-n", str(workers), "--dist", "load"]
     argv += ["--shard-id", str(shard), "--num-shards", str(shards)]
     argv += ["--reruns", "1", "--only-rerun", "InfraError"]
-    argv += ["--physics", physics, "--brain", values.get("brain", "scripted")]
+    argv += ["--physics", physics, "--brain", brain]
     argv += list(TEST_PATHS)
     return argv
 
@@ -135,8 +148,6 @@ def main(argv: list[str] | None = None) -> int:
     if values.get("dry") == "1":
         print(json.dumps({"args": argv}))
         return 0
-    if "brain" in values:
-        print("Varning: brain= ignoreras, befälhavaren är inte byggd än: inte byggt än (B1-10)")
     for key in FUTURE_KEYS:
         if key in values:
             print(f"Obs: {key}= används inte av de nuvarande testerna.")

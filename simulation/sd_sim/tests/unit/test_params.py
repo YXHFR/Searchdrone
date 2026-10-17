@@ -78,3 +78,49 @@ def test_rules_agree_with_the_ground_station() -> None:
     for name, value in FC_SAFETY_EXPECTED.items():
         assert name in exact, f"{name} saknar en exakt regel"
         assert exact[name] == value, name
+
+
+FIELD_FILE = SAFETY_FILE.with_name("searchdrone-safety.field.parm")
+
+
+def test_field_layer_requires_the_rc_transmitter() -> None:
+    """Real flight: the field layer on top of the safety file keeps every rule, but the
+    RC failsafe must act; the simulator file alone does not pass for real flight."""
+    sim = params.merge_layers([SAFETY_FILE])
+    real = params.merge_layers([SAFETY_FILE, FIELD_FILE])
+    assert params.rule_violations(real, params.FIELD_RULES) == []
+    assert any(
+        v.startswith("FS_THR_ENABLE") for v in params.rule_violations(sim, params.FIELD_RULES)
+    )
+    assert any(v.startswith("FS_THR_ENABLE") for v in params.rule_violations(real))
+    assert {n for n, _, _ in params.FIELD_RULES} == {n for n, _, _ in params.SAFETY_RULES}
+    # The field layer changes only rows the safety file has, and keeps the arming checks.
+    field = params.parse_parm(FIELD_FILE.read_text(encoding="utf-8"))
+    assert set(field) <= set(sim)
+    assert field["ARMING_SKIPCHK"] == 0.0
+
+
+def test_field_rules_pin_the_rc_failsafe_value() -> None:
+    real = params.merge_layers([SAFETY_FILE, FIELD_FILE])
+    assert params.rule_violations({**real, "FS_THR_ENABLE": 2.0}, params.FIELD_RULES)
+
+
+def test_a_test_layer_can_only_make_the_rules_stricter() -> None:
+    rules = {n: (op, v) for n, op, v in params.layer_rules({"FS_THR_ENABLE": 4.0})}
+    assert rules["FS_THR_ENABLE"] == ("==", 4.0)
+    assert rules["FENCE_ENABLE"] == ("==", 1.0)  # every other rule still applies
+    assert params.layer_rules({"SIM_WIND_SPD": 3.0}) == list(params.SAFETY_RULES)
+    with pytest.raises(params.ParamFileError, match="FENCE_ALT_MAX"):
+        params.layer_rules({"FENCE_ALT_MAX": 500.0})
+    with pytest.raises(params.ParamFileError, match="FS_THR_ENABLE"):
+        params.layer_rules({"FS_THR_ENABLE": 2.0})
+
+
+def test_a_test_layer_cannot_change_what_the_safety_file_sets() -> None:
+    # Not ruled, but set by the safety file (the RC mode switch, the GUIDED timeout).
+    for name, value in (("FLTMODE1", 6.0), ("GUID_TIMEOUT", 10.0)):
+        with pytest.raises(params.ParamFileError):
+            params.layer_rules({name: value})
+    with pytest.raises(params.ParamFileError):
+        params.layer_rules({"ANY_NAME": 1.0}, safety_names=["ANY_NAME"])
+    assert params.layer_rules({"ANY_NAME": 1.0}, safety_names=[]) == list(params.SAFETY_RULES)

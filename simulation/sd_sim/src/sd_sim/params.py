@@ -6,6 +6,9 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from sd_safety.constants import FIELD_RC_FAILSAFE
+from sd_sim import paths
+
 TOLERANCE = 1e-4
 
 # Safety parameters the flight controller must have, checked independently of the
@@ -35,11 +38,47 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("BATT_FS_LOW_ACT", "==", 3.0),
     ("BATT_FS_CRT_ACT", "==", 1.0),
     ("LOIT_SPEED_MS", "==", 15.0),
+    ("ARMING_SKIPCHK", "==", 0.0),  # every arming check on, the RC check included
     ("ARMING_RUDDER", "==", 0.0),
+    ("DISARM_DELAY", "==", 10.0),
     ("RC_OVERRIDE_TIME", "==", 1.0),
+    ("RTL_ALT_M", "==", 30.0),
+    ("RTL_SPEED_MS", "==", 8.0),
+    ("RTL_LOIT_TIME", "==", 0.0),
+    ("SRTL_POINTS", "==", 300.0),
+    ("SCR_ENABLE", "==", 0.0),
 )
 # Prefixes whose every line in the safety file must have a rule above.
-RULED_PREFIXES = ("FS_", "FENCE_", "BATT_")
+RULED_PREFIXES = ("FS_", "FENCE_", "BATT_", "ARMING_", "DISARM_", "RC_", "RTL_", "SRTL_", "SCR_")
+
+# Real flight (searchdrone-safety.parm + searchdrone-safety.field.parm): the same rules,
+# except that the RC transmitter is required, so its failsafe must act.
+FIELD_RULES: tuple[tuple[str, str, float], ...] = tuple(
+    ("FS_THR_ENABLE", "==", FIELD_RC_FAILSAFE) if name == "FS_THR_ENABLE" else (name, op, value)
+    for name, op, value in SAFETY_RULES
+)
+# What a test's own parameter layer may change in the strict rules, and to which value:
+# only the real-flight values (stricter than the simulator's). Anything else is refused.
+TEST_LAYER_OVERRIDES: dict[str, frozenset[float]] = {
+    "FS_THR_ENABLE": frozenset({FIELD_RC_FAILSAFE}),
+}
+
+
+def layer_rules(
+    layer: dict[str, float], safety_names: Iterable[str] | None = None
+) -> list[tuple[str, str, float]]:
+    """``SAFETY_RULES`` with a test layer's values as exact rules. A layer may not touch a
+    ruled name or any name the safety file sets (``safety_names``, by default read from
+    ``simulation/sitl/params/searchdrone-safety.parm``) unless ``TEST_LAYER_OVERRIDES``
+    allows that value, so it can never loosen them or change the flight modes."""
+    if safety_names is None:
+        path = paths.REPO / "simulation" / "sitl" / "params" / "searchdrone-safety.parm"
+        safety_names = parse_parm(path.read_text(encoding="utf-8"), path.name)
+    protected = {name for name, _, _ in SAFETY_RULES} | set(safety_names)
+    for name, value in layer.items():
+        if name in protected and value not in TEST_LAYER_OVERRIDES.get(name, frozenset()):
+            raise ParamFileError(f"testlagret får inte ändra {name} till {value:g}")
+    return [(n, "==", layer[n]) if n in layer else (n, op, v) for n, op, v in SAFETY_RULES]
 
 
 class ParamFileError(ValueError):

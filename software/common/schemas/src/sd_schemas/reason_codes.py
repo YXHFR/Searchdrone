@@ -54,6 +54,10 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "INVALID_TRANSITION": "Färdigheten går inte i drönarens nuvarande läge.",
         "CLEARANCE_REQUIRED": "Någon måste bekräfta att det är fritt runt drönaren.",
         "CLEARANCE_EXPIRED": "Bekräftelsen att det är fritt runt drönaren har gått ut.",
+        "RC_LINK_DOWN": (
+            "RC-sändaren är inte påslagen eller har ingen kontakt med drönaren. "
+            "Slå på den innan start."
+        ),
         "TAKEOFF_PRECONDITION": "Drönaren är inte redo att lyfta.",
         "BATTERY_RESERVE": "Batteriet är nere på reserven.",
         "BATTERY_UNKNOWN": "Batterinivån är okänd.",
@@ -114,6 +118,10 @@ LIMITS_CODES: Final = MappingProxyType(
 ONBOARD_REASON_CODES: Final = MappingProxyType(
     {
         "ONB_PREFLIGHT_NOT_OK": "Förflygningskontrollerna är inte godkända.",
+        "ONB_RC_LINK_DOWN": (
+            "RC-sändaren är inte påslagen eller har ingen kontakt med drönaren. "
+            "Slå på den innan start."
+        ),
         "ONB_CLEARANCE_MISSING": "Ingen bekräftelse att det är fritt runt drönaren.",
         "ONB_CLEARANCE_STALE": "Bekräftelsen att det är fritt runt drönaren har gått ut.",
         "ONB_CLEARANCE_MISMATCH": "Bekräftelsen gäller ett annat uppdrag eller en annan ram.",

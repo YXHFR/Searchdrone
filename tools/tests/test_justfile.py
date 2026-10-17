@@ -74,11 +74,11 @@ def test_all_recipes_listed() -> None:
 @pytest.mark.parametrize(
     ("recipe", "ticket"),
     [
-        ("check-traceability", "B1-16"),
+        (("release-prep", "0.1.0"), "B1-18"),
     ],
 )
-def test_direct_unbuilt_recipe_exits_2(recipe: str, ticket: str) -> None:
-    res = just(recipe)
+def test_direct_unbuilt_recipe_exits_2(recipe: tuple[str, ...], ticket: str) -> None:
+    res = just(*recipe)
     assert res.returncode == 2
     assert f"inte byggt än ({ticket})" in res.stdout
 

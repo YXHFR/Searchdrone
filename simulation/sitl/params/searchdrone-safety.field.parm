@@ -1,0 +1,9 @@
+# Searchdrone safety parameters for real flight (ArduCopter Copter-4.7.1).
+# Loaded after searchdrone-safety.parm; it changes only the rows that differ from the
+# simulator. A real flight may only start with a physical RC transmitter that is on and
+# heard by the flight controller: the RC transmitter goes before everything.
+# Format: NAME VALUE.
+
+# --- RC transmitter required ------------------------------------------------------------
+ARMING_SKIPCHK 0         # every arming check on, the RC check (bit 6) included
+FS_THR_ENABLE 4          # RC link lost in the air -> SmartRTL, else RTL

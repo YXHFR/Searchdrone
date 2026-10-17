@@ -1,0 +1,33 @@
+# The main scenario: the AI proposes the demo charter, takes off when asked, flies to P1,
+# searches the box there, flies home and lands. Test data for the scripted commander.
+scenario: SC01
+timeout_s: 1200
+expected_runtime_s: 540
+fixture: ../demo_fixture.yaml
+turns:
+  - on: mission_created
+    say: ["Hej. Säg vilken ram vi ska använda."]
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: skill_event
+    when: {skill: takeoff, status: done}
+    action: {skill: goto, params: {at: "fixture:P1", alt_m: 40}}
+  - on: skill_event
+    when: {skill: goto, status: done}
+    action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40, spacing_m: 30, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: survey_sector, status: done}
+    say: ["Rutan är sökt. Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Sökningen klar."}}
+  - on: skill_event
+    when: {skill: return_home, status: done}
+    say: ["Uppdraget är klart. Drönaren har landat."]
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

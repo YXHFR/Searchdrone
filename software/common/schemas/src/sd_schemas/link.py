@@ -200,7 +200,7 @@ class StateSnapshot(SdModel):
     charter_version: int | None
     clearance_available: bool
     preflight_ok: bool
-    preflight: dict[str, bool]  # PF1 ... PF11
+    preflight: dict[str, bool]  # PF1 ... PF11, PF12 (RC link) when required
     limits_active: list[str]  # e.g. ["L-BATT"]
     stop_latch: bool
     battery_rtl_active: bool

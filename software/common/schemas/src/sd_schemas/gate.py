@@ -106,6 +106,9 @@ class GateContext(SdModel):
     recent_brain_reports_mono_ms: tuple[int, ...]
     brain_pending_approvals: int
     operator_present: bool
+    # The onboard computer's PF12 from the latest snapshot: False = an RC transmitter is
+    # required and the flight controller does not hear one; None = not required/unknown.
+    rc_link_ok: bool | None = None
 
 
 class GateDecision(SdModel):

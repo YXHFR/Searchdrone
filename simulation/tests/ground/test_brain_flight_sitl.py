@@ -45,7 +45,7 @@ from sd_obs.clock import MonotonicClock
 from sd_safety.targets import distance_m
 from sd_schemas.base import new_id
 
-pytestmark = [pytest.mark.sitl, pytest.mark.slow]
+pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 
 

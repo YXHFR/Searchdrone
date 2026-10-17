@@ -37,6 +37,7 @@ from sd_mav.vehicle import (
     MavResult,
     SendOrigin,
     Vehicle,
+    rc_link_ok,
 )
 from sd_obs.clock import Clock
 from sd_onboard.executor.authority import Authority
@@ -206,6 +207,9 @@ class Uplink(Protocol):
 class ExecutorOptions:
     vehicle_id: str
     allow_companion_arm: bool = True
+    # PF12: a physical RC transmitter must be on and heard by the flight controller
+    # before a take-off. Off only in SITL and CI (config ``require_rc``).
+    require_rc: bool = True
     takeoff_delay_after_arm_s: float = 0.0  # test hook (sim and SD_TEST=1 only)
     expected_params: Mapping[str, float] = field(default_factory=dict[str, float])  # PF6
     registry: SkillRegistry = SKILL_REGISTRY
@@ -771,6 +775,8 @@ class Executor:
 
     def _takeoff_problem(self) -> str | None:
         charter = self.charter
+        if self.state == S.PREFLIGHT and self.preflight.get("PF12") is False:
+            return "ONB_RC_LINK_DOWN"
         if self.state != S.PREFLIGHT or not self.preflight_ok():
             return "ONB_PREFLIGHT_NOT_OK"
         if charter is None or charter.approved_at is None or charter.approved_by is None:
@@ -1195,6 +1201,8 @@ class Executor:
             "PF10": area.contains(plane.xy(charter.home.lat, charter.home.lon)),
             "PF11": area_reach_from_home_m(charter) <= fc_area_max_from_home_m(self.hard_limits),
         }
+        if self.options.require_rc:
+            checks["PF12"] = rc_link_ok(t, now)
         if checks != self.preflight:
             changed = {k: v for k, v in checks.items() if self.preflight.get(k) != v}
             self.preflight = checks

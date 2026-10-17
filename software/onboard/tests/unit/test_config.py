@@ -172,3 +172,57 @@ def test_log_file_is_private(tmp_path: Path) -> None:
             if h not in before:
                 root_logger.removeHandler(h)
                 h.close()
+
+
+# --- the RC transmitter is required at real flight ------------------------------------
+
+FIELD = REPO / "simulation/sitl/params/searchdrone-safety.field.parm"
+
+
+def test_require_rc_is_on_by_default(root: Path, env: dict[str, str]) -> None:
+    assert load(root, env).config.require_rc is True
+    assert tomllib.loads(EXAMPLE.read_text())["require_rc"] is True
+
+
+def test_require_rc_off_only_in_the_simulator(root: Path, env: dict[str, str]) -> None:
+    off = {**env, "SD_ONBOARD__REQUIRE_RC": "false"}
+    assert load(root, off).config.require_rc is False
+    assert check(load(root, off)) == []
+    errors = check(load(root, {**off, "SD_ONBOARD__PROFILE": "field"}))
+    assert any("require_rc" in e for e in errors)
+
+
+def test_field_params_require_the_rc_transmitter(root: Path, env: dict[str, str]) -> None:
+    """Real flight: the flight controller itself refuses to arm without RC and flies home
+    when the RC link is lost; the simulator file alone is refused for it."""
+    field = {**env, "SD_ONBOARD__PROFILE": "field"}
+    errors = check(load(root, field))
+    assert any("ARMING_SKIPCHK" in e for e in errors) is False  # 0: every check on
+    assert any("FS_THR_ENABLE" in e for e in errors)
+    shutil.copy(FIELD, root / "simulation/sitl/params" / FIELD.name)
+    files = f"simulation/sitl/params/{PARM.name},simulation/sitl/params/{FIELD.name}"
+    errors = check(load(root, {**field, "SD_ONBOARD__EXPECTED_PARAM_FILES": files}))
+    assert not any("ARMING_SKIPCHK" in e or "FS_THR_ENABLE" in e for e in errors)
+
+
+def test_field_file_values() -> None:
+    from sd_onboard.config import ARMING_SKIP_RC_BIT
+    from sd_onboard.io.params import effective_params
+
+    sim = effective_params([PARM])
+    real = effective_params([PARM, FIELD])
+    assert int(real["ARMING_SKIPCHK"]) & ARMING_SKIP_RC_BIT == 0
+    assert real["FS_THR_ENABLE"] == 4.0  # RC lost in the air -> SmartRTL, else RTL
+    assert sim["FS_THR_ENABLE"] == 0.0  # the simulator may leave it off
+    # The field file only changes rows the safety file already has.
+    assert set(effective_params([FIELD])) <= set(sim)
+
+
+def test_rc_param_problems() -> None:
+    from sd_onboard.config import _rc_param_problems  # pyright: ignore[reportPrivateUsage]
+
+    assert _rc_param_problems({"ARMING_SKIPCHK": 0, "FS_THR_ENABLE": 4}) == []
+    found = _rc_param_problems({"ARMING_SKIPCHK": 64, "FS_THR_ENABLE": 0})
+    assert len(found) == 2
+    assert len(_rc_param_problems({"ARMING_SKIPCHK": 0, "FS_THR_ENABLE": 2})) == 1  # continue
+    assert len(_rc_param_problems({})) == 2  # unset counts as unsafe

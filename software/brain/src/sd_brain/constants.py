@@ -12,6 +12,7 @@ __all__ = [
     "CLOUD_RETRY_AFTER_S",
     "DEGRADED_MIN_S",
     "EXPOSED_STAGE",
+    "FRESH_SNAPSHOT_WAIT_S",
     "HEALTH_INTERVAL_S",
     "HEALTH_TIMEOUT_S",
     "LLM_CALL_TIMEOUT_S",
@@ -41,6 +42,11 @@ HEALTH_TIMEOUT_S = 1.0
 TAKEOFF_REQUEST_TTL_S = 120.0
 CLOUD_RETRY_AFTER_S = 60.0  # after a cloud failure, turns go straight to the local model
 EXPOSED_STAGE = 1
+# A skill's end, and the pilot's Resume, reach the AI before the snapshot that shows the
+# vehicle after them (the onboard computer sends snapshots at 5 Hz; the ground lifts the
+# pause only when a snapshot confirms the release). A turn on such an event waits at most
+# this long for the newer picture, so its order is not refused for an outdated state.
+FRESH_SNAPSHOT_WAIT_S = 2.0
 MIN_ACTION_INTERVAL_S = 3.0  # the gate's rate limit: one action per 3 s ...
 MAX_ACTIONS_PER_MINUTE = 15  # ... and 15 per minute
 CHAT_TAIL = 12

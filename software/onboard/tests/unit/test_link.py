@@ -40,7 +40,7 @@ async def test_link_roundtrip() -> None:
             vehicle,
             clock,
             link,
-            ExecutorOptions(vehicle_id="sim-01", expected_params=EXPECTED_PARAMS),
+            ExecutorOptions(vehicle_id="sim-01", expected_params=EXPECTED_PARAMS, require_rc=False),
         )
         holder.append(ex)
         link.executor = ex

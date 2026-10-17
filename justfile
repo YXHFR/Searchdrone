@@ -18,7 +18,7 @@ unbuilt := ""
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
-unbuilt_tools := "check_forbidden_mavlink check_coverage check_safety_manifest"
+unbuilt_tools := "check_forbidden_mavlink check_safety_manifest"
 
 _just := just_executable() + " --justfile " + quote(justfile()) + " --working-directory " + quote(justfile_directory())
 
@@ -342,8 +342,9 @@ hw-check:
 accept *args:
     uv run --no-sync python tools/just_args.py accept "$@"
 
-# Traceability report for the scenario tests (local only)
-check-traceability: (_not-built "B1-16")
+# Traceability from the local acceptance list to the tests (local only; set SD_ACCEPT_IDS)
+check-traceability:
+    uv run --no-sync python tools/gen_traceability.py
 
 # Record the showcase GIF for a stage (keys: brain)
 showcase STAGE *args:
