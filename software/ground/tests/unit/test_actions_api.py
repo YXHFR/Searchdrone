@@ -95,3 +95,16 @@ def test_observer_may_stop_but_not_resume_or_steer(
     for route in ("resume", "takeover", "handback", "return_home"):
         res = panel.post(f"/api/v1/vehicles/{VID}/actions/{route}", json=BODY, headers=auth)
         assert res.status_code == 403, (route, res.text)
+
+
+def test_stop_with_session_past_cap_while_armed(
+    logged_in: TestClient, vehicle_link: object, clock: FakeClock
+) -> None:
+    """An expired login never blocks the emergency buttons in flight."""
+    vehicle_link.flying_since = clock.utc_now()  # type: ignore[attr-defined]
+    clock.advance(13 * 3600)  # past the 12 h idle limit, in the air
+    res = logged_in.post(f"/api/v1/vehicles/{VID}/actions/stop", json=BODY, headers=H)
+    assert res.status_code == 202, res.text
+    vehicle_link.flying_since = None  # type: ignore[attr-defined]
+    res = logged_in.post(f"/api/v1/vehicles/{VID}/actions/stop", json=BODY, headers=H)
+    assert res.status_code == 401  # landed: the session has gone

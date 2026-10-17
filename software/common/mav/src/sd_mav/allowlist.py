@@ -102,6 +102,7 @@ ONBOARD_STREAMS: Final = frozenset(
         mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE,
         mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,
         mavlink.MAVLINK_MSG_ID_HOME_POSITION,
+        mavlink.MAVLINK_MSG_ID_RC_CHANNELS,  # the RC mode switch: a person took over
     }
 )
 GROUND_STREAMS: Final = frozenset(
@@ -115,6 +116,7 @@ GROUND_STREAMS: Final = frozenset(
         mavlink.MAVLINK_MSG_ID_GPS_RAW_INT,
         mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE,
         mavlink.MAVLINK_MSG_ID_HOME_POSITION,
+        mavlink.MAVLINK_MSG_ID_RC_CHANNELS,  # the RC mode switch: a person took over
     }
 )
 _REQUESTABLE: Final = frozenset(

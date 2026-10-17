@@ -10,8 +10,8 @@ STOP steps, ``HOME_MODES`` for the FLY HOME steps) within
 rules as the ground (``sd_mav.chain``).
 
 * Only while the flight controller still flies a mode this computer can command
-  (``sd_mav.chain.late_order``): a mode chosen with an RC transmitter, or a failsafe
-  that just began, is left alone.
+  (``sd_mav.chain.late_order``) and the RC mode switch has not moved: a mode chosen
+  with an RC transmitter, or a failsafe that just began, is left alone.
 * Only when ``override_phase(...)`` says airborne. On the ground nothing is sent: the
   onboard computer never disarms, and ArduPilot disarms by itself after landing.
 * The newest action wins: before every send the chain checks that its notice is still
@@ -33,6 +33,7 @@ from sd_mav.chain import (
     heartbeat_fresh,
     late_order,
     mode_shown,
+    rc_switch_moved,
     set_mode_with_fallback,
 )
 from sd_mav.modes import (
@@ -94,13 +95,18 @@ class OverrideFallback:
     async def _run(self, kind: str, action_seq: int, steps: str) -> None:
         chain = STOP_STEPS if steps == "stop" else HOME_STEPS
         targets = STOP_MODES if steps == "stop" else HOME_MODES
+        rc_before = self.vehicle.telemetry.rc_mode_pwm
         await self.clock.sleep(FALLBACK_DELAY_S)
         if not self._current(action_seq):
             return
         shown = mode_shown(self.vehicle)
         if shown is None or shown in targets:
             return  # the ground's MAVLink got through (or nothing to judge from)
-        if not late_order(shown, targets) or failsafe_began_recently(self.vehicle):
+        if (
+            not late_order(shown, targets)
+            or rc_switch_moved(self.vehicle, rc_before)
+            or failsafe_began_recently(self.vehicle)
+        ):
             return  # a person with an RC transmitter, or the flight controller, decided
         if not self._airborne():
             return

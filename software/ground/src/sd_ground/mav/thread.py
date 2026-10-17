@@ -375,12 +375,14 @@ class GroundMav:
         seq = self.latches.latest_seq(self.vehicle_id)
 
         async def loiter() -> None:
-            await set_mode_with_fallback(
+            result = await set_mode_with_fallback(
                 self.vehicle,
                 [CopterMode.LOITER],
                 origin=SendOrigin.GROUND,
                 aborted=lambda: self.latches.latest_seq(self.vehicle_id) != seq,
             )
+            if result.result == "failed":  # the pilot must see the takeover did not work
+                self._on_event("alarm.TAKEOVER_FAILED", "critical", {"takeover_id": takeover_id})
 
         self._spawn(loiter())
 

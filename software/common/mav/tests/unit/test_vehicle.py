@@ -611,7 +611,12 @@ def test_send_gate_is_asked_before_every_attempt() -> None:
         await clock.run_for(2.0)
         with pytest.raises(ControlNotAllowedError, match="held"):
             await task
-        speed = [m for m in vehicle.sent[before:] if m.get_type() == "COMMAND_LONG"]
+        speed = [
+            m
+            for m in vehicle.sent[before:]
+            if m.get_type() == "COMMAND_LONG"
+            and int(m.command) == mavlink.MAV_CMD_DO_CHANGE_SPEED  # not the stream requests
+        ]
         assert len(speed) == 1  # the first attempt only
         assert "mav.forbidden_mavlink_blocked" not in events.kinds()
         # Startup traffic (heartbeat, streams) still passes the same gate.

@@ -142,3 +142,17 @@ async def test_fallback_lets_a_new_failsafe_stand() -> None:
         r.fc.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_LOW  # begins now
         await r.run(3)
         assert _modes(r.vehicle.sent[before:]) == []
+
+
+async def test_fallback_leaves_an_rc_switch_to_rtl_alone() -> None:
+    """RTL is a mode the onboard computer could ask for, but the RC mode switch moved."""
+    async with rig() as r:
+        r.fc.rc_mode_pwm = 1100
+        await _in_goto(r)
+        before = len(r.vehicle.sent)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.5)
+        r.fc.rc_mode_switch(1900, CopterMode.RTL)
+        await r.run(3)
+        assert _modes(r.vehicle.sent[before:]) == []
+        assert r.fc.mode == CopterMode.RTL

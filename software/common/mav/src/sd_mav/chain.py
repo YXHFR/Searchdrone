@@ -13,11 +13,13 @@ the fallback origin), so both sides follow exactly the same rules:
   this chain, so an older action never sends anything late.
 
 After the steps, a mode outside the target set is undone only when it is a **late
-order** (``late_order``): a mode the onboard computer itself can command. Any other mode
-(ALT_HOLD, STABILIZE, POSHOLD, ...) can only come from a person with an RC transmitter
-or from the flight controller, and the RC transmitter goes before everything, so it is
-left alone. For STOP a failsafe that began within ``OVERRIDE_NOTICE_WINDOW_S`` also
-stands (``failsafe_began_recently``).
+order** (``late_order``): a mode the onboard computer itself can command, and the RC
+flight-mode switch has not moved (``rc_switch_moved``). Any other mode (ALT_HOLD,
+STABILIZE, POSHOLD, ...) can only come from a person with an RC transmitter or from the
+flight controller, and a moved mode switch means a person chose the mode, whatever it
+is; the RC transmitter goes before everything, so both are left alone. For STOP a
+failsafe that began within ``OVERRIDE_NOTICE_WINDOW_S`` also stands
+(``failsafe_began_recently``).
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ __all__ = [
     "heartbeat_fresh",
     "late_order",
     "mode_shown",
+    "rc_switch_moved",
     "set_mode_with_fallback",
 ]
 
@@ -75,6 +78,18 @@ def heartbeat_fresh(vehicle: Vehicle) -> bool:
 def late_order(mode: int, targets: frozenset[CopterMode]) -> bool:
     """``mode`` is outside ``targets`` and one the onboard computer can command."""
     return mode not in targets and mode in ONBOARD_MODES
+
+
+RC_SWITCH_MOVED_US: Final = 100  # a mode-switch change bigger than noise
+
+
+def rc_switch_moved(vehicle: Vehicle, before: int | None) -> bool:
+    """The RC flight-mode switch is not where it was (``before``): a person with an RC
+    transmitter chose a mode, and the RC transmitter goes before everything."""
+    now = vehicle.telemetry.rc_mode_pwm
+    if now is None:
+        return False  # no RC receiver heard: nothing a person did with it
+    return before is None or abs(now - before) > RC_SWITCH_MOVED_US  # turned on, or moved
 
 
 def failsafe_began_recently(vehicle: Vehicle) -> bool:

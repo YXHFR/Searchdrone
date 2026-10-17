@@ -21,9 +21,10 @@ is not fresh counts as airborne, so a stale picture never skips the mode steps.
 ``guard_override`` watches for ``OVERRIDE_MAX_S`` after the click: whenever the HEARTBEAT
 shows a late order (a mode outside the target set that the onboard computer can
 command, ``sd_mav.chain.late_order``) the target mode is sent again. A mode only a
-person with an RC transmitter or the flight controller can choose ends the watch: the RC
-transmitter goes before everything. For STOP a failsafe that began within
-``OVERRIDE_NOTICE_WINDOW_S`` also stands and ends the watch.
+person with an RC transmitter or the flight controller can choose, or any mode once the
+RC mode switch has moved, ends the watch: the RC transmitter goes before everything.
+For STOP a failsafe that began within ``OVERRIDE_NOTICE_WINDOW_S`` also stands and ends
+the watch.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from sd_mav.chain import (
     heartbeat_fresh,
     late_order,
     mode_shown,
+    rc_switch_moved,
     set_mode_with_fallback,
 )
 from sd_mav.modes import (
@@ -210,6 +212,7 @@ async def guard_override(
     """Keep the target for ``OVERRIDE_MAX_S`` after the click; returns how often it resent."""
     clock = vehicle.clock
     targets = target_modes(action)
+    rc_before = vehicle.telemetry.rc_mode_pwm  # where the RC mode switch stood
     resent = 0
     while clock.monotonic() - clicked_mono < OVERRIDE_MAX_S:
         if aborted():
@@ -218,7 +221,7 @@ async def guard_override(
             return resent  # landed and disarmed: nothing left to hold
         shown = mode_shown(vehicle)
         if shown is not None and shown not in targets:
-            if not late_order(shown, targets):
+            if not late_order(shown, targets) or rc_switch_moved(vehicle, rc_before):
                 return resent  # a person (RC transmitter) or the flight controller chose it
             if action == "stop" and failsafe_began_recently(vehicle):
                 return resent  # the flight controller's own failsafe decided: it stands

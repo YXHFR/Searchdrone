@@ -55,6 +55,7 @@ from sd_schemas.vehicle import LandedState, VehicleState
 __all__ = [
     "ACK_ATTEMPTS",
     "MODE_FRESH_S",
+    "RC_MODE_CHANNEL",
     "ControlNotAllowedError",
     "EventSink",
     "FcTelemetry",
@@ -65,6 +66,7 @@ __all__ = [
 ]
 
 ACK_ATTEMPTS: Final = 3
+RC_MODE_CHANNEL: Final = 5  # ArduCopter's FLTMODE_CH default: the RC flight-mode switch
 MODE_FRESH_S: Final = 1.5  # a HEARTBEAT older than this does not tell the current mode
 _OUR_HEARTBEAT_S: Final = 1.0
 _WATCH_S: Final = 0.05
@@ -111,6 +113,7 @@ ONBOARD_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 500_000,
     mavlink.MAVLINK_MSG_ID_MISSION_CURRENT: 500_000,
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,  # 1 Hz is the slowest allowed
+    mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
 }
 GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_HEARTBEAT: HEARTBEAT_INTERVAL_US,
@@ -122,6 +125,7 @@ GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_GPS_RAW_INT: 500_000,
     mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 500_000,
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,
+    mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
 }
 
 
@@ -210,6 +214,7 @@ class FcTelemetry:
     last_failsafe_signal: FailsafeSignal | None = None
     last_failsafe_mono_ms: int | None = None  # any failsafe signal, repeated ones too
     failsafe_onset_mono_ms: int | None = None  # a signal that was not active just before
+    rc_mode_pwm: int | None = None  # the RC mode-switch channel; None without an RC receiver
 
     @property
     def fc_mode(self) -> str:
@@ -821,6 +826,11 @@ class Vehicle:
                     landed_state=_LANDED.get(int(msg.landed_state), "unknown"),
                     landed_mono_ms=now,
                 )
+            case "RC_CHANNELS":
+                count = int(msg.chancount)
+                raw = int(getattr(msg, f"chan{RC_MODE_CHANNEL}_raw", 0))
+                usable = count >= RC_MODE_CHANNEL and 800 <= raw <= 2200
+                t = replace(t, rc_mode_pwm=raw if usable else None)
             case "MISSION_CURRENT":
                 t = replace(t, mission_seq_current=int(msg.seq))
             case "HOME_POSITION":

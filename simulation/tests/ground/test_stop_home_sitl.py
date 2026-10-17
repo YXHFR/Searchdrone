@@ -549,5 +549,27 @@ def test_hung_ground_station_lets_the_gcs_failsafe_act(sim: Sim) -> None:
     asyncio.run(run())
 
 
+@pytest.mark.budget_s(240)
+def test_rc_mode_switch_during_fly_home_stands(sim: Sim) -> None:
+    """FLY HOME, then a person flips the RC mode switch: whatever mode the switch
+    selects stands; the ground's 10 s watch does not take it back."""
+
+    async def run() -> None:
+        async with emergency(sim) as e:
+            await _airborne_goto(e, 80, 4)
+            await e.wait(lambda: e.fc.rc_mode_pwm is not None, 5, "RC channels")
+            e.home()
+            await e.wait(lambda: e.mode() in ("SMART_RTL", "RTL"), 1.0, "home mode")
+            await asyncio.sleep(1.0)
+            e.f.sim.rc.mode_pwm = 1900  # the pilot's switch
+            await e.wait(lambda: e.mode() not in ("SMART_RTL", "RTL"), 3.0, "RC mode")
+            chosen = e.mode()
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                assert e.mode() == chosen, (chosen, e.mode())
+
+    asyncio.run(run())
+
+
 def _is_command(msg: Any, command: int) -> bool:
     return msg.get_type() == "COMMAND_LONG" and int(msg.command) == command

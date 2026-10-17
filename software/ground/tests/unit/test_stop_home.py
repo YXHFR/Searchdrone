@@ -609,3 +609,53 @@ async def test_dispatch_from_many_threads_keeps_latch_and_numbers_in_step() -> N
         latch = s.latches.get(VID)
         assert latch is not None
         assert latch.action_seq == max(replies) == s.latches.override_seq(VID)
+
+
+async def test_rc_switch_to_loiter_during_fly_home_stands() -> None:
+    """LOITER is a mode the onboard computer could also ask for, but the RC mode switch
+    moved: a person chose it, and the RC transmitter goes before everything."""
+    async with stack() as s:
+        s.fly()
+        s.fc.rc_mode_pwm = 1100
+        await s.run(0.5)
+        s.home()
+        await s.run(1.0)
+        mark = len(s.fc.received)
+        s.fc.rc_mode_switch(1500, CopterMode.LOITER)
+        await s.run(5.0)
+        assert s.fc.mode == CopterMode.LOITER
+        assert ground_modes(s.fc, mark) == []
+
+
+async def test_rc_switch_to_rtl_during_stop_stands() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.rc_mode_pwm = 1100
+        await s.run(0.5)
+        s.stop()
+        await s.run(1.0)
+        s.fc.rc_mode_switch(1900, CopterMode.RTL)
+        await s.run(3.0)
+        assert s.fc.mode == CopterMode.RTL
+
+
+async def test_late_loiter_without_rc_movement_is_still_undone_during_fly_home() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.rc_mode_pwm = 1100  # an RC receiver is there, but nobody touches the switch
+        await s.run(0.5)
+        s.home()
+        await s.run(1.0)
+        s.fc.set_mode_external(CopterMode.LOITER)
+        await s.run(1.0)
+        assert s.fc.mode in HOME_MODES
+
+
+async def test_failed_takeover_raises_an_alarm() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.refuse_modes = {int(CopterMode.LOITER)}
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t5", by=PILOT)
+        await s.run(2.0)
+        assert "alarm.TAKEOVER_FAILED" in s.g.types()

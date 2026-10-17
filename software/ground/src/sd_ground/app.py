@@ -360,7 +360,7 @@ async def start_emergency_path(
             conn,
             role=Role.GROUND,
             clock=clock,
-            on_event=vehicle_events(actions.on_event),
+            on_event=vehicle_events(actions.on_event, now=clock.monotonic),
             heartbeat_allowed=HeartbeatGate(liveness, actions.on_event),
         )
         return GroundMav(
