@@ -16,6 +16,7 @@ rendering and run on a workstation: ``just test-sitl physics=gz sc=gz``.
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 import time
@@ -24,7 +25,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from sd_sim import config, fixture, geo, paths
+from sd_safety.targets import Plane
+from sd_sim import config, fixture, paths
 from sd_sim.errors import InfraError
 from sd_sim.harness import Harness, VehicleState
 from sd_sim.launch import Stack
@@ -55,6 +57,12 @@ HOVER_TIME_MIN = (25.0, 40.0)
 USABLE_CAPACITY = 0.85
 
 CAMERA_FRAMES_10S = 135
+
+
+def battery_ah() -> float:
+    """The pack capacity the builtin model simulates."""
+    frame = paths.REPO / "simulation" / "sitl" / "frames" / "sd_quad14.json"
+    return float(json.loads(frame.read_text(encoding="utf-8"))["battCapacityAh"])
 
 
 @dataclass
@@ -101,8 +109,8 @@ def land(harness: Harness) -> None:
 
 
 def drift_m(track: Track) -> float:
-    lat0, lon0 = track.pos[0]
-    return max(math.hypot(*geo.wgs84_to_enu(lat0, lon0, lat, lon)) for lat, lon in track.pos)
+    plane = Plane(*track.pos[0])
+    return max(math.hypot(*plane.xy(lat, lon)) for lat, lon in track.pos)
 
 
 def fly_scenario(
@@ -201,7 +209,7 @@ def parity_flight(physics: str) -> Callable[[Harness, Report], None]:
         )
         if physics == "builtin":
             mean_a = statistics.fmean(hover.current) if hover.current else 0.0
-            minutes = USABLE_CAPACITY * 9.0 / mean_a * 60 if mean_a > 0 else 0.0
+            minutes = USABLE_CAPACITY * battery_ah() / mean_a * 60 if mean_a > 0 else 0.0
             rep.check(
                 "PAR.4",
                 "Uppskattad svävtid (0,85 x kapacitet / medelström)",
@@ -213,13 +221,14 @@ def parity_flight(physics: str) -> Callable[[Harness, Report], None]:
         else:
             rep.not_built("PAR.4", "Uppskattad svävtid", "bara med inbyggd fysik")
 
-        lat0, lon0 = hover.pos[-1]
-        lat1, lon1 = geo.enu_to_wgs84(lat0, lon0, 0.0, LEG_M)
+        start = Plane(*hover.pos[-1])
+        lat1, lon1 = start.latlon(0.0, LEG_M)
+        target = Plane(lat1, lon1)
         cruise: list[float] = []
 
         def on_message(kind: str, s: VehicleState) -> None:
             if kind == "GLOBAL_POSITION_INT":
-                _, north = geo.wgs84_to_enu(lat0, lon0, s.lat, s.lon)
+                _, north = start.xy(s.lat, s.lon)
                 if CRUISE_FROM_M <= north <= CRUISE_TO_M:
                     cruise.append(s.ground_speed_ms)
 
@@ -230,7 +239,7 @@ def parity_flight(physics: str) -> Callable[[Harness, Report], None]:
             harness.pump(0.5)
             harness.set_speed(LEG_SPEED_MS)
             harness.wait(
-                lambda s: math.hypot(*geo.wgs84_to_enu(lat1, lon1, s.lat, s.lon)) < 3.0,
+                lambda s: math.hypot(*target.xy(s.lat, s.lon)) < 3.0,
                 90,
                 f"punkten {LEG_M:.0f} m fram",
             )

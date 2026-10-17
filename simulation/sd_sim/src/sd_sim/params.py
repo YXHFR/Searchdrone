@@ -10,8 +10,9 @@ TOLERANCE = 1e-4
 
 # Safety parameters the flight controller must have, checked independently of the
 # parameter files: (name, rule, value). Exact values, so a changed safety file fails here
-# too. Every FS_*, FENCE_* and BATT_* line in the safety file has a rule (unit-tested),
-# and the values agree with the ground station's expectations in sd_safety.
+# too. Every FS_*, FENCE_* and BATT_* line in the safety file has a rule, and every value
+# the ground station expects (sd_safety.constants.FC_SAFETY_EXPECTED) has an equal rule;
+# both are unit-tested.
 SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("MAV_GCS_SYSID", "==", 250.0),
     ("FS_GCS_ENABLE", "==", 3.0),
@@ -33,6 +34,7 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("BATT_CRT_VOLT", "==", 0.0),
     ("BATT_FS_LOW_ACT", "==", 3.0),
     ("BATT_FS_CRT_ACT", "==", 1.0),
+    ("LOIT_SPEED_MS", "==", 15.0),
     ("ARMING_RUDDER", "==", 0.0),
     ("RC_OVERRIDE_TIME", "==", 1.0),
 )

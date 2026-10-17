@@ -74,6 +74,8 @@ def argv_containing(pids: set[int], values: list[str]) -> list[int]:
 def check_params(rep: Report, stack: Stack, actual: dict[str, float]) -> None:
     layers = stack.sitl_layout().project_layers()
     names = [p.name for p in layers]
+    argv = stack.sitl_argv()
+    loaded = [Path(p).name for p in argv[argv.index("--defaults") + 1].split(",")]
     rep.check(
         "SC00.4a",
         "Hela parameterlistan lästes från flygkontrollen",
@@ -83,9 +85,9 @@ def check_params(rep: Report, stack: Stack, actual: dict[str, float]) -> None:
     )
     rep.check(
         "SC00.4c",
-        "Säkerhetsfilen och modellens simfil laddas i SITL",
-        names == list(PROJECT_PARAM_FILES),
-        measured=names,
+        "SITL:s --defaults slutar med säkerhetsfilen och modellens simfil",
+        loaded[-len(PROJECT_PARAM_FILES) :] == list(PROJECT_PARAM_FILES),
+        measured=loaded,
         limit=list(PROJECT_PARAM_FILES),
     )
     rep.param_mismatches = params.mismatches(params.merge_layers(layers), actual)

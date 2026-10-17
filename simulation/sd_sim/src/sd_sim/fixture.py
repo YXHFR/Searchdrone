@@ -21,7 +21,6 @@ import yaml
 from sd_sim import paths
 
 DEFAULT_PATH = paths.REPO / "simulation" / "scenarios" / "demo_fixture.yaml"
-EXIT_CODE = 2
 
 TOP_KEYS = {"home", "pilot", "operator", "vehicle_id", "pins", "survey_box", "charters"}
 HOME_KEYS = {"lat", "lon", "alt_amsl_m", "heading_deg"}
@@ -52,7 +51,7 @@ Xy = tuple[float, float]
 
 
 class FixtureError(ValueError):
-    """The fixture file does not have the expected shape (exit code 2)."""
+    """The fixture file does not have the expected shape."""
 
 
 @dataclass(frozen=True)

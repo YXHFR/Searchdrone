@@ -14,7 +14,9 @@ from types import ModuleType
 import pytest
 import yaml
 
-from sd_sim import fixture, geo, paths, ports, world
+from sd_hwcalc.calc import compute
+from sd_hwcalc.model import load_drone
+from sd_sim import fixture, paths, ports, world
 
 SIM = paths.REPO / "simulation"
 FRAME_JSON = SIM / "sitl" / "frames" / "sd_quad14.json"
@@ -37,8 +39,8 @@ WORLD_CHILDREN = {
 MASS_TOLERANCE_KG = 0.05
 
 
-def drone() -> dict:
-    return yaml.safe_load((paths.REPO / "hardware" / "drone.yaml").read_text(encoding="utf-8"))
+def total_mass_kg() -> float:
+    return compute(load_drone(world.DRONE_YAML)).total_mass_kg
 
 
 def model_root(instance: int = 0) -> ET.Element:
@@ -63,17 +65,8 @@ def pose(element: ET.Element | None) -> list[float]:
 
 
 def test_model_mass_matches_drone_yaml() -> None:
-    d = drone()
-    expected = (
-        d["frame_mass_kg"]
-        + d["avionics_mass_kg"]
-        + d["payload_mass_kg"]
-        + d["motors"]["count"] * d["motors"]["mass_kg"]
-        + d["props"]["count"] * d["props"]["mass_kg"]
-        + d["battery"]["mass_kg"]
-    )
     total = sum(float(m.text or "nan") for m in model_root().iter("mass"))
-    assert abs(total - expected) <= MASS_TOLERANCE_KG
+    assert abs(total - total_mass_kg()) <= MASS_TOLERANCE_KG
     assert abs(total - 2.30) <= MASS_TOLERANCE_KG
 
 
@@ -149,17 +142,29 @@ def test_render_model_writes_both_files(tmp_path: Path) -> None:
     assert (out / "model.sdf").is_file() and (out / "model.config").is_file()
 
 
-def test_blade_area_scales_with_mass_and_speed() -> None:
-    assert world.blade_area_m2(world.IRIS_MASS_KG) > world.IRIS_BLADE_AREA_M2
-    ratio = world.blade_area_m2(4.6) / world.blade_area_m2(2.3)
-    assert abs(ratio - 2.0) < 1e-9
+def test_blade_area_gives_the_thrust_to_weight() -> None:
+    mass = total_mass_kg()
+    area = world.blade_area_m2(mass)
+    v = world.MAX_ROTOR_RAD_S * world.BLADE_CP_M
+    lift = 0.5 * world.AIR_DENSITY * area * world.CLA * world.BLADE_A0_RAD * v * v
+    assert abs(8 * lift / (mass * 9.80665) - world.THRUST_TO_WEIGHT) < 1e-9
 
 
 def test_model_needs_a_quad() -> None:
-    d = drone()
-    d["props"]["count"] = 6
+    drone = load_drone(world.DRONE_YAML)
+    hexa = drone.model_copy(
+        update={
+            "motors": drone.motors.model_copy(update={"count": 6}),
+            "props": drone.props.model_copy(update={"count": 6}),
+        }
+    )
     with pytest.raises(ValueError):
-        world.model_context(0, d)
+        world.model_context(0, hexa)
+
+
+def test_model_is_self_contained() -> None:
+    """The model draws its own shapes: no meshes or models from other packages."""
+    assert ET.fromstring(world.model_sdf(0)).find(".//uri") is None  # noqa: S314 - our own rendered file
 
 
 # --- the builtin-physics model -----------------------------------------------------------
@@ -179,14 +184,14 @@ def test_frame_json_keys() -> None:
 
 def test_frame_json_matches_the_airframe() -> None:
     frame = json.loads(FRAME_JSON.read_text(encoding="utf-8"))
-    d = drone()
-    assert abs(frame["mass"] - world.airframe_mass_kg(d)) <= MASS_TOLERANCE_KG
-    assert frame["num_motors"] == d["motors"]["count"]
-    assert frame["battCapacityAh"] == d["battery"]["capacity_mah"] / 1000
+    drone = load_drone(world.DRONE_YAML)
+    assert abs(frame["mass"] - total_mass_kg()) <= MASS_TOLERANCE_KG
+    assert frame["num_motors"] == drone.motors.count
+    assert frame["battCapacityAh"] == drone.battery.capacity_mah / 1000
     assert frame["diagonal_size"] == 0.58
     assert frame["moment_inertia"] == list(world.INERTIA_KG_M2)
-    radius = d["props"]["diameter_in"] * 0.0254 / 2
-    assert abs(frame["disc_area"] - d["props"]["count"] * math.pi * radius**2) < 0.005
+    radius = drone.props.diameter_in * 0.0254 / 2
+    assert abs(frame["disc_area"] - drone.props.count * math.pi * radius**2) < 0.005
 
 
 # --- parameter layers --------------------------------------------------------------------
@@ -422,20 +427,3 @@ def test_fixture_load_errors(tmp_path: Path) -> None:
 
 def test_home_sitl_argument() -> None:
     assert fixture.load().home.sitl_arg() == "-35.363261,149.165230,584.0,353"
-
-
-# --- local coordinates -------------------------------------------------------------------
-
-
-def test_enu_round_trip() -> None:
-    lat0, lon0 = -35.363261, 149.165230
-    for east, north in [(0.0, 0.0), (0.0, 200.0), (505.0, 0.0), (-400.0, 400.0)]:
-        lat, lon = geo.enu_to_wgs84(lat0, lon0, east, north)
-        e2, n2 = geo.wgs84_to_enu(lat0, lon0, lat, lon)
-        assert abs(e2 - east) < 1e-6 and abs(n2 - north) < 1e-6
-
-
-def test_enu_against_known_distance() -> None:
-    # One arc minute of latitude is about 1 848 m at 35 degrees south.
-    lat, _ = geo.enu_to_wgs84(-35.363261, 149.165230, 0.0, 1848.0)
-    assert abs((lat + 35.363261) * 60 - 1.0) < 0.002

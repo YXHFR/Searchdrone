@@ -7,10 +7,10 @@ instance)`` writes ``build/sim/worlds/<name>_i<N>.sdf`` (which includes
 and the forest band in WGS84. Everything is deterministic (fixed seed) and offline: no
 template may name a remote URI.
 
-The airframe's mass comes from ``hardware/drone.yaml``. The Gazebo variant keeps the
-rotor model of ArduPilot's iris (each rotor is a joint driven by the ArduPilot plugin and
-lifted by two LiftDrag blades); the blade area is scaled so that thrust per weight at full
-speed equals the iris's, with the slower maximum rotor speed of a 14-inch propeller.
+The airframe's mass and propeller size come from ``hardware/drone.yaml`` (read and
+validated by ``sd_hwcalc``). In Gazebo each rotor is a joint that the ArduPilot plugin
+spins; two LiftDrag surfaces per rotor turn its speed into thrust. Their area is chosen
+so that full rotor speed lifts ``THRUST_TO_WEIGHT`` times the all-up weight.
 """
 
 from __future__ import annotations
@@ -24,9 +24,11 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
-import yaml
 
-from sd_sim import fixture, geo, paths, ports
+from sd_hwcalc.calc import compute
+from sd_hwcalc.model import Drone, load_drone
+from sd_safety.targets import Plane
+from sd_sim import fixture, paths, ports
 
 GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
@@ -40,10 +42,14 @@ ROTOR_XY_M = ARM_M / math.sqrt(2)  # 0.205 m in x and y for an X frame
 INERTIA_KG_M2 = (0.045, 0.045, 0.080)  # mass in the middle of the frame; CAD values later
 IMU_MASS_KG = 0.01
 MAX_ROTOR_RAD_S = 650.0  # about 6 200 rpm for a 14-inch propeller
-# ArduPilot's iris_with_gimbal, which the rotor model comes from.
-IRIS_MASS_KG = 1.98
-IRIS_BLADE_AREA_M2 = 0.002
-IRIS_MAX_ROTOR_RAD_S = 838.0
+THRUST_TO_WEIGHT = 2.0
+# LiftDrag surfaces: lift = 0.5 * rho * area * cl * v^2 with cl = CLA * angle of attack and
+# v = rotor speed * BLADE_CP_M. AOA_RAD is the blade's fixed pitch (a0) plus a typical
+# inflow angle; the area follows from the thrust each rotor must give at full speed.
+AIR_DENSITY = 1.2041
+BLADE_CP_M = 0.084
+CLA = 4.25
+BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
 
 # The world, in metres east/north of the landing pad.
@@ -71,52 +77,44 @@ class Tree:
     height: float
 
 
-def airframe_mass_kg(drone: dict[str, Any]) -> float:
-    """All-up mass from ``hardware/drone.yaml``."""
-    return (
-        drone["frame_mass_kg"]
-        + drone["avionics_mass_kg"]
-        + drone["payload_mass_kg"]
-        + drone["motors"]["count"] * drone["motors"]["mass_kg"]
-        + drone["props"]["count"] * drone["props"]["mass_kg"]
-        + drone["battery"]["mass_kg"]
-    )
-
-
-def load_drone(path: Path = DRONE_YAML) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
-
-
 def blade_area_m2(total_mass_kg: float) -> float:
-    """LiftDrag blade area that gives the iris's thrust per weight at full rotor speed."""
-    speed_ratio = IRIS_MAX_ROTOR_RAD_S / MAX_ROTOR_RAD_S
-    return IRIS_BLADE_AREA_M2 * (total_mass_kg / IRIS_MASS_KG) * speed_ratio**2
+    """LiftDrag area per surface so that full rotor speed gives THRUST_TO_WEIGHT x weight.
+
+    Each rotor has two surfaces; the lift of one is 0.5 * rho * area * CLA * a0 * v^2.
+    """
+    thrust_per_surface = THRUST_TO_WEIGHT * total_mass_kg * 9.80665 / 4 / 2
+    v = MAX_ROTOR_RAD_S * BLADE_CP_M
+    return thrust_per_surface / (0.5 * AIR_DENSITY * CLA * BLADE_A0_RAD * v * v)
 
 
-def model_context(instance: int, drone: dict[str, Any] | None = None) -> dict[str, Any]:
-    drone = load_drone() if drone is None else drone
-    if drone["props"]["count"] != 4 or drone["motors"]["count"] != 4:
+def model_context(instance: int, drone: Drone | None = None) -> dict[str, Any]:
+    drone = load_drone(DRONE_YAML) if drone is None else drone
+    if drone.motors.count != 4:
         raise ValueError("sd_quad14 är en quad: fyra motorer och fyra propellrar")
-    total = airframe_mass_kg(drone)
-    rotor_mass = drone["props"]["mass_kg"]
-    camera_mass = drone["payload_mass_kg"]
+    total = compute(drone).total_mass_kg
+    rotor_mass = drone.props.mass_kg
+    camera_mass = drone.payload_mass_kg
     base_mass = total - IMU_MASS_KG - 4 * rotor_mass - camera_mass
-    prop_radius = drone["props"]["diameter_in"] * 0.0254 / 2
+    prop_radius = drone.props.diameter_in * 0.0254 / 2
     r = ROTOR_XY_M
     # ArduPilot quad X order: front right, back left (both CCW), front left, back right (CW).
-    rotors = [
-        {"x": r, "y": -r, "spin": "ccw", "sign": 1, "fwd": 1},
-        {"x": -r, "y": r, "spin": "ccw", "sign": 1, "fwd": 1},
-        {"x": r, "y": r, "spin": "cw", "sign": -1, "fwd": -1},
-        {"x": -r, "y": -r, "spin": "cw", "sign": -1, "fwd": -1},
+    rotors: list[dict[str, Any]] = [
+        {"x": r, "y": -r, "ccw": True},
+        {"x": -r, "y": r, "ccw": True},
+        {"x": r, "y": r, "ccw": False},
+        {"x": -r, "y": -r, "ccw": False},
     ]
     for rotor in rotors:
         rotor["yaw"] = round(math.atan2(rotor["y"], rotor["x"]), 6)
+        # A CCW rotor spins with positive joint speed; its blades meet the air along +y
+        # at +x. A CW rotor mirrors both.
+        rotor["sign"] = 1 if rotor["ccw"] else -1
+    ports_i = ports.for_instance(instance)
     return {
         "name": f"{MODEL_NAME}_i{instance}",
         "instance": instance,
-        "fdm_port_in": ports.for_instance(instance)["sitl_json_fdm"],
-        "video_port": ports.for_instance(instance)["video_raw_udp"],
+        "fdm_port_in": ports_i["sitl_json_fdm"],
+        "video_port": ports_i["video_raw_udp"],
         "base_mass": round(base_mass, 6),
         "inertia": INERTIA_KG_M2,
         "imu_mass": IMU_MASS_KG,
@@ -129,6 +127,10 @@ def model_context(instance: int, drone: dict[str, Any] | None = None) -> dict[st
         "rotors": rotors,
         "multiplier": MAX_ROTOR_RAD_S,
         "blade_area": round(blade_area_m2(total), 6),
+        "blade_cp": BLADE_CP_M,
+        "blade_a0": BLADE_A0_RAD,
+        "cla": CLA,
+        "air_density": AIR_DENSITY,
         "camera": {**CAMERA, "hfov_rad": round(math.radians(CAMERA["hfov_deg"]), 6)},
     }
 
@@ -202,7 +204,7 @@ def _env() -> jinja2.Environment:
     )
 
 
-def model_sdf(instance: int, drone: dict[str, Any] | None = None) -> str:
+def model_sdf(instance: int, drone: Drone | None = None) -> str:
     template = _env().get_template(f"models/{MODEL_NAME}/model.sdf.jinja")
     return template.render(**model_context(instance, drone))
 
@@ -220,12 +222,12 @@ def world_sdf(name: str, instance: int, fix: fixture.Fixture | None = None) -> s
 
 def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
     fix = fixture.load() if fix is None else fix
-    lat0, lon0 = fix.home.lat, fix.home.lon
+    plane = Plane(fix.home.lat, fix.home.lon)
 
     def lonlat(points: list[Xy]) -> list[list[float]]:
         out = []
         for x, y in points:
-            lat, lon = geo.enu_to_wgs84(lat0, lon0, x, y)
+            lat, lon = plane.latlon(x, y)
             out.append([round(lon, 7), round(lat, 7)])
         return out
 
@@ -260,7 +262,10 @@ def render_model(instance: int, repo: Path = paths.REPO) -> Path:
 
 
 def render_world(name: str, instance: int, repo: Path = paths.REPO) -> Path:
-    """Write the instance's world and model, plus the world's GeoJSON layer."""
+    """Write the instance's world and model, plus the world's GeoJSON layer.
+
+    The GeoJSON file has no instance suffix: every instance writes the same content, since
+    the layer only depends on the fixture's home and the fixed scenery."""
     render_model(instance, repo)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"

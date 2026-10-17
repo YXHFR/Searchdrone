@@ -11,9 +11,3 @@ path = "hardware/**"
 precedence = "override"
 SPDX-FileCopyrightText = "Searchdrone contributors"
 SPDX-License-Identifier = "CERN-OHL-S-2.0"
-
-[[annotations]]
-path = "simulation/gazebo/models/sd_quad14/**"
-precedence = "override"
-SPDX-FileCopyrightText = ["ardupilot_gazebo authors", "Searchdrone contributors"]
-SPDX-License-Identifier = "LGPL-3.0-only"

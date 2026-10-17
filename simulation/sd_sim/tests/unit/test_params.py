@@ -76,5 +76,5 @@ def test_rules_agree_with_the_ground_station() -> None:
 
     exact = {name: value for name, op, value in params.SAFETY_RULES if op == "=="}
     for name, value in FC_SAFETY_EXPECTED.items():
-        if name in exact:
-            assert exact[name] == value, name
+        assert name in exact, f"{name} saknar en exakt regel"
+        assert exact[name] == value, name
