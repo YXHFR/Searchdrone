@@ -7,7 +7,7 @@ import socket
 from collections import deque
 from dataclasses import dataclass, field
 from importlib.metadata import version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sd_ground.auth import BrainToken, PendingLogins, SessionRecord, SessionStore
 from sd_ground.bus import EventBus
@@ -24,6 +24,9 @@ from sd_ground.sources import (
     VehicleLink,
 )
 from sd_obs.clock import Clock
+
+if TYPE_CHECKING:
+    from sd_ground.services.missions import MissionFlow
 
 __all__ = ["EVENT_QUEUE_MAX", "Ground", "lan_addresses"]
 
@@ -56,6 +59,7 @@ class Ground:
     sdlink: SdLink = field(default_factory=NoSdLink)
     emergency: EmergencyPath = field(default_factory=NoEmergencyPath)
     vehicle_actions: VehicleActions | None = None  # the emergency path once wired
+    flow: MissionFlow | None = None  # the mission flow (needs the database)
     bus: EventBus = field(default_factory=EventBus)
     lan_hosts: list[str] = field(default_factory=list[str])
     version: str = field(default_factory=lambda: version("sd-ground"))

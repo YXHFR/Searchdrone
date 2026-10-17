@@ -46,6 +46,7 @@ ALLOWED_MESSAGES = {
     "MISSION_ACK",
     "MISSION_SET_CURRENT",
     "PARAM_REQUEST_READ",
+    "PARAM_SET",
     "MANUAL_CONTROL",
 }
 ONBOARD_COMMANDS = {176, 400, 22, 178, 224, 511, 512}
@@ -450,3 +451,72 @@ def test_context_and_envelope_sanity() -> None:
     for bad in (float("inf"), float("nan"), 0.0, -1.0):
         with pytest.raises(ValueError):
             SendEnvelope(max_alt_agl_m=bad)
+
+
+# --- the fence's limits (owner decision: raised limits move the fence) ---------------
+
+
+def fence_limit(name: str, value: float, ptype: int = mavlink.MAV_PARAM_TYPE_REAL32) -> Any:
+    return mavlink.MAVLink_param_set_message(FC, 1, name.encode(), value, ptype)
+
+
+GROUND_STILL = {"on_ground": True, "armed": False, "fc_mode": CopterMode.LOITER}
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("FENCE_ALT_MAX", 125), ("FENCE_ALT_MAX", 305), ("FENCE_RADIUS", 2030), ("LOIT_SPEED_MS", 25)],
+)
+def test_ground_moves_the_fence_outward_on_the_ground(name: str, value: float) -> None:
+    assert sends(fence_limit(name, value), ctx(Profile.GROUND, "ground", **GROUND_STILL))
+
+
+@pytest.mark.parametrize(
+    ("msg", "c"),
+    [
+        # never from the onboard computer, whatever its origin
+        (
+            fence_limit("FENCE_ALT_MAX", 200),
+            ctx(Profile.ONBOARD, "skill", on_ground=True, armed=False),
+        ),
+        (
+            fence_limit("FENCE_ALT_MAX", 200),
+            ctx(Profile.ONBOARD, "startup", on_ground=True, armed=False),
+        ),
+        # never in the air or armed
+        (
+            fence_limit("FENCE_ALT_MAX", 200),
+            ctx(Profile.GROUND, "ground", armed=True, airborne=True),
+        ),
+        (
+            fence_limit("FENCE_ALT_MAX", 200),
+            ctx(Profile.GROUND, "ground", on_ground=True, armed=True),
+        ),
+        # never below the standard fence or beyond what the flight controller holds
+        (fence_limit("FENCE_ALT_MAX", 100), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("FENCE_RADIUS", 500), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("LOIT_SPEED_MS", 10), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("FENCE_RADIUS", 20_000), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("FENCE_ALT_MAX", float("nan")), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("FENCE_ALT_MAX", float("inf")), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        # only the three, only as floats, only the ground's own origin
+        (fence_limit("FENCE_ENABLE", 0), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("FENCE_ACTION", 0), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("FS_GCS_ENABLE", 0), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (fence_limit("ARMING_SKIPCHK", 1), ctx(Profile.GROUND, "ground", **GROUND_STILL)),
+        (
+            fence_limit("FENCE_ALT_MAX", 200, mavlink.MAV_PARAM_TYPE_INT32),
+            ctx(Profile.GROUND, "ground", **GROUND_STILL),
+        ),
+        (fence_limit("FENCE_ALT_MAX", 200), ctx(Profile.GROUND, "manual", **GROUND_STILL)),
+    ],
+)
+def test_fence_limit_refused(msg: Any, c: Any) -> None:
+    assert not sends(msg, c)
+
+
+def test_every_other_parameter_stays_on_the_deny_list() -> None:
+    for name in ("FENCE_ENABLE", "FENCE_TYPE", "FENCE_ACTION", "FS_GCS_ENABLE", "BATT_FS_LOW_ACT"):
+        assert denied_reason(fence_limit(name, 1)) is not None
+    for name in ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS"):
+        assert denied_reason(fence_limit(name, 1)) is None

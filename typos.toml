@@ -42,6 +42,9 @@ fram = "fram"  # also sd_onboard reasons for the operator (B1-07)
 lage = "lage"
 tre = "tre"
 tio = "tio"
+# Swedish (sd_ground: mission-flow texts, B1-12; "klick" above too)
+ser = "ser"
+ges = "ges"
 
 [default.extend-identifiers]
 # ArduPilot throttle failsafe (B1-07)

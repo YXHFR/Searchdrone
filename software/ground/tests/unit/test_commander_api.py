@@ -33,6 +33,8 @@ COMMANDER_WHITELIST = frozenset(
         ("POST", "/commander/v1/missions/{mission_id}/estimate"),
         ("POST", "/commander/v1/missions/{mission_id}/commands/{command_id}/cancel"),
         ("POST", "/commander/v1/missions/{mission_id}/charter-proposals"),
+        # The AI's stop check: a pilot's own recent line only, never a release.
+        ("POST", "/commander/v1/missions/{mission_id}/chat-intents"),
         ("GET", "/commander/v1/missions/{mission_id}/memory"),
         ("PUT", "/commander/v1/missions/{mission_id}/memory"),
         ("POST", "/commander/v1/missions/{mission_id}/decisions"),

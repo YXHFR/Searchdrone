@@ -1,0 +1,37 @@
+# The mission's transition table, written out by hand row by row, independently of the
+# code. test_transitions compares sd_ground.services.mission_state.TRANSITIONS with it.
+# Shorthand: P(x) = PAUSED with paused_by x, R(x) = RETURNING with returning_cause x,
+# P(*) / R(*) = every value. AIR = ACTIVE, P(*), R(*), HELD, FAILSAFE.
+# GROUND = DRAFT, CHARTER_PROPOSED, READY, LANDED. "-" = no mission yet.
+rows:
+  - {row: 1, from: ["-"], trigger: MISSION_OPENED, cond: "-", to: DRAFT}
+  - {row: 2, from: [DRAFT], trigger: CHARTER_PROPOSED, cond: "-", to: CHARTER_PROPOSED}
+  - {row: 3, from: [CHARTER_PROPOSED], trigger: PROPOSALS_CLEARED, cond: "-", to: DRAFT}
+  - {row: 4, from: [DRAFT, CHARTER_PROPOSED], trigger: CHARTER_READY, cond: "-", to: READY}
+  - {row: 5, from: [READY], trigger: TAKEOFF_ACCEPTED, cond: "-", to: ACTIVE}
+  - {row: 6, from: [AIR], trigger: OPERATOR_STOP, cond: in_flight, to: P(operator)}
+  - row: 7
+    from: [ACTIVE, "P(*)", R(brain), R(system), HELD, FAILSAFE]
+    trigger: OPERATOR_RTL
+    cond: in_flight
+    to: R(operator)
+  - {row: 8, from: [P(operator), P(system)], trigger: OPERATOR_RESUME_CONFIRMED, cond: not fc_home_mode, to: ACTIVE}
+  - {row: 9, from: [HELD, FAILSAFE], trigger: OPERATOR_RESUME_CONFIRMED, cond: not fc_home_mode, to: ACTIVE}
+  - {row: 10, from: [HELD, FAILSAFE], trigger: OPERATOR_RESUME_CONFIRMED, cond: fc_home_mode, to: R(operator)}
+  - {row: 11, from: [ACTIVE, P(brain)], trigger: WATCHDOG_STOP, cond: in_flight, to: P(system)}
+  - {row: 12, from: [ACTIVE, P(brain), P(system)], trigger: WATCHDOG_RTL, cond: in_flight, to: R(system)}
+  - {row: 13, from: [ACTIVE, P(brain)], trigger: OPERATOR_ABSENT_HOLD, cond: in_flight, to: P(system)}
+  - {row: 14, from: [ACTIVE, P(brain)], trigger: OPERATOR_ABSENT_RTL, cond: in_flight, to: R(system)}
+  - {row: 15, from: [ACTIVE], trigger: BRAIN_HOLD, cond: "-", to: P(brain)}
+  - {row: 16, from: [P(brain)], trigger: BRAIN_HOLD_END, cond: "-", to: ACTIVE}
+  - {row: 17, from: [ACTIVE, P(brain)], trigger: BRAIN_RTL_ACCEPTED, cond: "-", to: R(brain)}
+  - {row: 18, from: [ACTIVE, "P(*)", R(brain), R(system)], trigger: BATTERY_RTL, cond: in_flight, to: R(battery)}
+  - {row: 19, from: [ACTIVE, "P(*)", "R(*)"], trigger: CONTROL_TAKEN, cond: "-", to: HELD}
+  - {row: 20, from: [ACTIVE, "P(*)", "R(*)", HELD], trigger: FC_FAILSAFE, cond: "-", to: FAILSAFE}
+  - {row: 21, from: [ACTIVE, P(brain), R(brain)], trigger: LATCH_ADOPTED_STOP, cond: in_flight, to: P(system)}
+  - {row: 22, from: [ACTIVE, P(brain), P(system), R(brain)], trigger: LATCH_ADOPTED_RTL, cond: in_flight, to: R(system)}
+  - {row: 23, from: [ACTIVE, P(brain), R(brain)], trigger: RESTART_FC_STOPPED, cond: in_flight, to: P(system)}
+  - {row: 24, from: [ACTIVE, P(brain), P(system), R(brain)], trigger: RESTART_FC_RETURNING, cond: in_flight, to: R(system)}
+  - {row: 25, from: [AIR], trigger: LANDED_DISARMED, cond: not in_flight, to: LANDED}
+  - {row: 26, from: [LANDED], trigger: CLOSE_AUTO, cond: "-", to: CLOSED}
+  - {row: 27, from: [GROUND, AIR], trigger: CLOSE_MANUAL, cond: not in_flight, to: CLOSED}

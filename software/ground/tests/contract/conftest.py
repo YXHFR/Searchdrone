@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import hmac
 import itertools
@@ -138,11 +139,15 @@ async def _ensure_app_role(owner_password: str, app_password: str) -> None:
             return
         verifier = scram_verifier(app_password)
         quoted = await conn.fetchval("SELECT quote_literal($1)", verifier)
-        await conn.execute(
-            "CREATE ROLE sd_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS "
-            "NOREPLICATION "
-            f"PASSWORD {quoted}"
-        )
+        # Another pytest-xdist worker may create it between the check and here.
+        with contextlib.suppress(
+            asyncpg.exceptions.DuplicateObjectError, asyncpg.exceptions.UniqueViolationError
+        ):
+            await conn.execute(
+                "CREATE ROLE sd_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS "
+                "NOREPLICATION "
+                f"PASSWORD {quoted}"
+            )
     finally:
         await conn.close()
 

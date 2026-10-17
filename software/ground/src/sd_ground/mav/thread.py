@@ -29,7 +29,7 @@ import contextlib
 import datetime as dt
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
@@ -518,6 +518,10 @@ class GroundMav:
         self._system_action(self.vehicle_id, "battery_rtl")
 
 
+async def _run[T](work: Callable[[Vehicle], Awaitable[T]], vehicle: Vehicle) -> T:
+    return await work(vehicle)
+
+
 class ThreadSafeMav:
     """Calls into a ``GroundMav`` from any thread; the work runs in its own loop."""
 
@@ -546,6 +550,12 @@ class ThreadSafeMav:
 
     def snapshot(self) -> MavSnapshot | None:
         return self.core.snapshot()
+
+    async def call[T](self, work: Callable[[Vehicle], Awaitable[T]], timeout_s: float = 30.0) -> T:
+        """Run ``work(vehicle)`` in the MAVLink thread's loop and wait for it from another
+        loop (the fence upload and parameter reads; never the emergency path)."""
+        future = asyncio.run_coroutine_threadsafe(_run(work, self.core.vehicle), self.loop)
+        return await asyncio.wait_for(asyncio.wrap_future(future), timeout_s)
 
     # --- sd_ground.sources.VehicleLink ------------------------------------------------
 

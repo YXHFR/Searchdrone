@@ -39,6 +39,7 @@ from sd_ground.mav.thread import ActionReport, MavSnapshot, ModeAction
 from sd_ground.services.latches import LatchChange, Latches, LatchRefusedError
 from sd_ground.sources import EmergencyAction, EmergencyUnavailableError
 from sd_obs.clock import Clock
+from sd_safety.constants import OPERATOR_ABSENT_S
 from sd_schemas.api import ActionDispatched, ActionOutcome, ManualControlInput
 from sd_schemas.base import SdModel, new_id
 from sd_schemas.link import ManualTakeover, OperatorOverrideNotice, OperatorRelease, StickAxes
@@ -186,6 +187,7 @@ class VehicleActions:
         self._outcomes: OrderedDict[str, ActionOutcome] = OrderedDict()
         self._by_client: OrderedDict[tuple[str, str, str], ActionDispatched] = OrderedDict()
         self.post: queue.SimpleQueue[_Post | _Report | _Event] = queue.SimpleQueue()
+        self._via: dict[str, Via] = {}
 
     # --- the emergency path (sources.EmergencyPath) -----------------------------------
 
@@ -265,6 +267,8 @@ class VehicleActions:
                 "failsafe tar hem den om markstationen är borta.",
             )
         seq = self.latches.start(vehicle_id, kind, by).action_seq
+        with self._lock:
+            self._via[vehicle_id] = via
         action_id = str(new_id())
         submitted = self.mav is not None and self.mav.submit(
             ModeAction(action_id, vehicle_id, kind, seq)
@@ -333,6 +337,11 @@ class VehicleActions:
             self._outcomes.move_to_end(str(outcome.action_id))
             while len(self._outcomes) > OUTCOMES_MAX:
                 self._outcomes.popitem(last=False)
+
+    def latest_via(self, vehicle_id: str) -> Via | None:
+        """How the newest STOP / FLY HOME / system action came in (button, chat, ...)."""
+        with self._lock:
+            return self._via.get(vehicle_id)
 
     def outcome(self, vehicle_id: str, action_id: str) -> ActionOutcome | None:
         with self._lock:
@@ -609,21 +618,19 @@ def _latch_event(g: GroundView, change: LatchChange) -> None:
 
 
 class OperatorPresence:
-    """No pilot WebSocket for ``operator_absent_s`` during an active mission: the
-    configured action (``hold`` = STOP's steps with ``watchdog_stop``, ``return_home``
-    = FLY HOME's with ``watchdog_rtl``, ``off`` = only the alarm). Once per absence."""
+    """No pilot WebSocket for ``absent_s`` (30 s) during an active mission: the alarm and
+    a hold (STOP's steps with the latch ``watchdog_stop``), once per absence. Owner
+    decision: always a hold, never off and never a flight home."""
 
     def __init__(
         self,
         actions: VehicleActions,
         *,
-        absent_s: float,
-        action: Literal["hold", "return_home", "off"],
+        absent_s: float = OPERATOR_ABSENT_S,
         mission_active: Callable[[str], bool],
     ) -> None:
         self.actions = actions
         self.absent_s = absent_s
-        self.action = action
         self.mission_active = mission_active
         self._fired: set[str] = set()
 
@@ -641,10 +648,7 @@ class OperatorPresence:
             self._fired.add(vid)
             g.add_event("vehicle.operator_absent", severity="critical", vehicle_id=vid)
             _publish(g, "vehicle", "alarm.OPERATOR_ABSENT", {}, vid)
-            if self.action == "hold":
-                self.actions.system(vid, "watchdog_stop")
-            elif self.action == "return_home":
-                self.actions.system(vid, "watchdog_rtl")
+            self.actions.system(vid, "watchdog_stop")
 
     async def run(self, g: GroundView, every_s: float = 0.1) -> None:
         while True:

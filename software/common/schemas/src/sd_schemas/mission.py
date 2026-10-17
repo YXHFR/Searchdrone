@@ -94,6 +94,6 @@ class OperatorLatch(SdModel):
     action: LatchAction
     underlying: Literal["battery_rtl"] | None = None  # the battery latch stays under a STOP
     action_seq: int  # strictly increasing per vehicle
-    set_by: str  # "operator:<alias>" | "system:ground"
+    set_by: str  # "operator:<alias>" | "system:ground" | "system:onboard" (adopted)
     set_at: AwareDatetime  # display only
     set_mono_ms: int
