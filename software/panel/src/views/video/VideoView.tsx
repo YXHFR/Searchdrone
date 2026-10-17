@@ -23,10 +23,16 @@ interface Info {
   fps: number | null;
 }
 
-/** Playing = there is a frame (readyState >= 2) and the time moves on. */
-function playing(el: HTMLVideoElement, last: { t: number }): boolean {
-  const moved = el.currentTime > last.t;
+/**
+ * Playing = there is a frame (readyState >= 2) and the picture moves on: new decoded
+ * frames where the browser counts them, else the time. A WebRTC element's time can keep
+ * running after the frames stop (camera gone, link still up), so frames come first.
+ */
+function playing(el: HTMLVideoElement, last: { t: number; f: number }): boolean {
+  const frames = el.getVideoPlaybackQuality?.().totalVideoFrames ?? 0;
+  const moved = frames > 0 ? frames > last.f : el.currentTime > last.t;
   last.t = el.currentTime;
+  last.f = frames;
   return el.readyState >= 2 && moved;
 }
 
@@ -66,7 +72,7 @@ export function connect(
   let whep: WhepSession | null = null;
   const abort = new AbortController();
   const timers: ReturnType<typeof setTimeout>[] = [];
-  const last = { t: -1 };
+  const last = { t: -1, f: -1 };
   let started = false;
   let still = 0; // polls in a row without progress after the picture started
   let mode: Mode = "connecting";

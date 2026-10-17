@@ -90,6 +90,25 @@ describe("connect: a playing picture that stops", () => {
     expect(el.srcObject).toBeNull();
   });
 
+  it("WebRTC: the time runs on but no new frames come for 3 s → none", async () => {
+    const el = fakeVideo();
+    let frames = 0;
+    const counted = Object.assign(el, {
+      getVideoPlaybackQuality: () => ({ totalVideoFrames: frames }),
+    });
+    const w = fakeWhep();
+    start(counted);
+    w.resolve();
+    for (let t = 0; t < 1000; t += POLL_MS) {
+      frames += 4;
+      await run(el, POLL_MS, true);
+    }
+    expect(mode()).toBe("webrtc");
+    await run(el, STALL_MS, true); // currentTime moves, the frame count does not
+    expect(mode()).toBe("none");
+    expect(w.close).toHaveBeenCalledTimes(1);
+  });
+
   it("WebRTC: a short hiccup under 3 s keeps the picture", async () => {
     const el = fakeVideo();
     const w = fakeWhep();
