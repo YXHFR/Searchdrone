@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import os
 import shutil
@@ -134,21 +133,21 @@ def test_main_exits_2_on_a_failed_check(root: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_token_masked_in_logs() -> None:
-    secret = "s3cr3t-" + "x" * 40
-    stream = io.StringIO()
-    handler = logging.StreamHandler(stream)
-    handler.addFilter(SecretFilter([secret]))
-    logger = logging.getLogger("sd_onboard.test")
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    try:
-        logger.info("dialling with %s", secret)
-        logger.info("headers {'Authorization': 'Bearer abcdef123'}")
-        logger.info("token=zzz999")
-    finally:
-        logger.removeHandler(handler)
-    text = stream.getvalue()
-    assert secret not in text and "abcdef123" not in text and "zzz999" not in text
+    """The filter masks a configured value and keyed values. Records are built by hand
+    and passed through the filter only; nothing is written to any log."""
+    marker = "m4rk3r-" + "x" * 40
+    masker = SecretFilter([marker])
+    texts = []
+    for msg, args in (
+        ("dialling with %s", (marker,)),
+        ("headers {'Authorization': 'Bearer abcdef123'}", None),
+        ("token=zzz999", None),
+    ):
+        record = logging.LogRecord("sd_onboard.test", logging.INFO, __file__, 1, msg, args, None)
+        assert masker.filter(record)
+        texts.append(record.getMessage())
+    text = "\n".join(texts)
+    assert marker not in text and "abcdef123" not in text and "zzz999" not in text
     assert text.count(MASK) == 3
 
 
