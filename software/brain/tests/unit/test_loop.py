@@ -567,6 +567,36 @@ async def test_skill_end_waits_for_the_snapshot_after_it() -> None:
     assert fg.commands[0].based_on is not None and fg.commands[0].based_on.state_seq == 1005
 
 
+async def test_skill_end_waits_for_a_newer_snapshot_too() -> None:
+    """The ground has already marked the order done, but its onboard snapshot is still the
+    one from before the onboard computer changed state: the turn waits for the next one."""
+    backend = Steps(act("return_home"))
+    loop, fg, _ = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    fg.sit["active_command"] = None
+    calls = 0
+    situation = fg.situation
+
+    async def lagging(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            fg.sit["snapshot_state_seq"] = 2000
+        return await situation(mission_id)
+
+    fg.situation = lagging  # type: ignore[method-assign]
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    await loop.settle()
+    assert calls >= 3
+    assert len(fg.commands) == 1
+    assert fg.commands[0].based_on is not None and fg.commands[0].based_on.state_seq == 2000
+
+
 async def test_skill_end_waits_only_so_long() -> None:
     backend = Steps(act("return_home"))
     loop, fg, clock = make_loop(backend, "airborne_survey.json")

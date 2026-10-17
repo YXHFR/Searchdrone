@@ -727,21 +727,28 @@ class CommanderLoop:
         self, mid: str, s: Situation, trigger: Trigger, events: list[dict[str, Any]]
     ) -> Situation:
         """The situation once it shows the vehicle after the event (at most
-        ``FRESH_SNAPSHOT_WAIT_S``): after a skill's end, a snapshot without that order as
-        active (an order based on the older one is refused onboard as ``STATE_CHANGED``);
-        after the pilot's Resume, the mission no longer paused by a person (until the
-        onboard computer confirms the release, the gate still says the pilot must resume)."""
+        ``FRESH_SNAPSHOT_WAIT_S``): after a skill's end, a newer onboard snapshot than the
+        one at hand and without that order as active (the ground can mark the order done
+        before the snapshot that shows the onboard state change; an order based on the
+        older one is refused onboard as ``STATE_CHANGED``); after the pilot's Resume, the
+        mission no longer paused by a person (until the onboard computer confirms the
+        release, the gate still says the pilot must resume)."""
         kind = "event.skill" if trigger == "skill_event" else "event.operator_override"
         body = next((e.get("body") or {} for e in reversed(events) if e.get("type") == kind), {})
+        first = (s.snapshot_state_epoch, s.snapshot_state_seq)
 
         def stale(s: Situation) -> bool:
             if trigger == "skill_event":
                 ended = body.get("command_id")
-                return (
-                    ended is not None
-                    and s.active_command is not None
-                    and str(s.active_command.id) == str(ended)
+                if ended is None:
+                    return False
+                still_active = s.active_command is not None and str(s.active_command.id) == str(
+                    ended
                 )
+                same_snapshot = (
+                    first[1] is not None and (s.snapshot_state_epoch, s.snapshot_state_seq) == first
+                )
+                return still_active or same_snapshot
             return (
                 body.get("action") == "resume"
                 and s.mission_status == MissionState.PAUSED
