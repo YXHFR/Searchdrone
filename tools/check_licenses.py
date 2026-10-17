@@ -51,7 +51,13 @@ MAX_LICENSE_TEXT = 200
 # pip-licenses and its own dependencies are tools, not dependencies of our packages.
 IGNORED = {"pip-licenses", "prettytable", "wcwidth", "pip", "setuptools"}
 # "<package>": "<license according to its source>, checked <YYYY-MM-DD>"
-KNOWN_OK: dict[str, str] = {}
+KNOWN_OK: dict[str, str] = {
+    # Pulled in by shapely (sd_geo). The expression is all permissive licenses, but
+    # 0BSD, Zlib and CC0-1.0 are not on the word list above.
+    "numpy": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 (License-Expression);"
+    " the wheel bundles OpenBLAS/LAPACK (BSD-3-Clause), libgfortran (GPL-3.0-or-later"
+    " WITH GCC-exception-3.1) and libquadmath (LGPL-2.1), checked 2026-10-17",
+}
 
 
 @dataclass(frozen=True)

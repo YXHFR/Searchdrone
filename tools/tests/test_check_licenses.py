@@ -74,6 +74,12 @@ def test_unknown_fails_unless_known_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cl.violations([pkg]) == []
 
 
+def test_numpy_is_known_ok() -> None:
+    lic = "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+    assert not cl.license_allowed(lic)  # the word list alone does not cover it
+    assert cl.violations([P("numpy", "2.5.3", lic)]) == []
+
+
 def test_tools_are_ignored() -> None:
     assert cl.violations([P("pip-licenses", "5.5.5", "MIT"), P("prettytable", "3", "BSD")]) == []
 
