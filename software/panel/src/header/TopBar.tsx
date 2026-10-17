@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { PRESET_IDS } from "../layout/layoutModel";
+import { useBrainState } from "../state/brain";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
@@ -44,7 +45,7 @@ function StatusPills() {
   const vehicle = useLiveStore((s) => s.vehicle);
   const ws = useLiveStore((s) => s.ws);
   const mission = useLiveStore((s) => s.mission);
-  const brain = useLiveStore((s) => s.system?.parts.brain?.state ?? null);
+  const brain = useBrainState();
   const busy = useLiveStore((s) => s.brainBusy);
   const rtl = useSessionStore(
     (s) => mission?.limits.battery_rtl_pct ?? s.config?.limits_default.battery_rtl_pct ?? 15,

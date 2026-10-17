@@ -27,3 +27,9 @@ turns:
     say: ["Sökningen är klar. Flyger hem."]
     action: {skill: return_home}
     once: false
+  - on: operator_override          # the pilot's Resume released the stop (no latch left)
+    when: {action: null}
+    say: ["Fortsätter sökningen."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
+    delay_s: 3
+    once: false

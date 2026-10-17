@@ -288,10 +288,14 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       break;
     }
     case "chat.brain_status": {
-      const busy = (e.data as { state?: string }).state === "busy";
+      const state = (e.data as { state?: string }).state;
+      const busy = state === "busy";
+      const known = state === "ready" || busy || state === "degraded" || state === "down";
       live.patch({
         brainBusy: busy,
+        brainState: known ? state : live.brainState,
         brainBusySince: busy ? (live.brainBusySince ?? Date.now()) : null,
+        aiDisconnected: state === "ready" || busy ? false : live.aiDisconnected,
       });
       break;
     }

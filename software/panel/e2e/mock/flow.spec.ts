@@ -223,6 +223,12 @@ test.describe("chat and approval cards", () => {
     await expect(page.getByTestId("brain-row")).toContainText(/[2-9] s/);
     ground.pushLive("chat", "chat.brain_status", { state: "ready", typing: false });
     await expect(page.getByTestId("brain-row")).toHaveText("");
+    // The ground reports the AI process going away with chat.brain_status.
+    ground.pushLive("chat", "chat.brain_status", { state: "down", typing: false });
+    await expect(page.getByTestId("brain-row")).toContainText("AI:n är nere");
+    await expect(page.getByTestId("pill-ai")).toContainText("AI borta");
+    ground.pushLive("chat", "chat.brain_status", { state: "ready", typing: false });
+    await expect(page.getByTestId("brain-row")).toHaveText("");
 
     ground.mission = { ...ground.mission, active_charter_id: "C1" };
     ground.pushLive(

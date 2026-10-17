@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { vehiclePill } from "../../header/pills";
 import { ResumeRow } from "../../safety/ResumeButton";
+import { useBrainState } from "../../state/brain";
 import { useLiveStore } from "../../state/liveStore";
 import { activeCharter, useMissionStore } from "../../state/missionStore";
 import { useSessionStore } from "../../state/sessionStore";
@@ -63,7 +64,7 @@ function LinksCard() {
   const { t } = useTranslation();
   const ws = useLiveStore((s) => s.ws);
   const link = useLiveStore((s) => s.vehicle?.link ?? null);
-  const brain = useLiveStore((s) => s.system?.parts.brain?.state ?? null);
+  const brain = useBrainState();
   return (
     <section className="card" aria-labelledby="st-links">
       <h3 id="st-links">{t("status.links.title")}</h3>

@@ -13,6 +13,8 @@ interface LiveState {
   system: SystemStatus | null;
   mission: Mission | null;
   brainBusy: boolean;
+  /** The AI process as chat.brain_status reports it (the ground sends it on every change). */
+  brainState: "ready" | "busy" | "degraded" | "down" | null;
   /** When chat.brain_status turned busy ("AI:n tänker… N s"). */
   brainBusySince: number | null;
   /** Latest latch.updated; decides the Resume text when the onboard snapshot is missing. */
@@ -31,6 +33,7 @@ const empty = {
   system: null,
   mission: null,
   brainBusy: false,
+  brainState: null,
   brainBusySince: null,
   latch: null,
   aiDisconnected: false,

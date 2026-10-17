@@ -11,6 +11,7 @@ import { uuidv7 } from "../../lib/uuidv7";
 import { ClearanceControl } from "../../safety/ClearanceControl";
 import { ResumeButton, ResumeRow } from "../../safety/ResumeButton";
 import { resumeView } from "../../safety/resume";
+import { useBrainState } from "../../state/brain";
 import { chatOrder, type PanelChatMessage, useChatStore } from "../../state/chatStore";
 import { useLiveStore } from "../../state/liveStore";
 import { useMissionStore } from "../../state/missionStore";
@@ -156,7 +157,7 @@ function MessageList({ vehicleId }: ViewProps) {
 function BrainStatusRow() {
   const { t } = useTranslation();
   const since = useLiveStore((s) => s.brainBusySince);
-  const brain = useLiveStore((s) => s.system?.parts.brain?.state ?? null);
+  const brain = useBrainState();
   const now = useNow(500);
   let text: string | null = null;
   let warn = false;
