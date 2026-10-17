@@ -1,5 +1,5 @@
-# The mission's transition table, written out by hand from the specification, row by
-# row. test_transitions compares sd_ground.services.mission_state.TRANSITIONS with it.
+# The mission's transition table, written out by hand row by row, independently of the
+# code. test_transitions compares sd_ground.services.mission_state.TRANSITIONS with it.
 # Shorthand: P(x) = PAUSED with paused_by x, R(x) = RETURNING with returning_cause x,
 # P(*) / R(*) = every value. AIR = ACTIVE, P(*), R(*), HELD, FAILSAFE.
 # GROUND = DRAFT, CHARTER_PROPOSED, READY, LANDED. "-" = no mission yet.

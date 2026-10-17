@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Final, Protocol
 
 from sd_ground.logging import get_logger
-from sd_ground.services.latches import Latches
+from sd_ground.services.latches import ADOPTED_BY, Latches
 from sd_ground.sources import PartState
 from sd_link.server import LinkServer
 from sd_link.session import Closed, Expired, Inbound, LinkBusyError, LinkClosedError, LinkSession
@@ -209,7 +209,7 @@ class GroundLink:
                 vehicle_id=vehicle_id,
                 action=theirs.action,
                 action_seq=theirs.action_seq,
-                set_by="system:ground",
+                set_by=ADOPTED_BY,
                 set_at=self.clock.utc_now(),
                 set_mono_ms=self.clock.monotonic_ms(),
             )

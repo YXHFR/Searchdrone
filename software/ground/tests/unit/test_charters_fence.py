@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -116,6 +117,22 @@ def test_base_version_and_in_air_growth() -> None:
     )
     smaller = make(square(80))
     assert codes(smaller, active=old, base_version=1, airborne=True) == set()
+    wider_buffer = make(square(80), geofence_buffer_m=old.geofence_buffer_m + 10)
+    assert "AREA_CHANGE_REQUIRES_LANDING" in codes(
+        wider_buffer, active=old, base_version=1, airborne=True
+    )
+
+
+def test_huge_area_refused_before_splitting() -> None:
+    """A polygon over several degrees is refused at once, not cut into millions of cells."""
+    ring = [[149.0, -36.0], [152.0, -36.0], [152.0, -33.0], [149.0, -33.0], [149.0, -36.0]]
+    huge = {"type": "Polygon", "coordinates": [ring]}
+    start = time.monotonic()
+    with pytest.raises(ValueError, match="too large"):
+        charters.split_sectors(huge, PLANE)
+    with pytest.raises(charters.CharterInvalidError):
+        make(huge)
+    assert time.monotonic() - start < 1.0
 
 
 def test_sectors_split_large_area() -> None:

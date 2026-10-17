@@ -651,6 +651,12 @@ async def decide(
                 )
             confirmations.append("clear_around_drone")
     async with flow._lock:
+        now = flow.now()
+        fresh = await flow.repo.approval(str(card.id))
+        if fresh is None or str(fresh.status) != "pending":
+            raise FlowError(409, "SUPERSEDED", "Kortet är redan besvarat.")
+        if fresh.expires_at is not None and fresh.expires_at <= now:
+            raise FlowError(409, "APPROVAL_TIMEOUT", "Kortet har gått ut. Ordern skickas inte.")
         mission = await flow.open_mission_of(str(mission.id))
         row = await flow.active_charter_row(mission)
         ctx = await flow.gate_context(mission)
@@ -686,14 +692,15 @@ async def decide(
             )
             await set_status(flow, str(cmd.id), "rejected_by_gate", "GATE_ON_APPROVE")
             return await _card(flow, card)
-        await flow.repo.decide_approval(
+        if not await flow.repo.decide_approval(
             str(card.id),
             status="approved",
             by=by,
             now=now,
             reason=None,
             confirmations=confirmations,
-        )
+        ):
+            raise FlowError(409, "SUPERSEDED", "Kortet är redan besvarat.")
         consume = flow.clearances.get(mission.vehicle_id) if cmd.skill == "takeoff" else None
         if consume is not None:
             await flow.repo.consume_clearance(consume.clearance_id, str(cmd.id), now)
@@ -726,9 +733,15 @@ async def _card(flow: MissionFlow, card: Approval) -> Approval:
 # --- cancelling ------------------------------------------------------------------------
 
 
-async def cancel(flow: MissionFlow, command_id: str, *, brain_only: bool) -> Command:
+async def cancel(
+    flow: MissionFlow, command_id: str, *, brain_only: bool, mission_id: str | None = None
+) -> Command:
     cmd = await flow.repo.command(command_id)
-    if cmd is None or (brain_only and cmd.issuer_ref != BRAIN_ISSUER):
+    if (
+        cmd is None
+        or (brain_only and cmd.issuer_ref != BRAIN_ISSUER)
+        or (mission_id is not None and str(cmd.mission_id) != mission_id)
+    ):
         raise FlowError(404, "COMMAND_NOT_FOUND", "Ordern finns inte.")
     status = str(cmd.status)
     if status in _TERMINAL:

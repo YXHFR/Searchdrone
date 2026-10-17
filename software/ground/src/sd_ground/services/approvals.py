@@ -17,7 +17,6 @@ The AI has no route here: it can propose a charter, never approve one.
 from __future__ import annotations
 
 import dataclasses
-import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 from sd_ground.logging import get_logger
@@ -27,7 +26,6 @@ from sd_ground.services import fence as fence_rules
 from sd_ground.services.missions import FlowError
 from sd_mav.mission import MissionError
 from sd_mav.vehicle import ControlNotAllowedError, ForbiddenMavlinkError, Vehicle
-from sd_safety.constants import CLEARANCE_VALID_S
 from sd_schemas.api import Approval, ApprovalDecisionRequest, Charter, Mission
 from sd_schemas.base import new_id
 from sd_schemas.charter import AutonomyMode, CharterProposal, CharterValidationError, MissionCharter
@@ -117,6 +115,8 @@ async def propose(
     mission = await flow.open_mission_of(mission_id)
     if mission.status is MissionState.LANDED:
         raise FlowError(409, "MISSION_STATE_INVALID", "Uppdraget har landat. Öppna ett nytt.")
+    if by.startswith("brain:") and not mission.ai_enabled:
+        raise FlowError(409, "AI_DISABLED", "AI:n är avstängd för uppdraget.")
     active = await flow.active_charter(mission)
     home = active.home if active is not None else _home(flow, mission)
     area = await _area_of(flow, mission, proposal)
@@ -180,7 +180,7 @@ def _check(
         max_area_km2=flow.g.config.charter.max_area_km2,
         active=active,
         base_version=base_version,
-        airborne=flow.in_flight(mission.vehicle_id),
+        airborne=flow.may_be_airborne(mission),
     )
 
 
@@ -246,7 +246,7 @@ async def _decide_charter(
             [e.model_dump() for e in errors],
         )
     keep = None
-    if flow.in_flight(mission.vehicle_id) and active_row is not None:
+    if flow.may_be_airborne(mission) and active_row is not None:
         keep = str(active_row.id)  # a smaller area in the air keeps the verified fence
     await flow.repo.approve_charter(
         charter=charter,
@@ -534,7 +534,3 @@ async def supersede_command_cards(flow: MissionFlow, vehicle_id: str, reason: st
             updated = await flow.repo.approval(str(card.id))
             if updated is not None:
                 _publish_approval(flow, updated, "approval.updated")
-
-
-def valid_until(now: dt.datetime) -> dt.datetime:
-    return now + dt.timedelta(seconds=CLEARANCE_VALID_S)

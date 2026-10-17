@@ -8,6 +8,7 @@ Every test gets its own migrated ``searchdrone_test_*`` database. The AI is play
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 import sys
 from collections.abc import AsyncIterator
@@ -195,6 +196,33 @@ async def test_charter_validation_and_forbidden_fields(r: Rig) -> None:
 # --- 3: the fence ----------------------------------------------------------------------
 
 
+async def test_fence_read_back_must_match(r: Rig) -> None:
+    """A flight controller that stores a different vertex: never verified."""
+    fc = r.fc
+    assert fc is not None
+    store = fc._store  # pyright: ignore[reportPrivateUsage]
+
+    def shifted(item: Any) -> Any:
+        kept = store(item)
+        if kept.mission_type == FENCE and kept.seq == 1:
+            return dataclasses.replace(kept, x=kept.x + 100)
+        return kept
+
+    fc._store = shifted  # type: ignore[method-assign]
+    mid = await r.open_mission()
+    d = driver(r, mid)
+    proposal = (await d.charter("box")).json()
+    assert (await r.approve(proposal["approval_id"], 1)).status_code == 200
+    await r.until(lambda: "alert" in r.bus_types(), 10, "alarm")
+    await asyncio.sleep(1.0)
+    detail = await r.mission(mid)
+    assert detail["charter"]["fence_verified_at"] is None
+    assert detail["mission"]["status"] != "READY"
+    await r.clearance(mid)
+    res = await d.order("takeoff", {"alt_m": 40})
+    assert "FENCE_NOT_VERIFIED" in res.json()["reason_codes"]
+
+
 async def test_fence_params_wrong_blocks_takeoff(r: Rig) -> None:
     r.fc.params["FENCE_ACTION"] = 0  # someone changed the flight controller
     mid = await r.open_mission()
@@ -270,6 +298,23 @@ async def test_clearance_is_per_takeoff_and_logged(r: Rig) -> None:
     assert detail["clearance"] is None  # consumed by the take-off
 
 
+async def test_clearance_ends_at_disarming(r: Rig) -> None:
+    mid = await r.ready_mission()
+    res = await r.clearance(mid)
+    assert res.status_code == 200, res.text
+    fc = r.fc
+    assert fc is not None
+    fc.armed = True  # armed by hand on the ground, then disarmed again
+    await r.until(lambda: r.core.vehicle.telemetry.armed, 5, "armed")
+    await asyncio.sleep(0.5)
+    fc.armed = False
+
+    async def gone() -> bool:
+        return (await r.mission(mid))["clearance"] is None
+
+    await r.until(gone, 5, "clearance invalidated")
+
+
 async def test_command_card_lifecycle(r: Rig) -> None:
     mid = await r.ready_mission()
     put = await r.panel.put(
@@ -285,6 +330,11 @@ async def test_command_card_lifecycle(r: Rig) -> None:
     out = res.json()
     assert out["decision"] == "PENDING_APPROVAL" and out["status"] == "pending_approval", out
     approval = out["approval_id"]
+    wrong = await r.commander.post(
+        f"/commander/v1/missions/{new_id()}/commands/{out['command_id']}/cancel"
+    )
+    assert wrong.status_code == 404  # another mission's path cancels nothing
+    assert await _status_of(r, mid, out["command_id"], "pending_approval")
     stale = await r.approve(approval, 2)
     assert stale.status_code == 409 and stale.json()["code"] == "SUPERSEDED"
     rej = await r.panel.post(
@@ -373,6 +423,25 @@ async def _say(r: Rig, mid: str, text: str, msg_id: str | None = None) -> Any:
     return res.json()
 
 
+async def test_stop_word_with_the_database_down(r: Rig) -> None:
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    await r.wait_status(mid, "ACTIVE")
+    r.g.db_ok = False
+    try:
+        res = await r.panel.post(
+            f"/api/v1/missions/{mid}/chat",
+            json={"client_msg_id": str(new_id()), "text": "Stopp!"},
+            headers=H,
+        )
+        assert res.status_code == 503 and res.json()["code"] == "DB_DOWN"
+        await r.until(lambda: r.actions.latches.get(VID) is not None, 2, "latch")
+        assert r.actions.latches.get(VID).action == "stop"  # type: ignore[union-attr]
+    finally:
+        r.g.db_ok = True
+
+
 async def test_stop_words_without_the_ai(r: Rig) -> None:
     mid = await r.ready_mission()
     d = driver(r, mid)
@@ -434,6 +503,30 @@ async def test_chat_intent_rules(r: Rig) -> None:
     assert r.actions.latches.get(VID).action == "stop"  # type: ignore[union-attr]
     chat = (await r.panel.get(f"/api/v1/missions/{mid}/chat")).json()["items"]
     assert chat[-1]["role"] == "system" and "står still" in chat[-1]["text"]
+
+
+async def test_chat_intent_label_is_not_trusted(r: Rig) -> None:
+    """The AI claiming the exact-word rule on a line that is not the words only stops."""
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    await r.wait_status(mid, "ACTIVE")
+    line = await _say(r, mid, "hur går det?")
+    res = await r.commander.post(
+        f"/commander/v1/missions/{mid}/chat-intents",
+        json={
+            "request_id": str(new_id()),
+            "message_id": line["id"],
+            "intent": "return_home",
+            "probability": 1.0,
+            "engine": "rule",
+            "location": "local",
+            "latency_ms": 5,
+        },
+    )
+    assert res.status_code == 202, res.text
+    await r.until(lambda: r.actions.latches.get(VID) is not None, 2, "latch")
+    assert r.actions.latches.get(VID).action == "stop"  # type: ignore[union-attr]
 
 
 async def test_same_line_acts_once(r: Rig) -> None:

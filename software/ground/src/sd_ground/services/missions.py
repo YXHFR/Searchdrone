@@ -30,7 +30,9 @@ from sd_ground.mav.thread import MavSnapshot
 from sd_ground.services import fence as fence_rules
 from sd_ground.services import mission_state
 from sd_ground.services.clearance import Clearances
+from sd_ground.services.coverage import Coverage
 from sd_ground.services.gate_context import BrainRate, build_gate_context
+from sd_ground.services.latches import ADOPTED_BY
 from sd_ground.services.limits import check_change
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import Vehicle
@@ -75,6 +77,14 @@ _LATCH_TRIGGER: Final = {
     "watchdog_stop": Trigger.WATCHDOG_STOP,
     "watchdog_rtl": Trigger.WATCHDOG_RTL,
 }
+# A latch the ground took over from the onboard computer's Hello (``GroundLink``).
+_ADOPTED_TRIGGER: Final = {
+    "stop": Trigger.LATCH_ADOPTED_STOP,
+    "watchdog_stop": Trigger.LATCH_ADOPTED_STOP,
+    "return_home": Trigger.LATCH_ADOPTED_RTL,
+    "battery_rtl": Trigger.LATCH_ADOPTED_RTL,
+    "watchdog_rtl": Trigger.LATCH_ADOPTED_RTL,
+}
 _LATCH_REASON: Final = {
     "stop": "OPERATOR_STOP",
     "return_home": "OPERATOR_RTL",
@@ -116,6 +126,7 @@ class _VehicleWatch:
     hold_reason: str | None = None
     disarmed_mono: float | None = None
     closing: bool = False
+    armed: bool = False
     flown: bool = False  # in the air since it last stood disarmed outside a flight state
 
 
@@ -128,6 +139,7 @@ class MissionFlow:
     link: GroundLink | None = None
     mav: MavCaller | None = None
     actions: VehicleActions | None = None
+    coverage: Coverage = field(default_factory=Coverage)
     clearances: Clearances = field(default_factory=Clearances)
     rates: dict[str, BrainRate] = field(default_factory=dict[str, BrainRate])
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
@@ -216,6 +228,13 @@ class MissionFlow:
         return (
             snap is not None and snap.connected and not snap.in_flight and not snap.telemetry.armed
         )
+
+    def may_be_airborne(self, mission: Mission) -> bool:
+        """Fail closed: true unless the flight controller reports the vehicle disarmed on
+        the ground and the mission is not in a flight state (no telemetry = maybe flying).
+        For the checks that only the ground may pass (limits, larger areas, clearance)."""
+        status = MissionStatusFull(mission.status, mission.paused_by, mission.returning_cause)
+        return status in mission_state.AIR or not self.on_ground_disarmed(mission.vehicle_id)
 
     def latch(self, vehicle_id: str) -> OperatorLatch | None:
         return None if self.actions is None else self.actions.latches.get(vehicle_id)
@@ -405,6 +424,7 @@ class MissionFlow:
         )
         await files_service.close_files(self, mission)
         after = await self.transition(str(mission.id), trigger, closed_reason=reason)
+        self.coverage.forget(str(mission.id))
         return after or await self.mission(str(mission.id))
 
     # --- limits and autonomy -----------------------------------------------------------
@@ -417,7 +437,7 @@ class MissionFlow:
             old=mission.limits,
             caps=self.caps,
             active=charter,
-            in_flight=self.in_flight(mission.vehicle_id),
+            in_flight=self.may_be_airborne(mission),
         )
         if refusal is not None:
             raise FlowError(refusal.status, refusal.code, refusal.detail_sv, refusal.errors)
@@ -600,20 +620,27 @@ class MissionFlow:
     async def start(self) -> None:
         """At start: waiting order cards and clearances from before are void."""
         now = self.now()
-        with contextlib.suppress(Exception):
-            await self.repo.expire_all_pending(now)
-            await self.repo.invalidate_all_clearances(now)
+        await self._at_start("expire_cards", self.repo.expire_all_pending(now))
+        await self._at_start("invalidate_clearances", self.repo.invalidate_all_clearances(now))
         for vid in self.vehicle_ids:
-            with contextlib.suppress(Exception):
-                await self.repo.ensure_vehicle(vid, "sim", 1)
+            await self._at_start("ensure_vehicle", self.repo.ensure_vehicle(vid, "sim", 1))
             if self.actions is not None:
-                with contextlib.suppress(Exception):
-                    seq = await self.repo.latch_seq(vid)
+                seq = await self._at_start("latch_seq", self.repo.latch_seq(vid))
+                if isinstance(seq, int):
                     self.actions.latches.raise_seq(vid, seq)
             latch = self.latch(vid)
             self._watch[vid] = _VehicleWatch(
                 latch_seq=0 if latch is None else latch.action_seq, latch=latch
             )
+
+    async def _at_start(self, step: str, work: Awaitable[Any]) -> Any:
+        """One start step; a failure is logged and the next step still runs (the
+        database may be down at start: the tick catches up once it is back)."""
+        try:
+            return await work
+        except Exception as exc:
+            log.error("flow.start_step_failed", step=step, error=type(exc).__name__)
+            return None
 
     async def run(self) -> None:
         while True:
@@ -635,6 +662,7 @@ class MissionFlow:
         for vid in self.vehicle_ids:
             mission = await self.repo.open_mission(vid)
             await self._follow_latch(vid, mission)
+            await self._follow_arming(vid, mission)
             if mission is None:
                 continue
             await self._follow_landing(vid, mission)
@@ -692,10 +720,22 @@ class MissionFlow:
         if mission is None:
             return
         if latch is not None and (old is None or old.action_seq != latch.action_seq):
-            await self.transition(mid or "", _LATCH_TRIGGER[latch.action])
+            adopted = latch.set_by == ADOPTED_BY
+            trigger = (_ADOPTED_TRIGGER if adopted else _LATCH_TRIGGER)[latch.action]
+            await self.transition(mid or "", trigger)
             await commands_service.cancel_open(self, vehicle_id, _LATCH_REASON[latch.action])
         elif latch is None and old is not None:
             watch.resume_pending = True
+
+    async def _follow_arming(self, vehicle_id: str, mission: Mission | None) -> None:
+        """Disarming ends a "clear around the drone" confirmation that is still waiting."""
+        watch = self._watch.setdefault(vehicle_id, _VehicleWatch())
+        snap = self.mav_snapshot(vehicle_id)
+        armed = snap is not None and snap.connected and snap.telemetry.armed
+        if watch.armed and not armed and self.clearances.get(vehicle_id) is not None:
+            mid = None if mission is None else str(mission.id)
+            await self.end_clearance(vehicle_id, "invalidated", "DISARMED", mid)
+        watch.armed = armed
 
     async def _follow_landing(self, vehicle_id: str, mission: Mission) -> None:
         """Landed = it has been in the air during this mission and now stands disarmed

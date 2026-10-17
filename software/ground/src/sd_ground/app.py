@@ -22,6 +22,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from sd_ground.api import commander as commander_api
 from sd_ground.api import live as live_api
@@ -98,7 +99,28 @@ def create_commander_app(g: Ground) -> FastAPI:
     app.state.commander_hub = commander_api.CommanderHub(g)
     install_error_handlers(app)
     app.include_router(commander_api.router)
+    _with_schemas(app, commander_api.RAW_BODY_MODELS)
     return app
+
+
+def _with_schemas(app: FastAPI, models: tuple[type[BaseModel], ...]) -> None:
+    """Every ``$ref`` in the document resolves: add the raw-body models' schemas."""
+    build = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema:
+            return app.openapi_schema
+        doc = build()
+        schemas = doc.setdefault("components", {}).setdefault("schemas", {})
+        for model in models:
+            js = model.model_json_schema(ref_template="#/components/schemas/{model}")
+            for name, sub in js.pop("$defs", {}).items():
+                schemas.setdefault(name, sub)
+            schemas.setdefault(model.__name__, js)
+        app.openapi_schema = doc
+        return doc
+
+    app.openapi = openapi  # type: ignore[method-assign]
 
 
 def _labelled(app: ASGIApp, listener: str) -> ASGIApp:

@@ -32,9 +32,17 @@ from sd_schemas.base import new_id
 from sd_schemas.sv_commands import OverrideIntent, classify_override
 
 if TYPE_CHECKING:
+    from sd_ground.context import Ground
     from sd_ground.services.missions import MissionFlow
 
-__all__ = ["INTENT_MAX_AGE_S", "add_line", "exact_stop_word", "post_operator", "report_intent"]
+__all__ = [
+    "INTENT_MAX_AGE_S",
+    "act_without_db",
+    "add_line",
+    "exact_stop_word",
+    "post_operator",
+    "report_intent",
+]
 
 INTENT_MAX_AGE_S: Final = 10.0
 log = get_logger("sd_ground.chat")
@@ -106,6 +114,23 @@ async def add_line(
     return msg
 
 
+def act_without_db(g: Ground, body: ChatPost, who: Principal) -> bool:
+    """A pilot's exact stop words while the database is down: the mission (and so its
+    vehicle) cannot be looked up, so they act on every vehicle. True when sent."""
+    intent = exact_stop_word(body.text)
+    actions = g.vehicle_actions
+    if intent is None or who.role != "pilot" or actions is None:
+        return False
+    sent = False
+    for vid in actions.vehicle_ids:
+        try:
+            actions.chat_intent(intent, vehicle_id=vid, message_id=str(body.client_msg_id), by=who)
+            sent = True
+        except EmergencyUnavailableError as exc:
+            log.warning("chat.stop_word_refused", code=exc.code, vehicle_id=vid)
+    return sent
+
+
 async def post_operator(
     flow: MissionFlow, mission_id: str, body: ChatPost, who: Principal
 ) -> ChatMessage:
@@ -172,8 +197,11 @@ async def report_intent(
     if mission.status.value == "CLOSED" or age > INTENT_MAX_AGE_S:
         raise FlowError(409, "MESSAGE_TOO_OLD", "Chattraden är för gammal för att stoppa drönaren.")
     by = Principal(role="pilot", issuer_ref=line.author_ref, auth_mode="local")
-    model_reading = engine != "rule"
-    action: OverrideIntent = "stop" if model_reading else intent
+    # The ground decides itself whether the line is the exact words; the AI's own label
+    # (``engine``) is only recorded. Anything but an exact match only ever stops.
+    exact = exact_stop_word(line.text)
+    model_reading = exact != intent
+    action: OverrideIntent = intent if not model_reading else "stop"
     try:
         acted = _act(flow, mission, action, str(line.id), by)
     except EmergencyUnavailableError as exc:

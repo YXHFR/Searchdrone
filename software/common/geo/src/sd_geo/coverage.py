@@ -9,11 +9,11 @@ from shapely import Point, prepared
 from shapely import Polygon as ShapelyPolygon
 from shapely.strtree import STRtree
 
-__all__ = ["ALT_TOLERANCE_M", "CELL_M", "coverage_fraction"]
+__all__ = ["ALT_TOLERANCE_M", "CELL_M", "REACH_EXTRA_M", "coverage_fraction"]
 
 CELL_M = 5.0  # the polygon is cut into cells of this size
 ALT_TOLERANCE_M = 3.0  # track samples further than this from the search height do not count
-_REACH_EXTRA_M = 2.0  # a cell is covered within spacing/2 + this of a counted sample
+REACH_EXTRA_M = 2.0  # a cell is covered within spacing/2 + this of a counted sample
 
 
 def coverage_fraction(
@@ -28,7 +28,7 @@ def coverage_fraction(
     shape = ShapelyPolygon(polygon)
     if shape.is_empty or shape.area <= 0:
         raise ValueError("the polygon has no area")
-    reach = spacing_m / 2 + _REACH_EXTRA_M
+    reach = spacing_m / 2 + REACH_EXTRA_M
     samples = [Point(x, y) for x, y, alt in track if abs(alt - alt_target_m) <= ALT_TOLERANCE_M]
     inside = prepared.prep(shape)
     x0, y0, x1, y1 = shape.bounds

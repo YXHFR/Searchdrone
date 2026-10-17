@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 
+import pytest
 from fastapi.testclient import TestClient
 
 from sd_ground.app import create_panel_app, panel_asgi
@@ -261,6 +262,33 @@ def test_interactive_only_with_cli_token(panel: TestClient, pilot_token: str) ->
     res = panel.post(
         "/api/v1/missions/0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f/clearance",
         json={},
+        headers={**H, "Authorization": f"Bearer {pilot_token}"},
+    )
+    assert res.status_code == 403
+    assert res.json()["code"] == "INTERACTIVE_SESSION_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (
+            "limits",
+            {
+                "max_alt_agl_m": 120,
+                "max_speed_ms": 12,
+                "max_range_from_pilot_m": 500,
+                "battery_rtl_pct": 25,
+            },
+        ),
+        ("autonomy", {"mode": "APPROVE_EACH"}),
+    ],
+)
+def test_limits_and_autonomy_need_a_person(
+    panel: TestClient, pilot_token: str, path: str, body: dict[str, object]
+) -> None:
+    res = panel.put(
+        f"/api/v1/missions/0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f/{path}",
+        json=body,
         headers={**H, "Authorization": f"Bearer {pilot_token}"},
     )
     assert res.status_code == 403

@@ -4387,7 +4387,7 @@
         "summary": "Get Chat"
       },
       "post": {
-        "description": "A pilot's exact \"stopp\", \"stop\" or \"flyg hem\" acts like the button, before the\nline is stored and without the AI. \"Fortsätt\" never releases a stop.",
+        "description": "A pilot's exact \"stopp\", \"stop\" or \"flyg hem\" acts like the button, before the\nline is stored and without the AI. \"Fortsätt\" never releases a stop. With the\ndatabase down the words still act (on every vehicle); the line is then not stored.",
         "operationId": "post_chat_api_v1_missions__mission_id__chat_post",
         "parameters": [
           {

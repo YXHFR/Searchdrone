@@ -16,6 +16,7 @@ through ``mission_files.rel_path`` under the mission's folder (``resolve()`` and
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import shutil
@@ -77,24 +78,25 @@ def _track_geojson(track: list[dict[str, Any]]) -> dict[str, Any]:
 async def close_files(flow: MissionFlow, mission: Mission) -> None:
     mid = str(mission.id)
     folder = flow.mission_dir(mid)
-    folder.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
     written: list[tuple[str, str]] = []
     try:
         export = await flow.repo.mission_export(mid)
-        _write(
-            folder / "mission.json", json.dumps(export, ensure_ascii=False, indent=2, default=str)
-        )
+        text = json.dumps(export, ensure_ascii=False, indent=2, default=str)
+        await asyncio.to_thread(_write, folder / "mission.json", text)
         written.append(("export", "mission.json"))
         if flow.g.repo is not None:
             await flow.g.flush_events()
             events = await flow.g.repo.events(mid, None, None, 100_000)
             lines = [e.model_dump_json() for e in events]
-            _write(folder / "events.jsonl", "\n".join(lines) + ("\n" if lines else ""))
+            body = "\n".join(lines) + ("\n" if lines else "")
+            await asyncio.to_thread(_write, folder / "events.jsonl", body)
             written.append(("log", "events.jsonl"))
         track = await flow.repo.track(mid)
-        _write(folder / "exports" / "track.geojson", json.dumps(_track_geojson(track)))
+        geo = json.dumps(_track_geojson(track))
+        await asyncio.to_thread(_write, folder / "exports" / "track.geojson", geo)
         written.append(("export", "exports/track.geojson"))
-        written += _copy_dataflash(flow, folder)
+        written += await asyncio.to_thread(_copy_dataflash, flow, folder)
     except OSError as exc:
         log.error("files.write_failed", mission_id=mid, error=type(exc).__name__)
         flow.g.add_event(
@@ -107,7 +109,7 @@ async def close_files(flow: MissionFlow, mission: Mission) -> None:
         path = resolve_file(folder, rel)
         if path is None:
             continue
-        size, digest = sha256_of(path)
+        size, digest = await asyncio.to_thread(sha256_of, path)
         await flow.repo.add_file(
             mission_id=mid,
             kind=kind,

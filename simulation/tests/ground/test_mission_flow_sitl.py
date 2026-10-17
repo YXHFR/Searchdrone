@@ -11,7 +11,9 @@ executor in this process on 1/191 (through mavtap), connected to that server. Th
 * after the pilot approves the charter, the ground uploads the fence polygon to the
   flight controller, reads it back and marks it verified; the onboard computer accepts it;
 * a scripted flight: take off, fly to P1, fly home and land; the mission closes with its
-  files.
+  files;
+* limits raised by the pilot on the ground move ArduCopter's fence parameters, and the
+  onboard computer's preflight still passes.
 """
 
 from __future__ import annotations
@@ -39,14 +41,17 @@ from test_onboard_sitl import (  # pyright: ignore[reportMissingImports]
     sim,
 )
 
+from sd_ground.mav.fence import read_params
 from sd_mav import Role, SendOrigin
 from sd_mav.mission import FENCE, download, fence_hash
 from sd_obs.clock import MonotonicClock
 from sd_onboard.executor.executor import Executor, ExecutorOptions
 from sd_onboard.io.params import effective_params
 from sd_onboard.link_client import OnboardLink
+from sd_safety.limits import fc_fence_params
 from sd_safety.targets import distance_m
 from sd_schemas.executor import ExecutorState as S
+from sd_schemas.safety import SafetyLimits
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -235,3 +240,33 @@ async def test_scripted_flight_on_sitl(stack: Rig, sim: Sim) -> None:
     }
     gates = (await r.panel.get(f"/api/v1/missions/{mid}/gate_decisions")).json()
     assert [g["decision"] for g in gates] == ["ALLOW", "ALLOW", "ALLOW"]
+
+
+@pytest.mark.budget_s(180)
+async def test_raised_limits_move_the_fc_fence_on_sitl(stack: Rig, sim: Sim) -> None:
+    r = stack
+    raised = {
+        "max_alt_agl_m": 150,
+        "max_speed_ms": 15,
+        "max_range_from_pilot_m": 800,
+        "battery_rtl_pct": 25,
+    }
+    mid = await r.open_mission()
+    res = await r.panel.put(f"/api/v1/missions/{mid}/limits", json=raised, headers=H)
+    assert res.status_code == 200, res.text
+    res = await r.panel.post(
+        f"/api/v1/missions/{mid}/charters",
+        json={"area": r.square(AREA_HALF_M), "reason_sv": "SITL"},
+        headers=H,
+    )
+    assert res.status_code == 201, res.text
+    card = res.json()
+    res = await r.approve(str(card["approval_id"]), card["version"])
+    assert res.status_code == 200, res.text
+    await r.wait_status(mid, "READY", 90)
+    want = fc_fence_params(SafetyLimits.model_validate(raised))
+    assert r.flow.mav is not None
+    got = await r.flow.mav.call(lambda v: read_params(v, want), 20)
+    for name, value in want.items():
+        assert got[name] is not None and abs(got[name] - value) < 0.01, (name, got[name])
+    await r.until(r.onboard.ex.preflight_ok, 90, "onboard preflight with the raised fence")

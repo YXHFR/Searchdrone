@@ -267,7 +267,8 @@ class VehicleActions:
                 "failsafe tar hem den om markstationen är borta.",
             )
         seq = self.latches.start(vehicle_id, kind, by).action_seq
-        self._via[vehicle_id] = via
+        with self._lock:
+            self._via[vehicle_id] = via
         action_id = str(new_id())
         submitted = self.mav is not None and self.mav.submit(
             ModeAction(action_id, vehicle_id, kind, seq)
@@ -339,7 +340,8 @@ class VehicleActions:
 
     def latest_via(self, vehicle_id: str) -> Via | None:
         """How the newest STOP / FLY HOME / system action came in (button, chat, ...)."""
-        return self._via.get(vehicle_id)
+        with self._lock:
+            return self._via.get(vehicle_id)
 
     def outcome(self, vehicle_id: str, action_id: str) -> ActionOutcome | None:
         with self._lock:

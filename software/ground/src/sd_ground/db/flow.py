@@ -1191,7 +1191,3 @@ class FlowRepo:
                 payload=payload,
                 severity=severity,
             )
-
-
-def point_geojson(lat: float, lon: float) -> dict[str, Any]:
-    return json.loads(_point(lat, lon))

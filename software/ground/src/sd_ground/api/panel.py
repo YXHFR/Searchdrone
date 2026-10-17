@@ -401,13 +401,15 @@ async def patch_mission(mission_id: IdPath, body: MissionPatch, g: G, who: Pilot
 
 
 @router.put("/missions/{mission_id}/limits", response_model=Mission)
-async def put_limits(mission_id: IdPath, body: SafetyLimits, g: G, who: Pilot) -> Mission:
+async def put_limits(mission_id: IdPath, body: SafetyLimits, g: G, who: Interactive) -> Mission:
     """Stricter, or raised by click up to the outer cap (``config/local/limits.toml``)."""
     return await _flow(g).put_limits(mission_id, body, who.issuer_ref)
 
 
 @router.put("/missions/{mission_id}/autonomy", response_model=Mission)
-async def put_autonomy(mission_id: IdPath, body: AutonomyRequest, g: G, who: Pilot) -> Mission:
+async def put_autonomy(
+    mission_id: IdPath, body: AutonomyRequest, g: G, who: Interactive
+) -> Mission:
     return await _flow(g).put_autonomy(mission_id, body.mode, who.issuer_ref)
 
 
@@ -571,7 +573,12 @@ async def get_chat(
 @router.post("/missions/{mission_id}/chat", status_code=201, response_model=ChatMessage)
 async def post_chat(mission_id: IdPath, body: ChatPost, g: G, who: Pilot) -> ChatMessage:
     """A pilot's exact "stopp", "stop" or "flyg hem" acts like the button, before the
-    line is stored and without the AI. "Fortsätt" never releases a stop."""
+    line is stored and without the AI. "Fortsätt" never releases a stop. With the
+    database down the words still act (on every vehicle); the line is then not stored."""
+    if (g.repo is None or not g.db_ok) and chat_service.act_without_db(g, body, who):
+        raise ApiStatusError(
+            503, "DB_DOWN", "Databasen svarar inte. Kommandot skickades ändå till drönaren."
+        )
     return await chat_service.post_operator(_flow(g), mission_id, body, who)
 
 

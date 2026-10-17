@@ -10,18 +10,22 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from sd_mav.mission import FENCE, download, fence_hash, fence_items, upload
+from sd_mav.mission import FENCE, MissionError, download, fence_hash, fence_items, upload
 from sd_mav.vehicle import SendOrigin, Vehicle
 
 __all__ = ["read_fence_hash", "read_params", "set_fence_limits", "upload_fence"]
 
 
 async def upload_fence(vehicle: Vehicle, corners: Sequence[tuple[float, float]]) -> str:
-    """Upload the inclusion polygon ``corners`` (lat, lon) and return ``fence_hash`` of
-    what the flight controller gives back. ``MissionError`` / ``ForbiddenMavlinkError``
-    on failure."""
-    await upload(vehicle, fence_items(corners), origin=SendOrigin.GROUND)
-    return await read_fence_hash(vehicle)
+    """Upload the inclusion polygon ``corners`` (lat, lon), read it back and return its
+    ``fence_hash``. ``MissionError`` when what the flight controller gives back is not
+    exactly what was sent; ``MissionError`` / ``ForbiddenMavlinkError`` on failure."""
+    items = fence_items(corners)
+    await upload(vehicle, items, origin=SendOrigin.GROUND)
+    stored = await read_fence_hash(vehicle)
+    if stored != fence_hash(items):
+        raise MissionError("the fence read back differs from the uploaded polygon")
+    return stored
 
 
 async def read_fence_hash(vehicle: Vehicle) -> str:

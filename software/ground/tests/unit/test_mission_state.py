@@ -13,7 +13,7 @@ import yaml
 from sd_ground.services.mission_state import ALL_STATES, TRANSITIONS, next_state
 from sd_schemas.mission import MissionState, MissionStatusFull, TransitionCtx, Trigger
 
-FIXTURE = Path(__file__).parent / "fixtures" / "transitions_8_2.yaml"
+FIXTURE = Path(__file__).parent / "fixtures" / "transitions.yaml"
 S = MissionState
 _PAUSED = ("operator", "brain", "system")
 _RETURNING = ("brain", "operator", "battery", "failsafe", "system")

@@ -60,6 +60,7 @@ from sd_schemas.sv_commands import OverrideIntent
 __all__ = [
     "BRAIN_HEARTBEAT_TIMEOUT_S",
     "BRAIN_ISSUER",
+    "RAW_BODY_MODELS",
     "CommanderHub",
     "clean_text",
     "router",
@@ -67,6 +68,14 @@ __all__ = [
 ]
 
 BRAIN_PING_S = 5.0
+# Bodies read raw (for our own error codes) and named in ``openapi_extra``: their schemas
+# are added to the document's components by ``app.create_commander_app``.
+RAW_BODY_MODELS: tuple[type[BaseModel], ...] = (
+    BrainMessage,
+    CharterProposal,
+    DecisionLog,
+    MissionMemoryUpdate,
+)
 BRAIN_ISSUER = "brain:ground"
 log = get_logger("sd_ground.commander")
 
@@ -281,9 +290,9 @@ async def post_estimate(
 @router.post("/missions/{mission_id}/commands/{command_id}/cancel", status_code=202)
 async def post_cancel(mission_id: IdPath, command_id: IdPath, g: G, _: Commander) -> dict[str, Any]:
     """Only orders the AI itself gave (404 otherwise)."""
-    cmd = await commands_service.cancel(_flow(g), command_id, brain_only=True)
-    if str(cmd.mission_id) != str(UUID(mission_id)):
-        raise ApiStatusError(404, "COMMAND_NOT_FOUND", "Ordern finns inte.")
+    cmd = await commands_service.cancel(
+        _flow(g), command_id, brain_only=True, mission_id=str(UUID(mission_id))
+    )
     return {"command_id": str(cmd.id), "status": str(cmd.status)}
 
 

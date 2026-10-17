@@ -51,6 +51,7 @@ from sd_schemas.safety import SafetyLimits
 from sd_schemas.skills import SkillSpec
 
 __all__ = [
+    "MAX_GRID_CELLS",
     "MAX_VERTICES",
     "SECTOR_CELL_M",
     "CharterInvalidError",
@@ -69,6 +70,9 @@ MIN_VERTICES: Final = 3
 # full cell still fits in one survey_sector (250 000 m²).
 SECTOR_CELL_M: Final = 499.0
 SLIVER_M2: Final = 100.0
+# At most this many grid cells are cut; a larger box is refused before any geometry work,
+# so an absurd polygon cannot keep the event loop busy.
+MAX_GRID_CELLS: Final = 1000
 _SECTOR_IDS: Final = [*string.ascii_uppercase] + [
     a + b for a in string.ascii_uppercase for b in string.ascii_uppercase
 ]
@@ -147,6 +151,8 @@ def split_sectors(area: Mapping[str, Any], plane: Plane) -> list[Sector]:
         minx, miny, maxx, maxy = poly.bounds
         cols = max(1, math.ceil((maxx - minx) / SECTOR_CELL_M))
         rows = max(1, math.ceil((maxy - miny) / SECTOR_CELL_M))
+        if cols * rows > MAX_GRID_CELLS:
+            raise ValueError("area too large to split")
         cells: list[tuple[int, int, ShapelyPolygon]] = []
         for r in range(rows):
             top = maxy - r * SECTOR_CELL_M
@@ -324,6 +330,9 @@ def validate(
         new = polygon_xy(charter.area, Plane(active.home.lat, active.home.lon))
         if not old.buffer(0.01).covers(new):
             out.append(error("AREA_CHANGE_REQUIRES_LANDING", field="area"))
+        if charter.geofence_buffer_m > active.geofence_buffer_m:
+            # the kept fence polygon was built for the old buffer
+            out.append(error("AREA_CHANGE_REQUIRES_LANDING", field="geofence_buffer_m"))
     current = None if active is None else active.version
     if base_version != current:
         out.append(error("BASE_VERSION_STALE", field="base_version", limit=current))

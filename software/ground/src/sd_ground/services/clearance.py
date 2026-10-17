@@ -100,8 +100,12 @@ async def confirm(flow: MissionFlow, mission: Mission, *, by: str, origin: str) 
     if row is None:
         raise FlowError(409, "CHARTER_NOT_APPROVED", "Det finns ingen godkänd uppdragsram.")
     vid, mid = mission.vehicle_id, str(mission.id)
-    if flow.in_flight(vid):
-        raise FlowError(409, "AIRBORNE", "Drönaren är redan i luften.")
+    if flow.may_be_airborne(mission):
+        raise FlowError(
+            409,
+            "AIRBORNE",
+            "Drönaren måste stå avstängd på marken, med kontakt med flygkontrollern.",
+        )
     clearance_id = str(new_id())
     now = flow.now()
     until = now + dt.timedelta(seconds=CLEARANCE_VALID_S)

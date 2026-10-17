@@ -275,6 +275,60 @@
         "title": "AutonomyMode",
         "type": "string"
       },
+      "BrainMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "client_msg_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Client Msg Id",
+            "type": "string"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "In Reply To"
+          },
+          "kind": {
+            "default": "text",
+            "enum": [
+              "text",
+              "question",
+              "status",
+              "proposal"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "refs": {
+            "additionalProperties": true,
+            "maxProperties": 16,
+            "title": "Refs",
+            "type": "object"
+          },
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_msg_id",
+          "text"
+        ],
+        "title": "BrainMessage",
+        "type": "object"
+      },
       "Charter": {
         "additionalProperties": false,
         "properties": {
@@ -402,6 +456,166 @@
           "created_at"
         ],
         "title": "Charter",
+        "type": "object"
+      },
+      "CharterProposal": {
+        "additionalProperties": false,
+        "description": "A new or changed charter from the pilot (panel) or the AI.\n\nIt has no field for the autonomy mode, the mission's SafetyLimits, home or the pilot\nposition: sending one is rejected (unknown fields are forbidden). Its own charter\nvalues are checked against the mission limits by the server before any card shows.",
+        "properties": {
+          "allowed_skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Allowed Skills"
+          },
+          "alt_max_agl_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Alt Max Agl M"
+          },
+          "alt_min_agl_m": {
+            "default": 15,
+            "minimum": 5.0,
+            "title": "Alt Min Agl M",
+            "type": "number"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Area"
+          },
+          "area_annotation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Area Annotation Id"
+          },
+          "base_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Version"
+          },
+          "battery_rtl_pct": {
+            "anyOf": [
+              {
+                "maximum": 90,
+                "minimum": 15.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Battery Rtl Pct"
+          },
+          "default_alt_agl_m": {
+            "default": 40,
+            "minimum": 5.0,
+            "title": "Default Alt Agl M",
+            "type": "number"
+          },
+          "geofence_buffer_m": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 5,
+            "title": "Geofence Buffer M",
+            "type": "number"
+          },
+          "max_range_from_pilot_m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Range From Pilot M"
+          },
+          "max_speed_ms": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Speed Ms"
+          },
+          "reason_sv": {
+            "maxLength": 500,
+            "title": "Reason Sv",
+            "type": "string"
+          },
+          "sectors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Sector"
+                },
+                "maxItems": 52,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sectors"
+          }
+        },
+        "required": [
+          "reason_sv"
+        ],
+        "title": "CharterProposal",
         "type": "object"
       },
       "CharterProposalResult": {
@@ -913,6 +1127,239 @@
         ],
         "title": "CommandStatus",
         "type": "string"
+      },
+      "DecisionLog": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_config_hash": {
+            "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
+            "title": "Ai Config Hash",
+            "type": "string"
+          },
+          "backend": {
+            "enum": [
+              "llm",
+              "grammar",
+              "scripted",
+              "rule",
+              "cloud"
+            ],
+            "title": "Backend",
+            "type": "string"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Id"
+          },
+          "completion_tokens": {
+            "minimum": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cloud",
+                  "local"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Engine"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "enum": [
+                  "deadline",
+                  "timeout",
+                  "http_error",
+                  "parse_error",
+                  "round_limit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "gate_decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ALLOW",
+                  "REJECT",
+                  "PENDING_APPROVAL"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Decision"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "latency_ms": {
+            "minimum": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model Id"
+          },
+          "prompt_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Json"
+          },
+          "prompt_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Prompt Sha256",
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "minimum": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "proposal_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Ok"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "repairs": {
+            "minimum": 0,
+            "title": "Repairs",
+            "type": "integer"
+          },
+          "retry_of": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retry Of"
+          },
+          "rounds": {
+            "minimum": 0,
+            "title": "Rounds",
+            "type": "integer"
+          },
+          "tool_calls": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 32,
+            "title": "Tool Calls",
+            "type": "array"
+          },
+          "trigger": {
+            "pattern": "^[a-z][a-z0-9_.]{0,63}$",
+            "title": "Trigger",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "turn_id",
+          "trigger",
+          "backend",
+          "ai_config_hash",
+          "prompt_sha256",
+          "prompt_tokens",
+          "completion_tokens",
+          "latency_ms",
+          "rounds",
+          "repairs",
+          "tool_calls",
+          "command_id",
+          "gate_decision",
+          "error",
+          "prompt_json"
+        ],
+        "title": "DecisionLog",
+        "type": "object"
       },
       "EstimateResult": {
         "additionalProperties": false,
@@ -1461,6 +1908,54 @@
           "updated_at"
         ],
         "title": "MissionMemory",
+        "type": "object"
+      },
+      "MissionMemoryUpdate": {
+        "additionalProperties": false,
+        "description": "What sd-brain sends (PUT .../memory). The server adds ``updated_at``.",
+        "properties": {
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "pending_operator_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pending Operator Request"
+          },
+          "plan_note": {
+            "maxLength": 400,
+            "title": "Plan Note",
+            "type": "string"
+          },
+          "summarized_up_to_seq": {
+            "minimum": 0,
+            "title": "Summarized Up To Seq",
+            "type": "integer"
+          },
+          "summary_sv": {
+            "maxLength": 1200,
+            "title": "Summary Sv",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mission_id",
+          "summary_sv",
+          "plan_note",
+          "summarized_up_to_seq"
+        ],
+        "title": "MissionMemoryUpdate",
         "type": "object"
       },
       "MissionState": {
