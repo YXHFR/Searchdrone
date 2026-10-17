@@ -12,8 +12,8 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from sd_mav.allowlist import Profile, SendContext, SendEnvelope
 from sd_mav.fake import CMAC_HOME
 from sd_mav.modes import CopterMode
-from sd_obs.clock import FakeClock
 from sd_safety.targets import distance_m
+from sd_testing import FakeClock
 
 HOME = (CMAC_HOME[0], CMAC_HOME[1])
 FC = 1

@@ -38,12 +38,14 @@ paket = "paket"
 klick = "klick"
 modell = "modell"
 absolut = "absolut"
-fram = "fram"
+fram = "fram"  # also sd_onboard reasons for the operator (B1-07)
 lage = "lage"
 tre = "tre"
 tio = "tio"
 
 [default.extend-identifiers]
+# ArduPilot throttle failsafe (B1-07)
+FS_THR_ENABLE = "FS_THR_ENABLE"
 # ArduPilot parameter and SITL frame names
 MOT_THST_HOVER = "MOT_THST_HOVER"
 hoverThrOut = "hoverThrOut"

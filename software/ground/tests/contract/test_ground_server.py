@@ -37,9 +37,9 @@ from sd_ground.context import Ground
 from sd_ground.db.engine import make_engine
 from sd_ground.db.repo import Repo
 from sd_ground.services.telemetry import TelemetryService
-from sd_obs.clock import FakeClock
 from sd_schemas.api import Telemetry
 from sd_schemas.mission import MissionState
+from sd_testing import FakeClock
 
 if TYPE_CHECKING:
     from conftest import Db

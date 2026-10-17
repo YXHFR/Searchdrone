@@ -206,9 +206,9 @@ class LinkSession:
         self._latest_manual: Inbound | None = None
         self._backlog = 0  # Inbound/Expired events not yet read
         self._invalid = 0
-        self._invalid_since = clock.now()
+        self._invalid_since = clock.monotonic()
         self._state = LinkState.UP
-        now = clock.now()
+        now = clock.monotonic()
         self._last_inbound = now
         self._manual_quarantine_until = now
         self._last_manual: float | None = None
@@ -350,7 +350,7 @@ class LinkSession:
             if envelope.reliable and track:
                 if budget and len(self._pending) >= MAX_PENDING_RELIABLE:
                     raise LinkBusyError(f"{len(self._pending)} messages without Ack")
-                self._pending.track(envelope, self._clock.now())
+                self._pending.track(envelope, self._clock.monotonic())
             self._seq += 1
             if isinstance(body, Ack):
                 self._seen.record_ack(body, text)
@@ -426,7 +426,7 @@ class LinkSession:
         """Link state and expiry. Never writes, so a blocked writer cannot stall it."""
         if self._closing:
             return
-        now = self._clock.now()
+        now = self._clock.monotonic()
         expired = self._pending.take_expired(now)
         if expired:
             for envelope in expired:
@@ -448,20 +448,20 @@ class LinkSession:
         """Heartbeat and resends."""
         if self._closing:
             return
-        now = self._clock.now()
+        now = self._clock.monotonic()
         if now - self._last_heartbeat >= self._heartbeat_s:
             self._last_heartbeat = now
             await self._send_quietly(Heartbeat())
         async with self._send_lock:
             if self._closing:
                 return
-            for envelope in self._pending.take_resends(self._clock.now(), self._next_seq):
+            for envelope in self._pending.take_resends(self._clock.monotonic(), self._next_seq):
                 await self._write(encode(envelope))
 
     # --- receiving ---------------------------------------------------------------
 
     async def _on_frame(self, frame: str | bytes) -> None:
-        now = self._clock.now()
+        now = self._clock.monotonic()
         gap = now - self._last_inbound
         if gap >= STALE_GAP_S:
             self._stale_until = now + STALE_WINDOW_S
@@ -536,7 +536,7 @@ class LinkSession:
         self._latest_manual = inbound  # only the newest value waits for the application
 
     async def _count_invalid(self) -> bool:
-        now = self._clock.now()
+        now = self._clock.monotonic()
         if now - self._invalid_since >= INVALID_WINDOW_S:
             self._invalid, self._invalid_since = 0, now
         self._invalid += 1

@@ -25,6 +25,12 @@ HOME modes, disarms only on the ground and uploads only the fence. Pilot stick v
 (`MANUAL_CONTROL`) pass only with the `manual` origin while the flight controller is in
 LOITER.
 
+**Send gate.** The owner of a channel can pass `send_gate`: it is asked right before
+every single write, retries included, and a reason closes it (`ControlNotAllowedError`,
+nothing sent, no event). The onboard executor uses it for compare-and-set: nothing that
+steers leaves while a person, the ground's emergency path or a flight-controller failsafe
+is in charge.
+
 | Module | Contents |
 |---|---|
 | `connection` | `connect()` / `MavConnection` (pymavlink, MAVLink 2), identity checks per role, telemetry log |

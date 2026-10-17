@@ -13,7 +13,7 @@ from sd_ground.auth import SessionStore
 from sd_ground.config import check, load
 from sd_ground.context import Ground
 from sd_ground.sources import NoEmergencyPath, NoVehicleLink
-from sd_obs.clock import FakeClock
+from sd_testing import FakeClock
 
 H = {"X-SD-Client": "panel", "Content-Type": "application/json"}
 ACT = {"client_action_id": "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a11"}

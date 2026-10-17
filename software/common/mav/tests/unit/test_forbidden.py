@@ -20,7 +20,7 @@ from sd_mav.denylist import DENIED_COMMANDS, DENIED_MESSAGES, denied_reason
 from sd_mav.fake import FakeFlightController, FakeVehicle
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import ForbiddenMavlinkError, SendOrigin
-from sd_obs.clock import FakeClock
+from sd_testing import FakeClock
 
 
 async def _refused_everywhere(make: Callable[[], Any], ground_too: bool) -> None:

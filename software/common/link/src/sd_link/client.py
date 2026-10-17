@@ -41,17 +41,24 @@ from sd_link.transport import Transport, TransportClosedError, WebSocketTranspor
 from sd_link.wslog import WS_LOGGER
 from sd_schemas.link import SCHEMA_MAJOR, Hello, HelloAck
 
-__all__ = ["Backoff", "ClientSessionHandler", "LinkClient", "handshake"]
+__all__ = ["Backoff", "ClientSessionHandler", "InsecureLinkUrlError", "LinkClient", "handshake"]
 
 log = logging.getLogger("sd_link")
 
 ClientSessionHandler = Callable[[LinkSession, HelloAck], Awaitable[None]]
 
 
-def _is_safe_url(url: str) -> bool:
+class InsecureLinkUrlError(ValueError):
+    """The link token would travel in clear text to another machine."""
+
+
+def is_safe_url(url: str) -> bool:
+    """``wss://`` anywhere, or ``ws://`` only to this machine (loopback)."""
     parts = urlsplit(url)
     if parts.scheme == "wss":
         return True
+    if parts.scheme != "ws":
+        return False
     host = parts.hostname or ""
     if host == "localhost":
         return True
@@ -148,8 +155,9 @@ class LinkClient:
         self._dedup = DedupCache()  # one per peer, kept across reconnects
         self._background: set[asyncio.Future[None]] = set()
         self.last_close_code: int | None = None
-        if not _is_safe_url(url):
-            log.warning("sdlink token sent in clear to a non-loopback host; use wss://")
+        if not is_safe_url(url):
+            # The bearer token would cross the network unencrypted: refuse to start.
+            raise InsecureLinkUrlError("SD-link token only over wss://, or ws:// to loopback")
 
     def __repr__(self) -> str:  # never show the token
         return f"LinkClient(url={self._url!r}, vehicle_id={self.vehicle_id!r})"

@@ -14,16 +14,17 @@ from link_helpers import VEHICLE, frame, goto, hello, stop_notice
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from sd_link.client import Backoff, LinkClient
-from sd_link.clock import MonotonicClock
+from sd_link.client import Backoff, InsecureLinkUrlError, LinkClient
 from sd_link.close_codes import CloseCode
 from sd_link.constants import AUTH_RETRY_S, SDLINK_PATH
 from sd_link.server import LinkServer, bearer_token
 from sd_link.session import Inbound, LinkSession
 from sd_link.tokens import TokenStore, generate_token, hash_token
-from sd_link_testing import FakeClock, FakeGround, LossyProxy, next_inbound
+from sd_link_testing import FakeGround, LossyProxy, next_inbound
+from sd_obs.clock import MonotonicClock
 from sd_schemas.base import new_id
 from sd_schemas.link import SCHEMA_MAJOR, Hello, HelloAck, SkillCommand
+from sd_testing import FakeClock
 
 pytestmark = pytest.mark.component
 
@@ -126,9 +127,9 @@ async def test_no_hello_within_five_seconds() -> None:
     clock = FakeClock()
     async with running(Ground(clock)) as g, dial(g.url) as ws:
         await asyncio.sleep(0.05)
-        await clock.advance(4.9)
+        await clock.run_for(4.9)
         assert ws.close_code is None
-        await clock.advance(0.2)
+        await clock.run_for(0.2)
         assert await close_code(ws) == CloseCode.BAD_HELLO
 
 
@@ -178,7 +179,7 @@ async def test_duplicate_same_boot_after_three_silent_seconds_replaces() -> None
         old = await _connect_hello(g.url, boot_id=7)
         await old.recv()
         await g.sessions.get()
-        await clock.advance(3.1)  # the old connection sends nothing (half-open TCP)
+        await clock.run_for(3.1)  # the old connection sends nothing (half-open TCP)
         new = await _connect_hello(g.url, boot_id=7)
         got = None
         while got != "HelloAck":
@@ -358,14 +359,14 @@ async def test_replacing_a_dead_old_connection_does_not_wait_for_it() -> None:
     await old_client.send(frame(hello(boot_id=7)))
     await asyncio.sleep(0.01)
     assert json.loads(await old_client.recv())["kind"] == "HelloAck"
-    await clock.advance(3.1)
+    await clock.run_for(3.1)
     new_client, new_server = transport_pair()
     second = asyncio.ensure_future(ground.server.handle(new_server, headers))
     await new_client.send(frame(hello(boot_id=7)))
     await asyncio.sleep(0.01)
     kinds = [json.loads(await new_client.recv())["kind"]]
     assert kinds == ["HelloAck"]  # at once, not after the old close handshake
-    await clock.advance(1.2)  # the old close gives up and aborts
+    await clock.run_for(1.2)  # the old close gives up and aborts
     assert old_server.aborted
     new_server.abort()
     await asyncio.gather(first, second)
@@ -406,23 +407,30 @@ def test_redact() -> None:
     assert redact("nothing here") == "nothing here"
 
 
-async def test_plain_ws_to_a_lan_host_warns(caplog: pytest.LogCaptureFixture) -> None:
-    for url, warns in (
+async def test_plain_ws_to_a_lan_host_is_refused() -> None:
+    """Was a warning; the token is now never sent in clear to another host."""
+    for url, refused in (
         ("ws://192.0.2.10:7600/sdlink/v1/control", True),
         ("ws://localhost:7600/sdlink/v1/control", False),
         ("ws://127.0.0.1:7600/sdlink/v1/control", False),
         ("wss://ground.example:7600/sdlink/v1/control", False),
     ):
-        caplog.clear()
-        LinkClient(
-            url=url,
-            token=TOKEN,
-            vehicle_id=VEHICLE,
-            make_hello=hello,
-            on_session=lambda s, a: asyncio.sleep(0),
-            clock=MonotonicClock(),
-        )
-        assert ("in clear" in caplog.text) is warns, url
+
+        def build(url: str = url) -> LinkClient:
+            return LinkClient(
+                url=url,
+                token=TOKEN,
+                vehicle_id=VEHICLE,
+                make_hello=hello,
+                on_session=lambda s, a: asyncio.sleep(0),
+                clock=MonotonicClock(),
+            )
+
+        if refused:
+            with pytest.raises(InsecureLinkUrlError):
+                build()
+        else:
+            build()
 
 
 def test_set_linger_zero_on_a_real_socket() -> None:

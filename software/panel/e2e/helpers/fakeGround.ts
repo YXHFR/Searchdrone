@@ -85,6 +85,8 @@ export class FakeGround {
   private overrides: { match: string; handler: Handler; times: number }[] = [];
   private sockets: WebSocketRoute[] = [];
   private seq = 0;
+  private vehicleState: unknown = vehicleLive;
+  private stateAnswered = 0;
   private actionCounter = 0;
   private readonly contract = contractPaths();
 
@@ -158,7 +160,19 @@ export class FakeGround {
     this.respond(match, () => "hang", n);
   }
 
+  /** Wait until the page has its live connection open (pushLive only reaches open ones)
+   *  and has been answered the vehicle state it loads on connect, so that answer cannot
+   *  land after a pushed state. */
+  async liveConnected(): Promise<void> {
+    await expect.poll(() => this.sockets.length).toBeGreaterThan(0);
+    await expect.poll(() => this.stateAnswered).toBeGreaterThan(0);
+    await this.page.waitForTimeout(100); // the panel reads the answer asynchronously
+  }
+
   pushLive(topic: string, type: string, data: unknown): void {
+    // Like the real ground: the REST state is the newest pushed one, so the panel's
+    // resync on connect cannot bring back an older state.
+    if (topic === "vehicle" && type === "vehicle.state") this.vehicleState = data;
     this.seq += 1;
     const msg = JSON.stringify({
       seq: topic === "telemetry" ? null : this.seq,
@@ -304,6 +318,7 @@ export class FakeGround {
       return;
     }
     await route.fulfill({ status: res.status, json: res.body ?? {}, headers: res.headers ?? {} });
+    if (/^GET .*\/vehicles\/[^/]+\/state$/.test(key)) this.stateAnswered += 1;
   }
 
   private defaults(req: SeenRequest, p: string): ReturnType<Handler> | null {
@@ -328,7 +343,7 @@ export class FakeGround {
     }
     if (k === `GET ${API}/panel/config`) return { status: 200, body: this.config };
     if (k === `GET ${API}/system/status`) return { status: 200, body: systemStatus };
-    if (k === `GET ${v}/state`) return { status: 200, body: vehicleLive };
+    if (k === `GET ${v}/state`) return { status: 200, body: this.vehicleState };
     if (k === `POST ${v}/missions/open`) return { status: 200, body: mission };
     if (k === `GET ${API}/missions/active`) return { status: 200, body: mission };
     const action = /^POST \/api\/v1\/vehicles\/sim-01\/actions\/(stop|return_home|resume)$/.exec(k);

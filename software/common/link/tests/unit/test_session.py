@@ -27,7 +27,6 @@ from sd_link.session import (
 )
 from sd_link.transport import ABORT_CODE
 from sd_link_testing import (
-    FakeClock,
     FakeLink,
     LossyTransport,
     MemoryTransport,
@@ -44,6 +43,7 @@ from sd_schemas.link import (
     SkillCommand,
     StateSnapshot,
 )
+from sd_testing import FakeClock
 
 
 def kinds(frames: list[str]) -> list[str]:
@@ -112,7 +112,7 @@ async def test_reliable_message_is_acknowledged_received() -> None:
         got = await next_inbound(link.vehicle, SkillCommand)
         assert got.envelope.msg_id == sent.msg_id and got.body == cmd
         assert got.deadline == pytest.approx(got.received_at + 15.0)
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert link.ground.pending_count == 0
         assert bodies(link.vehicle_transport.sent, "Ack") == [
             {
@@ -128,7 +128,7 @@ async def test_reliable_message_is_acknowledged_received() -> None:
 async def test_heartbeat_both_ways_one_hz_never_acknowledged() -> None:
     clock = FakeClock()
     async with FakeLink(clock) as link:
-        await clock.advance(3.0)
+        await clock.run_for(3.0)
         g, v = kinds(link.ground_transport.sent), kinds(link.vehicle_transport.sent)
         assert g.count("Heartbeat") in (3, 4) and v.count("Heartbeat") in (3, 4)
         assert "Ack" not in g + v
@@ -147,11 +147,11 @@ async def test_app_acks_terminal_reliable_and_duplicate_gets_the_same_frame() ->
         assert done.reliable and done.corr_id == cmd.command_id
         stages = [(await next_inbound(link.ground, Ack)).body.stage for _ in range(3)]  # type: ignore[union-attr]
         assert stages == ["received", "running", "done"]
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert link.vehicle.pending_count == 0  # the ground acknowledged the terminal Ack
         before = len(link.vehicle_transport.sent)
         await link.ground_transport.send(encode(sent))  # duplicate of the order
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         repeated = link.vehicle_transport.sent[before:]
         assert repeated == [encode(done)]  # exactly the same frame, not a new message
         assert link.vehicle.pending_count == 0  # and not tracked again
@@ -166,7 +166,7 @@ async def test_duplicate_gets_same_ack_and_no_new_effect() -> None:
         assert first.envelope.msg_id == sent.msg_id
         for _ in range(3):
             await link.ground_transport.send(encode(sent))
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         acks = bodies(link.vehicle_transport.sent, "Ack")
         assert len(acks) == 4 and all(a == acks[0] for a in acks)
         assert not app_messages(link.vehicle.events_nowait())
@@ -178,9 +178,9 @@ async def test_same_command_id_under_a_new_msg_id_is_a_duplicate() -> None:
         cmd = goto()
         await link.ground.send(cmd, ttl_ms=15_000)
         await next_inbound(link.vehicle, SkillCommand)
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         await link.ground_transport.send(frame_from(cmd, "ground", clock, ttl_ms=15_000))
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert not app_messages(link.vehicle.events_nowait())
 
 
@@ -196,7 +196,7 @@ async def test_dedup_survives_into_a_new_session_with_the_same_cache() -> None:
         vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock, dedup=cache)
         task = asyncio.ensure_future(vehicle.run())
         await g.send(order)
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         delivered.append(len(app_messages(vehicle.events_nowait())))
         vehicle.abort()
         await task
@@ -211,13 +211,13 @@ async def test_lost_send_is_resent_after_one_second_with_same_msg_id() -> None:
     async with pair(clock) as p:
         p.g.broken = True
         sent = await p.ground.send(goto(), ttl_ms=15_000)
-        await clock.advance(0.5)
+        await clock.run_for(0.5)
         p.g.broken = False
-        await clock.advance(0.6)
+        await clock.run_for(0.6)
         got = await next_inbound(p.vehicle, SkillCommand)
         assert got.envelope.msg_id == sent.msg_id and got.envelope.seq > sent.seq
         assert 13_900 <= (got.envelope.ttl_ms or 0) <= 14_000
-        await clock.advance(0.2)
+        await clock.run_for(0.2)
         assert p.ground.pending_count == 0
 
 
@@ -227,9 +227,9 @@ async def test_no_ack_expires_after_three_resends_and_aborts_the_connection() ->
         p.g.broken = True
         sent = await p.ground.send(stop_notice())
         other = await p.ground.send(goto(), ttl_ms=15_000)
-        await clock.advance(3.9)
+        await clock.run_for(3.9)
         assert p.ground.pending_count == 2
-        await clock.advance(0.2)
+        await clock.run_for(0.2)
         await asyncio.gather(p.tasks[0])
         events = p.ground.events_nowait()
         expired = [e for e in events if isinstance(e, Expired)]
@@ -246,7 +246,7 @@ async def test_expired_order_never_arrives_late() -> None:
     clock = FakeClock()
     async with pair(clock, delay_s=6.0) as p:
         sent = await p.ground.send(goto(), ttl_ms=15_000)
-        await clock.advance(8.0)
+        await clock.run_for(8.0)
         events = p.ground.events_nowait()
         assert [e.envelope.msg_id for e in events if isinstance(e, Expired)] == [sent.msg_id]
         assert not app_messages(p.vehicle.events_nowait())  # dropped with the connection
@@ -257,9 +257,9 @@ async def test_every_tracked_message_ends_in_expired_or_unacked() -> None:
     async with pair(clock) as p:
         p.g.broken = True
         first = await p.ground.send(stop_notice(1))
-        await clock.advance(1.5)
+        await clock.run_for(1.5)
         second = await p.ground.send(stop_notice(2))
-        await clock.advance(1.0)
+        await clock.run_for(1.0)
         p.vehicle.abort()  # the connection drops while both are waiting
         await asyncio.gather(*p.tasks)
         events = p.ground.events_nowait()
@@ -274,13 +274,13 @@ async def test_link_states_degraded_then_lost_and_closed_1001() -> None:
     clock = FakeClock()
     async with pair(clock) as p:
         p.v.broken = True  # nothing from the vehicle ever reaches the ground
-        await clock.advance(2.9)
+        await clock.run_for(2.9)
         assert p.ground.state is LinkState.UP
-        await clock.advance(0.2)
+        await clock.run_for(0.2)
         assert p.ground.state is LinkState.DEGRADED
-        await clock.advance(6.8)
+        await clock.run_for(6.8)
         assert p.ground.state is LinkState.DEGRADED
-        await clock.advance(0.2)
+        await clock.run_for(0.2)
         await asyncio.gather(p.tasks[0])
         events = p.ground.events_nowait()
         states = [e.state for e in events if isinstance(e, StateChanged)]
@@ -294,10 +294,10 @@ async def test_traffic_brings_degraded_back_up() -> None:
     clock = FakeClock()
     async with pair(clock) as p:
         p.v.broken = True
-        await clock.advance(3.2)
+        await clock.run_for(3.2)
         assert p.ground.state is LinkState.DEGRADED
         p.v.broken = False
-        await clock.advance(1.1)
+        await clock.run_for(1.1)
         assert p.ground.state is LinkState.UP
 
 
@@ -315,10 +315,10 @@ async def test_liveness_and_expiry_continue_while_a_write_is_blocked() -> None:
     g.peer, v.peer = v, g
     ground = LinkSession(g, side="ground", vehicle_id=VEHICLE, clock=clock, degraded_after_s=1.5)
     task = asyncio.ensure_future(ground.run())
-    await clock.advance(0.1)
+    await clock.run_for(0.1)
     g.stuck = True
-    await clock.advance(1.0)  # the next heartbeat write now blocks
-    await clock.advance(1.5)
+    await clock.run_for(1.0)  # the next heartbeat write now blocks
+    await clock.run_for(1.5)
     assert ground.state is LinkState.DEGRADED  # the watch task still runs
     await clock.run_until(task, limit_s=1.0)  # WRITE_TIMEOUT_S after the blocked write
     events = ground.events_nowait()
@@ -365,7 +365,7 @@ async def test_a_crashing_loop_aborts_the_session(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(ground, "tick", boom)
     task = asyncio.ensure_future(ground.run())
-    await clock.advance(0.1)
+    await clock.run_for(0.1)
     await task
     closed = ground.events_nowait()[-1]
     assert isinstance(closed, Closed) and closed.reason == "tick failed"
@@ -380,7 +380,7 @@ async def _stream(session: LinkSession, clock: FakeClock, seconds: float, start:
     for _ in range(round(seconds / 0.05)):
         assert await session.offer(sticks(n), ttl_ms=1000)
         n += 1
-        await clock.advance(0.05)
+        await clock.run_for(0.05)
     return n
 
 
@@ -398,9 +398,9 @@ async def test_stick_values_are_best_effort_never_tracked_or_resent() -> None:
         latest = await next_inbound(link.vehicle, ManualControl)
         assert latest.body.input_seq == n + 9  # type: ignore[union-attr]  # only the newest
         assert latest.deadline == pytest.approx(latest.received_at + 1.0)
-        assert not latest.expired(clock.now()) and latest.expired(clock.now() + 1.0)
+        assert not latest.expired(clock.monotonic()) and latest.expired(clock.monotonic() + 1.0)
         sent = kinds(link.ground_transport.sent).count("ManualControl")
-        await clock.advance(5.0)
+        await clock.run_for(5.0)
         assert kinds(link.ground_transport.sent).count("ManualControl") == sent  # no resend
         with pytest.raises(ValueError, match="offer"):
             await link.ground.send(sticks(), ttl_ms=1000)
@@ -422,12 +422,12 @@ async def test_stick_values_are_dropped_unless_the_link_is_up() -> None:
     clock = FakeClock()
     async with pair(clock) as p:
         p.v.broken = True
-        await clock.advance(3.2)
+        await clock.run_for(3.2)
         assert p.ground.state is LinkState.DEGRADED
         assert not await p.ground.offer(sticks(), ttl_ms=1000)
         async with p.ground._send_lock:  # writer busy
             p.v.broken = False
-            await clock.advance(1.1)
+            await clock.run_for(1.1)
             assert p.ground.state is LinkState.UP
             assert not await p.ground.offer(sticks(), ttl_ms=1000)
         assert await p.ground.offer(sticks(), ttl_ms=1000)
@@ -443,16 +443,16 @@ async def test_a_burst_of_old_stick_values_after_a_stall_is_dropped(stall_s: flo
     async def feed(first: int, count: int) -> None:
         for i in range(first, first + count):
             await g.send(frame_from(sticks(i), "ground", clock, ttl_ms=1000))
-            await clock.advance(0.05)
+            await clock.run_for(0.05)
 
     await feed(0, 30)  # 1.5 s of steady values: past the start-of-stream quarantine
     assert app_messages(vehicle.events_nowait())
-    await clock.advance(stall_s)  # the stream stalls (TCP holds the values) ...
+    await clock.run_for(stall_s)  # the stream stalls (TCP holds the values) ...
     for i in range(100, 130):  # ... then delivers them all at once
         await g.send(frame_from(sticks(i), "ground", clock, ttl_ms=1000))
-    await clock.advance(0.01)
+    await clock.run_for(0.01)
     assert app_messages(vehicle.events_nowait()) == []
-    await clock.advance(1.0)
+    await clock.run_for(1.0)
     await feed(200, 30)  # a steady stream again: delivered once past the quarantine
     fresh = app_messages(vehicle.events_nowait())
     assert fresh and all(m.body.input_seq >= 200 for m in fresh)  # type: ignore[union-attr]
@@ -465,14 +465,14 @@ async def test_a_slow_burst_after_a_dropout_stays_refused() -> None:
     g, v = transport_pair()
     vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
     task = asyncio.ensure_future(vehicle.run())
-    await clock.advance(3.1)
+    await clock.run_for(3.1)
     for _ in range(30):  # the queued bytes trickle in over 1.5 s
         await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
-        await clock.advance(0.05)
+        await clock.run_for(0.05)
     assert app_messages(vehicle.events_nowait()) == []
-    await clock.advance(0.5)  # the burst has ended
+    await clock.run_for(0.5)  # the burst has ended
     await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
-    await clock.advance(0.05)
+    await clock.run_for(0.05)
     assert len(app_messages(vehicle.events_nowait())) == 1
     vehicle.abort()
     await task
@@ -484,13 +484,13 @@ async def test_a_stick_stream_after_a_dropout_does_not_block_hand_back(hz: int) 
     g, v = transport_pair()
     vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
     task = asyncio.ensure_future(vehicle.run())
-    await clock.advance(3.1)  # a dropout in manual mode
+    await clock.run_for(3.1)  # a dropout in manual mode
     period = 1 / hz
     for i in range(round(2.0 * hz)):  # the panel keeps streaming sticks for 2 s
         await g.send(frame_from(sticks(i), "ground", clock, ttl_ms=1000))
-        await clock.advance(period)
+        await clock.run_for(period)
     await g.send(frame_from(takeover(active=False), "ground", clock))
-    await clock.advance(0.01)
+    await clock.run_for(0.01)
     names = [type(m.body).__name__ for m in app_messages(vehicle.events_nowait())]
     assert "ManualTakeover" in names  # the hand-back gets through
     vehicle.abort()
@@ -502,13 +502,13 @@ async def test_the_stale_window_is_capped() -> None:
     g, v = transport_pair()
     vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
     task = asyncio.ensure_future(vehicle.run())
-    await clock.advance(3.1)
+    await clock.run_for(3.1)
     for _ in range(80):  # 4 s of back-to-back frames
         await g.send(frame_from(stop_notice(), "ground", clock))
-        await clock.advance(0.05)
+        await clock.run_for(0.05)
     vehicle.events_nowait()
     await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
-    await clock.advance(0.01)
+    await clock.run_for(0.01)
     assert [type(m.body).__name__ for m in app_messages(vehicle.events_nowait())] == [
         "SkillCommand"
     ]
@@ -521,7 +521,7 @@ async def test_orders_right_after_a_dropout_are_refused_stop_still_delivered() -
     g, v = transport_pair()
     vehicle = LinkSession(v, side="vehicle", vehicle_id=VEHICLE, clock=clock)
     task = asyncio.ensure_future(vehicle.run())
-    await clock.advance(3.1)  # nothing from the ground for 3 s (a dropout)
+    await clock.run_for(3.1)  # nothing from the ground for 3 s (a dropout)
     late = goto()
     for body, ttl in (
         (late, 15_000),
@@ -530,7 +530,7 @@ async def test_orders_right_after_a_dropout_are_refused_stop_still_delivered() -
         (stop_notice(), None),
     ):
         await g.send(frame_from(body, "ground", clock, ttl_ms=ttl))
-    await clock.advance(0.05)
+    await clock.run_for(0.05)
     delivered = app_messages(vehicle.events_nowait())
     assert [type(m.body).__name__ for m in delivered] == ["OperatorOverrideNotice"]
     acks = bodies(v.sent, "Ack")
@@ -538,9 +538,9 @@ async def test_orders_right_after_a_dropout_are_refused_stop_still_delivered() -
     assert len(stale) == 3 and all(a["reason_codes"] == ["LINK_STALE"] for a in stale)
     assert stale[0]["ref_id"] == str(late.command_id)
     assert vehicle.pending_count == 0  # link-generated answers are not tracked
-    await clock.advance(1.0)  # after the window, orders flow again
+    await clock.run_for(1.0)  # after the window, orders flow again
     await g.send(frame_from(goto(), "ground", clock, ttl_ms=15_000))
-    await clock.advance(0.05)
+    await clock.run_for(0.05)
     assert [type(m.body).__name__ for m in app_messages(vehicle.events_nowait())] == [
         "SkillCommand"
     ]
@@ -567,7 +567,7 @@ async def test_inbound_wrong_direction_is_rejected() -> None:
     async with FakeLink(clock) as link:
         bad = frame_from(goto(), "vehicle", clock, ttl_ms=1000)
         await link.vehicle_transport.send(bad)
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         rejected = bodies(link.ground_transport.sent, "Ack")[-1]
         assert rejected["stage"] == "rejected" and rejected["reason_codes"] == [SCHEMA_INVALID]
         assert rejected["ref_id"] == json.loads(bad)["msg_id"]
@@ -581,7 +581,7 @@ async def test_invalid_reliable_frame_is_rejected_unreliable_ignored() -> None:
         raw["body"]["kind"] = "selfdestruct"
         await link.ground_transport.send(json.dumps(raw))
         await link.ground_transport.send("garbage")
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         acks = bodies(link.vehicle_transport.sent, "Ack")
         assert len(acks) == 1 and acks[0]["reason_codes"] == [SCHEMA_INVALID]
         assert not app_messages(link.vehicle.events_nowait())
@@ -593,7 +593,7 @@ async def test_receiver_enforces_ttl_rules() -> None:
         raw = json.loads(frame_from(clearance(), "ground", clock, ttl_ms=5000))
         raw["ttl_ms"] = None  # a clearance that would never expire
         await link.ground_transport.send(json.dumps(raw))
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert bodies(link.vehicle_transport.sent, "Ack")[-1]["stage"] == "rejected"
         assert not app_messages(link.vehicle.events_nowait())
 
@@ -603,7 +603,7 @@ async def test_too_many_invalid_frames_close_the_connection() -> None:
     async with FakeLink(clock) as link:
         for _ in range(MAX_INVALID_FRAMES + 1):
             await link.ground_transport.send("garbage")
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert link.vehicle.state is LinkState.CLOSED
         assert link.vehicle_transport.close_code == CloseCode.POLICY_VIOLATION
 
@@ -620,7 +620,7 @@ async def test_unread_events_beyond_the_backlog_close_the_connection(
             pos = PilotPosition(lat=-35.36, lon=149.16, source="charter", accuracy_m=None)
             await link.ground.send(pos)
         overflow = await link.ground.send(stop_notice())
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert link.vehicle.state is LinkState.CLOSED
         assert link.vehicle_transport.close_code == CloseCode.POLICY_VIOLATION
         # The message that overflowed was neither acknowledged nor remembered.
@@ -639,7 +639,7 @@ async def test_sender_mismatch_closes_forbidden() -> None:
             sent_utc=clock.utc_now(),
         )
         await link.ground_transport.send(encode(other))
-        await clock.advance(0.1)
+        await clock.run_for(0.1)
         assert link.vehicle.state is LinkState.CLOSED
         assert link.vehicle_transport.close_code == CloseCode.FORBIDDEN
 
@@ -668,7 +668,7 @@ async def test_close_gives_up_on_a_peer_that_never_answers() -> None:
     g.block_close = True
     ground = LinkSession(g, side="ground", vehicle_id=VEHICLE, clock=clock)
     closing = asyncio.ensure_future(ground.close())
-    await clock.advance(1.1)
+    await clock.run_for(1.1)
     await closing
     assert g.aborted
 

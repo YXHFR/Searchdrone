@@ -7,7 +7,7 @@ idempotency and link liveness. The message catalogue is ``sd_schemas.link``.
 from importlib.metadata import version
 
 from sd_link.client import LinkClient
-from sd_link.clock import Clock, MonotonicClock
+from sd_link.clock import Clock
 from sd_link.close_codes import CloseCode
 from sd_link.server import LinkServer
 from sd_link.session import (
@@ -38,7 +38,6 @@ __all__ = [
     "LinkServer",
     "LinkSession",
     "LinkState",
-    "MonotonicClock",
     "StateChanged",
     "TokenStore",
     "__version__",

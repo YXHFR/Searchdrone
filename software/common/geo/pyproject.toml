@@ -1,11 +1,11 @@
 [project]
 name = "sd-geo"
 version = "0.0.0"
-description = "Geometry helpers: local ENU projection, search patterns and polygon maths."
+description = "Geometry helpers in a local east/north plane: search patterns and coverage."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["shapely>=2.1"]  # shapely: BSD-3-Clause
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

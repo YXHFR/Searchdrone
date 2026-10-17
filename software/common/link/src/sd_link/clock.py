@@ -1,42 +1,16 @@
-"""The clock SD-link reads. All link timing goes through an injected ``Clock``.
-
-Tests use ``sd_link_testing.FakeClock``. This is the only module in ``sd_link`` that
-reads the system clock.
+"""Deadlines on the injected clock. SD-link takes its time from ``sd_obs.clock.Clock``,
+the project's one clock abstraction; tests use ``sd_testing.FakeClock``. No module in
+``sd_link`` reads the system clock.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
-from typing import Protocol, runtime_checkable
 
-__all__ = ["Clock", "MonotonicClock", "first_or_timeout"]
+from sd_obs.clock import Clock
 
-
-@runtime_checkable
-class Clock(Protocol):
-    def now(self) -> float:
-        """Monotonic seconds. Only differences mean anything."""
-        ...
-
-    async def sleep(self, seconds: float) -> None: ...
-
-    def utc_now(self) -> datetime:
-        """Wall-clock time for humans and logs (``sent_utc``); never logic."""
-        ...
-
-
-class MonotonicClock:
-    def now(self) -> float:
-        return time.monotonic()
-
-    async def sleep(self, seconds: float) -> None:
-        await asyncio.sleep(max(0.0, seconds))
-
-    def utc_now(self) -> datetime:
-        return datetime.now(UTC)
+__all__ = ["Clock", "first_or_timeout"]
 
 
 async def first_or_timeout[T](

@@ -14,11 +14,12 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Self
 
-from sd_link.clock import Clock, MonotonicClock
+from sd_link.clock import Clock
 from sd_link.server import LinkServer
 from sd_link.session import Closed, Inbound, LinkClosedError, LinkEvent, LinkSession
 from sd_link.tokens import TokenStore, generate_token, hash_token
 from sd_link_testing.memory import MemoryTransport, transport_pair
+from sd_obs.clock import MonotonicClock
 from sd_schemas.base import SdModel, new_id
 from sd_schemas.link import SCHEMA_MAJOR, Hello, HelloAck, LatchRef
 
