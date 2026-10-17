@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 from flow_rig import VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 from script_driver import ScriptDriver  # pyright: ignore[reportMissingImports]
 
+from sd_ground.api.live import TOPICS as LIVE_TOPICS
 from sd_ground.services import approvals as approvals_service
 from sd_ground.services.latches import ADOPTED_BY
 from sd_mav.allowlist import FENCE_GROUND_STATE
@@ -221,6 +222,7 @@ async def test_fence_read_back_must_match(r: Rig) -> None:
     proposal = (await d.charter("box")).json()
     assert (await r.approve(proposal["approval_id"], 1)).status_code == 200
     await r.until(lambda: "alert" in r.bus_types(), 10, "alarm")
+    _all_on_panel_topics(r)
     await asyncio.sleep(1.0)
     detail = await r.mission(mid)
     assert detail["charter"]["fence_verified_at"] is None
@@ -531,6 +533,12 @@ async def test_autonomy_change_invalidates_clearance(r: Rig) -> None:
 # --- 8, 9: pilot position, ground skills -------------------------------------------------
 
 
+def _all_on_panel_topics(r: Rig) -> None:
+    """Every event goes out on a topic the panel can subscribe to (alerts, map pins)."""
+    events = r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+    assert {e.topic for e in events} <= LIVE_TOPICS, {(e.topic, e.type) for e in events}
+
+
 async def test_pilot_position_is_home_and_ground_skills(r: Rig) -> None:
     mid = await r.ready_mission()
     detail = await r.mission(mid)
@@ -546,6 +554,7 @@ async def test_pilot_position_is_home_and_ground_skills(r: Rig) -> None:
     assert mark.json()["status"] == "done"
     pins = (await r.panel.get(f"/api/v1/missions/{mid}/annotations")).json()
     assert [p["label"] for p in pins] == ["M1"]
+    _all_on_panel_topics(r)
     prop = await d.order(
         "propose_charter_change",
         {"base_version": 1, "area": r.square(100), "reason_sv": "Mindre"},

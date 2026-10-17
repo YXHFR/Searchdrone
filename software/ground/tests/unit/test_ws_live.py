@@ -136,3 +136,37 @@ async def test_telemetry_rates(ground: Ground, clock: FakeClock, vehicle_link: o
         got.append(event)
     assert 49 <= len(got) <= 52
     assert all(e.seq is None for e in got)
+
+
+class _Sticks:
+    def __init__(self) -> None:
+        self.got: list[tuple[str, float, str]] = []
+
+    def manual_input(self, vehicle_id: str, value: object, by: object) -> bool:
+        self.got.append((vehicle_id, value.pitch, by.role))  # type: ignore[attr-defined]
+        return True
+
+
+def test_manual_op_reaches_the_stick_path(logged_in: TestClient, ground: Ground) -> None:
+    """``op: manual`` from the panel goes to the vehicle actions; junk is dropped quietly."""
+    sticks = _Sticks()
+    ground.vehicle_actions = sticks  # type: ignore[assignment]
+    value = {
+        "takeover_id": "0192f000-0000-7000-8000-000000000001",
+        "input_seq": 1,
+        "pitch": 0.5,
+        "roll": 0.0,
+        "throttle": 0.5,
+        "yaw": 0.0,
+        "source": "touch",
+    }
+    with logged_in.websocket_connect(URL) as ws:
+        ws.receive_json()
+        _sub(ws, ground, ["system"], None)
+        ws.receive_json()
+        ws.send_json({"op": "manual", **value, "pitch": 7})  # out of range: dropped
+        ws.send_json({"op": "manual", "pitch": 0.1})  # incomplete: dropped
+        ws.send_json({"op": "manual", **value})
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"  # the socket stayed open
+    assert sticks.got == [("sim-01", 0.5, "pilot")]
