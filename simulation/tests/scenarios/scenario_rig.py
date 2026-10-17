@@ -625,9 +625,17 @@ async def _sticks(sc: Scenario) -> None:
 
 @contextlib.asynccontextmanager
 async def scenario(
-    name: str, sim: Sim, db: Any, tmp_path: Path, script: str, *, brain: bool = True
+    name: str,
+    sim: Sim,
+    db: Any,
+    tmp_path: Path,
+    script: str,
+    *,
+    brain: bool = True,
+    ground_config: dict[str, Any] | None = None,
 ) -> AsyncIterator[Scenario]:
-    """One scenario: ground, onboard and (unless ``brain=False``) the AI with ``script``."""
+    """One scenario: ground, onboard and (unless ``brain=False``) the AI with ``script``.
+    ``ground_config`` adds to the ground station's test configuration."""
     path = SCRIPTS / f"{script}.yaml"
     if not path.is_file():
         raise InfraError(f"manuset {path.name} saknas")
@@ -651,7 +659,7 @@ async def scenario(
             mav_clock=MonotonicClock(),
             onboard=onboard,
             sdlink_bind=f"127.0.0.1:{sim.ports['ground_sdlink']}",
-            http={"commander_bind": f"127.0.0.1:{port}"},
+            **_merged(ground_config or {}, {"http": {"commander_bind": f"127.0.0.1:{port}"}}),
         ) as r,
         serve_commander(r, port),
     ):
@@ -669,6 +677,16 @@ async def scenario(
                 task.cancel()
             await asyncio.gather(*sc._tasks, return_exceptions=True)
             await sc.kill_brain()
+
+
+def _merged(extra: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = {**out[key], **value}
+        else:
+            out[key] = value
+    return out
 
 
 def mode_name(mode: int | None) -> str:

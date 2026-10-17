@@ -150,7 +150,14 @@ class Harness:
             )
         self._streams_requested = True
 
+    def drain(self) -> None:
+        """Apply everything already queued, so an answer is not behind a long backlog
+        (the harness is not read while a test flies)."""
+        while (msg := self._conn.recv_match(blocking=False)) is not None:
+            self._apply(msg)
+
     def _command(self, command: int, *params: float, wait_ack: bool = True) -> None:
+        self.drain()
         values = [*params, 0, 0, 0, 0, 0, 0, 0][:7]
         self._conn.mav.command_long_send(FC_SYSID, FC_COMPID, command, 0, *values)
         if not wait_ack:
@@ -255,6 +262,7 @@ class Harness:
 
     def read_param(self, name: str, timeout: float = 5.0) -> float:
         """Read one parameter (read only, nothing is set)."""
+        self.drain()
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             self._conn.mav.param_request_read_send(FC_SYSID, FC_COMPID, name.encode(), -1)

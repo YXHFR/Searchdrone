@@ -75,6 +75,9 @@ RELEASING_EVENTS = frozenset({"vehicle.resume", "vehicle.return_home", "vehicle.
 FALLBACK_WINDOW_S = 3.0
 # An order already on its way when a hold starts may still arrive this long after (s).
 STEER_GRACE_S = 1.0
+# The ground logs an operator's action after it has sent its mode change (the audit
+# event follows the MAVLink path), at most this much later (s).
+EVENT_LAG_S = 2.0
 ON_GROUND_ALT_M = 0.5
 
 
@@ -378,7 +381,7 @@ def inv10(tl: Timeline) -> Result:
     for start, mode, cause, index in _holds(tl):
         release = next(
             (
-                t
+                t - EVENT_LAG_S
                 for n, (t, kind, p) in enumerate(tl.events)
                 if t >= start and n != index and _releases(kind, p)
             ),

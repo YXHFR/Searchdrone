@@ -1,0 +1,14 @@
+# SC18: the API protections. The AI only proposes the charter; the test does the rest.
+scenario: SC18
+timeout_s: 300
+expected_runtime_s: 120
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]
