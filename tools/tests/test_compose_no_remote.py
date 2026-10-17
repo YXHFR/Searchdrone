@@ -19,6 +19,7 @@ DOCKER = shutil.which("docker")
 DUMMY_ENV = {
     "SD_GROUND__DB_PASSWORD": "x",
     "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "x",
+    "SD_GROUND__VIDEO_API_PASSWORD": "x",
     "SD_LLM_API_KEY": "x",
     "SD_UID": "1000",
     "SD_GID": "1000",
@@ -101,10 +102,14 @@ def test_mediamtx_service() -> None:
     assert env["MTX_APIADDRESS"] == "127.0.0.1:9997"
     assert env["MTX_WEBRTCLOCALUDPADDRESS"] == "${SD_VIDEO_BIND:-127.0.0.1}:8189"
     assert env["MTX_AUTHINTERNALUSERS_0_PASS"].startswith("${SD_GROUND__VIDEO_PUBLISH_PASSWORD:?")
+    assert env["MTX_AUTHINTERNALUSERS_2_PASS"].startswith("${SD_GROUND__VIDEO_API_PASSWORD:?")
     assert "./config/mediamtx.yml:/mediamtx.yml:ro" in mtx["volumes"]
 
 
 def test_mediamtx_config_has_no_real_password() -> None:
     data = yaml.safe_load((ROOT / "config" / "mediamtx.yml").read_text(encoding="utf-8"))
-    passwords = [u.get("pass") for u in data["authInternalUsers"]]
-    assert passwords == ["CHANGE_ME", None]
+    users = data["authInternalUsers"]
+    assert [u.get("pass") for u in users] == ["CHANGE_ME", None, "CHANGE_ME"]
+    # The user without a password may only read; the control API needs a password.
+    assert [p["action"] for p in users[1]["permissions"]] == ["read"]
+    assert [p["action"] for p in users[2]["permissions"]] == ["api"]

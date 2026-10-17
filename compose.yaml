@@ -46,6 +46,7 @@ services:
       MTX_RTSPADDRESS: "127.0.0.1:8554"
       MTX_APIADDRESS: "127.0.0.1:9997"
       MTX_AUTHINTERNALUSERS_0_PASS: "${SD_GROUND__VIDEO_PUBLISH_PASSWORD:?saknas i .env, kör just setup-config}"
+      MTX_AUTHINTERNALUSERS_2_PASS: "${SD_GROUND__VIDEO_API_PASSWORD:?saknas i .env, kör just setup-config}"
     volumes:
       - ./config/mediamtx.yml:/mediamtx.yml:ro
       - ${SD_DATA_DIR:?saknas i .env, kör just setup-config}/video:/recordings

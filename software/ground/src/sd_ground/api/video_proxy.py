@@ -59,7 +59,7 @@ def panel_location(vehicle_id: str, upstream: str | None) -> str | None:
     if not path.startswith(prefix):
         return None
     session = path[len(prefix) :]
-    if not re.match(SESSION_RE, session):
+    if not re.fullmatch(SESSION_RE, session):
         return None
     return f"/api/v1/video/{vehicle_id}/main/whep/{session}"
 

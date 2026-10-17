@@ -38,6 +38,7 @@ from video_rig import (  # pyright: ignore[reportMissingImports]
     GroundServer,
     VideoChain,
     api_get,
+    api_request,
     delay_summary,
     ffprobe,
     listeners,
@@ -98,7 +99,8 @@ def test_running_config_is_loopback_only(mtx: dict[str, Any]) -> None:
     assert users["publisher"]["ips"] == ["127.0.0.1/32"]
     assert [p["action"] for p in users["publisher"]["permissions"]] == ["publish"]
     assert users["any"]["ips"] == ["127.0.0.1/32"]
-    assert "publish" not in [p["action"] for p in users["any"]["permissions"]]
+    assert [p["action"] for p in users["any"]["permissions"]] == ["read"]
+    assert [p["action"] for p in users["ground"]["permissions"]] == ["api"]
 
 
 def test_ports_bind_only_loopback(mtx: dict[str, Any]) -> None:
@@ -120,6 +122,22 @@ def test_publish_without_the_real_password_is_refused(
     result = try_publish(user, password, "sim-99")
     assert result != "published", result
     assert not stream_ready("sim-99")
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/v3/config/global/get"),
+        ("PATCH", "/v3/config/global/patch"),
+        ("POST", "/v3/config/paths/add/drone/sim-97/main"),
+    ],
+)
+def test_control_api_needs_its_password(mtx: dict[str, Any], method: str, path: str) -> None:
+    """No password-less local client (or web page) may read or change the configuration."""
+    body = b'{"apiAddress": "0.0.0.0:9997"}' if method != "GET" else None
+    status, _ = api_request(path, method=method, body=body, auth=False)
+    assert status == 401
+    assert api_get("/v3/config/global/get")["apiAddress"] == "127.0.0.1:9997"  # pyright: ignore[reportOptionalSubscript]
 
 
 def test_publish_with_the_real_password_works(mtx: dict[str, Any]) -> None:
@@ -244,6 +262,8 @@ def test_browser_plays_through_the_proxy(chain: VideoChain) -> None:
     """In a real browser: picture within 5 s, median delay < 1 000 ms."""
     result = chain.run_dir / "browser_video.json"
     with GroundServer.running(chain.run_dir) as ground:
+        # The ground station sees the stream through MediaMTX's API (its own user).
+        wait_for(lambda: ground.health()["parts"]["mediamtx"] == "ok", 10, "mediamtx ok i /health")
         code = ground.login_code()
         assert playwright("http://localhost:8080", code, result) == 0
     summary = json.loads(result.read_text(encoding="utf-8"))

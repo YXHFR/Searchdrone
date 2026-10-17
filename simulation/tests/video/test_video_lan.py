@@ -1,15 +1,17 @@
 """LAN mode: only the WebRTC media port leaves loopback.
 
-MediaMTX is restarted with ``SD_VIDEO_BIND=0.0.0.0`` and the LAN address, the ground
+MediaMTX is restarted with ``SD_VIDEO_BIND=<LAN address>``, the ground
 station runs with its LAN listener (:8443, TLS). Then:
 
 * ``ss``: WHEP signalling (8889), HLS, RTSP and the API stay on 127.0.0.1; only UDP 8189
-  is on every address;
+  is on the LAN address;
 * ``curl -X POST http://<LAN-IP>:8889/drone/sim-01/main/whep`` fails;
 * ``/api/v1/video/sim-01/main/whep`` on :8443 gives 401 without a session, and with a
   session the browser plays the video through it.
 
-MediaMTX is put back to loopback-only afterwards, also when the test fails.
+MediaMTX is put back to loopback-only afterwards, also when the test fails. This runs in
+CI too (the video job): the runner is a throw-away machine, and LAN mode is where a
+listener leaving loopback would matter most.
 """
 
 from __future__ import annotations
@@ -86,7 +88,7 @@ def compose_mediamtx(**env: str) -> None:
 def lan_mediamtx() -> Iterator[str]:
     need_mediamtx()
     ip = lan_ip()
-    compose_mediamtx(SD_VIDEO_BIND="0.0.0.0", SD_LAN_IP=ip)  # noqa: S104 - the LAN test
+    compose_mediamtx(SD_VIDEO_BIND=ip, SD_LAN_IP=ip)
     try:
         wait_for(lambda: need_mediamtx() is not None, 20, "MediaMTX i LAN-läge")
         yield ip
@@ -110,7 +112,7 @@ def test_lan_mode_keeps_signalling_on_loopback(lan_mediamtx: str) -> None:
     tcp, udp = listeners("t"), listeners("u")
     for port in (8889, 8888, 8554, 9997):
         assert sorted({h for h, p in tcp if p == port}) == ["127.0.0.1"], port
-    assert {h for h, p in udp if p == 8189} == {"0.0.0.0"}  # noqa: S104 - the media port
+    assert {h for h, p in udp if p == 8189} == {ip}
     direct = curl(
         "-X",
         "POST",

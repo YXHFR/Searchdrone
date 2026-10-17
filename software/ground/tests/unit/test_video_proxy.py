@@ -1,4 +1,4 @@
-"""The WHEP proxy in front of MediaMTX (04 §14.9, C4 / T40; B1-09 point 5).
+"""The WHEP proxy in front of MediaMTX (B1-09: Location rewrite, PATCH and DELETE routing).
 
 MediaMTX is faked with an ``httpx.MockTransport`` that records every upstream call.
 """
@@ -144,6 +144,7 @@ def test_hls_is_not_built(logged_in: TestClient) -> None:
         (f"http://127.0.0.1:8889/drone/sim-01/main/whep/{SESSION}", f"{BASE}/{SESSION}"),
         (f"/drone/sim-01/main/whep/{SESSION}/x", None),
         ("/drone/sim-01/main/whep/not-a-session", None),
+        (f"/drone/sim-01/main/whep/{SESSION}\n", f"{BASE}/{SESSION}"),  # urlsplit drops it
         ("", None),
     ],
 )

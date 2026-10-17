@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -30,11 +31,10 @@ import pytest
 
 from sd_sim import config, paths, timecode
 from sd_sim.gst import load_gst
-from sd_sim.launch import Stack
+from sd_sim.launch import VIDEO_API_PASSWORD_KEY, VIDEO_API_USER, Stack, read_env_value
 from sd_sim.util import LOOPBACK_OPENER, new_run_dir
 
 REPO = paths.REPO
-API = "http://127.0.0.1:9997"
 VID = "sim-01"
 
 
@@ -43,12 +43,30 @@ def require_video() -> bool:
     return os.environ.get("SD_SIM__REQUIRE_VIDEO") == "1"
 
 
-def api_get(path: str) -> dict[str, Any] | None:
+def api_request(
+    path: str, *, method: str = "GET", body: bytes | None = None, auth: bool = True
+) -> tuple[int, dict[str, Any] | None]:
+    """(status, JSON body) from MediaMTX's API; status 0 when it does not answer."""
+    headers = {"Content-Type": "text/plain"} if body is not None else {}
+    if auth:
+        password = read_env_value(REPO / ".env", VIDEO_API_PASSWORD_KEY)
+        token = base64.b64encode(f"{VIDEO_API_USER}:{password}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
+    url = f"http://127.0.0.1:9997{path}"
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with LOOPBACK_OPENER.open(f"{API}{path}", timeout=3) as resp:
-            return json.loads(resp.read())
+        with LOOPBACK_OPENER.open(req, timeout=3) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
     except (urllib.error.URLError, OSError, ValueError):
-        return None
+        return 0, None
+
+
+def api_get(path: str) -> dict[str, Any] | None:
+    status, body = api_request(path)
+    return body if status == 200 else None
 
 
 def need_mediamtx() -> dict[str, Any]:
@@ -271,6 +289,10 @@ class GroundServer:
                 return r.status == 200
         except (urllib.error.URLError, OSError):
             return False
+
+    def health(self) -> dict[str, Any]:
+        with LOOPBACK_OPENER.open("http://127.0.0.1:8080/api/v1/health", timeout=2) as r:
+            return json.loads(r.read())
 
     def login_code(self) -> str:
         res = self._cli("login-link", "--print-code")

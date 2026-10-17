@@ -1,7 +1,9 @@
 # MediaMTX for the simulator's live video and per-mission recordings (`just video-up`).
-# Committed and generic: the publisher password below is a placeholder that compose.yaml
-# always overrides with SD_GROUND__VIDEO_PUBLISH_PASSWORD from .env (MediaMTX refuses to
-# start without it). Every listener is on 127.0.0.1; the panel reaches the video only
+# Committed and generic: the two passwords below are placeholders that compose.yaml
+# always overrides from .env (SD_GROUND__VIDEO_PUBLISH_PASSWORD for publishing,
+# SD_GROUND__VIDEO_API_PASSWORD for the control API; compose refuses to start without
+# them). Reading without a password is allowed only from 127.0.0.1, and only reading:
+# the control API can change the configuration at runtime, so it needs its own user. Every listener is on 127.0.0.1; the panel reaches the video only
 # through the ground station's proxy. Only the WebRTC media port (UDP 8189) moves to the
 # LAN address in LAN mode, through MTX_WEBRTCLOCALUDPADDRESS in compose.yaml.
 logLevel: info
@@ -55,7 +57,11 @@ authInternalUsers:
   - user: any
     pass:
     ips: ["127.0.0.1/32"]      # reading only through the ground station's proxy
-    permissions: [{action: read}, {action: playback}, {action: api}]
+    permissions: [{action: read}]
+  - user: ground               # the password comes from MTX_AUTHINTERNALUSERS_2_PASS
+    pass: CHANGE_ME
+    ips: ["127.0.0.1/32"]      # the ground station and the simulator: health and recordings
+    permissions: [{action: api}]
 
 pathDefaults:
   record: no

@@ -17,6 +17,7 @@ GOOD_ENV = "".join(
         ("SD_GROUND__DB_PASSWORD", "a" * 20),
         ("SD_GROUND__DB_APP_PASSWORD", APP),
         ("SD_GROUND__VIDEO_PUBLISH_PASSWORD", "c" * 20),
+        ("SD_GROUND__VIDEO_API_PASSWORD", "d" * 20),
     )
 )
 

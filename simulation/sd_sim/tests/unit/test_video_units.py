@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from sd_sim import config, launch, testvideo, timecode, video_relay
+from sd_sim import config, launch, testvideo, timecode, util, video_relay
 from sd_sim.errors import InfraError
 
 W, H = 640, 480
@@ -185,3 +185,21 @@ def test_test_picture_runs_the_strip_source(
     ((name, argv),) = stack.group.started  # pyright: ignore[reportAttributeAccessIssue]
     assert name == "testvideo"
     assert argv[1:] == ["-m", "sd_sim.testvideo", "--port", "5600"]
+
+
+def test_mediamtx_refused_password_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.error
+
+    stack = _stack(tmp_path, monkeypatch, "pw-123456")
+    seen: list[str] = []
+
+    def refuse(req: Any, timeout: float) -> Any:
+        seen.append(req.get_header("Authorization"))
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(util.LOOPBACK_OPENER, "open", refuse)
+    with pytest.raises(InfraError, match="SD_GROUND__VIDEO_API_PASSWORD"):
+        stack.mediamtx_get("/v3/config/global/get")
+    assert seen and seen[0].startswith("Basic ")

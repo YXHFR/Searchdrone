@@ -47,7 +47,7 @@ HOST_NET = """services:
     network_mode: host{comment}
     environment:
       MTX_RTSPADDRESS: "{rtsp}"
-      MTX_WEBRTCADDRESS: "${{SD_VIDEO_BIND:-127.0.0.1}}:8889"
+      MTX_WEBRTCLOCALUDPADDRESS: "${{SD_VIDEO_BIND:-127.0.0.1}}:8189"
 """
 
 
@@ -155,3 +155,35 @@ def test_mediamtx_moq_missing_fails() -> None:
 def test_repository_files_pass() -> None:
     root = Path(__file__).resolve().parents[2]
     assert ccp.main(["--root", str(root)]) == 0
+
+
+def test_mediamtx_passwordless_user_may_only_read() -> None:
+    text = MTX_OK + "  - user: any\n    pass:\n    permissions: [{action: read}, {action: api}]\n"
+    errors = ccp.check_mediamtx(text, COMPOSE_WITH_PASS)
+    assert any("no-password" in e and "api" in e for e in errors)
+    reader = MTX_OK + "  - user: any\n    pass:\n    permissions: [{action: read}]\n"
+    assert ccp.check_mediamtx(reader, COMPOSE_WITH_PASS) == []
+
+
+def test_mediamtx_each_change_me_needs_its_own_override() -> None:
+    text = MTX_OK + "  - user: reader\n    pass:\n    permissions: [{action: read}]\n"
+    text += "  - user: ground\n    pass: CHANGE_ME\n    permissions: [{action: api}]\n"
+    errors = ccp.check_mediamtx(text, COMPOSE_WITH_PASS)
+    assert any("ground" in e and "MTX_AUTHINTERNALUSERS_2_PASS" in e for e in errors)
+    both = COMPOSE_WITH_PASS + "      MTX_AUTHINTERNALUSERS_2_PASS: ${SD_X:?set}\n"
+    assert ccp.check_mediamtx(text, both) == []
+
+
+@pytest.mark.parametrize(
+    ("key", "ok"),
+    [("MTX_WEBRTCLOCALUDPADDRESS", True), ("MTX_WEBRTCADDRESS", False), ("MTX_APIADDRESS", False)],
+)
+def test_only_the_media_port_may_follow_the_lan_bind(key: str, ok: bool) -> None:
+    text = f"""services:
+  mediamtx:
+    # host-network: test
+    network_mode: host
+    environment:
+      {key}: "${{SD_VIDEO_BIND:-127.0.0.1}}:8189"
+"""
+    assert (ccp.check_compose(text) == []) is ok

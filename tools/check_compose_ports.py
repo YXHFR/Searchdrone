@@ -6,15 +6,19 @@ compose.yaml
   * every ``ports:`` entry publishes on ``127.0.0.1`` (``127.0.0.1:<host>:<container>``
     or the long syntax with ``host_ip: 127.0.0.1``);
   * ``network_mode: host`` needs the comment ``# host-network: <reason>`` on the same
-    line or the line above, and every ``MTX_*ADDRESS`` variable of that service must
-    default to ``127.0.0.1:<port>`` or ``${SD_VIDEO_BIND:-127.0.0.1}:<port>``.
+    line or the line above, and every ``MTX_*ADDRESS`` variable of that service must be
+    ``127.0.0.1:<port>``; only ``MTX_WEBRTCLOCALUDPADDRESS`` (the WebRTC media port) may
+    be ``${SD_VIDEO_BIND:-127.0.0.1}:<port>``.
 
 config/mediamtx.yml
   * every key ending in ``Address`` is empty or starts with ``127.0.0.1:``;
   * ``rtmp``, ``srt`` and ``moq`` (Media over QUIC, on by default since 1.21 and bound
     to every interface) are ``no``;
-  * ``CHANGE_ME`` appears only as the internal user's ``pass:`` value, and only when
-    compose.yaml overrides it with ``MTX_AUTHINTERNALUSERS_0_PASS: ${...:?...}``.
+  * ``CHANGE_ME`` appears only as an internal user's ``pass:`` value, and only when
+    compose.yaml overrides that user's password with
+    ``MTX_AUTHINTERNALUSERS_<n>_PASS: ${...:?...}``;
+  * a user without a password may only ``read`` (the control API can rebind listeners,
+    and publishing must need the password).
 
 A missing file is skipped (the database and video tickets add them); a compose file
 anywhere but the repository root is an error.
@@ -37,7 +41,10 @@ LOCALHOST = "127.0.0.1"
 HOST_NETWORK_RE = re.compile(r"^\s*network_mode:\s*[\"']?host[\"']?\s*(#.*)?$")
 HOST_NETWORK_COMMENT_RE = re.compile(r"#\s*host-network:\s*\S")
 MTX_ADDRESS_RE = re.compile(r"^MTX_\w*ADDRESS$")
-MTX_ADDRESS_OK_RE = re.compile(r"^(127\.0\.0\.1|\$\{SD_VIDEO_BIND:-127\.0\.0\.1\}):\d{1,5}$")
+MTX_ADDRESS_OK_RE = re.compile(r"^127\.0\.0\.1:\d{1,5}$")
+MTX_LAN_ADDRESS_RE = re.compile(r"^\$\{SD_VIDEO_BIND:-127\.0\.0\.1\}:\d{1,5}$")
+MTX_LAN_KEY = "MTX_WEBRTCLOCALUDPADDRESS"  # the WebRTC media port, the only one on the LAN
+MTX_PASS_RE = re.compile(r"^MTX_AUTHINTERNALUSERS_(\d+)_PASS$")
 REQUIRED_SECRET_RE = re.compile(r"^\$\{[A-Z0-9_]+:\?[^}]*\}$")
 CHANGE_ME_PASS_RE = re.compile(r"^\s*-?\s*pass:\s*[\"']?CHANGE_ME[\"']?\s*(#.*)?$")
 
@@ -81,11 +88,14 @@ def check_compose(text: str) -> list[str]:
                 )
         if svc.get("network_mode") == "host":
             for key, value in environment(svc).items():
-                if MTX_ADDRESS_RE.match(key) and not MTX_ADDRESS_OK_RE.match(value):
-                    errors.append(
-                        f"{COMPOSE}: host-network: tjänsten {name}: {key}={value!r} "
-                        "ska vara 127.0.0.1:<port> eller ${SD_VIDEO_BIND:-127.0.0.1}:<port>"
-                    )
+                if not MTX_ADDRESS_RE.match(key) or MTX_ADDRESS_OK_RE.match(value):
+                    continue
+                if key == MTX_LAN_KEY and MTX_LAN_ADDRESS_RE.match(value):
+                    continue
+                errors.append(
+                    f"{COMPOSE}: host-network: tjänsten {name}: {key}={value!r} "
+                    "ska vara 127.0.0.1:<port> (bara mediaporten får följa SD_VIDEO_BIND)"
+                )
     for line, ok in host_network_lines(text):
         if not ok:
             errors.append(
@@ -111,15 +121,18 @@ def is_no(value: Any) -> bool:
     return value is False or (isinstance(value, str) and value.lower() in {"no", "false"})
 
 
-def compose_requires_mtx_pass(compose_text: str | None) -> bool:
+def compose_mtx_passwords(compose_text: str | None) -> set[int]:
+    """Indexes of the MediaMTX users whose password compose.yaml requires from .env."""
     if not compose_text:
-        return False
+        return set()
     data = yaml.safe_load(compose_text) or {}
+    found: set[int] = set()
     for svc in (data.get("services") or {}).values():
-        value = environment(svc or {}).get("MTX_AUTHINTERNALUSERS_0_PASS")
-        if value is not None and REQUIRED_SECRET_RE.match(value):
-            return True
-    return False
+        for key, value in environment(svc or {}).items():
+            match = MTX_PASS_RE.match(key)
+            if match and REQUIRED_SECRET_RE.match(value):
+                found.add(int(match.group(1)))
+    return found
 
 
 def check_mediamtx(text: str, compose_text: str | None) -> list[str]:
@@ -132,16 +145,24 @@ def check_mediamtx(text: str, compose_text: str | None) -> list[str]:
     for key in ("rtmp", "srt", "moq"):
         if not is_no(data.get(key)):
             errors.append(f"{MEDIAMTX}: protocol: {key} ska vara no")
-    override = compose_requires_mtx_pass(compose_text)
+    overrides = compose_mtx_passwords(compose_text)
     for n, line in enumerate(text.splitlines(), start=1):
-        if "CHANGE_ME" not in line.upper():
-            continue
-        if not CHANGE_ME_PASS_RE.match(line):
+        if "CHANGE_ME" in line.upper() and not CHANGE_ME_PASS_RE.match(line):
             errors.append(f"{MEDIAMTX}:{n}: change-me: CHANGE_ME är bara tillåtet i pass:")
-        elif not override:
+    for i, user in enumerate(data.get("authInternalUsers") or []):
+        user = user or {}
+        name = user.get("user", f"#{i}")
+        password = user.get("pass")
+        actions = [str((p or {}).get("action")) for p in user.get("permissions") or []]
+        if str(password).upper() == "CHANGE_ME" and i not in overrides:
             errors.append(
-                f"{MEDIAMTX}:{n}: change-me: compose.yaml måste sätta "
-                "MTX_AUTHINTERNALUSERS_0_PASS: ${...:?...}"
+                f"{MEDIAMTX}: change-me: användaren {name}: compose.yaml måste sätta "
+                f"MTX_AUTHINTERNALUSERS_{i}_PASS: ${{...:?...}}"
+            )
+        if password in (None, "") and any(a != "read" for a in actions):
+            errors.append(
+                f"{MEDIAMTX}: no-password: användaren {name} utan lösenord får bara read, "
+                f"inte {', '.join(a for a in actions if a != 'read')}"
             )
     return errors
 

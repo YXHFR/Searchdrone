@@ -21,12 +21,6 @@ interface Info {
   fps: number | null;
 }
 
-interface HlsLike {
-  loadSource(url: string): void;
-  attachMedia(el: HTMLMediaElement): void;
-  destroy(): void;
-}
-
 /** Playing = there is a frame (readyState >= 2) and the time moves on. */
 function playing(el: HTMLVideoElement, last: { t: number }): boolean {
   const moved = el.currentTime > last.t;
@@ -43,17 +37,15 @@ async function videoServerDown(): Promise<boolean> {
   }
 }
 
-async function startHls(el: HTMLVideoElement, url: string): Promise<HlsLike | null> {
-  if (el.canPlayType("application/vnd.apple.mpegurl")) {
-    el.src = url; // Safari plays HLS by itself
-    return null;
-  }
-  const { default: Hls } = await import("hls.js");
-  if (!Hls.isSupported()) return null;
-  const hls = new Hls({ lowLatencyMode: true, enableWorker: true });
-  hls.loadSource(url);
-  hls.attachMedia(el);
-  return hls;
+/**
+ * HLS where the browser plays it by itself (Safari, every iPhone browser): the case the
+ * fallback is for. Elsewhere it is not attempted and the view ends at "no video".
+ */
+function startHls(el: HTMLVideoElement, url: string): boolean {
+  if (!el.canPlayType("application/vnd.apple.mpegurl")) return false;
+  el.src = url;
+  void el.play().catch(() => undefined);
+  return true;
 }
 
 /**
@@ -69,7 +61,6 @@ function connect(
 ): () => void {
   let stopped = false;
   let whep: WhepSession | null = null;
-  let hls: HlsLike | null = null;
   const abort = new AbortController();
   const timers: ReturnType<typeof setTimeout>[] = [];
   const last = { t: -1 };
@@ -86,17 +77,12 @@ function connect(
     el.srcObject = null;
   };
 
-  const toHls = async () => {
+  const toHls = () => {
     if (stopped || mode === "hls" || mode === "none") return;
     dropWhep();
     if (!hlsUrl) return;
     set("hls");
-    try {
-      hls = await startHls(el, hlsUrl);
-      if (stopped) hls?.destroy();
-    } catch {
-      // stays on the HLS badge until the no-video timer
-    }
+    startHls(el, hlsUrl); // without native HLS the no-video timer ends the attempt
   };
 
   const tick = setInterval(() => {
@@ -106,7 +92,7 @@ function connect(
 
   timers.push(
     setTimeout(() => {
-      if (mode === "connecting") void toHls();
+      if (mode === "connecting") toHls();
     }, WHEP_PLAY_MS),
     setTimeout(() => {
       if (stopped || mode === "webrtc" || (mode === "hls" && el.readyState >= 2)) return;
@@ -125,7 +111,7 @@ function connect(
       el.srcObject = s.stream;
       void el.play().catch(() => undefined);
     })
-    .catch(() => void toHls());
+    .catch(() => toHls());
 
   return () => {
     stopped = true;
@@ -133,9 +119,8 @@ function connect(
     clearInterval(tick);
     for (const t of timers) clearTimeout(t);
     dropWhep();
-    hls?.destroy();
-    hls = null;
     el.removeAttribute("src");
+    el.load();
   };
 }
 

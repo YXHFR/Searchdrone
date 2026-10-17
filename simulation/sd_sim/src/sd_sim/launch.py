@@ -8,6 +8,7 @@ skipped with a message.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -17,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
@@ -56,6 +58,8 @@ HEALTH_VIDEO_S = 15.0
 VIDEO_VEHICLE_ID = "sim-01"
 VIDEO_SECRET = "mediamtx_publish"  # noqa: S105 - a file name, not a secret
 VIDEO_PASSWORD_KEY = "SD_GROUND__VIDEO_PUBLISH_PASSWORD"  # noqa: S105 - a variable name
+VIDEO_API_PASSWORD_KEY = "SD_GROUND__VIDEO_API_PASSWORD"  # noqa: S105 - a variable name
+VIDEO_API_USER = "ground"
 PLACEHOLDERS = {"", "change_me", "change-me", "changeme"}
 
 
@@ -325,11 +329,23 @@ class Stack:
             )
 
     def mediamtx_get(self, path: str) -> dict[str, object] | None:
-        """MediaMTX's API (instance 0 only); ``None`` when it does not answer 200."""
-        url = f"http://127.0.0.1:{self.ports['mediamtx_api']}{path}"
+        """MediaMTX's API (instance 0 only), as the user ``ground``; ``None`` when it does
+        not answer. A refused password is an error, not "not running"."""
+        password = read_env_value(self.repo / ".env", VIDEO_API_PASSWORD_KEY)
+        token = base64.b64encode(f"{VIDEO_API_USER}:{password}".encode()).decode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.ports['mediamtx_api']}{path}",
+            headers={"Authorization": f"Basic {token}"},
+        )
         try:
-            with LOOPBACK_OPENER.open(url, timeout=2) as resp:
+            with LOOPBACK_OPENER.open(req, timeout=2) as resp:
                 return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == HTTPStatus.UNAUTHORIZED:
+                raise InfraError(
+                    f"MediaMTX nekade {VIDEO_API_PASSWORD_KEY}. Starta om med just video-up."
+                ) from exc
+            return None
         except (urllib.error.URLError, OSError, ValueError):
             return None
 

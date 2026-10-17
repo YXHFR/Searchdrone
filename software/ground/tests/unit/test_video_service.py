@@ -1,4 +1,4 @@
-"""Video health and the per-mission recordings (04 §15.2; B1-09 point 3 without MediaMTX).
+"""Video health and the per-mission recordings (B1-09, without MediaMTX).
 
 MediaMTX's API is an ``httpx.MockTransport``; the recordings are small files in a
 temporary data root, named the way MediaMTX names them.
@@ -6,6 +6,7 @@ temporary data root, named the way MediaMTX names them.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import os
@@ -71,12 +72,15 @@ def test_select_segments() -> None:
 def test_segment_file_exact_and_nearest(tmp_path: Path) -> None:
     exact = tmp_path / "2026-10-17_12-00-00-250000.mp4"
     exact.write_bytes(b"x")
-    assert video.segment_file(tmp_path, at(0)) == exact
     near = tmp_path / "2026-10-17_12-01-00-900000.mp4"
     near.write_bytes(b"x")
-    assert video.segment_file(tmp_path, at(60)) == near  # 0.65 s off
-    assert video.segment_file(tmp_path, at(120)) is None
-    assert video.segment_file(tmp_path / "missing", at(0)) is None
+    (tmp_path / "notes.txt").write_text("x")
+    index = video.recordings_index(tmp_path)
+    assert len(index) == 2
+    assert video.segment_file(index, at(0)) == exact
+    assert video.segment_file(index, at(60)) == near  # 0.65 s off
+    assert video.segment_file(index, at(120)) is None
+    assert video.recordings_index(tmp_path / "missing") == {}
 
 
 @pytest.mark.parametrize(
@@ -89,14 +93,14 @@ def test_segment_file_exact_and_nearest(tmp_path: Path) -> None:
     ],
 )
 async def test_monitor(ground: Ground, transport: httpx.MockTransport, state: str) -> None:
-    monitor = video.VideoMonitor(ground, video.MediaMtx("http://127.0.0.1:9997", transport))
+    monitor = video.VideoMonitor(ground, video.MediaMtx("http://127.0.0.1:9997", "pw", transport))
     assert await monitor.tick() == state
     assert ground.video_state == state
 
 
 async def test_monitor_disabled(make_ground: Callable[..., Ground]) -> None:
     g = make_ground(video={"enabled": False})
-    monitor = video.VideoMonitor(g, video.MediaMtx("http://127.0.0.1:9997", api([])))
+    monitor = video.VideoMonitor(g, video.MediaMtx("http://127.0.0.1:9997", "pw", api([])))
     assert await monitor.tick() == "down"
 
 
@@ -171,7 +175,7 @@ async def test_close_links_finished_and_copies_the_open_segment(ground: Ground) 
     flow: Any = FakeFlow(ground, clock)
     m = mission(at(10), at(125))
     os.utime(live, (at(129).timestamp(), at(129).timestamp()))  # still being written
-    await video.close_video(flow, m, video.MediaMtx("http://127.0.0.1:9997", api(starts)))
+    await video.close_video(flow, m, video.MediaMtx("http://127.0.0.1:9997", "pw", api(starts)))
 
     target = flow.mission_dir(str(m.id)) / "video"
     rows = {r["rel_path"]: r for r in flow.repo.files}
@@ -208,7 +212,7 @@ async def test_old_last_segment_is_finished(ground: Ground) -> None:
     )
     flow: Any = FakeFlow(ground, clock)
     await video.close_video(
-        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", api(starts))
+        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", "pw", api(starts))
     )
     (row,) = [r for r in flow.repo.files if r["rel_path"].endswith(".mp4")]
     assert row["notes"] is None
@@ -218,13 +222,17 @@ async def test_missing_file_and_no_server(ground: Ground) -> None:
     clock = FakeClock(start_utc=at(100))
     flow: Any = FakeFlow(ground, clock)
     await video.close_video(
-        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", api([at(0)]))
+        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", "pw", api([at(0)]))
     )
     assert flow.repo.files == []
     assert [e["type"] for e in ground.queued_events()] == ["video.segment_missing"]
-    await video.close_video(flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", down()))
+    await video.close_video(
+        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", "pw", down())
+    )
     assert ground.queued_events()[-1]["type"] == "video.unavailable"
-    await video.close_video(flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", api(None)))
+    await video.close_video(
+        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", "pw", api(None))
+    )
     assert flow.repo.files == []
 
 
@@ -233,5 +241,103 @@ async def test_close_does_nothing_when_disabled(
 ) -> None:
     g = make_ground(video={"enabled": False})
     flow: Any = FakeFlow(g, clock)
-    await video.close_video(flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", down()))
+    await video.close_video(
+        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", "pw", down())
+    )
     assert g.queued_events() == []
+
+
+async def test_a_stream_that_stopped_before_the_mission_is_not_part_of_it(
+    ground: Ground,
+) -> None:
+    """The last segment has no next start; its file's last write bounds it."""
+    clock = FakeClock(start_utc=at(400))
+    starts = [at(0)]
+    folder = recordings(ground, starts)
+    old = folder / f"{at(0).strftime(video.NAME_FORMAT)}.mp4"
+    os.utime(old, (at(50).timestamp(), at(50).timestamp()))  # the stream stopped at 50 s
+    flow: Any = FakeFlow(ground, clock)
+    await video.close_video(
+        flow, mission(at(200), at(300)), video.MediaMtx("http://x:1", "pw", api(starts))
+    )
+    assert flow.repo.files == []
+    # A mission that overlaps the recording still gets it.
+    await video.close_video(
+        flow, mission(at(10), at(40)), video.MediaMtx("http://x:1", "pw", api(starts))
+    )
+    assert flow.repo.files[0]["rel_path"].endswith(".mp4")
+
+
+async def test_api_uses_its_own_user() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ready": True})
+
+    mtx = video.MediaMtx("http://127.0.0.1:9997", "api-pw", httpx.MockTransport(handler))
+    assert await mtx.stream_state("sim-01") == "ok"
+    assert seen[0].headers["authorization"] == httpx.BasicAuth("ground", "api-pw")._auth_header  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, content=b"not json"),
+        httpx.Response(200, json=["x"]),
+        httpx.Response(401),
+    ],
+)
+async def test_odd_answers_mean_down_or_degraded(ground: Ground, response: httpx.Response) -> None:
+    mtx = video.MediaMtx("http://127.0.0.1:9997", "pw", httpx.MockTransport(lambda r: response))
+    assert await mtx.stream_state("sim-01") in ("down", "degraded")
+    assert await mtx.stream_state("sim-01") != "ok"
+
+
+@pytest.mark.parametrize(
+    "body", [{"segments": "x"}, {"segments": [{"no": 1}]}, ["x"], {"segments": [{"start": "bad"}]}]
+)
+async def test_odd_recordings_answer_is_unavailable(ground: Ground, body: Any) -> None:
+    flow: Any = FakeFlow(ground, FakeClock(start_utc=at(100)))
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, json=body))
+    await video.close_video(
+        flow, mission(at(10), at(90)), video.MediaMtx("http://x:1", "pw", transport)
+    )
+    assert flow.repo.files == []
+    assert ground.queued_events()[-1]["type"] == "video.unavailable"
+
+
+async def test_monitor_keeps_running_after_an_error(
+    ground: Ground, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Boom(video.MediaMtx):
+        async def stream_state(self, vehicle_id: str) -> Any:
+            raise RuntimeError("boom")
+
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(clock, "sleep", sleep)
+    ground.video_state = "ok"
+    with pytest.raises(asyncio.CancelledError):
+        await video.VideoMonitor(ground, Boom("http://x:1")).run()
+    assert len(sleeps) == 2  # it went round again after the error
+    assert ground.video_state == "down"
+
+
+async def test_a_failing_archive_never_stops_the_close(
+    ground: Ground, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(*_: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(video, "_close_video", broken)
+    flow: Any = FakeFlow(ground, FakeClock(start_utc=at(100)))
+    await video.close_video(flow, mission(at(10), at(90)))  # does not raise
+    event = ground.queued_events()[-1]
+    assert event["type"] == "video.archive_failed"
+    assert event["severity"] == "critical"

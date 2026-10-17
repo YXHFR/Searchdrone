@@ -6,7 +6,7 @@
 // RTCPeerConnection that sends a canvas, so the view really plays (no network involved).
 import type { Page, Route } from "@playwright/test";
 import { expect, test } from "../helpers/fakeGround";
-import { isMobile } from "../helpers/safety";
+import { expectSafetyVisible, isMobile } from "../helpers/safety";
 
 const WHEP = "/api/v1/video/sim-01/main/whep";
 const HLS = "/api/v1/video/sim-01/main/hls/index.m3u8";
@@ -35,6 +35,34 @@ async function answerInPage(page: Page, offer: string): Promise<string> {
   }, offer);
 }
 
+/** A WHEP mock that accepts the offer with a real answer; records every POST and DELETE. */
+async function acceptWhep(page: Page): Promise<{ deletes: string[]; posts: () => number }> {
+  const deletes: string[] = [];
+  let count = 0;
+  await page.route(`**${WHEP}**`, async (route: Route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (req.method() === "POST" && path === WHEP) {
+      count += 1;
+      const sdp = await answerInPage(page, req.postData() ?? "");
+      await route.fulfill({
+        status: 201,
+        body: sdp,
+        headers: { "Content-Type": "application/sdp", Location: SESSION },
+      });
+      return;
+    }
+    if (req.method() === "DELETE") {
+      deletes.push(path);
+      expect(req.headers()["x-sd-client"]).toBe("panel");
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    await route.fulfill({ status: 404 });
+  });
+  return { deletes, posts: () => count };
+}
+
 test.describe("video view (P-22)", () => {
   test.beforeEach(({ page }) => {
     test.skip(isMobile(page) || (page.viewportSize()?.width ?? 0) < 1200, "desktop layout");
@@ -57,33 +85,12 @@ test.describe("video view (P-22)", () => {
     ground,
   }) => {
     ground.setConfig({ video: { whep_url: WHEP, hls_url: null } });
-    const deletes: string[] = [];
-    let posts = 0;
-    await page.route(`**${WHEP}**`, async (route: Route) => {
-      const req = route.request();
-      const path = new URL(req.url()).pathname;
-      if (req.method() === "POST" && path === WHEP) {
-        posts += 1;
-        const sdp = await answerInPage(page, req.postData() ?? "");
-        await route.fulfill({
-          status: 201,
-          body: sdp,
-          headers: { "Content-Type": "application/sdp", Location: SESSION },
-        });
-        return;
-      }
-      if (req.method() === "DELETE") {
-        deletes.push(path);
-        expect(req.headers()["x-sd-client"]).toBe("panel");
-        await route.fulfill({ status: 204 });
-        return;
-      }
-      await route.fulfill({ status: 404 });
-    });
+    const { deletes, posts } = await acceptWhep(page);
     await ground.open();
     await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 8000 });
-    expect(posts).toBe(1);
+    expect(posts()).toBe(1);
     expect(deletes).toEqual([]);
+    await expectSafetyVisible(page, "video playing");
     await page.getByTestId("layout-menu").click();
     await page.getByTestId("preset-chat_only").click();
     await expect(page.getByTestId("view-video")).toHaveCount(0);
@@ -99,4 +106,14 @@ test.describe("video view (P-22)", () => {
     await expect(page.getByTestId("video-retry")).toBeVisible();
     expect(ground.posts(WHEP)).toEqual([]);
   });
+});
+
+test("phone: STOP and RETURN HOME stay visible while the video plays", async ({ page, ground }) => {
+  test.skip(!isMobile(page), "phone only");
+  ground.setConfig({ video: { whep_url: WHEP, hls_url: null } });
+  await acceptWhep(page);
+  await ground.open();
+  await page.getByTestId("tab-video").click();
+  await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 8000 });
+  await expectSafetyVisible(page, "video playing on a phone");
 });
