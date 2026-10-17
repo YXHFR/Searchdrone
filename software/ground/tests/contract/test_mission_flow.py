@@ -77,7 +77,7 @@ async def test_t19_whole_mission(r: Rig) -> None:
     assert await r.status(mid) == "CHARTER_PROPOSED"
     res = await r.approve(proposal["approval_id"], 1)
     assert res.status_code == 200, res.text
-    await r.wait_status(mid, "READY", 15)
+    await r.wait_status(mid, "READY", 30)
     await r.wait_snapshot(ExecutorState.PREFLIGHT)
     assert len(r.fc.missions[FENCE]) >= 3  # the polygon is in the flight controller
     charter = (await r.mission(mid))["charter"]
@@ -111,7 +111,7 @@ async def test_t19_whole_mission(r: Rig) -> None:
     assert (await r.mission(mid))["mission"]["returning_cause"] == "brain"
 
     r.land()
-    await r.wait_status(mid, "LANDED", 15)
+    await r.wait_status(mid, "LANDED", 30)
     await r.wait_status(mid, "CLOSED", 20)
     files = await r.panel.get(f"/api/v1/missions/{mid}/files")
     assert files.status_code == 200
@@ -131,7 +131,7 @@ async def test_forbidden_transitions_are_409(r: Rig) -> None:
     end = await r.panel.post(f"/api/v1/missions/{mid}/end", json={"reason": "x"}, headers=H)
     assert end.status_code == 409 and end.json()["code"] == "MISSION_IN_FLIGHT"
     r.land()
-    await r.wait_status(mid, "LANDED", 15)
+    await r.wait_status(mid, "LANDED", 30)
     res = await d.charter("small")
     assert res.status_code == 409 and res.json()["code"] == "MISSION_STATE_INVALID"
     end = await r.panel.post(f"/api/v1/missions/{mid}/end", json={"reason": "klart"}, headers=H)
@@ -172,7 +172,7 @@ async def test_charter_only_by_the_pilots_click(r: Rig) -> None:
     assert ok.status_code == 200 and ok.json()["status"] == "approved"
     detail = await r.mission(mid)
     assert detail["mission"]["autonomy_mode"] == "APPROVE_EACH"
-    assert detail["charter"]["approved_by"] == "operator:demo"
+    assert detail["charter"]["approved_by"] == "operator:ci-harness"
 
 
 async def test_charter_validation_and_forbidden_fields(r: Rig) -> None:
@@ -244,7 +244,7 @@ async def test_raised_limits_move_the_fence(r: Rig) -> None:
     d = driver(r, mid)
     proposal = (await d.charter("box", alt_max_agl_m=180)).json()
     assert (await r.approve(proposal["approval_id"], 1)).status_code == 200
-    await r.wait_status(mid, "READY", 15)
+    await r.wait_status(mid, "READY", 30)
     assert r.fc.params["FENCE_ALT_MAX"] == 205
     assert r.fc.params["FENCE_RADIUS"] == 1030
     assert r.fc.params["LOIT_SPEED_MS"] == 20
@@ -261,7 +261,7 @@ async def test_clearance_is_per_takeoff_and_logged(r: Rig) -> None:
     assert "CLEARANCE_REQUIRED" in no.json()["reason_codes"]
     out = await take_off(r, mid, d)
     rows = await r.panel.get(f"/api/v1/missions/{mid}/events?type=clearance.confirmed")
-    assert rows.json() and rows.json()[0]["payload"]["by"] == "operator:demo"
+    assert rows.json() and rows.json()[0]["payload"]["by"] == "operator:ci-harness"
     gate = await r.panel.get(
         f"/api/v1/missions/{mid}/gate_decisions?command_id={out['command_id']}"
     )

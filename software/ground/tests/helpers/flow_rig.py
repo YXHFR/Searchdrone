@@ -19,13 +19,14 @@ import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from sqlalchemy import URL
 
 from sd_ground.app import commander_asgi, create_commander_app, create_panel_app, panel_asgi
-from sd_ground.auth import BrainToken
+from sd_ground.auth import BrainToken, SessionRecord, new_token
+from sd_ground.auth import hash_token as hash_session_token
 from sd_ground.config import GroundConfig, Loaded
 from sd_ground.context import Ground
 from sd_ground.db.engine import make_engine
@@ -246,11 +247,11 @@ class FakeOnboard:
 class Rig:
     g: Ground
     flow: MissionFlow
-    fc: FakeFlightController
+    fc: FakeFlightController | None
     core: GroundMav
     actions: VehicleActions
     link: GroundLink
-    onboard: FakeOnboard
+    onboard: Any
     panel: httpx.AsyncClient
     commander: httpx.AsyncClient
     clock: WallClock
@@ -258,7 +259,7 @@ class Rig:
 
     @property
     def home(self) -> tuple[float, float]:
-        return self.fc.home[0], self.fc.home[1]
+        return self.plane.lat0, self.plane.lon0
 
     def at(self, east: float, north: float) -> tuple[float, float]:
         return self.plane.latlon(east, north)
@@ -305,10 +306,14 @@ class Rig:
 
     def fly(self, alt: float = 40.0) -> None:
         """The fake flight controller is in the air (no physics in these tests)."""
+        if self.fc is None:
+            raise RuntimeError("only with the fake flight controller")
         self.fc.armed = True
         self.fc.alt_rel = alt
 
     def land(self) -> None:
+        if self.fc is None:
+            raise RuntimeError("only with the fake flight controller")
         self.fc.armed = False
         self.fc.alt_rel = 0.0
 
@@ -339,7 +344,7 @@ class Rig:
         charter = res.json()
         res = await self.approve(str(charter["approval_id"]), charter["version"])
         assert res.status_code == 200, res.text
-        await self.wait_status(mid, "READY", 15)
+        await self.wait_status(mid, "READY", 30)
         await self.wait_snapshot(ExecutorState.PREFLIGHT)
         return mid
 
@@ -368,6 +373,30 @@ def app_url(name: str, password: str) -> URL:
     )
 
 
+async def _harness_token(g: Ground) -> str:
+    """A pilot CLI token named ``ci-harness``, as ``sd-ground token create`` makes it: the
+    harness approves and confirms only through the panel API, as ``operator:ci-harness``."""
+    if g.repo is None:
+        raise RuntimeError("no database")
+    token = new_token()
+    now = dt.datetime.now(dt.UTC)
+    rec = SessionRecord(
+        id="",
+        kind="token",
+        role="pilot",
+        issuer_ref="operator:ci-harness",
+        auth_mode="cli",
+        token_sha256=hash_session_token(token),
+        created_at=now,
+        last_used_at=now,
+        expires_at=now + dt.timedelta(hours=24),
+        name="ci-harness",
+    )
+    await g.repo.save_session(rec)
+    g.sessions.load(await g.repo.sessions())
+    return token
+
+
 async def _flush_events(g: Ground) -> None:
     """Writes the queued events every 0.1 s, as the app's background loop does."""
     while True:
@@ -375,12 +404,56 @@ async def _flush_events(g: Ground) -> None:
         await asyncio.sleep(0.1)
 
 
+class Onboard(Protocol):
+    """The onboard side of a rig: ``FakeOnboard`` or the real executor against SITL."""
+
+    async def start(self, home: tuple[float, float]) -> None: ...
+
+    async def close(self) -> None: ...
+
+
 @contextlib.asynccontextmanager
 async def rig(db_name: str, app_password: str, tmp_path: Path, **config: Any) -> AsyncIterator[Rig]:
-    clock = WallClock()
+    """The ground station against the fake flight controller and ``FakeOnboard``."""
     mav_clock = MonotonicClock()
+    fc = FakeFlightController(mav_clock)
+    onboard_vehicle = FakeVehicle(mav_clock, fc=fc)  # the onboard heartbeat (1/191)
+    await onboard_vehicle.start()
+    async with ground_stack(
+        db_name,
+        app_password,
+        tmp_path,
+        vehicle=FakeVehicle(mav_clock, fc=fc, role=Role.GROUND),
+        mav_clock=mav_clock,
+        onboard=lambda clock, url, token: FakeOnboard(clock, url, token),
+        fc=fc,
+        **config,
+    ) as r:
+        try:
+            yield r
+        finally:
+            await onboard_vehicle.close()
+
+
+@contextlib.asynccontextmanager
+async def ground_stack(
+    db_name: str,
+    app_password: str,
+    tmp_path: Path,
+    *,
+    vehicle: Any,
+    mav_clock: Any,
+    onboard: Callable[[WallClock, str, str], Onboard],
+    fc: FakeFlightController | None = None,
+    **config: Any,
+) -> AsyncIterator[Rig]:
+    """The ground station's mission flow on ``vehicle`` (250/190), with its database, the
+    real SD-link server, the panel and commander APIs; ``onboard`` connects to it."""
+    clock = WallClock()
     loaded = Loaded(
-        config=GroundConfig.model_validate({"data_dir": str(tmp_path / "data"), **config}),
+        config=GroundConfig.model_validate(
+            {"data_dir": str(tmp_path / "data"), "auth": {"cli_may_confirm": True}, **config}
+        ),
         root=tmp_path,
         env={},
     )
@@ -388,13 +461,10 @@ async def rig(db_name: str, app_password: str, tmp_path: Path, **config: Any) ->
     engine = make_engine(app_url(db_name, app_password))
     g.repo = Repo(engine)
     g.db_ok = True
-    fc = FakeFlightController(mav_clock)
-    ground_vehicle = FakeVehicle(mav_clock, fc=fc, role=Role.GROUND)
-    onboard_vehicle = FakeVehicle(mav_clock, fc=fc)  # the onboard heartbeat (1/191)
     latches = Latches(clock)
     actions = VehicleActions(clock, latches, vehicle_ids=[VID])
     core = GroundMav(
-        ground_vehicle,
+        vehicle,
         mav_clock,
         vehicle_id=VID,
         latches=latches,
@@ -421,11 +491,10 @@ async def rig(db_name: str, app_password: str, tmp_path: Path, **config: Any) ->
     g.emergency = actions
     g.vehicle_actions = actions
     g.flow = flow
-    await onboard_vehicle.start()
     await core.start()
     await flow.start()
     await link.start()
-    onboard = FakeOnboard(clock, f"ws://127.0.0.1:{link.port}/sdlink/v1/control", token)
+    side = onboard(clock, f"ws://127.0.0.1:{link.port}/sdlink/v1/control", token)
     tasks = [
         asyncio.ensure_future(flow.run()),
         asyncio.ensure_future(actions.pump(g)),
@@ -441,42 +510,43 @@ async def rig(db_name: str, app_password: str, tmp_path: Path, **config: Any) ->
         base_url="http://127.0.0.1:7700",
         headers={"Authorization": f"Bearer {BRAIN}"},
     )
-    r = Rig(
-        g,
-        flow,
-        fc,
-        core,
-        actions,
-        link,
-        onboard,
-        panel,
-        commander,
-        clock,
-        Plane(fc.home[0], fc.home[1]),
-    )
     try:
-        code, _ = g.login_link()
-        res = await panel.post("/api/v1/session", json={"login_code": code}, headers=H)
-        assert res.status_code == 200, res.text
+        panel.headers["Authorization"] = f"Bearer {await _harness_token(g)}"
         g.operator_seen_mono = clock.monotonic()
-        for _ in range(100):
+        home = None
+        for _ in range(300):
             snap = core.snapshot()
             if snap is not None and snap.connected and snap.telemetry.home is not None:
+                home = snap.telemetry.home
                 break
             await asyncio.sleep(0.05)
-        await onboard.start(r.home)
-        await r.until(lambda: link.up(VID), 10, "SD-link up")
+        if home is None:
+            raise AssertionError("no HOME_POSITION from the flight controller")
+        r = Rig(
+            g,
+            flow,
+            fc,
+            core,
+            actions,
+            link,
+            side,
+            panel,
+            commander,
+            clock,
+            Plane(home.lat, home.lon),
+        )
+        await side.start(r.home)
+        await r.until(lambda: link.up(VID), 30, "SD-link up")
         yield r
     finally:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await onboard.close()
+        await side.close()
         await link.stop()
         await panel.aclose()
         await commander.aclose()
         await core.close()
-        await onboard_vehicle.close()
         await g.repo.close()
 
 
@@ -484,4 +554,4 @@ def dump(data: Any) -> str:
     return json.dumps(data, default=str)[:2000]
 
 
-__all__ += ["app_url", "dump", "new_id"]
+__all__ += ["Onboard", "app_url", "dump", "ground_stack", "new_id"]

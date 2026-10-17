@@ -116,7 +116,7 @@ class _VehicleWatch:
     hold_reason: str | None = None
     disarmed_mono: float | None = None
     closing: bool = False
-    flown: bool = False  # in the air since the mission became ACTIVE
+    flown: bool = False  # in the air since it last stood disarmed outside a flight state
 
 
 @dataclass
@@ -704,8 +704,10 @@ class MissionFlow:
         watch = self._watch.setdefault(vehicle_id, _VehicleWatch())
         status = MissionStatusFull(mission.status, mission.paused_by, mission.returning_cause)
         air = status in mission_state.AIR
-        if air and self.in_flight(vehicle_id):
-            watch.flown = True
+        if self.in_flight(vehicle_id):
+            watch.flown = True  # also when seen before the state turned ACTIVE
+        elif not air and self.on_ground_disarmed(vehicle_id):
+            watch.flown = False
         if air and watch.flown and self.on_ground_disarmed(vehicle_id):
             watch.flown = False
             await self.transition(str(mission.id), Trigger.LANDED_DISARMED)
