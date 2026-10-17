@@ -44,8 +44,8 @@ IMU_MASS_KG = 0.01
 MAX_ROTOR_RAD_S = 650.0  # about 6 200 rpm for a 14-inch propeller
 THRUST_TO_WEIGHT = 2.0
 # LiftDrag surfaces: lift = 0.5 * rho * area * cl * v^2 with cl = CLA * angle of attack and
-# v = rotor speed * BLADE_CP_M. AOA_RAD is the blade's fixed pitch (a0) plus a typical
-# inflow angle; the area follows from the thrust each rotor must give at full speed.
+# v = rotor speed * BLADE_CP_M. The angle of attack is the blade's fixed pitch
+# BLADE_A0_RAD; the area follows from the thrust each rotor must give at full speed.
 AIR_DENSITY = 1.2041
 BLADE_CP_M = 0.084
 CLA = 4.25
@@ -193,14 +193,14 @@ def world_context(name: str, instance: int, fix: fixture.Fixture) -> dict[str, A
 
 
 def _env() -> jinja2.Environment:
-    # SDF is XML, not HTML, and every value comes from our own files and constants.
+    # SDF is XML, so values are escaped like any other XML text.
     return jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(GAZEBO_DIR)),
         undefined=jinja2.StrictUndefined,
         keep_trailing_newline=True,
         trim_blocks=True,
         lstrip_blocks=True,
-        autoescape=False,  # noqa: S701
+        autoescape=True,
     )
 
 

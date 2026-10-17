@@ -17,6 +17,7 @@ import yaml
 from sd_hwcalc.calc import compute
 from sd_hwcalc.model import load_drone
 from sd_sim import fixture, paths, ports, world
+from sd_sim.sitl import CMAC_HOME
 
 SIM = paths.REPO / "simulation"
 FRAME_JSON = SIM / "sitl" / "frames" / "sd_quad14.json"
@@ -426,4 +427,4 @@ def test_fixture_load_errors(tmp_path: Path) -> None:
 
 
 def test_home_sitl_argument() -> None:
-    assert fixture.load().home.sitl_arg() == "-35.363261,149.165230,584.0,353"
+    assert fixture.load().home.sitl_arg() == CMAC_HOME
