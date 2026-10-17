@@ -201,8 +201,9 @@ def test_stubs_and_stage2_never_exposed() -> None:
     s = situation()
     names = _names(s, reg=REG)
     assert not names & {"orbit", "land_at", "follow_me", "find_me", "inspect_detection"}
-    # The real registry still has every skill as a stub: only read tools are offered.
-    assert _names(s, reg=SKILL_REGISTRY) == READ
+    # The real registry offers only its implemented skills; its stubs never become tools.
+    implemented = {k.name for k in SKILL_REGISTRY if k.status == "implemented"}
+    assert _names(s, reg=SKILL_REGISTRY) == READ | (names & implemented)
 
 
 def test_stub_in_allowed_skills_is_not_exposed() -> None:

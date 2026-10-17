@@ -73,19 +73,10 @@ def test_registry_mismatch() -> None:
         for s in SKILL_REGISTRY.public()
     ]
     assert registry_mismatch(SKILL_REGISTRY, public) == []
-    assert registry_mismatch(REG, public) == sorted(
-        {
-            "takeoff",
-            "goto",
-            "survey_sector",
-            "hold",
-            "resume",
-            "return_home",
-            "report",
-            "mark_location",
-            "propose_charter_change",
-        }
-    )
+    # The evaluation copy differs exactly where the real registry still has a stub.
+    differs = {k.name for k in REG if k.status != SKILL_REGISTRY.get(k.name).status}
+    assert differs >= {"report", "mark_location", "propose_charter_change"}
+    assert registry_mismatch(REG, public) == sorted(differs)
     assert registry_mismatch(SKILL_REGISTRY, public[1:]) == [public[0].name]
 
 
