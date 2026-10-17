@@ -6,6 +6,9 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from sd_safety.constants import FIELD_RC_FAILSAFE
+from sd_sim import paths
+
 TOLERANCE = 1e-4
 
 # Safety parameters the flight controller must have, checked independently of the
@@ -48,8 +51,6 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
 # Prefixes whose every line in the safety file must have a rule above.
 RULED_PREFIXES = ("FS_", "FENCE_", "BATT_", "ARMING_", "DISARM_", "RC_", "RTL_", "SRTL_", "SCR_")
 
-# The RC failsafe of real flight: RC link lost in the air -> SmartRTL, else RTL.
-FIELD_RC_FAILSAFE = 4.0
 # Real flight (searchdrone-safety.parm + searchdrone-safety.field.parm): the same rules,
 # except that the RC transmitter is required, so its failsafe must act.
 FIELD_RULES: tuple[tuple[str, str, float], ...] = tuple(
@@ -63,12 +64,19 @@ TEST_LAYER_OVERRIDES: dict[str, frozenset[float]] = {
 }
 
 
-def layer_rules(layer: dict[str, float]) -> list[tuple[str, str, float]]:
-    """``SAFETY_RULES`` with a test layer's values as exact rules. A layer may only set a
-    ruled name to a value ``TEST_LAYER_OVERRIDES`` allows, so it can never loosen them."""
-    ruled = {name for name, _, _ in SAFETY_RULES}
+def layer_rules(
+    layer: dict[str, float], safety_names: Iterable[str] | None = None
+) -> list[tuple[str, str, float]]:
+    """``SAFETY_RULES`` with a test layer's values as exact rules. A layer may not touch a
+    ruled name or any name the safety file sets (``safety_names``, by default read from
+    ``simulation/sitl/params/searchdrone-safety.parm``) unless ``TEST_LAYER_OVERRIDES``
+    allows that value, so it can never loosen them or change the flight modes."""
+    if safety_names is None:
+        path = paths.REPO / "simulation" / "sitl" / "params" / "searchdrone-safety.parm"
+        safety_names = parse_parm(path.read_text(encoding="utf-8"), path.name)
+    protected = {name for name, _, _ in SAFETY_RULES} | set(safety_names)
     for name, value in layer.items():
-        if name in ruled and value not in TEST_LAYER_OVERRIDES.get(name, frozenset()):
+        if name in protected and value not in TEST_LAYER_OVERRIDES.get(name, frozenset()):
             raise ParamFileError(f"testlagret får inte ändra {name} till {value:g}")
     return [(n, "==", layer[n]) if n in layer else (n, op, v) for n, op, v in SAFETY_RULES]
 

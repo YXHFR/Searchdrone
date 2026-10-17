@@ -48,6 +48,9 @@ HEARTBEAT_INTERVAL_US: Final = 200_000
 COMMANDER_STATUS_HZ: Final = 1
 EXECUTOR_TICK_HZ: Final = 10
 SNAPSHOT_HZ: Final = 2
+# Real flight: FS_THR_ENABLE on the flight controller (RC link lost in the air -> SmartRTL,
+# else RTL). The real-flight parameter layer sets it; the onboard config check requires it.
+FIELD_RC_FAILSAFE: Final = 4.0
 
 # --- links, watchdogs and the emergency path --------------------------------------------
 

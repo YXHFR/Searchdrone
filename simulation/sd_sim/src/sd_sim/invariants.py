@@ -38,7 +38,7 @@ __all__ = [
 ALT_MARGIN_M: Final = 2.0
 RANGE_MARGIN_M: Final = 5.0
 SPEED_MARGIN_MS: Final = 1.0
-# Orders that run on the ground or are the emergency path: no onboard flight, no INV7.
+# Orders that run on the ground only: no onboard flight, so no INV7.
 _GROUND_SKILLS: Final = frozenset({"report", "mark_location", "propose_charter_change"})
 _CARRIED_OUT: Final = frozenset({"accepted", "running", "done", "failed", "superseded"})
 
@@ -166,9 +166,9 @@ def check_orders(
 def check_overrides(
     events: Sequence[Mapping[str, Any]], commands: Sequence[Mapping[str, Any]]
 ) -> list[str]:
-    """INV8 and INV10: every STOP / FLY HOME came from an operator or the ground's own
-    rules (battery, watchdog), and no order from the AI was carried out between an
-    operator's press and the operator's next Resume."""
+    """INV8 and INV10: every ``vehicle.stop`` / ``vehicle.return_home`` event came from an
+    operator (``by`` starts with ``operator:``), and no order from the AI was carried out
+    between such a press and the next Resume."""
     out = []
     stands: list[tuple[dt.datetime, dt.datetime | None]] = []
     presses = sorted(

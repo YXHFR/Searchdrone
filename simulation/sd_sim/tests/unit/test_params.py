@@ -114,3 +114,13 @@ def test_a_test_layer_can_only_make_the_rules_stricter() -> None:
         params.layer_rules({"FENCE_ALT_MAX": 500.0})
     with pytest.raises(params.ParamFileError, match="FS_THR_ENABLE"):
         params.layer_rules({"FS_THR_ENABLE": 2.0})
+
+
+def test_a_test_layer_cannot_change_what_the_safety_file_sets() -> None:
+    # Not ruled, but set by the safety file (the RC mode switch, the GUIDED timeout).
+    for name, value in (("FLTMODE1", 6.0), ("GUID_TIMEOUT", 10.0)):
+        with pytest.raises(params.ParamFileError):
+            params.layer_rules({name: value})
+    with pytest.raises(params.ParamFileError):
+        params.layer_rules({"ANY_NAME": 1.0}, safety_names=["ANY_NAME"])
+    assert params.layer_rules({"ANY_NAME": 1.0}, safety_names=[]) == list(params.SAFETY_RULES)

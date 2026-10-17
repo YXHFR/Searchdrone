@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sd_link.client import is_safe_url
 from sd_mav.connection import BROADCAST_SYSID, GCS_COMPID
 from sd_onboard.io.params import effective_params
+from sd_safety.constants import FIELD_RC_FAILSAFE
 from sd_schemas.base import VEHICLE_ID_PATTERN
 
 __all__ = [
@@ -202,8 +203,6 @@ def check(loaded: Loaded) -> list[str]:
 
 # ArduCopter 4.7's ARMING_SKIPCHK bit for the RC check (ARMING_CHECK_RC, 1 << 6).
 ARMING_SKIP_RC_BIT = 1 << 6
-# RC link lost in the air -> SmartRTL, else RTL (the real-flight safety layer's value).
-FIELD_RC_FAILSAFE = 4.0
 
 
 def _rc_param_problems(params: dict[str, float]) -> list[str]:

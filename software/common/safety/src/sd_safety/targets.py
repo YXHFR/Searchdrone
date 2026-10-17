@@ -20,7 +20,7 @@ from itertools import pairwise
 from typing import Any
 
 from sd_schemas.base import LatLon
-from sd_schemas.geo import WGS84_A, WGS84_E2, WGS84_F, plane_offset, tangent_radii, wrap_lon
+from sd_schemas.geo import WGS84_A, WGS84_F, plane_offset, tangent_radii, wrap_lon
 
 __all__ = [
     "Plane",
@@ -36,7 +36,6 @@ Xy = tuple[float, float]  # east, north in metres
 _A = WGS84_A
 _F = WGS84_F
 _B = _A * (1 - _F)
-_E2 = WGS84_E2
 
 _EPS_M = 1e-6  # a point this close to an edge counts as on it
 
@@ -45,7 +44,7 @@ def distance_m(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
     """Geodesic distance in metres on WGS84; ``inf`` if the formula does not converge."""
     if a_lat == b_lat and a_lon == b_lon:
         return 0.0
-    big_l = math.radians(_wrap_lon(b_lon - a_lon))
+    big_l = math.radians(wrap_lon(b_lon - a_lon))
     u1 = math.atan((1 - _F) * math.tan(math.radians(a_lat)))
     u2 = math.atan((1 - _F) * math.tan(math.radians(b_lat)))
     sin_u1, cos_u1 = math.sin(u1), math.cos(u1)
@@ -91,9 +90,6 @@ def distance_m(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
     return math.inf  # nearly antipodal points: never near a drone, so too far
 
 
-_wrap_lon = wrap_lon
-
-
 @dataclass(frozen=True, slots=True)
 class Plane:
     """A local east/north plane (metres) tangent to the ellipsoid at a reference point."""
@@ -107,7 +103,7 @@ class Plane:
 
     def xy(self, lat: float, lon: float) -> Xy:
         east_r, north_r = self._radii()
-        east = math.radians(_wrap_lon(lon - self.lon0)) * east_r
+        east = math.radians(wrap_lon(lon - self.lon0)) * east_r
         north = math.radians(lat - self.lat0) * north_r
         return east, north
 
