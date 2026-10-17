@@ -68,6 +68,7 @@ from sd_schemas.commander import (
 )
 from sd_schemas.decide import ChatIntentReport, DecideRequest
 from sd_schemas.gate import GateDecision, StateRef
+from sd_schemas.mission import MissionState
 from sd_schemas.skills import SkillRegistry
 from sd_schemas.sv_commands import is_resume_request, is_takeoff_request
 
@@ -404,8 +405,8 @@ class CommanderLoop:
         self._last_turn_at = self._busy_since
         now = self.clock.utc_now()
         s = await self.ground.situation(mid)
-        if trigger == "skill_event":
-            s = await self._after_skill_event(mid, s, events)
+        if trigger in ("skill_event", "operator_override"):
+            s = await self._fresh_situation(mid, s, trigger, events)
         chat = await self.ground.chat(mid, 0, 200)
         try:
             mem = await self.ground.memory(mid)
@@ -722,21 +723,32 @@ class CommanderLoop:
                 await self._say(OutMessage(text=text), reply_to)
         return mem
 
-    async def _after_skill_event(
-        self, mid: str, s: Situation, events: list[dict[str, Any]]
+    async def _fresh_situation(
+        self, mid: str, s: Situation, trigger: Trigger, events: list[dict[str, Any]]
     ) -> Situation:
-        """The situation once its snapshot no longer shows the order that just ended as
-        active (at most ``FRESH_SNAPSHOT_WAIT_S``). An order based on the older snapshot
-        would be refused onboard as ``STATE_CHANGED``: the vehicle has moved on."""
+        """The situation once it shows the vehicle after the event (at most
+        ``FRESH_SNAPSHOT_WAIT_S``): after a skill's end, a snapshot without that order as
+        active (an order based on the older one is refused onboard as ``STATE_CHANGED``);
+        after the pilot's Resume, the mission no longer paused by a person (until the
+        onboard computer confirms the release, the gate still says the pilot must resume)."""
         body = (events[-1].get("body") or {}) if events else {}
-        ended = body.get("command_id")
+
+        def stale(s: Situation) -> bool:
+            if trigger == "skill_event":
+                ended = body.get("command_id")
+                return (
+                    ended is not None
+                    and s.active_command is not None
+                    and str(s.active_command.id) == str(ended)
+                )
+            return (
+                body.get("action") == "resume"
+                and s.mission_status == MissionState.PAUSED
+                and s.paused_by != "brain"
+            )
+
         end = self.clock.monotonic() + FRESH_SNAPSHOT_WAIT_S
-        while (
-            ended is not None
-            and s.active_command is not None
-            and str(s.active_command.id) == str(ended)
-            and self.clock.monotonic() < end
-        ):
+        while stale(s) and self.clock.monotonic() < end:
             await self.clock.sleep(0.1)
             s = await self.ground.situation(mid)
         return s

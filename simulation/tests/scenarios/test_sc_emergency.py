@@ -176,6 +176,8 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
                 "intent": "stop",
                 "probability": 0.99,
                 "engine": "jev",
+                "location": "cloud",
+                "latency_ms": 120,
             },
         )
         assert res.status_code in (202, 409), res.text

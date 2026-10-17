@@ -580,3 +580,30 @@ async def test_skill_end_waits_only_so_long() -> None:
     await loop.settle()
     assert clock.monotonic() - start <= 2.0  # the stale snapshot is used after 1.5 s
     assert len(backend.turns) == 1
+
+
+async def test_resume_waits_until_the_release_is_confirmed() -> None:
+    """The pilot's Resume reaches the AI before the onboard computer has confirmed it (the
+    mission is still PAUSED by the operator): the turn waits for the confirmed picture."""
+    backend = Steps(act("resume"))
+    loop, fg, _ = make_loop(backend)
+    fg.sit["mission_status"] = "PAUSED"
+    fg.sit["paused_by"] = "operator"
+    calls = 0
+    situation = fg.situation
+
+    async def confirming(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 4:  # the onboard snapshot without the latch arrived
+            fg.sit["mission_status"] = "ACTIVE"
+            fg.sit["paused_by"] = None
+        return await situation(mission_id)
+
+    fg.situation = confirming  # type: ignore[method-assign]
+    loop.handle_event(
+        {"type": "event.operator_override", "body": {"active": False, "action": "resume"}}
+    )
+    await loop.settle()
+    assert calls >= 4
+    assert backend.turns and backend.turns[0].trigger == "operator_override"
