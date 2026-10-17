@@ -13,7 +13,9 @@ interface Hooks {
       mission: Mission | null;
     };
   };
-  missionStore: { getState(): { sectors: { properties: { progress: number } }[] } };
+  missionStore: {
+    getState(): { sectors: { properties: { status: string; progress: number } }[] };
+  };
 }
 interface Tel {
   armed: boolean;
@@ -42,10 +44,13 @@ const live = <T>(page: Page, pick: string): Promise<T> =>
       .reduce<unknown>((o, k) => (o == null ? o : (o as Record<string, unknown>)[k]), s);
   }, pick) as Promise<T>;
 
-const sectorProgress = (page: Page): Promise<number> =>
+/** Every sector searched: done, with its progress (a fraction) full. */
+const sectorsDone = (page: Page): Promise<boolean> =>
   page.evaluate(() => {
     const s = (window as unknown as { __sd: Hooks }).__sd.missionStore.getState().sectors;
-    return s.length === 0 ? 0 : Math.min(...s.map((x) => x.properties.progress));
+    return (
+      s.length > 0 && s.every((x) => x.properties.status === "done" && x.properties.progress >= 1)
+    );
   });
 
 function metres(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
@@ -142,9 +147,7 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
     .not.toBe("HELD");
 
   // PS-2: the search finishes, the AI flies home and lands.
-  await expect
-    .poll(() => sectorProgress(page), { timeout: 360_000, intervals: [2_000] })
-    .toBeGreaterThanOrEqual(100);
+  await expect.poll(() => sectorsDone(page), { timeout: 360_000, intervals: [2_000] }).toBe(true);
   await expect(page.getByTestId("pill-vehicle")).toHaveText("På marken", { timeout: 240_000 });
   await expect.poll(() => live<boolean>(page, "telemetry.armed"), { timeout: 60_000 }).toBe(false);
   expect(errors).toEqual([]);

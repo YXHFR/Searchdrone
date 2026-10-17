@@ -12,7 +12,7 @@ export interface SectorFeature {
     sector_id: string;
     name: string;
     status: string;
-    progress: number;
+    progress: number; // 0..1
     covered?: unknown;
     [k: string]: unknown;
   };

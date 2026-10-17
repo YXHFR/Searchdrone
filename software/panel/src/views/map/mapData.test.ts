@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Annotation, Charter, Command, Telemetry } from "../../api/types";
 import { areaM2, distanceM, selfIntersects } from "../../lib/geo";
-import { droneData, nextLabel, pilotRangeData, rectangle, targetData, trackData } from "./mapData";
+import {
+  droneData,
+  nextLabel,
+  pilotRangeData,
+  rectangle,
+  sectorsData,
+  targetData,
+  trackData,
+} from "./mapData";
 
 const HOME = { lat: -35.363261, lon: 149.16523 };
 
@@ -38,6 +46,27 @@ describe("map data", () => {
         [1, 3],
       ]).features,
     ).toHaveLength(1);
+  });
+
+  it("a sector's label shows its progress (a fraction from the ground) in per cent", () => {
+    const fc = sectorsData([
+      {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [0, 0],
+              [0, 1],
+              [1, 1],
+              [0, 0],
+            ],
+          ],
+        },
+        properties: { sector_id: "A", name: "A", status: "active", progress: 0.476 },
+      },
+    ]);
+    expect(fc.features[0]?.properties?.label).toBe("A · 48 %");
   });
 
   it("labels: the next free P<n> and ar-<n>", () => {

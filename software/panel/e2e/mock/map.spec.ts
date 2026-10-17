@@ -197,7 +197,7 @@ test("every layer is fed: drone, charter, pilot range, home, sectors, target, tr
       {
         type: "Feature",
         geometry: square(50, 0, 180),
-        properties: { sector_id: "S1", name: "S1", status: "active", progress: 40 },
+        properties: { sector_id: "S1", name: "S1", status: "active", progress: 0.4 },
       },
       {
         type: "Feature",

@@ -86,7 +86,7 @@ export function sectorsData(sectors: SectorFeature[]): FC {
           name: s.properties.name,
           status: s.properties.status,
           progress: s.properties.progress,
-          label: `${s.properties.name} · ${Math.round(s.properties.progress)} %`,
+          label: `${s.properties.name} · ${Math.round(s.properties.progress * 100)} %`,
         },
       })),
   );

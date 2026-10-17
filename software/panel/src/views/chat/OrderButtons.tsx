@@ -60,7 +60,7 @@ export function OrderButtons() {
         params: { lat: c[1], lon: c[0], alt_m: Math.round(tel?.alt_rel_home_m ?? alt) },
       });
     }
-    const next = sectors.find((s) => s.properties.status !== "done" && s.properties.progress < 100);
+    const next = sectors.find((s) => s.properties.status !== "done" && s.properties.progress < 1);
     if (next) {
       orders.push({
         key: `survey-${next.properties.sector_id}`,
