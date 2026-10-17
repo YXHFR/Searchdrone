@@ -165,6 +165,11 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
         line = await sc.say("stopp")
         assert line["handled_by"] == "ground" and line["parsed_intent"] == "stop", line
         await stopped_and_holding(sc, t0)
+        await sc.until(
+            lambda: any(a["result"] == "dispatched" for a in sc.actions("stop")),
+            5,
+            "the STOP outcome",
+        )
         stops = [a for a in sc.actions("stop") if a["result"] == "dispatched"]
         assert len(stops) == 1, sorted({t for t, _ in sc.bus_log})
         assert stops[0]["via"] == "chat", stops
@@ -192,6 +197,13 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
         line = await sc.say("flyg hem")
         assert line["handled_by"] == "ground" and line["parsed_intent"] == "return_home"
         await sc.until(lambda: sc.mode() in HOME_MODES, 2.0 * STOP_ACK_S, "flying home")
+        # The outcome is published from the ground's queue after the MAVLink command went
+        # out, so the mode can change first.
+        await sc.until(
+            lambda: any(a["result"] == "dispatched" for a in sc.actions("return_home")),
+            5,
+            "the FLY HOME outcome",
+        )
         homes = [a for a in sc.actions("return_home") if a["result"] == "dispatched"]
         assert len(homes) == 1 and homes[0]["via"] == "chat", homes
         await sc.until(lambda: not sc.tel.armed, 180, "landed")
