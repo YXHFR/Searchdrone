@@ -12,18 +12,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sd_sim.errors import InfraError
+
 # ArduPilot's public SITL site (CMAC). Never a private address.
 CMAC_HOME = "-35.363261,149.165230,584.0,353"
 QGC_SERIAL = "--serial5"
 # The project's parameter layers, loaded after every generated layer: the safety
-# parameters (failsafes, fence, battery) and the sim-only parameters.
+# parameters (failsafes, fence, battery) and the sim-only parameters. Both are required:
+# a missing layer stops the start instead of silently flying without it.
 SAFETY_PARAM_FILE = "searchdrone-safety.parm"
-PROJECT_PARAM_FILES = (SAFETY_PARAM_FILE, "sd_quad14-sim.parm")
+SIM_PARAM_FILE = "sd_quad14-sim.parm"
+PROJECT_PARAM_FILES = (SAFETY_PARAM_FILE, SIM_PARAM_FILE)
+# SITL strips the leading "/" from a frame file path and opens it relative to its working
+# directory, so the launcher copies the frame file there and passes the bare name.
+FRAME_FILE = "sd_quad14.json"
 
 
 @dataclass(frozen=True)
 class SitlLayout:
-    """Files the command line points at. Missing optional files are simply left out."""
+    """Files the command line points at. The project's parameter layers are required."""
 
     arducopter: Path
     ardupilot_home: Path
@@ -32,7 +39,16 @@ class SitlLayout:
 
     @property
     def frame_json(self) -> Path:
-        return self.repo / "simulation" / "sitl" / "frames" / "sd_quad14.json"
+        return self.repo / "simulation" / "sitl" / "frames" / FRAME_FILE
+
+    def stage_frame(self, workdir: Path) -> Path:
+        """Copy the builtin-physics frame file into SITL's working directory."""
+        if not self.frame_json.is_file():
+            raise InfraError(f"{self.frame_json} saknas: modellen sd_quad14 kan inte startas.")
+        workdir.mkdir(parents=True, exist_ok=True)
+        target = workdir / FRAME_FILE
+        target.write_bytes(self.frame_json.read_bytes())
+        return target
 
     def defaults(self, physics: str) -> list[Path]:
         """Parameter layers, later files win: ArduPilot's sim defaults, Gazebo's (gz
@@ -49,9 +65,14 @@ class SitlLayout:
         return layers
 
     def project_layers(self) -> list[Path]:
-        """The project's own parameter files that exist, in load order (later wins)."""
+        """The project's own parameter files in load order (later wins). Every one must
+        exist; a missing layer raises instead of being skipped."""
         params = self.repo / "simulation" / "sitl" / "params"
-        return [params / name for name in PROJECT_PARAM_FILES if (params / name).is_file()]
+        layers = [params / name for name in PROJECT_PARAM_FILES]
+        missing = [p.name for p in layers if not p.is_file()]
+        if missing:
+            raise InfraError(f"Parameterlager saknas i {params}: {', '.join(missing)}")
+        return layers
 
 
 @dataclass(frozen=True)
@@ -79,10 +100,12 @@ def build_sitl_argv(opts: SitlOptions, ports: dict[str, int], layout: SitlLayout
     ]
     if opts.physics == "gz":
         argv += ["--model", "JSON", "--sim-address", "127.0.0.1"]
-    elif opts.vehicle == "sd_quad14" and layout.frame_json.is_file():
-        argv += ["--model", f"quad:{layout.frame_json}"]
-    else:
+    elif opts.vehicle == "sd_quad14":
+        argv += ["--model", f"quad:{FRAME_FILE}"]
+    elif opts.vehicle == "stock":
         argv += ["--model", "quad"]
+    else:
+        raise ValueError(f"okänt fordon {opts.vehicle!r}")
     argv += ["--defaults", ",".join(str(p) for p in layout.defaults(opts.physics))]
     argv += [
         "--serial0",

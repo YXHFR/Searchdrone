@@ -1,0 +1,6 @@
+# Simulator-only parameters for the sd_quad14 model. Loaded after the safety parameters.
+# Only SIM_* names and the names in tools/params_allowlist.toml may appear here; every
+# safety-relevant value (battery, fence, failsafes) lives in searchdrone-safety.parm.
+SIM_WIND_SPD 0           # no wind
+SIM_WIND_DIR 0
+MOT_THST_HOVER 0.42      # start value for the learned hover throttle

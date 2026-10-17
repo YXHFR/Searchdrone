@@ -9,6 +9,7 @@ extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**",
 # Domain
 sitl = "sitl"
 brin = "brin"  # Postgres BRIN index (B0-04)
+ned = "ned"  # north-east-down, a Gazebo plugin tag (sd_quad14 model)
 # Swedish
 varning = "varning"
 databas = "databas"
