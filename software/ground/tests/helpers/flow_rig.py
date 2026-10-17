@@ -397,6 +397,13 @@ async def _harness_token(g: Ground) -> str:
     return token
 
 
+async def _operator_present(g: Ground) -> None:
+    """The pilot keeps the panel open: its live connection pings once a second."""
+    while True:
+        g.operator_seen_mono = g.clock.monotonic()
+        await asyncio.sleep(1.0)
+
+
 async def _flush_events(g: Ground) -> None:
     """Writes the queued events every 0.1 s, as the app's background loop does."""
     while True:
@@ -500,6 +507,7 @@ async def ground_stack(
         asyncio.ensure_future(actions.pump(g)),
         asyncio.ensure_future(TelemetryService(g).run()),
         asyncio.ensure_future(_flush_events(g)),
+        asyncio.ensure_future(_operator_present(g)),
     ]
     panel = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=panel_asgi(g, create_panel_app(g))),  # pyright: ignore[reportArgumentType]
@@ -512,7 +520,6 @@ async def ground_stack(
     )
     try:
         panel.headers["Authorization"] = f"Bearer {await _harness_token(g)}"
-        g.operator_seen_mono = clock.monotonic()
         home = None
         for _ in range(300):
             snap = core.snapshot()

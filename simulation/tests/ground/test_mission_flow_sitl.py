@@ -149,6 +149,13 @@ async def _ready(r: Rig) -> str:
     assert res.status_code == 200, res.text
     await r.wait_status(mid, "READY", 90)
     await r.wait_snapshot(S.PREFLIGHT, 60)
+    ex = r.onboard.ex
+    await r.until(ex.preflight_ok, 90, "onboard preflight")
+    await r.until(
+        lambda: (snap := r.flow.snapshot(VID)[0]) is not None and snap.preflight_ok,
+        10,
+        "preflight ok in the ground's snapshot",
+    )
     return mid
 
 
@@ -187,7 +194,7 @@ async def test_health_ready_and_fence_on_sitl(stack: Rig, sim: Sim) -> None:
     assert charter["install_status"] == "installed"
     # What the flight controller holds is what the ground verified and the onboard
     # computer accepted.
-    stored = await r.core.call(lambda v: download(v, FENCE, origin=SendOrigin.GROUND), 10)
+    stored = await r.flow.mav.call(lambda v: download(v, FENCE, origin=SendOrigin.GROUND), 10)
     assert len(stored) >= 3
     assert fence_hash(stored) == charter["body"]["fence_hash"]
 
