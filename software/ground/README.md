@@ -29,6 +29,17 @@ addresses, missing or readable secrets, unknown settings, remote access switched
 
 None of these ports may ever be exposed to the internet.
 
+## Video
+
+`just video-up` starts MediaMTX (compose service `mediamtx`, config `config/mediamtx.yml`).
+Its ports (RTSP 8554, WHEP 8889, HLS 8888, API 9997) listen on 127.0.0.1 only, also in
+LAN mode; the panel reaches the video only through `POST /api/v1/video/<vehicle>/main/whep`
+(and `PATCH`/`DELETE` on the session address it returns), which needs a session. Only the
+WebRTC media (UDP 8189) goes directly, on the LAN address when `SD_VIDEO_BIND` is set.
+Publishing needs `SD_GROUND__VIDEO_PUBLISH_PASSWORD` from `.env`. When a mission closes,
+its part of the recording is linked or copied into `<data_dir>/missions/<id>/video/` and
+listed in the mission's files.
+
 Every panel request needs a session (also from `127.0.0.1`), changing requests need the
 header `X-SD-Client: panel` and JSON, the `Host` must be on the allow-list and a foreign
 `Origin` is refused. The commander token is refused on the panel ports, and the commander

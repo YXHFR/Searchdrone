@@ -77,6 +77,34 @@ jobs:
       - name: License policy for production dependencies
         run: uv run tools/check_licenses.py
 
+  video:
+    # Live video end to end (B1-09): MediaMTX from compose.yaml, the synthetic camera with
+    # the time strip, sd-ground's WHEP proxy and Google Chrome (preinstalled on the runner).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: GStreamer (H.264 encoder) and ffprobe
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gstreamer1.0-tools \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly ffmpeg
+      - name: The machine's name resolves to its LAN address (for the LAN-mode test)
+        run: |
+          ip="$(hostname -I | tr ' ' '\n' | grep -E '^(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.' | head -n1)"
+          [ -n "$ip" ] && echo "$ip $(hostname)" | sudo tee -a /etc/hosts
+      - name: Live video (Chrome, MediaMTX, sd-ground)
+        env:
+          SD_VIDEO_REQUIRE_LAN: "1"
+        run: just test-video
+      - name: MediaMTX log
+        if: failure()
+        run: docker compose --env-file .env logs --no-color mediamtx | tail -n 200
+
   panel-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -176,7 +204,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, typecheck, unit, contract, panel-e2e, reuse, secrets, build]
+    needs: [lint, typecheck, unit, contract, panel-e2e, video, reuse, secrets, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

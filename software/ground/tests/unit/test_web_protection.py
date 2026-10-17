@@ -139,16 +139,21 @@ def test_whep_content_types(logged_in: TestClient) -> None:
     base = "/api/v1/video/sim-01/main/whep"
     no_header = logged_in.post(base, content="v=0", headers={"Content-Type": "application/sdp"})
     assert no_header.status_code == 403
+    plain = logged_in.post(
+        base, content="v=0", headers={"X-SD-Client": "panel", "Content-Type": "text/plain"}
+    )
+    assert plain.status_code == 403
+    # SDP and trickle-ICE fragments pass the guard and reach the video proxy (B1-09).
     sdp = logged_in.post(
         base, content="v=0", headers={"X-SD-Client": "panel", "Content-Type": "application/sdp"}
     )
-    assert sdp.status_code == 501  # passes the guard; the video proxy itself comes with B1-09
+    assert sdp.status_code != 403
     frag = logged_in.patch(
-        base,
+        f"{base}/0b0e5a9c-1d2e-4f30-8a41-5c6d7e8f9a0b",
         content="a=x",
         headers={"X-SD-Client": "panel", "Content-Type": "application/trickle-ice-sdpfrag"},
     )
-    assert frag.status_code == 501
+    assert frag.status_code != 403
 
 
 def test_body_over_256_kib_is_413(logged_in: TestClient) -> None:

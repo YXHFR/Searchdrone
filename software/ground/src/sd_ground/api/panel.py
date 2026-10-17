@@ -9,7 +9,7 @@ owns are already here, with their final paths, bodies and role checks, and answe
   action outcomes are answered here from the same service.
 - The mission flow (open, limits, autonomy, clearance, charters, approvals, orders, chat
   posts, map pins, sectors, track, files) is ``services.missions.MissionFlow``.
-- Video comes with its own part. The offline map is ``sd_ground.api.tiles``.
+- Video (WHEP and HLS) is ``sd_ground.api.video_proxy``. The offline map is ``sd_ground.api.tiles``.
 """
 
 from __future__ import annotations
@@ -145,7 +145,11 @@ async def get_panel_config(g: G, _: Observer) -> PanelConfig:
     return PanelConfig(
         default_vehicle_id=vid,
         map=tiles.map_config(g),
-        video=VideoConfig(whep_url=f"/api/v1/video/{vid}/main/whep", hls_url=None),
+        video=(
+            VideoConfig(whep_url=f"/api/v1/video/{vid}/main/whep", hls_url=None)
+            if g.config.video.enabled
+            else None
+        ),
         vehicle_kind="sim",
         limits_default=SafetyLimits(),
         limits_absolute=AbsoluteLimits(
@@ -681,23 +685,3 @@ async def get_candidates(
 async def get_detections(mission_id: IdPath, _: Observer, response: Response) -> list[Any]:
     response.headers[STAGE2_HEADER] = STAGE2_VALUE
     return []
-
-
-@router.post("/video/{vehicle_id}/main/whep")
-async def whep_post(vehicle_id: VehiclePath, _: Observer) -> Response:
-    raise not_built("B1-09")
-
-
-@router.patch("/video/{vehicle_id}/main/whep")
-async def whep_patch(vehicle_id: VehiclePath, _: Observer) -> Response:
-    raise not_built("B1-09")
-
-
-@router.delete("/video/{vehicle_id}/main/whep")
-async def whep_delete(vehicle_id: VehiclePath, _: Observer) -> Response:
-    raise not_built("B1-09")
-
-
-@router.get("/video/{vehicle_id}/main/hls/{path:path}")
-async def hls(vehicle_id: VehiclePath, path: str, _: Observer) -> Response:
-    raise not_built("B1-09")

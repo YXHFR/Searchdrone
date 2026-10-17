@@ -96,7 +96,17 @@ def test_only_python_312(path: Path) -> None:
 
 def test_ci_ok_needs_every_ci_job() -> None:
     jobs = load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]
-    expected = {"lint", "typecheck", "unit", "contract", "panel-e2e", "reuse", "secrets", "build"}
+    expected = {
+        "lint",
+        "typecheck",
+        "unit",
+        "contract",
+        "panel-e2e",
+        "video",
+        "reuse",
+        "secrets",
+        "build",
+    }
     assert set(jobs) == expected | {"ci-ok"}
     assert set(jobs["ci-ok"]["needs"]) == expected
     assert jobs["ci-ok"]["if"] == "always()"

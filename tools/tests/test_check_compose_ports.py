@@ -88,6 +88,7 @@ webrtcAddress: 127.0.0.1:8889
 apiAddress: ""
 rtmp: no
 srt: no
+moq: no
 authInternalUsers:
   - user: publisher
     pass: CHANGE_ME
@@ -118,10 +119,16 @@ def test_mediamtx_public_address_fails() -> None:
     assert any("rtspAddress" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
 
 
-@pytest.mark.parametrize("key", ["rtmp", "srt"])
-def test_mediamtx_rtmp_and_srt_must_be_off(key: str) -> None:
+@pytest.mark.parametrize("key", ["rtmp", "srt", "moq"])
+def test_mediamtx_rtmp_srt_and_moq_must_be_off(key: str) -> None:
     text = MTX_OK.replace(f"{key}: no", f"{key}: yes")
     assert any(f"{key} ska vara no" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
+
+
+def test_mediamtx_moq_missing_fails() -> None:
+    # MediaMTX turns MoQ on by default, on every interface: it must be switched off.
+    text = MTX_OK.replace("moq: no\n", "")
+    assert any("moq ska vara no" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
 
 
 def test_main_without_files_passes(tmp_path: Path) -> None:

@@ -154,6 +154,24 @@ db-down: _env-file
 db-check: _env-file
     docker compose --env-file .env exec -T db psql -U sd_owner -d searchdrone -v ON_ERROR_STOP=1 -tAc 'SELECT postgis_full_version()'
 
+# Start the video server MediaMTX (loopback only; recordings in <data_dir>/video)
+video-up: _env-file
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data="$(grep -E '^SD_DATA_DIR=' .env | cut -d= -f2-)"
+    mkdir -p "${data/#\~/$HOME}/video"
+    docker compose --env-file .env up -d mediamtx
+
+# Stop the video server (recordings are kept)
+video-down: _env-file
+    docker compose --env-file .env stop mediamtx
+
+# Live video end to end: MediaMTX, synthetic camera, sd-ground and Chrome (B1-09)
+test-video:
+    {{_just}} video-up
+    pnpm --filter @searchdrone/panel build
+    uv run pytest simulation/tests/video -v -s
+
 # Create or upgrade the database schema (creates the role sd_app if missing)
 migrate:
     uv run --package sd-ground sd-ground db setup

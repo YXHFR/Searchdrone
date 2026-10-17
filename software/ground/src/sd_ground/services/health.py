@@ -25,8 +25,13 @@ def parts(g: Ground) -> dict[str, PartState]:
         "sdlink": g.sdlink.state(),
         "onboard": g.vehicle_link.onboard_state(),
         "brain": brain,
-        "mediamtx": "down",  # the video server is checked once video is built (B1-09)
+        "mediamtx": _video(g),
     }
+
+
+def _video(g: Ground) -> PartState:
+    state = g.video_state if g.config.video.enabled else "down"
+    return state if state in ("ok", "degraded") else "down"
 
 
 def health(g: Ground) -> Health:

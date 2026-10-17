@@ -105,6 +105,7 @@ class CharterConfig(_Section):
 
 
 class VideoConfig(_Section):
+    enabled: bool = True  # false for simulator instances > 0 (MediaMTX is instance 0 only)
     mediamtx_api: str = "http://127.0.0.1:9997"
     mediamtx_whep: str = "http://127.0.0.1:8889"
     mediamtx_hls: str = "http://127.0.0.1:8888"

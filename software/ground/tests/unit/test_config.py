@@ -97,6 +97,25 @@ def test_placeholder_secret(root: Path, value: str) -> None:
     assert any("SD_GROUND__DB_APP_PASSWORD" in e for e in _errors(root))
 
 
+@pytest.mark.parametrize("value", ["", "CHANGE_ME", "change_me"])
+def test_video_publish_password_check_exits_1(
+    root: Path, value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B1-09 point 6: ``sd-ground config check`` gives code 1 for an empty or placeholder
+    MediaMTX publish password (the real one lives only in .env)."""
+    from sd_ground.__main__ import main
+
+    env = root / ".env"
+    env.write_text(GOOD_ENV.replace("c" * 20, value) + f"SD_DATA_DIR={root / 'data'}\n")
+    env.chmod(0o600)
+    monkeypatch.chdir(root)
+    for key in ("SD_GROUND__VIDEO_PUBLISH_PASSWORD", "SD_DATA_DIR"):
+        monkeypatch.delenv(key, raising=False)
+    assert main(["config", "check"]) == 1
+    env.write_text(GOOD_ENV + f"SD_DATA_DIR={root / 'data'}\n")
+    assert main(["config", "check"]) == 0
+
+
 def test_data_dir_mismatch(root: Path) -> None:
     (root / ".env").write_text(GOOD_ENV + "SD_DATA_DIR=/somewhere/else\n")
     assert any("SD_DATA_DIR" in e for e in _errors(root))

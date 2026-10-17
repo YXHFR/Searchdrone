@@ -25,6 +25,29 @@ services:
       retries: 20
     shm_size: 256mb
 
+  # --- mediamtx: live video and recording per mission (B1-09) ---
+  # Start with `just video-up`. Signalling (WHEP 8889), HLS (8888), RTSP (8554) and the
+  # API (9997) are always on 127.0.0.1; the panel reaches them only through sd-ground.
+  # Only the WebRTC media port UDP 8189 moves to the LAN address in LAN mode
+  # (SD_VIDEO_BIND). Publishing needs the password from .env.
+  mediamtx:
+    # bluenviron/mediamtx:1.21.1, pushed 2026-09-20 (multi-arch index digest)
+    image: bluenviron/mediamtx:1.21.1@sha256:5ce2a948eb68df06ce2e13870db8df8e30d516ac4dc40e04bfe8aee3bdf7be40
+    restart: unless-stopped
+    # host-network: WebRTC over UDP works most simply this way in WSL2; every TCP address is pinned to 127.0.0.1 below
+    network_mode: host
+    user: "${SD_UID:?saknas i .env, kör just setup-config}:${SD_GID:?saknas i .env, kör just setup-config}"
+    environment:
+      TZ: UTC
+      MTX_WEBRTCADDRESS: "127.0.0.1:8889"
+      MTX_WEBRTCLOCALUDPADDRESS: "${SD_VIDEO_BIND:-127.0.0.1}:8189"
+      MTX_WEBRTCADDITIONALHOSTS: "${SD_LAN_IP:-}"
+      MTX_HLSADDRESS: "127.0.0.1:8888"
+      MTX_AUTHINTERNALUSERS_0_PASS: ${SD_GROUND__VIDEO_PUBLISH_PASSWORD:?saknas i .env, kör just setup-config}
+    volumes:
+      - ./config/mediamtx.yml:/mediamtx.yml:ro
+      - ${SD_DATA_DIR:?saknas i .env, kör just setup-config}/video:/recordings
+
 
   # --- llm: the local AI model in llama-server (B1-10), profile "ai" ---
   # Start with `just llm-up`. The key comes from .env (SD_LLM_API_KEY); without it the

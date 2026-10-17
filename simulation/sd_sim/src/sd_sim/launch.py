@@ -47,7 +47,10 @@ FLAGS = ("--demo", "--with-db")
 # (processes stop in reverse start order and the ground station's heartbeat must end
 # last); the rest start after SITL.
 NOT_BUILT_BEFORE_SITL = ("postgres", "sd-ground")
-NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain", "video_relay")
+NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain")
+VIDEO_SECRET = "mediamtx_publish"  # noqa: S105 - a file name, not a secret
+VIDEO_PASSWORD_KEY = "SD_GROUND__VIDEO_PUBLISH_PASSWORD"  # noqa: S105 - a variable name
+PLACEHOLDERS = {"", "change_me", "change-me", "changeme"}
 
 HEALTH_LINK_S = 10.0
 HEALTH_HEARTBEAT_S = 60.0
@@ -64,6 +67,19 @@ def write_secret(directory: Path, name: str, value: str) -> Path:
         out.write(value)
     path.chmod(0o600)
     return path
+
+
+def video_password(repo: Path) -> str:
+    """The MediaMTX publish password: the environment first, then the repository's .env."""
+    value = os.environ.get(VIDEO_PASSWORD_KEY)
+    env_file = repo / ".env"
+    if value is None and env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            name, sep, rest = line.strip().partition("=")
+            if sep and name.strip() == VIDEO_PASSWORD_KEY:
+                value = rest.strip().strip('"').strip("'")
+    value = (value or "").strip()
+    return "" if value.lower() in PLACEHOLDERS else value
 
 
 def check_secret_modes(directory: Path) -> None:
@@ -92,6 +108,7 @@ class Stack:
         self.secrets_dir = self.inst_dir / "secrets"
         self.group = procs.ProcessGroup(self.inst_dir / "pids.json", run_dir / "logs")
         self.linksim_token = ""
+        self.video_password = ""
         self.world: gazebo.World | None = None
 
     # --- helpers -------------------------------------------------------------------
@@ -104,8 +121,9 @@ class Stack:
         return InfraError(f"Steget '{step}' blev inte friskt. {hint}\n{tail}".rstrip())
 
     def mask(self, text: str) -> str:
-        if self.linksim_token:
-            text = text.replace(self.linksim_token, "***")
+        for secret in (self.linksim_token, self.video_password):
+            if secret:
+                text = text.replace(secret, "***")
         return text
 
     def _wait(self, step: str, proc: procs.Proc | None, timeout: float, check, hint: str) -> None:
@@ -296,9 +314,44 @@ class Stack:
         elif self.cfg.video == "test":
             self.group.start(
                 "testvideo",
-                gazebo.test_video_argv(self.ports["video_raw_udp"]),
+                [
+                    sys.executable,
+                    "-m",
+                    "sd_sim.video_relay",
+                    "source",
+                    "--port",
+                    str(self.ports["video_raw_udp"]),
+                ],
                 env=procs.clean_env(),
             )
+
+    def start_video_relay(self) -> None:
+        """Publish the video that passed linksim to MediaMTX (instance 0 only)."""
+        if self.cfg.instance != 0 or self.cfg.video == "off":
+            return
+        self.video_password = video_password(self.repo)
+        if not self.video_password:
+            say(f"hoppar över video_relay ({VIDEO_PASSWORD_KEY} saknas i .env)")
+            return
+        write_secret(self.secrets_dir, VIDEO_SECRET, self.video_password)
+        self.group.start(
+            "video_relay",
+            [
+                sys.executable,
+                "-m",
+                "sd_sim.video_relay",
+                "relay",
+                "--udp-port",
+                str(self.ports["video_out_udp"]),
+                "--rtsp-port",
+                str(self.ports["mediamtx_rtsp"]),
+                "--vehicle",
+                "sim-01",
+                "--password-file",
+                str(self.secrets_dir / VIDEO_SECRET),
+            ],
+            env=procs.clean_env(),
+        )
 
     def up(self) -> None:
         os.umask(0o077)
@@ -319,6 +372,7 @@ class Stack:
             self.wait_vehicle_observed(sitl)
         for part in NOT_BUILT_AFTER_SITL:
             say(f"hoppar över {part} (inte byggt än)")
+        self.start_video_relay()
         self.start_video_source()
 
     def down(self) -> None:

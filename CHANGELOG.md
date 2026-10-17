@@ -8,6 +8,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Live video: the MediaMTX service in `compose.yaml` (`just video-up`), every TCP
+  port on 127.0.0.1 and only the WebRTC media port UDP 8189 on the LAN address in LAN
+  mode; the publish password comes from `.env`. `sd-ground` passes WHEP through
+  `/api/v1/video/<vehicle>/main/whep` (session required), shows MediaMTX in the health
+  parts and takes each mission's recording into its folder (`video/`, hard links or exact
+  copies, with SHA-256). The panel's video view plays WebRTC and falls back to HLS. The
+  simulator gets a synthetic camera with a machine-readable time strip and an RTSP relay
+  (`sd_sim.video_relay`); `just test-video` checks in Google Chrome that the picture comes
+  within 5 s with a median latency under 1 s, the recording per mission and the ports.
 - AI mission commander `sd-brain`: chat and situation in, one gated order per turn out.
   The cloud model (any OpenAI-compatible API, OpenRouter by default) decides when a key is
   set, and the local Qwen3-VL-4B in llama-server takes over automatically in the same turn.

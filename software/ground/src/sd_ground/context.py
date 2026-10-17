@@ -65,6 +65,7 @@ class Ground:
     version: str = field(default_factory=lambda: version("sd-ground"))
     db_ok: bool = False
     brain_state: str = "down"
+    video_state: str = "down"  # MediaMTX and the default vehicle's stream (services.video)
     operator_seen_mono: float | None = None
     pilot_ws: int = 0
     _events: deque[EventRow] = field(

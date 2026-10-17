@@ -214,8 +214,10 @@ export class FakeGround {
     expect(this.cspErrors, "CSP violations").toEqual([]);
     for (const r of this.requests.filter((x) => x.method !== "GET")) {
       expect(r.headers["x-sd-client"], `${r.method} ${r.path} X-SD-Client`).toBe("panel");
+      // WHEP offers are SDP; everything else that changes something is JSON.
+      const whepOffer = r.method === "POST" && /\/video\/[^/]+\/main\/whep$/.test(r.path);
       expect(r.headers["content-type"], `${r.method} ${r.path} Content-Type`).toContain(
-        "application/json",
+        whepOffer ? "application/sdp" : "application/json",
       );
       expect(r.headers["idempotency-key"], `${r.method} ${r.path} Idempotency-Key`).toBeUndefined();
     }
@@ -361,6 +363,13 @@ export class FakeGround {
         body: { actions: [{ ...dispatched(`a${this.actionCounter}`), vehicle_id: VEHICLE }] },
       };
     }
+    // Video: no stream by default (tests answer the offer themselves).
+    if (k === `POST ${API}/video/${VEHICLE}/main/whep`)
+      return { status: 404, body: { code: "VIDEO_NOT_FOUND" } };
+    if (new RegExp(`^(PATCH|DELETE) ${API}/video/${VEHICLE}/main/whep/[^/]+$`).test(k))
+      return { status: 200 };
+    if (k.startsWith(`GET ${API}/video/${VEHICLE}/main/hls/`))
+      return { status: 404, body: { code: "NOT_FOUND" } };
     if (k === `POST ${API}/missions/${MISSION}/chat`) {
       const b = req.body as { text: string; client_msg_id: string };
       return {

@@ -14,6 +14,7 @@ const ALLOWED = [
   "https://wiki.openstreetmap.org/wiki/This_map_requires_WebGL", // MapLibre no-WebGL message
   "https://github.com/mapbox/mapbox-gl-js/issues/", // MapLibre comment link in an error text
   "https://github.com/protomaps/PMTiles/tree/main/js", // PMTiles Leaflet error text (unused)
+  "https://aomedia.org/emsg/ID3", // hls.js: an ID3 metadata scheme identifier, not fetched
 ];
 // Allowed by exact shape only: the licence link in the MapLibre worker's header comment.
 const ALLOWED_RE = [

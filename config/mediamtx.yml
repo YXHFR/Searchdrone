@@ -1,0 +1,38 @@
+# MediaMTX for the ground station (compose service `mediamtx`, `just video-up`).
+# Committed WITHOUT a real password: compose.yaml sets the publisher password from
+# .env (MTX_AUTHINTERNALUSERS_0_PASS) and refuses to start without it. The listen
+# addresses for WebRTC and HLS are set in compose.yaml as well; every TCP port here and
+# there is on 127.0.0.1. The panel reaches video only through sd-ground's proxy
+# (/api/v1/video/<vehicle>/main/whep); only the WebRTC media (UDP 8189) goes directly.
+logLevel: info
+api: yes
+apiAddress: 127.0.0.1:9997
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]         # no RTP/RTCP UDP ports (8000/8001)
+rtmp: no
+srt: no
+moq: no                       # MoQ would listen on every interface (8892/8893)
+webrtc: yes
+hls: yes                      # fallback when WebRTC does not work
+hlsVariant: lowLatency
+authMethod: internal
+authInternalUsers:
+  - user: publisher           # the password comes from MTX_AUTHINTERNALUSERS_0_PASS
+    pass: CHANGE_ME
+    ips: ["127.0.0.1/32"]
+    permissions: [{action: publish}]
+  - user: any
+    pass:
+    ips: ["127.0.0.1/32"]     # reading only via sd-ground's proxy on loopback
+    permissions: [{action: read}, {action: playback}, {action: api}]
+pathDefaults:
+  record: no
+paths:
+  "~^drone/[a-z0-9][a-z0-9-]{2,31}/main$":
+    source: publisher
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+    recordFormat: fmp4
+    recordSegmentDuration: 60s
+    recordDeleteAfter: 0s

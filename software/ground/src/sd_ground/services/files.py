@@ -8,6 +8,7 @@ At ``LANDED -> CLOSED`` and at ``/end`` this writes into ``<data_dir>/missions/<
 * ``exports/track.geojson``: the flown track;
 * ``dataflash/<name>.BIN``: the simulator's flight log, copied from ``[sim]
   dataflash_dir`` when that is set;
+* ``video/``: the mission's recording from MediaMTX (``services.video``);
 
 and records each file (size, SHA-256) in ``mission_files``. Files are only ever opened
 through ``mission_files.rel_path`` under the mission's folder (``resolve()`` and
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sd_ground.logging import get_logger
+from sd_ground.services import video as video_service
 from sd_schemas.api import Mission
 
 if TYPE_CHECKING:
@@ -120,6 +122,7 @@ async def close_files(flow: MissionFlow, mission: Mission) -> None:
             ended_at=flow.now(),
             notes=None,
         )
+    await video_service.close_mission_video(flow, mission)
 
 
 def _copy_dataflash(flow: MissionFlow, folder: Path) -> list[tuple[str, str]]:

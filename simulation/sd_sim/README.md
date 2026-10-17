@@ -14,12 +14,14 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just sim` / `just sim-headless` | Starts the simulator stack for one instance in the foreground (Ctrl-C stops it). |
 | `just stop` | Stops what `just sim` started. |
 | `just test-sitl [sc=SC00] [physics=builtin\|gz] [mode=pr\|nightly] [workers=N] [shard=N shards=M]` | Runs the scenario tests (pytest with `sd_sim.pytest_plugin`). Each test writes `runs/<run>/result.json`; the run writes `runs/summary.md`. |
+| `just test-video` | Live video end to end: MediaMTX, the synthetic camera, `sd-ground` and Google Chrome (needs Docker, GStreamer and ffprobe). |
 | `just ci-sitl [same keys]` | Runs the same tests inside the SITL image, exactly like the `sitl` CI job. |
 
 ## Parts
 
 - `launch` builds the SITL command line (`sitl.build_sitl_argv`), starts each process with a minimal environment and waits for it to be healthy. Process ids go to `build/sim/i<N>/pids.json`, logs to `runs/<run>/logs/`.
 - `linksim` is the simulated radio: MAVLink and video over UDP with delay, jitter and loss, SD-link over TCP with delay only. Its control API on 127.0.0.1 needs a bearer token from `build/sim/i<N>/secrets/linksim_token`.
+- `video_relay` is the video for instance 0: `source` draws the synthetic camera (a moving ball and a time strip of 48 squares with the clock in milliseconds, read back by the panel's end-to-end test) and sends H.264 RTP to the camera's port; `relay` publishes what passes `linksim` to MediaMTX over RTSP, with the password read from `build/sim/i0/secrets/mediamtx_publish` (never on the command line).
 - `mavtap` records the onboard computer's MAVLink channel without changing it.
 - `harness` is the test rig's own MAVLink channel (system 253) on SITL serial0.
 - `pytest_plugin` adds the simulator markers and options. Every `sitl` test has `@pytest.mark.budget_s(<s>)`; tests are spread over CI shards by longest budget first, and `test_sitl_budget` fails when a shard would not fit the job.
