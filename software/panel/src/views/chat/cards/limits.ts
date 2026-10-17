@@ -75,6 +75,7 @@ export function looser(field: string, before: unknown, after: unknown): boolean 
   const n = (x: unknown) => (typeof x === "number" ? x : null);
   switch (field) {
     case "alt_max_agl_m":
+    case "max_alt_agl_m":
     case "max_speed_ms":
     case "max_range_from_pilot_m":
     case "geofence_buffer_m":
