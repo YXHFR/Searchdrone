@@ -219,6 +219,12 @@ class MissionFlow:
         snap = None if self.mav is None else self.mav.snapshot()
         return snap if snap is not None and snap.vehicle_id == vehicle_id else None
 
+    def seen_flying(self, vehicle_id: str) -> bool:
+        """Whether the run task has seen the vehicle in the air since it last stood
+        disarmed outside a flight state (what makes a later disarm a landing)."""
+        watch = self._watch.get(vehicle_id)
+        return watch is not None and watch.flown
+
     def in_flight(self, vehicle_id: str) -> bool:
         snap = self.mav_snapshot(vehicle_id)
         return snap is not None and snap.connected and snap.in_flight

@@ -62,6 +62,9 @@ async def take_off(r: Rig, mid: str, d: ScriptDriver) -> dict[str, Any]:
     assert out["decision"] == "ALLOW", out
     r.fly(40.0)
     await r.until(lambda: r.flow.in_flight(VID), 5, "in the air for the ground")
+    # A real flight lasts far longer than one tick of the flow; this one is a flag in
+    # the fake flight controller, so wait until the flow has seen it before landing.
+    await r.until(lambda: r.flow.seen_flying(VID), 10, "flight seen by the flow")
     return out
 
 
