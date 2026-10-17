@@ -8,6 +8,21 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Failure and safety scenarios in SITL (`simulation/tests/scenarios/`, scripts in
+  `simulation/scenarios/scripts/`): the gate refusing every way out of the charter (also
+  a malicious commander), STOP and FLY HOME past a dead AI or onboard computer, battery,
+  radio and SD-link loss, a restarted ground station, the onboard computer's watchdog,
+  the flight controller's fence as the last line, a missing operator and the API
+  protections. After every scenario the invariants (height, distance, speed, area, who
+  may write what to the flight controller, arming only with a charter and a fresh
+  clearance, nothing fighting a failsafe or the pilot) are checked on the recorded
+  timeline. `tools/gen_traceability.py` and `just check-traceability` trace the local
+  acceptance ids to the tests.
+- The pilot's RC transmitter is required for real flight: the onboard preflight check
+  refuses `takeoff` without a live RC link (`require_rc`, on by default, off only in the
+  simulator), and `searchdrone-safety-flight.parm` arms only with the RC check and makes
+  a lost RC link a failsafe.
+
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password
@@ -107,6 +122,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The gate checks the whole circle of an `orbit` (charter area, pilot distance), not only
+  its centre, before `orbit` is ever built.
+- An `sd-brain` that was already running when a mission was opened takes the new mission
+  on (the commander stream now marks a new mission as `created`).
 - One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
   clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
 - The SD-link client refuses to send its token over `ws://` to anything but loopback.
