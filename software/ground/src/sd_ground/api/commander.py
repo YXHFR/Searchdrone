@@ -14,7 +14,7 @@ import json
 import os
 import unicodedata
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import (
@@ -27,7 +27,7 @@ from fastapi import (
 )
 from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from sd_ground.api.deps import ApiStatusError, ground, repo_of
 from sd_ground.api.tasks import until_first_done
@@ -54,8 +54,8 @@ from sd_schemas.commander import (
     SkillRequest,
     SkillSubmitResult,
 )
+from sd_schemas.decide import ChatIntentReport
 from sd_schemas.skills import SKILL_REGISTRY, SkillSpecPublic
-from sd_schemas.sv_commands import OverrideIntent
 
 __all__ = [
     "BRAIN_HEARTBEAT_TIMEOUT_S",
@@ -337,20 +337,6 @@ async def post_charter_proposal(mission_id: IdPath, request: Request, g: G, _: C
         approval_id=card.id,
         validation=CharterValidationResult(ok=True, errors=[]),
     )
-
-
-class ChatIntentReport(BaseModel):
-    """The AI's stop check found that a pilot's chat line means STOP or FLY HOME."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    request_id: UUID
-    message_id: UUID
-    intent: OverrideIntent
-    probability: float = Field(ge=0, le=1)
-    engine: Literal["local", "jev", "openai_decisions", "rule"]
-    location: Literal["cloud", "local"]
-    latency_ms: int = Field(ge=0)
 
 
 @router.post(

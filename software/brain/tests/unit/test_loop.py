@@ -6,6 +6,7 @@ import asyncio
 import itertools
 from typing import Any, Literal
 
+import pytest
 from brain_helpers import REG, make_loop
 
 from sd_brain.backends.base import BackendCrashError
@@ -281,6 +282,18 @@ async def test_rate_limit_three_times_degrades() -> None:
     assert all(b - a >= 3 for a, b in itertools.pairwise(times))
 
 
+async def test_shutdown_mid_turn_stops_the_loop() -> None:
+    """Cancelling the loop during a turn stops it (it is not an operator's interrupt)."""
+    loop, fg, _ = make_loop(Steps(30.0))
+    runner = asyncio.create_task(loop.run_forever())
+    loop.handle_event(fg.operator_message("sök sektor A"))
+    await asyncio.sleep(0.05)
+    assert loop._turn_task is not None
+    runner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(runner, 2)
+
+
 async def test_override_cancels_running_turn() -> None:
     backend = Steps(5.0, say("Stoppat. Drönaren står still."))
     loop, fg, _ = make_loop(backend)
@@ -402,16 +415,34 @@ async def test_stop_check_reports_to_ground() -> None:
     assert any(d.trigger == "stop_check" for d in fg.decisions)
 
 
-async def test_stop_check_fallback_without_ground_route() -> None:
-    loop, fg, _ = make_loop(Steps(), decide=DecisionService([]), chat_intents=False)
+async def test_stop_check_fallback_when_ground_unreachable() -> None:
+    loop, fg, _ = make_loop(Steps(), decide=DecisionService([]), chat_intents="down")
     loop.handle_event(fg.operator_message("Stopp!"))
     await loop.settle()
     assert fg.posted[0].text == STOP_FALLBACK["stop"]
     assert [c.skill for c in fg.commands] == ["hold"] and fg.commands[0].backend == "rule"
-    loop2, fg2, _ = make_loop(Steps(), decide=DecisionService([]), chat_intents=False)
+    # Never a flight home from the AI's side: it stops and asks for the button.
+    loop2, fg2, _ = make_loop(Steps(), decide=DecisionService([]), chat_intents="down")
     loop2.handle_event(fg2.operator_message("flyg hem"))
     await loop2.settle()
-    assert [c.skill for c in fg2.commands] == ["return_home"]
+    assert fg2.posted[0].text == STOP_FALLBACK["return_home"]
+    assert [c.skill for c in fg2.commands] == ["hold"]
+
+
+async def test_stop_check_refused_by_ground_sends_nothing() -> None:
+    loop, fg, _ = make_loop(Steps(), decide=DecisionService([]), chat_intents="refused")
+    loop.handle_event(fg.operator_message("Stopp!"))
+    await loop.settle()
+    assert fg.intents and not fg.commands and not fg.posted
+
+
+async def test_stop_check_skips_lines_the_ground_handled() -> None:
+    loop, fg, _ = make_loop(Steps(), decide=DecisionService([_StopEngine()]))
+    evt = fg.operator_message("stopp")
+    evt["body"]["handled_by"] = "ground"
+    loop.handle_event(evt)
+    await loop.settle()
+    assert not fg.intents and not fg.commands
 
 
 async def test_stop_check_disabled() -> None:

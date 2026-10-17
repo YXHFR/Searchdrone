@@ -6,7 +6,7 @@ import copy
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -15,16 +15,23 @@ from sd_brain.backends.base import CommanderBackend
 from sd_brain.config import BrainConfig
 from sd_brain.decide.service import DecisionService
 from sd_brain.evals.fake_ground import FakeGround
-from sd_brain.evals.registry import foundation_registry
 from sd_brain.evals.runner import EvalClock
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop
 from sd_schemas.commander import Situation
+from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry
 
 FIXTURES = Path(__file__).resolve().parents[1] / "src/sd_brain/evals/fixtures"
 SCENARIOS = Path(__file__).resolve().parents[1] / "src/sd_brain/evals/scenarios"
 GOLDEN = Path(__file__).resolve().parent / "golden"
-REG = foundation_registry()
+REG = SKILL_REGISTRY
+
+
+def with_stub(name: str, reg: SkillRegistry = SKILL_REGISTRY) -> SkillRegistry:
+    """A copy of the registry where ``name`` is a stub again (a ground of another build)."""
+    return SkillRegistry(
+        s.model_copy(update={"status": "stub"}) if s.name == name else s for s in reg
+    )
 
 
 def fixture(name: str) -> dict[str, Any]:
@@ -47,7 +54,7 @@ def make_loop(
     *,
     cfg: BrainConfig | None = None,
     decide: DecisionService | None = None,
-    chat_intents: bool = True,
+    chat_intents: Literal["acted", "refused", "down"] = "acted",
 ) -> tuple[CommanderLoop, FakeGround, EvalClock]:
     fx = fixture(name)
     clock = EvalClock()

@@ -531,8 +531,9 @@ export interface CharterValidationError {
  *
  * Sent by ``sd-brain`` to ``POST /commander/v1/missions/{id}/chat-intents``. The ground
  * station checks that ``message_id`` is a pilot's own, recent chat line in that mission
- * and then runs the same emergency path as the buttons. It can only ever ask for a stop
- * or a flight home, never release one.
+ * and names that pilot, never the AI. A line that is exactly the stop words acts like
+ * the button; a model's reading only ever stops the vehicle where it is. It can never
+ * release a stop.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "ChatIntentReport".

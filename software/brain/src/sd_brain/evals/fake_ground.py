@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-from typing import Any
+from typing import Any, Literal
 
 from sd_brain.charter_draft import CharterError, CharterProposalOutcome
+from sd_brain.ground_client import GroundError, IntentOutcome
 from sd_schemas.api import ChatMessage
 from sd_schemas.base import new_id
 from sd_schemas.charter import CharterProposal
@@ -55,7 +56,7 @@ class FakeGround:
         reg: SkillRegistry = SKILL_REGISTRY,
         memory: dict[str, Any] | None = None,
         now: Any = None,
-        chat_intents: bool = True,
+        chat_intents: Literal["acted", "refused", "down"] = "acted",
     ) -> None:
         self.sit = copy.deepcopy(situation)
         Situation.model_validate(self.sit)
@@ -71,7 +72,7 @@ class FakeGround:
         self.proposals: list[CharterProposal] = []
         self.decisions: list[DecisionLog] = []
         self.intents: list[ChatIntentReport] = []
-        self.chat_intents = chat_intents
+        self.chat_intents: Literal["acted", "refused", "down"] = chat_intents
         self.responses: list[dict[str, Any]] = []
         self.step_responses: list[dict[str, Any]] = []
         mem = {
@@ -350,8 +351,9 @@ class FakeGround:
     async def post_decision(self, mission_id: str, entry: DecisionLog) -> None:
         self.decisions.append(entry)
 
-    async def report_chat_intent(self, mission_id: str, report: ChatIntentReport) -> bool:
-        if not self.chat_intents:
-            return False
+    async def report_chat_intent(self, mission_id: str, report: ChatIntentReport) -> IntentOutcome:
+        mode = self.chat_intents
+        if mode == "down":
+            raise GroundError("sd-ground svarar inte (test)")
         self.intents.append(report)
-        return True
+        return mode

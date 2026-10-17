@@ -467,10 +467,13 @@ class VehicleActions:
         by: Principal,
         stop_check: StopCheck | None = None,
     ) -> ActionDispatched | None:
-        """A pilot's chat line: STOP or FLY HOME when the stop check says so.
+        """A pilot's chat line: STOP or FLY HOME for the exact stop words, else when the
+        stop check says so.
 
-        The decision interface's quick stop check decides (no fixed word list); without
-        an answer nothing happens and the line goes to the AI as usual. Never Resume.
+        The exact words ("stopp", "stop", "flyg hem"; ``classify_override``) act first and
+        need no check (owner decision: the fallback beside the AI's stop check). Otherwise
+        the decision interface's quick stop check decides; without an answer nothing
+        happens and the line goes to the AI as usual. Never Resume.
         """
         intent = classify_override(text)
         if intent is None and stop_check is not None:

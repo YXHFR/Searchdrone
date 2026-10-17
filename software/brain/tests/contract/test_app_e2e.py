@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 
 import pytest
-from brain_helpers import REG, fixture
+from brain_helpers import REG, fixture, with_stub
 from mock_commander import TOKEN, MockCommander
 
 from sd_brain.app import StartError, _startup, build, run
@@ -31,7 +31,8 @@ def _cfg(url: str) -> BrainConfig:
 
 
 async def test_startup_refuses_a_different_registry() -> None:
-    fg = FakeGround(fixture("airborne_modeB.json")["situation"], reg=REG, now=utc_now)
+    other = with_stub("report")  # the ground station runs another build
+    fg = FakeGround(fixture("airborne_modeB.json")["situation"], reg=other, now=utc_now)
     async with MockCommander(fg) as mock:
         b = build(_cfg(mock.url), Secrets(TOKEN, KEY), SKILL_REGISTRY)
         with pytest.raises(StartError, match="registret"):

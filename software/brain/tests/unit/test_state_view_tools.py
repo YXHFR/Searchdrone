@@ -6,13 +6,13 @@ import datetime as dt
 from typing import Any
 
 import pytest
-from brain_helpers import REG, situation
+from brain_helpers import REG, situation, with_stub
 
 from sd_brain.memory import PendingRequest, empty_memory, pending_request, to_update, with_changes
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.tools import AdaptError, adapt, exposed_tools, read_tools, registry_tool_schemas
 from sd_schemas.base import new_id
-from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry
+from sd_schemas.skills import SkillRegistry
 
 NOW = dt.datetime(2026, 1, 1, 0, 1, tzinfo=dt.UTC)
 READ = {t.name for t in read_tools()}
@@ -201,9 +201,9 @@ def test_stubs_and_stage2_never_exposed() -> None:
     s = situation()
     names = _names(s, reg=REG)
     assert not names & {"orbit", "land_at", "follow_me", "find_me", "inspect_detection"}
-    # The real registry offers only its implemented skills; its stubs never become tools.
-    implemented = {k.name for k in SKILL_REGISTRY if k.status == "implemented"}
-    assert _names(s, reg=SKILL_REGISTRY) == READ | (names & implemented)
+    assert "goto" in names
+    # A skill that is a stub (in another build) never becomes a tool.
+    assert "goto" not in _names(s, reg=with_stub("goto"))
 
 
 def test_stub_in_allowed_skills_is_not_exposed() -> None:
@@ -321,3 +321,22 @@ def test_no_setting_drops_the_start_request() -> None:
         load_config(None, {"SD_BRAIN__BEHAVIOUR__TAKEOFF_POLICY": "clearance_only"})
     s = situation("ready_charter_v1_modeB.json", **_cleared())
     assert "takeoff" not in _names(s)
+
+
+@pytest.mark.parametrize(
+    ("state", "want"),
+    [
+        ("HOLD", {"goto", "survey_sector", "hold", "resume", "return_home"}),
+        ("TRANSIT", {"goto", "survey_sector", "hold", "return_home"}),
+        ("SURVEY", {"goto", "survey_sector", "hold", "return_home"}),
+        ("TAKEOFF", {"return_home"}),
+        ("RTL", {"return_home"}),
+        ("LAND", set()),
+    ],
+)
+def test_onboard_skills_only_from_their_executor_states(state: str, want: set[str]) -> None:
+    s = situation(vehicle={"executor_state": state})
+    moving = {k.name for k in REG if k.allowed_from}
+    assert _names(s) & moving == want
+    # Mirrors the registry: exactly the onboard skills the executor may start from here.
+    assert want == {k.name for k in REG if state in k.allowed_from and k.name != "takeoff"}

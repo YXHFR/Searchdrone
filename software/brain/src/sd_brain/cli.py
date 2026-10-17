@@ -130,8 +130,8 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    from sd_brain.evals.registry import foundation_registry
     from sd_brain.runtime.base import Sampling
+    from sd_schemas.skills import SKILL_REGISTRY
 
     paths = sorted(Path(args.scenarios).glob("*.yaml"))
     if args.only:
@@ -139,7 +139,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
     report = asyncio.run(_eval(args, paths, cfg))
     if args.backend == "llm_local":
-        h = ai_config_hash(foundation_registry(), Sampling())
+        h = ai_config_hash(SKILL_REGISTRY, Sampling())
         report.update(
             backend="llm_local",
             ai_config_hash=h,

@@ -25,9 +25,9 @@ TOKEN = "brain-token-for-contract-tests-0123456789"
 
 
 class MockCommander:
-    def __init__(self, fg: FakeGround, *, chat_intents: bool = True) -> None:
+    def __init__(self, fg: FakeGround, *, chat_intent_status: int = 202) -> None:
         self.fg = fg
-        self.chat_intents = chat_intents
+        self.chat_intent_status = chat_intent_status
         self.epoch = "epoch-1"
         self.events: list[dict[str, Any]] = []
         self.hellos: list[dict[str, Any]] = []
@@ -137,10 +137,11 @@ class MockCommander:
 
         @app.post(base + "/missions/{mid}/chat-intents", status_code=202)
         async def intents(mid: str, request: Request) -> Response:
-            if not self.chat_intents:
-                return Response(status_code=404)
-            await fg.report_chat_intent(mid, ChatIntentReport.model_validate(await request.json()))
-            return Response(status_code=202)
+            if self.chat_intent_status == 202:
+                await fg.report_chat_intent(
+                    mid, ChatIntentReport.model_validate(await request.json())
+                )
+            return Response(status_code=self.chat_intent_status)
 
         @app.websocket(base + "/ws")
         async def ws(websocket: WebSocket) -> None:

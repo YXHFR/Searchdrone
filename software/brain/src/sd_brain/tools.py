@@ -4,8 +4,9 @@ Which tools a turn gets is a pure function of the registry and the situation
 (:func:`exposed_tools`): stubs, stage-2 skills and anything the gate would always refuse
 in this state are left out. While a STOP, FLY HOME, a battery return, a failsafe or a
 manual takeover holds, only the registry's ``allowed_under_latch`` skills (``report``,
-``mark_location``) are offered. There is no tool for parameters, the fence, the autonomy
-mode, the limits, approvals or releasing a stop.
+``mark_location``) are offered. An onboard skill is offered only in the executor states
+it may start from (``allowed_from``). There is no tool for parameters, the fence, the
+autonomy mode, the limits, approvals or releasing a stop.
 """
 
 from __future__ import annotations
@@ -223,8 +224,8 @@ def exposed_tools(
             continue
         if k.starts_flight and not takeoff_ok(s, mem, now, ttl_s=ttl_s):
             continue
-        if k.name == "resume" and s.vehicle.executor_state != "HOLD":
-            continue
+        if k.allowed_from and s.vehicle.executor_state not in k.allowed_from:
+            continue  # the onboard executor would refuse it in this state
         out.append(skill_tool(k, lim))
     return out
 

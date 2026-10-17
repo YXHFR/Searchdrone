@@ -29,11 +29,11 @@ from sd_brain.config import BrainConfig
 from sd_brain.context import ContextBuilder
 from sd_brain.decide.service import DecisionService
 from sd_brain.evals.fake_ground import FakeGround
-from sd_brain.evals.registry import foundation_registry
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop, TurnRecord
 from sd_brain.runtime.base import ModelRuntime, Sampling
 from sd_brain.runtime.replay import ReplayRuntime, load_golden
+from sd_schemas.skills import SKILL_REGISTRY
 
 __all__ = [
     "EVAL_CLOCK_START",
@@ -292,7 +292,7 @@ async def run_scenario(
     base = path.parent.parent
     fx = _fixture(base, sc["fixture"])
     clock = EvalClock()
-    reg = foundation_registry()
+    reg = SKILL_REGISTRY
     fg = FakeGround(
         fx["situation"],
         next_charter=fx.get("next_charter"),

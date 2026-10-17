@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -39,14 +39,17 @@ __all__ = [
     "GroundApi",
     "GroundClient",
     "GroundError",
+    "IntentOutcome",
     "SecondCommanderError",
     "StreamState",
 ]
 
 log = logging.getLogger("sd_brain.ground")
 RECONNECT_DELAYS_S = (1.0, 2.0, 5.0)
+BYE_TIMEOUT_S = 2.0
 _CHAT = TypeAdapter(list[ChatMessage])
 _SKILLS = TypeAdapter(list[SkillSpecPublic])
+IntentOutcome = Literal["acted", "refused"]
 
 
 class GroundError(RuntimeError):
@@ -73,7 +76,9 @@ class GroundApi(Protocol):
     async def memory(self, mission_id: str) -> MissionMemory: ...
     async def put_memory(self, mission_id: str, mem: MissionMemoryUpdate) -> None: ...
     async def post_decision(self, mission_id: str, entry: DecisionLog) -> None: ...
-    async def report_chat_intent(self, mission_id: str, report: ChatIntentReport) -> bool: ...
+    async def report_chat_intent(
+        self, mission_id: str, report: ChatIntentReport
+    ) -> IntentOutcome: ...
 
 
 class StreamState:
@@ -215,16 +220,17 @@ class GroundClient:
             json=entry.model_dump(mode="json"),
         )
 
-    async def report_chat_intent(self, mission_id: str, report: ChatIntentReport) -> bool:
-        """``False`` when the ground station has no route for it yet (404)."""
+    async def report_chat_intent(self, mission_id: str, report: ChatIntentReport) -> IntentOutcome:
+        """``acted`` (202), or ``refused`` when the ground does not take it for that line
+        (unknown, not a pilot's own, too old). Anything else is a ``GroundError``."""
         resp = await self._request(
             "POST", f"/missions/{mission_id}/chat-intents", json=report.model_dump(mode="json")
         )
-        if resp.status_code == 404:
-            return False
-        if resp.status_code not in (200, 201, 202, 204):
-            raise GroundError(f"chat-intents gav HTTP {resp.status_code}", resp.status_code)
-        return True
+        if resp.status_code in (200, 202):
+            return "acted"
+        if resp.status_code in (403, 404, 409, 422):
+            return "refused"
+        raise GroundError(f"chat-intents gav HTTP {resp.status_code}", resp.status_code)
 
     # --- WebSocket ------------------------------------------------------------------------
 
@@ -332,7 +338,8 @@ class GroundClient:
         ws = self._ws
         if ws is not None:
             try:
-                await ws.send(json.dumps({"type": "brain.bye", "body": {}}))
-                await ws.close(1000)
-            except (OSError, websockets.ConnectionClosed):
+                async with asyncio.timeout(BYE_TIMEOUT_S):  # never hold up a shutdown
+                    await ws.send(json.dumps({"type": "brain.bye", "body": {}}))
+                    await ws.close(1000)
+            except (OSError, TimeoutError, websockets.ConnectionClosed):
                 pass

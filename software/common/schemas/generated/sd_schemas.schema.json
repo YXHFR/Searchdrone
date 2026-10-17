@@ -1321,7 +1321,7 @@
     },
     "ChatIntentReport": {
       "additionalProperties": false,
-      "description": "The stop check found that an operator's chat line means STOP or FLY HOME.\n\nSent by ``sd-brain`` to ``POST /commander/v1/missions/{id}/chat-intents``. The ground\nstation checks that ``message_id`` is a pilot's own, recent chat line in that mission\nand then runs the same emergency path as the buttons. It can only ever ask for a stop\nor a flight home, never release one.",
+      "description": "The stop check found that an operator's chat line means STOP or FLY HOME.\n\nSent by ``sd-brain`` to ``POST /commander/v1/missions/{id}/chat-intents``. The ground\nstation checks that ``message_id`` is a pilot's own, recent chat line in that mission\nand names that pilot, never the AI. A line that is exactly the stop words acts like\nthe button; a model's reading only ever stops the vehicle where it is. It can never\nrelease a stop.",
       "properties": {
         "engine": {
           "anyOf": [

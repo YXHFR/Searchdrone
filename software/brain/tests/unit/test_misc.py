@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from brain_helpers import REG
+from brain_helpers import REG, with_stub
 
 from sd_brain.ai_config import ai_config_hash, model_sha256, prompt_text
 from sd_brain.app import build, registry_mismatch
@@ -62,7 +62,7 @@ def test_ai_config_hash() -> None:
     assert h == ai_config_hash(REG, Sampling()) and len(h) == 64
     assert h != ai_config_hash(REG, Sampling(temperature=0.3))
     assert h != ai_config_hash(REG, Sampling(), cloud_model="vendor/model")
-    assert h != ai_config_hash(SKILL_REGISTRY, Sampling())
+    assert h != ai_config_hash(with_stub("report"), Sampling())
     assert len(model_sha256()) == 64
     assert "You are the mission commander AI" in prompt_text("system_v1.md")
 
@@ -73,10 +73,8 @@ def test_registry_mismatch() -> None:
         for s in SKILL_REGISTRY.public()
     ]
     assert registry_mismatch(SKILL_REGISTRY, public) == []
-    # The evaluation copy differs exactly where the real registry still has a stub.
-    differs = {k.name for k in REG if k.status != SKILL_REGISTRY.get(k.name).status}
-    assert differs >= {"report", "mark_location", "propose_charter_change"}
-    assert registry_mismatch(REG, public) == sorted(differs)
+    # A ground station of another build: one skill is still a stub there.
+    assert registry_mismatch(with_stub("report"), public) == ["report"]
     assert registry_mismatch(SKILL_REGISTRY, public[1:]) == [public[0].name]
 
 

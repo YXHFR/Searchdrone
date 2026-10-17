@@ -140,9 +140,13 @@ async def test_rest_roundtrip() -> None:
             location="cloud",
             latency_ms=12,
         )
-        assert await g.report_chat_intent(mid, report)
-        mock.chat_intents = False
-        assert not await g.report_chat_intent(mid, report)
+        assert await g.report_chat_intent(mid, report) == "acted"
+        for status in (403, 404, 409):
+            mock.chat_intent_status = status
+            assert await g.report_chat_intent(mid, report) == "refused"
+        mock.chat_intent_status = 503
+        with pytest.raises(GroundError):
+            await g.report_chat_intent(mid, report)
         wrong = GroundClient(mock.url, "wrong-token-0123456789012345678901", http)
         with pytest.raises(GroundError) as exc:
             await wrong.skills()

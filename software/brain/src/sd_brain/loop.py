@@ -89,11 +89,13 @@ CLEARED_NO_REQUEST = "Fritt runt är bekräftat. Säg till när jag ska starta."
 CHARTER_WITH_REQUEST = "Ramen gäller. Jag startar direkt när du trycker Fritt runt drönaren."
 RATE_TEXT = "Jag skickade för många order. Jag pausar AI:n; skriv 'hjälp' för kommandon."
 BACK_TEXT = "AI:n är tillbaka."
+# The ground station could not be reached with the stop check's report: ask for the
+# button and stop where it is (a model's reading never flies home, owner decision).
 STOP_FALLBACK = {
-    "stop": "Jag tolkar det som att du vill stoppa. "
+    "stop": "Jag tolkar det som att du vill stoppa, men markstationen svarar inte. "
     "Tryck STOPP i panelen om drönaren inte står still.",
-    "return_home": "Jag tolkar det som att du vill flyga hem. "
-    "Tryck FLYG HEM i panelen om drönaren inte vänder.",
+    "return_home": "Jag tolkar det som att du vill flyga hem, men markstationen svarar "
+    "inte. Jag ber drönaren stanna; tryck FLYG HEM i panelen.",
 }
 
 # Skill events that wake a turn (done, failed, …); "running" etc. only update the picture.
@@ -365,8 +367,9 @@ class CommanderLoop:
             try:
                 await task
             except asyncio.CancelledError:
-                if not task.cancelled():
-                    raise
+                me = asyncio.current_task()
+                if not task.cancelled() or (me is not None and me.cancelling()):
+                    raise  # the loop itself is being stopped (shutdown), not just the turn
                 log.info("turen avbröts av operatörens beslut")
             finally:
                 self._turn_task = None
@@ -810,6 +813,8 @@ class CommanderLoop:
             return
         if body.get("author_role") not in (None, "pilot"):
             return
+        if body.get("handled_by") == "ground":
+            return  # the exact stop words: the ground already acted like the button
         text = str(body.get("text") or "")
         message_id = body.get("message_id")
         if not text or message_id is None:
@@ -845,15 +850,17 @@ class CommanderLoop:
         self._queue = [p for p in self._queue if p.trigger != "operator_message"]
         self._followups.clear()
         try:
-            handled = await self.ground.report_chat_intent(mid, report)
+            outcome = await self.ground.report_chat_intent(mid, report)
         except GroundError as exc:
             log.warning("stoppkontrollen nådde inte markstationen: %s", exc)
-            handled = False
-        if not handled:
-            await self._stop_fallback(mid, result, message_id)
+            await self._stop_fallback(mid, result)
+            return
+        if outcome == "refused":  # not a pilot's own recent line: the ground decides
+            log.info("markstationen tog inte emot stoppkontrollen för rad %s", message_id)
 
-    async def _stop_fallback(self, mid: str, result: StopCheckResult, message_id: str) -> None:
-        """No chat-intent route on the ground: ask for the button and send a gated order."""
+    async def _stop_fallback(self, mid: str, result: StopCheckResult) -> None:
+        """The ground could not take the report: ask for the button and send a gated
+        ``hold`` (a model's reading only ever stops the vehicle where it is)."""
         if result.intent is None:
             return
         await self._say(OutMessage(text=STOP_FALLBACK[result.intent]))
@@ -863,15 +870,10 @@ class CommanderLoop:
             return
         if not s.vehicle.airborne or motion_block(s) is not None:
             return
-        skill = "hold" if result.intent == "stop" else "return_home"
-        reason = (
-            "Operatören bad om stopp i chatten."
-            if skill == "hold"
-            else "Operatören bad om hemflygning i chatten."
-        )
+        reason = "Operatören bad om stopp i chatten."
         out = TurnOutput(
             action=AiAction(
-                skill=skill, params={"reason": reason}, rationale_sv=reason, adapted=True
+                skill="hold", params={"reason": reason}, rationale_sv=reason, adapted=True
             ),
             diagnostics=TurnDiagnostics(backend="rule"),
         )
