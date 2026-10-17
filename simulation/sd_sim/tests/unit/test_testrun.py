@@ -19,7 +19,9 @@ def test_pr_selection_matches_ci() -> None:
         {"physics": "builtin", "brain": "scripted", "shard": "2", "shards": "4", "workers": "4"}
     )
     assert argv[1:5] == ["-m", "pytest", "-p", "sd_sim.pytest_plugin"]
-    assert argv[argv.index("-m", 2) + 1] == "sitl and not gz and not llm and not nightly"
+    assert (
+        argv[argv.index("-m", 2) + 1] == "sitl and not gz and not llm and not nightly and not panel"
+    )
     assert argv[argv.index("-n") + 1] == "4" and "--dist" in argv
     assert argv[argv.index("--shard-id") + 1] == "2"
     assert argv[argv.index("--num-shards") + 1] == "4"
@@ -33,8 +35,10 @@ def test_pr_selection_matches_ci() -> None:
 
 
 def test_nightly_and_gz_selection() -> None:
-    assert testrun.selection("nightly", "builtin") == "sitl and nightly"
-    assert testrun.selection("pr", "gz") == "sitl and not llm and not nightly"
+    assert testrun.selection("nightly", "builtin") == "sitl and nightly and not panel"
+    assert testrun.selection("pr", "gz") == "sitl and not llm and not nightly and not panel"
+    assert testrun.selection("pr", "builtin").endswith("and not panel")
+    assert testrun.selection("panel", "builtin") == "sitl and panel"
 
 
 def test_single_worker_without_xdist_and_names() -> None:

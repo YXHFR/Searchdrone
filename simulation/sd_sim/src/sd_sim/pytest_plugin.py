@@ -35,6 +35,7 @@ MARKERS = (
     "private_db: the instance gets its own Postgres container",
     "param_override(file): extra SITL parameter layer for one test",
     "lan: needs lan=1 (local only)",
+    "panel: drives the real panel in a browser (just test-panel-sitl only)",
 )
 MAX_INSTANCE = 7
 # A shard's estimated work per worker must fit in this many seconds, and no single

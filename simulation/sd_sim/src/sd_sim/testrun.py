@@ -8,7 +8,8 @@ Runs the simulator tests with pytest and the ``sd_sim.pytest_plugin`` plugin:
 
 ``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly`` (with
 ``physics=gz`` the Gazebo tests are included); ``mode=nightly`` selects
-``sitl and nightly``. ``sc=`` and ``variant=`` narrow the run by test name. Only
+``sitl and nightly``; ``mode=panel`` selects the panel's browser test (``sitl and panel``,
+started by ``just test-panel-sitl``). ``sc=`` and ``variant=`` narrow the run by test name. Only
 test-rig failures (``InfraError``) are retried, once. Afterwards ``runs/summary.md``
 lists every result written during the run.
 """
@@ -49,11 +50,15 @@ FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
 
 
 def selection(mode: str, physics: str) -> str:
+    # The panel's browser test needs Playwright beside the stack (`just test-panel-sitl`),
+    # so it is never part of the pull-request or the nightly SITL suite.
+    if mode == "panel":
+        return "sitl and panel"
     if mode == "nightly":
-        return "sitl and nightly"
+        return "sitl and nightly and not panel"
     if physics == "gz":
-        return "sitl and not llm and not nightly"
-    return "sitl and not gz and not llm and not nightly"
+        return "sitl and not llm and not nightly and not panel"
+    return "sitl and not gz and not llm and not nightly and not panel"
 
 
 def _int(values: dict[str, str], key: str, default: int, low: int, high: int) -> int:
@@ -69,8 +74,8 @@ def _int(values: dict[str, str], key: str, default: int, low: int, high: int) ->
 
 def pytest_argv(values: dict[str, str]) -> list[str]:
     mode = values.get("mode", "pr")
-    if mode not in ("pr", "nightly"):
-        _args.fail("sd_sim.testrun: mode= ska vara pr eller nightly")
+    if mode not in ("pr", "nightly", "panel"):
+        _args.fail("sd_sim.testrun: mode= ska vara pr, nightly eller panel")
     physics = values.get("physics", "builtin")
     if physics not in ("builtin", "gz"):
         _args.fail("sd_sim.testrun: physics= ska vara builtin eller gz")

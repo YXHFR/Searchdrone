@@ -216,6 +216,28 @@ test-panel-e2e:
     pnpm --filter @searchdrone/panel build:test
     pnpm --filter @searchdrone/panel e2e
 
+# The stack runs in the SITL container and Playwright beside it on this machine.
+# Panel in a browser against SITL and the scripted commander (keys as ci-sitl)
+test-panel-sitl *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm --filter @searchdrone/panel build:test
+    ex=build/panel-sitl
+    mkdir -p "$ex"
+    rm -f "$ex/stack.json" "$ex/stop-brain" "$ex/done.json"
+    {{_just}} ci-sitl mode=panel physics=builtin brain=scripted "$@" &
+    stack=$!
+    trap 'kill "$stack" 2>/dev/null || true' EXIT
+    set +e
+    pnpm --filter @searchdrone/panel e2e:sitl
+    code=$?
+    echo "{\"code\": $code}" > "$ex/done.json"
+    wait "$stack"
+    stack_code=$?
+    set -e
+    trap - EXIT
+    [ "$code" -eq 0 ] && [ "$stack_code" -eq 0 ]
+
 [private]
 panel-build:
     pnpm --filter @searchdrone/panel build

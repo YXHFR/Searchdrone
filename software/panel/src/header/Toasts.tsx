@@ -30,9 +30,9 @@ export function Toasts() {
       <div className="sr-only" aria-live="assertive">
         {announce ? t("cards.announce", { title: titleOf(announce) }) : ""}
       </div>
-      <ul className="toasts" data-testid="toasts">
+      <div className="toasts" data-testid="toasts">
         {toasts.map((x) => (
-          <li key={x.id} className="toast" role="status">
+          <div key={x.id} className="toast" role="status">
             <span>
               {x.approvalId ? t("cards.toast", { title: titleOf(x.approvalId) }) : x.text}
             </span>
@@ -58,9 +58,9 @@ export function Toasts() {
             >
               <X aria-hidden="true" size={16} />
             </button>
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
     </>
   );
 }

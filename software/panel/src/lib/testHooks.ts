@@ -2,6 +2,7 @@
 // and scripts/check-offline.mjs fails if the hook name is found in dist/.
 import type { ViewId } from "../layout/layoutModel";
 import { useLiveStore } from "../state/liveStore";
+import { useMissionStore } from "../state/missionStore";
 
 export const TEST_HOOKS = import.meta.env.VITE_SD_TEST_HOOKS === "1";
 
@@ -9,6 +10,7 @@ export function installTestHooks(): void {
   if (!TEST_HOOKS) return;
   (window as unknown as { __sd?: unknown }).__sd = {
     liveStore: useLiveStore,
+    missionStore: useMissionStore,
     map: null,
   };
 }
