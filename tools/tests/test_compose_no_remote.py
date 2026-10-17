@@ -16,7 +16,7 @@ COMPOSE = ROOT / "compose.yaml"
 DOCKER = shutil.which("docker")
 # Dummy values so `docker compose config` can render without a real .env. Tickets that
 # add services with required variables add them here.
-DUMMY_ENV = {"SD_GROUND__DB_PASSWORD": "x"}
+DUMMY_ENV = {"SD_GROUND__DB_PASSWORD": "x", "SD_LLM_API_KEY": "x"}
 
 
 def _services() -> dict[str, Any]:

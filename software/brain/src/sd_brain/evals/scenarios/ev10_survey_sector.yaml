@@ -1,0 +1,13 @@
+id: EV-10
+title: Sök sektor A på 40 meter
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- operator: Sök sektor A på 40 meter
+  expect:
+    tool: survey_sector
+    params:
+      sector:
+        equals: A
+      alt_m:
+        equals: 40

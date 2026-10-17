@@ -1,0 +1,194 @@
+{
+  "situation": {
+    "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+    "vehicle_id": "sim-01",
+    "state_seq": 100,
+    "snapshot_state_epoch": 7,
+    "snapshot_state_seq": 1000,
+    "mission_status": "ACTIVE",
+    "paused_by": null,
+    "returning_cause": null,
+    "autonomy_mode": "WITHIN_CHARTER",
+    "ai_enabled": true,
+    "limits": {
+      "max_alt_agl_m": 120.0,
+      "max_speed_ms": 15.0,
+      "max_range_from_pilot_m": 500.0,
+      "battery_rtl_pct": 15.0
+    },
+    "charter": {
+      "charter_id": "0192f49e-1000-7000-8000-000000000001",
+      "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+      "vehicle_id": "sim-01",
+      "version": 1,
+      "area": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [149.1635777, -35.3641593],
+            [149.1674331, -35.3641593],
+            [149.1674331, -35.3605661],
+            [149.1635777, -35.3605661],
+            [149.1635777, -35.3641593]
+          ]
+        ]
+      },
+      "geofence_buffer_m": 20.0,
+      "home": {
+        "lat": -35.363261,
+        "lon": 149.16523,
+        "alt_amsl_m": 584.0
+      },
+      "pilot_position": {
+        "lat": -35.363261,
+        "lon": 149.16523
+      },
+      "alt_min_agl_m": 15.0,
+      "alt_max_agl_m": 120.0,
+      "default_alt_agl_m": 40.0,
+      "max_speed_ms": 15.0,
+      "max_range_from_pilot_m": 500.0,
+      "battery_rtl_pct": 15.0,
+      "allowed_skills": [
+        "takeoff",
+        "goto",
+        "survey_sector",
+        "hold",
+        "resume",
+        "return_home",
+        "report",
+        "mark_location"
+      ],
+      "on_ai_silent": "continue_plan",
+      "ai_silent_timeout_s": 10.0,
+      "autonomy_mode": "WITHIN_CHARTER",
+      "sectors": [
+        {
+          "sector_id": "A",
+          "name": "A",
+          "area": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [149.1646792, -35.3619135],
+                [149.1657808, -35.3619135],
+                [149.1657808, -35.3610152],
+                [149.1646792, -35.3610152],
+                [149.1646792, -35.3619135]
+              ]
+            ]
+          },
+          "order_idx": 0
+        },
+        {
+          "sector_id": "B",
+          "name": "B",
+          "area": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [149.1657808, -35.3619135],
+                [149.1668823, -35.3619135],
+                [149.1668823, -35.3610152],
+                [149.1657808, -35.3610152],
+                [149.1657808, -35.3619135]
+              ]
+            ]
+          },
+          "order_idx": 1
+        }
+      ],
+      "fence_hash": "ab12",
+      "approved_by": "operator:demo",
+      "approved_at": "2026-01-01T00:00:00Z",
+      "notes": null
+    },
+    "charter_installed": true,
+    "fence_verified": true,
+    "pending_proposal": null,
+    "pending_approvals": [],
+    "takeoff_clearance_valid_until": null,
+    "brain_may_takeoff": false,
+    "override": null,
+    "vehicle": {
+      "connected": true,
+      "armed": true,
+      "landed": false,
+      "airborne": true,
+      "flight_mode": "GUIDED",
+      "executor_state": "SURVEY",
+      "lat": -35.3614644,
+      "lon": 149.16523,
+      "alt_rel_home_m": 40.0,
+      "groundspeed_ms": 0.0,
+      "battery_pct": 71.0,
+      "battery_to_reserve_s": 840,
+      "dist_to_pilot_m": 200.0,
+      "gnss_ok": true,
+      "link_ok": true,
+      "manual_control": false
+    },
+    "active_command": {
+      "id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+      "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+      "vehicle_id": "sim-01",
+      "skill": "survey_sector",
+      "params": {
+        "sector_id": "A",
+        "pattern": "lawnmower",
+        "alt_m": 40
+      },
+      "issuer_kind": "brain",
+      "issuer_ref": "brain:ground",
+      "backend": "llm",
+      "rationale_sv": "Söker sektor A.",
+      "in_reply_to": null,
+      "charter_version": 1,
+      "based_on": {
+        "state_epoch": 7,
+        "state_seq": 990
+      },
+      "status": "running",
+      "status_reason": null,
+      "approval_id": null,
+      "expires_at": null,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    },
+    "sectors": [
+      {
+        "sector_id": "A",
+        "name": "A",
+        "status": "active",
+        "progress": 0.52
+      },
+      {
+        "sector_id": "B",
+        "name": "B",
+        "status": "pending",
+        "progress": 0
+      }
+    ],
+    "pins": [
+      {
+        "id": "P1",
+        "annotation_id": "0192f49e-2000-7000-8000-000000000001",
+        "lat": -35.3614644,
+        "lon": 149.16523,
+        "note": "parkeringen"
+      }
+    ],
+    "areas": [],
+    "home": {
+      "lat": -35.363261,
+      "lon": 149.16523
+    },
+    "pilot": {
+      "lat": -35.363261,
+      "lon": 149.16523
+    },
+    "alerts": [],
+    "recent_events": []
+  },
+  "next_charter": null
+}

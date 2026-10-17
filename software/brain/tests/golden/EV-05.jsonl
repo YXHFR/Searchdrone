@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Jag har föreslagit en ram. Godkänn kortet om den stämmer.", "tool_calls": [{"name": "propose_charter_change", "arguments": {"search_areas": [{"kind": "drawn", "area_id": "ar-1"}], "alt_max_agl_m": 60, "reason_sv": "Sökning av det ritade området, högst 60 m."}}]}}

@@ -77,6 +77,7 @@ from sd_schemas.safety import LimitCaps, SafetyLimits
 
 __all__ = [
     "FC_COMPID",
+    "FENCE_GROUND_STATE",
     "FENCE_MAX_VERTICES",
     "GROUND_STREAMS",
     "ONBOARD_STREAMS",
@@ -90,6 +91,11 @@ __all__ = [
 FC_COMPID: Final = mavlink.MAV_COMP_ID_AUTOPILOT1  # 1
 POSITION_TYPE_MASK: Final = 0x0DF8  # position only: ignore velocity, acceleration and yaw
 FENCE_MAX_VERTICES: Final = 70
+# The refusal while the vehicle is not known to stand disarmed on the ground (also when
+# its telemetry is late): the ground may wait for fresh telemetry and try again.
+FENCE_GROUND_STATE: Final = (
+    "the fence is uploaded only when the vehicle stands disarmed on the ground"
+)
 _GUIDED_FRAME: Final = mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT  # 6
 _REL_ALT_FRAMES: Final = frozenset(
     {mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT}
@@ -420,7 +426,7 @@ def _position_target(msg: Any, ctx: SendContext) -> str | None:
 def _fence_ground_state(ctx: SendContext) -> str | None:
     # A new fence replaces the old one at once; only on the ground and disarmed.
     if not ctx.on_ground or ctx.armed is not False:
-        return "the fence is uploaded only when the vehicle stands disarmed on the ground"
+        return FENCE_GROUND_STATE
     return None
 
 

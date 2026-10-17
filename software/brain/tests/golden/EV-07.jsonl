@@ -1,0 +1,2 @@
+{"step": 0, "call": 0, "reply": {"content": null, "tool_calls": [{"name": "propose_charter_change", "arguments": {"base_version": 1, "search_areas": [{"kind": "rect", "center_pin_id": "P1", "width_m": 100, "height_m": 100}], "alt_max_agl_m": 150, "reason_sv": "Operatören vill höja taket till 150 m."}}]}}
+{"step": 0, "call": 1, "reply": {"content": "Högsta tillåtna höjd i uppdraget är 120 m. Bara du kan ändra gränserna, i panelen.", "tool_calls": []}}

@@ -1,0 +1,11 @@
+id: EV-14
+title: Markering vid drönaren
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- operator: Sätt en markering här och kalla den spår
+  expect:
+    tool: mark_location
+    params:
+      label:
+        equals: spår

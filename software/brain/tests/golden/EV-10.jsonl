@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Söker sektor A på 40 m.", "tool_calls": [{"name": "survey_sector", "arguments": {"sector": "A", "alt_m": 40, "rationale_sv": "Operatören bad om sökning av sektor A."}}]}}

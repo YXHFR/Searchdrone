@@ -46,6 +46,14 @@ simulation/sd_sim/**
 simulation/gazebo/**
 simulation/scenarios/**
 
+# The AI commander: which tools it gets, the turn loop, the stop check and the prompt (B1-10)
+software/brain/src/sd_brain/tools.py
+software/brain/src/sd_brain/loop.py
+software/brain/src/sd_brain/state_view.py
+software/brain/src/sd_brain/toolcall_parse.py
+software/brain/src/sd_brain/decide/**
+software/brain/src/sd_brain/prompts/**
+
 # Build, CI and the gates themselves
 compose.yaml
 config/*.example.toml

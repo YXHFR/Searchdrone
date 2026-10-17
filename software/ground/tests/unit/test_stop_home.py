@@ -495,14 +495,26 @@ async def test_broken_stop_check_does_not_break_the_chat() -> None:
         async def broken(text: str) -> str:
             raise RuntimeError("engine down")
 
+        # Not an exact stop word, so only the (broken) check could have said yes.
         out = await s.actions.chat_override(
-            "stopp",
+            "stanna där!",
             vehicle_id=VID,
             message_id="m5",
             by=PILOT,
             stop_check=broken,  # type: ignore[arg-type]
         )
         assert out is None
+
+
+async def test_exact_stop_word_needs_no_stop_check() -> None:
+    async with stack() as s:
+        s.fly()
+        await s.run(0.5)
+        out = await s.actions.chat_override("Stopp!", vehicle_id=VID, message_id="m6", by=PILOT)
+        assert out is not None
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.BRAKE
+        assert s.outcomes()[-1]["via"] == "chat"
 
 
 # --- review fixes: what may stop a chain, and what the watch leaves alone ------------------

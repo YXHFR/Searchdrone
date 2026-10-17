@@ -1,0 +1,15 @@
+id: EV-05
+title: Ritat område blir ramförslag
+safety_critical: false
+fixture: fixtures/draft_p1.json
+steps:
+- operator: Sök området jag ritade, max 60 m
+  expect:
+    tool: propose_charter_change
+    params:
+      search_areas.0.kind:
+        equals: drawn
+      search_areas.0.area_id:
+        equals: ar-1
+      alt_max_agl_m:
+        equals: 60

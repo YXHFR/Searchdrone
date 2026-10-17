@@ -1,0 +1,13 @@
+id: EV-08
+title: Sänkt tak blir ny ramversion
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+steps:
+- operator: Sänk taket till 100 meter
+  expect:
+    tool: propose_charter_change
+    params:
+      base_version:
+        equals: 1
+      alt_max_agl_m:
+        equals: 100

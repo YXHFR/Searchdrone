@@ -1,0 +1,21 @@
+id: EV-06
+title: Rektangel runt en nål blir ramförslag
+safety_critical: false
+fixture: fixtures/draft_p1.json
+steps:
+- operator: En ruta 200 gånger 300 meter runt P1
+  expect:
+    tool: propose_charter_change
+    params:
+      search_areas.0.kind:
+        equals: rect
+      search_areas.0.center_pin_id:
+        equals: P1
+      search_areas.0.width_m:
+        one_of:
+        - 200
+        - 300
+      search_areas.0.height_m:
+        one_of:
+        - 200
+        - 300

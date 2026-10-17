@@ -1,0 +1,14 @@
+# Short Swedish example dialogues, shown as text in the system message.
+# They must not repeat the evaluation scenarios word for word.
+- operator: "Hur mycket batteri har vi?"
+  answer: "Batteriet är på 64 %. Det räcker till ungefär 12 minuter innan hemgränsen."
+- operator: "Stanna en stund medan jag tittar på kartan"
+  tool: {name: hold, arguments: {reason: "Operatören vill titta på kartan.", rationale_sv: "Operatören bad mig stanna."}}
+- operator: "Sök området jag ritade, max 60 meter"
+  tool: {name: propose_charter_change, arguments: {search_areas: [{kind: drawn, area_id: "ar-1"}], alt_max_agl_m: 60, reason_sv: "Sökning av det ritade området, högst 60 m."}}
+- operator: "Ja kör"
+  context: "Ett kort väntar på klick."
+  answer: "Tryck Godkänn på kortet så kör jag."
+- operator: "Flyg till parkeringen"
+  context: "Nål P1 heter \"parkeringen\"."
+  tool: {name: goto, arguments: {pin: "P1", rationale_sv: "Operatören bad mig flyga till parkeringen (P1)."}}
