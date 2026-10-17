@@ -474,6 +474,13 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             "delivery": d.get("delivery", "delivered"),
             "created_at": d.get("created_at"),
         }
+    elif event.type == "vehicle.action" and d.get("action") == "resume":
+        # The pilot's Resume wakes the AI as an override ``resume`` (the latch event only
+        # says "no latch", which a landing says too). Each outcome update is the same press.
+        if d.get("result") != "dispatched":
+            return None
+        kind = "event.operator_override"
+        body = {"active": False, "action": "resume", "by": d.get("by"), "via": d.get("via")}
     elif event.type == "vehicle.action":
         kind = "event.vehicle_action"
         body = {k: d.get(k) for k in ("action_id", "action", "via", "by", "result")}
@@ -507,6 +514,8 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
     elif event.type == "clearance.updated":
         kind = "event.takeoff_clearance"
         body = {k: d.get(k) for k in ("status", "confirmed_by", "valid_until")}
+    elif event.type == "latch.updated" and not d.get("active", True):
+        return None  # a lifted latch: the pilot's Resume (above) or a landing says why
     elif event.type == "latch.updated":
         kind = "event.operator_override"
         body = {

@@ -97,9 +97,10 @@ async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) 
         assert not sc.actions("resume")
 
         # The pilot's Resume: the AI flies on to P1.
+        before = [c["id"] for c in await sc.commands()]
         res = await sc.press("resume")
         assert res.status_code == 202, res.text
-        resumed = await sc.wait_command("resume", "done", 120, issuer_kind="brain")
+        resumed = await sc.wait_command("resume", "done", 120, issuer_kind="brain", besides=before)
         assert resumed["status"] == "done"
         p1 = pin("P1")
         assert distance_m(*p1, sc.tel.lat, sc.tel.lon) <= 5.0
@@ -165,7 +166,8 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
         assert line["handled_by"] == "ground" and line["parsed_intent"] == "stop", line
         await stopped_and_holding(sc, t0)
         stops = [a for a in sc.actions("stop") if a["result"] == "dispatched"]
-        assert len(stops) == 1 and stops[0]["via"] == "chat", stops
+        assert len(stops) == 1, sorted({t for t, _ in sc.bus_log})
+        assert stops[0]["via"] == "chat", stops
         assert stops[0]["by"] == "operator:ci-harness"
         # The AI reports the same line as well: it still acts only once.
         res = await sc.r.commander.post(
