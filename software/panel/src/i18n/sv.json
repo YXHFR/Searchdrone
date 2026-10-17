@@ -8,7 +8,8 @@
   "common": {
     "loading": "Laddar…",
     "yes": "Ja",
-    "no": "Nej"
+    "no": "Nej",
+    "close": "Stäng"
   },
   "banner": {
     "noGround": "Ingen kontakt med markstationen. Försöker igen… STOPP och FLYG HEM försöker ändå."
@@ -48,7 +49,8 @@
     "button": "Fortsätt",
     "held": "Drönaren svävar efter ett avbrott. Tryck Fortsätt för att låta AI:n fortsätta, eller FLYG HEM.",
     "homeActive": "Tryck STOPP först för att avbryta hemflygningen.",
-    "onboardSilent": "Ombordsdatorn svarar inte – använd RC eller FLYG HEM"
+    "onboardSilent": "Ombordsdatorn svarar inte – använd RC eller FLYG HEM",
+    "nothing": "Inget att fortsätta"
   },
   "pills": {
     "vehicle": {
@@ -167,14 +169,26 @@
       "operator": "Du",
       "brain": "AI-befälhavaren",
       "system": "System"
-    }
+    },
+    "question": "Fråga till dig",
+    "answer": "Svara",
+    "replyTo": "Svar till AI:n: {{preview}}",
+    "replyCancel": "Avbryt svaret",
+    "older": "Hämta äldre meddelanden",
+    "tooLong": "För långt meddelande",
+    "thinking": "AI:n tänker… {{s}} s",
+    "brainDegraded": "AI:n svarar inte. Kommandoläge: skriv 'hjälp' för kommandon.",
+    "brainDown": "AI:n är nere. Använd STOPP, FLYG HEM och Fortsätt."
   },
   "orders": {
     "legend": "Snabbval",
-    "gotoPin": "Flyg till P1",
-    "survey": "Sök av området",
-    "land": "Landa",
-    "notYet": "Snabbvalen kopplas in i en senare version."
+    "gotoPin": "Flyg till {{pin}}",
+    "survey": "Sök av {{sector}}",
+    "takeoff": "Starta",
+    "hold": "Sväva här",
+    "rejected": "Grinden stoppade ordern: {{reason}}",
+    "needsApproval": "Ordern väntar på ditt godkännande i chatten.",
+    "failed": "Ordern kunde inte skickas."
   },
   "manual": {
     "takeover": "Ta över",
@@ -220,7 +234,8 @@
       "speed": "Max fart",
       "range": "Max avstånd",
       "battery": "Hem vid batteri",
-      "cap": "tak"
+      "cap": "tak",
+      "charter": "Aktiv ram"
     },
     "log": {
       "title": "Händelselogg",
@@ -244,5 +259,196 @@
     "title": "Ingen kontakt med markstationen",
     "body": "Ingen kontakt med markstationen – använd RC/QGroundControl. Panelen försöker igen av sig själv.",
     "reload": "Ladda om panelen"
-  }
+  },
+  "toast": {
+    "close": "Stäng meddelandet"
+  },
+  "aiDown": {
+    "lead": "AI:n svarar inte.",
+    "continue_plan": "Drönaren gör klart steget och svävar sedan.",
+    "hold": "Drönaren stannar och svävar inom {{s}} s.",
+    "return_home": "Drönaren flyger hem efter {{s}} s.",
+    "safety": "STOPP och FLYG HEM fungerar."
+  },
+  "clearance": {
+    "check": "Jag har kontrollerat att det är fritt runt drönaren: människor, djur, hinder.",
+    "button": "Fritt runt drönaren",
+    "active": "Klartecken gäller {{left}}",
+    "failed": "Klartecknet kunde inte sparas."
+  },
+  "cards": {
+    "needsApproval": "Kräver ditt godkännande",
+    "charter": {
+      "title": "Ny ram (version {{v}})"
+    },
+    "charter_change": {
+      "title": "Ändrad ram (version {{v}})"
+    },
+    "skill": {
+      "title": "Order: {{skill}}",
+      "point": "Flyg till punkt {{lat}}° N {{lon}}° Ö på {{alt}} m",
+      "alt": "Höjd {{alt}} m",
+      "area": "Inom ett område på kartan"
+    },
+    "byAi": "Föreslagen av AI:n",
+    "byOperator": "Föreslagen av operatören",
+    "expiresIn": "går ut om {{left}}",
+    "approve": "Godkänn",
+    "reject": "Avvisa",
+    "rejectSend": "Skicka avvisning",
+    "why": "Varför? (skickas till AI:n)",
+    "edit": "Ändra",
+    "editPrefix": "Ändra ramen: ",
+    "approvedBy": "Godkänd av {{name}} {{time}}",
+    "rejected": "Avvisad",
+    "expired": "Gick ut",
+    "superseded": "Ersatt av en nyare version",
+    "gateRejected": "Stoppad av grinden: {{reason}}",
+    "failed": "Beslutet kunde inte skickas.",
+    "mode": {
+      "legend": "Läge",
+      "a": "A – varje steg godkänns",
+      "b": "B – AI:n flyger fritt inom ramen"
+    },
+    "pending": "{{n}} väntande godkännanden – visa chatten",
+    "toast": "Väntar på ditt godkännande: {{title}}",
+    "announce": "Godkännande krävs: {{title}}",
+    "show": "Visa"
+  },
+  "charter": {
+    "allFields": "Alla fält i ramen (version {{v}})",
+    "areaValue": "{{ha}} ha, {{w}} × {{h}} m",
+    "areaMid": "mitt {{m}} m {{dir}} om hem",
+    "dir": {
+      "north": "norr",
+      "northeast": "nordost",
+      "east": "öster",
+      "southeast": "sydost",
+      "south": "söder",
+      "southwest": "sydväst",
+      "west": "väster",
+      "northwest": "nordväst"
+    },
+    "sectorsValue": "{{n}} sektorer ({{names}}), sökhöjd {{alt}} m",
+    "altValue": "{{min}}–{{max}} m över hem",
+    "speedValue": "högst {{v}} m/s",
+    "rangeValue": "högst {{v}} m",
+    "pilotAtHome": "piloten vid hem",
+    "pilotFromHome": "piloten {{m}} m från hem",
+    "batteryValue": "flyger hem vid {{v}} %",
+    "bufferValue": "geofence {{v}} m utanför området",
+    "silent": {
+      "continue_plan": "gör klart steget och svävar (efter {{s}} s)",
+      "hold": "stannar och svävar (efter {{s}} s)",
+      "return_home": "flyger hem (efter {{s}} s)"
+    },
+    "noPersonal": "Inga personuppgifter",
+    "maybePersonal": "Kan innehålla personuppgifter",
+    "changed": {
+      "looser": "ändrat från standard (lösare)",
+      "tighter": "ändrat från standard (stramare)"
+    },
+    "noChange": "Inga ändringar mot den godkända ramen.",
+    "looser": "(lösare)",
+    "unknownField": "okänt fält: {{name}}",
+    "changedUnknown": "ändrat (okänt fält)",
+    "field": {
+      "area": "Område",
+      "sectors": "Sektorer",
+      "alt_max_agl_m": "Höjd",
+      "alt_min_agl_m": "Lägsta höjd",
+      "default_alt_agl_m": "Standardhöjd",
+      "max_alt_agl_m": "Max höjd",
+      "max_speed_ms": "Fart",
+      "max_range_from_pilot_m": "Avstånd till pilot",
+      "pilot_position": "Pilotens position",
+      "battery_rtl_pct": "Batteri",
+      "geofence_buffer_m": "Marginal",
+      "home": "Hem",
+      "on_ai_silent": "Om AI:n tystnar",
+      "ai_silent_timeout_s": "Tid innan AI:n räknas som tyst",
+      "allowed_skills": "Tillåtna färdigheter",
+      "no_personal_data": "Personuppgifter",
+      "notes": "Anteckning"
+    }
+  },
+  "limits": {
+    "cannotApprove": "Kan inte godkännas",
+    "aboveCap": "{{field}} över taket {{cap}}",
+    "belowFloor": "{{field}} under golvet {{floor}}",
+    "minNotBelowMax": "{{field}} måste vara lägre än högsta höjden",
+    "areaTooBig": "{{field}} större än {{cap}} km²",
+    "pilotFarFromHome": "{{field}} {{m}} m från hem",
+    "homeFarFromVehicle": "{{field}} {{m}} m från drönarens hemposition"
+  },
+  "limitsForm": {
+    "open": "Ändra gränser",
+    "title": "Ändra gränser för uppdraget",
+    "save": "Spara",
+    "cancel": "Avbryt",
+    "saved": "Gränserna är ändrade",
+    "failed": "Gränserna kunde inte sparas.",
+    "aboveCap": "Över det absoluta taket ({{v}})",
+    "belowFloor": "Under det lägsta tillåtna ({{v}})",
+    "cap": "Tak {{v}}",
+    "floor": "Lägst {{v}}",
+    "belowCharter": "Den godkända ramen ligger utanför de nya gränserna. Be AI:n om en ny ram först."
+  },
+  "autonomy": {
+    "title": "Autonomi",
+    "none": "Inget läge valt ännu (väljs när ramen godkänns)",
+    "toA": "Byt till läge A",
+    "toB": "Byt till läge B",
+    "needCharter": "Kräver en godkänd ram.",
+    "confirmTitle": "Byt läge",
+    "confirmA": "Byt till läge A: du godkänner varje steg i ram v{{v}}.",
+    "confirmB": "Byt till läge B: AI:n flyger fritt inom ram v{{v}}.",
+    "switch": "Byt",
+    "failed": "Läget kunde inte bytas."
+  },
+  "missionCard": {
+    "title": "Uppdrag",
+    "name": "Uppdragets namn",
+    "rename": "Byt namn",
+    "end": "Avsluta uppdrag",
+    "endTitle": "Avsluta uppdraget?",
+    "endBody": "Uppdraget stängs. Drönaren måste stå på marken.",
+    "endConfirm": "Avsluta",
+    "ended": "Uppdraget är avslutat",
+    "airborne": "Drönaren är i luften – tryck FLYG HEM först.",
+    "failed": "Det gick inte att ändra uppdraget."
+  },
+  "missionState": {
+    "DRAFT": "Utkast – beskriv uppdraget i chatten",
+    "CHARTER_PROPOSED": "Ram föreslagen – väntar på ditt godkännande",
+    "READY": "Redo att starta",
+    "ACTIVE": "Pågår",
+    "PAUSED": "Pausat",
+    "HELD": "Stoppat av dig",
+    "FAILSAFE": "Failsafe",
+    "RETURNING": "Flyger hem",
+    "LANDED": "Landat",
+    "CLOSED": "Avslutat"
+  },
+  "skills": {
+    "takeoff": "Starta",
+    "goto": "Flyg till punkt",
+    "survey_sector": "Sök av sektor",
+    "hold": "Sväva",
+    "resume": "Fortsätt",
+    "return_home": "Flyg hem",
+    "report": "Rapportera",
+    "mark_location": "Markera plats",
+    "propose_charter_change": "Föreslå ändrad ram",
+    "orbit": "Cirkla",
+    "set_camera_tilt": "Vinkla kameran",
+    "capture_stills": "Ta bilder",
+    "land_at": "Landa vid punkt",
+    "inspect_detection": "Titta närmare",
+    "follow_track": "Följ spår",
+    "stop_follow": "Sluta följa",
+    "follow_me": "Följ mig",
+    "find_me": "Hitta mig"
+  },
+  "reasons": {}
 }

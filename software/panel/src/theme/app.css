@@ -734,3 +734,203 @@ dd {
   border-radius: 12px;
   padding: 16px;
 }
+
+/* --- approval cards, clearance and the chat's extras ------------------------------------ */
+.msg-card {
+  list-style: none;
+}
+.msgs-older {
+  align-self: center;
+}
+.msg-question {
+  background: transparent;
+  border: 2px solid var(--c-mute);
+}
+.answer-btn {
+  margin-top: 6px;
+}
+.approval {
+  margin: 0;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 2px solid var(--c-acc);
+  border-radius: 12px;
+  background: var(--c-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  white-space: normal;
+}
+.approval:focus-visible {
+  outline: 3px solid var(--c-focus);
+}
+.approval h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.approval p {
+  margin: 0;
+}
+.approval-need {
+  font-weight: 700;
+  color: var(--c-warn);
+}
+.approval-actions,
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.reject-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-basis: 100%;
+}
+.card-decided {
+  font-weight: 600;
+  color: var(--c-mute);
+}
+.card-problems {
+  margin: 0;
+  padding-left: 18px;
+}
+.charter-fields {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.charter-fields .kv[data-bad="true"] dd,
+.limits-row[data-bad="true"] input {
+  color: var(--c-bad);
+  border-color: var(--c-bad);
+  font-weight: 700;
+}
+.charter-diff {
+  margin: 0;
+  padding-left: 18px;
+}
+.charter-diff li[data-looser="true"] {
+  color: var(--c-warn);
+  font-weight: 600;
+}
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--c-line);
+  background: var(--c-panel-2);
+  font-size: 13px;
+}
+.mode-choice {
+  border: 1px solid var(--c-line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mode-choice label,
+.clearance-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+}
+.clearance {
+  margin: 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--c-warn);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.approval .clearance {
+  margin: 0;
+}
+.clearance-on {
+  border-color: var(--c-ok);
+  font-weight: 600;
+}
+.clearance input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+}
+.brain-row {
+  margin: 0 12px;
+  min-height: 1.2em;
+  font-size: 14px;
+  color: var(--c-mute);
+}
+.brain-row-warn {
+  padding: 6px 10px;
+  border-left: 4px solid var(--c-warn);
+  background: var(--c-panel-2);
+  color: var(--c-text);
+}
+.reply-to {
+  flex-basis: 100%;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--c-mute);
+}
+.banner-warn {
+  background: var(--c-warn);
+  color: #1a1200;
+}
+.badge-btn {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  cursor: pointer;
+  min-height: 32px;
+}
+.toasts {
+  position: fixed;
+  right: 12px;
+  bottom: calc(var(--safety-h) + 12px);
+  z-index: var(--z-menu);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--c-panel-2);
+  border: 1px solid var(--c-line);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.35);
+}
+.toast span {
+  flex: 1;
+}
+.limits-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.limits-row {
+  display: grid;
+  gap: 4px;
+}
+.title-form {
+  display: flex;
+  gap: 6px;
+}

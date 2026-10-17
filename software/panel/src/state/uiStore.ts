@@ -23,19 +23,56 @@ function initialTheme(): Theme {
   return "dark";
 }
 
+export interface Toast {
+  id: number;
+  text: string;
+  /** Approval card to show when the toast's "Visa" is pressed. */
+  approvalId?: string | undefined;
+}
+
+/** The chat composer's text and reply target, so "Ändra" and "Svara" can fill and focus it. */
+export interface Draft {
+  text: string;
+  replyTo: { id: string; preview: string } | null;
+  /** Bumped to move focus to the composer. */
+  focusTick: number;
+}
+
 interface UiState {
   theme: Theme;
   eventLog: LogEntry[];
   /** Latest critical message, read out with aria-live="assertive". */
   alert: string | null;
+  toasts: Toast[];
+  draft: Draft;
+  setDraft(patch: Partial<Omit<Draft, "focusTick">>, focus?: boolean): void;
+  /** Approval card that should be brought into view and focused (set by "Visa"). */
+  focusApproval: string | null;
+  /** Latest new approval, announced with aria-live="assertive". */
+  approvalAnnounce: string | null;
   setTheme(t: Theme): void;
   log(level: LogEntry["level"], message: string): void;
+  toast(text: string, approvalId?: string): void;
+  dismissToast(id: number): void;
+  approvalRequested(approvalId: string): void;
+  showApproval(approvalId: string | null): void;
 }
 
-export const useUiStore = create<UiState>((set) => ({
+const TOAST_MS = 8_000;
+let toastSeq = 0;
+
+export const useUiStore = create<UiState>((set, get) => ({
   theme: initialTheme(),
   eventLog: [],
   alert: null,
+  toasts: [],
+  draft: { text: "", replyTo: null, focusTick: 0 },
+  setDraft: (patch, focus = false) =>
+    set((s) => ({
+      draft: { ...s.draft, ...patch, focusTick: s.draft.focusTick + (focus ? 1 : 0) },
+    })),
+  focusApproval: null,
+  approvalAnnounce: null,
   setTheme: (theme) => {
     try {
       localStorage.setItem(THEME_KEY, theme);
@@ -49,4 +86,16 @@ export const useUiStore = create<UiState>((set) => ({
       eventLog: [{ t: Date.now(), level, message }, ...s.eventLog].slice(0, MAX_LOG),
       alert: level === "critical" ? message : s.alert,
     })),
+  toast: (text, approvalId) => {
+    toastSeq += 1;
+    const id = toastSeq;
+    set((s) => ({ toasts: [...s.toasts, { id, text, approvalId }].slice(-4) }));
+    setTimeout(() => get().dismissToast(id), TOAST_MS);
+  },
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  approvalRequested: (approvalId) => {
+    set({ approvalAnnounce: approvalId });
+    get().toast("", approvalId);
+  },
+  showApproval: (approvalId) => set({ focusApproval: approvalId }),
 }));

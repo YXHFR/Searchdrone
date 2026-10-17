@@ -1,79 +1,126 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useChatStore } from "../state/chatStore";
 import { useLiveStore } from "../state/liveStore";
+import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
 import { startLive } from "./live";
 
 const sockets: {
   onmessage: ((e: { data: string }) => void) | null;
   onclose: (() => void) | null;
+  sent: string[];
 }[] = [];
 class FakeWs {
   readyState = 1;
   onmessage: ((e: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
+  sent: string[] = [];
   constructor() {
     sockets.push(this);
   }
-  send(): void {}
+  send(m: string): void {
+    this.sent.push(m);
+  }
   close(): void {
     this.onclose?.();
   }
 }
 
 const calls: string[] = [];
+let gate: Promise<void> = Promise.resolve();
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
 }
+const mission = { id: "M1", title: "Uppdrag", status: "DRAFT", active_charter_id: null };
+
+function answer(url: string): unknown {
+  if (url.endsWith("/state")) return { vehicle_id: "sim-01", telemetry: null };
+  if (url.endsWith("/missions/open") || url.includes("/missions/active")) return mission;
+  if (url.endsWith("/missions/M1"))
+    return {
+      mission,
+      charter: null,
+      clearance: null,
+      latch: null,
+      active_command: null,
+      pending_approvals: [],
+      sectors: {},
+    };
+  if (url.includes("/chat")) return { items: [], next_before: null };
+  if (url.includes("/sectors")) return { type: "FeatureCollection", features: [] };
+  if (url.includes("/track"))
+    return { type: "Feature", geometry: { type: "LineString", coordinates: [[1, 2, 3]] } };
+  return [];
+}
 
 beforeEach(() => {
   sockets.length = 0;
   calls.length = 0;
+  gate = Promise.resolve();
+  useLiveStore.getState().reset();
+  useMissionStore.getState().reset(null);
+  useChatStore.getState().clear();
   vi.stubGlobal("WebSocket", FakeWs);
   vi.stubGlobal(
     "fetch",
-    vi.fn((url: string, init?: RequestInit) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
-      if (url.endsWith("/state"))
-        return Promise.resolve(json({ vehicle_id: "sim-01", telemetry: null }));
-      return Promise.resolve(json({ id: "M1", title: "Uppdrag" }));
+      await gate;
+      return json(answer(url));
     }),
   );
   useSessionStore.getState().set({ session: { role: "pilot" } as never });
 });
 afterEach(() => vi.unstubAllGlobals());
 
+const send = (msg: unknown) => sockets.at(-1)?.onmessage?.({ data: JSON.stringify(msg) });
 const hello = (epoch: string) =>
-  sockets.at(-1)?.onmessage?.({
-    data: JSON.stringify({
-      seq: null,
-      topic: "system",
-      type: "hello",
-      data: { server_epoch: epoch },
-    }),
-  });
-const settle = () => new Promise((r) => setTimeout(r, 0));
+  send({ seq: null, topic: "system", type: "hello", data: { server_epoch: epoch } });
+const settle = async () => {
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setTimeout(r, 0));
+};
+
+const RESYNC = [
+  "GET /api/v1/vehicles/sim-01/state",
+  "POST /api/v1/vehicles/sim-01/missions/open",
+  "GET /api/v1/missions/M1",
+  "GET /api/v1/missions/M1/charters",
+  "GET /api/v1/missions/M1/approvals?status=pending",
+  "GET /api/v1/missions/M1/sectors",
+  "GET /api/v1/missions/M1/annotations",
+  "GET /api/v1/missions/M1/chat?limit=50",
+  "GET /api/v1/missions/M1/track?max_points=5000",
+];
 
 describe("startLive", () => {
-  it("opens the mission once, reloads state per epoch and the mission only after a server restart", async () => {
+  it("resyncs in the spec's order at start, not again on the first hello, again on a new epoch", async () => {
     const stop = startLive("sim-01");
     await settle();
-    expect(calls).toEqual(["POST /api/v1/vehicles/sim-01/missions/open"]);
+    expect(calls).toEqual(RESYNC);
+    expect(useMissionStore.getState().track).toEqual([[1, 2]]);
     hello("e1");
     await settle();
-    expect(calls.slice(1)).toEqual(["GET /api/v1/vehicles/sim-01/state"]);
+    expect(calls).toHaveLength(RESYNC.length);
     sockets.at(-1)?.onclose?.();
     await new Promise((r) => setTimeout(r, 700));
     hello("e2");
     await settle();
-    await settle();
-    expect(calls.slice(2)).toEqual([
-      "GET /api/v1/vehicles/sim-01/state",
-      "POST /api/v1/vehicles/sim-01/missions/open",
-    ]);
+    expect(calls.slice(RESYNC.length)).toEqual(RESYNC);
     expect(useLiveStore.getState().mission?.id).toBe("M1");
+    stop();
+  });
+
+  it("resync_required runs the resync again", async () => {
+    const stop = startLive("sim-01");
+    await settle();
+    hello("e1");
+    await settle();
+    send({ type: "resync_required", data: {} });
+    await settle();
+    expect(calls.slice(RESYNC.length)).toEqual(RESYNC);
     stop();
   });
 
@@ -81,7 +128,61 @@ describe("startLive", () => {
     useSessionStore.getState().set({ session: { role: "observer" } as never });
     const stop = startLive("sim-01");
     await settle();
-    expect(calls).toEqual(["GET /api/v1/missions/active?vehicle_id=sim-01"]);
+    expect(calls[1]).toBe("GET /api/v1/missions/active?vehicle_id=sim-01");
+    expect(calls.some((c) => c.includes("/missions/open"))).toBe(false);
+    stop();
+  });
+
+  it("holds events back during a resync and applies them after it, in seq order", async () => {
+    let release: () => void = () => undefined;
+    gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const stop = startLive("sim-01");
+    hello("e1");
+    const approval = (status: string) => ({
+      id: "AP1",
+      kind: "command",
+      mission_id: "M1",
+      subject_id: "K1",
+      subject_version: 1,
+      status,
+      required_confirmations: [],
+      requested_at: "2026-10-16T10:00:00Z",
+    });
+    send({
+      seq: 6,
+      topic: "mission",
+      type: "approval.updated",
+      mission_id: "M1",
+      data: approval("approved"),
+    });
+    send({
+      seq: 5,
+      topic: "mission",
+      type: "approval.requested",
+      mission_id: "M1",
+      data: approval("pending"),
+    });
+    expect(useMissionStore.getState().approvals.AP1).toBeUndefined();
+    release();
+    await settle();
+    expect(useMissionStore.getState().approvals.AP1?.status).toBe("approved");
+    stop();
+  });
+
+  it("subscribes again when the mission arrives after the hello", async () => {
+    let release: () => void = () => undefined;
+    gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const stop = startLive("sim-01");
+    hello("e1");
+    const before = sockets.at(-1)?.sent.length ?? 0;
+    release();
+    await settle();
+    const subs = (sockets.at(-1)?.sent ?? []).slice(before).map((m) => JSON.parse(m));
+    expect(subs.some((m) => m.op === "subscribe" && m.mission_id === "M1")).toBe(true);
     stop();
   });
 });

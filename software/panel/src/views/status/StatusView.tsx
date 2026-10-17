@@ -2,9 +2,12 @@ import { useTranslation } from "react-i18next";
 import { vehiclePill } from "../../header/pills";
 import { ResumeRow } from "../../safety/ResumeButton";
 import { useLiveStore } from "../../state/liveStore";
+import { activeCharter, useMissionStore } from "../../state/missionStore";
 import { useSessionStore } from "../../state/sessionStore";
 import { useUiStore } from "../../state/uiStore";
+import { LimitsButton } from "../chat/cards/LimitsForm";
 import type { ViewProps } from "../registry";
+import { AutonomyCard, MissionCard } from "./MissionCards";
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -80,6 +83,8 @@ function LimitsCard() {
   const missionLimits = useLiveStore((s) => s.mission?.limits ?? null);
   const lim = missionLimits ?? config?.limits_default ?? null;
   const abs = config?.limits_absolute ?? null;
+  const activeId = useLiveStore((s) => s.mission?.active_charter_id ?? null);
+  const charter = useMissionStore((s) => activeCharter(s, activeId))?.body ?? null;
   return (
     <section className="card" aria-labelledby="st-limits">
       <h3 id="st-limits">{t("status.limits.title")}</h3>
@@ -97,7 +102,14 @@ function LimitsCard() {
           value={`${num(lim?.max_range_from_pilot_m)} m (${t("status.limits.cap")} ${num(abs?.max_range_from_pilot_m)} m)`}
         />
         <Row label={t("status.limits.battery")} value={`${num(lim?.battery_rtl_pct)} %`} />
+        {charter ? (
+          <Row
+            label={t("status.limits.charter")}
+            value={`${num(charter.alt_max_agl_m)} m · ${num(charter.max_speed_ms)} m/s · ${num(charter.max_range_from_pilot_m)} m · ${num(charter.battery_rtl_pct)} %`}
+          />
+        ) : null}
       </dl>
+      <LimitsButton />
     </section>
   );
 }
@@ -132,6 +144,8 @@ export default function StatusView({ vehicleId }: ViewProps) {
   return (
     <div className="view-body status-grid">
       <VehicleCard vehicleId={vehicleId} />
+      <MissionCard />
+      <AutonomyCard />
       <LinksCard />
       <LimitsCard />
       <EventLog />

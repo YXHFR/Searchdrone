@@ -55,6 +55,10 @@ export const TIMING = {
 
 const FINAL_OK = new Set(["acked", "already_active"]);
 
+function isEmergency(a: VehicleAction): a is "stop" | "return_home" {
+  return a === "stop" || a === "return_home";
+}
+
 export interface MachineDeps {
   fetch: typeof fetch;
   log: ActionLog;
@@ -105,7 +109,8 @@ export class VehicleActionMachine {
 
   /** New press: always sends, with a new client_action_id, even mid-attempt. */
   trigger(): void {
-    if (this.action === "resume" && this.vehicleId() === null) return; // Resume needs a vehicle
+    // Only STOP and RETURN HOME have an all-vehicles form; the rest need a vehicle.
+    if (!isEmergency(this.action) && this.vehicleId() === null) return;
     this.clearTimers();
     this.generation += 1;
     this.pending.clear();
@@ -155,7 +160,7 @@ export class VehicleActionMachine {
 
   private url(): string {
     if (this.target !== null) return paths.vehicleAction(this.target, this.action);
-    // trigger() never starts a Resume without a vehicle, so this is stop or return_home.
+    // trigger() never starts another action without a vehicle.
     return paths.allVehiclesAction(this.action as "stop" | "return_home");
   }
 

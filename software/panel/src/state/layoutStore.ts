@@ -9,6 +9,7 @@ import {
   parseLayout,
   replaceView,
   restore,
+  showView,
   splitView,
   type ViewId,
   type Viewport,
@@ -57,6 +58,8 @@ interface LayoutStore {
   replace(path: Path, view: ViewId): void;
   split(path: Path, dir: "row" | "col", view: ViewId): void;
   close(path: Path): void;
+  /** Bring a view into sight (e.g. "Visa" on an approval toast): mobile switches tab. */
+  showView(view: ViewId): void;
   /** Mobile tab bar: show one view. */
   showOnly(view: ViewId): void;
   setPip(pip: PipView | null): void;
@@ -93,6 +96,10 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     replace: (path, view) => commit(replaceView(get().layout, path, view, get().vp)),
     split: (path, dir, view) => commit(splitView(get().layout, path, dir, view, get().vp)),
     close: (path) => commit(closeView(get().layout, path, get().vp)),
+    showView: (view) => {
+      if (get().vp === "mobile") get().showOnly(view);
+      else commit(showView(get().layout, view, get().vp));
+    },
     showOnly: (view) => {
       const pip = get().pip === view ? null : get().pip;
       set({ pip });
