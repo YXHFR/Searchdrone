@@ -25,7 +25,7 @@ def parts(g: Ground) -> dict[str, PartState]:
         "sdlink": g.sdlink.state(),
         "onboard": g.vehicle_link.onboard_state(),
         "brain": brain,
-        "mediamtx": "down",  # the video server is checked once video is built (B1-09)
+        "mediamtx": g.video_state,  # services.video.VideoMonitor
     }
 
 

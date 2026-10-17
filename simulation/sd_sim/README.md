@@ -14,12 +14,15 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just sim` / `just sim-headless` | Starts the simulator stack for one instance in the foreground (Ctrl-C stops it). |
 | `just stop` | Stops what `just sim` started. |
 | `just test-sitl [sc=SC00] [physics=builtin\|gz] [mode=pr\|nightly] [workers=N] [shard=N shards=M]` | Runs the scenario tests (pytest with `sd_sim.pytest_plugin`). Each test writes `runs/<run>/result.json`; the run writes `runs/summary.md`. |
+| `just test-video [physics=builtin\|gz]` | Video tests against MediaMTX (`just video-up`; the browser test also needs `just db-up migrate` and Google Chrome): publishing password, loopback-only ports, the delay read from the time code strip, recordings per mission, LAN mode. |
 | `just ci-sitl [same keys]` | Runs the same tests inside the SITL image, exactly like the `sitl` CI job. |
 
 ## Parts
 
 - `launch` builds the SITL command line (`sitl.build_sitl_argv`), starts each process with a minimal environment and waits for it to be healthy. Process ids go to `build/sim/i<N>/pids.json`, logs to `runs/<run>/logs/`.
 - `linksim` is the simulated radio: MAVLink and video over UDP with delay, jitter and loss, SD-link over TCP with delay only. Its control API on 127.0.0.1 needs a bearer token from `build/sim/i<N>/secrets/linksim_token`.
+- `testvideo` is the synthetic camera for `video=test` (builtin physics, CI): GStreamer's moving ball with a machine-readable time code strip (`timecode`: the wall clock in ms as 48 black/white boxes at the top of the picture), H.264 over RTP to the camera's port.
+- `video_relay` takes the camera's RTP after `linksim` and publishes it to MediaMTX (`rtsp://127.0.0.1:8554/drone/sim-01/main`, instance 0 only). The password is read from `build/sim/i0/secrets/mediamtx_publish`, never from the command line. Without a running MediaMTX (`just video-up`) the launcher skips it.
 - `mavtap` records the onboard computer's MAVLink channel without changing it.
 - `harness` is the test rig's own MAVLink channel (system 253) on SITL serial0.
 - `pytest_plugin` adds the simulator markers and options. Every `sitl` test has `@pytest.mark.budget_s(<s>)`; tests are spread over CI shards by longest budget first, and `test_sitl_budget` fails when a shard would not fit the job.

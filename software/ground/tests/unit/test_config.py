@@ -17,6 +17,7 @@ GOOD_ENV = "".join(
         ("SD_GROUND__DB_PASSWORD", "a" * 20),
         ("SD_GROUND__DB_APP_PASSWORD", APP),
         ("SD_GROUND__VIDEO_PUBLISH_PASSWORD", "c" * 20),
+        ("SD_GROUND__VIDEO_API_PASSWORD", "d" * 20),
     )
 )
 
@@ -147,3 +148,32 @@ def test_no_setting_turns_off_login() -> None:
     names = set(AuthConfig.model_fields)
     assert names == {"cli_may_confirm", "brain_token_file", "login_code_ttl_s"}
     assert not any(re.search(r"auto_?(approve|confirm|clear)|skip_|localhost", n) for n in names)
+
+
+@pytest.mark.parametrize("value", ["", "CHANGE_ME", "change_me"])
+@pytest.mark.parametrize(
+    ("key", "good"),
+    [("SD_GROUND__VIDEO_PUBLISH_PASSWORD", "c" * 20), ("SD_GROUND__VIDEO_API_PASSWORD", "d" * 20)],
+)
+def test_video_password_placeholder(root: Path, key: str, good: str, value: str) -> None:
+    """An empty or CHANGE_ME video password (publishing or the control API) stops it."""
+    (root / ".env").write_text(GOOD_ENV.replace(good, value))
+    assert any(key in e for e in _errors(root))
+
+
+@pytest.mark.parametrize(
+    ("key", "url"),
+    [
+        ("mediamtx_whep", "http://0.0.0.0:8889"),
+        ("mediamtx_api", "http://192.168.1.20:9997"),
+        ("mediamtx_hls", "https://127.0.0.1:8888"),
+        ("mediamtx_whep", "http://127.0.0.1:8889/../x"),
+    ],
+)
+def test_video_server_only_on_loopback(root: Path, key: str, url: str) -> None:
+    errors = _errors(root, f'[video]\n{key} = "{url}"\n')
+    assert any(f"video.{key}" in e for e in errors)
+
+
+def test_video_defaults_are_loopback(root: Path) -> None:
+    assert not any(e.startswith("video.") for e in _errors(root))

@@ -67,7 +67,15 @@ working when the main loop, the database, the AI or the onboard computer hang:
 - `sd-ground action stop|home` goes through the Unix socket (each client in its own
   thread with a 2 s read limit, so a stuck client never blocks a STOP).
 
-Parts that other components fill in (SD-link, the mission flow, video) already have their
+- **Video** (`api/video_proxy.py`, `services/video.py`): the panel reaches MediaMTX only
+  through `/api/v1/video/{vehicle_id}/main/whep` (WHEP signalling to `127.0.0.1:8889`,
+  the session's `Location` rewritten to `/api/v1/video/{vehicle_id}/main/whep/{session}`).
+  The part `mediamtx` in `/health` follows the stream (ok / degraded / down). When a mission
+  closes, its recorded segments are hard-linked (the open one copied) into
+  `missions/<id>/video/` and recorded in `mission_files` with their SHA-256. `[video]
+  enabled = false` turns video off.
+
+Parts that other components fill in (SD-link, the mission flow) already have their
 routes; until they are built those answer `501 NOT_BUILT`, and `/api/v1/health` reports
 `ready = false`.
 

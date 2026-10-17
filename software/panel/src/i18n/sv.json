@@ -137,7 +137,11 @@
     "video": {
       "title": "Video",
       "none": "Ingen video. Videon visas när drönarens kamera är igång.",
-      "connecting": "Ansluter till videon…"
+      "connecting": "Ansluter till videon…",
+      "noPicture": "Ingen video. Kontrollera simulatorn/kameran.",
+      "retry": "Försök igen",
+      "live": "LIVE · WebRTC",
+      "hls": "HLS · fördröjning ca 2–4 s"
     },
     "candidates": {
       "title": "Kandidater",

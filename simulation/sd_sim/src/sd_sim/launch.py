@@ -8,6 +8,7 @@ skipped with a message.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -17,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
@@ -47,11 +49,31 @@ FLAGS = ("--demo", "--with-db")
 # (processes stop in reverse start order and the ground station's heartbeat must end
 # last); the rest start after SITL.
 NOT_BUILT_BEFORE_SITL = ("postgres", "sd-ground")
-NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain", "video_relay")
+NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain")
 
 HEALTH_LINK_S = 10.0
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
+HEALTH_VIDEO_S = 15.0
+VIDEO_VEHICLE_ID = "sim-01"
+VIDEO_SECRET = "mediamtx_publish"  # noqa: S105 - a file name, not a secret
+VIDEO_PASSWORD_KEY = "SD_GROUND__VIDEO_PUBLISH_PASSWORD"  # noqa: S105 - a variable name
+VIDEO_API_PASSWORD_KEY = "SD_GROUND__VIDEO_API_PASSWORD"  # noqa: S105 - a variable name
+VIDEO_API_USER = "ground"
+PLACEHOLDERS = {"", "change_me", "change-me", "changeme"}
+
+
+def read_env_value(path: Path, key: str) -> str:
+    """One value from ``.env`` (the process environment wins), without reading the rest."""
+    if os.environ.get(key):
+        return os.environ[key]
+    if not path.is_file():
+        return ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        name, sep, value = raw.strip().partition("=")
+        if sep and name.strip() == key:
+            return value.strip().strip('"').strip("'")
+    return ""
 
 
 def write_secret(directory: Path, name: str, value: str) -> Path:
@@ -296,9 +318,74 @@ class Stack:
         elif self.cfg.video == "test":
             self.group.start(
                 "testvideo",
-                gazebo.test_video_argv(self.ports["video_raw_udp"]),
+                [
+                    sys.executable,
+                    "-m",
+                    "sd_sim.testvideo",
+                    "--port",
+                    str(self.ports["video_raw_udp"]),
+                ],
                 env=procs.clean_env(),
             )
+
+    def mediamtx_get(self, path: str) -> dict[str, object] | None:
+        """MediaMTX's API (instance 0 only), as the user ``ground``; ``None`` when it does
+        not answer. A refused password is an error, not "not running"."""
+        password = read_env_value(self.repo / ".env", VIDEO_API_PASSWORD_KEY)
+        token = base64.b64encode(f"{VIDEO_API_USER}:{password}".encode()).decode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.ports['mediamtx_api']}{path}",
+            headers={"Authorization": f"Basic {token}"},
+        )
+        try:
+            with LOOPBACK_OPENER.open(req, timeout=2) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == HTTPStatus.UNAUTHORIZED:
+                raise InfraError(
+                    f"MediaMTX nekade {VIDEO_API_PASSWORD_KEY}. Starta om med just video-up."
+                ) from exc
+            return None
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+
+    def _video_ready(self) -> bool:
+        state = self.mediamtx_get(f"/v3/paths/get/drone/{VIDEO_VEHICLE_ID}/main")
+        return state is not None and state.get("ready") is True
+
+    def start_video_relay(self) -> None:
+        """``video_relay`` publishes to MediaMTX (instance 0, when MediaMTX runs)."""
+        if self.cfg.instance != 0 or self.cfg.video == "off":
+            return
+        if self.mediamtx_get("/v3/config/global/get") is None:
+            say("hoppar över video_relay (MediaMTX kör inte; starta den med just video-up)")
+            return
+        password = read_env_value(self.repo / ".env", VIDEO_PASSWORD_KEY)
+        if password.strip().lower() in PLACEHOLDERS:
+            raise InfraError(f"{VIDEO_PASSWORD_KEY} saknas i .env. Kör just setup-config.")
+        secret = write_secret(self.secrets_dir, VIDEO_SECRET, password)
+        relay = self.group.start(
+            "video_relay",
+            [
+                sys.executable,
+                "-m",
+                "sd_sim.video_relay",
+                "--instance",
+                str(self.cfg.instance),
+                "--secret-file",
+                str(secret),
+                "--vehicle-id",
+                VIDEO_VEHICLE_ID,
+            ],
+            env=procs.clean_env(),
+        )
+        self._wait(
+            "video_relay",
+            relay,
+            HEALTH_VIDEO_S,
+            self._video_ready,
+            "MediaMTX fick ingen video. Kontrollera kameran/testbilden och lösenordet i .env.",
+        )
 
     def up(self) -> None:
         os.umask(0o077)
@@ -320,6 +407,7 @@ class Stack:
         for part in NOT_BUILT_AFTER_SITL:
             say(f"hoppar över {part} (inte byggt än)")
         self.start_video_source()
+        self.start_video_relay()
 
     def down(self) -> None:
         self.group.stop_all()
