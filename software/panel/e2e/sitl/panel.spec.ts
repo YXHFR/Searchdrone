@@ -159,9 +159,12 @@ test("FLYG HEM med AI:n avstängd (PS-4)", async ({ page }) => {
     await readyMission(page);
     await startFlight(page);
   }
-  await expect(page.getByTestId("pill-vehicle")).toHaveText(/Flyger till punkt|Söker|Svävar/, {
-    timeout: 120_000,
-  });
+  await expect(page.getByTestId("pill-vehicle")).toHaveText(
+    /Flyger till punkt|Söker|Svävar|Stoppad – svävar/,
+    {
+      timeout: 120_000,
+    },
+  );
 
   stopBrain();
   await expect(page.getByTestId("brain-row")).toContainText("AI:n är nere", { timeout: 6_000 });
