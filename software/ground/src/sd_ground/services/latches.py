@@ -30,9 +30,12 @@ from typing import Final, Literal
 from sd_obs.clock import Clock
 from sd_schemas.mission import LatchAction, OperatorLatch
 
-__all__ = ["HOME_LATCHES", "LatchChange", "LatchRefusedError", "Latches"]
+__all__ = ["ADOPTED_BY", "HOME_LATCHES", "LatchChange", "LatchRefusedError", "Latches"]
 
 HOME_LATCHES: Final = frozenset({"return_home", "watchdog_rtl"})
+# set_by of a latch taken over from the onboard Hello (the ground's own system latches,
+# battery and watchdog, use "system:ground").
+ADOPTED_BY: Final = "system:onboard"
 
 
 class LatchRefusedError(Exception):

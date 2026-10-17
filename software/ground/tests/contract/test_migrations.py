@@ -65,7 +65,7 @@ def test_roundtrip(fresh_db: Db) -> None:
     assert not {"detections", "candidates"} & _tables(db)
     assert "3.6" in db.run("SELECT postgis_full_version() AS v")[0]["v"]
     head = db.run("SELECT version_num FROM alembic_version", role="sd_app")
-    assert [r["version_num"] for r in head] == ["0001_initial"]
+    assert [r["version_num"] for r in head] == ["0002_mission_flow"]
 
 
 def test_app_role_has_no_delete_anywhere(migrated_db: Db) -> None:

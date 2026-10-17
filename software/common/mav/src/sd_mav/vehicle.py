@@ -629,6 +629,28 @@ class Vehicle:
         )
         return None if reply is None else float(reply.param_value)
 
+    async def set_fence_limit(
+        self, name: str, value: float, *, origin: SendOrigin, within_s: float = 2.0
+    ) -> float | None:
+        """Move one of the fence's limits (height, radius, LOITER speed); returns the
+        value the flight controller reports back, ``None`` without an answer.
+
+        Only the ground station may, only on the ground and disarmed, and never below
+        the standard fence: the allowlist checks every one of those.
+        """
+        msg = mavlink.MAVLink_param_set_message(
+            self.fc_sysid,
+            FC_COMPID,
+            name.encode("ascii"),
+            float(value),
+            mavlink.MAV_PARAM_TYPE_REAL32,
+        )
+        self._check_and_write(msg, origin)
+        reply = await self.wait_message(
+            lambda m: m.get_type() == "PARAM_VALUE" and _text(m.param_id) == name, within_s
+        )
+        return None if reply is None else float(reply.param_value)
+
     # --- background tasks --------------------------------------------------------------
 
     def _our_heartbeat(self) -> Any:

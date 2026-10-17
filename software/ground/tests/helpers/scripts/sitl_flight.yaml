@@ -1,0 +1,10 @@
+# The scripted AI for the B1-12 SITL flight: take off, fly to P1, fly home.
+steps:
+  - skill: takeoff
+    params: {alt_m: 30}
+    expect: ALLOW
+  - skill: goto
+    params: {at: p1, alt_m: 30}
+    expect: ALLOW
+  - skill: return_home
+    expect: ALLOW

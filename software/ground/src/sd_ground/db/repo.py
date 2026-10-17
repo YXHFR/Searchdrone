@@ -319,7 +319,8 @@ class Repo:
     def _chat(r: RowMapping) -> ChatMessage:
         data = dict(r)
         data["refs"] = _json(data["refs"])
-        data["author_role"] = "pilot" if data["role"] == "operator" else None
+        role = data["role"]
+        data["author_role"] = {"operator": "pilot", "system": "system"}.get(role)
         data["delivery"] = "n/a"
         return ChatMessage.model_validate(data)
 
@@ -335,16 +336,21 @@ class Repo:
         text_: str,
         in_reply_to: str | None,
         refs: dict[str, Any],
+        parsed_intent: str | None = None,
     ) -> tuple[ChatMessage, bool]:
-        """Add a chat line. A repeated ``msg_id`` returns the stored line (``False``)."""
+        """Add a chat line. A repeated ``msg_id`` returns the stored line (``False``).
+
+        ``parsed_intent``: the line was a STOP or FLY HOME the ground acted on
+        (``handled_by = "ground"``)."""
         async with self.engine.begin() as conn:
             row = (
                 (
                     await conn.execute(
                         text(
                             "INSERT INTO chat_messages (id, mission_id, vehicle_id, role, "
-                            "author_ref, kind, text, in_reply_to, refs) VALUES (:id, :m, :v, "
-                            ":role, :author, :kind, :text, :reply, CAST(:refs AS jsonb)) "
+                            "author_ref, kind, text, in_reply_to, refs, parsed_intent, handled_by) "
+                            "VALUES (:id, :m, :v, :role, :author, :kind, :text, :reply, "
+                            "CAST(:refs AS jsonb), :intent, :handled) "
                             "ON CONFLICT (id) DO NOTHING RETURNING id, seq, mission_id, role, "
                             "author_ref, kind, text, in_reply_to, refs, parsed_intent, "
                             "handled_by, created_at"
@@ -359,6 +365,8 @@ class Repo:
                             "text": text_,
                             "reply": in_reply_to,
                             "refs": json.dumps(refs),
+                            "intent": parsed_intent,
+                            "handled": None if parsed_intent is None else "ground",
                         },
                     )
                 )
@@ -384,6 +392,16 @@ class Repo:
                 if row is None:
                     raise LookupError("message id already used in another mission")
         return self._chat(row), created
+
+    async def chat_line(self, mission_id: str, msg_id: str) -> ChatMessage | None:
+        row = await self._one(
+            "SELECT id, seq, mission_id, role, author_ref, kind, text, in_reply_to, refs, "
+            "parsed_intent, handled_by, created_at FROM chat_messages WHERE id = :id "
+            "AND mission_id = :m",
+            id=msg_id,
+            m=mission_id,
+        )
+        return None if row is None else self._chat(row)
 
     async def chat_message_exists(self, mission_id: str, msg_id: str) -> bool:
         row = await self._one(

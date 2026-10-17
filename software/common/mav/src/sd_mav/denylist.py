@@ -6,6 +6,12 @@ the tests and reviewers point at: writing flight-controller parameters, switchin
 or moving the geofence, rebooting, terminating the flight, forcing arming, steering
 around the autopilot. Nothing here can be unlocked by any origin or setting.
 
+One named exception (owner decision on raising limits): ``PARAM_SET`` of exactly the
+fence's height, radius and LOITER speed (``FENCE_LIMIT_PARAMS``) is not on this list. The
+allowlist then lets only the ground station send it, only while the vehicle stands
+disarmed on the ground and only to a fence at or outside the standard limits. Every
+other parameter stays forbidden here.
+
 ``MANUAL_CONTROL`` is not listed: it is allowed onboard only for the pilot's own sticks
 in LOITER (see :mod:`sd_mav.allowlist`). ``RC_CHANNELS_OVERRIDE`` stays forbidden.
 """
@@ -20,8 +26,13 @@ __all__ = [
     "ARM_FORCE_MAGIC",
     "DENIED_COMMANDS",
     "DENIED_MESSAGES",
+    "FENCE_LIMIT_PARAMS",
     "denied_reason",
+    "param_name",
 ]
+
+# The only parameters the ground station may set (the fence follows raised limits).
+FENCE_LIMIT_PARAMS: Final = frozenset({"FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS"})
 
 # Messages that are never sent.
 DENIED_MESSAGES: Final = frozenset(
@@ -83,6 +94,14 @@ DENIED_COMMANDS: Final = frozenset(
 ARM_FORCE_MAGIC: Final = 21196
 
 
+def param_name(msg: Any) -> str:
+    """A parameter id as text (pymavlink gives bytes or str, NUL-padded)."""
+    value = msg.param_id
+    if isinstance(value, bytes):
+        value = value.decode("ascii", errors="replace")
+    return str(value).rstrip("\x00")
+
+
 def _command_of(msg: Any) -> int | None:
     name = msg.get_type()
     if name in ("COMMAND_LONG", "COMMAND_INT", "MISSION_ITEM_INT"):
@@ -93,6 +112,8 @@ def _command_of(msg: Any) -> int | None:
 def denied_reason(msg: Any) -> str | None:
     """Why ``msg`` is on the deny list, or ``None`` when it is not."""
     name = msg.get_type()
+    if name == "PARAM_SET" and param_name(msg) in FENCE_LIMIT_PARAMS:
+        return None  # the allowlist decides who, when and how far
     if name in DENIED_MESSAGES:
         return f"{name} is forbidden"
     command = _command_of(msg)

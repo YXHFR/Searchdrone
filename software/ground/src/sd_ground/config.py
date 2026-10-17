@@ -84,8 +84,14 @@ class MavlinkConfig(_Section):
 
 
 class GateConfig(_Section):
-    operator_absent_s: float = Field(default=OPERATOR_ABSENT_S, gt=0)
-    operator_absent_action: Literal["hold", "return_home", "off"] = "hold"
+    # Owner decision: no pilot in the panel for 30 s in an active mission gives the
+    # alarm and a hold. Fixed: the keys stay readable, but only these values load; a
+    # settings file with another time or "off" / "return_home" is refused at start, with
+    # the field named (the guard cannot be switched off).
+    operator_absent_s: float = Field(
+        default=OPERATOR_ABSENT_S, ge=OPERATOR_ABSENT_S, le=OPERATOR_ABSENT_S
+    )
+    operator_absent_action: Literal["hold"] = "hold"
 
 
 class AuthConfig(_Section):
