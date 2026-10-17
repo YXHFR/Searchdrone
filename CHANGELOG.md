@@ -8,6 +8,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
+  `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
+  to the LAN in LAN mode, Media over QUIC off) and publishing only with the password
+  from `.env`. The simulator's test picture carries a time code strip; `video_relay`
+  publishes the camera through the simulated radio. The ground station proxies WHEP
+  (`/api/v1/video/{vehicle_id}/main/whep`), reports the video server in `/health` and puts
+  each mission's video segments into its folder. The panel's video view plays WebRTC, falls
+  back to HLS and shows "no video" with a retry. `just test-video` measures the delay in
+  Google Chrome from the strip.
 - Onboard computer `sd-onboard` (`sd_onboard`): the executor that takes skill orders over
   SD-link, checks them again onboard (the shared safety gate on the handler's own route,
   plus its own checks: stale orders, approvals, the stop latch, takeoff preconditions with

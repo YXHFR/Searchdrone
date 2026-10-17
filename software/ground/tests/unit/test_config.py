@@ -147,3 +147,28 @@ def test_no_setting_turns_off_login() -> None:
     names = set(AuthConfig.model_fields)
     assert names == {"cli_may_confirm", "brain_token_file", "login_code_ttl_s"}
     assert not any(re.search(r"auto_?(approve|confirm|clear)|skip_|localhost", n) for n in names)
+
+
+@pytest.mark.parametrize("value", ["", "CHANGE_ME", "change_me"])
+def test_video_publish_password_placeholder(root: Path, value: str) -> None:
+    """B1-09 point 6: an empty or CHANGE_ME publish password stops the ground station."""
+    (root / ".env").write_text(GOOD_ENV.replace("c" * 20, value))
+    assert any("SD_GROUND__VIDEO_PUBLISH_PASSWORD" in e for e in _errors(root))
+
+
+@pytest.mark.parametrize(
+    ("key", "url"),
+    [
+        ("mediamtx_whep", "http://0.0.0.0:8889"),
+        ("mediamtx_api", "http://192.168.1.20:9997"),
+        ("mediamtx_hls", "https://127.0.0.1:8888"),
+        ("mediamtx_whep", "http://127.0.0.1:8889/../x"),
+    ],
+)
+def test_video_server_only_on_loopback(root: Path, key: str, url: str) -> None:
+    errors = _errors(root, f'[video]\n{key} = "{url}"\n')
+    assert any(f"video.{key}" in e for e in errors)
+
+
+def test_video_defaults_are_loopback(root: Path) -> None:
+    assert not any(e.startswith("video.") for e in _errors(root))

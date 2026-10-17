@@ -25,5 +25,30 @@ services:
       retries: 20
     shm_size: 256mb
 
+  # --- mediamtx: live video (WebRTC/WHEP, HLS fallback) and recordings (B1-09) ---
+  mediamtx:
+    # bluenviron/mediamtx:1.21.1, published 2026-09-20 (multi-arch index digest)
+    image: bluenviron/mediamtx:1.21.1@sha256:5ce2a948eb68df06ce2e13870db8df8e30d516ac4dc40e04bfe8aee3bdf7be40
+    restart: unless-stopped
+    # Every listener still binds 127.0.0.1 (config/mediamtx.yml); only UDP 8189 moves
+    # to the LAN address in LAN mode.
+    # host-network: WebRTC media over UDP is simplest this way in WSL2
+    network_mode: host
+    # The recordings belong to the owner's user, so the ground station can hard-link them.
+    user: "${SD_UID:?saknas i .env, kör just setup-config}:${SD_GID:?saknas i .env, kör just setup-config}"
+    environment:
+      TZ: UTC
+      # Signalling always on loopback only (the panel goes through the ground's proxy).
+      MTX_WEBRTCADDRESS: "127.0.0.1:8889"
+      MTX_WEBRTCLOCALUDPADDRESS: "${SD_VIDEO_BIND:-127.0.0.1}:8189"
+      MTX_WEBRTCADDITIONALHOSTS: "${SD_LAN_IP:-}"
+      MTX_HLSADDRESS: "127.0.0.1:8888"
+      MTX_RTSPADDRESS: "127.0.0.1:8554"
+      MTX_APIADDRESS: "127.0.0.1:9997"
+      MTX_AUTHINTERNALUSERS_0_PASS: "${SD_GROUND__VIDEO_PUBLISH_PASSWORD:?saknas i .env, kör just setup-config}"
+    volumes:
+      - ./config/mediamtx.yml:/mediamtx.yml:ro
+      - ${SD_DATA_DIR:?saknas i .env, kör just setup-config}/video:/recordings
+
 volumes:
   sd-pgdata:

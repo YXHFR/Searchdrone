@@ -99,4 +99,5 @@ markers = [
   "private_db: the instance gets its own Postgres container",
   "param_override(file): extra SITL parameter layer for one test",
   "lan: needs lan=1 (local only)",
+  "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
 ]

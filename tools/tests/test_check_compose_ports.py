@@ -88,6 +88,7 @@ webrtcAddress: 127.0.0.1:8889
 apiAddress: ""
 rtmp: no
 srt: no
+moq: no
 authInternalUsers:
   - user: publisher
     pass: CHANGE_ME
@@ -118,7 +119,7 @@ def test_mediamtx_public_address_fails() -> None:
     assert any("rtspAddress" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
 
 
-@pytest.mark.parametrize("key", ["rtmp", "srt"])
+@pytest.mark.parametrize("key", ["rtmp", "srt", "moq"])
 def test_mediamtx_rtmp_and_srt_must_be_off(key: str) -> None:
     text = MTX_OK.replace(f"{key}: no", f"{key}: yes")
     assert any(f"{key} ska vara no" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
@@ -143,3 +144,14 @@ def test_compose_file_outside_the_root_fails(
     (tmp_path / "database" / "compose.yaml").write_text(DB_OK, encoding="utf-8")
     assert ccp.main(["--root", str(tmp_path)]) == 1
     assert "database/compose.yaml: location:" in capsys.readouterr().out
+
+
+def test_mediamtx_moq_missing_fails() -> None:
+    """MediaMTX turns Media over QUIC on when the key is left out."""
+    text = MTX_OK.replace("moq: no\n", "")
+    assert any("moq ska vara no" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
+
+
+def test_repository_files_pass() -> None:
+    root = Path(__file__).resolve().parents[2]
+    assert ccp.main(["--root", str(root)]) == 0

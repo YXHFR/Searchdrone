@@ -11,7 +11,8 @@ compose.yaml
 
 config/mediamtx.yml
   * every key ending in ``Address`` is empty or starts with ``127.0.0.1:``;
-  * ``rtmp`` and ``srt`` are ``no``;
+  * ``rtmp``, ``srt`` and ``moq`` (Media over QUIC, on by default since 1.21 and bound
+    to every interface) are ``no``;
   * ``CHANGE_ME`` appears only as the internal user's ``pass:`` value, and only when
     compose.yaml overrides it with ``MTX_AUTHINTERNALUSERS_0_PASS: ${...:?...}``.
 
@@ -128,7 +129,7 @@ def check_mediamtx(text: str, compose_text: str | None) -> list[str]:
         if value in (None, "") or (isinstance(value, str) and value.startswith(f"{LOCALHOST}:")):
             continue
         errors.append(f"{MEDIAMTX}: address: {key}={value!r} ska börja med {LOCALHOST}:")
-    for key in ("rtmp", "srt"):
+    for key in ("rtmp", "srt", "moq"):
         if not is_no(data.get(key)):
             errors.append(f"{MEDIAMTX}: protocol: {key} ska vara no")
     override = compose_requires_mtx_pass(compose_text)

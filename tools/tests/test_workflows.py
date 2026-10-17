@@ -148,9 +148,10 @@ def test_sitl_jobs_and_aggregate() -> None:
         "sitl-nightly",
         "sitl-nightly-gz",
         "sitl-e2e",
+        "video",
     }
     assert jobs["sitl-ok"]["if"] == "always()"
-    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl"}
+    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl", "video"}
     assert "ci_aggregate.jq" in jobs["sitl-ok"]["steps"][-1]["run"]
     assert jobs["sitl"]["if"] == "needs.changes.outputs.run == 'true'"
     for name in ("sitl-nightly", "sitl-nightly-gz"):
@@ -199,3 +200,12 @@ def test_image_scanned_before_push() -> None:
 def test_sitl_image_tag_from_script() -> None:
     for name in ("sitl.yml", "sitl-image.yml"):
         assert "tools/sitl_image_tag.sh" in (ROOT / ".github" / "workflows" / name).read_text()
+
+
+def test_video_job_runs_the_video_tests_without_skipping() -> None:
+    job = load(ROOT / ".github" / "workflows" / "sitl.yml")["jobs"]["video"]
+    assert job["if"] == "needs.changes.outputs.run == 'true'"
+    runs = [s for s in job["steps"] if "test-video" in str(s.get("run", ""))]
+    assert len(runs) == 1
+    assert runs[0]["env"]["SD_SIM__REQUIRE_VIDEO"] == "1"
+    assert any("just video-up" in str(s.get("run", "")) for s in job["steps"])
