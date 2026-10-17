@@ -538,7 +538,7 @@ async def _run_on_ground(flow: MissionFlow, mission: Mission, cmd: Command) -> N
             in_reply_to=None,
             refs={"command_id": str(cmd.id), "priority": p.get("priority", "info")},
         )
-    elif cmd.skill == "mark_location":
+    else:  # mark_location, the only other skill that runs on the ground
         await annotations_service.mark(
             flow,
             mission,

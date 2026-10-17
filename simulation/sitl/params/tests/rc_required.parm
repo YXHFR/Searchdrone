@@ -1,0 +1,3 @@
+# test: test_sc09_takeoff_needs_the_rc_transmitter
+# The RC failsafe of real flight, so the flight controller reports a lost RC link.
+FS_THR_ENABLE 4

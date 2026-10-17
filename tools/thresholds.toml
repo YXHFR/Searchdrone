@@ -1,0 +1,39 @@
+# Coverage requirements, checked by tools/check_coverage.py after `just test-contract`
+# (one pytest run with unit, contract and component tests). A requirement may only be
+# raised; lowering one weakens the gate. Other packages are only reported.
+
+[[coverage]]
+module = "sd_safety"                            # the safety gate
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground.services.commands"          # every order passes the gate here
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground.services.clearance"         # "clear around the drone" before a take-off
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground.services.vehicle_actions"   # STOP / FLY HOME past the AI
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground.services.latches"
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground.mav.gcs"
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground.mav.companion_watchdog"
+branch_min = 100
+
+[[coverage]]
+module = "sd_onboard.executor.override"
+branch_min = 100
+
+[[coverage]]
+module = "sd_ground"
+line_min = 85

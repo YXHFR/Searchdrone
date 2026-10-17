@@ -11,6 +11,7 @@ from brain_helpers import REG, make_loop
 
 from sd_brain.backends.base import BackendCrashError
 from sd_brain.config import BrainConfig
+from sd_brain.constants import FRESH_SNAPSHOT_WAIT_S
 from sd_brain.decide.engines import EngineAnswer
 from sd_brain.decide.service import DecisionService
 from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
@@ -533,3 +534,127 @@ async def test_unknown_skill_from_backend_is_refused() -> None:
 
 async def test_registry_is_the_foundation_one() -> None:
     assert "goto" in REG and REG.get("goto").status == "implemented"
+
+
+async def test_skill_end_waits_for_the_snapshot_after_it() -> None:
+    """The end of the search arrives before the snapshot that shows the vehicle holding:
+    the next order is based on the newer snapshot, not on the one the onboard computer
+    would refuse as STATE_CHANGED."""
+    backend = Steps(act("return_home"))
+    loop, fg, _ = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    calls = 0
+    situation = fg.situation
+
+    async def lagging(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 3:  # the newer snapshot: holding, nothing active
+            fg.sit["active_command"] = None
+            fg.sit["snapshot_state_seq"] = 1005
+        return await situation(mission_id)
+
+    fg.situation = lagging  # type: ignore[method-assign]
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    await loop.settle()
+    assert calls >= 3
+    assert len(fg.commands) == 1
+    assert fg.commands[0].based_on is not None and fg.commands[0].based_on.state_seq == 1005
+
+
+async def test_skill_end_waits_for_a_newer_snapshot_too() -> None:
+    """The ground has already marked the order done, but its onboard snapshot is still the
+    one from before the onboard computer changed state: the turn waits for the next one."""
+    backend = Steps(act("return_home"))
+    loop, fg, _ = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    fg.sit["active_command"] = None
+    calls = 0
+    situation = fg.situation
+
+    async def lagging(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            fg.sit["snapshot_state_seq"] = 2000
+        return await situation(mission_id)
+
+    fg.situation = lagging  # type: ignore[method-assign]
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    await loop.settle()
+    assert calls >= 3
+    assert len(fg.commands) == 1
+    assert fg.commands[0].based_on is not None and fg.commands[0].based_on.state_seq == 2000
+
+
+async def test_skill_end_waits_only_so_long() -> None:
+    backend = Steps(act("return_home"))
+    loop, fg, clock = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    start = clock.monotonic()
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    await loop.settle()
+    waited = clock.monotonic() - start
+    # The stale snapshot is used once FRESH_SNAPSHOT_WAIT_S has passed, not earlier.
+    assert FRESH_SNAPSHOT_WAIT_S <= waited <= FRESH_SNAPSHOT_WAIT_S + 0.5, waited
+    assert len(backend.turns) == 1
+
+
+async def test_the_wait_reads_the_skill_event_among_others() -> None:
+    """A skill's end queued together with another event: the wait follows the skill's."""
+    backend = Steps(act("return_home"))
+    loop, fg, clock = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    start = clock.monotonic()
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    loop.handle_event({"type": "event.alert", "body": {"level": "warning", "code": "X"}})
+    await loop.settle()
+    assert clock.monotonic() - start >= FRESH_SNAPSHOT_WAIT_S
+    assert backend.turns and backend.turns[0].trigger == "skill_event"
+
+
+async def test_resume_waits_until_the_release_is_confirmed() -> None:
+    """The pilot's Resume reaches the AI before the onboard computer has confirmed it (the
+    mission is still PAUSED by the operator): the turn waits for the confirmed picture."""
+    backend = Steps(act("resume"))
+    loop, fg, _ = make_loop(backend)
+    fg.sit["mission_status"] = "PAUSED"
+    fg.sit["paused_by"] = "operator"
+    calls = 0
+    situation = fg.situation
+
+    async def confirming(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 4:  # the onboard snapshot without the latch arrived
+            fg.sit["mission_status"] = "ACTIVE"
+            fg.sit["paused_by"] = None
+        return await situation(mission_id)
+
+    fg.situation = confirming  # type: ignore[method-assign]
+    loop.handle_event(
+        {"type": "event.operator_override", "body": {"active": False, "action": "resume"}}
+    )
+    await loop.settle()
+    assert calls >= 4
+    assert backend.turns and backend.turns[0].trigger == "operator_override"

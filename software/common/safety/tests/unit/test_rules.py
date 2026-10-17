@@ -6,11 +6,15 @@ names the owner's standard values (120 m, 15 m/s, 500 m, 15 %).
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
 from gate_fixtures import (
     CHARTER,
+    HOME_LAT,
+    HOME_LON,
+    IMPLEMENTED,
     L_AREA,
     NOW,
     ON_GROUND,
@@ -332,6 +336,51 @@ def test_stub_is_not_implemented_even_after_approval() -> None:
     assert "SKILL_NOT_IMPLEMENTED" in codes(approved, ctx())
 
 
+def test_orbit_checks_the_whole_circle_not_only_its_centre() -> None:
+    """The centre is inside the area, but the circle reaches outside it (the L's notch is
+    east 100..300, north 100..300): the gate refuses on the radius, not on the centre."""
+    orbit_spec = spec("orbit").model_copy(update={"status": "implemented"})
+    c = ctx(
+        registry=registry_with(orbit_spec),
+        charter=CHARTER.model_copy(update={"allowed_skills": [*IMPLEMENTED, "orbit"]}),
+    )
+    lat, lon = latlon(0, 0)
+    small = {"lat": lat, "lon": lon, "radius_m": 50, "alt_m": 40}
+    assert codes(req("orbit", small), c) == []
+    lat, lon = latlon(40, 40)  # 60 m from the notch's corner (100, 100)
+    wide = {"lat": lat, "lon": lon, "radius_m": 100, "alt_m": 40}
+    d = decide(req("orbit", wide), c)
+    assert "OUTSIDE_CHARTER" in d.reason_codes
+    lat, lon = latlon(-200, 200)  # inside, but 100 m past the western edge with 150 m
+    edge = {"lat": lat, "lon": lon, "radius_m": 150, "alt_m": 40}
+    assert "OUTSIDE_CHARTER" in codes(req("orbit", edge), c)
+    far = ctx(
+        registry=registry_with(orbit_spec),
+        charter=CHARTER.model_copy(
+            update={"allowed_skills": [*IMPLEMENTED, "orbit"], "max_range_from_pilot_m": 300}
+        ),
+    )
+    lat, lon = latlon(-200, -150)  # centre 250 m from the pilot, the circle up to 300+
+    reach = {"lat": lat, "lon": lon, "radius_m": 60, "alt_m": 40}
+    assert "PILOT_DISTANCE" in codes(req("orbit", reach), far)
+
+
+def test_circle_polygon_holds_the_circle() -> None:
+    from sd_safety.targets import Plane, polygon_from_geojson
+    from sd_schemas.skills import circle_polygon
+
+    centre = point(30, -20)
+    area = circle_polygon(centre, 100.0)
+    plane = Plane(HOME_LAT, HOME_LON)
+    poly = polygon_from_geojson(area, plane)
+    assert poly.is_simple()
+    cx, cy = plane.point(centre)
+    for i in range(72):
+        a = math.radians(i * 5)
+        assert poly.contains((cx + 99.9 * math.cos(a), cy + 99.9 * math.sin(a)))
+    assert not poly.contains((cx + 104.0, cy))  # and not much more than the circle
+
+
 @pytest.mark.parametrize("name", ["set_param", "arm", "disable_fence", "no_such_skill"])
 def test_unknown_and_forbidden_names(name: str) -> None:
     d = decide(req(name, {}), ctx())
@@ -531,6 +580,21 @@ def test_takeoff_preconditions(
     assert why in d.details["takeoff"]
     ok = vehicle(**{**ON_GROUND, "battery_pct": 35.0})
     assert codes(req("takeoff", TAKEOFF), ground_ctx(vehicle=ok)) == []
+
+
+def test_takeoff_needs_the_rc_transmitter() -> None:
+    """The onboard computer's PF12 is false: no RC transmitter heard. Its own reason comes
+    first, so the panel says why; without the requirement (None) nothing changes."""
+    v = vehicle(**ON_GROUND, battery_pct=35.0)
+    d = decide(req("takeoff", TAKEOFF), ground_ctx(vehicle=v, rc_link_ok=False, preflight_ok=False))
+    assert d.decision == "REJECT"
+    assert d.reason_codes[0] == "RC_LINK_DOWN"
+    assert "TAKEOFF_PRECONDITION" in d.reason_codes
+    assert "RC-sändaren" in d.message_sv
+    assert codes(req("takeoff", TAKEOFF), ground_ctx(vehicle=v, rc_link_ok=True)) == []
+    assert codes(req("takeoff", TAKEOFF), ground_ctx(vehicle=v, rc_link_ok=None)) == []
+    # Only a take-off is held back by it; in the air the RC link is the FC's failsafe.
+    assert codes(req("hold", {}), ctx(rc_link_ok=False)) == []
 
 
 def test_takeoff_without_vehicle_state() -> None:

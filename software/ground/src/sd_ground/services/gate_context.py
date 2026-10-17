@@ -117,4 +117,5 @@ def build_gate_context(
         recent_brain_reports_mono_ms=reports,
         brain_pending_approvals=brain_pending_approvals,
         operator_present=operator_present,
+        rc_link_ok=None if snapshot is None else snapshot.preflight.get("PF12"),
     )
