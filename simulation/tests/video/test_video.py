@@ -74,7 +74,12 @@ MAX_INVALID = 5
 
 @pytest.fixture(scope="module")
 def mtx() -> dict[str, Any]:
-    return need_mediamtx()
+    """The running configuration, without the users' passwords (never in a traceback)."""
+    cfg = need_mediamtx()
+    cfg["authInternalUsers"] = [
+        {k: v for k, v in u.items() if k != "pass"} for u in cfg["authInternalUsers"]
+    ]
+    return cfg
 
 
 @pytest.fixture(scope="module")
@@ -134,10 +139,10 @@ def test_publish_without_the_real_password_is_refused(
 )
 def test_control_api_needs_its_password(mtx: dict[str, Any], method: str, path: str) -> None:
     """No password-less local client (or web page) may read or change the configuration."""
-    body = b'{"apiAddress": "0.0.0.0:9997"}' if method != "GET" else None
+    body = b'{"logLevel": "debug"}' if method != "GET" else None
     status, _ = api_request(path, method=method, body=body, auth=False)
     assert status == 401
-    assert api_get("/v3/config/global/get")["apiAddress"] == "127.0.0.1:9997"  # pyright: ignore[reportOptionalSubscript]
+    assert api_get("/v3/config/global/get")["logLevel"] == "info"  # pyright: ignore[reportOptionalSubscript]
 
 
 def test_publish_with_the_real_password_works(mtx: dict[str, Any]) -> None:

@@ -177,7 +177,7 @@ def segment_file(index: dict[dt.datetime, Path], start: dt.datetime) -> Path | N
 
 @dataclass(frozen=True)
 class Planned:
-    segment: Segment
+    segment: Segment  # its end is the earlier of the next start and the file's last write
     source: Path
     finished: bool
 
@@ -187,9 +187,11 @@ def plan_segments(
 ) -> tuple[list[Planned], list[Segment]]:
     """Find each segment's file (runs in a worker thread: it reads the folder).
 
-    The last segment has no next start, so its real end is the file's last write: a
-    stream that stopped before the mission began is not part of it. Returns the files
-    to place and the segments whose file is missing."""
+    A segment ends at the next segment's start or at its file's last write, whichever is
+    earlier: the stream may have stopped (a dropout, the camera off) long before the next
+    one began, and the last segment has no next start at all. A segment that ended before
+    the mission began is not part of it. Returns the files to place and the segments
+    whose file is missing."""
     index = recordings_index(folder)
     planned: list[Planned] = []
     missing: list[Segment] = []
@@ -199,10 +201,13 @@ def plan_segments(
             missing.append(seg)
             continue
         written = dt.datetime.fromtimestamp(src.stat().st_mtime, tz=dt.UTC)
-        if seg.end is None and written < start_at:
+        if written < start_at:
             continue
         finished = seg.end is not None or (now - written).total_seconds() > FINISHED_AFTER_S
-        planned.append(Planned(seg, src, finished))
+        end = written if seg.end is None and finished else seg.end
+        if end is not None and seg.end is not None:
+            end = min(end, written)
+        planned.append(Planned(Segment(seg.start, end), src, finished))
     return planned, missing
 
 

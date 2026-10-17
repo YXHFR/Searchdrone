@@ -151,10 +151,14 @@ def test_no_setting_turns_off_login() -> None:
 
 
 @pytest.mark.parametrize("value", ["", "CHANGE_ME", "change_me"])
-def test_video_publish_password_placeholder(root: Path, value: str) -> None:
-    """B1-09 point 6: an empty or CHANGE_ME publish password stops the ground station."""
-    (root / ".env").write_text(GOOD_ENV.replace("c" * 20, value))
-    assert any("SD_GROUND__VIDEO_PUBLISH_PASSWORD" in e for e in _errors(root))
+@pytest.mark.parametrize(
+    ("key", "good"),
+    [("SD_GROUND__VIDEO_PUBLISH_PASSWORD", "c" * 20), ("SD_GROUND__VIDEO_API_PASSWORD", "d" * 20)],
+)
+def test_video_password_placeholder(root: Path, key: str, good: str, value: str) -> None:
+    """An empty or CHANGE_ME video password (publishing or the control API) stops it."""
+    (root / ".env").write_text(GOOD_ENV.replace(good, value))
+    assert any(key in e for e in _errors(root))
 
 
 @pytest.mark.parametrize(

@@ -341,3 +341,23 @@ async def test_a_failing_archive_never_stops_the_close(
     event = ground.queued_events()[-1]
     assert event["type"] == "video.archive_failed"
     assert event["severity"] == "critical"
+
+
+async def test_a_gap_in_the_stream_is_not_part_of_a_mission(ground: Ground) -> None:
+    """Stream 0-50 s, then nothing until a new stream at 500 s: a mission at 200-300 s
+    gets neither segment, and a mission at 10-40 s gets the first, ending at 50 s."""
+    clock = FakeClock(start_utc=at(600))
+    starts = [at(0), at(500)]
+    folder = recordings(ground, starts)
+    first = folder / f"{at(0).strftime(video.NAME_FORMAT)}.mp4"
+    os.utime(first, (at(50).timestamp(), at(50).timestamp()))
+    second = folder / f"{at(500).strftime(video.NAME_FORMAT)}.mp4"
+    os.utime(second, (at(590).timestamp(), at(590).timestamp()))
+    flow: Any = FakeFlow(ground, clock)
+    mtx = video.MediaMtx("http://x:1", "pw", api(starts))
+    await video.close_video(flow, mission(at(200), at(300)), mtx)
+    assert flow.repo.files == []
+    await video.close_video(flow, mission(at(10), at(40)), mtx)
+    (row,) = [r for r in flow.repo.files if r["rel_path"].endswith(".mp4")]
+    assert row["started_at"] == at(0)
+    assert row["ended_at"] == at(50)
