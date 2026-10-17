@@ -61,6 +61,15 @@ async def test_ground_skills_go_to_the_wrong_executor(name: str) -> None:
         assert r.up.codes(cmd.command_id) == ("ONB_WRONG_EXECUTOR",)
 
 
+async def test_onboard_rule_issuer_refused_from_the_link() -> None:
+    async with rig() as r:
+        await r.takeoff()
+        before = len(r.vehicle.sent)
+        cmd = await r.send(r.order("hold", {}, issuer="rule:onboard"))
+        assert r.up.codes(cmd.command_id) == ("ONB_WRONG_EXECUTOR",)
+        assert r.steering_sent(before) == []
+
+
 async def test_unknown_skill_and_bad_params() -> None:
     async with rig() as r:
         await r.takeoff()

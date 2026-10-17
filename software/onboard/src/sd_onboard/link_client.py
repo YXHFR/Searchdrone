@@ -5,6 +5,12 @@ says. Acks and events wait in a bounded queue while the link is down (events: th
 Stick values (``ManualControl``) are never forwarded from here: the ground station sends
 the pilot's sticks to the flight controller itself (as 250/190, the way STOP goes), so
 they are only counted onboard.
+
+Inbound order: charters, clearances, orders, cancels and releases are handled one at a
+time in the order they arrived (a charter install reads the fence first, which takes a
+while). STOP/FLY HOME notices, takeovers, the pilot's position and the AI's status do
+not wait behind them: a notice that overtakes a queued order can only make that order
+be refused, never let one through.
 """
 
 from __future__ import annotations
@@ -78,7 +84,7 @@ class OnboardLink:
         self.manual_values_ignored = 0
         self.dropped_events = 0
         self.dropped_acks = 0
-        self._charter_task: asyncio.Task[None] | None = None
+        self._ordered: asyncio.Queue[Inbound] = asyncio.Queue()
 
     def __repr__(self) -> str:  # never show the token
         return f"OnboardLink({self._client!r})"
@@ -95,8 +101,7 @@ class OnboardLink:
         gate: GateDecision | None = None,
     ) -> None:
         codes = list(reason_codes)
-        if len(self._acks) == MAX_ACKS:
-            self.dropped_acks += 1
+        self._count_ack_drop()
         self._acks.append(
             lambda s: s.ack(ref_id, stage, reason_codes=codes, detail_sv=detail_sv, gate=gate)
         )
@@ -105,13 +110,20 @@ class OnboardLink:
     def event(self, type: str, severity: Severity, data: dict[str, Any]) -> None:
         if len(self._events) == MAX_EVENTS:
             self.dropped_events += 1
+            log.warning("link down too long: oldest event dropped (%d so far)", self.dropped_events)
         clean = {k: (str(v) if isinstance(v, UUID) else v) for k, v in data.items()}
         self._events.append(OnboardEvent(type=type, severity=severity, data=clean))
         self._wake.set()
 
     def charter_ack(self, ack: CharterAck) -> None:
+        self._count_ack_drop()
         self._acks.append(lambda s: s.send(ack))
         self._wake.set()
+
+    def _count_ack_drop(self) -> None:
+        if len(self._acks) == MAX_ACKS:
+            self.dropped_acks += 1
+            log.warning("link down too long: oldest ack dropped (%d so far)", self.dropped_acks)
 
     # --- the connection ---------------------------------------------------------------
 
@@ -131,7 +143,9 @@ class OnboardLink:
         self._session = session
         ex.on_connected(ack)
         ex.on_link(True, self.clock.monotonic_ms())
+        self._ordered = asyncio.Queue()  # nothing from an earlier session is handled late
         tasks = [
+            asyncio.ensure_future(self._handle_in_order()),
             asyncio.ensure_future(self._snapshots(session)),
             asyncio.ensure_future(self._flush(session)),
             asyncio.ensure_future(self._watch(session)),
@@ -165,21 +179,16 @@ class OnboardLink:
         ex = self._ex()
         body, env = inbound.body, inbound.envelope
         match body:
-            case SkillCommand():
-                deadline = None if inbound.deadline is None else round(inbound.deadline * 1000)
-                await ex.on_skill_command(body, deadline_ms=deadline)
-            case CommandCancel():
-                ex.on_cancel(body.command_id)
+            case (
+                SkillCommand()
+                | CommandCancel()
+                | OperatorRelease()
+                | ClearanceConfirmation()
+                | CharterInstall()
+            ):
+                self._ordered.put_nowait(inbound)
             case OperatorOverrideNotice():
                 ex.on_override(body)
-            case OperatorRelease():
-                ex.on_release(body, env.msg_id)
-            case ClearanceConfirmation():
-                ex.on_clearance(body, env.msg_id)
-            case CharterInstall():
-                # Reading the fence takes a while; STOP notices behind it must not wait.
-                previous = self._charter_task
-                self._charter_task = asyncio.ensure_future(self._install(previous, body))
             case PilotPosition():
                 ex.on_pilot_position(body)
             case CommanderStatus():
@@ -187,14 +196,44 @@ class OnboardLink:
             case ManualTakeover():
                 ex.on_takeover(body, env.msg_id)
             case ManualControl():
+                if self.manual_values_ignored == 0:
+                    log.warning("stick values over SD-link are ignored onboard")
                 self.manual_values_ignored += 1
             case _:
                 pass
 
-    async def _install(self, previous: asyncio.Task[None] | None, body: CharterInstall) -> None:
-        if previous is not None:
-            await asyncio.gather(previous, return_exceptions=True)  # keep the order
-        await self._ex().on_charter(body)
+    async def _handle_in_order(self) -> None:
+        while True:
+            inbound = await self._ordered.get()
+            try:
+                await self._handle(inbound)
+            except Exception:
+                # One bad message must not stop the ones behind it; the ground sees no
+                # answer for it and the event says why.
+                log.exception("sdlink %s could not be handled", inbound.envelope.kind)
+                self.event(
+                    "executor.inbound_failed",
+                    "critical",
+                    {"kind": inbound.envelope.kind, "msg_id": inbound.envelope.msg_id},
+                )
+
+    async def _handle(self, inbound: Inbound) -> None:
+        ex = self._ex()
+        body, env = inbound.body, inbound.envelope
+        match body:
+            case SkillCommand():
+                deadline = None if inbound.deadline is None else round(inbound.deadline * 1000)
+                await ex.on_skill_command(body, deadline_ms=deadline)
+            case CommandCancel():
+                ex.on_cancel(body.command_id)
+            case OperatorRelease():
+                ex.on_release(body, env.msg_id)
+            case ClearanceConfirmation():
+                ex.on_clearance(body, env.msg_id)
+            case CharterInstall():
+                await ex.on_charter(body)
+            case _:
+                pass
 
     async def _snapshots(self, session: LinkSession) -> None:
         ex = self._ex()

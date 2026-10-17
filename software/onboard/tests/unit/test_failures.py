@@ -85,13 +85,15 @@ async def test_failsafe_release_needs_the_cause_gone() -> None:
         r.fc.set_mode_external(CopterMode.LOITER)
         await r.run(1.5)
         assert r.ex.state == S.FAILSAFE
+        r.ex.on_override(r.notice("stop"))  # a STOP now does not skip the check below
+        assert r.ex.state == S.FAILSAFE
         ref = new_id()
-        r.ex.on_release(OperatorRelease(action_seq=0, operator_id="operator:pilot"), ref)
+        r.ex.on_release(OperatorRelease(action_seq=r.next_seq(), operator_id="operator:pilot"), ref)
         assert r.up.codes(ref) == ("ONB_FAILSAFE_ACTIVE",)
         r.fc.battery_pct = 80  # the cause is gone (and the ground's heartbeat is fresh)
         await r.run(2)
         ref = new_id()
-        r.ex.on_release(OperatorRelease(action_seq=0, operator_id="operator:pilot"), ref)
+        r.ex.on_release(OperatorRelease(action_seq=r.next_seq(), operator_id="operator:pilot"), ref)
         assert r.ex.state == S.HOLD, r.up.acks[-2:]
 
 
@@ -114,3 +116,22 @@ async def test_first_charter_after_a_restart_in_the_air() -> None:
         await r.run(2)
         assert r.up.charter_acks[-1].accepted
         assert r.ex.charter == right
+
+
+async def test_first_charter_after_a_restart_in_the_air_with_raised_limits() -> None:
+    """After a restart in the air the raised fence is read again before the charter."""
+    async with rig(start=False) as r:
+        r.fc.params.update({"FENCE_ALT_MAX": 205.0})
+        c = charter(alt_max_agl_m=200)
+        polygon = [(lat, lon) for lon, lat in c.area["coordinates"][0][:-1]]
+        r.fc.missions[FENCE] = fence_items(polygon)
+        r.fc.armed, r.fc.alt_rel, r.fc.mode = True, 40.0, CopterMode.LOITER
+        r.fc.target = (r.fc.lat, r.fc.lon, 40.0)
+        r.background.append(asyncio.ensure_future(r.ex.run(r.stop)))
+        await r.until(lambda: r.ex._started, 10)
+        right = c.model_copy(update={"fence_hash": fence_hash(r.fc.missions[FENCE])})
+        await r.ex.on_charter(CharterInstall(charter=right))
+        await r.run(2)
+        assert r.up.charter_acks[-1].accepted, r.up.charter_acks[-1].reason_codes
+        assert r.ex.hard_limits.max_alt_agl_m == 200
+        assert r.ex.state == S.HELD

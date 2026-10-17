@@ -217,7 +217,6 @@ class _Active:
     handler: SkillHandler
     plan: SkillPlan
     origin: SendOrigin
-    issuer: str
     task: asyncio.Task[None] | None = None
     ack_done: bool = True  # Ack(done)/(failed) for this order (False for internal orders)
 
@@ -322,6 +321,7 @@ class Executor:
         self.flown = False  # airborne seen since the takeoff began
         self._landed_ms: int | None = None
         self._rtl_retry_ms: int | None = None
+        self._rtl_retries = 0  # counted up so the ground can raise the alarm
         self._last_tick_ms: int | None = None
         self._last_save_ms = -_SAVE_EVERY_MS
         self._last_preflight_ms = -_PREFLIGHT_EVERY_MS
@@ -544,9 +544,7 @@ class Executor:
     def _internal(
         self, skill: str, handler: SkillHandler, plan: SkillPlan, origin: SendOrigin
     ) -> None:
-        self._start_active(
-            _Active(new_id(), skill, handler, plan, origin, "rule:onboard", ack_done=False)
-        )
+        self._start_active(_Active(new_id(), skill, handler, plan, origin, ack_done=False))
 
     def _finish_active(self) -> None:
         """Turn a finished skill task into SKILL_DONE or SKILL_FAILED."""
@@ -630,6 +628,10 @@ class Executor:
         if spec.runs_on != "onboard" or spec.name not in HANDLERS:
             self._ack(cmd.command_id, "rejected", ("ONB_WRONG_EXECUTOR",))
             return
+        if cmd.issuer == "rule:onboard":
+            # Only the executor itself issues rule:onboard orders; one over the link is false.
+            self._ack(cmd.command_id, "rejected", ("ONB_WRONG_EXECUTOR",))
+            return
         try:
             params = spec.params_model.model_validate(cmd.params)
         except ValidationError:
@@ -698,10 +700,10 @@ class Executor:
             if self.clearance is not None:
                 self.clearance = self.clearance.model_copy(update={"consumed": True})
             self.flown = False
-        origin = SendOrigin.LIMIT if cmd.issuer == "rule:onboard" else SendOrigin.SKILL
+        origin = SendOrigin.SKILL
         reason = "ai_hold" if spec.name == "hold" else None
         self._enter(target, hold_reason=reason, cause=f"skill:{spec.name}")
-        self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin, cmd.issuer))
+        self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin))
         self._ack(cmd.command_id, "running")
 
     def _onboard_checks(
@@ -890,7 +892,10 @@ class Executor:
             self._save()
             return
         self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
-        self._enter(target, held_by=rule.held_by, cause=f"override:{notice.kind}")
+        if self.state == S.FAILSAFE:
+            self._save()  # stay in FAILSAFE: Resume must still find the failsafe's cause gone
+        else:
+            self._enter(target, held_by=rule.held_by, cause=f"override:{notice.kind}")
         self.emit("control_taken", {"kind": notice.kind, "action_seq": notice.action_seq})
 
     def on_takeover(self, takeover: ManualTakeover, ref_id: UUID) -> None:
@@ -971,9 +976,10 @@ class Executor:
 
     async def on_charter(self, install: CharterInstall) -> None:
         charter = install.charter
-        if self.state in ON_GROUND:
-            # On the ground the flight controller's fence is read first: it decides the
-            # hard limits (a pilot may have raised them, and the fence with them).
+        if self.state in ON_GROUND or self.charter is None:
+            # The flight controller's fence is read first: it decides the hard limits (a
+            # pilot may have raised them, and the fence with them). In the air this is
+            # only done for the first charter after a restart; the reads change nothing.
             await self._read_fence_limits()
         codes = self._charter_problems(charter)
         if not codes and self.state not in ON_GROUND and self.charter is None:
@@ -1253,14 +1259,22 @@ class Executor:
     def _keep_flying_home(self, now: int) -> None:
         """RTL means the flight controller flies home. If it does not (SmartRTL and RTL
         were refused or never confirmed), ask again every few seconds."""
+        if self._flying_home():
+            self._rtl_retries = 0
         if self.state != S.RTL or self.active is not None or self._flying_home():
             return
+        if self.charter is None:
+            return  # no plan can be made; the flight controller's own failsafes still fly
         if not is_airborne(self.vehicle_state()):
             return
         if self._rtl_retry_ms is not None and now - self._rtl_retry_ms < _RTL_RETRY_MS:
             return
         self._rtl_retry_ms = now
-        self.emit("return_home_retry", {"fc_mode": self.vehicle.telemetry.fc_mode})
+        self._rtl_retries += 1
+        self.emit(
+            "return_home_retry",
+            {"fc_mode": self.vehicle.telemetry.fc_mode, "attempt": self._rtl_retries},
+        )
         handler = ReturnHomeHandler()
         plan = handler.plan(HOME_PARAMS, self._plan_context(new_id()))
         self._internal("return_home", handler, plan, SendOrigin.LIMIT)

@@ -49,7 +49,7 @@ def test_no_forbidden_mavlink_in_onboard() -> None:
 
 def test_fallback_origin_only_in_the_fallback() -> None:
     for path in _sources(ONBOARD):
-        if path.name not in ("override.py", "override_fallback.py"):
+        if path.name != "override.py":
             assert "SendOrigin.OVERRIDE_FALLBACK" not in path.read_text(), path
 
 

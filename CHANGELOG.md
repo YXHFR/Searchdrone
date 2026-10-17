@@ -24,7 +24,6 @@ All notable changes to this project are listed here. The format follows
   (`ARMING_RUDDER 0`) and stick values that expire after 1 s (`RC_OVERRIDE_TIME 1`).
 - `sd_geo`: the lawnmower search pattern (concave areas too) and the coverage measure.
 - `sd_testing`: a test-only package with the project's one fake clock.
-
 - Vehicle link (`sd_mav`): MAVLink to the flight controller for the onboard computer and
   the ground station, behind a default-deny allowlist with number checks against the
   mission's limits and a deny list of the most dangerous messages (no parameter writes,

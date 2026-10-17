@@ -53,7 +53,6 @@ class OverrideState:
         self.last_action_seq = -1
         self.last_kind: LatchAction | None = None
         self.manual = False  # the pilot steers by hand (Ta över)
-        self.takeover_id: object | None = None
 
     def is_new(self, action_seq: int) -> bool:
         """A notice, release or takeover older than the newest one seen is ignored."""
@@ -77,7 +76,6 @@ class OverrideState:
             return False
         self.last_action_seq = takeover.action_seq
         self.manual = takeover.active
-        self.takeover_id = takeover.takeover_id if takeover.active else None
         return True
 
     def accept_release_seq(self, action_seq: int) -> bool:
@@ -96,7 +94,6 @@ class OverrideState:
         self.battery_rtl_active = False
         self.last_kind = None
         self.manual = False
-        self.takeover_id = None
 
     def latch_ref(self) -> LatchRef | None:
         """What the Hello reports as the latch onboard."""
