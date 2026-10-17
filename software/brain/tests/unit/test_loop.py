@@ -11,6 +11,7 @@ from brain_helpers import REG, make_loop
 
 from sd_brain.backends.base import BackendCrashError
 from sd_brain.config import BrainConfig
+from sd_brain.constants import FRESH_SNAPSHOT_WAIT_S
 from sd_brain.decide.engines import EngineAnswer
 from sd_brain.decide.service import DecisionService
 from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
@@ -578,8 +579,28 @@ async def test_skill_end_waits_only_so_long() -> None:
         }
     )
     await loop.settle()
-    assert clock.monotonic() - start <= 2.0  # the stale snapshot is used after 1.5 s
+    waited = clock.monotonic() - start
+    # The stale snapshot is used once FRESH_SNAPSHOT_WAIT_S has passed, not earlier.
+    assert FRESH_SNAPSHOT_WAIT_S <= waited <= FRESH_SNAPSHOT_WAIT_S + 0.5, waited
     assert len(backend.turns) == 1
+
+
+async def test_the_wait_reads_the_skill_event_among_others() -> None:
+    """A skill's end queued together with another event: the wait follows the skill's."""
+    backend = Steps(act("return_home"))
+    loop, fg, clock = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    start = clock.monotonic()
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {"command_id": cid, "skill": "survey_sector", "status": "done"},
+        }
+    )
+    loop.handle_event({"type": "event.alert", "body": {"level": "warning", "code": "X"}})
+    await loop.settle()
+    assert clock.monotonic() - start >= FRESH_SNAPSHOT_WAIT_S
+    assert backend.turns and backend.turns[0].trigger == "skill_event"
 
 
 async def test_resume_waits_until_the_release_is_confirmed() -> None:

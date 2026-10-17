@@ -21,7 +21,7 @@ import signal
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ FC_SYSID = 1
 FC_COMPID = 1
 EKF_PRED_POS_HORIZ_ABS = 512
 GPS_FIX_3D = 3
+MAX_TEXTS = 50
 STREAM_HZ = 5
 _STREAMS = ("GLOBAL_POSITION_INT", "EKF_STATUS_REPORT", "GPS_RAW_INT", "SYS_STATUS")
 
@@ -56,6 +57,8 @@ class VehicleState:
     ground_speed_ms: float = 0.0
     battery_current_a: float = -1.0  # -1: not reported yet
     battery_pct: int = -1  # SYS_STATUS battery_remaining; -1: not reported yet
+    # The flight controller's STATUSTEXT lines, oldest first, with their monotonic time.
+    texts: list[tuple[float, str]] = field(default_factory=list)
 
     @property
     def ready(self) -> bool:
@@ -128,6 +131,9 @@ class Harness:
             if msg.current_battery >= 0:
                 s.battery_current_a = msg.current_battery / 100.0
             s.battery_pct = int(msg.battery_remaining)
+        elif kind == "STATUSTEXT":
+            s.texts.append((time.monotonic(), str(msg.text)))
+            del s.texts[:-MAX_TEXTS]
         for listener in self.listeners:
             listener(kind, s)
 

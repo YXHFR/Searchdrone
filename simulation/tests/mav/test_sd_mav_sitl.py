@@ -95,6 +95,8 @@ def sim() -> Iterator[Sim]:
         stack.up()
         harness.wait(lambda s: s.heartbeat, 60, "HEARTBEAT från flygkontrollen")
         harness.wait(lambda s: s.ready, READY_S, "position från EKF och GPS")
+        broken = harness.safety_violations()
+        assert not broken, f"flygkontrollens säkerhetsparametrar: {broken}"
         harness.close()
         yield Sim(stack, stack.ports)
     finally:

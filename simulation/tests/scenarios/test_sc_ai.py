@@ -26,23 +26,15 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     passwords,
     scenario,
     sim,
-    survey_box_enu,
 )
 
-from sd_geo.coverage import coverage_fraction
 from sd_safety.constants import BRAIN_HEARTBEAT_TIMEOUT_S
-from sd_safety.targets import Plane, distance_m
+from sd_safety.targets import distance_m
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 
 AI_SILENT_S = 150.0  # the drone waits at least this long without a flight home
-
-
-def coverage(sc: Scenario, since: float) -> float:
-    plane = Plane(*sc.r.home)
-    track = [(*plane.xy(s.lat, s.lon), s.alt_m) for s in sc.track if s.t >= since and s.armed]
-    return coverage_fraction(survey_box_enu(), track, 40.0, 30.0)
 
 
 async def still_for(sc: Scenario, seconds: float, what: str) -> None:
@@ -77,7 +69,7 @@ async def test_sc08a_ai_dies_mid_search(sim: Any, migrated_db: Any, tmp_path: Pa
 
         await sc.wait_command("survey_sector", "done", 300, issuer_kind="brain")
         done = time.monotonic()
-        assert coverage(sc, t_survey) >= 0.95
+        assert sc.coverage(t_survey) >= 0.95
         await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 10, "stopped after the search")
 
         async def holding() -> bool:

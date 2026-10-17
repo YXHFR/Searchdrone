@@ -14,7 +14,7 @@ link_token_file = "${SD_DATA_DIR}/secrets/onboard_link_token"  # outside the rep
 state_dir = ""                                    # empty = ${SD_DATA_DIR}/onboard/<vehicle_id>
 allow_companion_arm = true
 require_rc = true                                 # take-off needs an RC transmitter with link;
-                                                  # the simulator sets SD_ONBOARD__REQUIRE_RC=false
+                                                  # false only with profile "sim" (SITL, CI)
 expected_param_files = ["simulation/sitl/params/searchdrone-safety.parm"]
 
 [test_hooks]                                      # only with profile "sim" and SD_TEST=1

@@ -120,3 +120,20 @@ def test_check_all_uses_the_loosest_approved_charter() -> None:
     assert check_all(track, charters, [], {}, []) == []
     assert check_all([sample(alt_m=70.0)], charters, [], {}, [])
     assert check_all(track, [], [cmd("goto", "done")], {}, [], exempt=["INV7"]) == []
+
+
+def test_each_limit_against_the_version_that_allows_it_most() -> None:
+    high_slow = {**CHARTER, "alt_max_agl_m": 100.0, "max_speed_ms": 5.0}
+    low_fast = {**CHARTER, "alt_max_agl_m": 30.0, "max_speed_ms": 15.0, "area": square(40)}
+    both = [high_slow, low_fast]
+    fast_and_high = sample(alt_m=90.0, groundspeed_ms=14.0)
+    # No single version allows both, but each limit has one that does.
+    assert check_track([fast_and_high], high_slow) == ["INV3: markfart 14.0 > 6.0"]
+    assert check_track([fast_and_high], both) == []
+    # The area the sample is least outside of: square(100) holds it.
+    assert check_track([sample(east=90.0)], both) == []
+    assert check_track([sample(east=90.0, alt_m=20.0)], low_fast) == [
+        "INV4: utanför ramens område 50.0 > 20.0"
+    ]
+    # Above every ceiling: the finding names the highest one.
+    assert check_track([sample(alt_m=150.0)], both) == ["INV1: höjd över hem 150.0 > 102.0"]

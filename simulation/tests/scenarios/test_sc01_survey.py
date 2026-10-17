@@ -21,17 +21,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scenario_rig import (  # pyright: ignore[reportMissingImports]
-    Scenario,
     fresh_db,
     migrated_db,
     passwords,
     scenario,
     sim,
-    survey_box_enu,
 )
 
-from sd_geo.coverage import coverage_fraction
-from sd_safety.targets import Plane, distance_m
+from sd_safety.targets import distance_m
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -40,12 +37,6 @@ ALT_M = 40.0
 SPACING_M = 30.0
 MIN_COVERAGE = 0.95
 SURVEY_LIMIT_S = 240.0
-
-
-def coverage(sc: Scenario, since: float) -> float:
-    plane = Plane(*sc.r.home)
-    track = [(*plane.xy(s.lat, s.lon), s.alt_m) for s in sc.track if s.t >= since and s.armed]
-    return coverage_fraction(survey_box_enu(), track, ALT_M, SPACING_M)
 
 
 @pytest.mark.budget_s(600)
@@ -59,7 +50,7 @@ async def test_sc01_survey_on_sitl(sim: Any, migrated_db: Any, tmp_path: Path) -
         await sc.wait_command("survey_sector", "done", SURVEY_LIMIT_S, issuer_kind="brain")
         took = time.monotonic() - t0
         assert took <= SURVEY_LIMIT_S
-        got = coverage(sc, t0)
+        got = sc.coverage(t0, ALT_M, SPACING_M)
         assert got >= MIN_COVERAGE, f"coverage {got:.3f}"
         gates = await sc.gate(survey["id"])
         assert [g["decision"] for g in gates if g["side"] == "ground"] == ["ALLOW"]

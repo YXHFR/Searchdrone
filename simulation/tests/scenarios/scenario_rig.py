@@ -48,6 +48,7 @@ from test_onboard_sitl import Sim, _vehicle  # pyright: ignore[reportMissingImpo
 from sd_brain.app import Brain, _idle_ticker, _startup, _stream, build
 from sd_brain.config import BrainConfig
 from sd_brain.secrets import Secrets
+from sd_geo.coverage import coverage_fraction
 from sd_ground.auth import Principal, SessionRecord, new_token
 from sd_ground.auth import hash_token as hash_session_token
 from sd_link_testing import LossyProxy
@@ -218,6 +219,12 @@ class Scenario:
 
     def from_home_m(self) -> float:
         return distance_m(self.r.home[0], self.r.home[1], self.tel.lat, self.tel.lon)
+
+    def coverage(self, since: float, alt_m: float = 40.0, spacing_m: float = 30.0) -> float:
+        """The share of the survey box seen from the track flown armed since ``since``."""
+        plane = Plane(*self.r.home)
+        track = [(*plane.xy(s.lat, s.lon), s.alt_m) for s in self.track if s.t >= since and s.armed]
+        return coverage_fraction(survey_box_enu(), track, alt_m, spacing_m)
 
     def at(self, east: float, north: float) -> tuple[float, float]:
         return self.r.at(east, north)

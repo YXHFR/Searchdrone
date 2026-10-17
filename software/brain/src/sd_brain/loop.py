@@ -731,7 +731,8 @@ class CommanderLoop:
         active (an order based on the older one is refused onboard as ``STATE_CHANGED``);
         after the pilot's Resume, the mission no longer paused by a person (until the
         onboard computer confirms the release, the gate still says the pilot must resume)."""
-        body = (events[-1].get("body") or {}) if events else {}
+        kind = "event.skill" if trigger == "skill_event" else "event.operator_override"
+        body = next((e.get("body") or {} for e in reversed(events) if e.get("type") == kind), {})
 
         def stale(s: Situation) -> bool:
             if trigger == "skill_event":

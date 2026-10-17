@@ -3,7 +3,8 @@
 * SC06a: the battery reaches the charter's reserve (25 % with ``charter_batt25``): the
   onboard rule flies home within 3 s, the AI's orders are refused, it lands within 3 m.
 * SC06c: the flight controller's own battery failsafe with no onboard computer and no
-  ground link: SmartRTL (or RTL) within 5 s of the low level.
+  ground link: SmartRTL (or RTL) within 5 s of the FC's low-battery message, before the
+  GCS failsafe's timeout could explain it.
 * SC07a/b: the whole radio down for 10 s: nothing changes and no AI order gets through;
   for 90 s: the flight controller's GCS failsafe flies home after FS_GCS_TIMEOUT and
   lands before the radio is back, and the mission does not resume on its own.
@@ -16,7 +17,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import re
 import sys
 import time
 from pathlib import Path
@@ -51,6 +52,8 @@ SAFETY = merge_layers([PARAMS / SAFETY_PARAM_FILE])
 HOME_MODES = ("SMART_RTL", "RTL")
 SKILL_RTL_S = 3.0
 FS_SLACK_S = 2.0
+# ArduCopter: "Battery 1 is low 15.10V used 7650 mAh".
+LOW_BATTERY = re.compile(r"battery.*\blow\b", re.IGNORECASE)
 
 
 async def to_p1(sc: Scenario, speed_ms: float = 6.0) -> None:
@@ -95,24 +98,20 @@ async def test_sc06c_fc_battery_failsafe_alone(sim: Any, migrated_db: Any, tmp_p
         await sc.until(lambda: sc.from_home_m() > 30.0, 60, "on the way")
         await sc.kill_onboard()
         sc.radio(mavlink=False)
+        radio_off = time.monotonic()
         try:
-            # Just above the FC's 15 % (BATT_LOW_MAH): the pack crosses it as it drains.
-            await sc.harness(sim.harness.battery_set_remaining, 16)
-            low = 100.0 * SAFETY["BATT_LOW_MAH"] / SAFETY["BATT_CAPACITY"]
-            seen: dict[str, float] = {}
-
-            def crossed() -> bool:
-                pct = sim.harness.state.battery_pct
-                if 0 <= pct < low and "below" not in seen:
-                    seen["below"] = time.monotonic()  # surely under the FC's threshold
-                return sc.fc_mode() in HOME_MODES
-
-            await sc.until(crossed, 150, "the FC's battery failsafe")
-            # The FC acts at its own threshold: at the latest 5 s after the pack shows
-            # less than it (the mode may also change while the display still rounds up).
-            if "below" in seen:
-                assert time.monotonic() - seen["below"] <= 5.0
-            assert sim.harness.state.battery_pct >= low - 2
+            # Just above the FC's 15 % (BATT_LOW_MAH): the pack crosses it within seconds,
+            # well before the GCS failsafe (FS_GCS_TIMEOUT) could be what flies home.
+            await sc.harness(sim.harness.battery_set_remaining, 15.2)
+            await sc.until(lambda: sc.fc_mode() in HOME_MODES, 60, "the FC's battery failsafe")
+            home_at = time.monotonic()
+            assert home_at - radio_off < SAFETY["FS_GCS_TIMEOUT"] - FS_SLACK_S, (
+                "flew home only when the GCS failsafe could have done it",
+                home_at - radio_off,
+            )
+            low = [t for t, text in sim.harness.state.texts if LOW_BATTERY.search(text)]
+            assert low and low[0] >= radio_off, sim.harness.state.texts[-10:]
+            assert home_at - low[0] <= 5.0, home_at - low[0]
             await sc.until(lambda: not sim.harness.state.armed, 180, "landed")
         finally:
             sc.radio(mavlink=True)
@@ -234,14 +233,11 @@ async def test_sc16_fc_fence_is_the_last_line(sim: Any, migrated_db: Any, tmp_pa
             sc.harness(sim.harness.guided_velocity, 0.0, 8.0, 0.0, 60.0, lambda: stop["done"])
         )
         try:
-            # The FC either holds the climb at its height fence (its fence avoidance in
-            # GUIDED) or breaches and flies home; both keep it under the fence.
-            with contextlib.suppress(AssertionError):  # held at the fence: no breach
-                await sc.until(lambda: sc.fc_mode() in (*HOME_MODES, "LAND"), 50, "breach")
+            # The FC's polygon fence is breached and its FENCE_ACTION flies home.
+            await sc.until(lambda: sc.fc_mode() in (*HOME_MODES, "LAND"), 50, "the FC fence")
         finally:
             stop["done"] = True
             await flight
-        assert (await sc.press("return_home")).status_code == 202
         await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         worst = max(
             area.boundary_distance(plane.xy(s.lat, s.lon))

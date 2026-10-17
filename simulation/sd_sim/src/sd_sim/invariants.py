@@ -58,36 +58,32 @@ class Sample:
 
 def check_track(
     samples: Sequence[Sample],
-    charter: Mapping[str, Any],
+    charter: Mapping[str, Any] | Sequence[Mapping[str, Any]],
     *,
     exempt: Iterable[str] = (),
 ) -> list[str]:
-    """INV1-INV4 for the samples flown while armed, against one approved charter body
-    (``area``, ``home``, ``pilot_position``, ``alt_max_agl_m``, ``max_range_from_pilot_m``,
-    ``max_speed_ms``, ``geofence_buffer_m``)."""
+    """INV1-INV4 for the samples flown while armed, against one or more approved charter
+    bodies (``area``, ``home``, ``pilot_position``, ``alt_max_agl_m``,
+    ``max_range_from_pilot_m``, ``max_speed_ms``, ``geofence_buffer_m``).
+
+    With several bodies each limit is checked on its own against the body that allows the
+    sample most (a stricter later version never makes an earlier sample wrong): the
+    highest ceiling, the nearest pilot range, the fastest speed and the area the sample is
+    least outside of."""
     skip = set(exempt)
-    home = charter["home"]
-    plane = Plane(float(home["lat"]), float(home["lon"]))
-    area = polygon_from_geojson(charter["area"], plane)
-    pilot = charter["pilot_position"]
-    worst = {"INV1": 0.0, "INV2": 0.0, "INV3": 0.0, "INV4": 0.0}
+    bodies = [charter] if isinstance(charter, Mapping) else list(charter)
+    views = [_view(b) for b in bodies]
+    # Per invariant the worst (excess, value, limit) over the samples, where a sample's
+    # excess is the smallest over the bodies.
+    worst: dict[str, tuple[float, float, float]] = {}
     for s in samples:
         if not s.armed:
             continue
-        worst["INV1"] = max(worst["INV1"], s.alt_m)
-        worst["INV2"] = max(
-            worst["INV2"], distance_m(float(pilot["lat"]), float(pilot["lon"]), s.lat, s.lon)
-        )
-        worst["INV3"] = max(worst["INV3"], s.groundspeed_ms)
-        xy = plane.xy(s.lat, s.lon)
-        if not area.contains(xy):
-            worst["INV4"] = max(worst["INV4"], area.boundary_distance(xy))
-    limits = {
-        "INV1": float(charter["alt_max_agl_m"]) + ALT_MARGIN_M,
-        "INV2": float(charter["max_range_from_pilot_m"]) + RANGE_MARGIN_M,
-        "INV3": float(charter["max_speed_ms"]) + SPEED_MARGIN_MS,
-        "INV4": float(charter["geofence_buffer_m"]),
-    }
+        for inv in ("INV1", "INV2", "INV3", "INV4"):
+            best = min((v.measure(inv, s) for v in views), key=lambda m: m[1] - m[2])
+            excess = best[1] - best[2]
+            if inv not in worst or excess > worst[inv][0]:
+                worst[inv] = (excess, best[1], best[2])
     what = {
         "INV1": "höjd över hem",
         "INV2": "avstånd från piloten",
@@ -95,10 +91,47 @@ def check_track(
         "INV4": "utanför ramens område",
     }
     return [
-        f"{inv}: {what[inv]} {worst[inv]:.1f} > {limits[inv]:.1f}"
+        f"{inv}: {what[inv]} {worst[inv][1]:.1f} > {worst[inv][2]:.1f}"
         for inv in ("INV1", "INV2", "INV3", "INV4")
-        if inv not in skip and worst[inv] > limits[inv]
+        if inv not in skip and inv in worst and worst[inv][0] > 0
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class _View:
+    plane: Plane
+    area: Any
+    pilot: tuple[float, float]
+    limits: Mapping[str, float]
+
+    def measure(self, inv: str, s: Sample) -> tuple[str, float, float]:
+        if inv == "INV1":
+            value = s.alt_m
+        elif inv == "INV2":
+            value = distance_m(self.pilot[0], self.pilot[1], s.lat, s.lon)
+        elif inv == "INV3":
+            value = s.groundspeed_ms
+        else:
+            xy = self.plane.xy(s.lat, s.lon)
+            value = 0.0 if self.area.contains(xy) else self.area.boundary_distance(xy)
+        return inv, value, self.limits[inv]
+
+
+def _view(charter: Mapping[str, Any]) -> _View:
+    home = charter["home"]
+    plane = Plane(float(home["lat"]), float(home["lon"]))
+    pilot = charter["pilot_position"]
+    return _View(
+        plane=plane,
+        area=polygon_from_geojson(charter["area"], plane),
+        pilot=(float(pilot["lat"]), float(pilot["lon"])),
+        limits={
+            "INV1": float(charter["alt_max_agl_m"]) + ALT_MARGIN_M,
+            "INV2": float(charter["max_range_from_pilot_m"]) + RANGE_MARGIN_M,
+            "INV3": float(charter["max_speed_ms"]) + SPEED_MARGIN_MS,
+            "INV4": float(charter["geofence_buffer_m"]),
+        },
+    )
 
 
 def _ts(value: Any) -> dt.datetime:
@@ -169,17 +202,13 @@ def check_all(
     *,
     exempt: Iterable[str] = (),
 ) -> list[str]:
-    """Every invariant. The track is checked against the loosest approved charter version
-    (a stricter later version never makes an earlier sample wrong)."""
+    """Every invariant. The track is checked against every approved charter version, each
+    limit against the version that allows it most (see ``check_track``)."""
     skip = set(exempt)
     approved = [c for c in charters if c.get("status") in ("approved", "superseded")]
     out: list[str] = []
     if approved and samples:
-        loosest = max(
-            approved,
-            key=lambda c: (float(c["body"]["alt_max_agl_m"]), float(c["body"]["max_speed_ms"])),
-        )
-        out += check_track(samples, loosest["body"], exempt=skip)
+        out += check_track(samples, [c["body"] for c in approved], exempt=skip)
     if "INV7" not in skip:
         out += check_orders(commands, gate_decisions)
     out += [p for p in check_overrides(events, commands) if p.split(":", 1)[0] not in skip]
