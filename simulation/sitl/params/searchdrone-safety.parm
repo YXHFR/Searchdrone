@@ -49,5 +49,15 @@ ARMING_RUDDER 0          # sticks can never arm or disarm (also not via MANUAL_C
 DISARM_DELAY 10          # s; the flight controller disarms by itself after landing
 RC_OVERRIDE_TIME 1       # s; stick values older than this are dropped (vehicle holds)
 
+# --- RC mode switch (simulator profile) --------------------------------------------------
+# The same modes as ArduPilot's SITL defaults, so no default file decides them. The mapping
+# for real flight is set together with the RC transmitter.
+FLTMODE1 7               # CIRCLE
+FLTMODE2 9               # LAND
+FLTMODE3 6               # RTL
+FLTMODE4 3               # AUTO
+FLTMODE5 5               # LOITER
+FLTMODE6 0               # STABILIZE
+
 # --- scripting ------------------------------------------------------------------------
 SCR_ENABLE 0             # no Lua scripts in v0.1

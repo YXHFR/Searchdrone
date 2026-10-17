@@ -1,0 +1,273 @@
+"""Render the Gazebo model ``sd_quad14`` and the world ``sd_lake_forest`` for one instance.
+
+The templates live in ``simulation/gazebo/``. ``render_model(instance)`` writes
+``build/sim/models/sd_quad14_i<N>/model.sdf`` and ``model.config``; ``render_world(name,
+instance)`` writes ``build/sim/worlds/<name>_i<N>.sdf`` (which includes
+``model://sd_quad14_i<N>``) and ``build/sim/worlds/<name>.geojson`` with the lake, the path
+and the forest band in WGS84. Everything is deterministic (fixed seed) and offline: no
+template may name a remote URI.
+
+The airframe's mass comes from ``hardware/drone.yaml``. The Gazebo variant keeps the
+rotor model of ArduPilot's iris (each rotor is a joint driven by the ArduPilot plugin and
+lifted by two LiftDrag blades); the blade area is scaled so that thrust per weight at full
+speed equals the iris's, with the slower maximum rotor speed of a 14-inch propeller.
+"""
+
+from __future__ import annotations
+
+import itertools
+import json
+import math
+import random
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import jinja2
+import yaml
+
+from sd_sim import fixture, geo, paths, ports
+
+GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
+DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
+MODEL_NAME = "sd_quad14"
+WORLD_NAME = "sd_lake_forest"
+SEED = 42
+
+# The vehicle.
+ARM_M = 0.29  # half the 0.58 m motor-to-motor diagonal
+ROTOR_XY_M = ARM_M / math.sqrt(2)  # 0.205 m in x and y for an X frame
+INERTIA_KG_M2 = (0.045, 0.045, 0.080)  # mass in the middle of the frame; CAD values later
+IMU_MASS_KG = 0.01
+MAX_ROTOR_RAD_S = 650.0  # about 6 200 rpm for a 14-inch propeller
+# ArduPilot's iris_with_gimbal, which the rotor model comes from.
+IRIS_MASS_KG = 1.98
+IRIS_BLADE_AREA_M2 = 0.002
+IRIS_MAX_ROTOR_RAD_S = 838.0
+CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
+
+# The world, in metres east/north of the landing pad.
+GROUND_SIZE_M = 1200.0
+PAD_SIZE_M = 3.0
+LAKE_CENTER = (150.0, 120.0)
+LAKE_SEMI_AXES = (90.0, 60.0)
+LAKE_POINTS = 48
+PATH_WIDTH_M = 3.0
+PATH_POINTS = ((0.0, 0.0), (-50.0, 150.0), (-120.0, 300.0))
+FOREST_X = (-400.0, -200.0)
+FOREST_Y = (-300.0, 400.0)
+FOREST_TREES = 250
+TREE_HEIGHT_M = (15.0, 25.0)
+TRUNK_RADIUS_M = 0.2
+
+Xy = tuple[float, float]
+
+
+@dataclass(frozen=True)
+class Tree:
+    name: str
+    x: float
+    y: float
+    height: float
+
+
+def airframe_mass_kg(drone: dict[str, Any]) -> float:
+    """All-up mass from ``hardware/drone.yaml``."""
+    return (
+        drone["frame_mass_kg"]
+        + drone["avionics_mass_kg"]
+        + drone["payload_mass_kg"]
+        + drone["motors"]["count"] * drone["motors"]["mass_kg"]
+        + drone["props"]["count"] * drone["props"]["mass_kg"]
+        + drone["battery"]["mass_kg"]
+    )
+
+
+def load_drone(path: Path = DRONE_YAML) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def blade_area_m2(total_mass_kg: float) -> float:
+    """LiftDrag blade area that gives the iris's thrust per weight at full rotor speed."""
+    speed_ratio = IRIS_MAX_ROTOR_RAD_S / MAX_ROTOR_RAD_S
+    return IRIS_BLADE_AREA_M2 * (total_mass_kg / IRIS_MASS_KG) * speed_ratio**2
+
+
+def model_context(instance: int, drone: dict[str, Any] | None = None) -> dict[str, Any]:
+    drone = load_drone() if drone is None else drone
+    if drone["props"]["count"] != 4 or drone["motors"]["count"] != 4:
+        raise ValueError("sd_quad14 är en quad: fyra motorer och fyra propellrar")
+    total = airframe_mass_kg(drone)
+    rotor_mass = drone["props"]["mass_kg"]
+    camera_mass = drone["payload_mass_kg"]
+    base_mass = total - IMU_MASS_KG - 4 * rotor_mass - camera_mass
+    prop_radius = drone["props"]["diameter_in"] * 0.0254 / 2
+    r = ROTOR_XY_M
+    # ArduPilot quad X order: front right, back left (both CCW), front left, back right (CW).
+    rotors = [
+        {"x": r, "y": -r, "spin": "ccw", "sign": 1, "fwd": 1},
+        {"x": -r, "y": r, "spin": "ccw", "sign": 1, "fwd": 1},
+        {"x": r, "y": r, "spin": "cw", "sign": -1, "fwd": -1},
+        {"x": -r, "y": -r, "spin": "cw", "sign": -1, "fwd": -1},
+    ]
+    for rotor in rotors:
+        rotor["yaw"] = round(math.atan2(rotor["y"], rotor["x"]), 6)
+    return {
+        "name": f"{MODEL_NAME}_i{instance}",
+        "instance": instance,
+        "fdm_port_in": ports.for_instance(instance)["sitl_json_fdm"],
+        "video_port": ports.for_instance(instance)["video_raw_udp"],
+        "base_mass": round(base_mass, 6),
+        "inertia": INERTIA_KG_M2,
+        "imu_mass": IMU_MASS_KG,
+        "rotor_mass": rotor_mass,
+        # A thin disc of the propeller's radius around z.
+        "rotor_ixx": round(rotor_mass * prop_radius**2 / 4, 9),
+        "rotor_izz": round(rotor_mass * prop_radius**2 / 2, 9),
+        "prop_radius": round(prop_radius, 4),
+        "camera_mass": camera_mass,
+        "rotors": rotors,
+        "multiplier": MAX_ROTOR_RAD_S,
+        "blade_area": round(blade_area_m2(total), 6),
+        "camera": {**CAMERA, "hfov_rad": round(math.radians(CAMERA["hfov_deg"]), 6)},
+    }
+
+
+def lake_polygon() -> list[Xy]:
+    cx, cy = LAKE_CENTER
+    ax, ay = LAKE_SEMI_AXES
+    return [
+        (
+            round(cx + ax * math.cos(2 * math.pi * i / LAKE_POINTS), 3),
+            round(cy + ay * math.sin(2 * math.pi * i / LAKE_POINTS), 3),
+        )
+        for i in range(LAKE_POINTS)
+    ]
+
+
+def path_segments() -> list[dict[str, float]]:
+    out = []
+    for (x0, y0), (x1, y1) in itertools.pairwise(PATH_POINTS):
+        out.append(
+            {
+                "x": (x0 + x1) / 2,
+                "y": (y0 + y1) / 2,
+                "length": math.hypot(x1 - x0, y1 - y0),
+                "yaw": math.atan2(y1 - y0, x1 - x0),
+            }
+        )
+    return out
+
+
+def trees(seed: int = SEED) -> list[Tree]:
+    rng = random.Random(seed)  # noqa: S311 - scenery, not security
+    return [
+        Tree(
+            f"tree_{i:03d}",
+            round(rng.uniform(*FOREST_X), 2),
+            round(rng.uniform(*FOREST_Y), 2),
+            round(rng.uniform(*TREE_HEIGHT_M), 2),
+        )
+        for i in range(FOREST_TREES)
+    ]
+
+
+def world_context(name: str, instance: int, fix: fixture.Fixture) -> dict[str, Any]:
+    home = fix.home
+    return {
+        "name": name,
+        "model_uri": f"model://{MODEL_NAME}_i{instance}",
+        "home": home,
+        # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
+        "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
+        "ground_size": GROUND_SIZE_M,
+        "pad_size": PAD_SIZE_M,
+        "lake": lake_polygon(),
+        "path": path_segments(),
+        "path_width": PATH_WIDTH_M,
+        "trees": trees(),
+        "trunk_radius": TRUNK_RADIUS_M,
+    }
+
+
+def _env() -> jinja2.Environment:
+    # SDF is XML, not HTML, and every value comes from our own files and constants.
+    return jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(GAZEBO_DIR)),
+        undefined=jinja2.StrictUndefined,
+        keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
+        autoescape=False,  # noqa: S701
+    )
+
+
+def model_sdf(instance: int, drone: dict[str, Any] | None = None) -> str:
+    template = _env().get_template(f"models/{MODEL_NAME}/model.sdf.jinja")
+    return template.render(**model_context(instance, drone))
+
+
+def model_config(instance: int) -> str:
+    template = (GAZEBO_DIR / "models" / MODEL_NAME / "model.config").read_text(encoding="utf-8")
+    return template.replace(f"<name>{MODEL_NAME}</name>", f"<name>{MODEL_NAME}_i{instance}</name>")
+
+
+def world_sdf(name: str, instance: int, fix: fixture.Fixture | None = None) -> str:
+    fix = fixture.load() if fix is None else fix
+    template = _env().get_template(f"worlds/{name}.sdf.jinja")
+    return template.render(**world_context(name, instance, fix))
+
+
+def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
+    fix = fixture.load() if fix is None else fix
+    lat0, lon0 = fix.home.lat, fix.home.lon
+
+    def lonlat(points: list[Xy]) -> list[list[float]]:
+        out = []
+        for x, y in points:
+            lat, lon = geo.enu_to_wgs84(lat0, lon0, x, y)
+            out.append([round(lon, 7), round(lat, 7)])
+        return out
+
+    lake = lake_polygon()
+    forest = [
+        (FOREST_X[0], FOREST_Y[0]),
+        (FOREST_X[1], FOREST_Y[0]),
+        (FOREST_X[1], FOREST_Y[1]),
+        (FOREST_X[0], FOREST_Y[1]),
+    ]
+
+    def feature(kind: str, geometry: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "Feature", "properties": {"kind": kind}, "geometry": geometry}
+
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            feature("lake", {"type": "Polygon", "coordinates": [lonlat([*lake, lake[0]])]}),
+            feature("path", {"type": "LineString", "coordinates": lonlat(list(PATH_POINTS))}),
+            feature("forest", {"type": "Polygon", "coordinates": [lonlat([*forest, forest[0]])]}),
+        ],
+    }
+
+
+def render_model(instance: int, repo: Path = paths.REPO) -> Path:
+    """Write the instance's model; returns its folder (``model://sd_quad14_i<N>``)."""
+    out = repo / "build" / "sim" / "models" / f"{MODEL_NAME}_i{instance}"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "model.sdf").write_text(model_sdf(instance), encoding="utf-8")
+    (out / "model.config").write_text(model_config(instance), encoding="utf-8")
+    return out
+
+
+def render_world(name: str, instance: int, repo: Path = paths.REPO) -> Path:
+    """Write the instance's world and model, plus the world's GeoJSON layer."""
+    render_model(instance, repo)
+    fix = fixture.load()
+    out = repo / "build" / "sim" / "worlds"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{name}_i{instance}.sdf"
+    path.write_text(world_sdf(name, instance, fix), encoding="utf-8")
+    (out / f"{name}.geojson").write_text(
+        json.dumps(world_geojson(fix), indent=1) + "\n", encoding="utf-8"
+    )
+    return path

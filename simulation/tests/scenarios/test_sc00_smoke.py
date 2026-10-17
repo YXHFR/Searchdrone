@@ -20,7 +20,7 @@ from sd_sim.errors import InfraError, VehicleError
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.report import Report
-from sd_sim.sitl import CMAC_HOME, SAFETY_PARAM_FILE
+from sd_sim.sitl import CMAC_HOME, PROJECT_PARAM_FILES
 from sd_sim.util import new_run_dir
 
 pytestmark = [
@@ -35,10 +35,6 @@ STABLE_S = 30.0
 MIN_PARAMS = 500  # ArduCopter 4.7 has well over a thousand
 SECRET_ENV_KEY = re.compile(r"(PASSWORD|TOKEN|KEY)$")
 GROUND = "inte byggt än: startaren startar inte markservern"
-SAFETY_PARAMS = "inte byggt än (B1-07)"
-# The onboard executor and the safety parameter file arrive together. Once the executor
-# exists, a missing safety file is an error, never "not built yet".
-ONBOARD_EXECUTOR = paths.REPO / "software" / "onboard" / "src" / "sd_onboard" / "executor"
 
 
 def secret_values(secrets_dir: Path) -> list[str]:
@@ -85,18 +81,13 @@ def check_params(rep: Report, stack: Stack, actual: dict[str, float]) -> None:
         measured=len(actual),
         limit=MIN_PARAMS,
     )
-    if SAFETY_PARAM_FILE not in names:
-        if ONBOARD_EXECUTOR.exists():
-            rep.check(
-                "SC00.4",
-                f"{SAFETY_PARAM_FILE} laddas i SITL",
-                False,
-                measured=names,
-                limit=[SAFETY_PARAM_FILE],
-            )
-        else:
-            rep.not_built("SC00.4", "Parametrarna stämmer med säkerhetsfilen", SAFETY_PARAMS)
-        return
+    rep.check(
+        "SC00.4c",
+        "Säkerhetsfilen och modellens simfil laddas i SITL",
+        names == list(PROJECT_PARAM_FILES),
+        measured=names,
+        limit=list(PROJECT_PARAM_FILES),
+    )
     rep.param_mismatches = params.mismatches(params.merge_layers(layers), actual)
     rep.check(
         "SC00.4",
@@ -108,7 +99,7 @@ def check_params(rep: Report, stack: Stack, actual: dict[str, float]) -> None:
     broken = params.rule_violations(actual)
     rep.check(
         "SC00.4b",
-        "Säkerhetsparametrarna (GCS-id, staket, batteri- och länkfailsafe)",
+        "Säkerhetsparametrarna har exakt rätt värden (GCS-id, staket, batteri, failsafes)",
         not broken,
         measured=broken,
         limit=[],

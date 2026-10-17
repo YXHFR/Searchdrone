@@ -8,15 +8,36 @@ from pathlib import Path
 
 TOLERANCE = 1e-4
 
-# Safety parameters the smoke test checks independently of the files, once the safety
-# layer exists: (name, rule, value). The flight controller must satisfy each rule.
+# Safety parameters the flight controller must have, checked independently of the
+# parameter files: (name, rule, value). Exact values, so a changed safety file fails here
+# too. Every FS_*, FENCE_* and BATT_* line in the safety file has a rule (unit-tested),
+# and the values agree with the ground station's expectations in sd_safety.
 SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("MAV_GCS_SYSID", "==", 250.0),
+    ("FS_GCS_ENABLE", "==", 3.0),
+    ("FS_GCS_TIMEOUT", "==", 20.0),
+    ("FS_OPTIONS", "==", 8.0),
+    ("FS_EKF_ACTION", "==", 1.0),
+    ("FS_THR_ENABLE", "==", 0.0),  # simulator profile: no RC link in SITL
     ("FENCE_ENABLE", "==", 1.0),
-    ("BATT_FS_LOW_ACT", "!=", 0.0),
-    ("BATT_LOW_MAH", ">", 0.0),
-    ("FS_GCS_ENABLE", "!=", 0.0),
+    ("FENCE_TYPE", "==", 7.0),
+    ("FENCE_ACTION", "==", 3.0),
+    ("FENCE_ALT_MAX", "==", 125.0),
+    ("FENCE_RADIUS", "==", 530.0),
+    ("FENCE_MARGIN", "==", 5.0),
+    ("BATT_MONITOR", "==", 4.0),
+    ("BATT_CAPACITY", "==", 9000.0),
+    ("BATT_LOW_MAH", "==", 1350.0),
+    ("BATT_CRT_MAH", "==", 630.0),
+    ("BATT_LOW_VOLT", "==", 0.0),
+    ("BATT_CRT_VOLT", "==", 0.0),
+    ("BATT_FS_LOW_ACT", "==", 3.0),
+    ("BATT_FS_CRT_ACT", "==", 1.0),
+    ("ARMING_RUDDER", "==", 0.0),
+    ("RC_OVERRIDE_TIME", "==", 1.0),
 )
+# Prefixes whose every line in the safety file must have a rule above.
+RULED_PREFIXES = ("FS_", "FENCE_", "BATT_")
 
 
 class ParamFileError(ValueError):

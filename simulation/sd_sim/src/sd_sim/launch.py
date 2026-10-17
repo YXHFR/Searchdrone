@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, paths, ports, procs
+from sd_sim import _args, config, gazebo, paths, ports, procs, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -161,18 +161,20 @@ class Stack:
         check_secret_modes(self.secrets_dir)
 
     def start_gazebo(self) -> None:
+        if self.cfg.vehicle == "sd_quad14" and self.cfg.world == world.WORLD_NAME:
+            world.render_world(self.cfg.world, self.cfg.instance, self.repo)
         self.world = gazebo.resolve_world(self.cfg, self.repo)
         if self.world.note:
             say(self.world.note)
         argv = gazebo.gz_sim_argv(self.world, gui=self.cfg.gui)
         env = gazebo.gz_env(self.cfg.instance, gui=self.cfg.gui)
         proc = self.group.start("gazebo", argv, env=env, cwd=self.run_dir)
-        world = self.world
+        running = self.world
         self._wait(
             "gazebo",
             proc,
             60,
-            lambda: gazebo.world_running(world, self.cfg.instance),
+            lambda: gazebo.world_running(running, self.cfg.instance),
             "Gazebo svarar inte. Se reservvägarna i installationsguiden (gui=false).",
         )
 
@@ -266,6 +268,8 @@ class Stack:
             raise InfraError(f"{argv[0]} finns inte. Kör just sim-setup först.")
         work = self.run_dir / "sitl"
         work.mkdir(parents=True, exist_ok=True)
+        if self.cfg.physics == "builtin" and self.cfg.vehicle == "sd_quad14":
+            self.sitl_layout().stage_frame(work)
         return self.group.start("arducopter", argv, env=procs.clean_env(), cwd=work)
 
     def wait_vehicle_observed(self, sitl: procs.Proc) -> None:

@@ -1,0 +1,50 @@
+# The demo's places, test pins and charters. Read by the tests, the scripted commander
+# and `just demo`. Every point is metres east/north of home and height above home (the
+# world is flat).
+# Public place: ArduPilot's standard SITL site CMAC. Never a private address.
+home:   { lat: -35.363261, lon: 149.165230, alt_amsl_m: 584.0, heading_deg: 353 }
+pilot:  { east_m: 0.0, north_m: 0.0 }          # the pilot stands at home unless a test moves them
+operator: "operator:demo"
+vehicle_id: sim-01
+pins:
+  - { id: "P1", east_m: 0.0, north_m: 200.0 }   # the demo's target, 200 m north of home
+  - { id: "OUT", east_m: 250.0, north_m: 0.0 }  # outside charter_test (and its fence), 250 m from the pilot
+  - { id: "HIGH", east_m: 0.0, north_m: 100.0, alt_m: 150.0 }
+  - { id: "FAR", east_m: 505.0, north_m: 0.0 }  # inside charter_wide + buffer, but 505 m from the pilot
+survey_box:                                     # the demo's search box, 100 x 100 m around P1
+  center_pin: "P1"
+  size_m: [100.0, 100.0]                        # corners (-50,150)-(50,250)
+  alt_m: 40.0
+charters:
+  charter_test:                                 # the demo's charter
+    area_enu: [[-150,-100],[150,-100],[150,300],[-150,300]]   # farthest corner 335 m
+    geofence_buffer_m: 20
+    alt_min_agl_m: 20
+    alt_max_agl_m: 120
+    default_alt_agl_m: 40                       # takeoff height in the demo
+    max_speed_ms: 15
+    max_range_from_pilot_m: 500
+    battery_rtl_pct: 15
+    allowed_skills: [takeoff, goto, survey_sector, hold, resume, return_home,
+                     mark_location, report, propose_charter_change]   # implemented skills only
+    sectors: [{ sector_id: "A", name: "survey_box", from: survey_box, line_spacing_m: 30 }]
+  charter_wide:                                 # narrow and long: reaches the 500 m limit from the pilot
+    area_enu: [[-50,-40],[470,-40],[470,40],[-50,40]]          # farthest corner 472 m
+    geofence_buffer_m: 40
+    alt_min_agl_m: 20
+    alt_max_agl_m: 120
+    default_alt_agl_m: 40
+    max_speed_ms: 15
+    max_range_from_pilot_m: 500
+    battery_rtl_pct: 15
+    allowed_skills: [takeoff, goto, hold, resume, return_home, report]
+    sectors: []
+  charter_toofar:                               # the area reaches past 500 m from the pilot
+    base: charter_wide
+    area_enu: [[-50,-40],[560,-40],[560,40],[-50,40]]          # farthest corner about 561 m
+  charter_batt25:                               # stricter battery reserve: home at 25 %
+    base: charter_test
+    battery_rtl_pct: 25
+  charter_overcap:                              # looser than the hard limits; values set at run time
+    base: charter_test
+    exceed_limits: true
