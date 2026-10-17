@@ -438,8 +438,16 @@ class Scenario:
             found.update(c)
             return c["status"] == status
 
-        await self.until(reached, limit_s, f"{skill} {status}")
+        try:
+            await self.until(reached, limit_s, f"{skill} {status}")
+        except AssertionError as exc:
+            seen = [(c["skill"], c["status"], c["status_reason"]) for c in await self.commands()]
+            raise AssertionError(f"{exc}; orders {seen}; modes {self.modes()}") from None
         return found
+
+    def actions(self, action: str) -> list[dict[str, Any]]:
+        """STOP / FLY HOME / Resume outcomes the ground station published, by action."""
+        return [a for a in self.published("vehicle.action") if a.get("action") == action]
 
     def published(self, type_: str) -> list[dict[str, Any]]:
         """What the ground station put on its live stream (the panel's view), by type."""

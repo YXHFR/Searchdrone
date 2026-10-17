@@ -64,10 +64,6 @@ async def stopped_and_holding(sc: Scenario, t0: float) -> None:
     )
 
 
-async def vehicle_events(sc: Scenario, kind: str) -> list[dict[str, Any]]:
-    return [e for e in await sc.events() if e["type"] == kind]
-
-
 @pytest.mark.brain
 @pytest.mark.budget_s(480)
 async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
@@ -88,7 +84,7 @@ async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) 
         # The AI's resume is refused on the ground: only the pilot releases a stop.
         tried = await sc.wait_command("resume", "rejected_by_gate", 20, issuer_kind="brain")
         assert "RESUME_NEEDS_OPERATOR" in str(tried["status_reason"]), tried
-        assert any(m["role"] == "system" for m in await sc.chat())
+        assert [a["via"] for a in sc.actions("stop")][:1] == ["button"]  # on the live stream
 
         # A question and "Fortsätt." in the chat release nothing.
         line = await sc.say("Vad hände?")
@@ -98,7 +94,7 @@ async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) 
         await asyncio.sleep(10.0)
         assert sc.mode() == "BRAKE"
         assert sc.r.actions.latches.get(VID) is not None
-        assert not await vehicle_events(sc, "vehicle.resume")
+        assert not sc.actions("resume")
 
         # The pilot's Resume: the AI flies on to P1.
         res = await sc.press("resume")
@@ -168,9 +164,9 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
         line = await sc.say("stopp")
         assert line["handled_by"] == "ground" and line["parsed_intent"] == "stop", line
         await stopped_and_holding(sc, t0)
-        stops = await vehicle_events(sc, "vehicle.stop")
-        assert len(stops) == 1 and stops[0]["payload"]["via"] == "chat", stops
-        assert stops[0]["payload"]["by"] == "operator:ci-harness"
+        stops = [a for a in sc.actions("stop") if a["result"] == "dispatched"]
+        assert len(stops) == 1 and stops[0]["via"] == "chat", stops
+        assert stops[0]["by"] == "operator:ci-harness"
         # The AI reports the same line as well: it still acts only once.
         res = await sc.r.commander.post(
             f"/commander/v1/missions/{sc.mid}/chat-intents",
@@ -184,7 +180,7 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
         )
         assert res.status_code in (202, 409), res.text
         await asyncio.sleep(2.0)
-        assert len(await vehicle_events(sc, "vehicle.stop")) == 1
+        assert len([a for a in sc.actions("stop") if a["result"] == "dispatched"]) == 1
 
         # Resume, then the pilot's "flyg hem": home and land, still without the AI.
         assert (await sc.press("resume")).status_code == 202
@@ -192,8 +188,8 @@ async def test_chat_stop_words_without_the_ai(sim: Any, migrated_db: Any, tmp_pa
         line = await sc.say("flyg hem")
         assert line["handled_by"] == "ground" and line["parsed_intent"] == "return_home"
         await sc.until(lambda: sc.mode() in HOME_MODES, 2.0 * STOP_ACK_S, "flying home")
-        homes = await vehicle_events(sc, "vehicle.return_home")
-        assert len(homes) == 1 and homes[0]["payload"]["via"] == "chat"
+        homes = [a for a in sc.actions("return_home") if a["result"] == "dispatched"]
+        assert len(homes) == 1 and homes[0]["via"] == "chat", homes
         await sc.until(lambda: not sc.tel.armed, 180, "landed")
         assert sc.from_home_m() <= 3.0
         await sc.check_invariants()
