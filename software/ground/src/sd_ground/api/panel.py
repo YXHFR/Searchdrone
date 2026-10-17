@@ -666,14 +666,23 @@ async def get_file(mission_id: IdPath, file_id: IdPath, g: G, _: Observer) -> Re
     return FileResponse(path, filename=path.name)
 
 
+# Stage 2 stubs: always empty, never a find, and the header says the feature is not built.
+STAGE2_HEADER = "Sd-Not-Built"
+STAGE2_VALUE = "stage-2"
+
+
 @router.get("/missions/{mission_id}/candidates")
-async def get_candidates(mission_id: IdPath, _: Observer) -> dict[str, list[Any]]:
-    return {"items": []}  # stage 2
+async def get_candidates(
+    mission_id: IdPath, _: Observer, response: Response
+) -> dict[str, list[Any]]:
+    response.headers[STAGE2_HEADER] = STAGE2_VALUE
+    return {"items": []}
 
 
 @router.get("/missions/{mission_id}/detections")
-async def get_detections(mission_id: IdPath, _: Observer) -> list[Any]:
-    return []  # stage 2
+async def get_detections(mission_id: IdPath, _: Observer, response: Response) -> list[Any]:
+    response.headers[STAGE2_HEADER] = STAGE2_VALUE
+    return []
 
 
 @router.post("/video/{vehicle_id}/main/whep")

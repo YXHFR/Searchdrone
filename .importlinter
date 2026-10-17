@@ -85,6 +85,23 @@ forbidden_modules =
     sd_brain
     sd_sim
 
+[importlinter:contract:detect-no-steering]
+name = the detector cannot steer the vehicle or reach the safety gate
+type = forbidden
+source_modules = sd_detect
+forbidden_modules =
+    sd_safety
+    sd_mav
+    sd_link
+    sd_geo
+    pymavlink
+    serial
+    mavsdk
+    dronekit
+    MAVProxy
+    httpx
+    socket
+
 [importlinter:contract:onboard]
 name = sd_onboard does not reach ground or AI
 type = forbidden
