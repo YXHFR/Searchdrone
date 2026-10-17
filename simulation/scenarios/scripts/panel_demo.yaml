@@ -19,7 +19,7 @@ turns:
   - on: skill_event
     when: {skill: takeoff, status: done}
     say: ["Söker av sektor A."]
-    action: {skill: survey_sector, params: {sector: "A", alt_m: 40}}
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
     once: false
   - on: skill_event
     when: {skill: survey_sector, status: done}

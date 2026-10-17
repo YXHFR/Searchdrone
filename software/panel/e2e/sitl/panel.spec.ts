@@ -101,9 +101,17 @@ async function untilStatus(page: Page, want: string, limitMs: number): Promise<v
 async function startFlight(page: Page): Promise<void> {
   const cc = page.locator(".chat").getByTestId("clearance");
   await expect(cc.getByRole("checkbox")).toBeVisible({ timeout: 90_000 });
+  // A pilot looks at the drone before confirming; the onboard preflight needs a moment
+  // after the charter is installed, and the take-off is refused until it has passed.
+  await expect
+    .poll(() => live<boolean>(page, "vehicle.snapshot.preflight_ok"), { timeout: 90_000 })
+    .toBe(true);
   await cc.getByRole("checkbox").check();
   await cc.getByTestId("clearance-button").click();
   await expect(page.locator(".chat").getByTestId("clearance")).toContainText("Klartecken gäller");
+  await expect
+    .poll(() => live<boolean>(page, "vehicle.snapshot.clearance_available"), { timeout: 15_000 })
+    .toBe(true);
   await say(page, "Starta");
   await expect(page.getByTestId("pill-vehicle")).toHaveText("Lyfter", { timeout: 60_000 });
 }
