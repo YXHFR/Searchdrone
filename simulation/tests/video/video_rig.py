@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-from sd_sim import config, paths, timecode
+from sd_sim import config, paths, services, timecode
 from sd_sim.gst import load_gst
 from sd_sim.launch import VIDEO_API_PASSWORD_KEY, VIDEO_API_USER, Stack, read_env_value
 from sd_sim.util import LOOPBACK_OPENER, new_run_dir
@@ -271,7 +271,7 @@ class GroundServer:
         assert init.returncode == 0, init.stdout + init.stderr
         log = (self.run_dir / "sd-ground.log").open("wb")
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "sd_ground", "serve"],
+            services.ground_serve_argv(),
             cwd=REPO,
             env={**os.environ, **self.env},
             stdout=log,

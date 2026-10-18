@@ -87,3 +87,20 @@ def test_stack_starts_no_services_unless_asked(tmp_path: Path) -> None:
     cfg = config.load({"physics": "builtin", "gui": "false", "video": "off", "instance": "3"})
     assert Stack(cfg, tmp_path).services is False
     assert Stack(cfg, tmp_path, services=True).services is True
+
+
+def test_every_launcher_starts_sd_ground_without_login_codes() -> None:
+    """Launchers write sd-ground's output to logs that CI uploads: no login code or PIN there.
+    So they all start it through ``ground_serve_argv`` (the unit tests only check argv)."""
+    assert services.ground_serve_argv()[1:] == ["-m", "sd_ground", "serve", "--no-login-link"]
+    simulation = Path(__file__).resolve().parents[3]
+    unit_tests = Path(__file__).resolve().parent
+    own = Path(services.__file__).resolve()
+    starts = [
+        p.relative_to(simulation)
+        for p in simulation.rglob("*.py")
+        if p.resolve() != own
+        and unit_tests not in p.resolve().parents
+        and '"sd_ground", "serve"' in p.read_text(encoding="utf-8")
+    ]
+    assert starts == []
