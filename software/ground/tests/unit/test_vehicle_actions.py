@@ -290,19 +290,31 @@ async def test_a_failing_takeover_task_is_logged_not_raised() -> None:
     assert [e["event"] for e in logs] == ["actions.task_failed"]
 
 
+class SlowToCancelSink(RecordingSink):
+    """A notice whose send cleans up over a few loop turns when cancelled."""
+
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            for _ in range(3):
+                await asyncio.sleep(0)
+        return "down"  # never reached: it is only ever cancelled
+
+
 async def test_stopping_the_pump_cancels_a_waiting_takeover_notice() -> None:
     clock = FakeClock()
-    sink = RecordingSink()
-    sink.hangs = True
-    actions = _actions(clock, mav=StubMav(), notices=sink)
+    actions = _actions(clock, mav=StubMav(), notices=SlowToCancelSink())
     pump = asyncio.ensure_future(actions.pump(StubGround(clock)))
     actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
     await clock.run_for(0.1)
     tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
     assert tasks
+    seen_at_end: list[bool] = []  # recorded the moment the pump itself finishes
+    pump.add_done_callback(lambda _: seen_at_end.extend(t.cancelled() for t in tasks))
     pump.cancel()
-    await asyncio.gather(pump, *tasks, return_exceptions=True)
-    assert all(t.cancelled() for t in tasks)
+    await asyncio.gather(pump, return_exceptions=True)
+    assert seen_at_end == [True] * len(tasks)  # the pump waited for them
 
 
 async def test_without_sdlink_nothing_is_acknowledged() -> None:
