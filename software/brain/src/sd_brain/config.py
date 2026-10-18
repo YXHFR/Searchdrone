@@ -1,7 +1,7 @@
 """``BrainConfig``: read from ``config/brain.toml`` with ``SD_BRAIN__…`` overrides.
 
 Environment variables named ``SD_BRAIN__<SECTION>__<KEY>`` (``__`` between levels)
-override the file, e.g. ``SD_BRAIN__LLM__ROOT_URL``. ``.env`` is never read here; the
+override the file, e.g. ``SD_BRAIN__CLOUD__MODEL``. ``.env`` is never read here; the
 secrets are read by :mod:`sd_brain.secrets` under their own names.
 """
 
@@ -29,6 +29,7 @@ __all__ = [
     "DecisionEngineConfig",
     "GroundConfig",
     "LlmConfig",
+    "ProviderConfig",
     "load_config",
 ]
 
@@ -66,47 +67,71 @@ class GroundConfig(_Section):
 
 
 class BackendConfig(_Section):
-    kind: Literal["llm_local", "scripted", "grammar"] = "llm_local"
+    kind: Literal["cloud", "scripted", "grammar"] = "cloud"
     fallback: Literal["grammar"] = "grammar"
     scripted_file: str = ""
 
 
 class LlmConfig(_Section):
-    """The local model server (llama-server) on loopback."""
+    """How a turn talks to the language model (any backend that uses one)."""
 
-    root_url: str = "http://127.0.0.1:8091"
-    model: str = "qwen3-vl-4b-instruct-q4_k_m"
-    call_timeout_s: float = Field(default=LLM_CALL_TIMEOUT_S, gt=0, le=LLM_CALL_TIMEOUT_S)
     temperature: float = Field(default=0.2, ge=0, le=2)
     top_p: float = Field(default=0.8, gt=0, le=1)
     max_tokens: int = Field(default=512, ge=1, le=4096)
     seed: int | None = 42
     context_tokens: int = Field(default=8192, ge=1024)
     prompt_budget_tokens: int = Field(default=6000, ge=512)
-    health_interval_s: float = Field(default=2.0, gt=0)
-    health_timeout_s: float = Field(default=1.0, gt=0)
 
-    @field_validator("root_url")
-    @classmethod
-    def _loopback(cls, value: str) -> str:
-        if not _is_loopback(value):
-            raise ValueError("llm.root_url måste ligga på 127.0.0.1 (llama-server)")
-        return value.rstrip("/")
 
-    @property
-    def base_url(self) -> str:
-        return self.root_url + "/v1"
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+class ProviderConfig(_Section):
+    """OpenRouter's provider routing (``provider`` in the request).
+
+    ``data_collection = "deny"`` keeps the calls away from providers that may store or
+    train on the data. ``require_parameters`` routes only to providers that support every
+    parameter sent (tools, reasoning). ``zdr`` narrows it to zero-data-retention
+    endpoints. Other OpenAI-compatible APIs ignore or refuse the field: turn it off with
+    ``send = false``.
+    """
+
+    send: bool = True
+    data_collection: Literal["allow", "deny"] = "deny"
+    require_parameters: bool = True
+    zdr: bool = False
+    only: list[str] = Field(default_factory=list[str])
+    order: list[str] = Field(default_factory=list[str])
+
+    def body(self) -> dict[str, Any] | None:
+        if not self.send:
+            return None
+        out: dict[str, Any] = {
+            "data_collection": self.data_collection,
+            "require_parameters": self.require_parameters,
+        }
+        if self.zdr:
+            out["zdr"] = True
+        if self.only:
+            out["only"] = list(self.only)
+        if self.order:
+            out["order"] = list(self.order)
+        return out
 
 
 class CloudConfig(_Section):
     """The cloud model (any OpenAI-compatible API, default OpenRouter).
 
-    It answers first whenever a key (``SD_CLOUD_API_KEY``) and a model are set; the local
-    model takes over in the same turn when it fails or is slow.
+    It answers whenever a key (``SD_CLOUD_API_KEY``) and a model are set. When the main
+    model fails, ``fallback_model`` is asked in the same call; when neither answers in
+    time, the turn goes to the command mode.
     """
 
     base_url: str = "https://openrouter.ai/api/v1"
-    model: str = ""
+    model: str = "z-ai/glm-5.3-flash"
+    fallback_model: str = "anthropic/claude-haiku-5.5"
+    reasoning_effort: ReasoningEffort | Literal[""] = "low"
+    provider: ProviderConfig = Field(default_factory=ProviderConfig)
     call_timeout_s: float = Field(default=LLM_CALL_TIMEOUT_S, gt=0, le=LLM_CALL_TIMEOUT_S)
     retry_after_s: float = Field(default=60.0, ge=0)
 
@@ -116,6 +141,16 @@ class CloudConfig(_Section):
         if urlsplit(value).scheme != "https" and not _is_loopback(value):
             raise ValueError("cloud.base_url måste använda https")
         return value.rstrip("/")
+
+    def extra_body(self) -> dict[str, Any]:
+        """The OpenRouter fields added to every chat request."""
+        out: dict[str, Any] = {}
+        if self.reasoning_effort:
+            out["reasoning"] = {"effort": self.reasoning_effort, "exclude": True}
+        provider = self.provider.body()
+        if provider is not None:
+            out["provider"] = provider
+        return out
 
 
 class DecisionEngineConfig(_Section):
@@ -133,8 +168,8 @@ class DecisionEngineConfig(_Section):
 class DecideConfig(_Section):
     """The decision interface (``sd_brain.decide``): best available engine first."""
 
-    engines: list[Literal["jev", "openai_decisions", "local"]] = Field(
-        default_factory=lambda: ["jev", "openai_decisions", "local"]
+    engines: list[Literal["jev", "openai_decisions"]] = Field(
+        default_factory=lambda: ["jev", "openai_decisions"]
     )
     stop_check: bool = True
     stop_check_timeout_s: float = Field(default=STOP_CHECK_TARGET_S, gt=0, le=5)
@@ -166,6 +201,25 @@ class BehaviourConfig(_Section):
     language: Literal["sv"] = "sv"
     takeoff_policy: Literal["request_then_clearance"] = "request_then_clearance"
     rule_takeoff: bool = True
+
+
+# Keys of the removed local model that older config/brain.toml files still carry. They
+# are dropped on load so an existing file keeps working; nothing reads them.
+_REMOVED_LLM_KEYS = ("root_url", "model", "call_timeout_s", "health_interval_s", "health_timeout_s")
+
+
+def _drop_local_model(data: dict[str, Any]) -> dict[str, Any]:
+    llm = data.get("llm")
+    if isinstance(llm, dict):
+        for key in _REMOVED_LLM_KEYS:
+            llm.pop(key, None)
+    backend = data.get("backend")
+    if isinstance(backend, dict) and backend.get("kind") == "llm_local":
+        backend["kind"] = "cloud"
+    decide = data.get("decide")
+    if isinstance(decide, dict) and isinstance(decide.get("engines"), list):
+        decide["engines"] = [e for e in decide["engines"] if e != "local"]
+    return data
 
 
 class BrainConfig(_Section):
@@ -225,7 +279,7 @@ def load_config(path: str | Path | None, env: Mapping[str, str] | None = None) -
             data = tomllib.loads(p.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as exc:
             raise ConfigError(f"Konfigurationen {p} går inte att läsa: {exc}") from None
-    merged = _apply_env(data, env or {})
+    merged = _drop_local_model(_apply_env(data, env or {}))
     try:
         return BrainConfig.model_validate(merged)
     except ValueError as exc:

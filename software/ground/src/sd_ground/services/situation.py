@@ -140,6 +140,7 @@ def build_situation(
         ],
         pins=_pins(annotations),
         areas=[a for a in annotations if a.kind == "area"],
+        paths=[a for a in annotations if a.kind == "path"],
         home=home,
         pilot=pilot,
         alerts=[],

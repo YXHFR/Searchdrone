@@ -7,8 +7,8 @@
   (the first detection's id); the ground station sets it when the row is written.
 * ``mission_files.kind`` may be ``crop`` (a detection's thumbnail).
 
-Revision ID: 0003_detections
-Revises: 0002_mission_flow
+Revision ID: 0004_detections
+Revises: 0003_path_annotations
 Create Date: 2026-10-18
 """
 
@@ -16,8 +16,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0003_detections"
-down_revision: str | None = "0002_mission_flow"
+revision: str = "0004_detections"
+down_revision: str | None = "0003_path_annotations"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -21,7 +21,7 @@ __all__ = [
 
 # Always an approval card, in every autonomy mode.
 ALWAYS_REQUIRE_APPROVAL: Final = frozenset(
-    {"follow_track", "follow_me", "find_me", "land_at", "propose_charter_change"}
+    {"follow_track", "follow_me", "find_me", "land_at", "propose_charter_change", "follow_path"}
 )
 
 # Never skills: they would let an order bypass the gate's model of the vehicle (arming, modes,

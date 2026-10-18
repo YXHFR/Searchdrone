@@ -15,6 +15,11 @@ CLEARANCE_VALID_S: Final = 120  # "clear around the drone" is valid this long, t
 APPROVAL_TIMEOUT_S: Final = 60  # an approval card that nobody answers expires
 TAKEOFF_BATTERY_MARGIN_PCT: Final = 20.0  # takeoff needs battery >= rtl level + this
 BRAIN_BATTERY_MARGIN_PCT: Final = 5.0  # the AI may not start a move this close to the rtl level
+# A drawn path (follow_path) must leave the reserve after the path and the flight home.
+# Assumed use: 5 % per minute in the air, i.e. 20 min on a full pack, well below the
+# simulation model's computed hover time. A real energy model replaces this later.
+ROUTE_BATTERY_PCT_PER_MIN: Final = 5.0
+ROUTE_DESCENT_MS: Final = 1.0  # the landing at home, counted slowly
 AIRBORNE_MIN_ALT_M: Final = 2.0  # "airborne" for the gate: armed, in the air and above this
 STATE_MAX_AGE_MS: Final = 2000  # older vehicle state or snapshot -> STATE_STALE
 RATE_ACTION_MIN_GAP_MS: Final = 3000  # at most one AI action per 3 s ...

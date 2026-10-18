@@ -1061,7 +1061,7 @@ class FlowRepo:
         created_by: str,
         now: dt.datetime,
     ) -> str | None:
-        """A pin or area. ``label = None`` gives the next free ``M<n>`` (pins the AI
+        """A pin, area or path. ``label = None`` gives the next free ``M<n>`` (pins the AI
         marks). ``None`` when the label is taken."""
         async with self.engine.begin() as conn:
             if label is None:
@@ -1099,7 +1099,8 @@ class FlowRepo:
         row = await self._one(
             "SELECT id, mission_id, vehicle_id, kind, label, ST_AsGeoJSON(geom) AS geometry, "
             "created_by, created_at, CASE WHEN kind = 'area' THEN ST_Area(geom::geography) END "
-            "AS area_m2, deleted_at FROM map_annotations WHERE id = :id",
+            "AS area_m2, CASE WHEN kind = 'path' THEN ST_Length(geom::geography) END AS length_m, "
+            "deleted_at FROM map_annotations WHERE id = :id",
             id=annotation_id,
         )
         return None if row is None else {**dict(row), "geometry": _json(row["geometry"])}

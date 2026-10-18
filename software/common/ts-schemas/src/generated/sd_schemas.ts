@@ -231,8 +231,9 @@ export interface Annotation {
     [k: string]: unknown;
   };
   id: string;
-  kind: "pin" | "area";
+  kind: "pin" | "area" | "path";
   label: string;
+  length_m?: number | null;
   mission_id: string;
 }
 /**
@@ -243,7 +244,7 @@ export interface AnnotationCreate {
   geometry: {
     [k: string]: unknown;
   };
-  kind: "pin" | "area";
+  kind: "pin" | "area" | "path";
   label: string;
 }
 /**
@@ -539,7 +540,7 @@ export interface CharterValidationError {
  * via the `definition` "ChatIntentReport".
  */
 export interface ChatIntentReport {
-  engine: ("local" | "jev" | "openai_decisions") | "rule";
+  engine: ("jev" | "openai_decisions") | "rule";
   intent: "stop" | "return_home";
   latency_ms: number;
   location: "cloud" | "local";
@@ -893,8 +894,8 @@ export interface DecideResult {
     [k: string]: NoulAnswer | ChoiceAnswer | ScoreAnswer | BoxAnswer;
   };
   created_at: string;
-  engine: "local" | "jev" | "openai_decisions";
-  fallback_from?: ("local" | "jev" | "openai_decisions") | null;
+  engine: "jev" | "openai_decisions";
+  fallback_from?: ("jev" | "openai_decisions") | null;
   latency_ms: number;
   location: "cloud" | "local";
   model_id: string | null;
@@ -926,7 +927,7 @@ export interface DecisionLog {
   backend: "llm" | "grammar" | "scripted" | "rule" | "cloud";
   command_id: string | null;
   completion_tokens: number;
-  engine?: ("cloud" | "local") | null;
+  engine?: ("cloud" | "command") | null;
   error: ("deadline" | "timeout" | "http_error" | "parse_error" | "round_limit") | null;
   gate_decision: ("ALLOW" | "REJECT" | "PENDING_APPROVAL") | null;
   id: string;
@@ -964,7 +965,7 @@ export interface DecisionLogStored {
   backend: "llm" | "grammar" | "scripted" | "rule" | "cloud";
   command_id: string | null;
   completion_tokens: number;
-  engine?: ("cloud" | "local") | null;
+  engine?: ("cloud" | "command") | null;
   error: ("deadline" | "timeout" | "http_error" | "parse_error" | "round_limit") | null;
   gate_decision: ("ALLOW" | "REJECT" | "PENDING_APPROVAL") | null;
   id: string;
@@ -1120,6 +1121,35 @@ export interface FollowMeParams {
   standoff_m: number;
 }
 /**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FollowPathAiParams".
+ */
+export interface FollowPathAiParams {
+  alt_m?: number | null;
+  path: string;
+  speed_ms?: number | null;
+}
+/**
+ * Fly a drawn line point by point at one height, then hover at its last point.
+ *
+ * ``points`` come from the pilot's drawn path (sd-brain resolves ``pa-<n>``, and the
+ * ground checks that they are that path's points); the model never writes them.
+ * ``label`` is that path's name, for the card and the map.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FollowPathParams".
+ */
+export interface FollowPathParams {
+  alt_m: number;
+  label?: string | null;
+  /**
+   * @minItems 2
+   * @maxItems 50
+   */
+  points: [LatLon, LatLon, ...LatLon[]];
+  speed_ms?: number | null;
+}
+/**
  * Stage 2. The target moves; every set-point is checked onboard. Unresolved here.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1172,6 +1202,7 @@ export interface GateTargets {
   path?: LatLon[];
   points?: LatLon[];
   resolved?: boolean;
+  route_energy?: boolean;
   speed_ms?: number | null;
 }
 /**
@@ -2082,6 +2113,7 @@ export interface Situation {
   mission_id: string;
   mission_status: MissionState;
   override: OperatorLatch | null;
+  paths?: Annotation[];
   paused_by: ("operator" | "brain" | "system") | null;
   pending_approvals: Approval[];
   pending_proposal: Charter | null;
@@ -2304,6 +2336,7 @@ export interface SurveyResumePoint {
   interrupted_at: LatLon;
   kind?: "survey";
   next_index: number;
+  path?: boolean;
   seq_offset: number;
   speed_ms: number;
   waypoints: LatLon[];
@@ -2340,7 +2373,7 @@ export interface SurveySectorParams {
  * via the `definition` "SystemStatus".
  */
 export interface SystemStatus {
-  brain_engine?: ("cloud" | "local") | null;
+  brain_engine?: ("cloud" | "command") | null;
   internet: "up" | "down" | "unknown";
   operator_present: boolean;
   parts: {

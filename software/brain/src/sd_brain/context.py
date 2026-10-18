@@ -138,6 +138,14 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
     if areas:
         parts = [f"{_quote(a.label)} {_num((a.area_m2 or 0) / 10_000, 1)} ha" for a in areas]
         lines.append("Ritade områden: " + "; ".join(parts))
+    if s.paths:
+        parts = []
+        for a in s.paths:
+            coords = a.geometry.get("coordinates") or []
+            km = _num((a.length_m or 0) / 1000, 1)
+            start = _where(s, coords[0][1], coords[0][0]) if coords else ""
+            parts.append(f"{_quote(a.label)} {len(coords)} punkter {km} km, börjar {start}".strip())
+        lines.append("Ritade vägar (flyg med follow_path): " + "; ".join(parts))
     waiting = [a.summary_sv for a in s.pending_approvals if getattr(a, "summary_sv", None)]
     if s.pending_proposal is not None:
         waiting.append(f"ramförslag v{s.pending_proposal.version}")

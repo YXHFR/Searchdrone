@@ -7,8 +7,10 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { Protocol } from "pmtiles";
 import { addOverlay } from "./layers";
 import { attributionHtml, buildStyle, type MapFlavor } from "./mapStyle";
+import { addPathLayers } from "./pathLayers";
 
 export { setData, setVisible } from "./layers";
+export { setPathData, setPathsVisible } from "./pathLayers";
 
 // The worker URL and the pmtiles:// protocol are set once, here in the lazily loaded map
 // chunk, so that neither MapLibre nor PMTiles ends up in the main bundle.
@@ -69,6 +71,7 @@ export function createMap(
   );
   map.on("load", () => {
     addOverlay(map, cfg !== null);
+    addPathLayers(map, cfg !== null);
     onReady(map);
   });
   return map;

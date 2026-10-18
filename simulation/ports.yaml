@@ -41,4 +41,3 @@ mediamtx_whep:       {base: 8889,  per_instance: false, only_instance: 0, owner:
 mediamtx_hls:        {base: 8888,  per_instance: false, only_instance: 0, owner: ground}
 mediamtx_webrtc_udp: {base: 8189,  per_instance: false, only_instance: 0, owner: ground}
 mediamtx_api:        {base: 9997,  per_instance: false, only_instance: 0, owner: ground}
-llm_http:            {base: 8091,  per_instance: false, owner: brain}  # llama-server; shared, local only

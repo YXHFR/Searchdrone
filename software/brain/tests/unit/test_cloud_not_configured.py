@@ -13,13 +13,11 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 import pytest_socket
-from brain_helpers import chat_reply, mock_client
 
-from sd_brain.config import CloudConfig, LlmConfig
+from sd_brain.config import CloudConfig
 from sd_brain.runtime.base import NotConfiguredError, Sampling
 from sd_brain.runtime.cloud import CloudModelRuntime
-from sd_brain.runtime.fallback import BestAvailableRuntime
-from sd_brain.runtime.local import LocalModelRuntime
+from sd_brain.runtime.fallback import BestAvailableRuntime, CloudUnavailableError
 
 KEY = "k" * 40
 MSG = [{"role": "user", "content": "hej"}]
@@ -62,16 +60,13 @@ async def test_cloud_not_configured_sends_nothing(
     assert no_network == []
 
 
-async def test_best_available_without_cloud_answers_locally(no_network: list[object]) -> None:
+async def test_best_available_without_cloud_goes_to_command_mode(
+    no_network: list[object],
+) -> None:
     async with httpx.AsyncClient(timeout=1.0, trust_env=False) as cloud_client:
-        cloud = CloudModelRuntime(CloudConfig(), None, cloud_client)
-        local = LocalModelRuntime(
-            LlmConfig(),
-            KEY,
-            mock_client(lambda _r: httpx.Response(200, json=chat_reply("lokal"))),
-        )
-        best = BestAvailableRuntime(cloud, local)
-        assert best.engine() == "local"
-        reply = await best.chat(MSG, [], 5, Sampling())
-    assert reply.content == "lokal" and reply.engine == "local"
+        best = BestAvailableRuntime(CloudModelRuntime(CloudConfig(), None, cloud_client))
+        assert best.engine() == "command" and best.model_id == ""
+        with pytest.raises(CloudUnavailableError):
+            await best.chat(MSG, [], 5, Sampling())
+    assert best.last_engine == "command"
     assert no_network == []

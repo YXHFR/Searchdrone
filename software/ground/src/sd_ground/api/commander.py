@@ -14,7 +14,7 @@ import json
 import os
 import unicodedata
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import (
@@ -542,6 +542,9 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
         if d.get("kind") == "area":
             kind = "event.area_drawn"
             body = {"area_id": d.get("id"), "label": d.get("label"), "area_m2": d.get("area_m2")}
+        elif d.get("kind") == "path":
+            kind = "event.path_drawn"
+            body = {"path_id": d.get("label"), "length_m": d.get("length_m")}
         else:
             kind = "event.pin_set"
             coords = geometry.get("coordinates") or [None, None]
@@ -584,13 +587,24 @@ class CommanderHub:
         self.connected: WebSocket | None = None
         self.last_heartbeat: float | None = None
 
-    def _set_state(self, state: str) -> None:
-        if state == self.g.brain_state:
+    def _set_state(self, state: str, engine: str | None = None) -> None:
+        """``engine`` (cloud model or command mode) comes with the brain's heartbeat;
+        it is cleared when the brain goes."""
+        new_engine: Literal["cloud", "command"] | None = None
+        if state != "down":
+            new_engine = self.g.brain_engine
+            if engine == "cloud" or engine == "command":
+                new_engine = engine
+        if state == self.g.brain_state and new_engine == self.g.brain_engine:
             return
         previous = self.g.brain_state
         self.g.brain_state = state
+        self.g.brain_engine = new_engine
         self.g.bus.publish(
-            "chat", "chat.brain_status", {"state": state, "typing": False}, ts=self.g.now()
+            "chat",
+            "chat.brain_status",
+            {"state": state, "typing": False, "engine": new_engine},
+            ts=self.g.now(),
         )
         if state == "down" and previous != "down":
             self.g.add_event("brain.disconnected", severity="warning")
@@ -674,14 +688,22 @@ class CommanderHub:
                     self._set_state("ready")
                 elif kind == "brain.heartbeat":
                     self.last_heartbeat = g.clock.monotonic()
-                    status = str((msg.get("body") or {}).get("status", "ready"))
-                    self._set_state(status if status in ("ready", "busy", "degraded") else "ready")
+                    beat: dict[str, Any] = msg.get("body") or {}
+                    status = str(beat.get("status", "ready"))
+                    self._set_state(
+                        status if status in ("ready", "busy", "degraded") else "ready",
+                        engine=beat.get("engine"),
+                    )
                 elif kind == "brain.typing":
                     body = msg.get("body") or {}
                     g.bus.publish(
                         "chat",
                         "chat.brain_status",
-                        {"state": g.brain_state, "typing": bool(body.get("active"))},
+                        {
+                            "state": g.brain_state,
+                            "typing": bool(body.get("active")),
+                            "engine": g.brain_engine,
+                        },
                         ts=g.now(),
                         mission_id=_uuid_or_none(body.get("mission_id")),
                     )
