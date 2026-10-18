@@ -57,7 +57,7 @@ def evaluate(req: GateRequest, ctx: GateContext) -> GateDecision:
         decision=decision,
         reason_codes=ordered,
         rule_ids=rule_ids,
-        message_sv=message_sv(ordered),
+        message_sv=message_sv(ordered, details, req.skill),
         details=details,
         required_confirmations=confirmations,
         side=ctx.side,

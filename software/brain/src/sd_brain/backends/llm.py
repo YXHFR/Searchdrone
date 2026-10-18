@@ -1,4 +1,8 @@
-"""``LlmCommander``: one turn with a language model (cloud first, local as fallback)."""
+"""``LlmCommander``: one turn with the cloud language model.
+
+When the model does not answer, the turn ends with the error and the loop lets the
+command mode (``GrammarBackend``) answer the same turn.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +45,7 @@ def _tool_message(call_id: str, content: str) -> dict[str, Any]:
 
 
 class LlmCommander:
-    name = "llm_local"
+    name = "cloud"
 
     def __init__(
         self,

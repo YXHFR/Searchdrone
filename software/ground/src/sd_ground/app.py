@@ -59,6 +59,7 @@ __all__ = [
     "panel_asgi",
     "read_brain_token",
     "serve",
+    "start_lines",
 ]
 
 API_VERSION = "1"  # the /api/v1 and /commander/v1 contract, not the package version
@@ -272,7 +273,7 @@ def _uvicorn(app: Any, bind: str, **extra: Any) -> uvicorn.Server:
     return uvicorn.Server(config)
 
 
-async def _serve(loaded: Loaded) -> int:
+async def _serve(loaded: Loaded, *, announce_login: bool = True) -> int:
     errors = check(loaded)
     if errors:
         for line in errors:
@@ -333,11 +334,8 @@ async def _serve(loaded: Loaded) -> int:
     log.info("system.start", version=g.version, profile=cfg.profile)
     if g.test_rig:
         log.warning("auth.test_rig", detail="cli_may_confirm = true: bara för testriggen")
-    _code, url = g.login_link()
-    print(f"Searchdrone markstation körs. Öppna panelen: {url}", flush=True)  # noqa: T201
-    if cfg.lan.enabled:
-        _c, pin, lan_url = g.pair()
-        print(f"Mobil i samma nät: {lan_url}  PIN: {pin}", flush=True)  # noqa: T201
+    for line in start_lines(g, with_codes=announce_login):
+        print(line, flush=True)  # noqa: T201
 
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -447,8 +445,24 @@ async def start_mission_flow(
     return link, flow
 
 
-def serve(loaded: Loaded) -> int:
-    return asyncio.run(_serve(loaded))
+def start_lines(g: Ground, *, with_codes: bool) -> list[str]:
+    """The operator's start-up lines. Without codes no login code or PIN is even created:
+    a launcher that logs our output fetches its own link with ``sd-ground login-link``."""
+    if not with_codes:
+        lines = ["Searchdrone markstation körs. Ny inloggningslänk: sd-ground login-link"]
+        if g.config.lan.enabled:
+            lines.append("Mobil i samma nät: sd-ground pair")
+        return lines
+    _code, url = g.login_link()
+    lines = [f"Searchdrone markstation körs. Öppna panelen: {url}"]
+    if g.config.lan.enabled:
+        _c, pin, lan_url = g.pair()
+        lines.append(f"Mobil i samma nät: {lan_url}  PIN: {pin}")
+    return lines
+
+
+def serve(loaded: Loaded, *, announce_login: bool = True) -> int:
+    return asyncio.run(_serve(loaded, announce_login=announce_login))
 
 
 def openapi_documents() -> dict[str, dict[str, Any]]:

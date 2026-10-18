@@ -389,12 +389,24 @@
         "kind": {
           "enum": [
             "pin",
-            "area"
+            "area",
+            "path"
           ],
           "type": "string"
         },
         "label": {
           "type": "string"
+        },
+        "length_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "mission_id": {
           "format": "uuid",
@@ -425,7 +437,8 @@
         "kind": {
           "enum": [
             "pin",
-            "area"
+            "area",
+            "path"
           ],
           "type": "string"
         },
@@ -1355,7 +1368,6 @@
           "anyOf": [
             {
               "enum": [
-                "local",
                 "jev",
                 "openai_decisions"
               ],
@@ -2150,7 +2162,6 @@
         },
         "engine": {
           "enum": [
-            "local",
             "jev",
             "openai_decisions"
           ],
@@ -2160,7 +2171,6 @@
           "anyOf": [
             {
               "enum": [
-                "local",
                 "jev",
                 "openai_decisions"
               ],
@@ -2249,7 +2259,7 @@
             {
               "enum": [
                 "cloud",
-                "local"
+                "command"
               ],
               "type": "string"
             },
@@ -2460,7 +2470,7 @@
             {
               "enum": [
                 "cloud",
-                "local"
+                "command"
               ],
               "type": "string"
             },
@@ -2940,6 +2950,92 @@
       "title": "FollowMeParams",
       "type": "object"
     },
+    "FollowPathAiParams": {
+      "additionalProperties": false,
+      "properties": {
+        "alt_m": {
+          "anyOf": [
+            {
+              "minimum": 5.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "pattern": "^pa-[0-9]{1,3}$",
+          "type": "string"
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "FollowPathAiParams",
+      "type": "object"
+    },
+    "FollowPathParams": {
+      "additionalProperties": false,
+      "description": "Fly a drawn line point by point at one height, then hover at its last point.\n\n``points`` come from the pilot's drawn path (sd-brain resolves ``pa-<n>``, and the\nground checks that they are that path's points); the model never writes them.\n``label`` is that path's name, for the card and the map.",
+      "properties": {
+        "alt_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "pattern": "^pa-[0-9]{1,3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/LatLon"
+          },
+          "maxItems": 50,
+          "minItems": 2,
+          "type": "array"
+        },
+        "speed_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "points",
+        "alt_m"
+      ],
+      "title": "FollowPathParams",
+      "type": "object"
+    },
     "FollowTrackParams": {
       "additionalProperties": false,
       "description": "Stage 2. The target moves; every set-point is checked onboard. Unresolved here.",
@@ -3161,6 +3257,10 @@
         },
         "resolved": {
           "default": true,
+          "type": "boolean"
+        },
+        "route_energy": {
+          "default": false,
           "type": "boolean"
         },
         "speed_ms": {
@@ -5656,6 +5756,12 @@
             }
           ]
         },
+        "paths": {
+          "items": {
+            "$ref": "#/$defs/Annotation"
+          },
+          "type": "array"
+        },
         "paused_by": {
           "anyOf": [
             {
@@ -6481,6 +6587,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "path": {
+          "default": false,
+          "type": "boolean"
+        },
         "seq_offset": {
           "maximum": 1,
           "minimum": 0,
@@ -6656,7 +6766,7 @@
             {
               "enum": [
                 "cloud",
-                "local"
+                "command"
               ],
               "type": "string"
             },

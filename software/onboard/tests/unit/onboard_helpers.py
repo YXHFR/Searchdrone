@@ -37,7 +37,15 @@ from sd_testing import FakeClock
 
 HOME_LAT, HOME_LON, HOME_ALT = CMAC_HOME
 PLANE = Plane(HOME_LAT, HOME_LON)
-ONBOARD_SKILLS = ["takeoff", "goto", "survey_sector", "hold", "resume", "return_home"]
+ONBOARD_SKILLS = [
+    "takeoff",
+    "goto",
+    "survey_sector",
+    "follow_path",
+    "hold",
+    "resume",
+    "return_home",
+]
 _M_PER_DEG = 111_320.0
 
 

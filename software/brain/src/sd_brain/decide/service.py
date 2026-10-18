@@ -1,4 +1,4 @@
-"""``DecisionService``: the best available engine decides, the local engine is the reserve.
+"""``DecisionService``: the best available hosted engine decides.
 
 All configured engines are asked at once. The answer used is the one from the highest
 ranked engine that answers within the time limit; when a better engine fails or is too

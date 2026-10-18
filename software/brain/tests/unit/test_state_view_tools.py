@@ -326,9 +326,9 @@ def test_no_setting_drops_the_start_request() -> None:
 @pytest.mark.parametrize(
     ("state", "want"),
     [
-        ("HOLD", {"goto", "survey_sector", "hold", "resume", "return_home"}),
-        ("TRANSIT", {"goto", "survey_sector", "hold", "return_home"}),
-        ("SURVEY", {"goto", "survey_sector", "hold", "return_home"}),
+        ("HOLD", {"goto", "survey_sector", "follow_path", "hold", "resume", "return_home"}),
+        ("TRANSIT", {"goto", "survey_sector", "follow_path", "hold", "return_home"}),
+        ("SURVEY", {"goto", "survey_sector", "follow_path", "hold", "return_home"}),
         ("TAKEOFF", {"return_home"}),
         ("RTL", {"return_home"}),
         ("LAND", set()),
@@ -337,8 +337,70 @@ def test_no_setting_drops_the_start_request() -> None:
     ],
 )
 def test_onboard_skills_only_from_their_executor_states(state: str | None, want: set[str]) -> None:
-    s = situation(vehicle={"executor_state": state})
+    s = situation(vehicle={"executor_state": state}, charter=_allowing("follow_path"))
     moving = {k.name for k in REG if k.allowed_from}
     assert _names(s) & moving == want
     # Mirrors the registry: exactly the onboard skills the executor may start from here.
     assert want == {k.name for k in REG if state in k.allowed_from and k.name != "takeoff"}
+
+
+def _allowing(*extra: str) -> dict[str, Any]:
+    """The fixture's charter, also allowing ``extra`` (its list predates them)."""
+    charter = situation().charter
+    assert charter is not None
+    return {"allowed_skills": [*charter.allowed_skills, *extra]}
+
+
+def _drawn_path(label: str = "pa-1") -> dict[str, Any]:
+    s = situation()
+    return {
+        "id": str(new_id()),
+        "mission_id": str(s.mission_id),
+        "kind": "path",
+        "label": label,
+        "geometry": {
+            "type": "LineString",
+            "coordinates": [[149.1652, -35.3630], [149.1660, -35.3620], [149.1670, -35.3625]],
+        },
+        "created_by": "operator:demo",
+        "created_at": "2026-10-18T12:00:00Z",
+        "area_m2": None,
+        "length_m": 230.0,
+    }
+
+
+def test_adapt_follow_path_takes_the_points_from_the_drawn_path() -> None:
+    s = situation(paths=[_drawn_path()])
+    out = adapt("follow_path", {"path": "pa-1", "rationale_sv": "längs bäcken"}, s)
+    assert out == {
+        "points": [
+            {"lat": -35.3630, "lon": 149.1652},
+            {"lat": -35.3620, "lon": 149.1660},
+            {"lat": -35.3625, "lon": 149.1670},
+        ],
+        "alt_m": 40,
+        "label": "pa-1",
+    }
+    assert adapt("follow_path", {"path": "pa-1", "alt_m": 25, "speed_ms": 4}, s)["speed_ms"] == 4
+    with pytest.raises(AdaptError, match="unknown path pa-2; known: pa-1"):
+        adapt("follow_path", {"path": "pa-2"}, s)
+
+
+def test_follow_path_tool_names_a_path_and_never_takes_coordinates() -> None:
+    s = situation(paths=[_drawn_path()], charter=_allowing("follow_path"))
+    tool = next(
+        t
+        for t in exposed_tools(REG, s, empty_memory(s.mission_id), dt.datetime.now(dt.UTC))
+        if t.name == "follow_path"
+    )
+    props = tool.openai["function"]["parameters"]["properties"]
+    assert set(props) == {"path", "alt_m", "speed_ms", "rationale_sv"}
+    assert tool.openai["function"]["parameters"]["additionalProperties"] is False
+
+
+def test_the_situation_text_lists_drawn_paths() -> None:
+    from sd_brain.context import situation_text
+
+    text = situation_text(situation(paths=[_drawn_path()]), dt.datetime.now(dt.UTC))
+    line = next(x for x in text.splitlines() if x.startswith("Ritade vägar"))
+    assert '"pa-1" 3 punkter 0,2 km' in line and "follow_path" in line

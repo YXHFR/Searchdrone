@@ -1040,7 +1040,8 @@ dd {
   border-top: 2px solid var(--c-warn);
 }
 .map-note,
-.map-cursor {
+.map-cursor,
+.map-path-progress {
   position: absolute;
   margin: 0;
   padding: 4px 8px;
@@ -1057,4 +1058,10 @@ dd {
   right: 8px;
   bottom: 36px;
   color: var(--c-mute);
+}
+.map-path-progress {
+  left: 8px;
+  bottom: 36px;
+  border: 1px solid var(--c-warn);
+  font-weight: 600;
 }

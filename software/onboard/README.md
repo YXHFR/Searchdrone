@@ -32,7 +32,7 @@ holds.
 | `executor/authority.py` | Compare-and-set and the classification of mode changes |
 | `executor/limits.py` | `LimitMonitor` and the effective pilot position |
 | `executor/override.py` | STOP / FLY HOME notices, the stop latch, the pilot's takeover |
-| `skills/` | The handlers: `takeoff`, `goto`, `survey_sector`, `hold`, `resume`, `return_home` |
+| `skills/` | The handlers: `takeoff`, `goto`, `survey_sector`, `follow_path`, `hold`, `resume`, `return_home` |
 | `io/` | `executor_state.json` (restart) and the parameter files (PF6) |
 | `link_client.py` | SD-link onboard: inbound orders, outbound Acks, events and snapshots |
 | `config.py`, `app.py`, `logs.py` | Configuration, start checks, the process, masked logs |

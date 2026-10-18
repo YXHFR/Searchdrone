@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { PRESET_IDS } from "../layout/layoutModel";
-import { useBrainState } from "../state/brain";
+import { useBrainEngine, useBrainState, useCommandMode } from "../state/brain";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
@@ -46,6 +46,9 @@ function StatusPills() {
   const ws = useLiveStore((s) => s.ws);
   const mission = useLiveStore((s) => s.mission);
   const brain = useBrainState();
+  const engine = useBrainEngine();
+  // The command mode (no AI chat) shows as its own state, whatever the process says.
+  const command = useCommandMode();
   const busy = useLiveStore((s) => s.brainBusy);
   const rtl = useSessionStore(
     (s) => mission?.limits.battery_rtl_pct ?? s.config?.limits_default.battery_rtl_pct ?? 15,
@@ -61,11 +64,15 @@ function StatusPills() {
   const ai =
     brain === "down"
       ? "pills.ai.down"
-      : busy
-        ? "pills.ai.busy"
-        : brain === "ok"
-          ? "pills.ai.ready"
-          : "pills.ai.unknown";
+      : command
+        ? "pills.ai.command"
+        : busy
+          ? "pills.ai.busy"
+          : brain === "ok"
+            ? engine === "cloud"
+              ? "pills.ai.cloud"
+              : "pills.ai.ready"
+            : "pills.ai.unknown";
 
   return (
     <div className="pills">
@@ -91,7 +98,7 @@ function StatusPills() {
           {t(mission.autonomy_mode === "WITHIN_CHARTER" ? "pills.mode.b" : "pills.mode.a")}
         </Pill>
       ) : null}
-      <Pill tone={brain === "down" ? "red" : "grey"} testId="pill-ai">
+      <Pill tone={brain === "down" ? "red" : command ? "yellow" : "grey"} testId="pill-ai">
         {t(ai)}
       </Pill>
       {ws === "down" ? (

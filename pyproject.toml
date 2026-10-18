@@ -100,7 +100,7 @@ markers = [
   "slow: > 10 s",
   # simulator tests (also registered by sd_sim.pytest_plugin)
   "gz: needs Gazebo (local only)",
-  "llm: needs the local language model (local only, never in CI)",
+  "llm: needs the cloud model (the owner's key; never in CI)",
   "nightly: runs only in the scheduled nightly suite",
   "script(name): script for the scripted commander",
   "budget_s(seconds): estimated wall time of a SITL test, stack start included",

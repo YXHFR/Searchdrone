@@ -345,7 +345,7 @@ class Harness:
         rules the flight controller breaks (read only). Every SITL flight test calls it
         before it flies: a weakened safety parameter fails the test, it is never retried.
         ``layer`` is a test's own parameter layer: its values are then the exact rule, and
-        it may only make a rule stricter (``sd_sim.params.TEST_LAYER_OVERRIDES``)."""
+        it may only set the values ``sd_sim.params.TEST_LAYER_OVERRIDES`` allows."""
         from sd_sim.params import ParamFileError, layer_rules, rule_violations
 
         try:

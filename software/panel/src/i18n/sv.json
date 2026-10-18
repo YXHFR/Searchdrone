@@ -83,6 +83,8 @@
     },
     "ai": {
       "ready": "AI klar",
+      "cloud": "AI klar (moln)",
+      "command": "Kommandoläge",
       "busy": "AI tänker",
       "down": "AI borta",
       "unknown": "AI okänd"
@@ -148,7 +150,8 @@
         "target": "Aktuellt mål",
         "track": "Flugen bana",
         "areas": "Ritade områden",
-        "pins": "Nålar"
+        "pins": "Nålar",
+        "paths": "Ritade vägar"
       }
     },
     "video": {
@@ -196,7 +199,14 @@
     "older": "Hämta äldre meddelanden",
     "tooLong": "För långt meddelande",
     "thinking": "AI:n tänker… {{s}} s",
-    "brainDegraded": "AI:n svarar inte. Kommandoläge: skriv 'hjälp' för kommandon.",
+    "brainDegraded": "AI:n svarar inte. Kommandoläge: skriv 'hjälp' eller använd knapparna.",
+    "commandButtons": "Fasta kommandon",
+    "command": {
+      "status": "Status",
+      "hold": "Håll position",
+      "resume": "Fortsätt sökningen",
+      "help": "Hjälp"
+    },
     "brainDown": "AI:n är nere. Använd STOPP, FLYG HEM och Fortsätt."
   },
   "orders": {
@@ -246,7 +256,10 @@
       "ground": "Markstation",
       "mavlink": "MAVLink",
       "sdlink": "SD-link",
-      "ai": "AI"
+      "ai": "AI",
+      "engine": "Svarar i chatten",
+      "engineCloud": "molnmodellen",
+      "engineCommand": "kommandoläget"
     },
     "ws": {
       "connecting": "ansluter",
@@ -313,7 +326,8 @@
       "title": "Order: {{skill}}",
       "point": "Flyg till punkt {{lat}}° N {{lon}}° Ö på {{alt}} m",
       "alt": "Höjd {{alt}} m",
-      "area": "Inom ett område på kartan"
+      "area": "Inom ett område på kartan",
+      "path": "Flyg längs vägen {{label}}: {{n}} punkter, {{length}} på {{alt}} m"
     },
     "byAi": "Föreslagen av AI:n",
     "byOperator": "Föreslagen av operatören",
@@ -473,7 +487,8 @@
     "follow_track": "Följ spår",
     "stop_follow": "Sluta följa",
     "follow_me": "Följ mig",
-    "find_me": "Hitta mig"
+    "find_me": "Hitta mig",
+    "follow_path": "Flyg längs väg"
   },
   "reasons": {},
   "draw": {
@@ -487,6 +502,15 @@
     "selfIntersects": "Området korsar sig självt",
     "tooBig": "Området är större än {{cap}} km²",
     "saved": "Område {{label}} sparat ({{ha}} ha). Skriv t.ex. \"sök området jag ritade\".",
-    "failed": "Det gick inte att spara på kartan."
+    "failed": "Det gick inte att spara på kartan.",
+    "path": "Rita väg",
+    "pathHint": "Klicka längs vägen, t.ex. en stig eller en bäck ({{n}} punkter, {{length}}). Tryck Klar när du är nöjd.",
+    "pathTooShort": "En väg behöver minst två punkter.",
+    "pathTooManyPoints": "En väg får ha högst {{max}} punkter.",
+    "pathTooLong": "Vägen är för lång ({{length}}). Den får vara högst {{max}}.",
+    "pathOutside": "Vägen går utanför sökområdet. Rita den inom uppdragsramen.",
+    "pathSaved": "Väg {{label}} sparad ({{n}} punkter, {{length}}). Skriv t.ex. \"flyg vägen {{label}}\".",
+    "pathPlanned": "Föreslagen väg {{label}}: väntar på ditt godkännande",
+    "pathProgress": "Väg {{label}}: {{pct}} % flugen"
   }
 }
