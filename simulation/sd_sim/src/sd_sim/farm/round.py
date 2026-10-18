@@ -44,7 +44,7 @@ SPEC_SCHEMA = "simfarm.spec/v1"
 ROUND_SCHEMA = "simfarm.round/v1"
 COMMANDERS = ("script", "sd-brain")
 EXIT_OK, EXIT_QC, EXIT_NOT_BUILT, EXIT_ERROR = 0, 1, 2, 3
-GRADE_MODULE = "sd_brain.evals.grade"
+GRADE_MODULE = "sd_brain.simeval.farm"
 GRADE_TIMEOUT_S = 600
 DEFAULT_WORLDS = ("sd_lake_forest",)
 # Asked in a child process, so sd_brain is never imported into the farm's own process.
@@ -247,7 +247,7 @@ def grade(
     run: Callable[..., Any] = subprocess.run,
 ) -> dict[str, Any] | None:
     """Let the AI commander grade the round, when this checkout's sd-brain can
-    (``sd_brain.evals.grade`` exists): runs ``python -m sd_brain eval grade --round
+    (``sd_brain.simeval.farm`` exists): runs ``python -m sd_brain eval grade --round
     <out>``, which writes ``grade.json``. ``None`` while there is no grader."""
     if not available():
         return None
@@ -321,7 +321,8 @@ def execute(spec_path: Path, runner: Runner) -> int:
         "credits": credits(raw.truth),
         **raw.extra,
     }
-    if check.ok:
-        result["grade"] = grade(out)
+    # Only a round that passed is graded: a failed one says something about the simulator
+    # or the recording, not about the decision maker.
+    result["grade"] = grade(out) if check.ok else {"skipped": "qc_failed"}
     write_result(out, spec, result)
     return EXIT_OK if check.ok else EXIT_QC

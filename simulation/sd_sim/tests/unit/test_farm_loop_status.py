@@ -273,7 +273,11 @@ def test_status_summary(tmp_path: Path) -> None:
                 "images": 10,
                 "labels": 4,
                 "finished_utc": (now - dt.timedelta(hours=hours_ago)).isoformat(),
-                "grade": {"is_exam": True, "cost_sek": 2.0} if i == 0 else None,
+                "grade": [
+                    {"is_exam": True, "cost_sek": 2.0},
+                    {"is_exam": True, "cost_sek": None},
+                    None,
+                ][i],
             },
         )
     (base / "uploaded.jsonl").write_text('{"round": "r1"}\n')
@@ -281,9 +285,10 @@ def test_status_summary(tmp_path: Path) -> None:
     assert s["state"] == "paused" and s["reason"] == "GPU"
     assert (s["rounds_ok"], s["rounds_failed"], s["images"], s["labels"]) == (2, 1, 20, 8)
     assert s["rounds_per_hour"] == round(1 / status.WINDOW_H, 2)
-    assert (s["exams"], s["exam_cost_sek"]) == (1, 2.0)
+    assert (s["exams"], s["exam_cost_sek"], s["exam_cost_unmeasured"]) == (2, 2.0, 1)
     assert s["not_uploaded"] == ["r0"] and s["storage"] == "R2 (EU)"
     text = status.render(s)
+    assert "2.0 kr (minst; 1 prov utan uppmätt kostnad)" in text
     assert (
         "paused (GPU)" in text and "väntar på uppladdning: 1 varv" in text and "r2: svarta" in text
     )

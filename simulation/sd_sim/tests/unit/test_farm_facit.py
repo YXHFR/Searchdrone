@@ -241,6 +241,7 @@ def test_black_pictures_fail_the_round(tmp_path: Path) -> None:
     result = farm_round.read_result(tmp_path)
     assert result is not None and "svarta" in result["error"]
     assert result["images"] == 5  # black pictures are never kept
+    assert result["grade"] == {"skipped": "qc_failed"}  # never graded
 
 
 def test_facit_that_misses_fails_the_check() -> None:

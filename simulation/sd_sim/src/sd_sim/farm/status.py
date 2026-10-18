@@ -78,7 +78,8 @@ def summary(
     since = now - dt.timedelta(hours=WINDOW_H)
     recent = [r for r in ok if r.get("finished_utc") and _utc(r["finished_utc"]) >= since]
     exams = [r for r in ok if (r.get("grade") or {}).get("is_exam")]
-    cost = sum(float((r.get("grade") or {}).get("cost_sek") or 0.0) for r in exams)
+    costs = [(r.get("grade") or {}).get("cost_sek") for r in exams]
+    cost = sum(float(c) for c in costs if c is not None)
     uploaded = Ledger(base / "uploaded.jsonl").rounds
     running = state.get("state") in ("running", "paused") and alive(state.get("pid"))
     return {
@@ -92,6 +93,7 @@ def summary(
         "rounds_per_hour": round(len(recent) / WINDOW_H, 2),
         "exams": len(exams),
         "exam_cost_sek": round(cost, 2),
+        "exam_cost_unmeasured": sum(1 for c in costs if c is None),
         "storage": "R2 (EU)" if state.get("upload") == "r2" else "lokalt",
         "not_uploaded": (
             [r["round_id"] for r in ok if r.get("round_id") not in uploaded]
@@ -114,7 +116,12 @@ def render(s: Mapping[str, Any]) -> str:
         f"  bilder: {s['images']} med {s['labels']} personrutor",
         f"  varv: {s['rounds_ok']} godkända, {s['rounds_failed']} fel ({s['streak']} fel i rad)",
         f"  varv per timme (senaste {WINDOW_H:g} h): {s['rounds_per_hour']}",
-        f"  prov för AI-befälhavaren: {s['exams']}, kostnad {s['exam_cost_sek']} kr",
+        f"  prov för AI-befälhavaren: {s['exams']}, kostnad {s['exam_cost_sek']} kr"
+        + (
+            f" (minst; {s['exam_cost_unmeasured']} prov utan uppmätt kostnad)"
+            if s["exam_cost_unmeasured"]
+            else ""
+        ),
     ]
     if s["not_uploaded"]:
         lines.append(f"  väntar på uppladdning: {len(s['not_uploaded'])} varv")
