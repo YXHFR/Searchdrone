@@ -74,23 +74,22 @@ async def test_sc10a_ground_restart_mid_search(demo_stack: Stack) -> None:
         await asyncio.to_thread(stack.restart_service, "sd-ground")
         restarted = time.monotonic()
 
-        # 1-2: the GCS heartbeat is back in time; no failsafe mode meanwhile (the test
-        # rig's own channel, independent of the ground station).
-        modes: set[str] = set()
-        while time.monotonic() - restarted < HEALTHY_AFTER_RESTART_S:
-            modes.add(str(stack.harness_state().get("mode", "")))
+        # 1: the GCS heartbeat is back in time (linksim writes its radio log once a second).
+        beats: list[int] = []
+        while not beats and (time.monotonic_ns() - killed_ns) / 1e9 < FS_GCS_TIMEOUT_S:
+            await asyncio.sleep(0.5)
+            beats = gcs_heartbeats_after(stack, killed_ns)
+        assert beats, "ingen HEARTBEAT från 250 efter omstarten"
+        assert (beats[0] - killed_ns) / 1e9 <= FS_GCS_TIMEOUT_S - 2.0
+        # 4 (health): healthy within 15 s of the restart.
+        while True:
             h = await asyncio.to_thread(stack.health)
             if h is not None and h.ready and h.ok("db", "mavlink", "sdlink", "onboard"):
                 break
-            await asyncio.sleep(0.2)
-        else:
-            raise AssertionError(
-                f"markstationen inte frisk {HEALTHY_AFTER_RESTART_S} s efter omstart"
+            assert time.monotonic() - restarted < HEALTHY_AFTER_RESTART_S, (
+                f"markstationen inte frisk {HEALTHY_AFTER_RESTART_S} s efter omstart: {h}"
             )
-        beats = gcs_heartbeats_after(stack, killed_ns)
-        assert beats, "ingen HEARTBEAT från 250 efter omstarten"
-        assert (beats[0] - killed_ns) / 1e9 <= FS_GCS_TIMEOUT_S - 2.0
-        assert not modes & FAILSAFE_MODES, modes
+            await asyncio.sleep(0.2)
 
         # 4: the same mission, charter, chat and running order, with the same ids.
         await d.until(lambda: bool(d.tel), 10, "telemetri efter omstarten")
@@ -106,6 +105,10 @@ async def test_sc10a_ground_restart_mid_search(demo_stack: Stack) -> None:
 
         # 3 and 5: the search goes on, is not sent again, and finishes with its coverage.
         await d.wait_command("survey_sector", "done", 300)
+        # 2: no GCS failsafe from the kill to the end of the search (the track has the
+        # test rig's own channel while the ground station was away).
+        modes = {s.mode for s in d.track if s.t >= killed_ns / 1e9}
+        assert not modes & FAILSAFE_MODES, modes
         surveys = [c for c in await d.commands() if c["skill"] == "survey_sector"]
         assert [c["id"] for c in surveys] == [survey["id"]]
         flown = [(*d.plane.xy(s.lat, s.lon), s.alt_m) for s in d.track if s.t >= t_survey]
