@@ -8,6 +8,12 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- Real flights only use zero-data-retention cloud endpoints: `[cloud.provider] zdr` now
+  defaults to `true` when `profile` is `bench` or `field` and to `false` in `sim`, so
+  OpenRouter gets `provider.zdr = true` for both the main and the fallback model. An
+  explicit `zdr` still wins. `config/brain.toml` files copied from the old example carry
+  `zdr = false`, which keeps zero retention off; remove that line (or set `zdr = true`)
+  before flying.
 - The cloud model is the AI commander and the local language model is gone: no
   llama-server in `compose.yaml`, no `just models-fetch`, `just llm-up`, `just check-model`
   or `just brain-eval-model`, and no local decision engine. Without network or key, or

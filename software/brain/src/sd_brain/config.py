@@ -92,14 +92,14 @@ class ProviderConfig(_Section):
     ``data_collection = "deny"`` keeps the calls away from providers that may store or
     train on the data. ``require_parameters`` routes only to providers that support every
     parameter sent (tools, reasoning). ``zdr`` narrows it to zero-data-retention
-    endpoints. Other OpenAI-compatible APIs ignore or refuse the field: turn it off with
-    ``send = false``.
+    endpoints; left unset it follows the profile (see ``BrainConfig``). Other
+    OpenAI-compatible APIs ignore or refuse the field: turn it off with ``send = false``.
     """
 
     send: bool = True
     data_collection: Literal["allow", "deny"] = "deny"
     require_parameters: bool = True
-    zdr: bool = False
+    zdr: bool | None = None  # None = by profile: true outside sim
     only: list[str] = Field(default_factory=list[str])
     order: list[str] = Field(default_factory=list[str])
 
@@ -231,6 +231,14 @@ class BrainConfig(_Section):
     cloud: CloudConfig = Field(default_factory=CloudConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     behaviour: BehaviourConfig = Field(default_factory=BehaviourConfig)
+
+    @model_validator(mode="after")
+    def _zdr_by_profile(self) -> BrainConfig:
+        # Real flights (bench, field) carry a real search area: only zero-data-retention
+        # endpoints unless zdr is set explicitly.
+        if self.cloud.provider.zdr is None:
+            self.cloud.provider.zdr = self.profile != "sim"
+        return self
 
     @model_validator(mode="after")
     def _scripted_only_in_sim(self) -> BrainConfig:
