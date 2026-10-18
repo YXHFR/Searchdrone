@@ -149,13 +149,24 @@ def test_sitl_jobs_and_aggregate() -> None:
         "sitl-nightly-gz",
         "sitl-e2e",
         "video",
+        "e2e",
+        "e2e-offline",
+        "e2e-nightly",
     }
     assert jobs["sitl-ok"]["if"] == "always()"
-    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl", "video"}
+    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl", "video", "e2e", "e2e-offline"}
     assert "ci_aggregate.jq" in jobs["sitl-ok"]["steps"][-1]["run"]
-    assert jobs["sitl"]["if"] == "needs.changes.outputs.run == 'true'"
-    for name in ("sitl-nightly", "sitl-nightly-gz"):
+    for name in ("sitl", "e2e", "e2e-offline"):
+        assert jobs[name]["if"] == "needs.changes.outputs.run == 'true'", name
+    for name in ("sitl-nightly", "sitl-nightly-gz", "e2e-nightly"):
         assert "schedule" in jobs[name]["if"] and "nightly" in jobs[name]["if"], name
+    runs = {
+        name: " ".join(str(s.get("run", "")) for s in jobs[name]["steps"])
+        for name in ("e2e", "e2e-offline", "e2e-nightly")
+    }
+    assert "just e2e runs=1" in runs["e2e"]
+    assert "just e2e offline=1 runs=1" in runs["e2e-offline"]
+    assert "just e2e runs=10" in runs["e2e-nightly"]
     tests = [s for s in jobs["sitl"]["steps"] if "ci-sitl" in str(s.get("run", ""))]
     assert len(tests) == 1
     assert tests[0]["timeout-minutes"] <= 35
