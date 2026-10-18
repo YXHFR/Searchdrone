@@ -197,6 +197,9 @@ def test_scenario_id() -> None:
     assert scenario_id("test_sc09_x[case-a]") == "SC09"
     assert scenario_id("test_demo_flight") == "test_demo_flight"
     assert scenario_id("test_scale") == "test_scale"
+    assert scenario_id("test_demo_flight", "test_sc01") == "SC01"
+    assert scenario_id("test_sc02_x", "test_sc01") == "SC02"  # the test's own wins
+    assert scenario_id("test_gps_lost", "test_sc_failsafe") == "test_gps_lost"
 
 
 def test_every_simulator_test_writes_its_measurements(tmp_path: Path) -> None:

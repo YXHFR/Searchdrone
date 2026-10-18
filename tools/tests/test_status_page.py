@@ -266,4 +266,5 @@ def test_push_page_waits_for_its_own_commit(tmp_path: Path) -> None:
     assert got["run_id"] == "3" and got["sha"] == f"{3:040x}"
     assert f"head_sha={'a' * 40}&event=push" in got["calls"]
     assert wait_for(tmp_path, "push", sitl_run(2, status="in_progress"))["exit"] == "1"
+    assert wait_for(tmp_path, "push", sitl_run(2, conclusion="cancelled"))["exit"] == "1"
     assert wait_for(tmp_path, "release")["exit"] == "2"

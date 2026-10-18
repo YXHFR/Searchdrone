@@ -31,7 +31,10 @@ deadline=$(($(date +%s) + WAIT_MIN * 60))
 while :; do
     run="$(gh api "$query" | jq -c --arg repo "$REPO" "$pick")"
     if [ -n "$run" ] && [ "$(jq -r .status <<<"$run")" = completed ]; then
-        break
+        case "$(jq -r .conclusion <<<"$run")" in
+            success | failure) break ;;
+            *) echo "sitl-körningen blev $(jq -r .conclusion <<<"$run"): inga resultat att visa"; exit 1 ;;
+        esac
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
         echo "sitl-körningen för $SHA blev inte klar inom $WAIT_MIN min"

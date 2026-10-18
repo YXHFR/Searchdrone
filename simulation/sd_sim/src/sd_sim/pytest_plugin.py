@@ -213,9 +213,10 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
             warnings.warn(f"result.json för {report.nodeid} skrevs inte: {exc}", stacklevel=1)
 
 
-def scenario_id(test_name: str) -> str:
-    """``test_sc02_stop_and_resume`` -> ``SC02``; a name without a scenario stays."""
-    m = _SCENARIO.search(test_name.split("[", 1)[0])
+def scenario_id(test_name: str, module: str = "") -> str:
+    """``test_sc02_stop_and_resume`` -> ``SC02``; else the module's scenario
+    (``test_demo_flight`` in ``test_sc01.py`` -> ``SC01``); else the name stays."""
+    m = _SCENARIO.search(test_name.split("[", 1)[0]) or _SCENARIO.search(module)
     return f"SC{m[1].upper()}" if m else test_name
 
 
@@ -234,7 +235,7 @@ def result_report(item: pytest.Item) -> Report:
     runs = Path(os.environ.get("SD_SIM__RUNS_DIR") or paths.runs_dir())
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     rep = Report(
-        scenario_id(item.name),
+        scenario_id(item.name, item.path.stem),
         runs / f"{stamp}-{label}-i{instance}",
         instance,
         str(item.config.getoption("--physics", "builtin")),
