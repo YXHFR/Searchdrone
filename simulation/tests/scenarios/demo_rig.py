@@ -124,7 +124,7 @@ class Demo:
                 value = await value
             if value:
                 took = time.monotonic() - start
-                measure(what, took, limit_s)
+                measure(what, took, limit_s, passed=True)  # the condition held: passed
                 return took
             if time.monotonic() - start > limit_s:
                 measure(what, time.monotonic() - start, limit_s)

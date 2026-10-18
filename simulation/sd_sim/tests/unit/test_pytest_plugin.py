@@ -241,3 +241,35 @@ def test_every_simulator_test_writes_its_measurements(tmp_path: Path) -> None:
     assert late["passed"] is False
     assert [c["passed"] for c in late["criteria"]] == [False, False]
     assert results["test_video_plain"]["passed"] is True
+
+
+def test_a_repeated_attempt_leaves_one_result(tmp_path: Path) -> None:
+    test = tmp_path / "test_x.py"
+    marker = tmp_path / "first-done"
+    test.write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "from sd_sim.report import measure\n\n"
+        "class InfraError(Exception):\n    pass\n\n"
+        "@pytest.mark.sitl\n@pytest.mark.budget_s(10)\n"
+        "def test_sc02_flaky_rig():\n"
+        f"    first = not Path({str(marker)!r}).exists()\n"
+        f"    Path({str(marker)!r}).touch()\n"
+        "    measure('BRAKE', 9.0 if first else 0.5, 2.0)\n"
+        "    if first:\n"
+        "        raise InfraError('port busy')\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "SD_SIM__REQUIRE_SITL"}
+    env["SD_SIM__RUNS_DIR"] = str(tmp_path / "runs")
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "sd_sim.pytest_plugin", "-q", "-p",
+         "no:cacheprovider", "--reruns", "1", "--only-rerun", "InfraError",
+         "--rootdir", str(tmp_path), "-c", "/dev/null", str(test)],
+        env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert out.returncode == 0, out.stdout
+    assert "1 rerun" in out.stdout
+    results = [json.loads(p.read_text()) for p in (tmp_path / "runs").glob("*/result.json")]
+    assert len(results) == 1, results
+    assert results[0]["passed"] is True
+    assert [c["measured"] for c in results[0]["criteria"]] == [0.5, "passed"]

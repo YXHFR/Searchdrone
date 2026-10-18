@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +105,19 @@ def test_one_red_round_of_several_makes_the_row_red(tmp_path: Path) -> None:
     assert "<dd>0,4 s</dd>" in stop  # the last value measured
 
 
+def test_a_repeated_wait_counts_its_worst_value(tmp_path: Path) -> None:
+    ok, late = brake(0.4), brake(2.6, passed=False)
+    results = write_results(
+        tmp_path / "in", result("test_sc02_stop_and_resume", True, late, ok, brake(0.3))
+    )
+    stop = card(page(tmp_path, "out", results), "STOPP")
+    assert 'class="cap fail"' in stop and "<dd>2,6 s</dd>" in stop
+    results = write_results(
+        tmp_path / "in2", result("test_sc02_stop_and_resume", True, ok, brake(0.3))
+    )
+    assert "<dd>0,3 s</dd>" in card(page(tmp_path, "out2", results), "STOPP")
+
+
 def test_outcome_rows_and_missing_results(tmp_path: Path) -> None:
     results = write_results(tmp_path / "in", result("test_sc18_api_guards", False, scenario="SC18"))
     html = page(tmp_path, "out", results)
@@ -192,3 +207,63 @@ def test_every_capability_names_a_real_test_and_measurement(cap: sp.Capability) 
     assert re.search(rf"^(async )?def {re.escape(test)}\(", SOURCES, re.M), test
     if cap.measure:
         assert f'"{cap.measure}"' in SOURCES, cap.measure
+
+
+WAIT = ROOT / "tools" / "status_page" / "wait_for_sitl.sh"
+REPO = "YXHFR/Searchdrone"
+
+
+def sitl_run(i: int, **kw: Any) -> dict[str, Any]:
+    run: dict[str, Any] = {"id": i, "html_url": f"https://github.com/{REPO}/actions/runs/{i}",
+                           "head_sha": f"{i:040x}", "updated_at": "2026-10-18T10:45:31Z",
+                           "status": "completed", "conclusion": "success", "event": "push",
+                           "head_branch": "main",
+                           "head_repository": {"full_name": REPO}}  # fmt: skip
+    run.update(kw)
+    return run
+
+
+def wait_for(tmp_path: Path, event: str, *runs: dict[str, Any]) -> dict[str, str]:
+    """wait_for_sitl.sh with a stand-in ``gh`` that answers with ``runs``."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    answer = tmp_path / "answer.json"
+    answer.write_text(json.dumps({"workflow_runs": list(runs)}), encoding="utf-8")
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path}/calls\ncat {answer}\n', encoding="utf-8")
+    gh.chmod(0o755)
+    out = tmp_path / "out"
+    out.write_text("", encoding="utf-8")
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "REPO": REPO,
+           "EVENT": event, "SHA": "a" * 40, "GITHUB_OUTPUT": str(out), "WAIT_MIN": "0",
+           "POLL_S": "0"}  # fmt: skip
+    proc = subprocess.run(["bash", str(WAIT)], env=env, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return {"exit": str(proc.returncode), "calls": (tmp_path / "calls").read_text()}
+    lines = out.read_text(encoding="utf-8").splitlines()
+    return dict(line.split("=", 1) for line in lines) | {"calls": (tmp_path / "calls").read_text()}
+
+
+def test_nightly_page_never_shows_a_pull_requests_run(tmp_path: Path) -> None:
+    got = wait_for(
+        tmp_path,
+        "schedule",
+        sitl_run(9, event="pull_request", head_repository={"full_name": "evil/Searchdrone"}),
+        sitl_run(8, event="pull_request"),
+        sitl_run(7, event="push", head_repository={"full_name": "evil/Searchdrone"}),
+        sitl_run(6, conclusion="cancelled"),
+        sitl_run(5, event="schedule", head_repository={"full_name": "yxhfr/searchdrone"}),
+        sitl_run(4),
+    )
+    assert got["run_id"] == "5"
+    assert got["run_url"] == f"https://github.com/{REPO}/actions/runs/5"
+    assert got["date"] == "2026-10-18 10:45 UTC"
+    assert "branch=main&status=completed" in got["calls"]
+
+
+def test_push_page_waits_for_its_own_commit(tmp_path: Path) -> None:
+    got = wait_for(tmp_path, "push", sitl_run(3, conclusion="failure"))
+    assert got["run_id"] == "3" and got["sha"] == f"{3:040x}"
+    assert f"head_sha={'a' * 40}&event=push" in got["calls"]
+    assert wait_for(tmp_path, "push", sitl_run(2, status="in_progress"))["exit"] == "1"
+    assert wait_for(tmp_path, "release")["exit"] == "2"

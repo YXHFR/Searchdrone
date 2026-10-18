@@ -73,9 +73,11 @@ jobs:
           SD_PW_VIDEO: "1"
         run: just test-panel-sitl
       - name: Film from the recordings
+        # Only panel.spec.ts (Playwright names its folders after the spec file): the LAN
+        # test types a pairing PIN, which must not end up in a public film.
         run: |
-          mapfile -t clips < <(find software/panel/test-results -name '*.webm' -printf '%T@ %p\n' \
-            | sort -n | cut -d' ' -f2-)
+          mapfile -t clips < <(find software/panel/test-results -path '*/panel-*' \
+            -name '*.webm' -printf '%T@ %p\n' | sort -n | cut -d' ' -f2-)
           bash tools/status_page/film.sh "$RUNNER_TEMP/film" "${clips[@]}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

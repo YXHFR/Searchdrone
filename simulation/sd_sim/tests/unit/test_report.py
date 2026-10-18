@@ -73,3 +73,6 @@ def test_measure_records_against_the_limit() -> None:
         ("M3", True, 0.97, "min"),
     ]
     assert take_measured() == []
+    # The caller's own verdict wins (a wait that held on the first look past its limit).
+    assert measure("BRAKE", 2.05, 2.0, passed=True) is True
+    assert take_measured()[0].passed is True

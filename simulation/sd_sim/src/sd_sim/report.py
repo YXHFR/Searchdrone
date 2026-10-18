@@ -133,13 +133,22 @@ _measured: list[Criterion] = []
 
 
 def measure(
-    text: str, measured: float, limit: float, *, at_most: bool = True, unit: str = "s"
+    text: str,
+    measured: float,
+    limit: float,
+    *,
+    at_most: bool = True,
+    unit: str = "s",
+    passed: bool | None = None,
 ) -> bool:
     """Record one measured value against its limit for the running test's result.json.
 
     ``at_most``: the value passes when it is at most ``limit`` (a time to react); else
-    when it is at least ``limit`` (a time something held, a coverage)."""
-    passed = measured <= limit if at_most else measured >= limit
+    when it is at least ``limit`` (a time something held, a coverage). ``passed`` gives
+    the caller's own verdict instead, when its check is not the comparison (a wait whose
+    condition held on the first look after the deadline still passed)."""
+    if passed is None:
+        passed = measured <= limit if at_most else measured >= limit
     cid = f"M{len(_measured) + 1}"
     _measured.append(
         Criterion(

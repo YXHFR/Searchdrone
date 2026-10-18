@@ -132,7 +132,13 @@ def criteria(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def criterion(result: dict[str, Any], text: str) -> dict[str, Any] | None:
-    return next((c for c in criteria(result) if c.get("text") == text), None)
+    """The last value measured under ``text``; red when any of them was out of its limit."""
+    found = [c for c in criteria(result) if c.get("text") == text]
+    if not found:
+        return None
+    if any(c.get("passed") is False for c in found):
+        return next(c for c in reversed(found) if c.get("passed") is False)
+    return found[-1]
 
 
 def expected_of(c: dict[str, Any]) -> str:
