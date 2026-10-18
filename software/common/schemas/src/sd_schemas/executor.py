@@ -65,6 +65,7 @@ class SurveyResumePoint(SdModel):
     seq_offset: int = Field(ge=0, le=1)  # 0 = original mission; 1 = resumed
     next_index: int = Field(ge=0)  # the point the vehicle was heading for
     interrupted_at: LatLon
+    path: bool = False  # the points are a drawn path (follow_path): resumes in TRANSIT
 
     @model_validator(mode="after")
     def _indices(self) -> SurveyResumePoint:

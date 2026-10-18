@@ -13,11 +13,13 @@ Script format (``simulation/scenarios/scripts/SCxx.yaml``)::
         when: {skill: goto, status: done}
         action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40}}
 
-``fixture:<pin>`` under ``at`` becomes ``lat``/``lon`` (``at: here`` is the drone's
-position in the turn's situation); ``fixture:<area>`` under
-``polygon`` becomes a GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}``
-sends that charter from the fixture. ``delay_s`` delays the turn and
-``fail: timeout | crash`` simulates a broken backend. Unknown keys refuse to load.
+``ai: true`` on an action sends the parameters in the model's form through the adapter
+(``{path: pa-1}`` becomes the drawn path's points). ``fixture:<pin>`` under ``at``
+becomes ``lat``/``lon`` (``at: here`` is the drone's position in the turn's situation);
+``fixture:<area>`` under ``polygon`` becomes a GeoJSON polygon;
+``charter_proposal: {from_fixture: <name>}`` sends that charter from the fixture.
+``delay_s`` delays the turn and ``fail: timeout | crash`` simulates a broken backend.
+Unknown keys refuse to load.
 """
 
 from __future__ import annotations
@@ -79,6 +81,9 @@ class _Strict(BaseModel):
 class ScriptAction(_Strict):
     skill: str
     params: dict[str, Any] = Field(default_factory=dict[str, Any])
+    # The parameters are in the model's form (e.g. ``{path: pa-1}``) and go through the
+    # same adapter as a language model's, against the live situation.
+    ai: bool = False
 
 
 class ScriptTurn(_Strict):
@@ -310,7 +315,7 @@ class ScriptedBackend:
                 skill=t.action.skill,
                 params=_resolve(t.action.params, self.fixture, turn),
                 rationale_sv="Steg i manuset.",
-                adapted=True,
+                adapted=not t.action.ai,
             )
         out.diagnostics.latency_ms = int((time.monotonic() - start) * 1000)
         return out

@@ -96,7 +96,17 @@ jobs:
             just test-panel-e2e
             pnpm --filter @searchdrone/panel screens
           fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Screenshots of the drawn-path flow
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: panel-e2e-screenshots
+          path: software/panel/test-results/path-flow/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Panel screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: panel-screens
           path: software/panel/screens/

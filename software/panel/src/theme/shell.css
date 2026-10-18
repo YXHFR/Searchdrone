@@ -586,6 +586,11 @@
   border: 1px solid var(--c-line-strong);
   border-radius: var(--r-2);
 }
+/* The drawing bar sits at the map's foot; while it is open the small window moves to the top. */
+.stage:has(.is-main .map-draw) :is(.surface.is-pip, .no-camera) {
+  top: 48px;
+  bottom: auto;
+}
 .surface > .view-body,
 .surface > .map-wrap {
   height: 100%;

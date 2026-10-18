@@ -37,7 +37,7 @@ from sd_sim.report import Report, take_measured
 MARKERS = (
     "sitl: needs ArduPilot SITL",
     "gz: needs Gazebo (local only)",
-    "llm: needs the local language model (local only, never in CI)",
+    "llm: needs the cloud model (the owner's key; never in CI)",
     "nightly: runs only in the scheduled nightly suite",
     "script(name): script for the scripted commander",
     "budget_s(seconds): estimated wall time of a SITL test, stack start included",
@@ -138,9 +138,7 @@ def _int_option(config: pytest.Config, name: str) -> int:
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("searchdrone simulator")
     group.addoption("--physics", choices=("builtin", "gz"), default="builtin")
-    group.addoption(
-        "--brain", choices=("scripted", "grammar", "llm_local", "none"), default="scripted"
-    )
+    group.addoption("--brain", choices=("scripted", "grammar", "cloud", "none"), default="scripted")
     group.addoption("--shard-id", type=int, default=1, help="1-based shard number")
     group.addoption("--num-shards", type=int, default=1)
 

@@ -6,6 +6,7 @@ import {
   Maximize2,
   Pencil,
   Pentagon,
+  Route,
   Square,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -42,6 +43,8 @@ import {
   targetData,
   trackData,
 } from "./mapData";
+import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";
+import { usePathOverlay } from "./pathOverlay";
 
 export function hasWebGL2(): boolean {
   try {
@@ -70,11 +73,12 @@ function compactAttribution(): boolean {
 
 type MapLike = import("maplibre-gl").Map;
 type MapMod = typeof import("./createMap");
-type DrawMode = "none" | "polygon" | "rectangle" | "pin";
+type DrawMode = "none" | "polygon" | "rectangle" | "path" | "pin";
+type ToggleId = SourceId | "paths";
 async function noPin(_p: [number, number]): Promise<void> {}
 
 const LAYERS_KEY = "sd.panel.map.layers.v1";
-const TOGGLES: SourceId[] = [
+const TOGGLES: ToggleId[] = [
   "charter-preview",
   "sectors",
   "swept",
@@ -84,14 +88,15 @@ const TOGGLES: SourceId[] = [
   "track",
   "areas",
   "pins",
+  "paths",
 ];
 const TRACK_EVERY_MS = 500;
 
-function loadHidden(): SourceId[] {
+function loadHidden(): ToggleId[] {
   try {
     const raw = JSON.parse(localStorage.getItem(LAYERS_KEY) ?? "[]") as unknown;
     return Array.isArray(raw)
-      ? (raw.filter((x) => TOGGLES.includes(x as SourceId)) as SourceId[])
+      ? (raw.filter((x) => TOGGLES.includes(x as ToggleId)) as ToggleId[])
       : [];
   } catch {
     return [];
@@ -156,7 +161,7 @@ export default function MapView({ isCompact }: ViewProps) {
   const [ready, setReady] = useState(false);
   const [mode, setMode] = useState<DrawMode>("none");
   const [points, setPoints] = useState<[number, number][]>([]);
-  const [hidden, setHidden] = useState<SourceId[]>(loadHidden);
+  const [hidden, setHidden] = useState<ToggleId[]>(loadHidden);
   const [cursor, setCursor] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
   const modeRef = useRef(mode);
@@ -257,13 +262,15 @@ export default function MapView({ isCompact }: ViewProps) {
   useEffect(() => {
     const h = handle.current;
     if (!ready || !h) return;
-    for (const id of TOGGLES) h.mod.setVisible(h.map, id, !hidden.includes(id));
+    for (const id of TOGGLES) if (id !== "paths") h.mod.setVisible(h.map, id, !hidden.includes(id));
     try {
       localStorage.setItem(LAYERS_KEY, JSON.stringify(hidden));
     } catch {
       // not remembered
     }
   }, [hidden, ready]);
+
+  const shownPath = usePathOverlay(ready, handle, !hidden.includes("paths"));
 
   // The drawing in progress.
   useEffect(() => {
@@ -287,7 +294,7 @@ export default function MapView({ isCompact }: ViewProps) {
         void savePinRef.current(p);
       } else if (m === "rectangle") {
         setPoints((prev) => (prev.length === 1 && prev[0] ? rectangle(prev[0], p) : [p]));
-      } else if (m === "polygon") {
+      } else if (m === "polygon" || m === "path") {
         setPoints((prev) => [...prev, p]);
       }
     };
@@ -307,12 +314,13 @@ export default function MapView({ isCompact }: ViewProps) {
   }, [mode, ready]);
 
   async function postAnnotation(
-    kind: "pin" | "area",
+    kind: "pin" | "area" | "path",
     geometry: unknown,
   ): Promise<Annotation | null> {
     if (!missionId) return null;
     const attempt = (anns: Annotation[]): Promise<Annotation> => {
-      const body = { kind, label: nextLabel(anns, kind), geometry };
+      const label = kind === "path" ? nextPathLabel(anns) : nextLabel(anns, kind);
+      const body = { kind, label, geometry };
       return api<Annotation>(paths.missionAnnotations(missionId), { method: "POST", body });
     };
     try {
@@ -339,7 +347,7 @@ export default function MapView({ isCompact }: ViewProps) {
 
   savePinRef.current = savePin;
 
-  function startDraw(m: "polygon" | "rectangle"): void {
+  function startDraw(m: "polygon" | "rectangle" | "path"): void {
     if (mode === m) {
       cancelDraw();
       return;
@@ -371,6 +379,36 @@ export default function MapView({ isCompact }: ViewProps) {
         t("draw.saved", {
           label: a.label,
           ha: new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 }).format(m2 / 10_000),
+        }),
+      );
+      cancelDraw();
+      useShellStore.getState().showTab("chat");
+    } catch (e) {
+      setDrawError(e instanceof HttpError ? e.message : t("draw.failed"));
+    }
+  }
+
+  async function finishPath(): Promise<void> {
+    const live = useLiveStore.getState();
+    const charter = activeCharter(
+      useMissionStore.getState(),
+      live.mission?.active_charter_id ?? null,
+    );
+    const problem = pathProblem(points, charter?.body.area ?? null);
+    if (problem) {
+      const { key, ...values } = problem;
+      setDrawError(t(key, values));
+      return;
+    }
+    try {
+      const a = await postAnnotation("path", { type: "LineString", coordinates: points });
+      if (!a) return;
+      useMissionStore.getState().upsertAnnotation(a);
+      useUiStore.getState().toast(
+        t("draw.pathSaved", {
+          label: a.label,
+          n: points.length,
+          length: formatLength(lengthM(points)),
         }),
       );
       cancelDraw();
@@ -501,6 +539,19 @@ export default function MapView({ isCompact }: ViewProps) {
                 <button
                   type="button"
                   className="menu-item"
+                  data-testid="draw-path"
+                  aria-pressed={mode === "path"}
+                  onClick={() => {
+                    close();
+                    startDraw("path");
+                  }}
+                >
+                  <Route aria-hidden="true" size={15} />
+                  {t("draw.path")}
+                </button>
+                <button
+                  type="button"
+                  className="menu-item"
                   data-testid="draw-pin"
                   aria-pressed={mode === "pin"}
                   onClick={() => {
@@ -524,15 +575,20 @@ export default function MapView({ isCompact }: ViewProps) {
               ? t("draw.pinHint")
               : mode === "rectangle"
                 ? t("draw.rectangleHint")
-                : t("draw.polygonHint", { n: points.length })}
+                : mode === "path"
+                  ? t("draw.pathHint", {
+                      n: points.length,
+                      length: formatLength(lengthM(points)),
+                    })
+                  : t("draw.polygonHint", { n: points.length })}
           </span>
           {mode !== "pin" ? (
             <button
               type="button"
               className="btn btn-small btn-primary"
               data-testid="draw-done"
-              disabled={points.length < 3}
-              onClick={() => void finishArea()}
+              disabled={points.length < (mode === "path" ? 2 : 3)}
+              onClick={() => void (mode === "path" ? finishPath() : finishArea())}
             >
               {t("draw.done")}
             </button>
@@ -542,6 +598,14 @@ export default function MapView({ isCompact }: ViewProps) {
           </button>
           {drawError ? <span className="error">{drawError}</span> : null}
         </div>
+      ) : null}
+      {shownPath ? (
+        <p className="map-path-progress" role="status" data-testid="path-progress">
+          {t(shownPath.running || shownPath.pct >= 100 ? "draw.pathProgress" : "draw.pathPlanned", {
+            label: String((shownPath.command.params as { label?: unknown }).label ?? ""),
+            pct: Math.round(shownPath.pct),
+          })}
+        </p>
       ) : null}
       {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
     </div>

@@ -2,8 +2,7 @@
 # Fresh WSL2 Ubuntu 24.04 (or CI / cloud container) -> ready development environment.
 # Idempotent and non-interactive: `bash tools/bootstrap.sh </dev/null` must work.
 # Uses sudo only for apt. Expects git, curl and python3 (Ubuntu 24.04 has 3.12).
-# The simulator, AI model and maps are NOT downloaded here (just sim-setup,
-# just models-fetch, just maps-fetch).
+# The simulator and maps are NOT downloaded here (just sim-setup, just maps-fetch).
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.local/share/searchdrone/node/bin:$PATH"

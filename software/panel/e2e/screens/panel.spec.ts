@@ -20,7 +20,7 @@ import { expect, type FakeGround, test } from "../helpers/fakeGround";
 import { layoutOf, showView } from "../helpers/safety";
 
 const OUT = fileURLToPath(new URL("../../screens/", import.meta.url));
-const FRAME = readFileSync(new URL("../fixtures/aerial-frame.jpg", import.meta.url));
+const FRAME = readFileSync(new URL("../testdata/aerial-frame.jpg", import.meta.url));
 const WHEP = "/api/v1/video/sim-01/main/whep";
 const MAP: MapConfig = {
   pack_url: "/tiles/fixture.pmtiles",

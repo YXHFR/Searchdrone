@@ -8,6 +8,7 @@
 - {id: T5, from: [TAKEOFF], trigger: [takeoff_timeout, skill_failed, order_cancel], to: [HOLD, PREFLIGHT], guard: airborne_or_ground}
 - {id: T6, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:goto"], to: [TRANSIT], guard: always}
 - {id: T7, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:survey_sector"], to: [SURVEY], guard: always}
+- {id: T7b, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:follow_path"], to: [TRANSIT], guard: always}
 - {id: T8, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:hold"], to: [HOLD], guard: always}
 - {id: T9, from: [HOLD], trigger: ["skill:resume"], to: [TRANSIT, SURVEY], guard: resume_target}
 - {id: T10, from: [TAKEOFF, TRANSIT, SURVEY, HOLD], trigger: ["skill:return_home"], to: [RTL], guard: always}

@@ -104,7 +104,8 @@
   border-top: 2px solid var(--c-acc);
 }
 .map-note,
-.map-cursor {
+.map-cursor,
+.map-path-progress {
   position: absolute;
   margin: 0;
   padding: 3px 8px;
@@ -124,8 +125,15 @@
   color: var(--c-mute);
   font-variant-numeric: tabular-nums;
 }
+.map-path-progress {
+  left: 8px;
+  bottom: 28px;
+  border-color: var(--c-warn);
+  font-weight: 600;
+}
 .surface.is-pip .map-tools,
 .surface.is-pip .map-cursor,
+.surface.is-pip .map-path-progress,
 .surface.is-pip .map-note,
 .surface.is-pip .maplibregl-ctrl-top-right,
 .surface.is-pip .maplibregl-ctrl-bottom-left {

@@ -39,7 +39,7 @@ cloudflared/
 /logs/
 /terrain/
 
-# --- Local AI model files (B1-10, downloaded by just models-fetch) ---
+# --- AI model files (none are downloaded any more; kept out of git) ---
 /models/
 *.gguf
 *.tlog

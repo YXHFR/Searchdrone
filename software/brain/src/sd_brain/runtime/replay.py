@@ -39,7 +39,6 @@ def _reply(raw: dict[str, Any]) -> ModelReply:
         prompt_tokens=int(raw.get("prompt_tokens", 0)),
         completion_tokens=int(raw.get("completion_tokens", 0)),
         latency_ms=int(raw.get("latency_ms", 0)),
-        engine="local",
         model_id="replay",
     )
 

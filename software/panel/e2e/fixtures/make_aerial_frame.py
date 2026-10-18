@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "aerial-frame.jpg"
+OUT = HERE.parent / "testdata" / "aerial-frame.jpg"
 W, H = 1280, 720
 RNG = np.random.default_rng(20261018)
 

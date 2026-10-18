@@ -602,7 +602,8 @@ def _wait(url: str, host: str, seconds: float = 30.0) -> httpx.Response:
             time.sleep(0.2)
 
 
-def test_serve_binds_loopback_only(migrated_db: Db, tmp_path: Path) -> None:
+@pytest.mark.parametrize("launcher", [False, True], ids=["operator", "launcher"])
+def test_serve_binds_loopback_only(migrated_db: Db, tmp_path: Path, launcher: bool) -> None:
     panel_port, commander_port = _free_port(), _free_port()
     data = tmp_path / "data"
     token_file = tmp_path / "secrets" / "brain_token"
@@ -620,7 +621,7 @@ def test_serve_binds_loopback_only(migrated_db: Db, tmp_path: Path) -> None:
         "XDG_RUNTIME_DIR": str(tmp_path),
     }
     proc = subprocess.Popen(
-        [sys.executable, "-m", "sd_ground", "serve"],
+        [sys.executable, "-m", "sd_ground", "serve", *(["--no-login-link"] if launcher else [])],
         env={
             **os.environ,
             **env,
@@ -671,7 +672,8 @@ def test_serve_binds_loopback_only(migrated_db: Db, tmp_path: Path) -> None:
         proc.send_signal(signal.SIGTERM)
         out, err = proc.communicate(timeout=20)
     assert proc.returncode == 0, err
-    assert "#login=" in out  # the login link is printed for the operator
+    # The operator gets the login link; a launcher that logs our output gets no code at all.
+    assert ("#login=" in out) is not launcher
     log = (data / "logs" / "sd-ground.jsonl").read_text()
     assert code not in log and code not in err
 

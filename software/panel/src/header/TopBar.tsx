@@ -2,7 +2,7 @@ import { Monitor, Moon, MoreVertical, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { useNow } from "../lib/useNow";
-import { useBrainState } from "../state/brain";
+import { useBrainEngine, useBrainState, useCommandMode } from "../state/brain";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
@@ -128,17 +128,30 @@ function Clock() {
 export function AiStatus() {
   const { t } = useTranslation();
   const brain = useBrainState();
+  const engine = useBrainEngine();
+  // The command mode (no AI chat) shows as its own state, whatever the process says.
+  const command = useCommandMode();
   const busy = useLiveStore((s) => s.brainBusy);
   const ai =
     brain === "down"
       ? "pills.ai.down"
-      : busy
-        ? "pills.ai.busy"
-        : brain === "ok"
-          ? "pills.ai.ready"
-          : "pills.ai.unknown";
+      : command
+        ? "pills.ai.command"
+        : busy
+          ? "pills.ai.busy"
+          : brain === "ok"
+            ? engine === "cloud"
+              ? "pills.ai.cloud"
+              : "pills.ai.ready"
+            : "pills.ai.unknown";
   const tone =
-    brain === "down" ? "bad" : brain === "degraded" ? "warn" : brain === "ok" ? "ok" : "mute";
+    brain === "down"
+      ? "bad"
+      : command || brain === "degraded"
+        ? "warn"
+        : brain === "ok"
+          ? "ok"
+          : "mute";
   return (
     <span className="ai-status" data-tone={tone} data-testid="pill-ai">
       <span className="dot" aria-hidden="true" />
