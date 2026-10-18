@@ -43,6 +43,7 @@ from sd_brain.decide.stop_check import StopCheckResult, stop_check
 from sd_brain.ground_client import GroundApi, GroundError
 from sd_brain.health import HealthState
 from sd_brain.memory import PendingRequest, empty_memory, to_update, with_changes
+from sd_brain.runtime.fallback import EngineName
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.sv import height_m
 from sd_brain.toolcall_parse import truncate
@@ -53,6 +54,7 @@ from sd_brain.turn import (
     OutMessage,
     Trigger,
     TurnDiagnostics,
+    TurnError,
     TurnInput,
     TurnOutput,
 )
@@ -80,6 +82,7 @@ DEADLINE_TEXT = (
     "Jag hann inte svara. Försök igen, eller skriv ett kort kommando "
     "(t.ex. 'håll position', 'flyg hem')."
 )
+COMMAND_MODE_TEXT = "AI:n svarar inte. Kommandoläge: skriv 'hjälp' eller använd knapparna."
 RESUME_TEXT = (
     "Tryck Fortsätt i panelen när det är säkert. Att skriva i chatten släpper inte stoppet."
 )
@@ -168,7 +171,7 @@ class CommanderLoop:
         health: HealthState | None = None,
         decide: DecisionService | None = None,
         clock: LoopClock | None = None,
-        engine: Callable[[], Literal["cloud", "local"] | None] | None = None,
+        engine: Callable[[], EngineName | None] | None = None,
     ) -> None:
         self.ground = ground
         self.backend = backend
@@ -177,7 +180,7 @@ class CommanderLoop:
         self.cfg = cfg
         self.ai_hash = ai_config_hash
         self.clock = clock or LoopClock()
-        self.health = health or HealthState(self.clock.monotonic, has_probe=False)
+        self.health = health or HealthState(self.clock.monotonic)
         self.decide = decide
         self._engine = engine or (lambda: None)
         self.mission_id: str | None = None
@@ -206,14 +209,14 @@ class CommanderLoop:
     # --- status for the heartbeat -----------------------------------------------------
 
     def heartbeat(self) -> dict[str, Any]:
+        engine = self._current_engine()
         status = (
             "degraded"
-            if self.health.degraded
+            if self.health.degraded or engine == "command"
             else ("thinking" if self._busy_since is not None else "idle")
         )
         body: dict[str, Any] = {"status": status, "backend": self._active_backend().name}
-        engine = self._engine()
-        if engine is not None and not self.health.degraded:
+        if engine is not None:
             body["engine"] = engine
         if self._busy_since is not None:
             body["busy_since"] = round(self.clock.monotonic() - self._busy_since, 1)
@@ -221,8 +224,17 @@ class CommanderLoop:
             body["last_turn_ms"] = self._last_turn_ms
         return body
 
+    def _current_engine(self) -> EngineName | None:
+        """``cloud`` or ``command`` for a backend with a model; ``None`` for the others."""
+        engine = self._engine()
+        if engine is not None and self.health.degraded:
+            return "command"
+        return engine
+
     def _active_backend(self) -> CommanderBackend:
-        return self.fallback if self.health.degraded else self.backend
+        if self.health.degraded or self._engine() == "command":
+            return self.fallback
+        return self.backend
 
     # --- mission ------------------------------------------------------------------------
 
@@ -587,8 +599,31 @@ class CommanderLoop:
         err = out.diagnostics.error
         if backend is self.backend:
             self.health.turn(err not in ("deadline", "timeout", "http_error", "parse_error"))
-        if err in ("timeout", "http_error") and not out.messages:
+        if (
+            backend is self.backend
+            and backend is not self.fallback
+            and err in ("timeout", "http_error")
+            and out.action is None
+            and not out.messages
+        ):
+            # The model did not answer: the command mode answers the same turn.
+            out = await self._command_mode(turn, executor, err)
+        elif err in ("timeout", "http_error") and not out.messages:
             out.messages = [OutMessage(text=DEADLINE_TEXT)]
+        return out
+
+    async def _command_mode(
+        self, turn: TurnInput, executor: _ReadTools, err: TurnError | None
+    ) -> TurnOutput:
+        start = self.clock.monotonic()
+        # Runs after the turn deadline, so the fallback must stay pure code with no I/O.
+        out = await self.fallback.decide(turn, executor)
+        if not out.messages and out.action is None and turn.trigger == "operator_message":
+            out.messages = [OutMessage(text=COMMAND_MODE_TEXT)]
+        out.diagnostics.error = err
+        out.diagnostics.engine = "command"
+        if out.diagnostics.latency_ms == 0:
+            out.diagnostics.latency_ms = int((self.clock.monotonic() - start) * 1000)
         return out
 
     # --- carrying out the turn's output -------------------------------------------------
@@ -968,7 +1003,7 @@ class CommanderLoop:
             turn_id=req.request_id,
             trigger=req.purpose,
             backend="rule",
-            engine=used.answer.location if used and used.answer else None,
+            engine="cloud" if used and used.answer and used.answer.location == "cloud" else None,
             model_id=used.answer.model_id if used and used.answer else None,
             ai_config_hash=self.ai_hash,
             prompt_sha256=hashlib.sha256(raw.encode()).hexdigest(),
@@ -1035,8 +1070,10 @@ class _ReadTools:
         return {"error": f"unknown tool {name}"}
 
 
-def _wire_backend(name: str) -> Literal["llm", "grammar", "scripted", "rule", "cloud"]:
-    return {"llm_local": "llm", "grammar": "grammar", "scripted": "scripted"}.get(name, "llm")  # type: ignore[return-value]
+def _wire_backend(name: str) -> Literal["llm", "grammar", "scripted"]:
+    if name == "grammar" or name == "scripted":
+        return name
+    return "llm"
 
 
 def _fmt(value: Any) -> str:
@@ -1056,6 +1093,7 @@ def _what(action: AiAction, req: SkillRequest) -> str:
         "return_home": "flyg hem",
         "report": "rapport",
         "mark_location": "markering",
+        "follow_path": f"flyg längs vägen {req.params.get('label') or ''}".strip(),
     }
     text = names.get(action.skill, action.skill)
     if action.skill == "takeoff" and req.params.get("alt_m") is not None:

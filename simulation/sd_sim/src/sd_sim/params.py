@@ -29,6 +29,7 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("FENCE_ALT_MAX", "==", 125.0),
     ("FENCE_RADIUS", "==", 530.0),
     ("FENCE_MARGIN", "==", 5.0),
+    ("AVOID_ENABLE", "==", 3.0),
     ("BATT_MONITOR", "==", 4.0),
     ("BATT_CAPACITY", "==", 9000.0),
     ("BATT_LOW_MAH", "==", 1350.0),
@@ -49,7 +50,18 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("SCR_ENABLE", "==", 0.0),
 )
 # Prefixes whose every line in the safety file must have a rule above.
-RULED_PREFIXES = ("FS_", "FENCE_", "BATT_", "ARMING_", "DISARM_", "RC_", "RTL_", "SRTL_", "SCR_")
+RULED_PREFIXES = (
+    "FS_",
+    "FENCE_",
+    "AVOID_",
+    "BATT_",
+    "ARMING_",
+    "DISARM_",
+    "RC_",
+    "RTL_",
+    "SRTL_",
+    "SCR_",
+)
 
 # Real flight (searchdrone-safety.parm + searchdrone-safety.field.parm): the same rules,
 # except that the RC transmitter is required, so its failsafe must act.
@@ -58,9 +70,12 @@ FIELD_RULES: tuple[tuple[str, str, float], ...] = tuple(
     for name, op, value in SAFETY_RULES
 )
 # What a test's own parameter layer may change in the strict rules, and to which value:
-# only the real-flight values (stricter than the simulator's). Anything else is refused.
+# the real-flight values (stricter than the simulator's), and AVOID_ENABLE 2 (no braking
+# before the fence) so that SC16b breaches the height fence every time instead of the
+# brake holding the drone just below it. Anything else is refused.
 TEST_LAYER_OVERRIDES: dict[str, frozenset[float]] = {
     "FS_THR_ENABLE": frozenset({FIELD_RC_FAILSAFE}),
+    "AVOID_ENABLE": frozenset({2.0}),
 }
 
 
@@ -70,7 +85,8 @@ def layer_rules(
     """``SAFETY_RULES`` with a test layer's values as exact rules. A layer may not touch a
     ruled name or any name the safety file sets (``safety_names``, by default read from
     ``simulation/sitl/params/searchdrone-safety.parm``) unless ``TEST_LAYER_OVERRIDES``
-    allows that value, so it can never loosen them or change the flight modes."""
+    allows that value, so it can never loosen them (except SC16b's AVOID_ENABLE 2) or
+    change the flight modes."""
     if safety_names is None:
         path = paths.REPO / "simulation" / "sitl" / "params" / "searchdrone-safety.parm"
         safety_names = parse_parm(path.read_text(encoding="utf-8"), path.name)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from sd_ground.api.commander import clean_text
 from sd_ground.app import openapi_documents
 from sd_ground.context import Ground
+from sd_ground.services.health import system_status
 
 BRAIN = "brain-token-for-tests-0123456789abcdef"  # same as conftest.BRAIN_TOKEN
 AUTH = {"Authorization": f"Bearer {BRAIN}"}
@@ -118,7 +120,7 @@ def test_skills_lists_registry(commander: TestClient) -> None:
     res = commander.get("/commander/v1/skills", headers=AUTH)
     assert res.status_code == 200
     names = {s["name"] for s in res.json()}
-    assert len(names) == 18
+    assert len(names) == 19
     assert "takeoff" in names
 
 
@@ -202,6 +204,40 @@ def test_only_one_commander_and_intruders_cannot_take_the_place(
         assert ground.brain_state == "ready"  # the first commander is still the one connected
 
 
+def _until(check: Any, within_s: float = 3.0) -> bool:
+    end = time.monotonic() + within_s
+    while time.monotonic() < end:
+        if check():
+            return True
+        time.sleep(0.02)
+    return check()
+
+
+def test_heartbeat_engine_reaches_the_health_strip(commander: TestClient, ground: Ground) -> None:
+    """The brain says who answers the chat (cloud model or command mode); the ground
+    passes it on in chat.brain_status and /system/status and forgets it when it goes."""
+    url = "ws://127.0.0.1:7700/commander/v1/ws"
+    since = ground.bus.last_seq
+
+    def sent() -> list[Any]:
+        events = ground.bus.replay(ground.bus.server_epoch, since) or []
+        return [e.data["engine"] for e in events if e.type == "chat.brain_status"]
+
+    with commander.websocket_connect(url, headers=AUTH) as ws:
+        ws.receive_json()
+        ws.send_json({"type": "brain.hello", "body": {"server_epoch": None}})
+        ws.receive_json()
+        for status, engine in (("ready", "cloud"), ("degraded", "command"), ("ready", "x")):
+            ws.send_json({"type": "brain.heartbeat", "body": {"status": status, "engine": engine}})
+        assert _until(lambda: len(sent()) == 4)
+        assert ground.brain_state == "ready"
+        assert ground.brain_engine == "command"  # an unknown name keeps the last one
+        assert system_status(ground).brain_engine == "command"
+    assert _until(lambda: ground.brain_state == "down")
+    assert ground.brain_engine is None
+    assert sent() == [None, "cloud", "command", "command", None]
+
+
 def test_commander_resume_stream(commander: TestClient, ground: Ground) -> None:
     url = "ws://127.0.0.1:7700/commander/v1/ws"
     pin = {
@@ -250,3 +286,25 @@ def test_a_new_mission_reaches_the_ai_as_created() -> None:
     assert new["body"]["created"] is True
     later = to_commander(event({"from": "DRAFT", "to": "READY", "state_seq": 2}))
     assert later is not None and later["body"]["created"] is False
+
+
+def test_a_drawn_path_reaches_the_ai_by_its_name_only() -> None:
+    import datetime as dt
+
+    from sd_ground.api.commander import to_commander
+    from sd_ground.bus import BusEvent
+
+    ts = dt.datetime(2026, 10, 18, tzinfo=dt.UTC)
+    data = {
+        "id": "a1",
+        "kind": "path",
+        "label": "pa-1",
+        "length_m": 420.0,
+        "geometry": {
+            "type": "LineString",
+            "coordinates": [[149.16523, -35.36326], [149.16583, -35.36226]],
+        },
+    }
+    out = to_commander(BusEvent(6, ts, "mission", "annotation.created", "sim-01", "M2", data))
+    assert out is not None and out["type"] == "event.path_drawn"
+    assert out["body"] == {"path_id": "pa-1", "length_m": 420.0}

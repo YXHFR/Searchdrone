@@ -30,7 +30,7 @@ REJECT = {
 class Steps:
     """A backend that returns prepared outputs, one per turn, and records its inputs."""
 
-    name = "llm_local"
+    name = "cloud"
 
     def __init__(self, *outs: TurnOutput | Exception | float) -> None:
         self.outs: list[TurnOutput | Exception | float] = list(outs)

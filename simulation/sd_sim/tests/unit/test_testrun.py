@@ -107,7 +107,7 @@ def test_exit_codes(
     [
         ("scripted", "sitl and not gz and not llm and not nightly and not e2e and not panel"),
         ("grammar", "sitl and not gz and not llm and not nightly and not e2e and not panel"),
-        ("llm_local", "sitl and not gz and not nightly and not e2e and not panel"),
+        ("cloud", "sitl and not gz and not nightly and not e2e and not panel"),
         (
             "none",
             "sitl and not gz and not llm and not nightly and not e2e and not brain and not panel",
@@ -127,7 +127,7 @@ def test_brain_is_not_ignored(
     testrun.main(["brain=scripted"])
     assert "inte byggt än" not in capsys.readouterr().out
     with pytest.raises(SystemExit):
-        testrun.pytest_argv({"brain": "cloud"})
+        testrun.pytest_argv({"brain": "llm_local"})  # removed: no local model
 
 
 def test_summary_lists_new_results(tmp_path: Path) -> None:

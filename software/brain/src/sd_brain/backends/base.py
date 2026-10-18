@@ -20,6 +20,6 @@ class ToolExecutor(Protocol):
 
 
 class CommanderBackend(Protocol):
-    name: str  # "llm_local", "grammar", "scripted"
+    name: str  # "cloud", "grammar", "scripted"
 
     async def decide(self, turn: TurnInput, tools: ToolExecutor) -> TurnOutput: ...

@@ -46,7 +46,7 @@ class SimConfig:
     speedup: int = 1
     qgc: bool = False
     link_profile: str = "perfect"
-    brain: str = "llm_local"
+    brain: str = "cloud"
     script: str = ""
     lan: bool = False
     private_db: bool = False
@@ -137,9 +137,10 @@ def load(
     cfg.link_profile = _choice(
         "link_profile", merged.get("link_profile", "perfect"), ("perfect", "field_typical", "dead")
     )
-    cfg.brain = _choice(
-        "brain", merged.get("brain", "llm_local"), ("llm_local", "scripted", "grammar", "none")
-    )
+    brain = merged.get("brain", "cloud")
+    if brain == "llm_local":  # old sim.toml from before the local model was removed
+        brain = "cloud"
+    cfg.brain = _choice("brain", brain, ("cloud", "scripted", "grammar", "none"))
     cfg.script = str(merged.get("script", ""))
     cfg.lan = _bool("lan", merged.get("lan", False))
     cfg.private_db = _bool("private_db", merged.get("private_db", False))

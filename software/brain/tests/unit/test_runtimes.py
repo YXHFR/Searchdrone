@@ -1,12 +1,14 @@
-"""Model runtimes: local, cloud, best-available and replay (05 §6.1; rev 6 B18)."""
+"""Model runtimes: cloud (main model, fallback model), best-available and replay."""
 
 from __future__ import annotations
+
+import json
 
 import httpx
 import pytest
 from brain_helpers import chat_reply, mock_client
 
-from sd_brain.config import CloudConfig, LlmConfig
+from sd_brain.config import CloudConfig
 from sd_brain.runtime.base import (
     ModelError,
     ModelTimeoutError,
@@ -15,8 +17,7 @@ from sd_brain.runtime.base import (
     parse_reply,
 )
 from sd_brain.runtime.cloud import CloudModelRuntime
-from sd_brain.runtime.fallback import BestAvailableRuntime
-from sd_brain.runtime.local import LocalModelRuntime
+from sd_brain.runtime.fallback import BestAvailableRuntime, CloudUnavailableError
 from sd_brain.runtime.replay import (
     ReplayExhaustedError,
     ReplayNotConsumedError,
@@ -28,23 +29,8 @@ KEY = "k" * 40
 MSG = [{"role": "user", "content": "hej"}]
 
 
-def _local(handler) -> LocalModelRuntime:
-    return LocalModelRuntime(LlmConfig(), KEY, mock_client(handler))
-
-
-async def test_local_sends_key_and_tools() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        seen.append(req)
-        return httpx.Response(200, json=chat_reply("ok", [("hold", {"rationale_sv": "x"})]))
-
-    reply = await _local(handler).chat(MSG, [{"type": "function"}], 5, Sampling(seed=1))
-    assert reply.engine == "local" and reply.tool_calls[0].name == "hold"
-    assert seen[0].url.path == "/v1/chat/completions"
-    assert seen[0].headers["authorization"] == f"Bearer {KEY}"
-    body = seen[0].read().decode()
-    assert '"tool_choice":"auto"' in body.replace(" ", "") and '"seed":1' in body.replace(" ", "")
+def _cloud(handler, **cfg) -> CloudModelRuntime:  # type: ignore[no-untyped-def]
+    return CloudModelRuntime(CloudConfig(**cfg), KEY, mock_client(handler))
 
 
 @pytest.mark.parametrize(
@@ -55,43 +41,25 @@ async def test_local_sends_key_and_tools() -> None:
         (httpx.Response(200, json={"choices": []}), "parse_error"),
     ],
 )
-async def test_local_errors(response: httpx.Response, kind: str) -> None:
+async def test_cloud_errors(response: httpx.Response, kind: str) -> None:
     with pytest.raises(ModelError) as exc:
-        await _local(lambda _r: response).chat(MSG, [], 5, Sampling())
+        await _cloud(lambda _r: response, fallback_model="").chat(MSG, [], 5, Sampling())
     assert exc.value.kind == kind
 
 
-async def test_local_timeout_and_unreachable() -> None:
+async def test_cloud_timeout_and_unreachable() -> None:
     def slow(_r: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow")
 
     with pytest.raises(ModelTimeoutError):
-        await _local(slow).chat(MSG, [], 5, Sampling())
+        await _cloud(slow).chat(MSG, [], 5, Sampling())
 
     def down(_r: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
 
-    with pytest.raises(ModelError):
-        await _local(down).chat(MSG, [], 5, Sampling())
-    assert not await _local(down).health()
-
-
-async def test_local_health_key_and_tokenize() -> None:
-    def handler(req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/health":
-            return httpx.Response(200, json={"status": "ok"})
-        if req.url.path == "/tokenize":
-            return httpx.Response(200, json={"tokens": [1, 2, 3]})
-        return httpx.Response(401)
-
-    rt = _local(handler)
-    assert await rt.health()
-    assert await rt.count_tokens("abc") == 3
-    with pytest.raises(ModelError, match="fel nyckel"):
-        await rt.check_key()
-    ok = _local(lambda r: httpx.Response(200, json=chat_reply("x")))
-    await ok.check_key()
-    assert await ok.count_tokens("x") is None or True
+    with pytest.raises(ModelError) as exc:
+        await _cloud(down, fallback_model="").chat(MSG, [], 5, Sampling())
+    assert KEY not in str(exc.value)
 
 
 async def test_cloud_not_configured_sends_nothing() -> None:
@@ -116,6 +84,50 @@ async def test_cloud_openrouter_call() -> None:
     assert '"seed"' not in seen[0].read().decode()
 
 
+async def test_cloud_sends_reasoning_provider_and_tools() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json=chat_reply("ok", [("hold", {"rationale_sv": "x"})]))
+
+    reply = await _cloud(handler).chat(MSG, [{"type": "function"}], 5, Sampling())
+    body = json.loads(seen[0].read())
+    assert reply.tool_calls[0].name == "hold"
+    assert body["model"] == "z-ai/glm-5.3-flash"
+    assert body["reasoning"] == {"effort": "low", "exclude": True}
+    assert body["provider"] == {"data_collection": "deny", "require_parameters": True}
+    assert body["tool_choice"] == "auto" and body["tools"] == [{"type": "function"}]
+    assert seen[0].headers["authorization"] == f"Bearer {KEY}"
+
+
+async def test_cloud_fallback_model_takes_over_on_error() -> None:
+    models: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        model = json.loads(req.read())["model"]
+        models.append(model)
+        if model == "z-ai/glm-5.3-flash":
+            return httpx.Response(503)
+        return httpx.Response(200, json={**chat_reply("fallback"), "model": model})
+
+    reply = await _cloud(handler).chat(MSG, [], 5, Sampling())
+    assert models == ["z-ai/glm-5.3-flash", "anthropic/claude-haiku-5.5"]
+    assert reply.content == "fallback" and reply.model_id == "anthropic/claude-haiku-5.5"
+
+
+async def test_cloud_no_fallback_after_a_timeout() -> None:
+    models: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        models.append(json.loads(req.read())["model"])
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(ModelTimeoutError):
+        await _cloud(handler).chat(MSG, [], 5, Sampling())
+    assert models == ["z-ai/glm-5.3-flash"]  # no time left: the command mode answers
+
+
 class _Clock:
     t = 0.0
 
@@ -123,26 +135,26 @@ class _Clock:
         return self.t
 
 
-async def test_best_available_falls_back_in_the_same_call() -> None:
+async def test_best_available_goes_to_command_mode_and_rests() -> None:
     calls: list[str] = []
 
     def cloud_handler(_r: httpx.Request) -> httpx.Response:
         calls.append("cloud")
         return httpx.Response(503)
 
-    def local_handler(_r: httpx.Request) -> httpx.Response:
-        calls.append("local")
-        return httpx.Response(200, json=chat_reply("lokal"))
-
     clock = _Clock()
-    cloud = CloudModelRuntime(CloudConfig(model="m"), KEY, mock_client(cloud_handler))
-    best = BestAvailableRuntime(cloud, _local(local_handler), retry_after_s=60, monotonic=clock)
+    cloud = CloudModelRuntime(
+        CloudConfig(model="m", fallback_model=""), KEY, mock_client(cloud_handler)
+    )
+    best = BestAvailableRuntime(cloud, retry_after_s=60, monotonic=clock)
     assert best.engine() == "cloud" and best.model_id == "m"
-    reply = await best.chat(MSG, [], 20, Sampling())
-    assert reply.content == "lokal" and calls == ["cloud", "local"]
-    assert best.engine() == "local" and best.last_engine == "local"
-    await best.chat(MSG, [], 20, Sampling())
-    assert calls == ["cloud", "local", "local"]  # no cloud call while it rests
+    with pytest.raises(ModelError):
+        await best.chat(MSG, [], 20, Sampling())
+    assert calls == ["cloud"]
+    assert best.engine() == "command" and best.last_engine == "command"
+    with pytest.raises(CloudUnavailableError):
+        await best.chat(MSG, [], 20, Sampling())
+    assert calls == ["cloud"]  # no cloud call while it rests
     clock.t = 61
     assert best.engine() == "cloud"
 
@@ -153,13 +165,11 @@ async def test_best_available_uses_cloud_when_it_answers() -> None:
         KEY,
         mock_client(lambda r: httpx.Response(200, json=chat_reply("moln"))),
     )
-    best = BestAvailableRuntime(cloud, _local(lambda r: httpx.Response(500)))
+    best = BestAvailableRuntime(cloud)
     assert (await best.chat(MSG, [], 6, Sampling())).engine == "cloud"
     assert best.last_engine == "cloud"
-    no_cloud = BestAvailableRuntime(
-        None, _local(lambda r: httpx.Response(200, json=chat_reply("l")))
-    )
-    assert no_cloud.engine() == "local" and no_cloud.model_id == LlmConfig().model
+    no_cloud = BestAvailableRuntime(None)
+    assert no_cloud.engine() == "command" and no_cloud.model_id == ""
 
 
 async def test_replay() -> None:
