@@ -406,6 +406,21 @@ def test_to_vehicle_state() -> None:
     assert FcTelemetry().fc_mode == "UNKNOWN"
 
 
+def test_attitude_is_parsed_in_degrees() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.attitude_mono_ms is not None  # the fake streams ATTITUDE
+        vehicle.fc.attitude_rad = (0.2, -0.1, 1.5)
+        await clock.run_for(0.5)
+        t = vehicle.telemetry
+        assert abs(t.roll_deg - 11.459) < 1e-3 and abs(t.pitch_deg + 5.730) < 1e-3
+        assert abs(t.yaw_deg - 85.944) < 1e-3
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_no_parameter_write_in_the_api() -> None:
     """No general parameter write: the one exception is ``Vehicle.set_fence_limit``, whose
     message the allowlist checks row by row. No other line of the package names a

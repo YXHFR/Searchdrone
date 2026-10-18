@@ -219,6 +219,15 @@ class Vehicle(SdModel):
     connected: bool  # flight controller heartbeat within 3 s
 
 
+class Attitude(SdModel):
+    """MAVLink ATTITUDE in degrees. Roll is positive right wing down, pitch positive nose
+    up, yaw 0-360 clockwise from north."""
+
+    roll_deg: float = Field(ge=-180, le=180)
+    pitch_deg: float = Field(ge=-90, le=90)
+    yaw_deg: float = Field(ge=0, lt=360)
+
+
 class Telemetry(SdModel):
     """From the ground station's own MAVLink channel."""
 
@@ -240,6 +249,9 @@ class Telemetry(SdModel):
     gps_sats: int
     home: LatLon | None
     dist_to_pilot_m: float | None
+    # None when the flight controller has sent no ATTITUDE within the last second; the
+    # panel then draws no horizon rather than a guessed one.
+    attitude: Attitude | None = None
 
 
 class LinkStatus(SdModel):
