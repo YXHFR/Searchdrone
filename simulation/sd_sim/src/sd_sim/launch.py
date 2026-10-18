@@ -786,6 +786,11 @@ def _run_foreground(stack: Stack) -> int:
         stack.down()
 
 
+def default_world_for(*, demo: bool) -> str:
+    """`just sim` gets the terrain world; the demo keeps the flat world its script is for."""
+    return config.TEST_WORLD if demo else config.LAUNCH_WORLD
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] not in COMMANDS:
@@ -802,8 +807,7 @@ def main(argv: list[str] | None = None) -> int:
     dry = values.pop("dry", "") == "1" or os.environ.get("SD_SIM__DRY_RUN") == "1"
     values.pop("record", None)
     try:
-        default_world = config.TEST_WORLD if demo else config.LAUNCH_WORLD
-        cfg = config.load(values, demo=demo, default_world=default_world)
+        cfg = config.load(values, demo=demo, default_world=default_world_for(demo=demo))
     except config.DemoHomeError as exc:
         print(str(exc), file=sys.stderr)
         return 3

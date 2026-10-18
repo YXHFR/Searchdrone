@@ -385,3 +385,18 @@ def test_measure_road_on_a_drawn_picture() -> None:
     out = snapshot.measure_road(img, view, 0.0, 0.0)
     assert out["width_m"] == pytest.approx(7.0, abs=2 * m_px)
     assert out["offset_m"] == pytest.approx(1.0, abs=2 * m_px)
+
+
+def test_objects_precheck_uses_the_site_size(tmp_path: Path) -> None:
+    from sd_sim import launch
+    from sd_sim.config import SimConfig
+
+    shutil.copytree(
+        paths.REPO / "simulation" / "gazebo" / "sites", tmp_path / "simulation" / "gazebo" / "sites"
+    )
+    toml = tmp_path / "simulation" / "gazebo" / "sites" / PUBLIC / "site.toml"
+    toml.write_text(toml.read_text().replace("half_size_m = 600", "half_size_m = 300"))
+    stack = launch.Stack(SimConfig(world="sd_hellasgarden"), tmp_path / "run", repo=tmp_path)
+    assert stack.world_half_m() == 300.0
+    flat = launch.Stack(SimConfig(), tmp_path / "run", repo=tmp_path)
+    assert flat.world_half_m() == 600.0

@@ -59,14 +59,15 @@ site=<site>`) all use the same point. No ground station sends SITL terrain data,
 (`TERRAIN_FOLLOW`, `RTL_ALT_TYPE`) stays at ArduPilot's default, off. Heights are therefore relative to home and the ground under the vehicle rises and falls
 with the hills (−13 to +37 m from home in `sd_hellasgarden`). The site's fixture
 (`build/sim/worlds/<world>.fixture.yaml`) therefore sets the search height at least 25 m
-above the highest ground plus the tallest tree under `charter_test`; scenarios that fly in
-this world read their pins, charter and height from there. Return home (RTL) climbs to
+above the highest ground plus the tallest tree under `charter_test`; it is written for
+scenarios that will fly in this world (none reads it yet). Return home (RTL) climbs to
 ArduPilot's default 15 m above home, so where the ground on the way home lies higher than
 that, the simulated vehicle can hit it: give a charter in the terrain world a return
 altitude above its highest ground.
 
-Your own area: copy `config/site.example.toml` to `config/site.local.toml`, enter your
-Geotorget login and run `just world-fetch site=<name>`. Lantmäteriet's 1 m height model and
+Your own area: copy `config/site.example.toml` to `config/site.local.toml`, set your area
+there and run `SD_LM_USER=... SD_LM_PASSWORD=... just world-fetch site=<name>` with your
+Geotorget login (read only from the environment, never from a file). Lantmäteriet's 1 m height model and
 orthophoto (CC BY 4.0, © Lantmäteriet) are written to `build/sites/<name>/` only, and the
 orthophoto becomes the ground's texture. Nothing of it is committed or uploaded.
 

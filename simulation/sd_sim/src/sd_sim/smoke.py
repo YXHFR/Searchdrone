@@ -36,11 +36,16 @@ FRAME_WINDOW_S = 10.0
 # Listeners, camera frames and real-time factor while hovering: 10 s of frames plus a few
 # gz calls; anything longer means a call hangs.
 MEASURE_LIMIT_S = 60.0
+# Gazebo must keep at least half of real time while hovering with the camera on.
+MIN_REAL_TIME_FACTOR = 0.5
 FRAME_SHARE = 0.9  # at least 90 % of the camera's nominal frames must arrive
 
 
-def min_frames(vehicle: str) -> int:
-    return int(FRAME_SHARE * gazebo.CAMERA_FPS[vehicle] * FRAME_WINDOW_S)
+def min_frames(vehicle: str, sim_seconds: float = FRAME_WINDOW_S) -> int:
+    """Frames the camera must deliver over ``sim_seconds`` of simulated time: the camera's
+    rate is in simulated time, so a Gazebo running slower than real time sends fewer per
+    wall-clock second without anything being wrong."""
+    return int(FRAME_SHARE * gazebo.CAMERA_FPS[vehicle] * sim_seconds)
 
 
 def harden(cfg: config.SimConfig) -> config.SimConfig:
@@ -89,6 +94,8 @@ def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
     t_end = gazebo.world_times(stack.world, stack.cfg.instance)
     if result is not None:
         result["real_time_factor"] = gazebo.real_time_factor(t_start, t_end)
+        if t_start is not None and t_end is not None and t_end[0] > t_start[0]:
+            result["sim_seconds"] = round(t_end[0] - t_start[0], 2)
     return frames() - start
 
 
@@ -157,8 +164,12 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
                 if cfg.physics == "gz" and not cfg.gui and stack.world is not None:
                     frames = count_frames(stack, result)
                     result["camera_frames_10s"] = frames
-                    result["camera_frames_min"] = min_frames(stack.world.vehicle)
+                    result["camera_frames_min"] = min_frames(
+                        stack.world.vehicle, result.get("sim_seconds", FRAME_WINDOW_S)
+                    )
                     checks["camera"] = frames >= result["camera_frames_min"]
+                    rtf = result.get("real_time_factor")
+                    checks["real_time_factor"] = rtf is not None and rtf >= MIN_REAL_TIME_FACTOR
             except Exception as exc:  # reported in result.json, never lost in the thread
                 result["measure_error"] = stack.mask(f"{type(exc).__name__}: {exc}")
                 checks["camera"] = False

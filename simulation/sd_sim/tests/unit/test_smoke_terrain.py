@@ -119,3 +119,17 @@ def test_hover_gives_up_on_a_hanging_measurement() -> None:
     release.set()
     assert time.monotonic() - start < 2.0
     assert checks == {"camera": False} and "0.3" in result["measure_error"]
+
+
+def test_camera_frames_follow_simulated_time() -> None:
+    # At a real-time factor of 0.75, 10 wall-clock seconds are 7.5 simulated seconds.
+    assert smoke.min_frames("stock") == 90
+    assert smoke.min_frames("stock", 7.5) == 67
+    assert smoke.min_frames("sd_quad14", 5.0) == 67
+
+
+def test_launch_default_worlds() -> None:
+    from sd_sim import launch
+
+    assert launch.default_world_for(demo=False) == "sd_hellasgarden"
+    assert launch.default_world_for(demo=True) == "sd_lake_forest"

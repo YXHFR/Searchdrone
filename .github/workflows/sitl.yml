@@ -412,7 +412,7 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
           done
           for f in runs/*-snapshot-i0/snapshots/summary.md; do
-            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
           done
       - *summary
       - *scan
