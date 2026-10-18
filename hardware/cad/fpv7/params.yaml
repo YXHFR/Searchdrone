@@ -69,7 +69,7 @@ layout:                       # design defaults: where the parts sit (x, or [x, 
 
 reference:
   takeoff_mass_g: 1500
-  inertia_kg_m2: [0.0055, 0.0065, 0.009]   # hand estimate before purchase
+  inertia_g_m2: [5.5, 6.5, 9.0]   # hand estimate before purchase (g m^2 = 0.001 kg m^2)
 
 checks:
   prop_margin_min: 5

@@ -177,7 +177,7 @@ is used only where the manufacturer publishes none.
 | `layout.battery_x` | 0 mm | balances the centre of gravity | Design default | - |
 | `layout.camera_x` | 92 mm | ahead of the battery | Design default | - |
 | `reference.takeoff_mass_g` | 1500 g | (osäkert) planning target | Estimate, no drawing published | - |
-| `reference.inertia_kg_m2` | 0.0055, 0.0065, 0.009 kg m^2 | (osäkert) hand estimate with point masses, made before purchase | Estimate, no drawing published | - |
+| `reference.inertia_g_m2` | 5.5, 6.5, 9.0 g m^2 | (osäkert) hand estimate with point masses, made before purchase | Estimate, no drawing published | - |
 | `checks.prop_margin_min` | 5 mm | acceptance limit | Design default | - |
 | `checks.fov_length` | 500 mm | how far below the camera the view is checked | Design default | - |
 | `checks.stl_tolerance` | 0.05 mm | STL chord tolerance | Design default | - |

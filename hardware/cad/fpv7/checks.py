@@ -116,7 +116,7 @@ def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
         "cog_mm": [round(v, 2) for v in mp["cog_mm"]],
         "inertia_kg_m2": [[round(v, 6) for v in row] for row in mp["inertia_kg_m2"]],
         "inertia_diag_kg_m2": [round(v, 6) for v in diag],
-        "reference_inertia_kg_m2": ref["inertia_kg_m2"],
+        "reference_inertia_kg_m2": [v / 1000 for v in ref["inertia_g_m2"]],
         "overlaps": over,
         "prop_margins": margins,
         "prop_margin_min_mm": limit,
