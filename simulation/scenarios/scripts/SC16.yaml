@@ -1,0 +1,17 @@
+# SC16: the flight controller's fence is the last guard; the harness flies past the gate.
+scenario: SC16
+timeout_s: 600
+expected_runtime_s: 240
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]
