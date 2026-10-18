@@ -34,6 +34,29 @@ export type AlertCode =
 export type AutonomyMode = "APPROVE_EACH" | "WITHIN_CHARTER";
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateState".
+ */
+export type CandidateState = "new" | "assessing" | "ready" | "inspecting" | "confirmed" | "rejected" | "merged";
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "ColorName".
+ */
+export type ColorName =
+  | "black"
+  | "white"
+  | "gray"
+  | "red"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "purple"
+  | "pink"
+  | "brown"
+  | "beige"
+  | "unknown";
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "CommandStatus".
  */
 export type CommandStatus =
@@ -328,6 +351,18 @@ export interface AutonomyRequest {
   mode: AutonomyMode;
 }
 /**
+ * A box in image pixels: top-left corner, width and height (also ``sd_detect.BBox``).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BBox".
+ */
+export interface BBox {
+  h: number;
+  w: number;
+  x: number;
+  y: number;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "BoxAnswer".
  */
@@ -360,6 +395,133 @@ export interface BrainMessage {
     [k: string]: unknown;
   };
   text: string;
+}
+/**
+ * A place where something that may be a person was seen. One row per revision.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Candidate".
+ */
+export interface Candidate {
+  best_detector_score: number;
+  candidate_id: string;
+  first_seen_utc: string;
+  last_seen_utc: string;
+  lat: number;
+  latest_assessment_id?: string | null;
+  lon: number;
+  merged_into?: string | null;
+  mission_id: string;
+  n_in_view: number;
+  n_seen: number;
+  priority: number;
+  refined_person_score?: number | null;
+  rev: number;
+  seq: number;
+  sigma95_m: number;
+  state: CandidateState;
+}
+/**
+ * One engine's view of a candidate against one profile version.
+ *
+ * The model fills only ``person``, ``person_p``, ``fields``, ``overall`` and
+ * ``explanation_sv``; the code fills the rest. Field keys follow ``FIELD_KEY_PATTERN``;
+ * unknown keys are dropped. ``flags`` mark claims nobody can check from a still (that
+ * someone moves, or who they are): the panel shows them as unverified.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateAssessment".
+ */
+export interface CandidateAssessment {
+  candidate_id: string;
+  cost_sek?: number;
+  /**
+   * @maxItems 3
+   */
+  crops_used?: [] | [string] | [string, string] | [string, string, string];
+  engine: "code" | "fast" | "strong" | "oracle";
+  evidence?: {
+    [k: string]: number;
+  };
+  explanation_sv: string;
+  fields?: {
+    [k: string]: "match" | "conflict" | "not_visible";
+  };
+  /**
+   * @maxItems 3
+   */
+  flags?:
+    | []
+    | ["motion_claim" | "identity_claim" | "format_repaired"]
+    | ["motion_claim" | "identity_claim" | "format_repaired", "motion_claim" | "identity_claim" | "format_repaired"]
+    | [
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired"
+      ];
+  latency_ms: number;
+  model_id: string;
+  overall: number;
+  person: "yes" | "no" | "unsure";
+  person_p: number;
+  profile_version: number;
+}
+/**
+ * One candidate as the panel's queue shows it.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateCard".
+ */
+export interface CandidateCard {
+  assessed_profile_version?: number | null;
+  best_detector_score: number;
+  candidate_id: string;
+  current_profile_version?: number | null;
+  engine?: ("code" | "fast" | "strong" | "oracle") | null;
+  fields?: {
+    [k: string]: "match" | "conflict" | "not_visible";
+  };
+  first_seen_utc: string;
+  /**
+   * @maxItems 3
+   */
+  flags?:
+    | []
+    | ["motion_claim" | "identity_claim" | "format_repaired"]
+    | ["motion_claim" | "identity_claim" | "format_repaired", "motion_claim" | "identity_claim" | "format_repaired"]
+    | [
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired"
+      ];
+  last_seen_utc: string;
+  lat: number;
+  lon: number;
+  merged_into?: string | null;
+  n_in_view: number;
+  n_seen: number;
+  near_seq?: number | null;
+  near_state?: ("rejected" | "confirmed") | null;
+  person?: ("yes" | "no" | "unsure") | null;
+  priority: number;
+  priority_class: "high" | "medium" | "low";
+  refined_person_score?: number | null;
+  rev: number;
+  seq: number;
+  sigma95_m: number;
+  state: CandidateState;
+  thumb_detection_id?: string | null;
+}
+/**
+ * A person's decision on a candidate. Only a logged-in person's session may send it.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateDecision".
+ */
+export interface CandidateDecision {
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  note?: string;
+  subject_rev: number;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -847,6 +1009,38 @@ export interface CommanderStatus {
   state: "ready" | "busy" | "degraded" | "down";
 }
 /**
+ * Onboard -> ground: a small JPEG cut from a still, for a detection or a view.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CropData".
+ */
+export interface CropData {
+  bbox_in_still: BBox;
+  height: number;
+  jpeg: string;
+  purpose: "detection" | "view";
+  ref_id: string;
+  still_id: string;
+  width: number;
+}
+/**
+ * Ground -> onboard: cut a view from a stored still (a person asked to see more).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CropRequest".
+ */
+export interface CropRequest {
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  center_px: [unknown, unknown];
+  max_px: number;
+  request_id: string;
+  side_px: number;
+  still_id: string;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "DecideRequest".
  */
@@ -996,6 +1190,23 @@ export interface DecisionLogStored {
   turn_id: string;
 }
 /**
+ * Which detector looked at a still, and how it went.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "DetectorInfo".
+ */
+export interface DetectorInfo {
+  latency_ms: number;
+  license: string;
+  name: string;
+  ok: boolean;
+  placement: "onboard" | "ground";
+  profile_id?: string | null;
+  rate_hz: number;
+  tiles: number;
+  version: string;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "Envelope".
  */
@@ -1116,6 +1327,23 @@ export interface FollowTrackParams {
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Garment".
+ */
+export interface Garment {
+  certainty: "certain" | "likely" | "unsure";
+  /**
+   * @minItems 1
+   * @maxItems 3
+   */
+  colors: [ColorName] | [ColorName, ColorName] | [ColorName, ColorName, ColorName];
+  kind?: string | null;
+  part: "outer" | "upper" | "lower" | "headwear" | "footwear" | "full_body";
+  pattern?: ("solid" | "striped" | "checked" | "patterned" | "reflective") | null;
+  shade?: ("light" | "dark") | null;
+  source?: string | null;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "GateRequest".
  */
 export interface GateRequest {
@@ -1159,6 +1387,22 @@ export interface GateTargets {
   speed_ms?: number | null;
 }
 /**
+ * One detection, placed on the map. A hint for a person to look at, never a find.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "GeoDetectionMsg".
+ */
+export interface GeoDetectionMsg {
+  bbox: BBox;
+  crop_inline: boolean;
+  detection_id: string;
+  lat: number;
+  lon: number;
+  px_size: number;
+  score: number;
+  sigma95_m: number;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "GotoAiParams".
  */
@@ -1190,6 +1434,15 @@ export interface GotoResumePoint {
   lat: number;
   lon: number;
   speed_ms: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Hair".
+ */
+export interface Hair {
+  certainty: "certain" | "likely" | "unsure";
+  color: ColorName;
+  length: "short" | "long" | "bald" | "unknown";
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1267,12 +1520,72 @@ export interface InspectDetectionParams {
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Item".
+ */
+export interface Item {
+  certainty: "certain" | "likely" | "unsure";
+  /**
+   * @maxItems 3
+   */
+  colors?: [] | [ColorName] | [ColorName, ColorName] | [ColorName, ColorName, ColorName];
+  kind: "backpack" | "bag" | "cane" | "walker" | "umbrella" | "bicycle" | "dog" | "other";
+  note?: string | null;
+}
+/**
+ * A no-fly cylinder around a possible person.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Keepout".
+ */
+export interface Keepout {
+  keepout_id: string;
+  lat: number;
+  lon: number;
+  radius_m: number;
+  source: "detection" | "candidate" | "confirmed";
+  source_id: string;
+}
+/**
+ * Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.
+ *
+ * ``install_seq`` grows with every list; a lower one than the last seen is ignored, so a
+ * late resend never brings back a removed cylinder or drops a new one. The installed
+ * list stays in force until a list with a higher ``install_seq`` arrives: the envelope's
+ * ``ttl_ms`` only limits how late the message may be delivered, never how long the
+ * cylinders apply.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "KeepoutInstall".
+ */
+export interface KeepoutInstall {
+  install_seq: number;
+  /**
+   * @maxItems 200
+   */
+  keepouts?: Keepout[];
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "LandAtParams".
  */
 export interface LandAtParams {
   lat?: number | null;
   lon?: number | null;
   reason?: string;
+}
+/**
+ * The initial planning point (IPP): where and when the person was last seen.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "LastSeen".
+ */
+export interface LastSeen {
+  at_utc: string;
+  heading_deg?: number | null;
+  kind?: "point_last_seen" | "last_known_position";
+  lat: number;
+  lon: number;
+  source?: string | null;
 }
 /**
  * The outer cap a pilot may raise ``SafetyLimits`` to, per mission and by click only.
@@ -1656,6 +1969,272 @@ export interface PartStatus {
   state: "ok" | "degraded" | "down";
 }
 /**
+ * Onboard -> ground: what the detector found in one still.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "PerceptionReport".
+ */
+export interface PerceptionReport {
+  captured_utc: string;
+  command_id: string | null;
+  /**
+   * @maxItems 20
+   */
+  detections?:
+    | []
+    | [GeoDetectionMsg]
+    | [GeoDetectionMsg, GeoDetectionMsg]
+    | [GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg]
+    | [GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg]
+    | [GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg]
+    | [GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg, GeoDetectionMsg]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ]
+    | [
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg,
+        GeoDetectionMsg
+      ];
+  detections_dropped?: number;
+  detector: DetectorInfo;
+  /**
+   * @minItems 4
+   * @maxItems 4
+   */
+  footprint: [LatLon, LatLon, LatLon, LatLon];
+  pose: Pose;
+  px_per_m: number;
+  sensor: "rgb";
+  still_id: string;
+  synthetic?: boolean;
+}
+/**
+ * Where the camera was at exposure, interpolated from telemetry.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Pose".
+ */
+export interface Pose {
+  agl_m: number;
+  alt_amsl_m: number;
+  lat: number;
+  lon: number;
+  pitch_deg: number;
+  roll_deg: number;
+  source_ts_ms: number;
+  yaw_deg: number;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "PilotPosition".
  */
@@ -1711,6 +2290,92 @@ export interface ResumeParams {}
  */
 export interface ReturnHomeParams {
   reason?: string;
+}
+/**
+ * What the person looked like, as the operator approved it.
+ *
+ * A proposal from the AI has ``approved_by = None`` and is never used for matching.
+ * The age and height bands are for the people searching, never for the matching.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfile".
+ */
+export interface SearchProfile {
+  age_band?: ("child" | "youth" | "adult" | "senior") | null;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  /**
+   * @maxItems 5
+   */
+  excluded?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string];
+  free_text?: string;
+  /**
+   * @maxItems 8
+   */
+  garments?:
+    | []
+    | [Garment]
+    | [Garment, Garment]
+    | [Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment, Garment, Garment];
+  hair?: Hair | null;
+  height_band?: ("short" | "medium" | "tall") | null;
+  /**
+   * @maxItems 6
+   */
+  items?:
+    | []
+    | [Item]
+    | [Item, Item]
+    | [Item, Item, Item]
+    | [Item, Item, Item, Item]
+    | [Item, Item, Item, Item, Item]
+    | [Item, Item, Item, Item, Item, Item];
+  last_seen: LastSeen;
+  /**
+   * @minItems 1
+   * @maxItems 4
+   */
+  likely_state?:
+    | ["walking" | "sitting" | "lying" | "unknown"]
+    | ["walking" | "sitting" | "lying" | "unknown", "walking" | "sitting" | "lying" | "unknown"]
+    | [
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown"
+      ]
+    | [
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown"
+      ];
+  mission_id: string;
+  mobility?: "good" | "reduced" | "unknown";
+  profile_id: string;
+  profile_version: number;
+  subject_category:
+    | "dementia"
+    | "hiker"
+    | "despondent"
+    | "gatherer"
+    | "hunter"
+    | "child_1_6"
+    | "child_7_12"
+    | "child_13_15"
+    | "autism"
+    | "other";
+  visual_notes?: string;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

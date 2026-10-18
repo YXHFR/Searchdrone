@@ -142,11 +142,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     for name in _ensure_env(root, loaded.data_dir):
         _say(f".env: fyllde i {name}")
     _private_dir(root / "secrets")
-    token_file = loaded.path(loaded.config.auth.brain_token_file)
-    if not token_file.is_file():
-        _private_dir(token_file.parent)
-        _write_private(token_file, new_token() + "\n")
-        _say(f"skapade {loaded.config.auth.brain_token_file}")
+    for name in (loaded.config.auth.brain_token_file, loaded.config.auth.search_token_file):
+        token_file = loaded.path(name)
+        if not token_file.is_file():
+            _private_dir(token_file.parent)
+            _write_private(token_file, new_token() + "\n")
+            _say(f"skapade {name}")
     _private_dir(loaded.data_dir)  # mission data and logs: only for the owner
     if args.lan:
         make_lan_cert(loaded.path(loaded.config.lan.tls_dir))

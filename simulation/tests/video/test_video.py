@@ -51,7 +51,7 @@ from video_rig import (  # pyright: ignore[reportMissingImports]
     wait_for,
 )
 
-from sd_ground.auth import BrainToken
+from sd_ground.auth import ServiceToken
 from sd_ground.config import load
 from sd_ground.context import Ground
 from sd_ground.services import video as video_service
@@ -242,7 +242,7 @@ class _Flow:
 @pytest.mark.slow
 async def test_mission_recording_is_h264_and_long_enough(chain: VideoChain) -> None:
     loaded = load(REPO)
-    g = Ground(loaded=loaded, clock=MonotonicClock(), brain_token=BrainToken(None))
+    g = Ground(loaded=loaded, clock=MonotonicClock(), brain_token=ServiceToken(None))
     start = g.now()
     await asyncio.sleep(25)
     end = g.now()

@@ -197,6 +197,10 @@ ground:
 brain-token:
     uv run --no-sync python tools/brain_token.py
 
+# Write a new token for the search service sd-search (restart sd-ground afterwards)
+search-token:
+    uv run --no-sync python tools/search_token.py
+
 # --- AI commander (sd-brain) -----------------------------------------------------------
 
 # Start the AI commander (reads config/brain.toml; keys from .env)

@@ -1,4 +1,4 @@
-"""OpenAPI of both APIs equals the committed snapshots (04 T24). Update with ``just gen``."""
+"""OpenAPI of every API equals the committed snapshots (04 T24). Update with ``just gen``."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ pytestmark = pytest.mark.contract
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots"
 
 
-@pytest.mark.parametrize("name", ["panel", "commander"])
+@pytest.mark.parametrize("name", ["panel", "commander", "search"])
 def test_openapi_matches_snapshot(name: str) -> None:
     current = json.loads(json.dumps(openapi_documents()[name]))
     stored = json.loads((SNAPSHOTS / f"{name}.openapi.json").read_text(encoding="utf-8"))
@@ -35,7 +35,7 @@ def _refs(node: object) -> list[str]:
     return []
 
 
-@pytest.mark.parametrize("name", ["panel", "commander"])
+@pytest.mark.parametrize("name", ["panel", "commander", "search"])
 def test_every_ref_resolves(name: str) -> None:
     doc = openapi_documents()[name]
     schemas = doc.get("components", {}).get("schemas", {})

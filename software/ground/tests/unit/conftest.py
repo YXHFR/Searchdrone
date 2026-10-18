@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sd_ground.app import commander_asgi, create_commander_app, create_panel_app, panel_asgi
-from sd_ground.auth import BrainToken, Principal
+from sd_ground.auth import Principal, ServiceToken
 from sd_ground.config import GroundConfig, Loaded
 from sd_ground.context import Ground
 from sd_ground.sources import PartState
@@ -160,7 +160,7 @@ def make_ground(
         return Ground(
             loaded=make_loaded(tmp_path, **sections),
             clock=clock,
-            brain_token=BrainToken(BRAIN_TOKEN),
+            brain_token=ServiceToken(BRAIN_TOKEN),
             vehicle_link=vehicle_link,
             sdlink=FakeSdLink(),
             emergency=emergency,

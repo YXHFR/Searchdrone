@@ -155,10 +155,12 @@ class PanelGuard:
         allowed_hosts: Callable[[], Iterable[str]],
         is_commander_token: Callable[[str], bool],
         profile: str,
+        is_search_token: Callable[[str], bool],
     ) -> None:
         self.app = app
         self._allowed_hosts = allowed_hosts
         self._is_commander = is_commander_token
+        self._is_search = is_search_token
         self._profile = profile
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -191,6 +193,14 @@ class PanelGuard:
             else:
                 await _reject_http(
                     send, 403, "COMMANDER_FORBIDDEN", "AI:ns nyckel gäller inte i panelen."
+                )
+            return
+        if token is not None and self._is_search(token):
+            if is_ws:
+                await _reject_ws(receive, send, 4403)
+            else:
+                await _reject_http(
+                    send, 403, "SEARCH_FORBIDDEN", "Söktjänstens nyckel gäller inte i panelen."
                 )
             return
         if is_ws:
