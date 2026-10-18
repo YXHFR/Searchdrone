@@ -261,7 +261,7 @@ panel-build:
 dev *args:
     uv run --no-sync python tools/just_args.py dev "$@"
 
-# Start the simulator stack with Gazebo (keys: physics, gui, video, brain, ...)
+# Start the simulator stack with Gazebo (keys: physics, gui, video, brain, vehicle, ...)
 sim *args:
     uv run --all-packages python -m sd_sim.launch up "$@"
 
@@ -285,7 +285,7 @@ sim-doctor *args:
 sim-setup:
     bash tools/setup/wsl-setup.sh sim
 
-# GUIDED, arm, take off to 20 m, land (keys: physics, gui, instance)
+# GUIDED, arm, take off to 20 m, land (keys: physics, gui, instance, world, vehicle)
 sim-smoke *args:
     uv run --package sd-sim python -m sd_sim.smoke "$@"
 
@@ -428,6 +428,10 @@ cad-detailed:
 # Test the CAD model: no overlaps, propeller margins, camera view, repeatable exports
 cad-test:
     uv run --locked --group cad pytest hardware/cad/fpv7/tests
+
+# Regenerate the simulator's sd_fpv7 (mass, inertia, meshes) from the CAD model (keys: --check)
+sim-model-fpv7 *args:
+    uv run --locked --all-packages --group cad python tools/sim_model_from_cad.py "$@"
 
 # Acceptance checks for a release (keys: phase, sha)
 accept *args:

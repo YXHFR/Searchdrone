@@ -1,0 +1,29 @@
+# Simulator-only parameters for the sd_fpv7 model (the 7-inch from hardware/cad/fpv7:
+# X frame, 2807 1300KV, 7x4 three-blade propellers, 6S2P 10 000 mAh). Loaded after the
+# safety parameters. Only SIM_*, the names in tools/params_allowlist.toml and, for this
+# model, its [vehicles.sd_fpv7] names may appear here (tools/params_check.py).
+SIM_WIND_SPD 0           # no wind
+SIM_WIND_DIR 0
+SIM_BATT_VOLTAGE 25.2    # 6S, full
+SIM_BATT_CAP_AH 10
+FRAME_CLASS 1            # quad
+FRAME_TYPE 1             # X
+MOT_THST_HOVER 0.45      # start value for the learned hover throttle (frame file's hoverThrOut)
+MOT_SPIN_MAX 0.90
+ATC_ANGLE_MAX 35         # degrees
+# The pack: 10 000 mAh with the safety file's reserves kept as shares (15 % low, 7 %
+# critical, as 1350 and 630 of 9000 mAh); params_check refuses other shares.
+BATT_CAPACITY 10000
+BATT_LOW_MAH 1500
+BATT_CRT_MAH 700
+# Rate gains: ArduPilot's defaults divided by how much more roll and pitch authority the
+# 7-inch has than sd_quad14 per unit of motor output (thrust x arm / inertia: about 3.9x
+# in roll, 2.8x in pitch); yaw a little lower than the default.
+ATC_RAT_RLL_P 0.035
+ATC_RAT_RLL_I 0.035
+ATC_RAT_RLL_D 0.0009
+ATC_RAT_PIT_P 0.05
+ATC_RAT_PIT_I 0.05
+ATC_RAT_PIT_D 0.0013
+ATC_RAT_YAW_P 0.12
+ATC_RAT_YAW_I 0.012

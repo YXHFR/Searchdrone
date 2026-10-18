@@ -43,6 +43,7 @@ ALLOWED_KEYS = (
     "lan",
     "private_db",
     "dry",
+    "vehicle",
     "objects",
     "world",
 )
@@ -207,7 +208,7 @@ class Stack:
         """Only the Searchdrone world is rendered here, and only with Gazebo physics."""
         return (
             self.cfg.physics == "gz"
-            and self.cfg.vehicle == "sd_quad14"
+            and self.cfg.vehicle in world.MODELS
             and self.cfg.world in world.known_worlds(self.repo)
         )
 
@@ -222,7 +223,8 @@ class Stack:
             return []
         if not self.renders_world():
             raise InfraError(
-                "objects= kräver physics=gz, vehicle=sd_quad14 och en av Searchdrones världar."
+                "objects= kräver physics=gz, en Searchdrone-modell (vehicle=sd_quad14 eller "
+                "sd_fpv7) och en av Searchdrones världar."
             )
         path = (self.repo / self.cfg.objects).resolve()
         if not path.is_relative_to(self.repo.resolve()):
@@ -240,7 +242,9 @@ class Stack:
     def start_gazebo(self) -> None:
         if self.renders_world():
             placed = self.placed
-            world.render_world(self.cfg.world, self.cfg.instance, self.repo, placed)
+            world.render_world(
+                self.cfg.world, self.cfg.instance, self.repo, placed, vehicle=self.cfg.vehicle
+            )
             if placed:
                 say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")
         self.world = gazebo.resolve_world(self.cfg, self.repo)
@@ -350,8 +354,8 @@ class Stack:
             raise InfraError(f"{argv[0]} finns inte. Kör just sim-setup först.")
         work = self.run_dir / "sitl"
         work.mkdir(parents=True, exist_ok=True)
-        if self.cfg.physics == "builtin" and self.cfg.vehicle == "sd_quad14":
-            self.sitl_layout().stage_frame(work)
+        if self.cfg.physics == "builtin" and self.cfg.vehicle != "stock":
+            self.sitl_layout().stage_frame(work, self.cfg.vehicle)
         return self.group.start("arducopter", argv, env=procs.clean_env(), cwd=work)
 
     def wait_vehicle_observed(self, sitl: procs.Proc) -> None:

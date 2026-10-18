@@ -12,6 +12,14 @@ precedence = "override"
 SPDX-FileCopyrightText = "Searchdrone contributors"
 SPDX-License-Identifier = "CERN-OHL-S-2.0"
 
+# Generated from the CAD model in hardware/cad/fpv7 (tools/sim_model_from_cad.py), so
+# under the hardware licence.
+[[annotations]]
+path = ["simulation/gazebo/models/sd_fpv7/cad.json", "simulation/gazebo/models/sd_fpv7/meshes/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "Searchdrone contributors"
+SPDX-License-Identifier = "CERN-OHL-S-2.0"
+
 [[annotations]]
 path = "simulation/gazebo/sites/*/osm.geojson"
 precedence = "override"

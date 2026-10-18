@@ -1,5 +1,27 @@
-# Names besides SIM_* that the simulator-only parameter file
-# simulation/sitl/params/sd_quad14-sim.parm may set. Checked by tools/params_check.py.
+# Names besides SIM_* that the simulator-only parameter files under simulation/sitl/params/
+# may set. Checked by tools/params_check.py.
 # Every safety-relevant value (battery, fence, failsafes) belongs in the safety file
 # searchdrone-safety.parm instead; adding a name here weakens that rule and needs review.
 allowed = ["MOT_THST_HOVER"]
+
+# A model other than sd_quad14 may also set its frame, motor range, tilt limit and rate
+# gains, and its own pack size: BATT_CAPACITY with BATT_LOW_MAH and BATT_CRT_MAH at the
+# safety file's shares of it (params_check compares them).
+[vehicles.sd_fpv7]
+allowed = [
+  "FRAME_CLASS",
+  "FRAME_TYPE",
+  "MOT_SPIN_MAX",
+  "ATC_ANGLE_MAX",
+  "ATC_RAT_RLL_P",
+  "ATC_RAT_RLL_I",
+  "ATC_RAT_RLL_D",
+  "ATC_RAT_PIT_P",
+  "ATC_RAT_PIT_I",
+  "ATC_RAT_PIT_D",
+  "ATC_RAT_YAW_P",
+  "ATC_RAT_YAW_I",
+  "BATT_CAPACITY",
+  "BATT_LOW_MAH",
+  "BATT_CRT_MAH",
+]

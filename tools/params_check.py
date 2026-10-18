@@ -1,7 +1,10 @@
 """Rules for the simulator's parameter layers.
 
-* The sim-only layer (``sd_quad14-sim.parm``) may only set ``SIM_*`` and the names in
-  ``tools/params_allowlist.toml``.
+* A model's sim-only layer (``sd_quad14-sim.parm``, ``sd_fpv7-sim.parm``) may only set
+  ``SIM_*``, the names in ``tools/params_allowlist.toml`` and that model's own
+  ``[vehicles.<model>]`` names there. A layer that sets its own pack size sets
+  ``BATT_CAPACITY``, ``BATT_LOW_MAH`` and ``BATT_CRT_MAH`` together, with the reserves at
+  the safety layer's shares of the capacity.
 * A per-test override under ``simulation/sitl/params/tests/`` may only set names that the
   safety layer also sets, and must name its test in a comment line (``# test: <name>``).
 * ArduPilot's default layers (``copter.parm``, ``gazebo-iris.parm``) must not set a
@@ -25,6 +28,8 @@ REPO = Path(__file__).resolve().parent.parent
 PARAMS = REPO / "simulation" / "sitl" / "params"
 SAFETY = PARAMS / "searchdrone-safety.parm"
 SIM = PARAMS / "sd_quad14-sim.parm"
+SIM_LAYERS = {"sd_quad14": SIM, "sd_fpv7": PARAMS / "sd_fpv7-sim.parm"}
+BATTERY = ("BATT_CAPACITY", "BATT_LOW_MAH", "BATT_CRT_MAH")
 OVERRIDES = PARAMS / "tests"
 ALLOWLIST = REPO / "tools" / "params_allowlist.toml"
 SHADOW_PREFIXES = (
@@ -57,16 +62,48 @@ def names(text: str) -> list[str]:
     return out
 
 
-def allowlist(path: Path = ALLOWLIST) -> set[str]:
-    return set(tomllib.loads(path.read_text(encoding="utf-8"))["allowed"])
+def values(text: str) -> dict[str, float]:
+    out = {}
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            name, value = re.split(r"[\s,]+", line)[:2]
+            out[name] = float(value)
+    return out
 
 
-def sim_layer_problems(sim_text: str, allowed: set[str]) -> list[str]:
+def allowlist(path: Path = ALLOWLIST, vehicle: str = "sd_quad14") -> set[str]:
+    """The names every sim-only layer may set, plus ``vehicle``'s own."""
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    own = data.get("vehicles", {}).get(vehicle, {}).get("allowed", [])
+    return set(data["allowed"]) | set(own)
+
+
+def sim_layer_problems(sim_text: str, allowed: set[str], layer: str = SIM.name) -> list[str]:
     return [
-        f"{SIM.name}: {name} är varken SIM_* eller med i {ALLOWLIST.name}"
+        f"{layer}: {name} är varken SIM_* eller med i {ALLOWLIST.name}"
         for name in names(sim_text)
         if not name.startswith("SIM_") and name not in allowed
     ]
+
+
+def battery_problems(sim_text: str, safety_text: str, layer: str) -> list[str]:
+    """A layer's own pack keeps the safety layer's reserves as shares of the capacity."""
+    own, safety = values(sim_text), values(safety_text)
+    have = [name for name in BATTERY if name in own]
+    if not have:
+        return []
+    if len(have) != len(BATTERY):
+        return [f"{layer}: sätter {', '.join(have)} men inte alla av {', '.join(BATTERY)}"]
+    out = []
+    for name in BATTERY[1:]:
+        share = own[name] / own["BATT_CAPACITY"]
+        wanted = safety[name] / safety["BATT_CAPACITY"]
+        if abs(share - wanted) > 1e-9:
+            out.append(
+                f"{layer}: {name} är {share:.1%} av BATT_CAPACITY, {SAFETY.name} har {wanted:.1%}"
+            )
+    return out
 
 
 def override_problems(files: Iterable[Path], safety_names: set[str]) -> list[str]:
@@ -101,8 +138,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Rules for the simulator's parameter layers.")
     parser.add_argument("--ardupilot-home", type=Path)
     args = parser.parse_args(argv)
-    safety_names = set(names(SAFETY.read_text(encoding="utf-8")))
-    problems = sim_layer_problems(SIM.read_text(encoding="utf-8"), allowlist())
+    safety_text = SAFETY.read_text(encoding="utf-8")
+    safety_names = set(names(safety_text))
+    problems = []
+    for vehicle, path in SIM_LAYERS.items():
+        text = path.read_text(encoding="utf-8")
+        problems += sim_layer_problems(text, allowlist(vehicle=vehicle), path.name)
+        problems += battery_problems(text, safety_text, path.name)
     problems += override_problems(OVERRIDES.glob("*.parm"), safety_names)
     if args.ardupilot_home is not None:
         layers = default_layers(args.ardupilot_home)
