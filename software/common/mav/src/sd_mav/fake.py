@@ -141,6 +141,8 @@ class FakeFlightController:
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
         self.attitude_rad = (0.0, 0.0, 0.0)  # roll, pitch, yaw sent in ATTITUDE
+        self.battery_current_a: float | None = None  # BATTERY_STATUS current; None: -1
+        self.wind: tuple[float, float] | None = None  # WIND (from deg, m/s); None: not sent
         self.rc_link = False  # an RC transmitter is on and its receiver is healthy
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
@@ -206,6 +208,8 @@ class FakeFlightController:
                     self._send(msg)
             if tick % 10 == 0:
                 self._send(self._home_position())
+                if self.wind is not None:
+                    self._send(mavlink.MAVLink_wind_message(*self.wind, 0.0))
             tick += 1
             await self.clock.sleep(_TICK_S)
 
@@ -301,7 +305,7 @@ class FakeFlightController:
             0,
             3000,
             [16000] + [65535] * 9,
-            -1,
+            -1 if self.battery_current_a is None else round(self.battery_current_a * 100),
             -1,
             -1,
             round(self.battery_pct),
