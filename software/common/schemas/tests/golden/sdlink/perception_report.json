@@ -1,0 +1,79 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a3-0000-7000-8000-000000000000",
+  "kind": "PerceptionReport",
+  "sender": "vehicle:sim-01",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 50,
+  "sent_utc": "2026-10-15T12:32:00.125Z",
+  "ttl_ms": 30000,
+  "reliable": true,
+  "corr_id": null,
+  "sig": null,
+  "body": {
+    "still_id": "0192f49e-4000-7000-8000-000000000004",
+    "command_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+    "captured_utc": "2026-10-15T12:30:00Z",
+    "sensor": "rgb",
+    "pose": {
+      "lat": -35.363261,
+      "lon": 149.16523,
+      "alt_amsl_m": 624.0,
+      "agl_m": 40.0,
+      "roll_deg": 0.5,
+      "pitch_deg": -1.0,
+      "yaw_deg": 90.0,
+      "source_ts_ms": 120500
+    },
+    "footprint": [
+      {
+        "lat": -35.3612,
+        "lon": 149.1648
+      },
+      {
+        "lat": -35.3612,
+        "lon": 149.1657
+      },
+      {
+        "lat": -35.3618,
+        "lon": 149.1657
+      },
+      {
+        "lat": -35.3618,
+        "lon": 149.1648
+      }
+    ],
+    "px_per_m": 50.0,
+    "synthetic": true,
+    "detector": {
+      "name": "oracle",
+      "license": "Apache-2.0",
+      "version": "1",
+      "profile_id": null,
+      "placement": "onboard",
+      "ok": true,
+      "tiles": 15,
+      "latency_ms": 12.5,
+      "rate_hz": 1.0
+    },
+    "detections": [
+      {
+        "detection_id": "0192f49e-5000-7000-8000-000000000005",
+        "bbox": {
+          "x": 1200.0,
+          "y": 800.0,
+          "w": 40.0,
+          "h": 90.0
+        },
+        "score": 0.62,
+        "lat": -35.36146,
+        "lon": 149.16523,
+        "sigma95_m": 4.5,
+        "px_size": 90.0,
+        "crop_inline": true
+      }
+    ],
+    "detections_dropped": 0
+  }
+}

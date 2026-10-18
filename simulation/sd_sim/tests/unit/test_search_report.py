@@ -64,3 +64,26 @@ def test_map_and_record_are_written(tmp_path: Path) -> None:
     assert json.loads(path.read_text(encoding="utf-8"))["result"]["missed"] == sorted(
         o["name"] for o in truth["objects"] if o["truth"]["cls"] == "red_block"
     )
+
+
+def test_a_kept_still_gets_its_boxes_drawn(tmp_path: Path) -> None:
+    from PIL import Image
+
+    jpeg = tmp_path / "still.jpg"
+    Image.new("RGB", (320, 180), (90, 120, 60)).save(jpeg)
+    report = {
+        "pose": {"agl_m": 30.0, "yaw_deg": 90.0},
+        "detections": [
+            {
+                "bbox": {"x": 100, "y": 60, "w": 20, "h": 20},
+                "label": "red_block",
+                "source": "color",
+                "score": 0.8,
+            }
+        ],
+    }
+    out = search_report.annotate_still(jpeg, report, tmp_path / "out" / "still.jpg")
+    with Image.open(out) as img:
+        assert img.size == (320, 180)
+        r, g, b = img.convert("RGB").getpixel((97, 70))  # on the box's outline
+        assert r > 150 and g < 100 and b < 100

@@ -1,12 +1,13 @@
-"""The perception task: poll the still source, run the pipeline, queue the report.
+"""The perception task: poll the still source, run the pipeline, queue the report and crops.
 
 Runs beside the executor in its own task and only reads: the flight controller's latest
 telemetry (``Vehicle.telemetry``) and the still source. It never sends anything to the
 flight controller and never touches the executor. Reports go to the link's
-lowest-priority queue (``OnboardLink.perception``). Reading the still and the detector
-work run in a worker thread so a slow picture never blocks the event loop the executor
-ticks on. A failing still is logged and skipped; the loop keeps going. Kept stills (for
-a run's record) are capped at ``KEEP_MAX``, the oldest removed first.
+lowest-priority queue (``OnboardLink.perception``), each report followed by its crops.
+Reading the still and the detector work run in a worker thread so a slow picture never
+blocks the event loop the executor ticks on. A failing still is logged and skipped; the
+loop keeps going. Kept stills (for a run's record) are capped at ``KEEP_MAX``, the oldest
+removed first.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -27,10 +28,9 @@ from sd_detect import ClassRegistry, Still, build_sources, default_registry, det
 from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
 from sd_obs.clock import Clock
-from sd_onboard.perception.pipeline import MIN_AGL_M, Pose, process
+from sd_onboard.perception.pipeline import MIN_AGL_M, Perception, Pose, process
 from sd_onboard.perception.sources import CapturedStill, StillSource
 from sd_schemas.base import new_id
-from sd_schemas.link import PerceptionReport
 
 __all__ = [
     "KEEP_MAX",
@@ -56,6 +56,7 @@ class PerceptionStats:
     skipped_no_pose: int = 0
     skipped_on_ground: int = 0
     skipped_turning: int = 0
+    skipped_no_footprint: int = 0  # the camera's view does not reach the ground
     failed: int = 0
     by_label: dict[str, int] = field(default_factory=dict[str, int])
 
@@ -78,6 +79,7 @@ def pose_from(t: FcTelemetry, now_ms: int) -> Pose | None:
         pitch_deg=t.pitch_deg,
         yaw_deg=t.yaw_deg,
         speed_ms=t.groundspeed_ms,
+        source_ts_ms=t.attitude_mono_ms,
     )
 
 
@@ -111,7 +113,7 @@ class PerceptionLoop:
         self,
         source: StillSource,
         telemetry: Callable[[], FcTelemetry],
-        send: Callable[[PerceptionReport], None],
+        send: Callable[[Perception], None],
         clock: Clock,
         camera: PinholeCamera,
         *,
@@ -131,13 +133,17 @@ class PerceptionLoop:
         self.built = build_sources(self.registry, env=env)
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
+        self._last_still_ms: int | None = None
 
     def handle(
         self, captured: CapturedStill, t: FcTelemetry, now_ms: int, turn_rate_dps: float = 0.0
-    ) -> PerceptionReport | None:
+    ) -> Perception | None:
         """One still and the telemetry read when it arrived (with the attitude rate then):
-        a report, or ``None`` when it cannot be placed on the ground well enough."""
+        a report and its crops, or ``None`` when it cannot be placed on the ground well
+        enough."""
         self.stats.stills += 1
+        last, self._last_still_ms = self._last_still_ms, now_ms
+        rate_hz = 1000.0 / (now_ms - last) if last is not None and now_ms > last else 0.0
         pose = pose_from(t, now_ms)
         if pose is None:
             self.stats.skipped_no_pose += 1
@@ -150,7 +156,7 @@ class PerceptionLoop:
             return None
         start = self.clock.monotonic_ms()
         found = detect_all(captured.still, self.built.sources, self.registry)
-        report = process(
+        out = process(
             captured.still.frame,
             found,
             pose,
@@ -160,30 +166,33 @@ class PerceptionLoop:
             captured_utc=self.clock.utc_now(),
             synthetic=captured.synthetic,
             sources=sorted(self.built.sources),
-            skipped=dict(self.built.skipped),
             latency_ms=max(0, self.clock.monotonic_ms() - start),
+            rate_hz=rate_hz,
         )
+        if out is None:
+            self.stats.skipped_no_footprint += 1
+            return None
+        report = out.report
         self.stats.reports += 1
         self.stats.detections += len(report.detections)
         for d in report.detections:
-            self.stats.by_label[d.label] = self.stats.by_label.get(d.label, 0) + 1
+            label = d.label or "?"
+            self.stats.by_label[label] = self.stats.by_label.get(label, 0) + 1
         if report.detections and self.keep_dir is not None:
-            self._keep(captured.still, report, self.keep_dir)
-        return report
+            self._keep(captured.still, out, self.keep_dir)
+        return out
 
-    def _keep(self, still: Still, report: PerceptionReport, folder: Path) -> None:
+    def _keep(self, still: Still, out: Perception, folder: Path) -> None:
         """Save a still that had detections (JPEG, no metadata) for the run's record."""
         from PIL import Image
 
         folder.mkdir(parents=True, exist_ok=True)
         f = still.frame
+        report = out.report
         Image.frombytes("RGB", (f.width, f.height), f.rgb).save(
             folder / f"{report.still_id}.jpg", format="JPEG", quality=90
         )
-        (folder / f"{report.still_id}.json").write_text(
-            report.model_dump_json(exclude={"detections": {"__all__": {"crop_jpeg_b64"}}}),
-            encoding="utf-8",
-        )
+        (folder / f"{report.still_id}.json").write_text(report.model_dump_json(), encoding="utf-8")
         kept = sorted(folder.glob("*.json"))  # still ids are time-ordered (UUIDv7)
         for old in kept[: max(0, len(kept) - KEEP_MAX)]:
             old.with_suffix(".jpg").unlink(missing_ok=True)
@@ -200,9 +209,9 @@ class PerceptionLoop:
                 if captured is not None:
                     t, now_ms = self.telemetry(), self.clock.monotonic_ms()
                     rate = max(rate, self.rate.update(t))
-                    report = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
-                    if report is not None:
-                        self.send(report)
+                    out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
+                    if out is not None:
+                        self.send(out)
             except Exception:
                 self.stats.failed += 1
                 log.exception("perception failed on a still")

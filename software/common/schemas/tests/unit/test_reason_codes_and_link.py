@@ -82,8 +82,12 @@ def test_kind_models_cover_the_catalogue() -> None:
         "CommanderStatus",
         "ManualTakeover",
         "ManualControl",
+        "CropData",
+        "CropRequest",
+        "KeepoutInstall",
     }
     assert set(link.KIND_MODELS) >= link.RELIABLE_KINDS
+    assert link.RELIABLE_KINDS >= link.TTL_REQUIRED_KINDS
 
 
 def test_reliability() -> None:
@@ -122,25 +126,22 @@ def test_classify_override_is_a_skeleton_that_never_resumes(text: str) -> None:
     assert classify_override(text) != "resume"
 
 
-def test_perception_report_limits() -> None:
+def test_a_detection_may_carry_its_class() -> None:
     base = {
         "detection_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
-        "label": "red_block",
-        "source": "color",
+        "bbox": {"x": 10, "y": 20, "w": 30, "h": 30},
         "score": 0.7,
-        "bbox": (10, 20, 30, 30),
         "lat": -35.36,
         "lon": 149.16,
         "sigma95_m": 4.0,
-        "size_m": 0.6,
+        "px_size": 30,
+        "crop_inline": True,
     }
-    assert link.PerceptionDetection.model_validate(base).crop_jpeg_b64 is None
-    for bad in (
-        {"label": "Red Block"},
-        {"source": "guess"},
-        {"score": 1.5},
-        {"crop_jpeg_b64": "A" * (link.CROP_B64_MAX + 1)},
-    ):
+    plain = link.GeoDetectionMsg.model_validate(base)
+    assert plain.label is None and plain.source is None  # a detector without classes
+    classed = link.GeoDetectionMsg.model_validate(base | {"label": "red_block", "source": "color"})
+    assert (classed.label, classed.source) == ("red_block", "color")
+    for bad in ({"label": "Red Block"}, {"source": "guess"}, {"score": 1.5}):
         with pytest.raises(ValueError):
-            link.PerceptionDetection.model_validate(base | bad)
+            link.GeoDetectionMsg.model_validate(base | bad)
     assert link.is_reliable("PerceptionReport", link.Heartbeat())

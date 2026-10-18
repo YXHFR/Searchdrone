@@ -6,9 +6,19 @@ Every message travels in an ``Envelope`` whose ``body`` is validated against
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+import base64
+import binascii
+from typing import Annotated, Any, Final, Literal
 
-from pydantic import AwareDatetime, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BeforeValidator,
+    Field,
+    PlainSerializer,
+    WithJsonSchema,
+    field_validator,
+)
 
 from sd_schemas.base import (
     ISSUER_PATTERN,
@@ -18,6 +28,7 @@ from sd_schemas.base import (
     SKILL_NAME_PATTERN,
     VEHICLE_ID_PATTERN,
     Id,
+    LatLon,
     LatLonAlt,
     SdModel,
     VehicleId,
@@ -29,24 +40,35 @@ from sd_schemas.gate import CLEARANCE_VALID_MS, GateDecision, StateRef
 from sd_schemas.mission import LatchAction
 
 __all__ = [
-    "CROP_B64_MAX",
+    "CROP_JPEG_MAX_BYTES",
+    "CROP_MAX_PX",
+    "KEEPOUTS_MAX",
     "KIND_MODELS",
     "MANUAL_CONTROL_TIMEOUT_MS",
-    "PERCEPTION_MAX_DETECTIONS",
+    "PERCEPTION_DETECTIONS_MAX",
     "RELIABLE_KINDS",
     "SCHEMA_MAJOR",
+    "TTL_REQUIRED_KINDS",
+    "VIEW_SIDE_MAX_PX",
     "Ack",
     "AckStage",
     "ApprovalRef",
+    "BBox",
     "CharterAck",
     "CharterInstall",
     "ClearanceConfirmation",
     "CommandCancel",
     "CommanderStatus",
+    "CropData",
+    "CropRequest",
+    "DetectorInfo",
     "Envelope",
+    "GeoDetectionMsg",
     "Heartbeat",
     "Hello",
     "HelloAck",
+    "Keepout",
+    "KeepoutInstall",
     "LatchRef",
     "ManualControl",
     "ManualTakeover",
@@ -54,13 +76,12 @@ __all__ = [
     "OperatorOverrideNotice",
     "OperatorPosition",
     "OperatorRelease",
-    "PerceptionDetection",
     "PerceptionReport",
     "PilotPosition",
+    "Pose",
     "SkillCommand",
     "StateSnapshot",
     "StickAxes",
-    "StillPose",
     "is_reliable",
 ]
 
@@ -220,61 +241,6 @@ class OnboardEvent(SdModel):
     data: dict[str, Any] = Field(default_factory=dict[str, Any])
 
 
-# A detection's crop: a small JPEG thumbnail, base64. Kept small so a report with several
-# crops stays well inside the link's message limit.
-CROP_B64_MAX = 12_000
-PERCEPTION_MAX_DETECTIONS = 20
-_CLASS_ID = r"^[a-z][a-z0-9_]{1,31}$"
-
-
-class StillPose(SdModel):
-    """Where the camera was when the still was taken (from the flight controller)."""
-
-    lat: float = Field(ge=-90, le=90)
-    lon: float = Field(ge=-180, le=180)
-    alt_amsl_m: float
-    agl_m: float  # height above the ground under the vehicle
-    roll_deg: float = Field(ge=-180, le=180)
-    pitch_deg: float = Field(ge=-90, le=90)
-    yaw_deg: float = Field(ge=0, le=360)
-
-
-class PerceptionDetection(SdModel):
-    """One detection, placed on the ground. A hint for a person to look at, never a
-    decision: only a person confirms a find."""
-
-    detection_id: Id
-    label: str = Field(pattern=_CLASS_ID)  # a class id from the detector's class register
-    source: Literal["model", "color", "oracle"]  # "oracle" = the simulator's own labels
-    score: float = Field(ge=0, le=1)
-    bbox: tuple[float, float, float, float]  # x, y, w, h in the still's pixels
-    lat: float = Field(ge=-90, le=90)
-    lon: float = Field(ge=-180, le=180)
-    sigma95_m: float = Field(ge=0, le=10_000)
-    size_m: float = Field(ge=0, le=10_000)  # longest side on the ground
-    crop_jpeg_b64: str | None = Field(default=None, max_length=CROP_B64_MAX)
-
-
-class PerceptionReport(SdModel):
-    """Onboard -> ground, reliable, about one still a second while searching. Sent from
-    its own low-priority queue: it never holds up acks, events or the emergency path."""
-
-    still_id: Id
-    captured_utc: AwareDatetime
-    sensor: Literal["rgb", "thermal"] = "rgb"
-    pose: StillPose
-    footprint: list[tuple[float, float]] = Field(max_length=4)  # (lat, lon) corners
-    px_per_m: float = Field(gt=0)
-    synthetic: bool = False  # True when the picture is not a camera's (simulator)
-    sources: list[str] = Field(default_factory=list[str], max_length=8)
-    skipped_sources: dict[str, str] = Field(default_factory=dict[str, str])
-    latency_ms: int = Field(ge=0)
-    detections: list[PerceptionDetection] = Field(
-        default_factory=list[PerceptionDetection], max_length=PERCEPTION_MAX_DETECTIONS
-    )
-    detections_dropped: int = Field(default=0, ge=0)
-
-
 class OperatorOverrideNotice(SdModel):
     """Ground -> onboard: STOP, FLY HOME, battery or watchdog. Never from the AI."""
 
@@ -363,6 +329,179 @@ class ManualControl(StickAxes):
     still in LOITER."""
 
 
+# --- stage 2: perception reports, crops and keep-out cylinders ------------------------
+# Only reports and small crops travel: never whole stills or video. Every message below
+# is reliable and needs ``ttl_ms`` (``TTL_REQUIRED_KINDS``). A frame stays under the
+# link's 64 KiB message limit, so a crop's JPEG is capped at ``CROP_JPEG_MAX_BYTES``
+# (base64 in JSON adds a third).
+
+PERCEPTION_DETECTIONS_MAX: Final = 20  # per still; the rest are only counted
+CROP_MAX_PX: Final = 512  # a crop's longest side
+CROP_JPEG_MAX_BYTES: Final = 45_000
+VIEW_SIDE_MAX_PX: Final = 1536  # the square a view is cut from, in still pixels
+KEEPOUTS_MAX: Final = 200
+
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _jpeg_from_base64(value: object) -> object:
+    """JSON carries the JPEG as base64; Python callers may pass the bytes themselves."""
+    if isinstance(value, str):
+        try:
+            return base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("jpeg must be base64") from None
+    return value
+
+
+def _check_jpeg(value: bytes) -> bytes:
+    if len(value) > CROP_JPEG_MAX_BYTES:
+        raise ValueError(f"jpeg too large: {len(value)} bytes, at most {CROP_JPEG_MAX_BYTES}")
+    if not value.startswith(_JPEG_MAGIC):
+        raise ValueError("not a JPEG")
+    return value
+
+
+def _jpeg_to_base64(value: bytes) -> str:
+    return base64.b64encode(value).decode("ascii")
+
+
+JpegBytes = Annotated[
+    bytes,
+    BeforeValidator(_jpeg_from_base64),
+    AfterValidator(_check_jpeg),
+    PlainSerializer(_jpeg_to_base64, return_type=str, when_used="json"),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "contentEncoding": "base64",
+            "contentMediaType": "image/jpeg",
+            "maxLength": (CROP_JPEG_MAX_BYTES + 2) // 3 * 4,
+        }
+    ),
+]
+"""A JPEG of at most ``CROP_JPEG_MAX_BYTES``; base64 in JSON."""
+
+
+class BBox(SdModel):
+    """A box in image pixels: top-left corner, width and height (also ``sd_detect.BBox``)."""
+
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    w: float = Field(gt=0)
+    h: float = Field(gt=0)
+
+
+class Pose(SdModel):
+    """Where the camera was at exposure, interpolated from telemetry."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    alt_amsl_m: float = Field(ge=-500, le=9000)
+    agl_m: float = Field(ge=-100, le=1000)
+    roll_deg: float = Field(ge=-180, le=180)
+    pitch_deg: float = Field(ge=-180, le=180)
+    yaw_deg: float = Field(ge=-360, le=360)
+    source_ts_ms: int = Field(ge=0)  # telemetry time the pose was interpolated to
+
+
+class DetectorInfo(SdModel):
+    """Which detector looked at a still, and how it went."""
+
+    name: str = Field(min_length=1, max_length=64)
+    license: str = Field(min_length=1, max_length=64)  # SPDX id
+    version: str = Field(min_length=1, max_length=64)
+    profile_id: str | None = Field(default=None, max_length=64)  # det_<model>_vN
+    placement: Literal["onboard", "ground"]
+    ok: bool  # False: the detector failed on this still (no detections is not a failure)
+    tiles: int = Field(ge=0)
+    latency_ms: float = Field(ge=0)
+    rate_hz: float = Field(ge=0)  # the measured still rate, always sent
+
+
+class GeoDetectionMsg(SdModel):
+    """One detection, placed on the map. A hint for a person to look at, never a find."""
+
+    detection_id: Id
+    bbox: BBox
+    score: float = Field(ge=0, le=1)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    sigma95_m: float = Field(ge=0, le=1000)  # 95 % position uncertainty
+    px_size: float = Field(gt=0)  # the box's longest side in still pixels
+    crop_inline: bool  # True: a CropData for this detection follows
+    # The class from the detector's class register (``sd_detect``) and the kind of source
+    # that saw it ("oracle" = the simulator's own labels, simulator only). Empty from a
+    # detector that has no classes.
+    label: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    source: Literal["model", "color", "oracle"] | None = None
+
+
+class PerceptionReport(SdModel):
+    """Onboard -> ground: what the detector found in one still."""
+
+    still_id: Id
+    command_id: Id | None  # the order the still was taken during
+    captured_utc: AwareDatetime
+    sensor: Literal["rgb"]  # a thermal camera comes later, with its own migration
+    pose: Pose
+    footprint: list[LatLon] = Field(min_length=4, max_length=4)  # corners on the ground
+    px_per_m: float = Field(gt=0)
+    synthetic: bool = False  # a placeholder image (CI), not a camera picture
+    detector: DetectorInfo
+    detections: list[GeoDetectionMsg] = Field(
+        default_factory=list[GeoDetectionMsg], max_length=PERCEPTION_DETECTIONS_MAX
+    )
+    detections_dropped: int = Field(default=0, ge=0)
+
+
+class CropData(SdModel):
+    """Onboard -> ground: a small JPEG cut from a still, for a detection or a view."""
+
+    ref_id: Id  # the detection_id or the CropRequest's request_id
+    purpose: Literal["detection", "view"]
+    still_id: Id
+    bbox_in_still: BBox
+    width: int = Field(ge=1, le=CROP_MAX_PX)
+    height: int = Field(ge=1, le=CROP_MAX_PX)
+    jpeg: JpegBytes
+
+
+class CropRequest(SdModel):
+    """Ground -> onboard: cut a view from a stored still (a person asked to see more)."""
+
+    request_id: Id
+    still_id: Id
+    center_px: tuple[Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)]]
+    side_px: int = Field(ge=1, le=VIEW_SIDE_MAX_PX)
+    max_px: int = Field(ge=1, le=CROP_MAX_PX)
+
+
+class Keepout(SdModel):
+    """A no-fly cylinder around a possible person."""
+
+    keepout_id: Id
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    radius_m: float = Field(gt=0, le=500)  # person_keepout_m + sigma95_m
+    source: Literal["detection", "candidate", "confirmed"]
+    source_id: Id  # the detection_id or candidate_id
+
+
+class KeepoutInstall(SdModel):
+    """Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.
+
+    ``install_seq`` grows with every list; a lower one than the last seen is ignored, so a
+    late resend never brings back a removed cylinder or drops a new one. The installed
+    list stays in force until a list with a higher ``install_seq`` arrives: the envelope's
+    ``ttl_ms`` only limits how late the message may be delivered, never how long the
+    cylinders apply.
+    """
+
+    install_seq: int = Field(ge=0)
+    keepouts: list[Keepout] = Field(default_factory=list[Keepout], max_length=KEEPOUTS_MAX)
+
+
 KIND_MODELS: dict[str, type[SdModel]] = {
     m.__name__: m
     for m in (
@@ -376,7 +515,6 @@ KIND_MODELS: dict[str, type[SdModel]] = {
         Ack,
         StateSnapshot,
         OnboardEvent,
-        PerceptionReport,
         OperatorOverrideNotice,
         OperatorRelease,
         ClearanceConfirmation,
@@ -385,6 +523,10 @@ KIND_MODELS: dict[str, type[SdModel]] = {
         CommanderStatus,
         ManualTakeover,
         ManualControl,
+        PerceptionReport,
+        CropData,
+        CropRequest,
+        KeepoutInstall,
     )
 }
 
@@ -395,13 +537,19 @@ RELIABLE_KINDS = frozenset(
         "SkillCommand",
         "CommandCancel",
         "OnboardEvent",
-        "PerceptionReport",
         "OperatorOverrideNotice",
         "OperatorRelease",
         "ClearanceConfirmation",
         "ManualTakeover",
+        "PerceptionReport",
+        "CropData",
+        "CropRequest",
+        "KeepoutInstall",
     }
 )
+
+TTL_REQUIRED_KINDS = frozenset({"PerceptionReport", "CropData", "CropRequest", "KeepoutInstall"})
+"""Stage 2 messages that are never sent without ``ttl_ms`` (checked by ``sd_link``)."""
 
 _TERMINAL_ACK_STAGES = frozenset({"done", "failed", "superseded", "expired", "rejected"})
 

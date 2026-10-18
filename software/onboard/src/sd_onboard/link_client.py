@@ -20,7 +20,7 @@ import contextlib
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 from sd_link.client import LinkClient
@@ -45,6 +45,7 @@ from sd_schemas.link import (
     ClearanceConfirmation,
     CommandCancel,
     CommanderStatus,
+    CropData,
     HelloAck,
     ManualControl,
     ManualTakeover,
@@ -56,14 +57,19 @@ from sd_schemas.link import (
     SkillCommand,
 )
 
+if TYPE_CHECKING:
+    from sd_onboard.perception.pipeline import Perception
+
 __all__ = ["OnboardLink"]
 
 log = logging.getLogger("sd_onboard.link")
 MAX_EVENTS: Final = 500
 MAX_ACKS: Final = 200
-# Perception reports wait behind every ack and event and only the newest few are kept:
-# a report is never worth delaying an order's answer, and an old one is worth little.
+# Perception reports (each followed by its crops) wait behind every ack and event and only
+# the newest few are kept: a report is never worth delaying an order's answer, and an old
+# one is worth little.
 MAX_PERCEPTION: Final = 10
+PERCEPTION_TTL_MS: Final = 30_000  # a report or crop delivered later than this is dropped
 _WATCH_S: Final = 0.1
 
 
@@ -84,7 +90,7 @@ class OnboardLink:
         self._session: LinkSession | None = None
         self._events: deque[OnboardEvent] = deque(maxlen=MAX_EVENTS)
         self._acks: deque[Callable[[LinkSession], Awaitable[object]]] = deque(maxlen=MAX_ACKS)
-        self._perception: deque[PerceptionReport] = deque(maxlen=MAX_PERCEPTION)
+        self._perception: deque[list[PerceptionReport | CropData]] = deque(maxlen=MAX_PERCEPTION)
         self.dropped_perception = 0
         self._wake = asyncio.Event()
         self.manual_values_ignored = 0
@@ -121,11 +127,12 @@ class OnboardLink:
         self._events.append(OnboardEvent(type=type, severity=severity, data=clean))
         self._wake.set()
 
-    def perception(self, report: PerceptionReport) -> None:
-        """Queue a perception report; the oldest waiting one goes when the queue is full."""
+    def perception(self, out: Perception) -> None:
+        """Queue a perception report and its crops; the oldest waiting report (with its
+        crops) goes when the queue is full."""
         if len(self._perception) == MAX_PERCEPTION:
             self.dropped_perception += 1
-        self._perception.append(report)
+        self._perception.append([out.report, *out.crops])
         self._wake.set()
 
     def charter_ack(self, ack: CharterAck) -> None:
@@ -270,14 +277,22 @@ class OnboardLink:
                 while self._events:
                     await session.send(self._events[0])
                     self._events.popleft()
-                # One report per round, and only with nothing more urgent waiting.
+                # One message per round (a report, then its crops one by one), and only
+                # with nothing more urgent waiting.
                 if self._perception and not self._acks and not self._events:
+                    bundle = self._perception[0]
                     try:
-                        await session.send(self._perception[0])
+                        await session.send(bundle[0], ttl_ms=PERCEPTION_TTL_MS)
+                        bundle.pop(0)
                     except ValueError as exc:  # too large: dropped, never in the way
                         self.dropped_perception += 1
-                        log.warning("perception report dropped: %s", exc)
-                    self._perception.popleft()
+                        log.warning("perception message dropped: %s", exc)
+                        if isinstance(bundle[0], PerceptionReport):
+                            bundle.clear()  # its crops are worth nothing without it
+                        else:
+                            bundle.pop(0)
+                    if not bundle:
+                        self._perception.popleft()
                     if self._perception:
                         self._wake.set()
             except LinkBusyError:

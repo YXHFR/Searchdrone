@@ -18,7 +18,13 @@ from pydantic import ValidationError
 from sd_link.codes import MSG_TOO_LARGE, SCHEMA_INVALID
 from sd_link.constants import MAX_MESSAGE_BYTES
 from sd_schemas.base import SdModel, new_id
-from sd_schemas.link import KIND_MODELS, MANUAL_CONTROL_TIMEOUT_MS, Envelope, is_reliable
+from sd_schemas.link import (
+    KIND_MODELS,
+    MANUAL_CONTROL_TIMEOUT_MS,
+    TTL_REQUIRED_KINDS,
+    Envelope,
+    is_reliable,
+)
 
 __all__ = [
     "CLEARANCE_TTL_MAX_MS",
@@ -44,7 +50,16 @@ GROUND_SENDER: Final = "ground:main"
 CLEARANCE_TTL_MAX_MS: Final = 5000
 
 VEHICLE_TO_GROUND: Final = frozenset(
-    {"Hello", "CharterAck", "StateSnapshot", "OnboardEvent", "PerceptionReport", "Ack", "Heartbeat"}
+    {
+        "Hello",
+        "CharterAck",
+        "StateSnapshot",
+        "OnboardEvent",
+        "Ack",
+        "Heartbeat",
+        "PerceptionReport",
+        "CropData",
+    }
 )
 GROUND_TO_VEHICLE: Final = frozenset(
     {
@@ -60,6 +75,8 @@ GROUND_TO_VEHICLE: Final = frozenset(
         "CommanderStatus",
         "ManualTakeover",
         "ManualControl",
+        "CropRequest",
+        "KeepoutInstall",
         "Ack",
         "Heartbeat",
     }
@@ -96,6 +113,8 @@ def check_ttl(kind: str, ttl_ms: int | None) -> None:
         raise ValueError(f"a ClearanceConfirmation needs ttl_ms <= {CLEARANCE_TTL_MAX_MS}")
     if kind == "ManualControl" and (ttl_ms is None or ttl_ms > MANUAL_CONTROL_TIMEOUT_MS):
         raise ValueError(f"ManualControl needs ttl_ms <= {MANUAL_CONTROL_TIMEOUT_MS}")
+    if kind in TTL_REQUIRED_KINDS and ttl_ms is None:
+        raise ValueError(f"a {kind} needs ttl_ms")
 
 
 def build_envelope(

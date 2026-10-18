@@ -1132,28 +1132,58 @@ class FlowRepo:
 
     # --- detections ------------------------------------------------------------------
 
-    async def add_detections(self, rows: list[dict[str, Any]]) -> set[str]:
-        """Insert detections in one statement; returns the ids stored now (an id already
-        stored is skipped: a resent report)."""
-        if not rows:
-            return set()
-        cols = (
-            "id, mission_id, vehicle_id, find_id, still_id, captured_at, label, kind, source, "
-            "score, bbox, lat, lon, sigma95_m, size_m, synthetic, crop_path"
-        )
-        names = [c.strip() for c in cols.split(",")]
-        values: list[str] = []
-        params: dict[str, Any] = {}
-        for i, r in enumerate(rows):
-            marks = [f"CAST(:{n}_{i} AS jsonb)" if n == "bbox" else f":{n}_{i}" for n in names]
-            values.append("(" + ", ".join(marks) + ")")
-            params |= {f"{n}_{i}": r[n] for n in names}
-            params[f"bbox_{i}"] = json.dumps(r["bbox"])
+    async def add_perception(self, still: dict[str, Any], rows: list[dict[str, Any]]) -> set[str]:
+        """Store a still (once) and its detections in one transaction; returns the
+        detection ids stored now (an id already stored is skipped: a resent report)."""
         async with self.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO perception_stills (mission_id, vehicle_id, still_id, command_id, "
+                    "captured_utc, sensor, pose, footprint, px_per_m, detector, synthetic) "
+                    "VALUES (:mission_id, :vehicle_id, :still_id, :command_id, :captured_utc, "
+                    ":sensor, CAST(:pose AS jsonb), ST_GeomFromGeoJSON(:footprint), :px_per_m, "
+                    "CAST(:detector AS jsonb), :synthetic) ON CONFLICT (still_id) DO NOTHING"
+                ),
+                still,
+            )
+            if not rows:
+                return set()
+            names = (
+                "detection_id",
+                "mission_id",
+                "vehicle_id",
+                "still_id",
+                "score",
+                "bbox",
+                "lat",
+                "lon",
+                "sigma95_m",
+                "px_size",
+                "crop_path",
+                "crop_sha256",
+                "label",
+                "kind",
+                "source",
+                "find_id",
+            )
+            values: list[str] = []
+            params: dict[str, Any] = {}
+            for i, r in enumerate(rows):
+                values.append(
+                    f"(:detection_id_{i}, :mission_id_{i}, :vehicle_id_{i}, :still_id_{i}, "
+                    f":score_{i}, CAST(:bbox_{i} AS jsonb), "
+                    f"ST_SetSRID(ST_MakePoint(:lon_{i}, :lat_{i}), 4326), :sigma95_m_{i}, "
+                    f":px_size_{i}, :crop_path_{i}, :crop_sha256_{i}, :label_{i}, :kind_{i}, "
+                    f":source_{i}, :find_id_{i})"
+                )
+                params |= {f"{n}_{i}": r[n] for n in names}
+                params[f"bbox_{i}"] = json.dumps(r["bbox"])
             res = await conn.execute(
                 text(
-                    f"INSERT INTO detections ({cols}) VALUES {', '.join(values)} "  # noqa: S608
-                    "ON CONFLICT (id) DO NOTHING RETURNING id::text"
+                    "INSERT INTO detections (detection_id, mission_id, vehicle_id, still_id, "  # noqa: S608
+                    "score, bbox, geom, sigma95_m, px_size, crop_path, crop_sha256, label, kind, "
+                    f"source, find_id) VALUES {', '.join(values)} "
+                    "ON CONFLICT (detection_id) DO NOTHING RETURNING detection_id::text"
                 ),
                 params,
             )
@@ -1163,42 +1193,54 @@ class FlowRepo:
         if not ids:
             return set()
         rows = await self._all(
-            "SELECT id::text FROM detections WHERE id = ANY(CAST(:ids AS uuid[]))", ids=ids
+            "SELECT detection_id::text AS id FROM detections "
+            "WHERE detection_id = ANY(CAST(:ids AS uuid[]))",
+            ids=ids,
         )
         return {str(r["id"]) for r in rows}
 
     async def find_groups(self, mission_id: str) -> list[dict[str, Any]]:
-        """Every find of a mission as the table holds it: the detections grouped by their
-        stored find id, oldest find first (mean position, best score, best thumbnail, a
-        real detector's source before the simulator's labels)."""
+        """Every find of a mission as the table holds it: the detections with a class,
+        grouped by their stored find id, oldest find first (mean position, best score,
+        best thumbnail, a real detector's source before the simulator's labels)."""
         rows = await self._all(
-            "SELECT find_id::text AS find_id, min(label) AS label, "
-            "COALESCE(min(source) FILTER (WHERE source <> 'oracle'), 'oracle') AS source, "
-            "avg(lat) AS lat, avg(lon) AS lon, min(sigma95_m) AS sigma95_m, "
-            "max(score) AS score, count(*) AS count, bool_or(synthetic) AS synthetic, "
-            "(array_agg(id::text ORDER BY score DESC, created_at, id) "
-            "FILTER (WHERE crop_path IS NOT NULL))[1] AS thumb_detection_id, "
-            "max(score) FILTER (WHERE crop_path IS NOT NULL) AS thumb_score "
-            "FROM detections WHERE mission_id = :m GROUP BY find_id "
-            "ORDER BY min(created_at), find_id",
+            "SELECT d.find_id::text AS find_id, min(d.label) AS label, "
+            "COALESCE(min(d.source) FILTER (WHERE d.source <> 'oracle'), 'oracle') AS source, "
+            "avg(ST_Y(d.geom)) AS lat, avg(ST_X(d.geom)) AS lon, "
+            "min(d.sigma95_m) AS sigma95_m, max(d.score) AS score, count(*) AS count, "
+            "bool_or(s.synthetic) AS synthetic, "
+            "(array_agg(d.detection_id::text ORDER BY d.score DESC, d.seq) "
+            "FILTER (WHERE d.crop_path IS NOT NULL))[1] AS thumb_detection_id, "
+            "max(d.score) FILTER (WHERE d.crop_path IS NOT NULL) AS thumb_score "
+            "FROM detections d JOIN perception_stills s ON s.still_id = d.still_id "
+            "WHERE d.mission_id = :m AND d.find_id IS NOT NULL GROUP BY d.find_id "
+            "ORDER BY min(d.seq), d.find_id",
             m=mission_id,
         )
         return [dict(r) for r in rows]
 
     async def detections(self, mission_id: str, limit: int = 2000) -> list[dict[str, Any]]:
+        """The mission's detections with a class, newest first."""
         rows = await self._all(
-            "SELECT id::text, find_id::text, vehicle_id, still_id::text, captured_at, label, "
-            "kind, source, score, bbox, lat, lon, sigma95_m, size_m, synthetic, "
-            "crop_path IS NOT NULL AS has_crop FROM detections WHERE mission_id = :m "
-            "ORDER BY created_at DESC, id DESC LIMIT :n",
+            "SELECT d.detection_id::text AS id, d.find_id::text, d.vehicle_id, "
+            "d.still_id::text, s.captured_utc AS captured_at, d.label, d.kind, d.source, "
+            "d.score, d.bbox, ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon, d.sigma95_m, "
+            "d.px_size / s.px_per_m AS size_m, s.synthetic, d.crop_path IS NOT NULL AS has_crop "
+            "FROM detections d JOIN perception_stills s ON s.still_id = d.still_id "
+            "WHERE d.mission_id = :m AND d.label IS NOT NULL "
+            "ORDER BY d.seq DESC LIMIT :n",
             m=mission_id,
             n=limit,
         )
-        return [{**dict(r), "bbox": _json(r["bbox"])} for r in rows]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            b = _json(r["bbox"])
+            out.append({**dict(r), "bbox": [b["x"], b["y"], b["w"], b["h"]]})
+        return out
 
     async def detection_crop(self, mission_id: str, detection_id: str) -> str | None:
         row = await self._one(
-            "SELECT crop_path FROM detections WHERE mission_id = :m AND id = :d",
+            "SELECT crop_path FROM detections WHERE mission_id = :m AND detection_id = :d",
             m=mission_id,
             d=detection_id,
         )

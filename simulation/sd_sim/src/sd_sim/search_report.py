@@ -185,7 +185,8 @@ def annotate_still(jpeg: Path, report: dict[str, Any], path: Path) -> Path:
         img = im.convert("RGB")
     d = ImageDraw.Draw(img)
     for det in report["detections"]:
-        x, y, w, h = det["bbox"]
+        b = det["bbox"]
+        x, y, w, h = b["x"], b["y"], b["w"], b["h"]
         color = _COLORS.get(det["label"], (255, 255, 255))
         d.rectangle([x - 3, y - 3, x + w + 3, y + h + 3], outline=color, width=3)
         d.text(

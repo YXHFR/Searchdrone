@@ -2,10 +2,14 @@
 
 Reports wait in a short queue per vehicle and are handled by their own task, so the
 link's inbound loop (acks, events, snapshots) never waits for the database or the disk;
-when the queue is full the oldest report is dropped and counted.
+when the queue is full the oldest report is dropped and counted. A report's crops
+(``CropData``, which follow it on the link) are kept beside the queue; a report waits up
+to ``CROP_WAIT_S`` for the crops it announces (``crop_inline``) and is then stored with
+the ones that came, since a stored detection never changes.
 
-Every detection in a ``PerceptionReport`` is stored (append-only) if its class is in the
-class register; anything else is dropped and counted. The table decides what is new: a
+Every still is stored (``perception_stills``, append-only) and every detection in its
+``PerceptionReport`` with a class from the class register; a detection without a class,
+or with one the register does not know, is dropped and counted. The table decides what is new: a
 resent detection is neither counted nor published again. Detections of the same class
 within ``FIND_RADIUS_M`` of an existing find join it, otherwise they start a new find
 (the first detection's id, stored on every row), so the panel and the AI commander see
@@ -15,8 +19,7 @@ detector's when one saw it (``oracle`` only when nothing else did). After a rest
 finds are rebuilt from the table, grouped by the stored find id.
 
 A target's thumbnail is saved in the mission folder (``crops/<detection_id>.jpg``,
-registered as a mission file) after checking that it is a small JPEG, once the row is
-stored, and never over an existing file.
+registered as a mission file) once the row is stored, and never over an existing file.
 
 Events on the bus (topic ``detections``): ``detection.new`` for every stored detection,
 ``find.new`` for a new find and ``find.updated`` when a find gets another detection.
@@ -27,9 +30,8 @@ steers the vehicle, and a find is never confirmed here: only a person confirms.
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import hashlib
+import json
 import math
 from collections import deque
 from dataclasses import dataclass, field
@@ -38,19 +40,21 @@ from typing import TYPE_CHECKING, Any
 from sd_detect.classes import default_registry
 from sd_ground.logging import get_logger
 from sd_schemas.geo import tangent_radii
-from sd_schemas.link import PerceptionReport
+from sd_schemas.link import CropData, PerceptionReport
 
 if TYPE_CHECKING:
     from sd_ground.services.missions import MissionFlow
 
 __all__ = [
-    "CROP_MAX_BYTES",
+    "CROPS_KEPT_MAX",
+    "CROP_WAIT_S",
     "FIND_RADIUS_M",
     "MAX_CACHED_MISSIONS",
     "REPORT_QUEUE_MAX",
     "Find",
     "Finds",
     "ReportQueue",
+    "add_crop",
     "enqueue",
     "finds_for",
     "on_report",
@@ -59,10 +63,10 @@ __all__ = [
 log = get_logger("sd_ground.perception")
 
 FIND_RADIUS_M = 6.0  # detections of one class this close belong to the same find
-CROP_MAX_BYTES = 9_000
+CROP_WAIT_S = 3.0  # how long a report waits for the crops it announces
+CROPS_KEPT_MAX = 64  # crops waiting for their report, per vehicle; the oldest goes first
 MAX_CACHED_MISSIONS = 4  # missions whose finds stay in memory (the open one and a few read)
 REPORT_QUEUE_MAX = 32  # reports waiting per vehicle; the oldest goes first when full
-_JPEG_MAGIC = b"\xff\xd8\xff"
 _ORACLE = "oracle"
 
 
@@ -183,18 +187,6 @@ class Finds:
         return cls(items)
 
 
-def _crop(b64: str | None) -> bytes | None:
-    if b64 is None:
-        return None
-    try:
-        data = base64.b64decode(b64, validate=True)
-    except (binascii.Error, ValueError):
-        return None
-    if len(data) > CROP_MAX_BYTES or not data.startswith(_JPEG_MAGIC):
-        return None
-    return data
-
-
 async def finds_for(flow: MissionFlow, mission_id: str) -> Finds:
     cache: dict[str, Finds] = flow.finds
     finds = cache.get(mission_id)
@@ -214,6 +206,8 @@ class ReportQueue:
     items: deque[PerceptionReport] = field(
         default_factory=lambda: deque[PerceptionReport](maxlen=REPORT_QUEUE_MAX)
     )
+    crops: dict[str, CropData] = field(default_factory=dict[str, CropData])
+    crop_arrived: asyncio.Event = field(default_factory=asyncio.Event)
     running: bool = False
     dropped: int = 0
     handled: int = 0  # reports taken off the queue (stored, or failed and logged)
@@ -231,12 +225,40 @@ def enqueue(flow: MissionFlow, vehicle_id: str, report: PerceptionReport) -> Non
         flow.spawn(_drain(flow, vehicle_id, q), f"perception-{vehicle_id}")
 
 
+def add_crop(flow: MissionFlow, vehicle_id: str, crop: CropData) -> None:
+    """Called from the link's inbound loop: keep a detection's crop for its report."""
+    if crop.purpose != "detection":
+        return  # a view a person asked for: not handled here
+    q: ReportQueue = flow.reports.setdefault(vehicle_id, ReportQueue())
+    q.crops[str(crop.ref_id)] = crop
+    while len(q.crops) > CROPS_KEPT_MAX:
+        q.crops.pop(next(iter(q.crops)))  # the oldest crop
+    q.crop_arrived.set()
+
+
+async def _crops_for(q: ReportQueue, report: PerceptionReport) -> dict[str, CropData]:
+    """The crops the report announces, waiting up to ``CROP_WAIT_S`` for late ones."""
+    wanted = {str(d.detection_id) for d in report.detections if d.crop_inline}
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CROP_WAIT_S
+    while wanted - q.crops.keys():
+        left = deadline - loop.time()
+        if left <= 0:
+            break
+        q.crop_arrived.clear()
+        try:
+            await asyncio.wait_for(q.crop_arrived.wait(), left)
+        except TimeoutError:
+            break
+    return {did: q.crops.pop(did) for did in wanted if did in q.crops}
+
+
 async def _drain(flow: MissionFlow, vehicle_id: str, q: ReportQueue) -> None:
     try:
         while q.items:
             report = q.items.popleft()
             try:
-                await on_report(flow, vehicle_id, report)
+                await on_report(flow, vehicle_id, report, await _crops_for(q, report))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -252,6 +274,23 @@ async def _drain(flow: MissionFlow, vehicle_id: str, q: ReportQueue) -> None:
         q.running = False
 
 
+def _still_row(mid: str, vehicle_id: str, report: PerceptionReport) -> dict[str, Any]:
+    ring = [[c.lon, c.lat] for c in report.footprint]
+    return {
+        "mission_id": mid,
+        "vehicle_id": vehicle_id,
+        "still_id": str(report.still_id),
+        "command_id": None if report.command_id is None else str(report.command_id),
+        "captured_utc": report.captured_utc,
+        "sensor": report.sensor,
+        "pose": report.pose.model_dump_json(),
+        "footprint": json.dumps({"type": "Polygon", "coordinates": [[*ring, ring[0]]]}),
+        "px_per_m": report.px_per_m,
+        "detector": report.detector.model_dump_json(),
+        "synthetic": report.synthetic,
+    }
+
+
 def _save_crop(flow: MissionFlow, mid: str, rel: str, data: bytes) -> bool:
     folder = flow.mission_dir(mid) / "crops"
     folder.mkdir(parents=True, exist_ok=True)
@@ -263,30 +302,34 @@ def _save_crop(flow: MissionFlow, mid: str, rel: str, data: bytes) -> bool:
     return True
 
 
-async def on_report(flow: MissionFlow, vehicle_id: str, report: PerceptionReport) -> None:
+async def on_report(
+    flow: MissionFlow,
+    vehicle_id: str,
+    report: PerceptionReport,
+    crops: dict[str, CropData] | None = None,
+) -> None:
     mission = await flow.repo.open_mission(vehicle_id)
     if mission is None:
         return  # nothing to search for: no mission is open
     mid = str(mission.id)
     reg = default_registry()
+    crops = crops or {}
     finds = await finds_for(flow, mid)
     stored = await flow.repo.stored_detection_ids([str(d.detection_id) for d in report.detections])
     rows: list[dict[str, Any]] = []
-    crops: dict[str, bytes] = {}
     dropped = 0
     for d in report.detections:
         did = str(d.detection_id)
         if did in stored:
             continue  # a resent report: already stored and counted
-        if d.label not in reg:
+        if d.label is None or d.label not in reg or d.source is None:
             dropped += 1
             continue
-        data = _crop(d.crop_jpeg_b64)
-        if data is not None:
-            crops[did] = data
+        crop = crops.get(did)
         rows.append(
             {
                 "id": did,
+                "detection_id": did,
                 "mission_id": mid,
                 "vehicle_id": vehicle_id,
                 "find_id": "",
@@ -296,18 +339,20 @@ async def on_report(flow: MissionFlow, vehicle_id: str, report: PerceptionReport
                 "kind": reg.get(d.label).kind,
                 "source": d.source,
                 "score": d.score,
-                "bbox": list(d.bbox),
+                "bbox": d.bbox.model_dump(),
                 "lat": d.lat,
                 "lon": d.lon,
                 "sigma95_m": d.sigma95_m,
-                "size_m": d.size_m,
+                "px_size": d.px_size,
+                "size_m": round(d.px_size / report.px_per_m, 2),
                 "synthetic": report.synthetic,
-                "crop_path": f"crops/{did}.jpg" if did in crops else None,
+                "crop_path": None if crop is None else f"crops/{did}.jpg",
+                "crop_sha256": None if crop is None else hashlib.sha256(crop.jpeg).hexdigest(),
             }
         )
     changes = [finds.add(r) for r in rows]
     try:
-        inserted = await flow.repo.add_detections(rows)
+        inserted = await flow.repo.add_perception(_still_row(mid, vehicle_id, report), rows)
     except BaseException:
         flow.finds.pop(mid, None)  # the cache ran ahead of the table: rebuild it next time
         raise
@@ -326,7 +371,7 @@ async def on_report(flow: MissionFlow, vehicle_id: str, report: PerceptionReport
             continue
         rel = row["crop_path"]
         if rel is not None:
-            data = crops[row["id"]]
+            data = crops[row["id"]].jpeg
             if _save_crop(flow, mid, rel, data):
                 await flow.repo.add_file(
                     mission_id=mid,
@@ -344,7 +389,7 @@ async def on_report(flow: MissionFlow, vehicle_id: str, report: PerceptionReport
             {
                 k: (v.isoformat() if k == "captured_at" else v)
                 for k, v in row.items()
-                if k not in ("mission_id", "crop_path")
+                if k not in ("mission_id", "crop_path", "crop_sha256", "detection_id", "px_size")
             }
             | {"has_crop": rel is not None},
             vehicle_id=vehicle_id,
