@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Annotation, Command, StateSnapshot } from "../../api/types";
 import {
   activePath,
+  finishedPath,
   formatLength,
   leavesArea,
   lengthM,
@@ -11,6 +12,7 @@ import {
   pathPlanData,
   pathProblem,
   pathsData,
+  resumedPath,
 } from "./pathData";
 
 const HOME = { lat: -35.363261, lon: 149.16523 };
@@ -134,5 +136,45 @@ describe("the path being flown", () => {
     expect(pathFlownData(p, null).features).toHaveLength(1);
     const goto = { ...cmd("running", L, "c2"), skill: "goto" } as Command;
     expect(activePath(goto, [], goto, null, null)).toBeNull();
+  });
+
+  it("a running resume after STOP keeps the path it continues on the map", () => {
+    const stopped = { ...cmd("cancelled"), updated_at: "2026-10-18T12:01:00Z" } as Command;
+    const resume = {
+      id: "r1",
+      skill: "resume",
+      status: "running",
+      params: {},
+      created_at: "2026-10-18T12:02:00Z",
+    } as unknown as Command;
+    const refused = {
+      ...cmd("rejected_by_gate", L, "c3"),
+      skill: "goto",
+      created_at: "2026-10-18T12:01:30Z",
+    } as Command;
+    expect(resumedPath(resume, [stopped, refused, resume])).toBe(stopped);
+    // A hold in between keeps the resume point: the resume still continues the path.
+    const hold = { ...cmd("done", L, "h1"), skill: "hold", created_at: "2026-10-18T12:01:20Z" };
+    expect(resumedPath(resume, [stopped, hold as Command, resume])).toBe(stopped);
+    const drone = { lon: at(0, 50)[0], lat: at(0, 50)[1] };
+    // The resume's own onboard progress is over the rest only: the line's share is used.
+    const snap = { active_command_id: "r1", progress_pct: 10 } as StateSnapshot;
+    const p = activePath(resume, [], null, drone, snap, resumedPath(resume, [stopped, resume]));
+    expect(p?.running).toBe(true);
+    expect(p?.pct).toBeCloseTo(25, 0);
+    // A resume after another kind of order shows no path; nor does any other order.
+    const goto = {
+      ...cmd("cancelled", L, "c4"),
+      skill: "goto",
+      created_at: "2026-10-18T12:01:40Z",
+    };
+    expect(resumedPath(resume, [stopped, goto as Command, resume])).toBeNull();
+    expect(resumedPath(stopped, [stopped])).toBeNull();
+    // When the resume has flown to the end, the whole path shows as flown.
+    const ended = { ...resume, status: "done", updated_at: "2026-10-18T12:05:00Z" } as Command;
+    const shown = activePath(null, [], finishedPath([stopped, ended]), null, null);
+    expect(shown?.command.id).toBe("c1");
+    expect(shown?.pct).toBe(100);
+    expect(finishedPath([ended])).toBeNull();
   });
 });

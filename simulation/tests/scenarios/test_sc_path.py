@@ -75,11 +75,11 @@ async def draw_and_fly(sc: Scenario) -> dict[str, Any]:
     return cmd
 
 
-def closest_m(sc: Scenario, since: float) -> list[float]:
-    """For each point of the path, how close the flown track came (armed, since ``since``)."""
+def closest_m(sc: Scenario, since: float, until: float = math.inf) -> list[float]:
+    """For each point of the path, how close the flown track came (armed, in [since, until))."""
     plane = Plane(*sc.r.home)
-    xy = [plane.xy(s.lat, s.lon) for s in sc.track if s.t >= since and s.armed]
-    return [min(math.dist(p, q) for p in xy) for q in PATH_ENU]
+    xy = [plane.xy(s.lat, s.lon) for s in sc.track if since <= s.t < until and s.armed]
+    return [min((math.dist(p, q) for p in xy), default=math.inf) for q in PATH_ENU]
 
 
 @pytest.mark.budget_s(540)
@@ -124,6 +124,7 @@ async def test_sc_path_stop_halfway_brakes_at_once(
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await sc.airborne_with_ai("SC_PATH")
+        t0 = time.monotonic()
         await draw_and_fly(sc)
         await sc.wait_command("follow_path", "running", 30, issuer_kind="brain")
         # Halfway: near the third point, flying at speed.
@@ -177,7 +178,11 @@ async def test_sc_path_stop_halfway_brakes_at_once(
         await sc.until(flies_on_as_a_path, 5, "Fortsätt: vägen flygs vidare i TRANSIT")
         await sc.wait_command("resume", "done", 180, issuer_kind="brain", besides=before)
         end = sc.at(*PATH_ENU[-1])
-        rest = closest_m(sc, pressed)[3:]  # the points still left when it stopped
+        # The points still left when it stopped, the one it was heading for included.
+        reached = closest_m(sc, t0, pressed)
+        since_stop = closest_m(sc, pressed)
+        rest = [a for b, a in zip(reached, since_stop, strict=True) if b > POINT_LIMIT_M]
+        assert len(rest) >= 2, (reached, since_stop)  # stopped near the third point
         measure(
             "Fortsätt efter STOPP: sämsta återstående vägpunkt", max(rest), POINT_LIMIT_M, unit="m"
         )
