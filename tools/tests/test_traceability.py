@@ -83,7 +83,8 @@ def test_main_writes_the_yaml(tmp_path: Path) -> None:
 
 def test_missing_nodes() -> None:
     collected = {"a.py::t", "b.py::u[x]", "b.py::u[y]"}
-    assert check_traceability.missing(["a.py::t", "b.py::u", "b.py::u[x]"], collected) == []
+    assert check_traceability.missing(["a.py::t", "b.py::u", "b.py::u[x]", "b.py"], collected) == []
+    assert check_traceability.missing(["c.py"], collected) == ["c.py"]
     assert check_traceability.missing(["a.py::gone", "b.py::u[z]"], collected) == [
         "a.py::gone",
         "b.py::u[z]",

@@ -29,7 +29,8 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_IDS = Path("docs/spec/grunden-v1/accept-ids.toml")
 TYPES = ("A", "M", "A + M")
 SC_PATTERN = re.compile(r"^SC[0-9]{2}$")
-NODE_PATTERN = re.compile(r"^[\w/.-]+\.py::\w+(\[[^\]]+\])?$")
+# A test (``file.py::test`` or ``file.py::test[case]``) or a whole test file.
+NODE_PATTERN = re.compile(r"^[\w/.-]+\.py(::\w+(\[[^\]]+\])?)?$")
 MISSING_EXIT = 2
 
 

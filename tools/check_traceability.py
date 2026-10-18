@@ -41,12 +41,14 @@ def nodes(paths: list[str]) -> set[str]:
 
 def missing(listed: list[str], collected: set[str]) -> list[str]:
     """Listed nodes pytest does not know. A node without parameters stands for all of
-    its parametrised cases."""
+    its parametrised cases, a file for all of its tests."""
     out = []
     for node in listed:
         if node in collected:
             continue
         if "[" not in node and any(c.startswith(node + "[") for c in collected):
+            continue
+        if "::" not in node and any(c.startswith(node + "::") for c in collected):
             continue
         out.append(node)
     return out
