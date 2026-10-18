@@ -28,6 +28,7 @@ export function OrderButtons() {
   const enabled = useSessionStore((s) => s.config?.features.order_buttons !== false);
   const mission = useLiveStore((s) => s.mission);
   const tel = useLiveStore((s) => s.telemetry);
+  const serverAirborne = useLiveStore((s) => s.vehicle?.airborne === true);
   const activeId = mission?.active_charter_id ?? null;
   const charter = useMissionStore((s) => activeCharter(s, activeId));
   const annotations = useMissionStore((s) => s.annotations);
@@ -36,7 +37,9 @@ export function OrderButtons() {
   if (!isPilot || !enabled || !mission || !charter) return null;
 
   const alt = charter.body.default_alt_agl_m ?? charter.body.alt_min_agl_m ?? 30;
-  const airborne = tel?.armed === true && tel.landed_state === "IN_AIR";
+  // In the air by either signal: the ground's own flag, or fresher telemetry. No take-off
+  // button is offered then.
+  const airborne = serverAirborne || (tel?.armed === true && tel.landed_state === "in_air");
   const orders: Order[] = [];
   if (!airborne) {
     orders.push({

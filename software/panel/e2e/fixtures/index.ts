@@ -109,7 +109,7 @@ export function telemetry(p: Partial<Telemetry> = {}): Telemetry {
     groundspeed_ms: 5,
     heading_deg: 10,
     home: HOME,
-    landed_state: "IN_AIR",
+    landed_state: "in_air",
     ...p,
   };
 }

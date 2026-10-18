@@ -8,6 +8,7 @@ import {
   observerSession,
   panelConfig,
   snapshot,
+  square,
   telemetry,
   vehicleLive,
 } from "../fixtures";
@@ -359,9 +360,42 @@ test.describe("clearance, limits, autonomy, mission card and order buttons", () 
     ground.pushLive(
       "telemetry",
       "telemetry",
-      telemetry({ armed: false, landed_state: "ON_GROUND", alt_rel_home_m: 0 }),
+      telemetry({ armed: false, landed_state: "on_ground", alt_rel_home_m: 0 }),
     );
   }
+
+  test("order buttons: Starta on the ground; pins, the next sector and Sväva här in the air", async ({
+    page,
+    ground,
+  }) => {
+    ground.sectors = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: square(50, 0, 200),
+          properties: { sector_id: "A", name: "A", status: "pending", progress: 0 },
+        },
+      ],
+    };
+    await readyMission(ground);
+    await showView(page, "chat");
+    const orders = page.locator(".orders");
+    await expect(orders.getByTestId("order-takeoff")).toBeVisible();
+    await expect(orders.getByTestId("order-hold")).toHaveCount(0);
+    ground.pushLive("vehicle", "vehicle.state", {
+      ...onGround,
+      airborne: true,
+      snapshot: snapshot({ executor_state: "HOLD" }),
+    });
+    ground.pushLive("telemetry", "telemetry", telemetry());
+    await expect(orders.getByTestId("order-takeoff")).toHaveCount(0);
+    await expect(orders.getByTestId("order-survey_sector")).toHaveText("Sök av A");
+    await orders.getByTestId("order-hold").click();
+    await expect
+      .poll(() => ground.posts("/api/v1/missions/M1/commands").map((r) => r.body))
+      .toEqual([expect.objectContaining({ skill: "hold", params: {} })]);
+  });
 
   test("'Fritt runt drönaren': box first, one POST with {}, countdown, reset when consumed", async ({
     page,
