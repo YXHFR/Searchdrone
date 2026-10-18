@@ -55,7 +55,7 @@ from sd_schemas.mission import OperatorLatch
 __all__ = ["COMMANDER_STATUS_S", "GroundLink", "InboundHandler"]
 
 COMMANDER_STATUS_S: Final = 1.0
-ACK_MEMORY: Final = 256  # executor Acks kept for a send_acked that starts waiting late
+ACK_MEMORY: Final = 64  # executor Acks kept per vehicle for a send_acked that waits late
 # The executor's own answers. "received" is the link's receipt before the executor has it.
 _EXECUTOR_ACKS: Final = frozenset({"done", "rejected", "failed", "expired", "superseded"})
 log = get_logger("sd_ground.link")
@@ -100,7 +100,7 @@ class GroundLink:
         self._snapshots: dict[str, SnapshotSeen] = {}
         self._hellos: dict[str, Hello] = {}
         self._ack_waiters: dict[tuple[str, uuid.UUID], asyncio.Future[str]] = {}
-        self._acked: OrderedDict[tuple[str, uuid.UUID], str] = OrderedDict()  # -> stage
+        self._acked: dict[str, OrderedDict[uuid.UUID, str]] = {}  # vehicle -> msg_id -> stage
         self.server = LinkServer(
             tokens=tokens,
             is_known_vehicle=lambda v: v in self.vehicle_ids,
@@ -187,14 +187,17 @@ class GroundLink:
     ) -> Literal["acked", "refused", "timeout", "down"]:
         """Send one message and wait for the onboard executor's ``Ack`` that names it, the
         send and the wait together within ``timeout_s`` (a take-over notice before its
-        LOITER). ``done`` is ``acked``; ``rejected``, ``expired`` and the like ``refused``."""
+        LOITER). ``done`` is ``acked``; ``rejected``, ``expired`` and the like ``refused``.
+
+        The timeout runs on the event loop's time and only bounds this helper; the
+        take-over's own deadline is kept by the MAVLink thread on its clock."""
         try:
             async with asyncio.timeout(timeout_s):
                 msg_id = await self.send_message(vehicle_id, message)
                 if msg_id is None:
                     return "down"
                 key = (vehicle_id, msg_id)
-                stage = self._acked.get(key)  # answered while the send was being queued
+                stage = self._acked.get(vehicle_id, {}).get(msg_id)  # answered while queued
                 if stage is None:
                     waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
                     self._ack_waiters[key] = waiter
@@ -209,10 +212,12 @@ class GroundLink:
     def _on_ack(self, vehicle_id: str, ack: Ack) -> None:
         if ack.stage not in _EXECUTOR_ACKS:
             return
-        key = (vehicle_id, uuid.UUID(str(ack.ref_id)))
-        self._acked[key] = ack.stage
-        while len(self._acked) > ACK_MEMORY:
-            self._acked.popitem(last=False)
+        msg_id = uuid.UUID(str(ack.ref_id))
+        acked = self._acked.setdefault(vehicle_id, OrderedDict())
+        acked[msg_id] = ack.stage
+        while len(acked) > ACK_MEMORY:
+            acked.popitem(last=False)
+        key = (vehicle_id, msg_id)
         waiter = self._ack_waiters.get(key)
         if waiter is not None and not waiter.done():
             waiter.set_result(ack.stage)

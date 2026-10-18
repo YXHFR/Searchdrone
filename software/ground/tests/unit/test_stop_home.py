@@ -517,6 +517,34 @@ async def test_handback_during_the_takeover_wait_drops_the_takeover() -> None:
         assert s.core.snapshot().manual is False  # type: ignore[union-attr]
 
 
+async def test_resume_during_the_takeover_wait_drops_it_and_says_so() -> None:
+    """Resume never reaches the MAVLink thread, but it is newer: no LOITER follows, and
+    the pilot is told the take-over did not happen."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-resume", by=PILOT)
+        await s.run(0.05)
+        s.resume()
+        await s.run(1.0)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        assert "vehicle.takeover_dropped" in s.g.types()
+
+
+async def test_landing_during_the_takeover_wait_drops_it() -> None:
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-land", by=PILOT)
+        await s.run(0.05)
+        s.core._landed()  # pyright: ignore[reportPrivateUsage]
+        await s.run(1.0)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+
+
 def _takeover_outcome(s: Stack) -> dict[str, Any]:
     return [o for o in s.outcomes() if o["action"] == "takeover"][-1]
 

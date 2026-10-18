@@ -541,12 +541,16 @@ class VehicleActions:
 
     async def pump(self, g: GroundView) -> None:
         """Runs in the main loop: notices, events and WebSocket updates."""
-        while True:
-            try:
-                await self.drain(g)
-            except Exception as exc:  # keep pumping
-                log.error("actions.pump_failed", error=type(exc).__name__)
-            await self.clock.sleep(PUMP_S)
+        try:
+            while True:
+                try:
+                    await self.drain(g)
+                except Exception as exc:  # keep pumping
+                    log.error("actions.pump_failed", error=type(exc).__name__)
+                await self.clock.sleep(PUMP_S)
+        finally:
+            for task in list(self._tasks):  # take-over notices still waiting
+                task.cancel()
 
     async def drain(self, g: GroundView) -> None:
         while True:

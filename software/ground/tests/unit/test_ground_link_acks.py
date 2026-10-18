@@ -7,9 +7,10 @@ import time
 import uuid
 from typing import Any
 
-from test_ground_link_hello import VID, make
+from test_ground_link_hello import VID, hello, make
 
 from sd_ground.link import ACK_MEMORY
+from sd_link.session import Closed, Inbound
 from sd_schemas.base import new_id
 from sd_schemas.link import Ack, AckStage, CommanderStatus
 
@@ -100,8 +101,47 @@ async def test_link_down_sends_nothing() -> None:
     assert await link.send_acked(VID, MESSAGE, 1.0) == "down"
 
 
-def test_the_ack_memory_is_capped() -> None:
+async def test_the_ack_memory_is_capped_per_vehicle() -> None:
+    """Another vehicle's many answers cannot push out an early answer to ours."""
     link, _, _ = make()
+    msg_id = _id()
+    _ack(link, msg_id, "done")
     for _ in range(ACK_MEMORY + 50):
-        _ack(link, _id(), "done")
-    assert len(link._acked) == ACK_MEMORY  # pyright: ignore[reportPrivateUsage]
+        _ack(link, _id(), "done", vehicle_id="sim-02")
+    assert len(link._acked["sim-02"]) == ACK_MEMORY  # pyright: ignore[reportPrivateUsage]
+    _sent(link, msg_id)
+    assert await link.send_acked(VID, MESSAGE, 0.05) == "acked"
+
+
+class _Session:
+    """An SD-link session that delivers the given events, then closes."""
+
+    vehicle_id = VID
+
+    def __init__(self, events: list[Any]) -> None:
+        self.events = list(events)
+
+    async def next_event(self) -> Any:
+        await asyncio.sleep(0)
+        return self.events.pop(0) if self.events else Closed(code=None, reason="done")
+
+    async def send(self, *_: Any, **__: Any) -> Any:
+        return None
+
+
+async def test_an_ack_from_the_session_reaches_the_waiting_send() -> None:
+    """The executor's Ack goes from the session loop to ``send_acked``, not only in tests
+    that call ``_on_ack`` themselves."""
+    link, _, _ = make()
+    msg_id = _id()
+    _sent(link, msg_id)
+    waiting = asyncio.ensure_future(link.send_acked(VID, MESSAGE, 1.0))
+    await asyncio.sleep(0)
+    inbound = Inbound(
+        envelope=None,  # type: ignore[arg-type]
+        body=Ack(ref_id=msg_id, stage="done"),
+        received_at=0.0,
+        deadline=None,
+    )
+    await link._on_session(_Session([inbound]), hello(None, 0))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    assert await waiting == "acked"

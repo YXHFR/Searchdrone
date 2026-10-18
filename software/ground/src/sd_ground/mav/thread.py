@@ -426,7 +426,14 @@ class GroundMav:
         self._pending = None
         seq = pending.action_seq
         if self.latches.latest_seq(self.vehicle_id) != seq:
-            return  # a newer action (a system action too) came while it waited
+            # A newer action (Resume, a system action) came while it waited: say so, the
+            # pilot pressed Ta över and no LOITER follows.
+            self._on_event(
+                "vehicle.takeover_dropped",
+                "warning",
+                {"takeover_id": pending.takeover_id, "reason": "newer_action"},
+            )
+            return
         if rc_switch_moved(self.vehicle, pending.rc_at_click):
             # A person at the RC transmitter chose a mode meanwhile: it goes first.
             self._on_event(
@@ -514,6 +521,7 @@ class GroundMav:
 
     def _landed(self) -> None:
         self._manual = None
+        self._pending = None
         self._battery_low_since = None
         latch = self.latches.landed(self.vehicle_id)
         self._on_event(

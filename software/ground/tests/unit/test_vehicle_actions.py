@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+import structlog.testing
 from stop_helpers import OBSERVER, PILOT, VID, RecordingSink, StubGround
 
 from sd_ground.mav.thread import ActionReport, MavSnapshot, ModeAction
@@ -280,11 +281,28 @@ async def test_a_failing_takeover_task_is_logged_not_raised() -> None:
     actions._posted = broken  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
     actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
     g = StubGround(clock)
-    await actions.drain(g)
-    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
-    await asyncio.gather(*tasks, return_exceptions=True)
-    await asyncio.sleep(0)
+    with structlog.testing.capture_logs() as logs:
+        await actions.drain(g)
+        tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0)
     assert actions._tasks == set()  # pyright: ignore[reportPrivateUsage]
+    assert [e["event"] for e in logs] == ["actions.task_failed"]
+
+
+async def test_stopping_the_pump_cancels_a_waiting_takeover_notice() -> None:
+    clock = FakeClock()
+    sink = RecordingSink()
+    sink.hangs = True
+    actions = _actions(clock, mav=StubMav(), notices=sink)
+    pump = asyncio.ensure_future(actions.pump(StubGround(clock)))
+    actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    await clock.run_for(0.1)
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    assert tasks
+    pump.cancel()
+    await asyncio.gather(pump, *tasks, return_exceptions=True)
+    assert all(t.cancelled() for t in tasks)
 
 
 async def test_without_sdlink_nothing_is_acknowledged() -> None:
