@@ -54,7 +54,7 @@ dev = [
 test = ["sd-link-testing", "sd-testing"]
 # CAD models in hardware/cad (`just cad`); not a default group, so only `just cad` and the
 # hw-cad CI job install it.
-cad = ["cadquery==2.8.0", "matplotlib>=3.10"]
+cad = ["cadquery==2.8.0", "matplotlib==3.11.2"]
 
 [tool.ruff]
 line-length = 100

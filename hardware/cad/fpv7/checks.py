@@ -140,13 +140,7 @@ def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
             ),
         ],
     }
-    out["ok"] = (
-        not over
-        and not hits
-        and all(m["distance_mm"] >= limit for m in margins)
-        and cog_ok(out)
-        and out["mass_g"] <= max_mass_g
-    )
+    out["ok"] = all(verdicts(out).values())
     return out
 
 
@@ -156,11 +150,22 @@ def cog_ok(r: dict[str, Any]) -> bool:
     return abs(x) <= r["cog_offset_max_mm"] and abs(y) <= r["cog_offset_max_mm"]
 
 
+def verdicts(r: dict[str, Any]) -> dict[str, bool]:
+    """Pass or fail per check; the report's ``ok`` (and the exit code of `just cad`) is all."""
+    return {
+        "overlaps": not r["overlaps"],
+        "prop_margin": all(m["distance_mm"] >= r["prop_margin_min_mm"] for m in r["prop_margins"]),
+        "camera_view": not r["fov_hits"],
+        "cog": cog_ok(r),
+        "mass": r["mass_g"] <= r["max_takeoff_mass_g"],
+    }
+
+
 def markdown(r: dict[str, Any]) -> str:
     def yes(ok: bool) -> str:
         return "ok" if ok else "FEL"
 
-    margin_ok = all(m["distance_mm"] >= r["prop_margin_min_mm"] for m in r["prop_margins"])
+    v = verdicts(r)
     lines = [
         "# fpv7: mass, inertia and checks",
         "",
@@ -181,14 +186,14 @@ def markdown(r: dict[str, Any]) -> str:
         "",
         "| Check | Result |",
         "|---|---|",
-        f"| No parts overlap | {yes(not r['overlaps'])} ({len(r['overlaps'])} overlaps) |",
-        f"| Propeller margin >= {r['prop_margin_min_mm']} mm | {yes(margin_ok)} "
+        f"| No parts overlap | {yes(v['overlaps'])} ({len(r['overlaps'])} overlaps) |",
+        f"| Propeller margin >= {r['prop_margin_min_mm']} mm | {yes(v['prop_margin'])} "
         f"(smallest {min(m['distance_mm'] for m in r['prop_margins']):.1f} mm) |",
-        f"| Camera view clear | {yes(not r['fov_hits'])} ({len(r['fov_hits'])} parts in view) |",
+        f"| Camera view clear | {yes(v['camera_view'])} ({len(r['fov_hits'])} parts in view) |",
         f"| Centre of gravity within {r['cog_offset_max_mm']} mm of the centre in x and y "
-        f"| {yes(cog_ok(r))} |",
+        f"| {yes(v['cog'])} |",
         f"| Take-off mass <= {r['max_takeoff_mass_g']:.0f} g (hardware/limits.yaml) "
-        f"| {yes(r['mass_g'] <= r['max_takeoff_mass_g'])} |",
+        f"| {yes(v['mass'])} |",
         "",
         "| Propeller | Nearest part | Distance (mm) |",
         "|---|---|---|",

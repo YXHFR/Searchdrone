@@ -76,6 +76,28 @@ def test_mass_is_within_the_hardware_limit(report: dict[str, Any]) -> None:
     assert report["ok"]
 
 
+@pytest.mark.parametrize(
+    ("change", "check"),
+    [
+        ({"overlaps": [{"a": "x", "b": "y", "volume_mm3": 1.0}]}, "overlaps"),
+        ({"prop_margins": [{"prop": "prop_1", "nearest": "x", "distance_mm": 4.9}]}, "prop_margin"),
+        ({"fov_hits": [{"part": "x", "volume_mm3": 1.0}]}, "camera_view"),
+        ({"cog_mm": [0.0, -5.1, 0.0]}, "cog"),
+        ({"mass_g": 2500.1}, "mass"),
+    ],
+)
+def test_each_failed_check_fails_the_report(
+    report: dict[str, Any], change: dict[str, Any], check: str
+) -> None:
+    """Every check decides ``ok``, the exit code of `just cad`, on its own."""
+    import checks
+
+    assert all(checks.verdicts(report).values())
+    bad = checks.verdicts({**report, **change})
+    assert [k for k, ok in bad.items() if not ok] == [check]
+    assert "FEL" in checks.markdown({**report, **change})
+
+
 def test_prop_margin_check_sees_a_part_too_close(drone: assembly.Drone) -> None:
     """The margin check is not vacuous: a block 3 mm under a disc is reported at 3 mm."""
     import checks

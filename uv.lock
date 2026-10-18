@@ -1824,7 +1824,7 @@ test = [
 [package.metadata.requires-dev]
 cad = [
     { name = "cadquery", specifier = "==2.8.0" },
-    { name = "matplotlib", specifier = ">=3.10" },
+    { name = "matplotlib", specifier = "==3.11.2" },
 ]
 dev = [
     { name = "httpx", specifier = ">=0.28" },
