@@ -7,7 +7,7 @@
 // Runs in software/panel (pnpm --filter ... exec), whose Playwright it uses. Exits 1 when
 // the page has a film that does not play.
 
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { extname, join, resolve, sep } from "node:path";
@@ -33,11 +33,18 @@ const TYPES = {
 const server = createServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
   const file = resolve(site, `.${path.endsWith("/") ? `${path}index.html` : path}`);
-  if (!file.startsWith(site + sep) || !statSync(file, { throwIfNoEntry: false })?.isFile()) {
+  let body = null;
+  if (file.startsWith(site + sep)) {
+    try {
+      body = readFileSync(file); // a folder or a missing file throws
+    } catch {
+      body = null;
+    }
+  }
+  if (body === null) {
     res.writeHead(404).end();
     return;
   }
-  const body = readFileSync(file);
   const type = TYPES[extname(file)] ?? "application/octet-stream";
   const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
   if (m) {
