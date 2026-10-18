@@ -36,6 +36,10 @@ software/onboard/**
 software/panel/src/safety/**
 software/panel/src/app/**
 software/panel/src/state/shellStore.ts
+software/panel/src/header/**
+software/panel/src/side/**
+software/panel/src/mission/**
+software/panel/src/ui/**
 software/panel/src/theme/**
 software/panel/src/views/manual/**
 software/panel/e2e/**
