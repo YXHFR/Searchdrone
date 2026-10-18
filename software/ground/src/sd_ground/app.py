@@ -59,6 +59,7 @@ __all__ = [
     "panel_asgi",
     "read_brain_token",
     "serve",
+    "start_lines",
 ]
 
 API_VERSION = "1"  # the /api/v1 and /commander/v1 contract, not the package version

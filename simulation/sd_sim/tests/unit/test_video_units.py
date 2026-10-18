@@ -122,6 +122,8 @@ class Recorder:
         self.started.append((name, argv))
         return None
 
+    restart = start
+
 
 def _stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, password: str) -> launch.Stack:
     (tmp_path / ".env").write_text(f"SD_GROUND__VIDEO_PUBLISH_PASSWORD={password}\n")
@@ -215,3 +217,5 @@ def test_ground_started_without_login_code_in_its_log(
     ((name, argv),) = stack.group.started  # pyright: ignore[reportAttributeAccessIssue]
     assert name == "sd-ground"
     assert argv[1:] == ["-m", "sd_ground", "serve", "--no-login-link"]
+    stack.restart_service("sd-ground")  # a test's ground restart (SC10) keeps the flag
+    assert stack.group.started[-1] == (name, argv)  # pyright: ignore[reportAttributeAccessIssue]
