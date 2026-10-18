@@ -110,11 +110,11 @@ All notable changes to this project are listed here. The format follows
 - The onboard computer reads the flight controller's fence back right before every
   takeoff and refuses with `FENCE_NOT_VERIFIED` when it differs from the charter's.
 - When the onboard battery rule flies home by itself, the mission returns (cause
-  battery), the pilot gets the `BATTERY_RTL` alert and the AI's orders meet the failsafe.
+  battery), the pilot gets the `BATTERY_RTL` alert, open orders are cancelled and the
+  AI's orders meet the failsafe.
 - The ground keeps the flight controller's failsafe texts (a fence breach comes as a
   notice) at any severity.
-- An `sd-brain` that was already running takes on a mission opened later, and a
-  ready-made charter proposal builds on the charter in force.
+- A ready-made charter proposal builds on the charter in force.
 
 - One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
   clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
