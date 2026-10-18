@@ -1051,11 +1051,10 @@ dd {
   align-items: center;
   gap: 6px;
 }
-.map-find img {
-  display: block;
+.map-find-thumb {
   width: 128px;
   height: 128px;
-  object-fit: cover;
+  background: center / cover no-repeat;
   margin: 6px 0;
   border-radius: 6px;
 }

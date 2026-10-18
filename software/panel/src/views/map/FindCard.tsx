@@ -32,12 +32,16 @@ export function FindCard({
         </button>
       </header>
       {find.thumb_detection_id ? (
-        <img
+        // A background, not an <img>: WebKit styles an image's built-in overlay with an
+        // inline <style> that the panel's CSP blocks and reports.
+        <div
           data-testid="find-thumb"
-          src={paths.detectionCrop(missionId, find.thumb_detection_id)}
-          alt={find.name_sv}
-          width={128}
-          height={128}
+          className="map-find-thumb"
+          role="img"
+          aria-label={find.name_sv}
+          style={{
+            backgroundImage: `url("${paths.detectionCrop(missionId, find.thumb_detection_id)}")`,
+          }}
         />
       ) : (
         <p className="muted">{t("views.map.find.noThumb")}</p>
