@@ -32,6 +32,7 @@ from demo_rig import (  # pyright: ignore[reportMissingImports]
 
 from sd_geo.coverage import coverage_fraction
 from sd_sim.launch import Stack
+from sd_sim.report import measure
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain]
 __all__ = ["demo_stack"]
@@ -80,7 +81,9 @@ async def test_sc10a_ground_restart_mid_search(demo_stack: Stack) -> None:
             await asyncio.sleep(0.5)
             beats = gcs_heartbeats_after(stack, killed_ns)
         assert beats, "ingen HEARTBEAT från 250 efter omstarten"
-        assert (beats[0] - killed_ns) / 1e9 <= FS_GCS_TIMEOUT_S - 2.0
+        back_s = (beats[0] - killed_ns) / 1e9
+        measure("HEARTBEAT från markstationen efter omstarten", back_s, FS_GCS_TIMEOUT_S - 2.0)
+        assert back_s <= FS_GCS_TIMEOUT_S - 2.0
         # 4 (health): healthy within 15 s of the restart.
         while True:
             h = await asyncio.to_thread(stack.health)

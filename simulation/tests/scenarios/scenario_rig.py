@@ -59,6 +59,7 @@ from sd_schemas.api import ManualControlInput
 from sd_schemas.base import new_id
 from sd_schemas.skills import SKILL_REGISTRY
 from sd_sim.invariants import Sample, check_all
+from sd_sim.report import measure
 from sd_sim.util import LOOPBACK_OPENER
 
 __all__ = [
@@ -236,8 +237,11 @@ class Scenario:
             if asyncio.iscoroutine(value):
                 value = await value
             if value:
-                return time.monotonic() - start
+                took = time.monotonic() - start
+                measure(what, took, limit_s, passed=True)  # the condition held: passed
+                return took
             if time.monotonic() - start > limit_s:
+                measure(what, time.monotonic() - start, limit_s)
                 t = self.tel
                 raise AssertionError(
                     f"{what}: not within {limit_s} s (mode {self.mode()}, armed {t.armed}, "
@@ -248,10 +252,16 @@ class Scenario:
 
     async def hold_for(self, seconds: float, cond: Callable[[], bool], what: str) -> None:
         """``cond`` stays true the whole time."""
-        end = time.monotonic() + seconds
+        start = time.monotonic()
+        end = start + seconds
         while time.monotonic() < end:
-            assert cond(), f"{what} (mode {self.mode()}, {self.from_home_m():.0f} m from home)"
+            if not cond():
+                measure(what, time.monotonic() - start, seconds, at_most=False)
+                raise AssertionError(
+                    f"{what} (mode {self.mode()}, {self.from_home_m():.0f} m from home)"
+                )
             await asyncio.sleep(0.1)
+        measure(what, time.monotonic() - start, seconds, at_most=False)
 
     # --- the pilot (panel API) -----------------------------------------------------------
 
