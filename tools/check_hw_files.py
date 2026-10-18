@@ -33,6 +33,10 @@ from pathlib import Path
 CHECKED: dict[str, str] = {
     "hardware/drone.yaml": "hw-calc",
     "hardware/limits.yaml": "hw-calc",
+    "hardware/cad/fpv7/*.py": "hw-cad",
+    "hardware/cad/fpv7/params.yaml": "hw-cad",
+    "hardware/cad/fpv7/README.md": "hw-cad",
+    "hardware/cad/fpv7/tests/*.py": "hw-cad",
     # Added in the same PR as their check, e.g.
     # "hardware/mechanical/fea/*.inp": "fea" and "hardware/electronics/**/*.kicad_pro": "kicad"
 }

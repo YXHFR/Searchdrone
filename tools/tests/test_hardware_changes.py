@@ -113,15 +113,18 @@ def test_filter_matches_spec_paths_and_workflow_uses_script() -> None:
 
 def test_jobs_and_aggregate() -> None:
     jobs = load()["jobs"]
-    assert set(jobs) == {"changes", "hw-files", "hw-calc", "hardware-ok"}
-    for name in ("hw-files", "hw-calc"):
+    assert set(jobs) == {"changes", "hw-files", "hw-calc", "hw-cad", "hardware-ok"}
+    for name in ("hw-files", "hw-calc", "hw-cad"):
         assert jobs[name]["needs"] == "changes" or jobs[name]["needs"] == ["changes"]
         assert jobs[name]["if"] == "needs.changes.outputs.run == 'true'"
     ok = jobs["hardware-ok"]
     assert ok["if"] == "always()"
-    assert set(ok["needs"]) == {"changes", "hw-files", "hw-calc"}
+    assert set(ok["needs"]) == {"changes", "hw-files", "hw-calc", "hw-cad"}
     assert any("ci_aggregate.jq" in str(s.get("run", "")) for s in ok["steps"])
     assert any("just hw-check" in str(s.get("run", "")) for s in jobs["hw-calc"]["steps"])
+    cad_runs = [str(s.get("run", "")) for s in jobs["hw-cad"]["steps"]]
+    assert "just cad" in cad_runs
+    assert "just cad-test" in cad_runs
     assert jobs["changes"]["outputs"]["run"]
 
 

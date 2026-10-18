@@ -51,6 +51,8 @@ RECIPES = [
     "showcase",
     "release-prep",
     "hw-check",
+    "cad",
+    "cad-test",
     "check-traceability",
     "brain-token",
 ]

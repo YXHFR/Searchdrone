@@ -9,7 +9,12 @@ package = false
 default-groups = ["dev", "test"]
 # Versions released less than two weeks before they were locked (2026-10-16) are held back
 # (B1-11); both ceilings may be lifted from 2026-10-25.
-constraint-dependencies = ["shapely<2.2", "numpy<2.5.4"]
+constraint-dependencies = [
+  "shapely<2.2", "numpy<2.5.4",
+  # The same rule for the cad group (locked 2026-10-18); may be lifted from 2026-11-01.
+  "aiohttp<3.14.4", "ezdxf<1.4.5", "fonttools<4.67", "more-itertools<11.2", "multidict<7.1",
+  "trame-client<4.1.4", "trame-common<1.2.8", "trame-server<4.1", "wslink<2.5.8",
+]
 
 [tool.uv.workspace]
 members = [
@@ -47,6 +52,9 @@ dev = [
 ]
 # Test-only workspace packages. Production packages never import these.
 test = ["sd-link-testing", "sd-testing"]
+# CAD models in hardware/cad (`just cad`); not a default group, so only `just cad` and the
+# hw-cad CI job install it.
+cad = ["cadquery==2.8.0", "matplotlib>=3.10"]
 
 [tool.ruff]
 line-length = 100
