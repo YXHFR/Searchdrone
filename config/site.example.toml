@@ -1,0 +1,26 @@
+# Your own simulator sites (`just world-fetch site=<name>`). Copy this file to
+# config/site.local.toml (gitignored) and put your own area there; never commit it.
+# The fetch uses Lantmäteriet's Markhöjdmodell (1 m) and orthophoto through their STAC
+# API with your Geotorget login, and writes everything to build/sites/<name>/, which is
+# never committed or uploaded. Then run `just sim` with SD_SIM__WORLD=sd_<name>, or
+# world = "sd_<name>" in config/sim.toml.
+#
+# The login is read only from the environment, never from this file:
+#   SD_LM_USER=... SD_LM_PASSWORD=... just world-fetch site=example
+# Lantmäteriet's data is CC BY 4.0: "© Lantmäteriet", processed by Searchdrone.
+
+[sites.example]
+ortho = true                  # the orthophoto as the ground's texture
+
+[sites.example.home]          # the landing pad (here: the public ArduPilot SITL site)
+lat = -35.363261
+lon = 149.165230
+heading_deg = 0
+
+[sites.example.area]
+half_size_m = 600             # the world covers home ± 600 m
+
+[sites.example.dem]
+source = "lantmateriet-mhm"
+cell_m = 2
+surface = "dtm"               # bare ground: no canopy to take off

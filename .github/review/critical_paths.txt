@@ -22,6 +22,7 @@ software/ground/src/sd_ground/emergency.py
 software/ground/src/sd_ground/ingress.py
 software/ground/src/sd_ground/control_socket.py
 software/ground/src/sd_ground/api/commander.py
+software/ground/src/sd_ground/api/search.py
 software/ground/src/sd_ground/api/panel.py
 software/ground/src/sd_ground/api/video_proxy.py
 software/ground/src/sd_ground/services/**

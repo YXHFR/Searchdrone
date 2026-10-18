@@ -4,20 +4,64 @@
 # underside of the bottom plate.
 schema_version: 1
 
-frame:                        # GEPRC Mark4 7", 5 mm arms
+frame:                        # GEPRC Mark4 7": H frame, 5 mm arms, 2.5 mm plates
   wheelbase: 295              # motor to motor, diagonal
-  mass: 121                   # whole frame kit, spread over the pieces by volume
-  bottom_plate: {length: 190, width: 50, thickness: 2.5, corner_radius: 8}
-  top_plate: {length: 140, width: 40, thickness: 2.5, corner_radius: 10}
-  arm: {thickness: 5, root_width: 28, tip_width: 30, root_offset: 30, tip_overhang: 15}
-  standoff: {height: 25, diameter: 5, pattern_x: 120, pattern_y: 34}
-
-motor: {diameter: 33.9, height: 20, mass: 47.6}     # EMAX ECO II 2807 1300KV, without leads
-prop: {diameter_in: 7, swept_height: 10, gap_above_motor: 0, mass: 9.7}   # HQ 7x4x3 Durable PC
-
+  motor_spacing: [193, 223]   # between motor axes: front to rear (x), side to side (y)
+  mass: 121                   # whole frame kit, spread over the pieces by volume and material
+  # Plate outlines: half outlines [x, y] on the left side (y >= 0), mirrored to the right.
+  bottom_plate:
+    thickness: 2.5
+    corner_radius: 3
+    outline: [[98, 0], [98, 12], [90, 18], [42, 21], [36, 28], [18, 28], [12, 21], [-12, 21], [-18, 28], [-36, 28], [-42, 21], [-86, 20], [-93.5, 13], [-93.5, 0]]
+    windows: [[64, 0, 26, 12], [-6, 0, 14, 18], [-60, 0, 26, 12]]   # [x, y, length, width]
+  top_plate:
+    thickness: 2.5
+    corner_radius: 3
+    outline: [[88, 0], [100.5, 6], [100.5, 14], [86, 16.5], [34, 16.5], [32, 14.5], [22, 14.5], [20, 16.5], [-20, 16.5], [-22, 14.5], [-32, 14.5], [-34, 16.5], [-76, 17.5], [-92, 13], [-93.5, 6], [-93.5, 0]]
+    windows: [[60, 0, 26, 12], [3, 0, 46, 14], [-54, 0, 26, 12]]
+    cam_hole: [82, 8]         # [x, diameter] round hole at the front (lead through)
+  arm:
+    thickness: 5
+    width: 12
+    root_screw: [27.2, 19.3]  # [x, y] of the outer arm screw, front left arm
+    root_length: 14           # arm past the outer screw towards the centre
+    root_hole_gap: 9          # second arm screw, this far inwards along the arm
+    tip_width: 25             # spade around the motor
+    tip_length: 24            # arm past the motor axis
+    window: [11, 20, 5]       # teardrop in the tip: from, to (mm past the motor axis), width
+    motor_bore: 7
+    motor_holes: [16, 19]     # hole circles (mm) of the two motor patterns, M3
+  reinforce_plate: {thickness: 2, pad: 4.5, waist: 3.5}
+  standoff:
+    height: 25
+    diameter: 5
+    bore: 3.2
+    positions: [[92.9, 10.3], [41.0, 10.3], [-34.8, 10.3], [-72.1, 16.7]]   # [x, y], mirrored in y
+  arm_standoff: {height: 18, diameter: 5, bore: 3.2}   # on the outer arm screws
+  hole: 3.2                   # M3 clearance
+  stack_holes: [30.5, 20]     # flight stack patterns (M3, M2)
+motor:                        # EMAX ECO II 2807 1300KV, without leads
+  diameter: 33.9              # bell
+  height: 20                  # base to the top of the bell
+  base_height: 6.6            # stator mount below the bell
+  base_diameter: 27
+  shaft: [5, 14]              # M5 shaft: diameter, length above the bell
+  nut: [9.2, 5]               # M5 nylon lock nut: across corners, height
+  mount_circle: 19            # 4 x M3 on this circle ("19x19")
+  mass: 47.6
+prop:                         # HQ 7x4x3 Durable PC
+  diameter_in: 7
+  pitch_in: 4
+  blades: 3
+  swept_height: 10            # the disc the checks use
+  gap_above_motor: 0
+  hub: [13.3, 7]              # diameter, height
+  chord_max: 19
+  bore: 10                    # the disc leaves room for the shaft and nut
+  mass: 9.7
 stack:                        # MicoAir743 V2 + 55 A AM32 4-in-1, 30.5 mm pattern
-  grommet_height: 3
-  board_gap: 4
+  base_height: 9.7            # ESC underside above the bottom plate (soft-mounted M3 posts)
+  board_gap: 1.8
   esc: {length: 44, width: 43.5, height: 5.2, mass: 14}
   fc: {length: 36, width: 36, height: 8, mass: 10}
 
@@ -30,7 +74,7 @@ gps:                          # Holybro Micro M10
   width: 28
   height: 11
   mass: 16
-  mast: {diameter: 10, height: 60, mass: 6}
+  mast: {diameter: 10, height: 60, mass: 6, foot: [22, 3]}   # foot: square side, thickness
 
 battery: {length: 145, width: 64, height: 43, mass: 913}    # Dogcom 6S2P 21700 10 000 mAh
 
@@ -43,7 +87,13 @@ pi5:                          # Raspberry Pi 5: the board, ports and cooler as b
   ports: {length: 21, width: 53, height: 16, overhang: 3, mass: 0}
 cooler: {length: 63.5, width: 42.5, height: 13.7, offset_from_gpio_end: 33, mass: 29}
 ai_hat: {length: 65, width: 56.5, height: 15.6, standoff_height: 16, mass: 45}   # AI HAT+ 2 with heatsink
-pi_tray: {length: 86, width: 56, height: 3, damper_height: 8, mass: 20}
+pi_tray:                      # printed tray on rubber dampers, with the canopy's screw bosses
+  length: 86
+  width: 63
+  height: 3
+  damper_height: 8
+  mass: 20
+  boss: [7, 3.0, 9]           # canopy screw boss: length (x), thickness (y), height above the tray
 
 camera:                       # Raspberry Pi Camera Module 3, standard lens
   length: 25
@@ -54,23 +104,23 @@ camera:                       # Raspberry Pi Camera Module 3, standard lens
   vfov_deg: 41
 camera_mount: {length: 30, width: 30, height: 6, mass: 4}
 
-legs: {length: 20, width: 10, radius: 110, ground_clearance: 10, mass: 6}
+legs: {length: 20, width: 10, from_motor: 40, ground_clearance: 10, mass: 6}   # under each arm
 
 canopy:                       # printed top canopy over the companion computer
   material: PETG
   wall: 1.2
-  length: 144
-  width: 66
-  height: 44
-  nose_radius: 28
+  # Sections from nose to tail: [x, width, height] above the rim, each a rectangle with
+  # rounded top corners (edge_radius, smaller where the section is small).
+  stations: [[82, 22, 12], [70, 50, 28], [54, 64, 37], [36, 66, 38], [-32, 66, 38], [-48, 60, 30], [-70, 44, 20], [-80, 32, 13]]
   edge_radius: 12
-  x: 0                        # centre in x
+  x: 0                        # shifts all stations in x
   rim_clearance: 6            # rim above the top of the propeller discs
-  intake: [30, 10]            # nose slot, width (y) and height (z)
+  intake: [24, 8]             # nose slot, width (y) and height (z)
   vent: [46, 34]              # roof opening over the cooler and AI HAT, length (x), width (y)
-  exhaust: [30, 10]           # tail slot, width and height
-  mast_clearance: 2.5         # around the GPS mast, room for a rubber grommet
+  exhaust: [22, 7]            # tail slot, width and height
+  mast_clearance: 3           # around the GPS mast: room for a rubber grommet and the GPS lead
   prop_keep_out: 4            # seen from above, the canopy stays this far outside the discs
+  screws: {x: [-26, 34], length: 4}   # 4 x M2 through the side walls into the tray bosses
 nose_fairing:                 # printed nose under the frame, ahead of the battery
   material: PETG
   wall: 1.2
@@ -83,24 +133,50 @@ nose_fairing:                 # printed nose under the frame, ahead of the batte
   x_tip: 117
   window_extra_deg: 4         # camera window wider than the field of view on every side
 
-materials: {PETG: 1.27, ASA: 1.07}   # density, g/cm^3
+materials: {PETG: 1.27, ASA: 1.07, carbon: 1.55, aluminium: 2.70, steel: 7.85}   # density, g/cm^3
 
-aero:                         # rough drag estimate, to be calibrated against flight logs
+aero:                         # drag estimate per part (see aero.py)
   speed: 10                   # m/s
   air_density: 1.225          # kg/m^3
-  cd_bluff: 1.05              # bluff, box-like parts
-  cd_faired: 0.5              # area behind a rounded printed nose
-misc: {mass: 80}              # wiring, XT60, screws, battery strap
+  kinematic_viscosity: 1.5e-5 # m^2/s, air at 15 C
+  pitch_deg: 0                # nose down; level flight unless set
+  cd_bluff: 1.05              # box-like parts with sharp edges
+  cd_faired: 0.5              # rounded printed covers
+  cd_cylinder: 0.9            # motors, standoffs, cables, antennas (short cylinders across the flow)
+  cd_plate: 1.6               # thin plates seen edge-on (arms, frame plates)
+  wake_factor: 0.35           # shielded area counts this much (body sits in another's wake)
+  wake_length: 150            # mm: beyond this behind the front part, the shielding is gone
+  reference_cda_m2: [0.018, 0.023]   # bare airframes of 0.35-0.4 m quads, NASA wind tunnel
+display: {prop_blades: true}  # pictures and fpv7.step: blades (true) or the swept discs
+misc: {mass: 15}              # what has no solid: solder, heat-shrink, zip ties, tape, soft mounts
+
+screws:                       # [head diameter, head height] per head type, for M3 and M2
+  m3_button: [5.7, 1.65]      # ISO 7380
+  m3_flat: [6.72, 1.86]       # ISO 10642 countersunk
+  m2_button: [3.5, 1.3]       # ISO 7380
+  m3_nut: [6.0, 2.4]          # ISO 4032 hex nut: across corners, height
+  motor_length: 8             # M3 x 8 under the arm into the motor
+
+wiring:                       # cables as tubes, mass per metre
+  motor: {diameter: 2.3, count: 3, g_per_m: 10.5}     # 18 AWG leads of each motor
+  battery: {diameter: 4.5, count: 2, g_per_m: 44}     # 12 AWG battery lead and ESC pigtail
+  power: {diameter: 1.9, count: 2, g_per_m: 7.5}      # 20 AWG, BEC to the Pi
+  gps: {diameter: 2.5, count: 1, g_per_m: 8}          # JST-GH 6-pin lead
+  ribbon: {width: 16, thickness: 0.3, g_per_m: 6}     # camera FFC
+xt60: {length: 23.8, width: 9.2, height: 16.4, mass: 7.7}   # XT60H: sizes per half, mass of the mated pair
+strap: {width: 20, thickness: 1.5, mass: 7.5, x: [-40, 40]}  # two battery straps
+antenna: {length: 65, diameter: 1.5, element: [30, 3], mass: 0.3, spread_deg: 20, droop_deg: 30}   # two receiver antennas
 
 layout:                       # design defaults: where the parts sit (x, or [x, y])
   stack_x: 0
-  bec: [55, 0]
+  bec: [64, 0]
   receiver: [-62, 0]
   remote_id: [62, 0]
   pi_x: 4
   gps_x: -62
   battery_x: 0
   camera_x: 92
+  xt60: [-100, -10]           # [x, z] of the mated XT60 pair behind the battery
 
 reference:
   takeoff_mass_g: 1500

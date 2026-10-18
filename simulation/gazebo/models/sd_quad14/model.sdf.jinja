@@ -10,7 +10,7 @@
 <sdf version="1.9">
   <model name="{{ name }}">
     <!-- Body origin above the ground so the landing legs just touch it. -->
-    <pose>0 0 0.2 0 0 0</pose>
+    <pose>0 0 {{ stand_m }} 0 0 0</pose>
 
     <link name="base_link">
       <inertial>
@@ -158,10 +158,11 @@
         </dynamics>
       </axis>
     </joint>
+{% set index = loop.index0 %}{# inside the blade loop, loop is the blade loop #}
 {% for blade in [1, -1] %}
-    <!-- Lift of rotor {{ loop.index0 }}, {{ "first" if blade == 1 else "second" }} blade half. -->
+    <!-- Lift of rotor {{ index }}, {{ "first" if blade == 1 else "second" }} blade half. -->
     <plugin filename="gz-sim-lift-drag-system" name="gz::sim::systems::LiftDrag">
-      <link_name>rotor_{{ loop.index0 }}</link_name>
+      <link_name>rotor_{{ index }}</link_name>
       <cp>{{ blade_cp * blade }} 0 0</cp>
       <forward>0 {{ rotor.sign * blade }} 0</forward>
       <upward>0 0 1</upward>

@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a3-0000-7000-8000-000000000001",
+  "kind": "CropData",
+  "sender": "vehicle:sim-01",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 51,
+  "sent_utc": "2026-10-15T12:32:00.125Z",
+  "ttl_ms": 30000,
+  "reliable": true,
+  "corr_id": null,
+  "sig": null,
+  "body": {
+    "ref_id": "0192f49e-5000-7000-8000-000000000005",
+    "purpose": "detection",
+    "still_id": "0192f49e-4000-7000-8000-000000000004",
+    "bbox_in_still": {
+      "x": 1200.0,
+      "y": 800.0,
+      "w": 40.0,
+      "h": 90.0
+    },
+    "width": 384,
+    "height": 384,
+    "jpeg": "/9j/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/Z"
+  }
+}

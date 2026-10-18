@@ -1,0 +1,30 @@
+{
+  "info": {
+    "title": "Searchdrone search API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/search/v1/health": {
+      "get": {
+        "description": "The search service's view of the ground station: up, and whether the database is.",
+        "operationId": "health_search_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Search V1 Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    }
+  }
+}

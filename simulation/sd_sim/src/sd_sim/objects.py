@@ -38,6 +38,8 @@ import yaml
 
 # Names the world templates already use at world level.
 RESERVED_NAMES = frozenset({"ground", "landing_pad", "lake", "path", "forest", "vehicle", "sun"})
+# The vehicle, a site's model and the snapshot cameras.
+RESERVED_PREFIXES = ("sd_quad14", "sd_site_", "snap_")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 BOX_REQUIRED = {"name", "kind", "east_m", "north_m", "size_m", "color"}
 BOX_OPTIONAL = {"up_m", "yaw_deg", "label", "truth"}
@@ -171,7 +173,7 @@ def check(objects: Sequence[WorldObject], world_half_m: float = math.inf) -> Non
     for obj in objects:
         if not _NAME.match(obj.name):
             raise ObjectError(f"{obj.name!r}: namnet ska vara bokstäver, siffror och _")
-        if obj.name in RESERVED_NAMES or obj.name.startswith("sd_quad14"):
+        if obj.name in RESERVED_NAMES or obj.name.startswith(RESERVED_PREFIXES):
             raise ObjectError(f"{obj.name!r}: namnet används redan av världen")
         if obj.name in seen:
             raise ObjectError(f"{obj.name!r}: namnet finns två gånger")

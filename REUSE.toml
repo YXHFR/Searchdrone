@@ -18,3 +18,15 @@ path = "software/panel/src/theme/fonts/inter-*.woff2"
 precedence = "override"
 SPDX-FileCopyrightText = "2016 The Inter Project Authors (https://github.com/rsms/inter)"
 SPDX-License-Identifier = "OFL-1.1"
+
+[[annotations]]
+path = "simulation/gazebo/sites/*/osm.geojson"
+precedence = "override"
+SPDX-FileCopyrightText = "OpenStreetMap contributors (https://www.openstreetmap.org/copyright)"
+SPDX-License-Identifier = "ODbL-1.0"
+
+[[annotations]]
+path = "simulation/gazebo/sites/*/dem.asc"
+precedence = "override"
+SPDX-FileCopyrightText = "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30."
+SPDX-License-Identifier = "LicenseRef-Copernicus-WorldDEM-30"
