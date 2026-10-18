@@ -116,6 +116,15 @@ def test_a_test_layer_can_only_make_the_rules_stricter() -> None:
         params.layer_rules({"FS_THR_ENABLE": 2.0})
 
 
+def test_a_test_layer_may_only_turn_off_the_fence_brake() -> None:
+    rules = {n: (op, v) for n, op, v in params.layer_rules({"AVOID_ENABLE": 2.0})}
+    assert rules["AVOID_ENABLE"] == ("==", 2.0)
+    assert rules["FENCE_ALT_MAX"] == ("==", 125.0)
+    for value in (0.0, 1.0, 7.0):
+        with pytest.raises(params.ParamFileError, match="AVOID_ENABLE"):
+            params.layer_rules({"AVOID_ENABLE": value})
+
+
 def test_a_test_layer_cannot_change_what_the_safety_file_sets() -> None:
     # Not ruled, but set by the safety file (the RC mode switch, the GUIDED timeout).
     for name, value in (("FLTMODE1", 6.0), ("GUID_TIMEOUT", 10.0)):
