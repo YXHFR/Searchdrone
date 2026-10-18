@@ -393,6 +393,9 @@ jobs:
           source "$HOME/.searchdrone_env"
           just sim-smoke physics=gz gui=false
       - name: Our own vehicle in Gazebo (sd_quad14 takes off, hovers and lands like in SITL)
+        # Runs even when the smoke flight's checks fail: the two flights test different
+        # vehicles, and a red smoke flight must not hide this one.
+        if: ${{ !cancelled() }}
         timeout-minutes: 20
         env:
           SD_SIM__HEADLESS: "1"
@@ -401,6 +404,7 @@ jobs:
           source "$HOME/.searchdrone_env"
           just test-sitl sc=test_model_parity_gz physics=gz
       - name: SK-RED, search for red blocks with the camera (Gazebo)
+        if: ${{ !cancelled() }}
         timeout-minutes: 45
         env:
           SD_SIM__HEADLESS: "1"
