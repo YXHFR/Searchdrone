@@ -1,8 +1,9 @@
 """The decision interface (``sd_brain.decide``): a state plus typed questions -> probabilities.
 
-The same questions go to whichever engine is available (cloud first, local as the
-fallback), and every answer is logged so the engines can be compared. In v0.1.0 it
-backs the quick stop check on chat messages; images and candidates come later.
+The same questions go to the best hosted engine that answers in time, and every answer
+is logged so the engines can be compared. There is no local engine: without one, the
+fixed stop words decide (``location = "local"`` then means the rule in code). In v0.1.0
+it backs the quick stop check on chat messages; images and candidates come later.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ __all__ = [
     "ScoreQuestion",
 ]
 
-DecisionEngine = Literal["local", "jev", "openai_decisions"]
+DecisionEngine = Literal["jev", "openai_decisions"]
 _NAME = r"^[a-z][a-z0-9_]{0,63}$"
 
 

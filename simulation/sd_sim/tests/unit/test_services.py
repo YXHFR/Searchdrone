@@ -69,8 +69,10 @@ def test_scripted_brain_needs_a_script(tmp_path: Path) -> None:
     p = ports.for_instance(0)
     with pytest.raises(InfraError):
         services.brain_env(p, _paths(tmp_path), "scripted", None)
-    env = services.brain_env(p, _paths(tmp_path), "llm_local", None)
+    env = services.brain_env(p, _paths(tmp_path), "cloud", None)
     assert "SD_BRAIN__BACKEND__SCRIPTED_FILE" not in env
+    assert env["SD_BRAIN__BACKEND__KIND"] == "cloud"
+    assert not any("LLM" in k for k in env)
     assert env["SD_BRAIN__GROUND__COMMANDER_URL"] == (
         f"http://127.0.0.1:{p['ground_commander']}/commander/v1"
     )
@@ -95,3 +97,20 @@ def test_service_tokens_come_from_the_instance(tmp_path: Path) -> None:
     env = services.ground_env(ports.for_instance(1), sp, 1, video=False, lan=False, test_rig=True)
     assert env["SD_GROUND__AUTH__BRAIN_TOKEN_FILE"] == str(sp.secrets_dir / "brain_token")
     assert env["SD_GROUND__AUTH__SEARCH_TOKEN_FILE"] == str(sp.secrets_dir / "search_token")
+
+
+def test_every_launcher_starts_sd_ground_without_login_codes() -> None:
+    """Launchers write sd-ground's output to logs that CI uploads: no login code or PIN there.
+    So they all start it through ``ground_serve_argv`` (the unit tests only check argv)."""
+    assert services.ground_serve_argv()[1:] == ["-m", "sd_ground", "serve", "--no-login-link"]
+    simulation = Path(__file__).resolve().parents[3]
+    unit_tests = Path(__file__).resolve().parent
+    own = Path(services.__file__).resolve()
+    starts = [
+        p.relative_to(simulation)
+        for p in simulation.rglob("*.py")
+        if p.resolve() != own
+        and unit_tests not in p.resolve().parents
+        and '"sd_ground", "serve"' in p.read_text(encoding="utf-8")
+    ]
+    assert starts == []

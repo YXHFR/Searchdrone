@@ -83,6 +83,8 @@
     },
     "ai": {
       "ready": "AI klar",
+      "cloud": "AI klar (moln)",
+      "command": "Kommandoläge",
       "busy": "AI tänker",
       "down": "AI borta",
       "unknown": "AI okänd"
@@ -197,7 +199,14 @@
     "older": "Hämta äldre meddelanden",
     "tooLong": "För långt meddelande",
     "thinking": "AI:n tänker… {{s}} s",
-    "brainDegraded": "AI:n svarar inte. Kommandoläge: skriv 'hjälp' för kommandon.",
+    "brainDegraded": "AI:n svarar inte. Kommandoläge: skriv 'hjälp' eller använd knapparna.",
+    "commandButtons": "Fasta kommandon",
+    "command": {
+      "status": "Status",
+      "hold": "Håll position",
+      "resume": "Fortsätt sökningen",
+      "help": "Hjälp"
+    },
     "brainDown": "AI:n är nere. Använd STOPP, FLYG HEM och Fortsätt."
   },
   "orders": {
@@ -247,7 +256,10 @@
       "ground": "Markstation",
       "mavlink": "MAVLink",
       "sdlink": "SD-link",
-      "ai": "AI"
+      "ai": "AI",
+      "engine": "Svarar i chatten",
+      "engineCloud": "molnmodellen",
+      "engineCommand": "kommandoläget"
     },
     "ws": {
       "connecting": "ansluter",

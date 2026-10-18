@@ -1,4 +1,4 @@
-"""Model runtimes behind one interface: local, cloud (with local fallback) and replay."""
+"""Model runtimes behind one interface: cloud (command mode as fallback) and replay."""
 
 from sd_brain.runtime.base import (
     ModelError,

@@ -14,7 +14,6 @@ from sd_brain.decide import (
     DecideError,
     DecisionService,
     JevEngine,
-    LocalDecisionEngine,
     OpenAiDecisionsEngine,
     stop_check,
     stop_check_request,
@@ -180,28 +179,6 @@ async def test_openai_decisions_adapter() -> None:
     assert ans.answers["intent"].choice == "return_home"  # type: ignore[union-attr]
 
 
-async def test_local_decision_engine() -> None:
-    def handler(req: httpx.Request) -> httpx.Response:
-        body = json.loads(req.read())
-        assert body["response_format"]["type"] == "json_schema"
-        content = json.dumps({"yes": 0.9, "level": [0.0, 0.0, 1.0]})
-        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
-
-    ans = await LocalDecisionEngine(
-        "http://127.0.0.1:8091/v1", "m", KEY, mock_client(handler)
-    ).answer(_req(), 1)
-    assert ans.location == "local" and ans.answers["level"].score == 2  # type: ignore[union-attr]
-    bad = lambda r: httpx.Response(200, json={"choices": [{"message": {"content": "nej"}}]})  # noqa: E731
-    with pytest.raises(DecideError):
-        await LocalDecisionEngine("http://127.0.0.1:8091/v1", "m", KEY, mock_client(bad)).answer(
-            _req(), 1
-        )
-    with pytest.raises(DecideError):
-        await LocalDecisionEngine(
-            "http://127.0.0.1:8091/v1", "m", KEY, mock_client(lambda r: httpx.Response(500))
-        ).answer(_req(), 1)
-
-
 class _Fake:
     name: DecisionEngine
     location: Literal["cloud", "local"]
@@ -232,24 +209,24 @@ class _Fake:
 async def test_service_best_engine_decides_and_logs_all() -> None:
     logged: list[Any] = []
     svc = DecisionService(
-        [_Fake("jev", 0.05, "stop"), _Fake("local", 0.0, "none", "local")],
+        [_Fake("jev", 0.05, "stop"), _Fake("openai_decisions", 0.0, "none")],
         on_answer=lambda req, outcomes: logged.append(outcomes),
     )
     res = await svc.decide(stop_check_request("x", {}), 1.0)
     assert res is not None and res.engine == "jev" and res.fallback_from is None
     await svc.drain()
-    assert [(o.engine, o.used) for o in logged[0]] == [("jev", True), ("local", False)]
+    assert [(o.engine, o.used) for o in logged[0]] == [("jev", True), ("openai_decisions", False)]
 
 
 async def test_service_falls_back_when_best_fails_or_is_slow() -> None:
-    svc = DecisionService([_Fake("jev", 0.0, None), _Fake("local", 0.0, "stop", "local")])
+    svc = DecisionService([_Fake("jev", 0.0, None), _Fake("openai_decisions", 0.0, "stop")])
     res = await svc.decide(stop_check_request("x", {}), 1.0)
-    assert res is not None and res.engine == "local" and res.fallback_from == "jev"
+    assert res is not None and res.engine == "openai_decisions" and res.fallback_from == "jev"
     slow = DecisionService(
-        [_Fake("jev", 0.5, "none"), _Fake("local", 0.0, "stop", "local")], late_answer_s=0.6
+        [_Fake("jev", 0.5, "none"), _Fake("openai_decisions", 0.0, "stop")], late_answer_s=0.6
     )
     res = await slow.decide(stop_check_request("x", {}), 0.1)
-    assert res is not None and res.engine == "local"
+    assert res is not None and res.engine == "openai_decisions"
     await slow.drain()
     none = DecisionService([_Fake("jev", 0.0, None)])
     assert await none.decide(stop_check_request("x", {}), 0.1) is None
@@ -261,18 +238,29 @@ async def test_stop_check() -> None:
     res = await stop_check(svc, "vänta, stanna där!", timeout_s=0.5, threshold=0.5)
     assert res.intent == "stop" and res.source == "engine" and res.engine == "jev"
     home = await stop_check(
-        DecisionService([_Fake("local", 0.0, "return_home", "local")]),
+        DecisionService([_Fake("openai_decisions", 0.0, "return_home")]),
         "kom tillbaka nu",
         timeout_s=0.5,
         threshold=0.5,
     )
-    assert home.intent == "return_home" and home.location == "local"
+    assert home.intent == "return_home" and home.location == "cloud"
     calm = await stop_check(
         DecisionService([_Fake("jev", 0.0, "none")]), "hur går det?", timeout_s=0.5, threshold=0.5
     )
     assert calm.intent is None
     high = await stop_check(svc, "stanna", timeout_s=0.5, threshold=0.95)
     assert high.intent is None
+
+
+async def test_stop_check_without_any_engine_rests_on_the_stop_words() -> None:
+    """No hosted engine (no network, no keys): the fixed words still stop, at once."""
+    none = DecisionService([])
+    for text, intent in (("stopp", "stop"), ("STOP", "stop"), ("flyg hem", "return_home")):
+        res = await stop_check(none, text, timeout_s=0.5, threshold=0.5)
+        assert res.intent == intent and res.source == "rule" and res.location == "local"
+        assert res.latency_ms < 100
+    talk = await stop_check(none, "kan du stanna där borta sen?", timeout_s=0.5, threshold=0.5)
+    assert talk.intent is None and talk.source == "none"
     # The fixed words always count, also with no engine at all.
     floor = await stop_check(DecisionService([]), "Stopp!", timeout_s=0.5, threshold=0.5)
     assert floor.intent == "stop" and floor.source == "rule"

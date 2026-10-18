@@ -36,6 +36,7 @@ __all__ = [
     "database_name",
     "ground_cli",
     "ground_env",
+    "ground_serve_argv",
     "onboard_env",
     "read_health",
     "recreate_database",
@@ -145,7 +146,6 @@ def brain_env(
         ),
         "SD_BRAIN__GROUND__VEHICLE_ID": VEHICLE_ID,
         "SD_BRAIN__BACKEND__KIND": kind,
-        "SD_BRAIN__LLM__ROOT_URL": f"http://127.0.0.1:{ports['llm_http']}",
     }
     if kind == "scripted":
         if script is None:
@@ -194,6 +194,12 @@ def recreate_database(password: str, name: str, port: int = DB_PORT) -> None:
         ) from None
     except Exception as exc:  # asyncpg's own errors: a wrong password, a missing role
         raise InfraError(f"Databasen {name} gick inte att skapa: {type(exc).__name__}") from None
+
+
+def ground_serve_argv() -> list[str]:
+    """``sd-ground serve`` for a launcher that writes its output to a log file (a CI artifact):
+    no login code or PIN in the start-up lines. The launcher gets its link with login-link."""
+    return [sys.executable, "-m", "sd_ground", "serve", "--no-login-link"]
 
 
 def ground_cli(

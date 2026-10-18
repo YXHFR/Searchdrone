@@ -88,3 +88,9 @@ def test_objects_key(tmp_path: Path) -> None:
     env = {"SD_SIM__OBJECTS": "a.yaml"}
     assert config.load({}, repo=repo, environ=env).objects == "a.yaml"
     assert config.load({"objects": " b.yaml "}, repo=repo, environ=env).objects == "b.yaml"
+
+
+def test_old_local_brain_loads_as_cloud(tmp_path: Path) -> None:
+    repo = fake_repo(tmp_path)
+    (repo / "config" / "sim.toml").write_text('[brain]\nkind = "llm_local"\n', encoding="utf-8")
+    assert config.load({}, repo=repo, environ={}).brain == "cloud"

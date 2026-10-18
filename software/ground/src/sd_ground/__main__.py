@@ -185,10 +185,10 @@ def cmd_db_setup(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_serve(_: argparse.Namespace) -> int:
+def cmd_serve(args: argparse.Namespace) -> int:
     from sd_ground.app import serve
 
-    return serve(_loaded())
+    return serve(_loaded(), announce_login=not args.no_login_link)
 
 
 def _socket_call(request: dict[str, object]) -> dict[str, object] | None:
@@ -371,7 +371,13 @@ def build_parser() -> argparse.ArgumentParser:
     db = sub.add_parser("db", help="databasen")
     db_sub = db.add_subparsers(dest="sub", required=True)
     db_sub.add_parser("setup").set_defaults(func=cmd_db_setup)
-    sub.add_parser("serve", help="starta markstationen").set_defaults(func=cmd_serve)
+    srv = sub.add_parser("serve", help="starta markstationen")
+    srv.add_argument(
+        "--no-login-link",
+        action="store_true",
+        help="skriv ingen inloggningskod eller PIN vid start (när utskriften loggas)",
+    )
+    srv.set_defaults(func=cmd_serve)
     ll = sub.add_parser("login-link", help="ny inloggningslänk för datorn")
     ll.add_argument("--print-code", action="store_true", help="skriv bara koden")
     ll.set_defaults(func=cmd_login_link)

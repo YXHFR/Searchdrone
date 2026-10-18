@@ -1886,7 +1886,6 @@
           "anyOf": [
             {
               "enum": [
-                "local",
                 "jev",
                 "openai_decisions"
               ],
@@ -2803,7 +2802,6 @@
         },
         "engine": {
           "enum": [
-            "local",
             "jev",
             "openai_decisions"
           ],
@@ -2813,7 +2811,6 @@
           "anyOf": [
             {
               "enum": [
-                "local",
                 "jev",
                 "openai_decisions"
               ],
@@ -2902,7 +2899,7 @@
             {
               "enum": [
                 "cloud",
-                "local"
+                "command"
               ],
               "type": "string"
             },
@@ -3113,7 +3110,7 @@
             {
               "enum": [
                 "cloud",
-                "local"
+                "command"
               ],
               "type": "string"
             },
@@ -8142,7 +8139,7 @@
             {
               "enum": [
                 "cloud",
-                "local"
+                "command"
               ],
               "type": "string"
             },

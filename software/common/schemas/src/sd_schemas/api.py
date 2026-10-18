@@ -585,6 +585,6 @@ class SystemStatus(SdModel):
     parts: dict[str, PartStatus]
     internet: Literal["up", "down", "unknown"]
     operator_present: bool
-    brain_engine: Literal["cloud", "local"] | None = None  # which AI engine answers now
+    brain_engine: Literal["cloud", "command"] | None = None  # cloud model or command mode now
     version: str
     profile: str

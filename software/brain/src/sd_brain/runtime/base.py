@@ -19,7 +19,7 @@ __all__ = [
     "openai_chat",
 ]
 
-Engine = Literal["cloud", "local"]
+Engine = Literal["cloud"]
 
 
 class ModelError(RuntimeError):
@@ -130,8 +130,12 @@ async def openai_chat(
     timeout_s: float,
     sampling: Sampling,
     extra_headers: dict[str, str] | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> ModelReply:
-    """``POST {url}`` (``…/chat/completions``) with tools; raise on any failure."""
+    """``POST {url}`` (``…/chat/completions``) with tools; raise on any failure.
+
+    No error message holds the key, the prompt or the answer: they go to logs.
+    """
     body: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -144,6 +148,7 @@ async def openai_chat(
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
+    body.update(extra_body or {})
     headers = {"Authorization": f"Bearer {api_key}", **(extra_headers or {})}
     start = time.monotonic()
     try:
