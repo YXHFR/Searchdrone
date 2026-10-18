@@ -98,6 +98,7 @@ async def test_cloud_sends_reasoning_provider_and_tools() -> None:
     assert body["reasoning"] == {"effort": "low", "exclude": True}
     assert body["provider"] == {"data_collection": "deny", "require_parameters": True}
     assert body["tool_choice"] == "auto" and body["tools"] == [{"type": "function"}]
+    assert seen[0].headers["authorization"] == f"Bearer {KEY}"
 
 
 @pytest.mark.parametrize("profile", ["field", "bench"])
@@ -115,7 +116,6 @@ async def test_real_flight_profile_sends_zdr_to_the_cloud(profile: str) -> None:
         "require_parameters": True,
         "zdr": True,
     }
-    assert seen[0].headers["authorization"] == f"Bearer {KEY}"
 
 
 async def test_cloud_fallback_model_takes_over_on_error() -> None:

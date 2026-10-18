@@ -104,6 +104,19 @@ def test_explicit_zdr_wins_over_the_profile() -> None:
     assert on.cloud.extra_body()["provider"]["zdr"] is True
 
 
+def test_explicit_zdr_off_on_a_real_flight_warns() -> None:
+    off = BrainConfig.model_validate({"profile": "field", "cloud": {"provider": {"zdr": False}}})
+    warning = off.zdr_warning()
+    assert warning is not None and "zdr = false" in warning
+    assert BrainConfig.model_validate({"profile": "field"}).zdr_warning() is None
+    sim = BrainConfig.model_validate({"profile": "sim", "cloud": {"provider": {"zdr": False}}})
+    assert sim.zdr_warning() is None
+    other_api = BrainConfig.model_validate(
+        {"profile": "field", "cloud": {"provider": {"send": False}}}
+    )
+    assert other_api.zdr_warning() is None
+
+
 def test_provider_can_be_turned_off_and_narrowed() -> None:
     off = BrainConfig.model_validate(
         {"cloud": {"reasoning_effort": "", "provider": {"send": False}}}

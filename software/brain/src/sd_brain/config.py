@@ -246,6 +246,19 @@ class BrainConfig(_Section):
             raise ValueError("ett förskrivet manus (scripted) får bara användas i profilen sim")
         return self
 
+    def zdr_warning(self) -> str | None:
+        """A Swedish warning when a real flight may reach providers that keep data."""
+        provider = self.cloud.provider
+        if self.profile == "sim" or self.backend.kind != "cloud" or not provider.send:
+            return None
+        if provider.zdr:
+            return None
+        return (
+            f"Varning: profilen {self.profile} med cloud.provider.zdr = false skickar "
+            "turerna även till leverantörer som sparar data. Ta bort raden zdr = false i "
+            "config/brain.toml för att bara använda leverantörer utan datalagring."
+        )
+
 
 def _parse_env_value(raw: str) -> Any:
     text = raw.strip()

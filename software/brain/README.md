@@ -25,7 +25,8 @@ Run its checks from the repository root: `just test` (all checks: `just check`).
   training and storage. With `profile = "bench"` or `"field"` (real flights, real search
   areas) `zdr` defaults to `true`: only zero-data-retention endpoints, for the main and
   the fallback model alike (both have such endpoints on OpenRouter). In `sim` it defaults
-  to `false`; an explicit `zdr` in `[cloud.provider]` wins either way. If no
+  to `false`; an explicit `zdr` in `[cloud.provider]` wins either way (`config-check`
+  and the start warn about `zdr = false` on bench or field). If no
   zero-retention endpoint answers, the command mode answers the turn as for any other
   cloud failure. `fallback_model = ""` keeps it to one vendor.
 - **The command mode is the only reserve.** Without network or key, or when the cloud
