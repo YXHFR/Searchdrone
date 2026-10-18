@@ -81,7 +81,12 @@ async def test_sc06a_battery_reserve_flies_home(sim: Any, migrated_db: Any, tmp_
         await asyncio.sleep(3.1)
         res = await sc.order("goto", {"lat": pin("P1")[0], "lon": pin("P1")[1], "alt_m": 40})
         assert res.get("decision") == "REJECT", res
-        assert {"FAILSAFE_ACTIVE", "BATTERY_RESERVE"} & set(res["reason_codes"]), res
+        assert {"FAILSAFE_ACTIVE", "BATTERY_RESERVE"} <= set(res["reason_codes"]), res
+        # The ground knows the onboard rule flies home: the mission returns because of the
+        # battery and the pilot has the alert.
+        mission = (await sc.r.mission(sc.mid))["mission"]
+        assert (mission["status"], mission["returning_cause"]) == ("RETURNING", "battery")
+        assert await sc.events("alarm.BATTERY_RTL")
         line = await sc.say("Fortsätt.")
         assert line["handled_by"] is None
         await sc.until(lambda: not sc.tel.armed, 180, "landed")

@@ -277,3 +277,16 @@ def test_vehicle_events_are_throttled_per_kind() -> None:
         "mav.inbound_command_ignored",
     ]
     assert seen[-1][1]["skipped"] == 99
+
+
+def test_failsafe_texts_are_kept_at_any_level() -> None:
+    """ArduCopter sends a fence breach as a notice; it must still reach the events."""
+    from sd_ground.mav.thread import vehicle_events
+
+    now = [0.0]
+    seen: list[tuple[str, dict[str, object]]] = []
+    on = vehicle_events(lambda t, _s, p: seen.append((t, p)), now=lambda: now[0])
+    on("mav.statustext", {"severity": 5, "text": "Polygon fence breached"})
+    now[0] = 2.0
+    on("mav.statustext", {"severity": 6, "text": "Throttle armed"})  # not a failsafe
+    assert [(t, p["text"]) for t, p in seen] == [("fc.statustext", "Polygon fence breached")]

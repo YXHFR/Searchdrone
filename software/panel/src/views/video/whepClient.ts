@@ -66,14 +66,29 @@ async function deleteSession(url: string): Promise<void> {
   }
 }
 
-/** Start a WHEP session. Rejects with WhepError when the server or WebRTC says no. */
-export async function startWhep(whepUrl: string, signal?: AbortSignal): Promise<WhepSession> {
+/**
+ * Start a WHEP session. Rejects with WhepError when the server or WebRTC says no.
+ * `onLost` runs (at most once) when the connection fails or disconnects before close().
+ */
+export async function startWhep(
+  whepUrl: string,
+  signal?: AbortSignal,
+  onLost?: () => void,
+): Promise<WhepSession> {
   const pc = new RTCPeerConnection({ iceServers: [] });
   const stream = new MediaStream();
   pc.addTransceiver("video", { direction: "recvonly" });
   pc.addEventListener("track", (ev) => stream.addTrack(ev.track));
   let location: string | null = null;
   let closed = false;
+  let lost = false;
+  pc.addEventListener("connectionstatechange", () => {
+    if (closed || lost) return;
+    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      lost = true;
+      onLost?.();
+    }
+  });
   const close = async () => {
     if (closed) return;
     closed = true;

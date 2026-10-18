@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from onboard_helpers import Rig, at, charter, rig, square
 
+from sd_mav.mission import FENCE
 from sd_onboard.skills import HANDLERS
 from sd_safety.policy import FORBIDDEN_SKILL_NAMES
 from sd_schemas.approval import command_hash
@@ -363,3 +366,44 @@ async def test_charter_in_flight(change: dict[str, object], accepted: bool) -> N
         else:
             assert ack.reason_codes == ["ONB_CHARTER_IN_FLIGHT"]
             assert r.ex.charter is not None and r.ex.charter.version == 1
+
+
+async def test_takeoff_rereads_the_fence() -> None:
+    """The fence in the flight controller changed after the charter was installed: the
+    onboard gate refuses the takeoff (FENCE_NOT_VERIFIED, with its own decision)."""
+    async with rig() as r:
+        await r.install()
+        r.clearance()
+        await r.run(1.5)
+        assert r.ex.preflight_ok()
+        stored = r.fc.missions[FENCE]
+        r.fc.missions[FENCE] = stored[:-1]  # someone changed the fence afterwards
+        cmd = await r.send(r.order("takeoff", {"alt_m": 40}))
+        assert r.up.codes(cmd.command_id) == ("FENCE_NOT_VERIFIED",)
+        assert "gate_disagreement" in [k.removeprefix("executor.") for k in r.up.kinds()]
+        assert r.ex.preflight["PF7"] is False
+        assert _arms(r) == 0
+
+
+async def test_takeoff_deadline_counts_the_fence_read() -> None:
+    """A slow fence read uses up the order's time: the takeoff is refused as expired, and
+    nothing arms."""
+    async with rig() as r:
+        await r.install()
+        r.clearance()
+        await r.run(1.5)
+        assert r.ex.preflight_ok()
+        read = r.ex._fence_matches  # pyright: ignore[reportPrivateUsage]
+        start = r.ex.now_ms()
+
+        async def slow_read(charter: Any) -> bool:
+            ok = await read(charter)
+            r.ex.now_ms = lambda: start + 5_000  # type: ignore[method-assign]
+            return ok
+
+        r.ex._fence_matches = slow_read  # type: ignore[method-assign]
+        cmd = r.order("takeoff", {"alt_m": 40})
+        await r.ex.on_skill_command(cmd, deadline_ms=start + 1_000)
+        await r.run(0.3)
+        assert r.up.codes(cmd.command_id) == ("ONB_ORDER_EXPIRED",)
+        assert _arms(r) == 0

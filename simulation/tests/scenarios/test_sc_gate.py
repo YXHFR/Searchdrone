@@ -190,6 +190,36 @@ async def test_sc09_takeoff_needs_charter_and_clearance(
         await sc.check_invariants()
 
 
+def _tamper_fence(sc: Scenario, half_m: float = 120.0) -> None:
+    """The test rig (serial0, 253/190) uploads a square fence around home that is not the
+    charter's, while the vehicle stands disarmed: someone changed the FC's fence."""
+    corners = [sc.at(x * half_m, y * half_m) for x, y in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
+    sc.sim.harness.upload_fence(corners)
+
+
+@pytest.mark.budget_s(200)
+async def test_sc09g_fence_changed_after_install(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    """The FC's fence is changed after the charter was installed (and the ground verified
+    it): the onboard computer reads it back before the takeoff and refuses; nothing arms."""
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.ready()
+        await sc.harness(_tamper_fence, sc)
+        await sc.clearance()
+        await asyncio.sleep(3.1)
+        res = await sc.order("takeoff", {"alt_m": 40})
+        assert res.get("decision") == "ALLOW", res  # the ground does not read it again
+        cmd = await sc.wait_command("takeoff", "rejected_onboard", 15)
+        gates = await sc.gate(cmd["id"])
+        onboard = [g for g in gates if g.get("side") == "onboard"]
+        assert onboard and "FENCE_NOT_VERIFIED" in onboard[0]["reason_codes"], gates
+        assert await sc.events("gate.mismatch")
+        await asyncio.sleep(30)
+        assert not any(s.armed for s in sc.track)
+        await sc.check_invariants()
+
+
 RC_LAYER = PARAMS / "tests/rc_required.parm"
 
 
