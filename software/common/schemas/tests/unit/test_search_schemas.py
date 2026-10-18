@@ -162,3 +162,13 @@ def test_stage2_kinds_are_reliable_and_need_a_ttl() -> None:
     for kind in link.TTL_REQUIRED_KINDS:
         assert kind in link.KIND_MODELS
         assert link.is_reliable(kind, EXAMPLES[link.KIND_MODELS[kind]])  # type: ignore[arg-type]
+
+
+def test_no_local_model_and_no_thermal_camera() -> None:
+    """No local model assesses candidates, and the camera is RGB only (for now)."""
+    data = EXAMPLES[search.CandidateAssessment].model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        search.CandidateAssessment.model_validate({**data, "engine": "local"})
+    report = EXAMPLES[link.PerceptionReport].model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        link.PerceptionReport.model_validate({**report, "sensor": "thermal"})

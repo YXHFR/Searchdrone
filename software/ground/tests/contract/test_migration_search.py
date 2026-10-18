@@ -276,3 +276,23 @@ def test_found_candidate_is_set_on_the_mission(migrated_db: Db) -> None:
     )
     row = db.run("SELECT found_candidate_id::text AS c, status FROM missions")[0]
     assert row["c"] == candidate and row["status"] == "DRAFT"
+
+
+def test_no_local_engine_and_no_thermal_sensor(migrated_db: Db) -> None:
+    db = migrated_db
+    mission = _seed(db)
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run(
+            "INSERT INTO candidate_assessments (candidate_id, profile_version, engine, model_id, "
+            "body, latency_ms) VALUES (uuidv7(), 1, 'local', 'm', '{}', 3)",
+            role="sd_app",
+        )
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run(
+            "INSERT INTO perception_stills (mission_id, vehicle_id, still_id, captured_utc, "
+            "sensor, pose, footprint, px_per_m, detector) VALUES ($1::uuid, 'sim-01', uuidv7(), "
+            "now(), 'thermal', '{}', ST_GeomFromText($2, 4326), 50, '{}')",
+            mission,
+            SQUARE,
+            role="sd_app",
+        )

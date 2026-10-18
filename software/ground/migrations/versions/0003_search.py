@@ -64,7 +64,7 @@ CREATE TABLE perception_stills (
   still_id      uuid NOT NULL UNIQUE,
   command_id    uuid,
   captured_utc  timestamptz NOT NULL,
-  sensor        text NOT NULL CHECK (sensor IN ('rgb','thermal')),
+  sensor        text NOT NULL CHECK (sensor IN ('rgb')),
   pose          jsonb NOT NULL,                           -- Pose
   footprint     geometry(Polygon, 4326) NOT NULL,
   px_per_m      real NOT NULL CHECK (px_per_m > 0),
@@ -134,7 +134,7 @@ CREATE TABLE candidate_assessments (
   id               uuid PRIMARY KEY DEFAULT uuidv7(),
   candidate_id     uuid NOT NULL,
   profile_version  int  NOT NULL CHECK (profile_version >= 0),  -- 0 = no approved profile
-  engine           text NOT NULL CHECK (engine IN ('code','fast','strong','local','oracle')),
+  engine           text NOT NULL CHECK (engine IN ('code','fast','strong','oracle')),
   model_id         text NOT NULL,
   body             jsonb NOT NULL,                        -- CandidateAssessment
   latency_ms       int  NOT NULL CHECK (latency_ms >= 0),

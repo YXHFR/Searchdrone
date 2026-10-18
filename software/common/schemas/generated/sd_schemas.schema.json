@@ -1078,7 +1078,6 @@
             "code",
             "fast",
             "strong",
-            "local",
             "oracle"
           ],
           "type": "string"
@@ -1208,7 +1207,6 @@
                 "code",
                 "fast",
                 "strong",
-                "local",
                 "oracle"
               ],
               "type": "string"
@@ -6285,10 +6283,7 @@
           "type": "number"
         },
         "sensor": {
-          "enum": [
-            "rgb",
-            "thermal"
-          ],
+          "const": "rgb",
           "type": "string"
         },
         "still_id": {

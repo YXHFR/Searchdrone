@@ -183,7 +183,8 @@ class Candidate(SdModel):
 
 
 FieldVerdict = Literal["match", "conflict", "not_visible"]
-AssessmentEngine = Literal["code", "fast", "strong", "local", "oracle"]
+# No local model: without a network only the code score and a person assess (B25).
+AssessmentEngine = Literal["code", "fast", "strong", "oracle"]
 AssessmentFlag = Literal["motion_claim", "identity_claim", "format_repaired"]
 
 

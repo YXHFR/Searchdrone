@@ -438,7 +438,7 @@ export interface CandidateAssessment {
    * @maxItems 3
    */
   crops_used?: [] | [string] | [string, string] | [string, string, string];
-  engine: "code" | "fast" | "strong" | "local" | "oracle";
+  engine: "code" | "fast" | "strong" | "oracle";
   evidence?: {
     [k: string]: number;
   };
@@ -476,7 +476,7 @@ export interface CandidateCard {
   best_detector_score: number;
   candidate_id: string;
   current_profile_version?: number | null;
-  engine?: ("code" | "fast" | "strong" | "local" | "oracle") | null;
+  engine?: ("code" | "fast" | "strong" | "oracle") | null;
   fields?: {
     [k: string]: "match" | "conflict" | "not_visible";
   };
@@ -2183,7 +2183,7 @@ export interface PerceptionReport {
   footprint: [LatLon, LatLon, LatLon, LatLon];
   pose: Pose;
   px_per_m: number;
-  sensor: "rgb" | "thermal";
+  sensor: "rgb";
   still_id: string;
   synthetic?: boolean;
 }

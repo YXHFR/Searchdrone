@@ -438,7 +438,7 @@ class PerceptionReport(SdModel):
     still_id: Id
     command_id: Id | None  # the order the still was taken during
     captured_utc: AwareDatetime
-    sensor: Literal["rgb", "thermal"]
+    sensor: Literal["rgb"]  # a thermal camera comes later, with its own migration
     pose: Pose
     footprint: list[LatLon] = Field(min_length=4, max_length=4)  # corners on the ground
     px_per_m: float = Field(gt=0)
