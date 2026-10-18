@@ -8,6 +8,13 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- Real flights only use zero-data-retention cloud endpoints: `[cloud.provider] zdr` now
+  defaults to `true` when `profile` is `bench` or `field` and to `false` in `sim`, so
+  OpenRouter gets `provider.zdr = true` for both the main and the fallback model. An
+  explicit `zdr` still wins. `config/brain.toml` files copied from the old example carry
+  `zdr = false`, which keeps zero retention off; remove that line (or set `zdr = true`)
+  before flying. `sd-brain config-check` and the brain's start warn when a bench or
+  field profile has `zdr = false`.
 - The cloud model is the AI commander and the local language model is gone: no
   llama-server in `compose.yaml`, no `just models-fetch`, `just llm-up`, `just check-model`
   or `just brain-eval-model`, and no local decision engine. Without network or key, or
@@ -30,8 +37,8 @@ All notable changes to this project are listed here. The format follows
 - Perception chain: `sd-onboard` takes stills from a camera folder (`[perception]` in
   `config/onboard.toml`, off by default), runs the class register's detector sources,
   places each detection on the ground with the flight controller's position and attitude
-  (`ATTITUDE` is now read) and sends a `PerceptionReport` followed by a `CropData` JPEG
-  for each target over SD-link, in its own lowest-priority queue. A detection may now
+  and sends a `PerceptionReport` followed by a `CropData` JPEG for each target over
+  SD-link, in its own lowest-priority queue. A detection may now
   carry its class (`GeoDetectionMsg.label` and `source`). `sd-ground` queues reports per
   vehicle off the link's inbound loop, waits a moment for a report's crops, stores the
   still and its classed detections (`perception_stills` and `detections`; migration

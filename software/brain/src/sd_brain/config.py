@@ -92,14 +92,14 @@ class ProviderConfig(_Section):
     ``data_collection = "deny"`` keeps the calls away from providers that may store or
     train on the data. ``require_parameters`` routes only to providers that support every
     parameter sent (tools, reasoning). ``zdr`` narrows it to zero-data-retention
-    endpoints. Other OpenAI-compatible APIs ignore or refuse the field: turn it off with
-    ``send = false``.
+    endpoints; left unset it follows the profile (see ``BrainConfig``). Other
+    OpenAI-compatible APIs ignore or refuse the field: turn it off with ``send = false``.
     """
 
     send: bool = True
     data_collection: Literal["allow", "deny"] = "deny"
     require_parameters: bool = True
-    zdr: bool = False
+    zdr: bool | None = None  # None = by profile: true outside sim
     only: list[str] = Field(default_factory=list[str])
     order: list[str] = Field(default_factory=list[str])
 
@@ -233,10 +233,31 @@ class BrainConfig(_Section):
     behaviour: BehaviourConfig = Field(default_factory=BehaviourConfig)
 
     @model_validator(mode="after")
+    def _zdr_by_profile(self) -> BrainConfig:
+        # Real flights (bench, field) carry a real search area: only zero-data-retention
+        # endpoints unless zdr is set explicitly.
+        if self.cloud.provider.zdr is None:
+            self.cloud.provider.zdr = self.profile != "sim"
+        return self
+
+    @model_validator(mode="after")
     def _scripted_only_in_sim(self) -> BrainConfig:
         if self.backend.kind == "scripted" and self.profile != "sim":
             raise ValueError("ett förskrivet manus (scripted) får bara användas i profilen sim")
         return self
+
+    def zdr_warning(self) -> str | None:
+        """A Swedish warning when a real flight may reach providers that keep data."""
+        provider = self.cloud.provider
+        if self.profile == "sim" or self.backend.kind != "cloud" or not provider.send:
+            return None
+        if provider.zdr:
+            return None
+        return (
+            f"Varning: profilen {self.profile} med cloud.provider.zdr = false skickar "
+            "turerna även till leverantörer som sparar data. Ta bort raden zdr = false i "
+            "config/brain.toml för att bara använda leverantörer utan datalagring."
+        )
 
 
 def _parse_env_value(raw: str) -> Any:
