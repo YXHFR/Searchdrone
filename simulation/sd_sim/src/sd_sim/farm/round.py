@@ -11,7 +11,8 @@ A round folder::
 
     spec.json          what the loop asked for (seed, commander, commit)
     round.json         the outcome: scenario, quality check, counts, credits
-    truth.json         the world's facit the pictures were labelled from
+    truth.json         the world's facit the pictures were labelled from, plus
+                       ``targets`` (lat/lon of the people to find, for the grade)
     images/<id>.png    the pictures from the air (no black ones)
     labels/<id>.txt    YOLO, class 0 = person
     meta/<id>.json     per picture: world, time, weather, height, camera, people
@@ -157,7 +158,8 @@ def finalize(spec: RoundSpec, raw: RawRound, out: Path) -> tuple[qc.QcResult, in
     number of pictures kept."""
     for sub in ("images", "labels", "meta"):
         (out / sub).mkdir(parents=True, exist_ok=True)
-    (out / "truth.json").write_text(json.dumps(raw.truth, indent=1) + "\n", encoding="utf-8")
+    truth = {**raw.truth, "targets": targets(raw.truth)}
+    (out / "truth.json").write_text(json.dumps(truth, indent=1) + "\n", encoding="utf-8")
     info = {
         "description": "Searchdrone sim farm, synthetic aerial pictures with person boxes",
         "round_id": spec.round_id,
@@ -260,6 +262,15 @@ def grade(
         return {"error": f"betyget gick inte att räkna: {exc}"}
 
 
+def targets(truth: Mapping[str, Any]) -> list[dict[str, float]]:
+    """Where the people to find are (WGS84), as ``sd-brain eval grade`` reads them."""
+    return [
+        {"lat": float(row["lat"]), "lon": float(row["lon"])}
+        for row in truth.get("objects", [])
+        if row.get("truth", {}).get("role") == "target" and "lat" in row and "lon" in row
+    ]
+
+
 def write_result(out: Path, spec: RoundSpec, result: Mapping[str, Any]) -> None:
     """``round.json``, written last and by rename: a reader that sees it sees a whole round."""
     data = {
@@ -269,6 +280,7 @@ def write_result(out: Path, spec: RoundSpec, result: Mapping[str, Any]) -> None:
         "commit": spec.commit,
         "commander_requested": spec.commander,
         "created_utc": spec.created_utc,
+        "truth": "truth.json",
         "finished_utc": dt.datetime.now(dt.UTC).isoformat(),
         **result,
     }

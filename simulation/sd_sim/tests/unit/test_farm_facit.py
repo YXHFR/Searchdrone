@@ -40,6 +40,8 @@ def person_row(p: Person, ground: float = 0.0) -> dict[str, Any]:
         "north_m": p.north_m,
         "ground_m": ground,
         "up_m": p.up_m,
+        "lat": round(-35.363 + p.north_m / 111_000, 8),
+        "lon": round(149.165 + p.east_m / 90_000, 8),
         "yaw_deg": p.yaw_deg,
         "label": p.label,
         "truth": dict(p.truth),
@@ -216,7 +218,11 @@ def test_round_writes_a_checked_dataset(tmp_path: Path) -> None:
     assert any(c["model"].startswith("Rescue Randy v3") for c in meta["credits"])
     coco = json.loads((tmp_path / "coco.json").read_text())
     assert len(coco["images"]) == 6 and len(coco["annotations"]) == 12
-    assert (tmp_path / "truth.json").is_file()
+    truth = json.loads((tmp_path / "truth.json").read_text())
+    assert result["truth"] == "truth.json"
+    assert truth["targets"] == [
+        {"lat": round(-35.363 + 1.0 / 111_000, 8), "lon": round(149.165 + 4.0 / 90_000, 8)}
+    ]
 
 
 def test_round_that_never_took_off_fails(tmp_path: Path) -> None:
