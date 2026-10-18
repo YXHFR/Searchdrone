@@ -633,13 +633,20 @@ async def test_the_wait_reads_the_skill_event_among_others() -> None:
     assert backend.turns and backend.turns[0].trigger == "skill_event"
 
 
-async def test_resume_waits_until_the_release_is_confirmed() -> None:
+@pytest.mark.parametrize(
+    ("status", "paused_by"),
+    [("PAUSED", "operator"), ("HELD", None)],  # HELD: STOP's BRAKE right after takeoff
+)
+async def test_resume_waits_until_the_release_is_confirmed(
+    status: str, paused_by: str | None
+) -> None:
     """The pilot's Resume reaches the AI before the onboard computer has confirmed it (the
-    mission is still PAUSED by the operator): the turn waits for the confirmed picture."""
+    mission is still PAUSED by the operator, or HELD by the STOP): the turn waits for the
+    confirmed picture, or the AI sees a lock and only asks the pilot to resume again."""
     backend = Steps(act("resume"))
     loop, fg, _ = make_loop(backend)
-    fg.sit["mission_status"] = "PAUSED"
-    fg.sit["paused_by"] = "operator"
+    fg.sit["mission_status"] = status
+    fg.sit["paused_by"] = paused_by
     calls = 0
     situation = fg.situation
 

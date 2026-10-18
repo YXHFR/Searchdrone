@@ -766,8 +766,8 @@ class CommanderLoop:
         one at hand and without that order as active (the ground can mark the order done
         before the snapshot that shows the onboard state change; an order based on the
         older one is refused onboard as ``STATE_CHANGED``); after the pilot's Resume, the
-        mission no longer paused by a person (until the onboard computer confirms the
-        release, the gate still says the pilot must resume)."""
+        mission no longer paused by a person nor HELD by the STOP (until the onboard
+        computer confirms the release, the gate still says the pilot must resume)."""
         kind = "event.skill" if trigger == "skill_event" else "event.operator_override"
         body = next((e.get("body") or {} for e in reversed(events) if e.get("type") == kind), {})
         first = (s.snapshot_state_epoch, s.snapshot_state_seq)
@@ -784,11 +784,11 @@ class CommanderLoop:
                     first[1] is not None and (s.snapshot_state_epoch, s.snapshot_state_seq) == first
                 )
                 return still_active or same_snapshot
-            return (
-                body.get("action") == "resume"
-                and s.mission_status == MissionState.PAUSED
-                and s.paused_by != "brain"
-            )
+            if body.get("action") != "resume":
+                return False
+            if s.mission_status == MissionState.HELD:  # STOP's BRAKE, not yet released
+                return True
+            return s.mission_status == MissionState.PAUSED and s.paused_by != "brain"
 
         end = self.clock.monotonic() + FRESH_SNAPSHOT_WAIT_S
         while stale(s) and self.clock.monotonic() < end:
