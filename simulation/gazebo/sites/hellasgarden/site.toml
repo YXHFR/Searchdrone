@@ -1,0 +1,25 @@
+# Public simulator site: the open meadow at the Hellasgården outdoor recreation area
+# (Nacka nature reserve, public land open to everyone). Chosen because 1.2 x 1.2 km
+# around it hold everything a search flight meets: mixed forest on hills (23-70 m above
+# sea level), the lake Källtorpssjön, the road Ältavägen with parking, buildings,
+# meadows, sports fields, paths and wetland. No private place.
+#
+# Height data and map layers next to this file come from `just world-fetch
+# site=hellasgarden` (tools/terrain/fetch_site.py); the world from `sd_sim.site`.
+name = "hellasgarden"
+world = "sd_hellasgarden"
+title = "Hellasgården, Nacka (public test site)"
+
+[home]                      # the landing pad, on the meadow west of the sports fields
+lat = 59.28842
+lon = 18.15953
+heading_deg = 90            # the vehicle faces east, towards the lake
+
+[area]
+half_size_m = 600           # the world covers home ± 600 m
+
+[dem]
+source = "copernicus-glo30"
+cell_m = 20                 # the committed grid; the world mesh is finer, interpolated
+surface = "dsm"             # Copernicus is a surface model: forest canopy is in the heights
+canopy_m = 12               # taken off inside forest so that trees stand on the ground

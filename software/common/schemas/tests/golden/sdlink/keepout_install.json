@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a3-0000-7000-8000-000000000003",
+  "kind": "KeepoutInstall",
+  "sender": "ground:main",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 53,
+  "sent_utc": "2026-10-15T12:32:00.125Z",
+  "ttl_ms": 10000,
+  "reliable": true,
+  "corr_id": null,
+  "sig": null,
+  "body": {
+    "install_seq": 3,
+    "keepouts": [
+      {
+        "keepout_id": "0192f49e-3000-7000-8000-000000000003",
+        "lat": -35.36146,
+        "lon": 149.16523,
+        "radius_m": 34.5,
+        "source": "detection",
+        "source_id": "0192f49e-5000-7000-8000-000000000005"
+      }
+    ]
+  }
+}

@@ -91,6 +91,14 @@ def test_stack_starts_no_services_unless_asked(tmp_path: Path) -> None:
     assert Stack(cfg, tmp_path, services=True).services is True
 
 
+def test_service_tokens_come_from_the_instance(tmp_path: Path) -> None:
+    """Both service tokens are the stack's own files, never the repository's secrets/."""
+    sp = _paths(tmp_path)
+    env = services.ground_env(ports.for_instance(1), sp, 1, video=False, lan=False, test_rig=True)
+    assert env["SD_GROUND__AUTH__BRAIN_TOKEN_FILE"] == str(sp.secrets_dir / "brain_token")
+    assert env["SD_GROUND__AUTH__SEARCH_TOKEN_FILE"] == str(sp.secrets_dir / "search_token")
+
+
 def test_every_launcher_starts_sd_ground_without_login_codes() -> None:
     """Launchers write sd-ground's output to logs that CI uploads: no login code or PIN there.
     So they all start it through ``ground_serve_argv`` (the unit tests only check argv)."""

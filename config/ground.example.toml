@@ -41,6 +41,7 @@ operator_absent_action = "hold"         # fixed: 30 s without a pilot -> alarm a
 [auth]
 cli_may_confirm = false                 # only the test rig sets true
 brain_token_file = "secrets/brain_token"
+search_token_file = "secrets/search_token"   # the search service's token (just search-token)
 
 [charter]
 max_area_km2 = 4.0

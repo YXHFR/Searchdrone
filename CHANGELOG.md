@@ -49,6 +49,17 @@ All notable changes to this project are listed here. The format follows
   on a survey leg, W4 the flight controller's battery failsafe 500 m out against 10 m/s.
   The nightly SITL job sweeps W2 over 0-18 m/s and is red only if the drone does not get
   home in 12 m/s or less.
+- A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
+  Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
+  OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain
+  with roads and road markings, about 25 000 spruce, pine and birch trees, buildings from
+  the map's footprints, parked cars and lakes. It is the default for `just sim`;
+  `just demo`, `brain=scripted` and the test suites keep the flat world at CMAC. Gazebo,
+  SITL's home and the panel's map pack (`just maps-fetch site=hellasgarden`) share one origin.
+  `just world-fetch` refreshes a site, or fetches your own area from Lantmäteriet into
+  `build/` only. `just world-snapshot` takes pictures at 40 m and 100 m and from the side,
+  and measures a road's width and the map overlap in them. `just sim-smoke world=...`
+  flies in a terrain world and reports Gazebo's real-time factor.
 - Fly a drawn path: the pilot draws a path on the map ("Rita väg", `pa-1`, ...: a
   `path` annotation, a GeoJSON LineString of 2-50 points) and asks for it in the chat. The
   AI proposes `follow_path` by the path's name only; sd-brain takes the points from the
@@ -192,3 +203,10 @@ All notable changes to this project are listed here. The format follows
 - `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
   executor) asks before every single write, retries included.
 - The six onboard skills of the foundation are `implemented` in the skill registry.
+
+### Fixed
+
+- The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
+  (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
+  vehicle now starts with its legs on the ground in every world; in a site world they were
+  inside the landing pad's box and stuck to it.

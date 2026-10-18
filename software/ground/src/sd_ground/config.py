@@ -98,6 +98,7 @@ class GateConfig(_Section):
 class AuthConfig(_Section):
     cli_may_confirm: bool = False  # only the test rig sets true
     brain_token_file: str = "secrets/brain_token"  # noqa: S105 - a path, not a secret
+    search_token_file: str = "secrets/search_token"  # noqa: S105 - a path, not a secret
     login_code_ttl_s: int = Field(default=DEFAULT_LOGIN_CODE_TTL_S, ge=1, le=3600)
 
 
@@ -338,6 +339,21 @@ def check(loaded: Loaded) -> list[str]:
         )
     elif not _private_mode(token):
         errors.append(f"{cfg.auth.brain_token_file} kan läsas av andra. Kör: chmod 600 på filen")
+    search_token = loaded.path(cfg.auth.search_token_file)  # optional until sd-search runs
+    if search_token.is_file() and not _private_mode(search_token):
+        errors.append(f"{cfg.auth.search_token_file} kan läsas av andra. Kör: chmod 600 på filen")
+    if (
+        search_token.is_file()
+        and token.is_file()
+        and (
+            search_token.resolve() == token.resolve()
+            or search_token.read_text(encoding="utf-8").strip()
+            == token.read_text(encoding="utf-8").strip()
+        )
+    ):
+        errors.append(
+            "Söktjänstens och befälhavarens token måste vara olika. Kör: just search-token"
+        )
     try:
         limit_caps(loaded)
     except ConfigError as exc:
