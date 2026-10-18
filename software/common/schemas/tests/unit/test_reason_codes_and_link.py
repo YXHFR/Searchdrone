@@ -81,8 +81,13 @@ def test_kind_models_cover_the_catalogue() -> None:
         "CommanderStatus",
         "ManualTakeover",
         "ManualControl",
+        "PerceptionReport",
+        "CropData",
+        "CropRequest",
+        "KeepoutInstall",
     }
     assert set(link.KIND_MODELS) >= link.RELIABLE_KINDS
+    assert link.RELIABLE_KINDS >= link.TTL_REQUIRED_KINDS
 
 
 def test_reliability() -> None:

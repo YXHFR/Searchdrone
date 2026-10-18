@@ -18,6 +18,7 @@ from pydantic import Field, field_validator, model_validator
 
 from sd_detect.classes import CLASS_ID_PATTERN, is_forbidden_class
 from sd_schemas.base import SdModel
+from sd_schemas.link import BBox
 
 __all__ = [
     "EMBEDDING_MAX_LEN",
@@ -51,15 +52,6 @@ class Frame(SdModel):
         if len(self.rgb) != self.width * self.height * 3:
             raise ValueError("rgb must hold exactly width * height * 3 bytes")
         return self
-
-
-class BBox(SdModel):
-    """A box in image pixels: top-left corner, width and height."""
-
-    x: float = Field(ge=0)
-    y: float = Field(ge=0)
-    w: float = Field(gt=0)
-    h: float = Field(gt=0)
 
 
 class Detection(SdModel):

@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "msg_id": "0192f4a3-0000-7000-8000-000000000002",
+  "kind": "CropRequest",
+  "sender": "ground:main",
+  "vehicle_id": "sim-01",
+  "mission_id": "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f",
+  "seq": 52,
+  "sent_utc": "2026-10-15T12:32:00.125Z",
+  "ttl_ms": 10000,
+  "reliable": true,
+  "corr_id": null,
+  "sig": null,
+  "body": {
+    "request_id": "0192f49e-3000-7000-8000-000000000003",
+    "still_id": "0192f49e-4000-7000-8000-000000000004",
+    "center_px": [1220, 845],
+    "side_px": 768,
+    "max_px": 512
+  }
+}
