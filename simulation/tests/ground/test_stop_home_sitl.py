@@ -283,6 +283,7 @@ def _set_ground_link(sim: Sim, up: bool) -> None:
 # --- STOP and FLY HOME past the onboard computer -----------------------------------------
 
 
+@pytest.mark.e2e  # just e2e: the emergency buttons
 @pytest.mark.budget_s(240)
 def test_stop_bypasses_onboard(sim: Sim) -> None:
     """``sd-onboard`` frozen during a goto at full speed: BRAKE <= 1.0 s, < 0.5 m/s in 5 s.
@@ -304,6 +305,7 @@ def test_stop_bypasses_onboard(sim: Sim) -> None:
     asyncio.run(run())
 
 
+@pytest.mark.e2e  # just e2e: the emergency buttons
 @pytest.mark.budget_s(300)
 def test_home_bypasses_onboard(sim: Sim) -> None:
     """``sd-onboard`` killed in flight: FLY HOME, SMART_RTL/RTL <= 1.0 s, landed within 3 m."""
