@@ -30,6 +30,7 @@ FENCE_ACTION 3           # SmartRTL, else RTL, else LAND
 FENCE_ALT_MAX 125        # m above home = 120 m limit + 5 m
 FENCE_RADIUS 530         # m from home = 500 m limit + 30 m
 FENCE_MARGIN 5           # m
+AVOID_ENABLE 3           # ArduPilot's default; bit 0 brakes before the fence
 
 # --- flying home ----------------------------------------------------------------------
 RTL_ALT_M 30             # m above home on the way back (flat demo area)

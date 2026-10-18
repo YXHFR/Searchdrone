@@ -124,6 +124,10 @@ All notable changes to this project are listed here. The format follows
 - The ground keeps the flight controller's failsafe texts (a fence breach comes as a
   notice) at any severity.
 - A ready-made charter proposal builds on the charter in force.
+- The safety parameters pin `AVOID_ENABLE 3` (ArduPilot's default, braking before the
+  fence), so the onboard computer reads it back before every takeoff. SC16b runs on its own
+  SITL with `AVOID_ENABLE 2` (`simulation/sitl/params/tests/fence_no_brake.parm`): the
+  climb no longer stops just below `FENCE_ALT_MAX`, so the height fence is breached every run.
 
 - One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
   clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
