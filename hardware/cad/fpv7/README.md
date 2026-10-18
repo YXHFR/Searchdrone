@@ -55,7 +55,8 @@ screws, a 4G modem and a stand-alone Remote ID beacon.
    and from the other discs; its own motor is the only exception.
 3. Nothing but the camera itself is inside the camera's field of view (66 x 41 degrees,
    checked to 500 mm below the lens).
-4. The centre of gravity is within 5 mm of the centre in x and y.
+4. The centre of gravity is within `checks.cog_offset_max` (5 mm) of the centre in x and y,
+   and the take-off mass is within `max_takeoff_mass_kg` in `hardware/limits.yaml`.
 5. Mass, centre of gravity and inertia are computed from the model and compared with
    the reference values in a table (`report.md`).
 6. The STEP, STL and report files are the same on every build.
@@ -179,5 +180,6 @@ is used only where the manufacturer publishes none.
 | `reference.takeoff_mass_g` | 1500 g | (osäkert) planning target | Estimate, no drawing published | - |
 | `reference.inertia_g_m2` | 5.5, 6.5, 9.0 g m^2 | (osäkert) hand estimate with point masses, made before purchase | Estimate, no drawing published | - |
 | `checks.prop_margin_min` | 5 mm | acceptance limit | Design default | - |
+| `checks.cog_offset_max` | 5 mm | acceptance limit, x and y | Design default | - |
 | `checks.fov_length` | 500 mm | how far below the camera the view is checked | Design default | - |
 | `checks.stl_tolerance` | 0.05 mm | STL chord tolerance | Design default | - |

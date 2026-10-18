@@ -9,14 +9,18 @@ body axes x forward, y left, z up, in kg m^2.
 from __future__ import annotations
 
 from itertools import combinations
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import cadquery as cq
+import yaml
 
 if TYPE_CHECKING:
     from assembly import Drone, Part
 
 G_MM2_TO_KG_M2 = 1e-9
+# The take-off mass limit for the hardware revision, shared with `just hw-check`.
+LIMITS = Path(__file__).resolve().parents[2] / "limits.yaml"
 # Shared faces (a motor standing on an arm) give a zero-volume intersection; anything
 # above this is a real overlap (mm^3).
 OVERLAP_TOL_MM3 = 1e-3
@@ -110,10 +114,14 @@ def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
     over = overlaps(drone.parts)
     hits = fov_hits(drone)
     diag = [mp["inertia_kg_m2"][i][i] for i in range(3)]
+    max_mass_g = yaml.safe_load(LIMITS.read_text(encoding="utf-8"))["max_takeoff_mass_kg"] * 1000
+    cog_max = p["checks"]["cog_offset_max"]
     out = {
         "mass_g": round(mp["mass_g"], 1),
         "reference_mass_g": ref["takeoff_mass_g"],
+        "max_takeoff_mass_g": max_mass_g,
         "cog_mm": [round(v, 2) for v in mp["cog_mm"]],
+        "cog_offset_max_mm": cog_max,
         "inertia_kg_m2": [[round(v, 6) for v in row] for row in mp["inertia_kg_m2"]],
         "inertia_diag_kg_m2": [round(v, 6) for v in diag],
         "reference_inertia_kg_m2": [v / 1000 for v in ref["inertia_g_m2"]],
@@ -132,8 +140,20 @@ def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
             ),
         ],
     }
-    out["ok"] = not over and not hits and all(m["distance_mm"] >= limit for m in margins)
+    out["ok"] = (
+        not over
+        and not hits
+        and all(m["distance_mm"] >= limit for m in margins)
+        and cog_ok(out)
+        and out["mass_g"] <= max_mass_g
+    )
     return out
+
+
+def cog_ok(r: dict[str, Any]) -> bool:
+    """The centre of gravity is within the allowed offset from the centre in x and y."""
+    x, y, _ = r["cog_mm"]
+    return abs(x) <= r["cog_offset_max_mm"] and abs(y) <= r["cog_offset_max_mm"]
 
 
 def markdown(r: dict[str, Any]) -> str:
@@ -165,6 +185,10 @@ def markdown(r: dict[str, Any]) -> str:
         f"| Propeller margin >= {r['prop_margin_min_mm']} mm | {yes(margin_ok)} "
         f"(smallest {min(m['distance_mm'] for m in r['prop_margins']):.1f} mm) |",
         f"| Camera view clear | {yes(not r['fov_hits'])} ({len(r['fov_hits'])} parts in view) |",
+        f"| Centre of gravity within {r['cog_offset_max_mm']} mm of the centre in x and y "
+        f"| {yes(cog_ok(r))} |",
+        f"| Take-off mass <= {r['max_takeoff_mass_g']:.0f} g (hardware/limits.yaml) "
+        f"| {yes(r['mass_g'] <= r['max_takeoff_mass_g'])} |",
         "",
         "| Propeller | Nearest part | Distance (mm) |",
         "|---|---|---|",

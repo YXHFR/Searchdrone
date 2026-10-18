@@ -73,5 +73,6 @@ reference:
 
 checks:
   prop_margin_min: 5
+  cog_offset_max: 5
   fov_length: 500
   stl_tolerance: 0.05

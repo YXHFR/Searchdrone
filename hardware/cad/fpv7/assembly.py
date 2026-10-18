@@ -18,6 +18,7 @@ written in the same order.
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 import re
@@ -300,7 +301,7 @@ def write_step(drone: Drone, path: Path) -> None:
     assy.export(str(path), "STEP")
     text = path.read_text(encoding="utf-8")
     text = STEP_DATE_RE.sub(rf"\g<1>{STEP_DATE}\g<2>", text, count=1)
-    counter = iter(range(1, len(text)))
+    counter = itertools.count(1)
     text = STEP_NAUO_RE.sub(lambda m: f"{m[1]}{next(counter)}{m[2]}", text)
     path.write_text(text, encoding="utf-8")
 

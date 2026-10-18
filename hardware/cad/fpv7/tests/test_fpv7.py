@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import assembly
+import cadquery as cq
 import pytest
 
 README = Path(assembly.__file__).with_name("README.md")
@@ -62,9 +63,28 @@ def test_mass_matches_the_parts(report: dict[str, Any], params: dict[str, Any]) 
 
 def test_centre_of_gravity_is_near_the_middle(report: dict[str, Any]) -> None:
     """Off-centre mass makes the motors work unevenly; keep it within 5 mm in x and y."""
-    x, y, _ = report["cog_mm"]
-    assert abs(x) <= 5
-    assert abs(y) <= 5
+    import checks
+
+    assert report["cog_offset_max_mm"] <= 5
+    assert checks.cog_ok(report)
+    assert not checks.cog_ok({**report, "cog_mm": [6.0, 0.0, 0.0]})
+
+
+def test_mass_is_within_the_hardware_limit(report: dict[str, Any]) -> None:
+    assert report["max_takeoff_mass_g"] > 0
+    assert report["mass_g"] <= report["max_takeoff_mass_g"]
+    assert report["ok"]
+
+
+def test_prop_margin_check_sees_a_part_too_close(drone: assembly.Drone) -> None:
+    """The margin check is not vacuous: a block 3 mm under a disc is reported at 3 mm."""
+    import checks
+
+    prop = next(pt for pt in drone.parts if pt.name == "prop_1")
+    box = prop.solid.BoundingBox()
+    block = cq.Solid.makeBox(10, 10, 2, cq.Vector(box.center.x, box.center.y, box.zmin - 5))
+    rows = checks.prop_margins([prop, assembly.Part("block", "printed", block, 1.0)], 5)
+    assert rows == [{"prop": "prop_1", "nearest": "block", "distance_mm": 3.0}]
 
 
 def test_inertia_is_physical_and_compared(report: dict[str, Any]) -> None:
