@@ -53,6 +53,9 @@ CELL_NOMINAL_V = 3.6
 CELL_FULL_V = 4.2
 # EMAX ECO II 2807 1300KV with HQ 7x4x3 on 6S at the CAD mass: about 15.5 A in hover.
 HOVER_CURRENT_A = 15.5
+# SITL's refCurrent is the draw at REF_SPEED_MS and REF_ANGLE_DEG, not in hover; its
+# builtin model draws this much less in hover (sitl-nightly-gz: 13.53 A for refCurrent 15.5).
+REF_TO_HOVER_CURRENT = 1.146
 HOVER_THROTTLE = 0.45  # throttle out at hover in the builtin model (about 3.5 x weight)
 SPIN_MIN = 0.15
 SPIN_MAX = 0.90  # equals MOT_SPIN_MAX in sd_fpv7-sim.parm
@@ -267,7 +270,7 @@ def frame_json() -> dict[str, Any]:
         "refSpd": REF_SPEED_MS,
         "refAngle": REF_ANGLE_DEG,
         "refVoltage": round(CELLS * CELL_NOMINAL_V, 2),
-        "refCurrent": HOVER_CURRENT_A,
+        "refCurrent": round(HOVER_CURRENT_A * REF_TO_HOVER_CURRENT, 1),
         "refAlt": 100,
         "refTempC": 20,
         "maxVoltage": round(CELLS * CELL_FULL_V, 2),

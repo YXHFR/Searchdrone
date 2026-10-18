@@ -182,7 +182,7 @@ def test_frame_file_matches_the_cad_model() -> None:
     assert frame["moment_inertia"] == [cad["inertia_kg_m2"][i][i] for i in range(3)]
     x, y, _ = cad["rotors"][0]["position_m"]
     assert frame["diagonal_size"] == pytest.approx(2 * math.hypot(x, y), abs=1e-4)
-    assert 15.0 <= frame["refCurrent"] <= 16.0
+    assert 15.0 <= frame["refCurrent"] / fpv7.REF_TO_HOVER_CURRENT <= 16.0  # hover current
     assert frame["maxVoltage"] == pytest.approx(6 * 4.2)
     assert frame["num_motors"] == 4
 
