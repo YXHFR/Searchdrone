@@ -67,6 +67,8 @@ __all__ = [
     "MissionFlow",
 ]
 
+TLOG_NAME = "flight.tlog"  # the ground station's own MAVLink channel, per mission
+
 CLOSE_AFTER_DISARM_S: Final = 10.0
 TICK_S: Final = 0.2
 _HOME_MODES: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL})
@@ -106,9 +108,13 @@ class FlowError(ApiStatusError):
 
 
 class MavCaller(Protocol):
-    """The MAVLink thread for the fence (``mav.thread.ThreadSafeMav``)."""
+    """The MAVLink thread for the fence and ``flight.tlog`` (``mav.thread.ThreadSafeMav``)."""
 
     def snapshot(self) -> MavSnapshot | None: ...
+
+    def start_tlog(self, path: Path) -> bool: ...
+
+    def stop_tlog(self) -> None: ...
 
     async def call[T](
         self, work: Callable[[Vehicle], Awaitable[T]], timeout_s: float = 30.0
@@ -146,6 +152,7 @@ class MissionFlow:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
     _status: dict[str, str] = field(default_factory=dict[str, str])
+    _tlog_mission: str | None = None  # whose flight.tlog the MAVLink channel records
 
     # --- small helpers -----------------------------------------------------------------
 
@@ -671,8 +678,30 @@ class MissionFlow:
             await self._follow_arming(vid, mission)
             if mission is None:
                 continue
+            self._follow_tlog(mission)
             await self._follow_landing(vid, mission)
             await coverage_service.tick(self, mission)
+
+    def _follow_tlog(self, mission: Mission) -> None:
+        """``flight.tlog`` in the mission's folder from its first activation until its
+        files close (also after a restart of this process: the file is appended to)."""
+        mid = str(mission.id)
+        if self.mav is None or self._tlog_mission == mid or mission.activated_at is None:
+            return
+        if mission.status in (MissionState.DRAFT, MissionState.CLOSED):
+            return
+        path = self.mission_dir(mid) / TLOG_NAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if self.mav.start_tlog(path):
+            self._tlog_mission = mid
+
+    def stop_tlog(self, mission_id: str) -> bool:
+        """Stop recording the mission's ``flight.tlog``; ``True`` when this process wrote it."""
+        if self.mav is None or self._tlog_mission != mission_id:
+            return False
+        self.mav.stop_tlog()
+        self._tlog_mission = None
+        return True
 
     def mission_active(self, vehicle_id: str) -> bool:
         """For the operator-absence guard: the mission is ACTIVE or PAUSED by the AI."""

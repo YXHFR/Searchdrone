@@ -186,11 +186,12 @@ class MavConnection:
         """Record every received message in a telemetry log (``flight.tlog``).
 
         Same format as pymavlink's logs: an 8-byte big-endian UTC time in microseconds
-        before each message, so ``mavutil.mavlink_connection(path)`` reads it back.
+        before each message, so ``mavutil.mavlink_connection(path)`` reads it back. An
+        existing file is appended to (the ground station restarted mid-flight).
         """
         self.stop_tlog()
         with self._tlog_lock:
-            self._tlog = path.open("wb")
+            self._tlog = path.open("ab")
             self._tlog_clock = clock
 
     def stop_tlog(self) -> None:

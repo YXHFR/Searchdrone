@@ -2,6 +2,8 @@
 
 At ``LANDED -> CLOSED`` and at ``/end`` this writes into ``<data_dir>/missions/<id>/``:
 
+* ``flight.tlog``: what the ground station's MAVLink channel received from the first
+  activation on (recorded by the mission flow, closed here);
 * ``mission.json``: the mission, its limits, every charter version, the orders and the
   approvals;
 * ``events.jsonl``: every event of the mission;
@@ -26,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from sd_ground.logging import get_logger
 from sd_ground.services import video as video_service
+from sd_ground.services.missions import TLOG_NAME
 from sd_schemas.api import Mission
 
 if TYPE_CHECKING:
@@ -82,6 +85,8 @@ async def close_files(flow: MissionFlow, mission: Mission) -> None:
     folder = flow.mission_dir(mid)
     await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
     written: list[tuple[str, str]] = []
+    if flow.stop_tlog(mid) or (folder / TLOG_NAME).is_file():
+        written.append(("tlog", TLOG_NAME))
     try:
         export = await flow.repo.mission_export(mid)
         text = json.dumps(export, ensure_ascii=False, indent=2, default=str)
