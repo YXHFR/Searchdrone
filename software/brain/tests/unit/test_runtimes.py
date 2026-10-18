@@ -8,7 +8,7 @@ import httpx
 import pytest
 from brain_helpers import chat_reply, mock_client
 
-from sd_brain.config import CloudConfig
+from sd_brain.config import BrainConfig, CloudConfig
 from sd_brain.runtime.base import (
     ModelError,
     ModelTimeoutError,
@@ -99,6 +99,23 @@ async def test_cloud_sends_reasoning_provider_and_tools() -> None:
     assert body["provider"] == {"data_collection": "deny", "require_parameters": True}
     assert body["tool_choice"] == "auto" and body["tools"] == [{"type": "function"}]
     assert seen[0].headers["authorization"] == f"Bearer {KEY}"
+
+
+@pytest.mark.parametrize("profile", ["field", "bench"])
+async def test_real_flight_profile_sends_zdr_to_the_cloud(profile: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json=chat_reply("ok", [("hold", {"rationale_sv": "x"})]))
+
+    cfg = BrainConfig.model_validate({"profile": profile}).cloud
+    await CloudModelRuntime(cfg, KEY, mock_client(handler)).chat(MSG, [], 5, Sampling())
+    assert json.loads(seen[0].read())["provider"] == {
+        "data_collection": "deny",
+        "require_parameters": True,
+        "zdr": True,
+    }
 
 
 async def test_cloud_fallback_model_takes_over_on_error() -> None:
