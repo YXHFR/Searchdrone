@@ -1029,6 +1029,42 @@ dd {
   align-items: center;
   min-height: 36px;
 }
+/* A found object's card: top right beside the compass, small, so the drone and the safety
+   bar stay visible. */
+.map-find {
+  position: absolute;
+  top: 8px;
+  right: 48px;
+  width: 168px;
+  max-height: calc(100% - 16px);
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-left: 3px solid var(--c-warn);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.map-find header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.map-find img {
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: cover;
+  margin: 6px 0;
+  border-radius: 6px;
+}
+.map-find p {
+  margin: 2px 0;
+}
+.map-find .warn {
+  color: var(--c-warn);
+}
 /* Below the map, never over it: every point of the map stays clickable while drawing. */
 .map-draw {
   display: flex;

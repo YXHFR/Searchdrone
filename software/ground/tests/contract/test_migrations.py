@@ -34,8 +34,9 @@ TABLES = {
     "auth_sessions",
     "brain_memory",
     "brain_decisions",
+    "detections",
 }
-APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions")
+APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions", "detections")
 
 # Public CMAC test field (ArduPilot's default SITL home), never a private place.
 LON, LAT = 149.165230, -35.363261
@@ -62,10 +63,10 @@ def test_roundtrip(fresh_db: Db) -> None:
     db.upgrade()
 
     assert _tables(db) == TABLES
-    assert not {"detections", "candidates"} & _tables(db)
+    assert "candidates" not in _tables(db)
     assert "3.6" in db.run("SELECT postgis_full_version() AS v")[0]["v"]
     head = db.run("SELECT version_num FROM alembic_version", role="sd_app")
-    assert [r["version_num"] for r in head] == ["0002_mission_flow"]
+    assert [r["version_num"] for r in head] == ["0003_detections"]
 
 
 def test_app_role_has_no_delete_anywhere(migrated_db: Db) -> None:
@@ -121,6 +122,16 @@ def _seed(db: Db) -> str:
         "INSERT INTO brain_decisions (id, mission_id, vehicle_id, turn_id, body) "
         "VALUES (uuidv7(), $1::uuid, 'sim-01', uuidv7(), '{}')",
         mission,
+        role="sd_app",
+    )
+    db.run(
+        "INSERT INTO detections (id, mission_id, vehicle_id, find_id, still_id, captured_at, "
+        "label, kind, source, score, bbox, lat, lon, sigma95_m, size_m, synthetic) "
+        "VALUES (uuidv7(), $1::uuid, 'sim-01', uuidv7(), uuidv7(), now(), 'red_block', "
+        "'target', 'color', 0.7, '[1, 2, 3, 4]', $2, $3, 4.0, 0.6, true)",
+        mission,
+        LAT,
+        LON,
         role="sd_app",
     )
     return mission
@@ -305,3 +316,36 @@ def test_one_approved_charter_and_one_active_clearance(migrated_db: Db) -> None:
     db.run(clearance, mission, charter, role="sd_app")
     with pytest.raises(asyncpg.UniqueViolationError):
         db.run(clearance, mission, charter, role="sd_app")
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("label", "'Red Block'"),
+        ("source", "'guess'"),
+        ("kind", "'other'"),
+        ("score", "1.5"),
+        ("crop_path", "'../x.jpg'"),
+        ("lat", "91"),
+    ],
+)
+def test_detection_rows_are_checked(migrated_db: Db, column: str, value: str) -> None:
+    db = migrated_db
+    mission = _seed(db)
+    row = {
+        "label": "'car'",
+        "kind": "'context'",
+        "source": "'oracle'",
+        "score": "1",
+        "lat": "0",
+        "crop_path": "NULL",
+    } | {column: value}
+    # Column names and values come from the fixed lists above, never from input.
+    sql = (
+        "INSERT INTO detections (id, mission_id, vehicle_id, find_id, still_id, captured_at, "  # noqa: S608
+        f"bbox, lon, sigma95_m, size_m, synthetic, {', '.join(row)}) VALUES (uuidv7(), "
+        "$1::uuid, 'sim-01', uuidv7(), uuidv7(), now(), '[]', 0, 0, 0, true, "
+        f"{', '.join(row.values())})"
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run(sql, mission, role="sd_app")

@@ -8,6 +8,19 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Perception chain: `sd-onboard` takes stills from a camera folder (`[perception]` in
+  `config/onboard.toml`, off by default), runs the class register's detector sources,
+  places each detection on the ground with the flight controller's position and attitude
+  (`ATTITUDE` is now read) and sends a `PerceptionReport` with JPEG thumbnails of targets
+  over SD-link, in its own lowest-priority queue. `sd-ground` stores detections
+  (append-only table `detections`, migration `0003_detections`), joins them into one find
+  per object, saves thumbnails in the mission folder and serves
+  `GET /missions/{id}/detections`, `/finds` and `/detections/{id}/crop`; live events
+  `detection.new`, `find.new` and `find.updated` on the `detections` topic. The AI
+  commander gets `event.detection` for new finds and wakes on targets (trigger
+  `detection`); the scripted commander can fly to a find (`at: "event:find"`) and ask the
+  pilot to confirm. The panel draws finds on the map and opens a card with the class,
+  score, thumbnail and source; the simulator's labels are marked "facit".
 - Class register and detector sources (`sd_detect`): a table of classes (`person`,
   `red_block`, `car`, `building`, `road`) with Swedish names, kind, source and plausible
   size; a colour detector on real pixels for red blocks; the simulator's labelled boxes as

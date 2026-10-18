@@ -995,6 +995,31 @@ export interface DecisionLogStored {
   turn_id: string;
 }
 /**
+ * A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.
+ * ``source = "oracle"`` is the simulator's own label, not a detector.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "DetectionRow".
+ */
+export interface DetectionRow {
+  bbox: number[];
+  captured_at: string;
+  find_id: string;
+  has_crop: boolean;
+  id: string;
+  kind: "target" | "context";
+  label: string;
+  lat: number;
+  lon: number;
+  score: number;
+  sigma95_m: number;
+  size_m: number;
+  source: "model" | "color" | "oracle";
+  still_id: string;
+  synthetic: boolean;
+  vehicle_id: string;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "Envelope".
  */
@@ -1050,6 +1075,28 @@ export interface Features {
   manual_control?: boolean;
   order_buttons?: boolean;
   voice?: boolean;
+}
+/**
+ * One found object: detections of one class at the same place, joined
+ * (``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:
+ * only a person confirms.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Find".
+ */
+export interface Find {
+  count: number;
+  find_id: string;
+  kind: "target" | "context";
+  label: string;
+  lat: number;
+  lon: number;
+  name_sv: string;
+  score: number;
+  sigma95_m: number;
+  source: "model" | "color" | "oracle";
+  synthetic: boolean;
+  thumb_detection_id: string | null;
 }
 /**
  * Stage 2. Unresolved here: the operator's position is checked onboard.
@@ -1623,6 +1670,321 @@ export interface PartStatus {
   detail?: string | null;
   since: string | null;
   state: "ok" | "degraded" | "down";
+}
+/**
+ * One detection, placed on the ground. A hint for a person to look at, never a
+ * decision: only a person confirms a find.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "PerceptionDetection".
+ */
+export interface PerceptionDetection {
+  /**
+   * @minItems 4
+   * @maxItems 4
+   */
+  bbox: [unknown, unknown, unknown, unknown];
+  crop_jpeg_b64?: string | null;
+  detection_id: string;
+  label: string;
+  lat: number;
+  lon: number;
+  score: number;
+  sigma95_m: number;
+  size_m: number;
+  source: "model" | "color" | "oracle";
+}
+/**
+ * Onboard -> ground, reliable, about one still a second while searching. Sent from
+ * its own low-priority queue: it never holds up acks, events or the emergency path.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "PerceptionReport".
+ */
+export interface PerceptionReport {
+  captured_utc: string;
+  /**
+   * @maxItems 20
+   */
+  detections?:
+    | []
+    | [PerceptionDetection]
+    | [PerceptionDetection, PerceptionDetection]
+    | [PerceptionDetection, PerceptionDetection, PerceptionDetection]
+    | [PerceptionDetection, PerceptionDetection, PerceptionDetection, PerceptionDetection]
+    | [PerceptionDetection, PerceptionDetection, PerceptionDetection, PerceptionDetection, PerceptionDetection]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ]
+    | [
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection,
+        PerceptionDetection
+      ];
+  detections_dropped?: number;
+  /**
+   * @maxItems 4
+   */
+  footprint:
+    | []
+    | [[unknown, unknown]]
+    | [[unknown, unknown], [unknown, unknown]]
+    | [[unknown, unknown], [unknown, unknown], [unknown, unknown]]
+    | [[unknown, unknown], [unknown, unknown], [unknown, unknown], [unknown, unknown]];
+  latency_ms: number;
+  pose: StillPose;
+  px_per_m: number;
+  sensor?: "rgb" | "thermal";
+  skipped_sources?: {
+    [k: string]: string;
+  };
+  /**
+   * @maxItems 8
+   */
+  sources?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
+  still_id: string;
+  synthetic?: boolean;
+}
+/**
+ * Where the camera was when the still was taken (from the flight controller).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "StillPose".
+ */
+export interface StillPose {
+  agl_m: number;
+  alt_amsl_m: number;
+  lat: number;
+  lon: number;
+  pitch_deg: number;
+  roll_deg: number;
+  yaw_deg: number;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

@@ -51,6 +51,7 @@ from sd_schemas.link import (
     OnboardEvent,
     OperatorOverrideNotice,
     OperatorRelease,
+    PerceptionReport,
     PilotPosition,
     SkillCommand,
 )
@@ -60,6 +61,9 @@ __all__ = ["OnboardLink"]
 log = logging.getLogger("sd_onboard.link")
 MAX_EVENTS: Final = 500
 MAX_ACKS: Final = 200
+# Perception reports wait behind every ack and event and only the newest few are kept:
+# a report is never worth delaying an order's answer, and an old one is worth little.
+MAX_PERCEPTION: Final = 10
 _WATCH_S: Final = 0.1
 
 
@@ -80,6 +84,8 @@ class OnboardLink:
         self._session: LinkSession | None = None
         self._events: deque[OnboardEvent] = deque(maxlen=MAX_EVENTS)
         self._acks: deque[Callable[[LinkSession], Awaitable[object]]] = deque(maxlen=MAX_ACKS)
+        self._perception: deque[PerceptionReport] = deque(maxlen=MAX_PERCEPTION)
+        self.dropped_perception = 0
         self._wake = asyncio.Event()
         self.manual_values_ignored = 0
         self.dropped_events = 0
@@ -113,6 +119,13 @@ class OnboardLink:
             log.warning("link down too long: oldest event dropped (%d so far)", self.dropped_events)
         clean = {k: (str(v) if isinstance(v, UUID) else v) for k, v in data.items()}
         self._events.append(OnboardEvent(type=type, severity=severity, data=clean))
+        self._wake.set()
+
+    def perception(self, report: PerceptionReport) -> None:
+        """Queue a perception report; the oldest waiting one goes when the queue is full."""
+        if len(self._perception) == MAX_PERCEPTION:
+            self.dropped_perception += 1
+        self._perception.append(report)
         self._wake.set()
 
     def charter_ack(self, ack: CharterAck) -> None:
@@ -257,6 +270,12 @@ class OnboardLink:
                 while self._events:
                     await session.send(self._events[0])
                     self._events.popleft()
+                # One report per round, and only with nothing more urgent waiting.
+                if self._perception and not self._acks and not self._events:
+                    await session.send(self._perception[0])
+                    self._perception.popleft()
+                    if self._perception:
+                        self._wake.set()
             except LinkBusyError:
                 await self.clock.sleep(0.2)
                 self._wake.set()

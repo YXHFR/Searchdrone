@@ -1390,6 +1390,115 @@
         "title": "CommandStatus",
         "type": "string"
       },
+      "DetectionRow": {
+        "additionalProperties": false,
+        "description": "A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.\n``source = \"oracle\"`` is the simulator's own label, not a detector.",
+        "properties": {
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Bbox",
+            "type": "array"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "find_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Find Id",
+            "type": "string"
+          },
+          "has_crop": {
+            "title": "Has Crop",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "target",
+              "context"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "sigma95_m": {
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "size_m": {
+            "title": "Size M",
+            "type": "number"
+          },
+          "source": {
+            "enum": [
+              "model",
+              "color",
+              "oracle"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "still_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Still Id",
+            "type": "string"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "vehicle_id": {
+            "title": "Vehicle Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "find_id",
+          "vehicle_id",
+          "still_id",
+          "captured_at",
+          "label",
+          "kind",
+          "source",
+          "score",
+          "bbox",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "size_m",
+          "synthetic",
+          "has_crop"
+        ],
+        "title": "DetectionRow",
+        "type": "object"
+      },
       "Event": {
         "additionalProperties": false,
         "properties": {
@@ -1513,6 +1622,96 @@
           }
         },
         "title": "Features",
+        "type": "object"
+      },
+      "Find": {
+        "additionalProperties": false,
+        "description": "One found object: detections of one class at the same place, joined\n(``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:\nonly a person confirms.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "find_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Find Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "target",
+              "context"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "title": "Lon",
+            "type": "number"
+          },
+          "name_sv": {
+            "title": "Name Sv",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "sigma95_m": {
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "source": {
+            "enum": [
+              "model",
+              "color",
+              "oracle"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "thumb_detection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumb Detection Id"
+          }
+        },
+        "required": [
+          "find_id",
+          "label",
+          "name_sv",
+          "kind",
+          "source",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "score",
+          "count",
+          "thumb_detection_id",
+          "synthetic"
+        ],
+        "title": "Find",
         "type": "object"
       },
       "GateDecision": {
@@ -4606,6 +4805,7 @@
     },
     "/api/v1/missions/{mission_id}/detections": {
       "get": {
+        "description": "The mission's detections, newest first (at most 2000). ``source = \"oracle\"`` marks\nthe simulator's own labels, never a real detector.",
         "operationId": "get_detections_api_v1_missions__mission_id__detections_get",
         "parameters": [
           {
@@ -4624,7 +4824,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {},
+                  "items": {
+                    "$ref": "#/components/schemas/DetectionRow"
+                  },
                   "title": "Response Get Detections Api V1 Missions  Mission Id  Detections Get",
                   "type": "array"
                 }
@@ -4644,6 +4846,55 @@
           }
         },
         "summary": "Get Detections"
+      }
+    },
+    "/api/v1/missions/{mission_id}/detections/{detection_id}/crop": {
+      "get": {
+        "description": "A target detection's thumbnail (JPEG), only from inside the mission's folder.",
+        "operationId": "get_detection_crop_api_v1_missions__mission_id__detections__detection_id__crop_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "detection_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Detection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Detection Crop"
       }
     },
     "/api/v1/missions/{mission_id}/end": {
@@ -4877,6 +5128,51 @@
           }
         },
         "summary": "Get File"
+      }
+    },
+    "/api/v1/missions/{mission_id}/finds": {
+      "get": {
+        "description": "One entry per found object: detections of a class at the same place, joined.",
+        "operationId": "get_finds_api_v1_missions__mission_id__finds_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Find"
+                  },
+                  "title": "Response Get Finds Api V1 Missions  Mission Id  Finds Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Finds"
       }
     },
     "/api/v1/missions/{mission_id}/gate_decisions": {

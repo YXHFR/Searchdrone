@@ -19,6 +19,7 @@ import type {
   Charter,
   Clearance,
   Command,
+  Find,
   Mission,
   PanelConfig,
   Session,
@@ -44,7 +45,7 @@ export interface SeenRequest {
 
 type Handler = (
   req: SeenRequest,
-) => { status: number; body?: unknown; headers?: Record<string, string> } | "hang";
+) => { status: number; body?: unknown; headers?: Record<string, string>; raw?: Buffer } | "hang";
 
 const API = "/api/v1";
 const FIXTURE_PACK = fileURLToPath(new URL("../fixtures/fixture.pmtiles", import.meta.url));
@@ -52,6 +53,11 @@ const FIXTURE_PACK = fileURLToPath(new URL("../fixtures/fixture.pmtiles", import
 const PNG_1PX = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==",
   "base64",
+);
+
+// A find's thumbnail as the vehicle makes it: a red block cut out of a rendered still.
+const THUMB_JPEG = readFileSync(
+  fileURLToPath(new URL("../fixtures/testdata/red_block_thumb.jpg", import.meta.url)),
 );
 
 /** An empty glyph range in the MapLibre glyph PBF format (the test pack has no names). */
@@ -104,6 +110,7 @@ export class FakeGround {
   approvals: Approval[] = [];
   commands: Command[] = [];
   annotations: Annotation[] = [];
+  finds: Find[] = [];
   clearance: Clearance | null = null;
   sectors: unknown = { type: "FeatureCollection", features: [] };
   track: number[][] = [];
@@ -230,6 +237,10 @@ export class FakeGround {
       this.commands = upsert(this.commands, data as Command);
     if (type === "annotation.created")
       this.annotations = upsert(this.annotations, data as Annotation);
+    if (type === "find.new" || type === "find.updated") {
+      const f = data as Find;
+      this.finds = [...this.finds.filter((x) => x.find_id !== f.find_id), f];
+    }
     if (type === "mission.updated") this.mission = data as Mission;
   }
 
@@ -378,6 +389,10 @@ export class FakeGround {
       await route.fulfill({ status: 204, headers: res.headers ?? {} });
       return;
     }
+    if (res.raw) {
+      await route.fulfill({ status: res.status, body: res.raw, headers: res.headers ?? {} });
+      return;
+    }
     await route.fulfill({ status: res.status, json: res.body ?? {}, headers: res.headers ?? {} });
     if (/^GET .*\/vehicles\/[^/]+\/state$/.test(key)) this.stateAnswered += 1;
   }
@@ -437,6 +452,9 @@ export class FakeGround {
     if (k === `GET ${ms}/commands`) return { status: 200, body: this.commands };
     if (k === `GET ${ms}/sectors`) return { status: 200, body: this.sectors };
     if (k === `GET ${ms}/annotations`) return { status: 200, body: this.annotations };
+    if (k === `GET ${ms}/finds`) return { status: 200, body: this.finds };
+    if (/^GET \/api\/v1\/missions\/[^/]+\/detections\/[^/]+\/crop$/.test(k))
+      return { status: 200, raw: THUMB_JPEG, headers: { "content-type": "image/jpeg" } };
     if (k === `GET ${ms}/chat`) return { status: 200, body: { items: [], next_before: null } };
     if (k === `GET ${ms}/track`) {
       return {

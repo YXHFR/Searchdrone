@@ -42,6 +42,7 @@ WHEN_FIELDS: dict[str, frozenset[str]] = {
     "operator_message": frozenset(),
     "operator_override": frozenset({"action", "via"}),
     "skill_event": frozenset({"skill", "status", "status_reason", "issuer_kind"}),
+    "detection": frozenset({"label", "kind", "source"}),
     "approval_event": frozenset({"kind", "decision"}),
     "charter_event": frozenset({"status", "install_status"}),
     "takeoff_clearance": frozenset(),
@@ -86,6 +87,7 @@ class ScriptTurn(_Strict):
         "operator_message",
         "operator_override",
         "skill_event",
+        "detection",
         "approval_event",
         "charter_event",
         "takeoff_clearance",
@@ -214,9 +216,18 @@ class _Fixture:
         return CharterProposal.model_validate(body)
 
 
-def _resolve(params: dict[str, Any], fx: _Fixture) -> dict[str, Any]:
+def _resolve(
+    params: dict[str, Any], fx: _Fixture, event: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """``fixture:<name>`` takes a pin or an area from the fixture; ``event:find`` (only
+    for ``at``) takes the position of the event that started the turn (a find)."""
     out: dict[str, Any] = {}
     for key, value in params.items():
+        if isinstance(value, str) and value == "event:find":
+            if key != "at" or not event or "lat" not in event or "lon" not in event:
+                raise ScriptError("event:find går bara att använda för at i en detection-tur")
+            out["lat"], out["lon"] = float(event["lat"]), float(event["lon"])
+            continue
         if isinstance(value, str) and value.startswith("fixture:"):
             name = value.removeprefix("fixture:")
             if key == "at":
@@ -292,7 +303,9 @@ class ScriptedBackend:
             text = next((m.text for m in reversed(turn.chat_tail) if m.role == "operator"), "")
             m = re.fullmatch(t.match, text)
             groups = {k: v for k, v in (m.groupdict() if m else {}).items() if v is not None}
-        out.messages = [OutMessage(text=line.format(**groups)) for line in t.say]
+        event = next((b for b in _event_bodies(turn) if _matches_when(t.when, b)), {})
+        fields = {k: str(v) for k, v in event.items() if isinstance(v, str | int | float)}
+        out.messages = [OutMessage(text=line.format(**fields, **groups)) for line in t.say]
         if t.charter_proposal is not None:
             name = t.charter_proposal.get("from_fixture", "").format(**groups)
             out.ready_proposal = self.fixture.charter(name, f"Ram {name} ur manuset.")
@@ -301,7 +314,7 @@ class ScriptedBackend:
         elif t.action is not None:
             out.action = AiAction(
                 skill=t.action.skill,
-                params=_resolve(t.action.params, self.fixture),
+                params=_resolve(t.action.params, self.fixture, event),
                 rationale_sv="Steg i manuset.",
                 adapted=True,
             )

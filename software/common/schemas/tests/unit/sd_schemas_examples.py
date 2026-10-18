@@ -284,6 +284,33 @@ def _decision_log() -> dict[str, Any]:
     }
 
 
+def _pose() -> s.StillPose:
+    return s.StillPose(
+        lat=HOME_LAT,
+        lon=HOME_LON,
+        alt_amsl_m=624.0,
+        agl_m=40.0,
+        roll_deg=1.5,
+        pitch_deg=-4.0,
+        yaw_deg=353.0,
+    )
+
+
+def _perception_detection() -> s.PerceptionDetection:
+    return s.PerceptionDetection(
+        detection_id=COMMAND,
+        label="red_block",
+        source="color",
+        score=0.71,
+        bbox=(452.0, 286.0, 34.0, 32.0),
+        lat=HOME_LAT + 0.0018,
+        lon=HOME_LON,
+        sigma95_m=4.9,
+        size_m=0.7,
+        crop_jpeg_b64="/9j/4AAQ",
+    )
+
+
 def examples() -> dict[type[BaseModel], BaseModel]:
     """One instance per exported model, keyed by its class."""
     items: list[BaseModel] = [
@@ -430,6 +457,25 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         s.Ack(ref_id=COMMAND, stage="rejected", reason_codes=["OUTSIDE_CHARTER"], gate=_gate()),
         _snapshot(),
         s.OnboardEvent(type="executor.state_changed", severity="info", data={"to": "HOLD"}),
+        _pose(),
+        _perception_detection(),
+        s.PerceptionReport(
+            still_id=OTHER,
+            captured_utc=T,
+            pose=_pose(),
+            footprint=[
+                (HOME_LAT, HOME_LON),
+                (HOME_LAT, HOME_LON + 0.0005),
+                (HOME_LAT - 0.0003, HOME_LON + 0.0005),
+                (HOME_LAT - 0.0003, HOME_LON),
+            ],
+            px_per_m=24.6,
+            synthetic=True,
+            sources=["color", "oracle"],
+            skipped_sources={"model": "inte byggd än"},
+            latency_ms=120,
+            detections=[_perception_detection()],
+        ),
         s.OperatorOverrideNotice(
             override_id=OTHER,
             kind="stop",
@@ -568,6 +614,38 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             area_m2=None,
         ),
         s.AnnotationCreate(kind="pin", label="P1", geometry=PIN),
+        s.DetectionRow(
+            id=COMMAND,
+            find_id=COMMAND,
+            vehicle_id="sim-01",
+            still_id=OTHER,
+            captured_at=T,
+            label="red_block",
+            kind="target",
+            source="color",
+            score=0.71,
+            bbox=[452.0, 286.0, 34.0, 32.0],
+            lat=HOME_LAT + 0.0018,
+            lon=HOME_LON,
+            sigma95_m=4.9,
+            size_m=0.7,
+            synthetic=True,
+            has_crop=True,
+        ),
+        s.Find(
+            find_id=COMMAND,
+            label="car",
+            name_sv="bil",
+            kind="context",
+            source="oracle",
+            lat=HOME_LAT + 0.0016,
+            lon=HOME_LON + 0.0004,
+            sigma95_m=5.5,
+            score=1.0,
+            count=3,
+            thumb_detection_id=None,
+            synthetic=True,
+        ),
         s.Clearance(
             id=OTHER,
             mission_id=MISSION,

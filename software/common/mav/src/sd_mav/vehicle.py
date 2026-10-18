@@ -208,6 +208,10 @@ class FcTelemetry:
     groundspeed_ms: float = 0.0
     climb_ms: float = 0.0
     heading_deg: float = 0.0
+    attitude_mono_ms: int | None = None  # ATTITUDE: roll right, pitch nose up, yaw from north
+    roll_deg: float = 0.0
+    pitch_deg: float = 0.0
+    yaw_deg: float = 0.0
     battery_pct: float | None = None
     battery_charge_state: int | None = None
     battery_voltage_v: float | None = None
@@ -835,6 +839,14 @@ class Vehicle:
                     heading_deg=t.heading_deg if hdg == 65535 else hdg / 100.0,
                 )
                 notify = True
+            case "ATTITUDE":
+                t = replace(
+                    t,
+                    attitude_mono_ms=now,
+                    roll_deg=math.degrees(float(msg.roll)),
+                    pitch_deg=math.degrees(float(msg.pitch)),
+                    yaw_deg=math.degrees(float(msg.yaw)) % 360.0,
+                )
             case "VFR_HUD":
                 t = replace(t, groundspeed_ms=float(msg.groundspeed), climb_ms=float(msg.climb))
             case "BATTERY_STATUS":

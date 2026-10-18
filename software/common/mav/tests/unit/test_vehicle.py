@@ -696,3 +696,20 @@ def test_rc_mode_channel_parsing_and_switch_rule() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_attitude_in_degrees() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(1.0)
+        msg = mavlink.MAVLink_attitude_message(1000, 0.1, -0.2, -1.0, 0.0, 0.0, 0.0)
+        vehicle.fc._send(msg)  # pyright: ignore[reportPrivateUsage]
+        await clock.run_for(0.05)
+        t = vehicle.telemetry
+        assert t.attitude_mono_ms is not None
+        assert t.roll_deg == pytest.approx(5.7296, abs=1e-3)
+        assert t.pitch_deg == pytest.approx(-11.4592, abs=1e-3)
+        assert t.yaw_deg == pytest.approx(360.0 - 57.2958, abs=1e-3)  # compass, 0-360
+        await vehicle.close()
+
+    asyncio.run(run())

@@ -24,8 +24,16 @@ range, area, navigation, height, speed, SD-link loss, a silent AI) work even wit
 link to the ground. A silent AI never sends the vehicle home: the step finishes, then it
 holds.
 
+**Perception (off by default).** With `[perception] enabled = true` a separate task reads
+stills from a camera folder, runs the detector sources of the class register
+(`sd_detect`), places each detection on the ground from the flight controller's position
+and attitude and sends a `PerceptionReport` to the ground. It only reads telemetry, never
+steers, and its reports wait behind every ack and event on the link; a failing still is
+skipped and logged, never a reason to stop.
+
 | Module | Contents |
 |---|---|
+| `perception/` | Still source, pipeline (detectors, georeferencing, thumbnails) and loop |
 | `executor/state.py` | States, triggers and the transition table |
 | `executor/guards.py` | The guards that pick a transition's target or refuse |
 | `executor/executor.py` | `Executor`: orders, checks, transitions, the tick, snapshots |

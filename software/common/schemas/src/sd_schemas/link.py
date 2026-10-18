@@ -29,8 +29,10 @@ from sd_schemas.gate import CLEARANCE_VALID_MS, GateDecision, StateRef
 from sd_schemas.mission import LatchAction
 
 __all__ = [
+    "CROP_B64_MAX",
     "KIND_MODELS",
     "MANUAL_CONTROL_TIMEOUT_MS",
+    "PERCEPTION_MAX_DETECTIONS",
     "RELIABLE_KINDS",
     "SCHEMA_MAJOR",
     "Ack",
@@ -52,10 +54,13 @@ __all__ = [
     "OperatorOverrideNotice",
     "OperatorPosition",
     "OperatorRelease",
+    "PerceptionDetection",
+    "PerceptionReport",
     "PilotPosition",
     "SkillCommand",
     "StateSnapshot",
     "StickAxes",
+    "StillPose",
     "is_reliable",
 ]
 
@@ -215,6 +220,61 @@ class OnboardEvent(SdModel):
     data: dict[str, Any] = Field(default_factory=dict[str, Any])
 
 
+# A detection's crop: a small JPEG thumbnail, base64. Kept small so a report with several
+# crops stays well inside the link's message limit.
+CROP_B64_MAX = 12_000
+PERCEPTION_MAX_DETECTIONS = 20
+_CLASS_ID = r"^[a-z][a-z0-9_]{1,31}$"
+
+
+class StillPose(SdModel):
+    """Where the camera was when the still was taken (from the flight controller)."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    alt_amsl_m: float
+    agl_m: float  # height above the ground under the vehicle
+    roll_deg: float = Field(ge=-180, le=180)
+    pitch_deg: float = Field(ge=-90, le=90)
+    yaw_deg: float = Field(ge=0, le=360)
+
+
+class PerceptionDetection(SdModel):
+    """One detection, placed on the ground. A hint for a person to look at, never a
+    decision: only a person confirms a find."""
+
+    detection_id: Id
+    label: str = Field(pattern=_CLASS_ID)  # a class id from the detector's class register
+    source: Literal["model", "color", "oracle"]  # "oracle" = the simulator's own labels
+    score: float = Field(ge=0, le=1)
+    bbox: tuple[float, float, float, float]  # x, y, w, h in the still's pixels
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    sigma95_m: float = Field(ge=0, le=10_000)
+    size_m: float = Field(ge=0, le=10_000)  # longest side on the ground
+    crop_jpeg_b64: str | None = Field(default=None, max_length=CROP_B64_MAX)
+
+
+class PerceptionReport(SdModel):
+    """Onboard -> ground, reliable, about one still a second while searching. Sent from
+    its own low-priority queue: it never holds up acks, events or the emergency path."""
+
+    still_id: Id
+    captured_utc: AwareDatetime
+    sensor: Literal["rgb", "thermal"] = "rgb"
+    pose: StillPose
+    footprint: list[tuple[float, float]] = Field(max_length=4)  # (lat, lon) corners
+    px_per_m: float = Field(gt=0)
+    synthetic: bool = False  # True when the picture is not a camera's (simulator)
+    sources: list[str] = Field(default_factory=list[str], max_length=8)
+    skipped_sources: dict[str, str] = Field(default_factory=dict[str, str])
+    latency_ms: int = Field(ge=0)
+    detections: list[PerceptionDetection] = Field(
+        default_factory=list[PerceptionDetection], max_length=PERCEPTION_MAX_DETECTIONS
+    )
+    detections_dropped: int = Field(default=0, ge=0)
+
+
 class OperatorOverrideNotice(SdModel):
     """Ground -> onboard: STOP, FLY HOME, battery or watchdog. Never from the AI."""
 
@@ -316,6 +376,7 @@ KIND_MODELS: dict[str, type[SdModel]] = {
         Ack,
         StateSnapshot,
         OnboardEvent,
+        PerceptionReport,
         OperatorOverrideNotice,
         OperatorRelease,
         ClearanceConfirmation,
@@ -334,6 +395,7 @@ RELIABLE_KINDS = frozenset(
         "SkillCommand",
         "CommandCancel",
         "OnboardEvent",
+        "PerceptionReport",
         "OperatorOverrideNotice",
         "OperatorRelease",
         "ClearanceConfirmation",

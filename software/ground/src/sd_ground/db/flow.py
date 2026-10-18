@@ -1129,6 +1129,48 @@ class FlowRepo:
         )
         return [dict(r) for r in rows]
 
+    # --- detections ------------------------------------------------------------------
+
+    async def add_detections(self, rows: list[dict[str, Any]]) -> int:
+        """Insert detections; a detection id already stored is skipped (a resent report)."""
+        if not rows:
+            return 0
+        async with self.engine.begin() as conn:
+            count = 0
+            for r in rows:
+                res = await conn.execute(
+                    text(
+                        "INSERT INTO detections (id, mission_id, vehicle_id, find_id, still_id, "
+                        "captured_at, label, kind, source, score, bbox, lat, lon, sigma95_m, "
+                        "size_m, synthetic, crop_path) VALUES (:id, :mission_id, :vehicle_id, "
+                        ":find_id, :still_id, :captured_at, :label, :kind, :source, :score, "
+                        "CAST(:bbox AS jsonb), :lat, :lon, :sigma95_m, :size_m, :synthetic, "
+                        ":crop_path) ON CONFLICT (id) DO NOTHING"
+                    ),
+                    {**r, "bbox": json.dumps(r["bbox"])},
+                )
+                count += res.rowcount
+            return count
+
+    async def detections(self, mission_id: str, limit: int = 2000) -> list[dict[str, Any]]:
+        rows = await self._all(
+            "SELECT id::text, find_id::text, vehicle_id, still_id::text, captured_at, label, "
+            "kind, source, score, bbox, lat, lon, sigma95_m, size_m, synthetic, "
+            "crop_path IS NOT NULL AS has_crop FROM detections WHERE mission_id = :m "
+            "ORDER BY created_at DESC, id DESC LIMIT :n",
+            m=mission_id,
+            n=limit,
+        )
+        return [{**dict(r), "bbox": _json(r["bbox"])} for r in rows]
+
+    async def detection_crop(self, mission_id: str, detection_id: str) -> str | None:
+        row = await self._one(
+            "SELECT crop_path FROM detections WHERE mission_id = :m AND id = :d",
+            m=mission_id,
+            d=detection_id,
+        )
+        return None if row is None else row["crop_path"]
+
     async def add_file(
         self,
         *,

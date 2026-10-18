@@ -17,6 +17,7 @@ import type {
   Charter,
   ChatMessage,
   Command,
+  Find,
   Mission,
   MissionDetail,
   OperatorLatch,
@@ -81,7 +82,7 @@ function setMission(mission: Mission | null): void {
 }
 
 /** Everything that belongs to the mission: detail, charters, pending approvals, sectors,
- * annotations, the latest chat page and the track, in that order. */
+ * annotations, the finds, the latest chat page and the track, in that order. */
 async function loadMissionData(missionId: string): Promise<void> {
   const m = useMissionStore.getState();
   const detail = await quietly(api<MissionDetail>(paths.mission(missionId)));
@@ -103,6 +104,8 @@ async function loadMissionData(missionId: string): Promise<void> {
   await loadSectors(missionId);
   const anns = await quietly(api<Annotation[]>(paths.missionAnnotations(missionId)));
   if (anns) m.setAnnotations(anns);
+  const finds = await quietly(api<Find[]>(paths.missionFinds(missionId)));
+  if (finds) m.setFinds(finds);
   await loadChat(missionId);
   const track = await quietly(api<TrackFeature>(paths.missionTrack(missionId)));
   const coords = track?.geometry?.coordinates;
@@ -282,6 +285,10 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
     }
     case "annotation.created":
       if (forMission) m.upsertAnnotation(e.data as Annotation);
+      break;
+    case "find.new":
+    case "find.updated":
+      if (forMission) m.upsertFind(e.data as Find);
       break;
     case "annotation.deleted":
       m.removeAnnotation((e.data as { id: string }).id);

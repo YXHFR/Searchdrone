@@ -95,6 +95,14 @@ jobs:
             pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium firefox webkit
             just test-panel-e2e
           fi
+      - name: Upload the tests' screenshots (mock data only)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: panel-screenshots
+          path: software/panel/test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 14
 
   reuse:
     runs-on: ubuntu-24.04

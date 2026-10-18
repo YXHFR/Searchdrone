@@ -143,6 +143,7 @@ class MissionFlow:
     coverage: Coverage = field(default_factory=Coverage)
     clearances: Clearances = field(default_factory=Clearances)
     rates: dict[str, BrainRate] = field(default_factory=dict[str, BrainRate])
+    finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
@@ -570,7 +571,8 @@ class MissionFlow:
     async def on_inbound(self, vehicle_id: str, inbound: Inbound) -> None:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
-        from sd_schemas.link import Ack, CharterAck, OnboardEvent
+        from sd_ground.services import perception as perception_service
+        from sd_schemas.link import Ack, CharterAck, OnboardEvent, PerceptionReport
 
         body = inbound.body
         if isinstance(body, Ack):
@@ -588,6 +590,8 @@ class MissionFlow:
             )
         elif isinstance(body, StateSnapshot):
             await self._on_snapshot(vehicle_id, body)
+        elif isinstance(body, PerceptionReport):
+            await perception_service.on_report(self, vehicle_id, body)
 
     async def _on_snapshot(self, vehicle_id: str, snap: StateSnapshot) -> None:
         from sd_ground.services import commands as commands_service

@@ -44,7 +44,7 @@ GROUND_SENDER: Final = "ground:main"
 CLEARANCE_TTL_MAX_MS: Final = 5000
 
 VEHICLE_TO_GROUND: Final = frozenset(
-    {"Hello", "CharterAck", "StateSnapshot", "OnboardEvent", "Ack", "Heartbeat"}
+    {"Hello", "CharterAck", "StateSnapshot", "OnboardEvent", "PerceptionReport", "Ack", "Heartbeat"}
 )
 GROUND_TO_VEHICLE: Final = frozenset(
     {

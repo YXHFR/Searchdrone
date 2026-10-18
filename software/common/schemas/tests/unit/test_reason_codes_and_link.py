@@ -73,6 +73,7 @@ def test_kind_models_cover_the_catalogue() -> None:
         "Ack",
         "StateSnapshot",
         "OnboardEvent",
+        "PerceptionReport",
         "OperatorOverrideNotice",
         "OperatorRelease",
         "ClearanceConfirmation",
@@ -119,3 +120,27 @@ def test_manual_control_bounds() -> None:
 def test_classify_override_is_a_skeleton_that_never_resumes(text: str) -> None:
     assert classify_override(text) in (None, "stop", "return_home")
     assert classify_override(text) != "resume"
+
+
+def test_perception_report_limits() -> None:
+    base = {
+        "detection_id": "0192f4a1-7b90-7a22-b1c3-77aa00bb11cc",
+        "label": "red_block",
+        "source": "color",
+        "score": 0.7,
+        "bbox": (10, 20, 30, 30),
+        "lat": -35.36,
+        "lon": 149.16,
+        "sigma95_m": 4.0,
+        "size_m": 0.6,
+    }
+    assert link.PerceptionDetection.model_validate(base).crop_jpeg_b64 is None
+    for bad in (
+        {"label": "Red Block"},
+        {"source": "guess"},
+        {"score": 1.5},
+        {"crop_jpeg_b64": "A" * (link.CROP_B64_MAX + 1)},
+    ):
+        with pytest.raises(ValueError):
+            link.PerceptionDetection.model_validate(base | bad)
+    assert link.is_reliable("PerceptionReport", link.Heartbeat())

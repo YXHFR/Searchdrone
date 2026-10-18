@@ -148,7 +148,20 @@
         "target": "Aktuellt mål",
         "track": "Flugen bana",
         "areas": "Ritade områden",
-        "pins": "Nålar"
+        "pins": "Nålar",
+        "finds": "Fynd"
+      },
+      "find": {
+        "title": "Fynd",
+        "close": "Stäng",
+        "score": "Säkerhet {{score}}",
+        "seen": "Sett {{count}} gånger",
+        "where": "{{lat}}, {{lon}} (±{{sigma}} m)",
+        "oracle": "Simulatorns facit, inte en riktig detektor",
+        "color": "Färgdetektor",
+        "model": "Detektor",
+        "unconfirmed": "Inte bekräftat. Bara du kan bekräfta ett fynd.",
+        "noThumb": "Ingen bild"
       }
     },
     "video": {

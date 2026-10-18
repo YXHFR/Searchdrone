@@ -51,8 +51,10 @@ __all__ = [
     "Command",
     "CommandResult",
     "CommandStatus",
+    "DetectionRow",
     "Event",
     "Features",
+    "Find",
     "Health",
     "LinkStatus",
     "LoginRequest",
@@ -493,6 +495,51 @@ class Annotation(SdModel):
     created_by: str
     created_at: AwareDatetime
     area_m2: float | None
+
+
+DetectionKind = Literal["target", "context"]
+DetectionSource = Literal["model", "color", "oracle"]
+
+
+class DetectionRow(SdModel):
+    """A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.
+    ``source = "oracle"`` is the simulator's own label, not a detector."""
+
+    id: Id
+    find_id: Id
+    vehicle_id: str
+    still_id: Id
+    captured_at: AwareDatetime
+    label: str
+    kind: DetectionKind
+    source: DetectionSource
+    score: float
+    bbox: list[float]
+    lat: float
+    lon: float
+    sigma95_m: float
+    size_m: float
+    synthetic: bool
+    has_crop: bool
+
+
+class Find(SdModel):
+    """One found object: detections of one class at the same place, joined
+    (``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:
+    only a person confirms."""
+
+    find_id: Id
+    label: str
+    name_sv: str
+    kind: DetectionKind
+    source: DetectionSource
+    lat: float
+    lon: float
+    sigma95_m: float
+    score: float
+    count: int
+    thumb_detection_id: Id | None
+    synthetic: bool
 
 
 class AnnotationCreate(SdModel):
