@@ -282,13 +282,13 @@ dev *args:
 
 # Start the simulator stack with Gazebo (keys: physics, gui, video, brain, ...)
 sim *args:
-    uv run --package sd-sim python -m sd_sim.launch up "$@"
+    uv run --all-packages python -m sd_sim.launch up "$@"
 
 alias sim-up := sim
 
 # Like `sim` but builtin physics and a test picture as video
 sim-headless *args:
-    SD_SIM__HEADLESS=1 uv run --package sd-sim python -m sd_sim.launch up video=test "$@"
+    SD_SIM__HEADLESS=1 uv run --all-packages python -m sd_sim.launch up video=test "$@"
 
 # Stop everything this instance started
 stop *args:
@@ -329,19 +329,77 @@ ci-sitl *args:
         sock=(-v /var/run/docker.sock:/var/run/docker.sock \
             --group-add "$(stat -c %g /var/run/docker.sock)")
     fi
-    docker run --rm --network host --user "$(id -u):$(id -g)" "${sock[@]}" \
-        -v "$PWD:/w" -w /w -e SD_SIM__HEADLESS=1 -e HOME=/tmp/home \
-        -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL \
+    # The data folder from .env (missions, video recordings, the onboard computer's token
+    # and state, all outside the checkout) is mounted at the same path.
+    data="$(sed -n 's/^SD_DATA_DIR=//p' .env 2>/dev/null | tail -n 1)"
+    [ -n "$data" ] || { echo "SD_DATA_DIR saknas i .env. Kör: just setup-config"; exit 1; }
+    mkdir -p "$data"
+    # The offline run (just e2e offline=1) runs the container as the test user, with a
+    # virtualenv in build/ that was filled before the network was cut.
+    user="${SD_SITL_USER:-$(id -u):$(id -g)}"
+    venv=(-e UV_PROJECT_ENVIRONMENT=/tmp/venv)
+    sync="uv sync --all-packages --frozen"
+    if [ -n "${SD_SITL_VENV:-}" ]; then
+        venv=(-v "$PWD/$SD_SITL_VENV:/opt/sd-venv" -e UV_PROJECT_ENVIRONMENT=/opt/sd-venv)
+    fi
+    if [ -n "${SD_SITL_ENV_FILE:-}" ]; then
+        venv+=(-v "$PWD/$SD_SITL_ENV_FILE:/w/.env:ro")  # the test user's own copy of .env
+    fi
+    if [ "${SD_SITL_OFFLINE:-}" = 1 ]; then sync="$sync --offline"; fi
+    docker run --rm --network host --user "$user" "${sock[@]}" "${venv[@]}" \
+        -v "$PWD:/w" -w /w -v "$data:$data" -e SD_SIM__HEADLESS=1 -e HOME=/tmp/home \
+        -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL -e SD_SIM__REQUIRE_VIDEO \
         ${SD_SITL_NAME:+--name "$SD_SITL_NAME"} \
-        "$image" bash -lc 'uv sync --all-packages --frozen && uv run --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
+        "$image" bash -lc "$sync"' && uv run --no-sync --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
 
-# Full demo locked to the public CMAC home (keys: lan, record, ...)
+# Full demo locked to the public CMAC home: Gazebo, SITL, database, ground station,
+# onboard computer, AI and video, then the login link (keys: lan, physics, gui, brain, ...)
 demo *args:
-    uv run --package sd-sim python -m sd_sim.launch up --demo "$@"
+    {{_just}} _step panel-build
+    uv run --all-packages python -m sd_sim.launch up --demo "$@"
 
-# Headless end-to-end run with the scripted commander (keys: runs, offline)
+# The demo (SC01) and the emergency buttons end to end, headless with builtin physics,
+# the scripted commander and the test picture, in the SITL container (keys: runs, offline)
 e2e *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv run --no-sync python tools/just_args.py e2e "$@"
+    runs=1
+    offline=0
+    for arg in "$@"; do
+        case "$arg" in
+            runs=*) runs="${arg#runs=}" ;;
+            offline=*) offline="${arg#offline=}" ;;
+            dry=1) exit 0 ;;
+        esac
+    done
+    [[ "$runs" =~ ^[1-9][0-9]?$ ]] || { echo "just e2e: runs= ska vara 1-99"; exit 2; }
+    [[ "$offline" =~ ^[01]$ ]] || { echo "just e2e: offline= ska vara 0 eller 1"; exit 2; }
+    compose=(docker compose --env-file .env -f compose.yaml)
+    if [ "$offline" = 1 ]; then
+        # The stack is cut off from the internet; the runner's own traffic is not.
+        ids="$(sudo -n bash tools/offline/isolate.sh prepare)"
+        SD_OFFLINE_UID="$(sed -n 's/^SD_OFFLINE_UID=\([0-9][0-9]*\)$/\1/p' <<<"$ids")"
+        SD_OFFLINE_GID="$(sed -n 's/^SD_OFFLINE_GID=\([0-9][0-9]*\)$/\1/p' <<<"$ids")"
+        [ -n "$SD_OFFLINE_UID" ] && [ -n "$SD_OFFLINE_GID" ] || { echo "isolate.sh gav inget uid"; exit 1; }
+        export SD_OFFLINE_UID SD_OFFLINE_GID
+        trap 'sudo -n bash tools/offline/isolate.sh down' EXIT
+        compose+=(-f compose.offline.yaml)
+        "${compose[@]}" up -d --force-recreate --wait db mediamtx
+        export SD_SITL_USER="$SD_OFFLINE_UID:$SD_OFFLINE_GID" SD_SITL_VENV=build/offline/venv
+        export SD_SITL_ENV_FILE=build/offline/env
+        {{_just}} ci-sitl mode=e2e dry=1  # fills the virtualenv while the network is open
+        sudo -n bash tools/offline/isolate.sh seal
+        sudo -n bash tools/offline/isolate.sh check
+        export SD_SITL_OFFLINE=1
+    else
+        data="$(sed -n 's/^SD_DATA_DIR=//p' .env | tail -n 1)"
+        mkdir -p "$data/video"
+        "${compose[@]}" up -d --wait db mediamtx
+    fi
+    # The next `just db-up` or `just video-up` puts the services back on their usual
+    # networks and user (compose recreates a service whose settings differ).
+    SD_SIM__REQUIRE_VIDEO=1 {{_just}} ci-sitl mode=e2e "runs=$runs" workers=4
 
 # Performance measurement on the owner's computer (keys: runs)
 perf *args:
@@ -363,9 +421,26 @@ maps-fetch *args:
 hw-check:
     uv run --package sd-hwcalc python -m sd_hwcalc check hardware/drone.yaml --limits hardware/limits.yaml
 
+# Build the 7-inch CAD model: STEP, STL, mass report and picture in build/cad/fpv7/
+cad:
+    uv run --locked --group cad python hardware/cad/fpv7/assembly.py build/cad/fpv7
+
+# Download the manufacturer 3D models (checksum checked) and write fpv7_detailed.step too
+cad-detailed:
+    uv run --locked --group cad python hardware/cad/fpv7/vendor.py
+    uv run --locked --group cad python hardware/cad/fpv7/assembly.py build/cad/fpv7 detailed
+
+# Test the CAD model: no overlaps, propeller margins, camera view, repeatable exports
+cad-test:
+    uv run --locked --group cad pytest hardware/cad/fpv7/tests
+
 # Acceptance checks for a release (keys: phase, sha)
 accept *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv run --no-sync python tools/just_args.py accept "$@"
+    [[ " $* " == *" dry=1 "* ]] && exit 0
+    uv run --no-sync python tools/accept/v0_1_0.py "$@"
 
 # Traceability from the local acceptance list to the tests (local only; set SD_ACCEPT_IDS)
 check-traceability:

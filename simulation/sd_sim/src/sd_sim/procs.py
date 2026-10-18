@@ -143,6 +143,30 @@ class ProcessGroup:
                 owned.add(int(stat.parent.name))
         return owned
 
+    def kill(self, name: str) -> int:
+        """A fault: SIGKILL ``name`` and its process group at once (no goodbye). Returns
+        its place in the start order, so a restart can take the same place."""
+        idx = next(i for i, p in enumerate(self.procs) if p.name == name)
+        proc = self.procs[idx]
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.popen.wait(timeout=5)
+        return idx
+
+    def restart(
+        self, name: str, argv: list[str], *, env: dict[str, str], cwd: Path | None = None
+    ) -> Proc:
+        """Start ``name`` again in its old place in the start (and stop) order."""
+        idx = next(i for i, p in enumerate(self.procs) if p.name == name)
+        if self.procs[idx].alive():
+            self.kill(name)
+        proc = self.start(name, argv, env=env, cwd=cwd)
+        self.procs.remove(proc)
+        self.procs[idx] = proc
+        self._save()
+        return proc
+
     def stop_all(self) -> None:
         """Stop in reverse start order: SIGTERM, then SIGKILL after the grace time."""
         for proc in reversed(self.procs):

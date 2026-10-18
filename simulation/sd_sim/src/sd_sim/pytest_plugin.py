@@ -38,6 +38,7 @@ MARKERS = (
     "panel: drives the real panel in a browser (just test-panel-sitl only)",
     "brain: flies with an AI commander (skipped with brain=none)",
     "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
+    "e2e: the end-to-end set of just e2e (the demo and the emergency buttons)",
 )
 MAX_INSTANCE = 7
 # A shard's estimated work per worker must fit in this many seconds, and no single
@@ -100,11 +101,14 @@ def require_sitl() -> bool:
 
 
 def worker_instance(environ: dict[str, str] | None = None) -> int:
-    """Simulator instance for this pytest-xdist worker (gw0 -> 0); 0 without xdist."""
+    """Simulator instance for this pytest-xdist worker (gw0 -> 0); 0 without xdist.
+    ``SD_SIM__FIRST_INSTANCE`` moves them all up, for a second pytest run beside a first
+    (``just e2e``: the demo keeps instance 0, the only one with video)."""
     env = os.environ if environ is None else environ
     name = env.get("PYTEST_XDIST_WORKER", "")
     match = _WORKER.match(name)
-    instance = int(match.group(1)) if match else 0
+    first = env.get("SD_SIM__FIRST_INSTANCE", "")
+    instance = (int(match.group(1)) if match else 0) + (int(first) if first.isdigit() else 0)
     if instance > MAX_INSTANCE:
         raise pytest.UsageError(f"högst {MAX_INSTANCE + 1} arbetare (simulatorinstanser 0-7)")
     return instance

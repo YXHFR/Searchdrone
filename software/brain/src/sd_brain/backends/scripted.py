@@ -13,7 +13,10 @@ Script format (``simulation/scenarios/scripts/SCxx.yaml``)::
         when: {skill: goto, status: done}
         action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40}}
 
-``fixture:<pin>`` under ``at`` becomes ``lat``/``lon``; ``fixture:<area>`` under
+``fixture:<pin>`` under ``at`` becomes ``lat``/``lon`` (``at: here`` is the drone's
+position in the turn's situation, ``at: "event:find"`` the find that started a
+``detection`` turn; ``say`` may use the event's fields, e.g. ``{name_sv}``);
+``fixture:<area>`` under
 ``polygon`` becomes a GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}``
 sends that charter from the fixture. ``delay_s`` delays the turn and
 ``fail: timeout | crash`` simulates a broken backend. Unknown keys refuse to load.
@@ -217,12 +220,22 @@ class _Fixture:
 
 
 def _resolve(
-    params: dict[str, Any], fx: _Fixture, event: dict[str, Any] | None = None
+    params: dict[str, Any],
+    fx: _Fixture,
+    turn: TurnInput,
+    event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """``fixture:<name>`` takes a pin or an area from the fixture; ``event:find`` (only
-    for ``at``) takes the position of the event that started the turn (a find)."""
+    """``fixture:<name>`` takes a pin or an area from the fixture, ``at: here`` the drone's
+    position, and ``event:find`` (only for ``at``) the position of the event that started
+    the turn (a find)."""
     out: dict[str, Any] = {}
     for key, value in params.items():
+        if key == "at" and value == "here":
+            v = turn.situation.vehicle
+            if v.lat is None or v.lon is None:
+                raise ScriptError("at: here, men drönarens position är okänd")
+            out["lat"], out["lon"] = v.lat, v.lon
+            continue
         if isinstance(value, str) and value == "event:find":
             if key != "at" or not event or "lat" not in event or "lon" not in event:
                 raise ScriptError("event:find går bara att använda för at i en detection-tur")
@@ -314,7 +327,7 @@ class ScriptedBackend:
         elif t.action is not None:
             out.action = AiAction(
                 skill=t.action.skill,
-                params=_resolve(t.action.params, self.fixture, event),
+                params=_resolve(t.action.params, self.fixture, turn, event),
                 rationale_sv="Steg i manuset.",
                 adapted=True,
             )

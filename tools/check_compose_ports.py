@@ -20,8 +20,9 @@ config/mediamtx.yml
   * a user without a password may only ``read`` (the control API can rebind listeners,
     and publishing must need the password).
 
-A missing file is skipped (the database and video tickets add them); a compose file
-anywhere but the repository root is an error.
+compose.offline.yaml (an overlay in the root, for the offline end-to-end run) is held to
+the compose.yaml rules too. A missing file is skipped (the database and video tickets
+add them); any other compose file is an error.
 """
 
 from __future__ import annotations
@@ -36,6 +37,9 @@ from typing import Any
 import yaml
 
 COMPOSE = "compose.yaml"
+# Overlays on compose.yaml in the repository root, held to the same rules
+# (compose.offline.yaml: the offline end-to-end run, B1-16).
+OVERLAYS = ("compose.offline.yaml",)
 MEDIAMTX = "config/mediamtx.yml"
 LOCALHOST = "127.0.0.1"
 HOST_NETWORK_RE = re.compile(r"^\s*network_mode:\s*[\"']?host[\"']?\s*(#.*)?$")
@@ -179,7 +183,9 @@ def main(argv: list[str] | None = None) -> int:
         str(f.relative_to(args.root))
         for pattern in ("*compose*.yaml", "*compose*.yml")
         for f in args.root.rglob(pattern)
-        if f != compose and not {"node_modules", ".venv", ".git"} & set(f.parts)
+        if f != compose
+        and f not in {args.root / name for name in OVERLAYS}
+        and not {"node_modules", ".venv", ".git"} & set(f.parts)
     )
     mediamtx = args.root / MEDIAMTX
     compose_text = compose.read_text(encoding="utf-8") if compose.is_file() else None
@@ -188,6 +194,11 @@ def main(argv: list[str] | None = None) -> int:
     if compose_text is not None:
         errors += check_compose(compose_text)
         checked.append(COMPOSE)
+    for name in OVERLAYS:
+        overlay = args.root / name
+        if overlay.is_file():
+            errors += [f"{name}: {e}" for e in check_compose(overlay.read_text(encoding="utf-8"))]
+            checked.append(name)
     if mediamtx.is_file():
         errors += check_mediamtx(mediamtx.read_text(encoding="utf-8"), compose_text)
         checked.append(MEDIAMTX)

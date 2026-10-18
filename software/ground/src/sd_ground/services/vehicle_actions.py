@@ -762,7 +762,10 @@ def _latch_event(g: GroundView, change: LatchChange) -> None:
 class OperatorPresence:
     """No pilot WebSocket for ``absent_s`` (30 s) during an active mission: the alarm and
     a hold (STOP's steps with the latch ``watchdog_stop``), once per absence. Owner
-    decision: always a hold, never off and never a flight home."""
+    decision: always a hold, never off and never a flight home.
+
+    Before any pilot has been seen by this process (it was restarted mid-flight), the
+    30 s count from its first tick, so the pilot's panel has the same 30 s to reconnect."""
 
     def __init__(
         self,
@@ -775,13 +778,16 @@ class OperatorPresence:
         self.absent_s = absent_s
         self.mission_active = mission_active
         self._fired: set[str] = set()
+        self._first_tick: float | None = None
 
     def tick(self, g: GroundView) -> None:
         now = g.clock.monotonic()
-        seen = g.operator_seen_mono
+        if self._first_tick is None:
+            self._first_tick = now
+        seen = g.operator_seen_mono if g.operator_seen_mono is not None else self._first_tick
         for vid in self.actions.vehicle_ids:
             active = self.mission_active(vid)
-            absent = active and (seen is None or now - seen >= self.absent_s)
+            absent = active and now - seen >= self.absent_s
             if not absent:
                 self._fired.discard(vid)
                 continue
