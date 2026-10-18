@@ -62,6 +62,7 @@ from sd_schemas.mission import MissionState
 from sd_schemas.safety import SafetyLimits
 from sd_sim import config
 from sd_sim.launch import Stack, read_env_value
+from sd_sim.report import measure
 from sd_sim.util import LOOPBACK_OPENER, new_run_dir
 
 pytestmark = [pytest.mark.video]
@@ -157,6 +158,7 @@ def test_stream_reaches_mediamtx_with_low_delay(chain: VideoChain) -> None:
     summary = delay_summary(rtsp_samples(SAMPLES))
     (chain.run_dir / "rtsp_delay.json").write_text(json.dumps(summary), encoding="utf-8")
     assert summary["valid"] >= SAMPLES - MAX_INVALID, summary
+    measure("fördröjning, median", summary["median_ms"], MAX_MEDIAN_MS, unit="ms")
     assert summary["median_ms"] < MAX_MEDIAN_MS, summary
 
 
@@ -272,6 +274,7 @@ def test_browser_plays_through_the_proxy(chain: VideoChain) -> None:
         code = ground.login_code()
         assert playwright("http://localhost:8080", code, result) == 0
     summary = json.loads(result.read_text(encoding="utf-8"))
+    measure("första bilden i webbläsaren", summary["first_frame_ms"], 5000, unit="ms")
     assert summary["first_frame_ms"] < 5000, summary
     assert summary["valid"] >= SAMPLES and summary["invalid"] <= MAX_INVALID, summary
     assert summary["median"] < MAX_MEDIAN_MS, summary

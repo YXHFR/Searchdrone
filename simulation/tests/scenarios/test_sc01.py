@@ -50,6 +50,7 @@ from sd_geo.coverage import coverage_fraction
 from sd_safety.targets import distance_m
 from sd_sim.invariants import check_all
 from sd_sim.launch import Stack
+from sd_sim.report import measure
 from sd_sim.services import VEHICLE_ID
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.e2e]
@@ -157,6 +158,7 @@ async def test_demo_flight(demo_stack: Stack) -> None:
         box = box_enu()
         flown = [(*d.plane.xy(s.lat, s.lon), s.alt_m) for s in sweep]
         got = coverage_fraction(box, flown, ALT_M, SPACING_M)
+        measure("täckning av sökrutan", got, MIN_COVERAGE, at_most=False, unit="")
         assert got >= MIN_COVERAGE, f"täckning {got:.3f}"
         survey_gates = await d.gate(survey["id"])
         assert [g["decision"] for g in survey_gates if g["side"] == "ground"] == ["ALLOW"]
@@ -165,6 +167,8 @@ async def test_demo_flight(demo_stack: Stack) -> None:
         await d.wait_command("return_home", "done", 300)
         await d.until(lambda: not d.tel["armed"], 60, "desarmerad efter landningen")
         t_disarmed = time.monotonic()
+        measure("landning från hem", d.from_home_m(), 3.0, unit="m")
+        measure("lyft till landning", t_disarmed - t_takeoff, DEMO_LIMIT_S)
         assert d.from_home_m() <= 3.0
         assert t_disarmed - t_takeoff <= DEMO_LIMIT_S
         await d.until(is_status(d, "CLOSED"), CLOSE_LIMIT_S, "uppdraget CLOSED av sig självt")

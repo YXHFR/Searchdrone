@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sd_sim.report import Report
+from sd_sim.report import Report, measure, take_measured
 
 
 def make(tmp_path: Path) -> Report:
@@ -59,3 +59,17 @@ def test_artifacts_listed(tmp_path: Path) -> None:
     rep.check("A", "a", True)
     data = json.loads(rep.write().read_text())
     assert data["artifacts"] == ["logs/sitl.log"]
+
+
+def test_measure_records_against_the_limit() -> None:
+    take_measured()
+    assert measure("BRAKE", 0.43219, 2.0) is True
+    assert measure("BRAKE", 2.5, 2.0) is False
+    assert measure("coverage", 0.97, 0.95, at_most=False, unit="") is True
+    got = take_measured()
+    assert [(c.id, c.passed, c.measured, c.bound) for c in got] == [
+        ("M1", True, 0.432, "max"),
+        ("M2", False, 2.5, "max"),
+        ("M3", True, 0.97, "min"),
+    ]
+    assert take_measured() == []

@@ -11,6 +11,9 @@
   required check can never go green without flying.
 * Fixtures ``sim_instance`` (one simulator instance per xdist worker) and
   ``sim_physics`` / ``sim_brain``.
+* Every ``sitl`` and ``video`` test that runs writes ``runs/<run>/result.json`` with its
+  outcome and the values it measured (``sd_sim.report.measure``), passed or not
+  (``SD_SIM__RUNS_DIR`` moves ``runs/``, for the plugin's own tests).
 """
 
 from __future__ import annotations
@@ -18,12 +21,16 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
 from collections.abc import Generator, Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from sd_sim import paths
+from sd_sim.report import Report, take_measured
 
 MARKERS = (
     "sitl: needs ArduPilot SITL",
@@ -46,6 +53,10 @@ MAX_INSTANCE = 7
 SHARD_LIMIT_S = 25 * 60
 MAX_NODE_S = 900
 _WORKER = re.compile(r"^gw(\d+)$")
+_SCENARIO = re.compile(r"(?:^|_)sc(\d+[a-z]?)(?=_|$)")
+_RESULT_MARKERS = ("sitl", "video")
+_PHASES = pytest.StashKey[dict[str, str]]()
+_STARTED = pytest.StashKey[tuple[str, float]]()
 
 
 @dataclass(frozen=True)
@@ -160,6 +171,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     items[:] = selected
 
 
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    take_measured()  # nothing a previous test left behind
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    item.stash[_STARTED] = (stamp, time.monotonic())
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
@@ -168,7 +185,48 @@ def pytest_runtest_makereport(
     if report.skipped and require_sitl() and item.get_closest_marker("sitl"):
         report.outcome = "failed"
         report.longrepr = f"SITL-testet hoppades över ({call.when}) men SD_SIM__REQUIRE_SITL=1"
+    phases = item.stash.setdefault(_PHASES, {})
+    phases[report.when] = report.outcome
+    if report.when == "teardown" and wants_result(item, phases):
+        write_test_result(item, phases)
     return report
+
+
+def scenario_id(test_name: str) -> str:
+    """``test_sc02_stop_and_resume`` -> ``SC02``; a name without a scenario stays."""
+    m = _SCENARIO.search(test_name.split("[", 1)[0])
+    return f"SC{m[1].upper()}" if m else test_name
+
+
+def wants_result(item: pytest.Item, phases: dict[str, str]) -> bool:
+    """A simulator test that ran (a test skipped on purpose writes nothing)."""
+    if not any(item.get_closest_marker(m) for m in _RESULT_MARKERS):
+        return False
+    return phases.get("setup") != "skipped" and phases.get("call") != "skipped"
+
+
+def write_test_result(item: pytest.Item, phases: dict[str, str]) -> Path:
+    """``runs/<run>/result.json`` for one test: what it measured, then its outcome."""
+    instance = worker_instance()
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "-", item.name).strip("-")[:80]
+    runs = Path(os.environ.get("SD_SIM__RUNS_DIR") or paths.runs_dir())
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = runs / f"{stamp}-{label}-i{instance}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    rep = Report(
+        scenario_id(item.name),
+        run_dir,
+        instance,
+        str(item.config.getoption("--physics", "builtin")),
+        str(item.config.getoption("--brain", "scripted")),
+        variant=item.name,
+    )
+    if _STARTED in item.stash:
+        rep.started_utc, rep._t0 = item.stash[_STARTED]
+    rep.criteria = take_measured()
+    failed = [f"{when}: {outcome}" for when, outcome in phases.items() if outcome != "passed"]
+    rep.check("T", "Testet godkänt", not failed, measured="; ".join(failed) or "passed")
+    return rep.write()
 
 
 @pytest.fixture

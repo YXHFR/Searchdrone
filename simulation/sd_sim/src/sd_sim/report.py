@@ -29,6 +29,8 @@ class Criterion:
     unit: str = ""
     clock: str = ""
     note: str = ""
+    # "max" or "min": which side of ``limit`` passes (``measure``); empty when not numeric.
+    bound: str = ""
 
 
 @dataclass
@@ -123,6 +125,35 @@ class Report:
         path = self.run_dir / "result.json"
         path.write_text(json.dumps(self.as_dict(), indent=2, ensure_ascii=False) + "\n", "utf-8")
         return path
+
+
+# What the running test measured (``measure``), written to its result.json by
+# ``sd_sim.pytest_plugin``. One test runs at a time in each pytest process.
+_measured: list[Criterion] = []
+
+
+def measure(
+    text: str, measured: float, limit: float, *, at_most: bool = True, unit: str = "s"
+) -> bool:
+    """Record one measured value against its limit for the running test's result.json.
+
+    ``at_most``: the value passes when it is at most ``limit`` (a time to react); else
+    when it is at least ``limit`` (a time something held, a coverage)."""
+    passed = measured <= limit if at_most else measured >= limit
+    cid = f"M{len(_measured) + 1}"
+    _measured.append(
+        Criterion(
+            cid, text, passed, round(measured, 3), limit, unit, bound="max" if at_most else "min"
+        )
+    )
+    return passed
+
+
+def take_measured() -> list[Criterion]:
+    """The values recorded since the last call (and forget them)."""
+    out = list(_measured)
+    _measured.clear()
+    return out
 
 
 def git_sha() -> str | None:
