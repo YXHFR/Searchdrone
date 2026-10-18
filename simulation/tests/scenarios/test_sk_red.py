@@ -62,6 +62,7 @@ SEED = int(os.environ.get("SD_SK_RED_SEED", "11"))
 MAX_ERROR_M = 3.0
 SEARCH_LIMIT_S = 1200.0
 ASK = "Rött block hittat, bekräfta?"
+PERIOD_S = 0.2  # how often the stills folder is read: a fresh still, a fresh pose
 
 
 @pytest.fixture
@@ -82,6 +83,7 @@ class PerceivingOnboard(SitlOnboard):
             self.link.perception,
             self.clock,
             PinholeCamera(int(cam["width"]), int(cam["height"]), float(cam["hfov_deg"])),
+            period_s=PERIOD_S,
             keep_dir=keep_dir,
             env={"SD_SIM": "1"},
         )
@@ -181,6 +183,7 @@ async def test_sk_red(gz_sim: Sim, migrated_db: Any, tmp_path: Path, scenario_id
             "detections": stats.detections,
             "by_label": stats.by_label,
             "skipped_no_pose": stats.skipped_no_pose,
+            "skipped_turning": stats.skipped_turning,
             "failed": stats.failed,
         },
         "ai_asked_to_confirm": len(asked),
