@@ -371,11 +371,12 @@ jobs:
 
   sitl-nightly-gz:
     # Gazebo as a server with headless rendering (no window, no GPU). Not required.
-    # The smoke flight, then SK-RED: the stills camera in Gazebo, the colour detector and
-    # the whole chain to the ground and the AI must find every red block.
+    # The smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14.
+    # Then SK-RED: the stills camera in Gazebo, the colour detector and the whole chain
+    # to the ground and the AI must find every red block.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 140
+    timeout-minutes: 160
     steps:
       - *checkout
       - *check-ref
@@ -390,6 +391,14 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just sim-smoke physics=gz gui=false
+      - name: Our own vehicle in Gazebo (sd_quad14 takes off, hovers and lands like in SITL)
+        timeout-minutes: 20
+        env:
+          SD_SIM__HEADLESS: "1"
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just test-sitl sc=test_model_parity_gz physics=gz
       - name: SK-RED, search for red blocks with the camera (Gazebo)
         timeout-minutes: 45
         env:

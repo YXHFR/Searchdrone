@@ -104,6 +104,52 @@ def test_model_ports_per_instance(instance: int) -> None:
     assert gst.findtext("use_cuda") == "false"
 
 
+def test_every_rotor_has_two_blade_halves_that_lift() -> None:
+    """Each rotor link carries two LiftDrag surfaces, one each side of the hub, whose
+    forward direction is the way that blade half moves at the rotor's commanded spin. A
+    surface on the wrong link or facing backwards gives no lift (Gazebo skips it)."""
+    model = model_root().find("model")
+    assert model is not None
+    spin = {
+        c.findtext("jointName"): float(c.findtext("multiplier") or 0) for c in model.iter("control")
+    }
+    lifts: dict[str, list[tuple[float, float]]] = {}
+    for p in model.iter("plugin"):
+        if p.get("filename") == "gz-sim-lift-drag-system":
+            cp_x = float((p.findtext("cp") or "").split()[0])
+            fwd_y = float((p.findtext("forward") or "").split()[1])
+            lifts.setdefault(p.findtext("link_name") or "", []).append((cp_x, fwd_y))
+    assert sorted(lifts) == [f"rotor_{i}" for i in range(4)]
+    for link, surfaces in lifts.items():
+        sign = math.copysign(1.0, spin[f"{link}_joint"])
+        assert sorted(cp for cp, _ in surfaces) == [-world.BLADE_CP_M, world.BLADE_CP_M]
+        # A positive spin about +z moves the blade at +x towards +y (and at -x towards -y).
+        for cp_x, fwd_y in surfaces:
+            assert math.copysign(1.0, cp_x) * fwd_y == sign, (link, cp_x, fwd_y)
+
+
+def test_vehicle_stands_on_its_legs_in_the_world() -> None:
+    """The world's include pose replaces the model's own: it must lift the body to the
+    model's height, or the legs start buried in the ground and the vehicle cannot take
+    off however hard the rotors push."""
+    model = model_root().find("model")
+    assert model is not None
+    body_z = pose(model)[2]
+    legs = [
+        pose(c)[2] - float(c.findtext("geometry/cylinder/length") or 0) / 2
+        for c in model.iter("collision")
+        if (c.get("name") or "").startswith("leg_")
+    ]
+    assert len(legs) == 4 and all(abs(body_z + low) < 1e-9 for low in legs)  # feet at z = 0
+    world_root = ET.fromstring(world.world_sdf(world.WORLD_NAME, 0))  # noqa: S314
+    include = next(
+        i
+        for i in world_root.iter("include")
+        if (i.findtext("uri") or "").endswith(f"{world.MODEL_NAME}_i0")
+    )
+    assert pose(include)[2] == body_z == world.SPAWN_Z_M
+
+
 def test_camera_fixed_straight_down() -> None:
     model = model_root().find("model")
     assert model is not None

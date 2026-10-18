@@ -144,3 +144,12 @@ All notable changes to this project are listed here. The format follows
 - `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
   executor) asks before every single write, retries included.
 - The six onboard skills of the foundation are `implemented` in the skill registry.
+
+### Fixed
+
+- `sd_quad14` takes off in Gazebo. Two faults in the model and world templates kept it on
+  the ground at full throttle: the blade-surface (LiftDrag) plugins took the inner loop's
+  index as the rotor number, so all eight surfaces sat on rotors 0 and 1 (rotors 2 and 3
+  gave no lift, about 20 N for a 22.6 N vehicle); and the world's include pose (z = 0)
+  replaced the model's own height, so the legs started buried in the ground. Unit tests
+  check both, and `sitl-nightly-gz` now also flies `sd_quad14` (the parity flight).

@@ -41,6 +41,9 @@ ARM_M = 0.29  # half the 0.58 m motor-to-motor diagonal
 ROTOR_XY_M = ARM_M / math.sqrt(2)  # 0.205 m in x and y for an X frame
 INERTIA_KG_M2 = (0.045, 0.045, 0.080)  # mass in the middle of the frame; CAD values later
 IMU_MASS_KG = 0.01
+# Body origin above the ground so the landing legs (0.2 m below it) just touch it. The
+# world's <include> pose replaces the model's own pose, so both use this height.
+SPAWN_Z_M = 0.2
 MAX_ROTOR_RAD_S = 650.0  # about 6 200 rpm for a 14-inch propeller
 THRUST_TO_WEIGHT = 2.0
 # LiftDrag surfaces: lift = 0.5 * rho * area * cl * v^2 with cl = CLA * angle of attack and
@@ -123,6 +126,7 @@ def model_context(
     ports_i = ports.for_instance(instance)
     return {
         "name": f"{MODEL_NAME}_i{instance}",
+        "spawn_z": SPAWN_Z_M,
         "instance": instance,
         "fdm_port_in": ports_i["sitl_json_fdm"],
         "video_port": ports_i["video_raw_udp"],
@@ -214,6 +218,7 @@ def world_context(
         "home": home,
         # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
         "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
+        "spawn_z": SPAWN_Z_M,
         "ground_size": GROUND_SIZE_M,
         "pad_size": PAD_SIZE_M,
         "lake": lake_polygon(),
