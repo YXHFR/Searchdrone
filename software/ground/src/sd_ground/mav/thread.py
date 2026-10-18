@@ -426,8 +426,9 @@ class GroundMav:
         self._pending = None
         seq = pending.action_seq
         if self.latches.latest_seq(self.vehicle_id) != seq:
-            # A newer action (Resume, a system action) came while it waited: say so, the
-            # pilot pressed Ta över and no LOITER follows.
+            # A newer action that never comes here (Resume) took a number while it waited:
+            # say so, the pilot pressed Ta över and no LOITER follows. STOP, FLY HOME and
+            # system actions clear the take-over in submit(), with events of their own.
             self._on_event(
                 "vehicle.takeover_dropped",
                 "warning",
@@ -521,7 +522,13 @@ class GroundMav:
 
     def _landed(self) -> None:
         self._manual = None
-        self._pending = None
+        if self._pending is not None:  # a take-over still waiting: no LOITER on the ground
+            self._on_event(
+                "vehicle.takeover_dropped",
+                "warning",
+                {"takeover_id": self._pending.takeover_id, "reason": "landed"},
+            )
+            self._pending = None
         self._battery_low_since = None
         latch = self.latches.landed(self.vehicle_id)
         self._on_event(

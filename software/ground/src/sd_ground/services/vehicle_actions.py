@@ -549,8 +549,10 @@ class VehicleActions:
                     log.error("actions.pump_failed", error=type(exc).__name__)
                 await self.clock.sleep(PUMP_S)
         finally:
-            for task in list(self._tasks):  # take-over notices still waiting
+            waiting = list(self._tasks)  # take-over notices still waiting
+            for task in waiting:
                 task.cancel()
+            await asyncio.gather(*waiting, return_exceptions=True)
 
     async def drain(self, g: GroundView) -> None:
         while True:

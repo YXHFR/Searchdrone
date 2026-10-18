@@ -524,13 +524,16 @@ async def test_resume_during_the_takeover_wait_drops_it_and_says_so() -> None:
         s.sink.acks = False
         s.fly()
         await s.run(0.5)
-        s.actions.takeover(VID, client_action_id="t-resume", by=PILOT)
+        reply = s.actions.takeover(VID, client_action_id="t-resume", by=PILOT)
         await s.run(0.05)
         s.resume()
         await s.run(1.0)
         assert CopterMode.LOITER not in ground_modes(s.fc)
         assert s.core.snapshot().manual is False  # type: ignore[union-attr]
-        assert "vehicle.takeover_dropped" in s.g.types()
+        dropped = [p for t, _, p in s.g.events if t == "vehicle.takeover_dropped"]
+        assert [(p["takeover_id"], p["reason"]) for p in dropped] == [
+            (str(reply.action_id), "newer_action")
+        ]
 
 
 async def test_landing_during_the_takeover_wait_drops_it() -> None:
@@ -538,11 +541,14 @@ async def test_landing_during_the_takeover_wait_drops_it() -> None:
         s.sink.acks = False
         s.fly()
         await s.run(0.5)
+        # It touches down and disarms as the pilot clicks; the MAVLink thread sees the
+        # landing (about 0.2 s here) while the take-over still waits.
+        s.fc.alt_rel, s.fc.armed = 0.0, False
         s.actions.takeover(VID, client_action_id="t-land", by=PILOT)
-        await s.run(0.05)
-        s.core._landed()  # pyright: ignore[reportPrivateUsage]
         await s.run(1.0)
         assert CopterMode.LOITER not in ground_modes(s.fc)
+        dropped = [p for t, _, p in s.g.events if t == "vehicle.takeover_dropped"]
+        assert [p["reason"] for p in dropped] == ["landed"]
 
 
 def _takeover_outcome(s: Stack) -> dict[str, Any]:

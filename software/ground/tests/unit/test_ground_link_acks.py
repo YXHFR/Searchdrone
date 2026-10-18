@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import time
 import uuid
 from typing import Any
@@ -12,7 +13,7 @@ from test_ground_link_hello import VID, hello, make
 from sd_ground.link import ACK_MEMORY
 from sd_link.session import Closed, Inbound
 from sd_schemas.base import new_id
-from sd_schemas.link import Ack, AckStage, CommanderStatus
+from sd_schemas.link import Ack, AckStage, CommanderStatus, Envelope
 
 MESSAGE = CommanderStatus(connected=True, state="ready")
 
@@ -137,11 +138,20 @@ async def test_an_ack_from_the_session_reaches_the_waiting_send() -> None:
     _sent(link, msg_id)
     waiting = asyncio.ensure_future(link.send_acked(VID, MESSAGE, 1.0))
     await asyncio.sleep(0)
-    inbound = Inbound(
-        envelope=None,  # type: ignore[arg-type]
-        body=Ack(ref_id=msg_id, stage="done"),
-        received_at=0.0,
-        deadline=None,
+    body = Ack(ref_id=msg_id, stage="done")
+    envelope = Envelope(
+        msg_id=new_id(),
+        kind="Ack",
+        sender=f"vehicle:{VID}",
+        vehicle_id=VID,
+        mission_id=None,
+        seq=0,
+        sent_utc=dt.datetime.now(dt.UTC),
+        ttl_ms=None,
+        reliable=False,
+        corr_id=None,
+        body=body.model_dump(mode="json"),
     )
+    inbound = Inbound(envelope=envelope, body=body, received_at=0.0, deadline=None)
     await link._on_session(_Session([inbound]), hello(None, 0))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
     assert await waiting == "acked"
