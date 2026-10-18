@@ -190,6 +190,72 @@ async def test_sc09_takeoff_needs_charter_and_clearance(
         await sc.check_invariants()
 
 
+def _tamper_fence(sc: Scenario, half_m: float = 120.0) -> None:
+    """The test rig (serial0, 253/190) uploads a square fence around home that is not the
+    charter's, while the vehicle stands disarmed: someone changed the FC's fence."""
+    from pymavlink.dialects.v20 import ardupilotmega as mav
+
+    fence = mav.MAV_MISSION_TYPE_FENCE
+    corners = [sc.at(x * half_m, y * half_m) for x, y in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
+    h = sc.sim.harness
+    conn = h._conn  # pyright: ignore[reportPrivateUsage]
+    conn.mav.mission_count_send(1, 1, len(corners), fence)
+    end = time.monotonic() + 10.0
+    while time.monotonic() < end:
+        msg = conn.recv_match(
+            type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"],
+            blocking=True,
+            timeout=0.5,
+        )
+        if msg is None or msg.get_srcSystem() != 1 or int(msg.mission_type) != fence:
+            continue
+        if msg.get_type() == "MISSION_ACK":
+            assert int(msg.type) == mav.MAV_MISSION_ACCEPTED, msg
+            return
+        lat, lon = corners[int(msg.seq)]
+        conn.mav.mission_item_int_send(
+            1,
+            1,
+            int(msg.seq),
+            mav.MAV_FRAME_GLOBAL,
+            mav.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
+            0,
+            0,
+            len(corners),
+            0,
+            0,
+            0,
+            round(lat * 1e7),
+            round(lon * 1e7),
+            0,
+            fence,
+        )
+    raise AssertionError("the tampered fence was not acknowledged")
+
+
+@pytest.mark.budget_s(200)
+async def test_sc09g_fence_changed_after_install(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    """The FC's fence is changed after the charter was installed (and the ground verified
+    it): the onboard computer reads it back before the takeoff and refuses; nothing arms."""
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.ready()
+        await sc.harness(_tamper_fence, sc)
+        await sc.clearance()
+        await asyncio.sleep(3.1)
+        res = await sc.order("takeoff", {"alt_m": 40})
+        assert res.get("decision") == "ALLOW", res  # the ground does not read it again
+        cmd = await sc.wait_command("takeoff", "rejected_onboard", 15)
+        gates = await sc.gate(cmd["id"])
+        onboard = [g for g in gates if g.get("side") == "onboard"]
+        assert onboard and "FENCE_NOT_VERIFIED" in onboard[0]["reason_codes"], gates
+        assert await sc.events("gate.mismatch")
+        await asyncio.sleep(30)
+        assert not any(s.armed for s in sc.track)
+        await sc.check_invariants()
+
+
 RC_LAYER = PARAMS / "tests/rc_required.parm"
 
 
