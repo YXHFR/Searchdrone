@@ -73,6 +73,15 @@ async def test_sc01_takeover_on_sitl(sim: Any, migrated_db: Any, tmp_path: Path)
         takeover_id = res.json()["action_id"]
         await sc.until(lambda: sc.mode() == "LOITER", 3, "LOITER after the takeover")
         await sc.wait_command("survey_sector", "superseded", 10, issuer_kind="brain")
+        # The notice reached the onboard side before the ground's LOITER: it is the
+        # pilot's take-over there, not a stop nobody asked for (no stop latch).
+        state = await sc.onboard_state()
+        for _ in range(10):
+            if state["held_by"] == "operator_manual":
+                break
+            await asyncio.sleep(0.5)
+            state = await sc.onboard_state()
+        assert state["held_by"] == "operator_manual" and not state["stop_latch"], state
 
         # The pilot pushes the stick forward at 10 Hz until the drone has moved 20 m.
         start = (sc.tel.lat, sc.tel.lon)

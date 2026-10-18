@@ -21,7 +21,7 @@ from sd_ground.auth import Principal
 from sd_ground.bus import EventBus
 from sd_ground.mav.thread import GroundMav, ThreadSafeMav
 from sd_ground.services.latches import Latches
-from sd_ground.services.vehicle_actions import VehicleActions
+from sd_ground.services.vehicle_actions import NoticeResult, VehicleActions
 from sd_mav.connection import Role
 from sd_mav.fake import FakeFlightController, FakeLink, FakeVehicle
 from sd_mav.modes import CopterMode
@@ -99,6 +99,13 @@ class RecordingSink:
 
     is_up: bool = True
     sent: list[SdModel] = field(default_factory=list[SdModel])
+    # How the onboard side answers a take-over notice: at once, or never (a timeout); or
+    # the send itself hangs, or raises.
+    acks: bool = True
+    hangs: bool = False
+    raises: bool = False
+    waits: list[float] = field(default_factory=list[float])
+    clock: FakeClock | None = None  # the stack's clock, for the time a missing ack takes
 
     def up(self, vehicle_id: str) -> bool:
         return self.is_up
@@ -108,6 +115,19 @@ class RecordingSink:
             return False
         self.sent.append(message)
         return True
+
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        if self.raises:
+            raise ConnectionResetError("link went away mid-send")
+        if self.hangs:
+            await asyncio.Event().wait()
+        if not await self.send(vehicle_id, message):
+            return "down"
+        if self.acks:
+            return "acked"
+        self.waits.append(timeout_s)
+        await (self.clock.sleep(timeout_s) if self.clock else asyncio.sleep(timeout_s))
+        return "timeout"
 
 
 @dataclass
@@ -124,6 +144,7 @@ class Stack:
     onboard_alive: list[bool]
 
     async def run(self, seconds: float) -> None:
+        await self.actions.drain(self.g)  # the main loop's pump, as often as it runs there
         await self.clock.run_for(seconds, step=0.01)
         await self.actions.drain(self.g)
 
@@ -163,7 +184,7 @@ async def stack(*, sink_up: bool = True, rtl_pct: float = 15.0) -> AsyncIterator
     ground = FakeVehicle(clock, fc=fc, role=Role.GROUND)
     onboard = FakeVehicle(clock, fc=fc, heartbeat_allowed=lambda: alive[0])
     latches = Latches(clock)
-    sink = RecordingSink(is_up=sink_up)
+    sink = RecordingSink(is_up=sink_up, clock=clock)
     actions = VehicleActions(clock, latches, vehicle_ids=[VID], notices=sink)
     core = GroundMav(
         ground,
