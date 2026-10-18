@@ -19,7 +19,7 @@ sitl_json_fdm:       {base: 9002,  per_instance: true}   # moved by -I; 9003 + 1
 gz_discovery_msg:    {base: 10317, per_instance: false}
 gz_discovery_srv:    {base: 10318, per_instance: false}
 # --- SITL internal (bound by ArduPilot itself, see listen_allowlist.yaml) ---
-sitl_rc_in:          {base: 5501,  per_instance: true}   # SITL RC input over UDP; nothing in Searchdrone sends to it
+sitl_rc_in:          {base: 5501,  per_instance: true}   # SITL RC input over UDP: the launcher's simulated transmitter (sd_sim.rc)
 # --- Video (UDP), block 5600 + 10N ---
 video_raw_udp:       {base: 5600,  per_instance: true}   # camera/test picture -> linksim
 video_out_udp:       {base: 5602,  per_instance: true}   # linksim -> video_relay

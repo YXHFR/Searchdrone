@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from pathlib import Path
 
 import pytest
 from pymavlink import mavutil
@@ -142,3 +143,60 @@ def test_read_errors_do_not_stop_the_reader() -> None:
         assert conn.read_errors == 3 and calls["reset"] == 3
 
     asyncio.run(run())
+
+
+def _heartbeat() -> object:
+    encoder = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+    hb = mavlink.MAVLink_heartbeat_message(
+        mavlink.MAV_TYPE_QUADROTOR, mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA, 1, 5, 3, 3
+    )
+    hb.pack(encoder)
+    return hb
+
+
+def test_tlog_appends_after_a_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A restarted ground station adds to the same flight.tlog; both sessions read back."""
+    path = tmp_path / "flight.tlog"
+    for _ in range(2):
+        conn = connect(
+            f"udpin:127.0.0.1:{_free_udp_port()}",
+            role=Role.GROUND,
+            source_system=250,
+            source_component=190,
+        )
+        assert isinstance(conn, MavConnection)
+        conn.start_tlog(path, MonotonicClock())
+        conn._log(_heartbeat())  # pyright: ignore[reportPrivateUsage]
+        conn.close()
+    log = mavutil.mavlink_connection(str(path))
+    assert [log.recv_match(type="HEARTBEAT") is not None for _ in range(2)] == [True, True]
+
+
+def test_a_failing_tlog_write_stops_the_recording_not_the_channel(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    class Broken:
+        def write(self, _data: bytes) -> int:
+            raise OSError(28, "No space left on device")
+
+        def close(self) -> None:
+            return None
+
+    conn = connect(
+        f"udpin:127.0.0.1:{_free_udp_port()}",
+        role=Role.GROUND,
+        source_system=250,
+        source_component=190,
+    )
+    assert isinstance(conn, MavConnection)
+    conn.start_tlog(tmp_path / "flight.tlog", MonotonicClock())
+    conn._tlog = Broken()  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    conn._log(_heartbeat())  # pyright: ignore[reportPrivateUsage]  # must not raise
+    assert conn.tlog_errors == 1 and not conn.tlog_active
+    conn.close()
+
+
+def test_vehicle_start_tlog_on_a_transport_that_cannot_record() -> None:
+    from sd_mav.fake import FakeVehicle
+
+    vehicle = FakeVehicle(MonotonicClock(), role=Role.GROUND)
+    assert vehicle.start_tlog(Path("/nonexistent/flight.tlog")) is False
+    vehicle.stop_tlog()  # a no-op
