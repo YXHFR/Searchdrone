@@ -162,6 +162,7 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
   const ackMs = Date.now() - pressed;
   test.info().annotations.push({ type: "stop-ack-ms", description: String(ackMs) });
   console.log(`STOPP kvitterat efter ${ackMs} ms`);
+  expect(ackMs).toBeLessThan(1_000);
   await expect
     .poll(() => live<number>(page, "telemetry.groundspeed_ms"), { timeout: 5_000 })
     .toBeLessThan(0.5);

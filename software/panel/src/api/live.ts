@@ -80,7 +80,8 @@ function setMission(mission: Mission | null): void {
   }
 }
 
-/** Everything that belongs to the mission, in the order the spec gives. */
+/** Everything that belongs to the mission: detail, charters, pending approvals, sectors,
+ * annotations, the latest chat page and the track, in that order. */
 async function loadMissionData(missionId: string): Promise<void> {
   const m = useMissionStore.getState();
   const detail = await quietly(api<MissionDetail>(paths.mission(missionId)));
@@ -151,7 +152,8 @@ export async function loadOlderChat(missionId: string): Promise<void> {
   if (page) chat.receivePage(page.items, page.next_before);
 }
 
-/** Fetch an approval card's subject once when the live event came before it (§ adapter). */
+/** Fetch an approval card's subject (charter or command) once, when its live event came
+ * before the subject itself. */
 export async function fetchSubject(a: Approval): Promise<void> {
   const m = useMissionStore.getState();
   if (m.subjectFetched[a.id]) return;

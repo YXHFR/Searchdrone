@@ -29,7 +29,7 @@ interface ChatState {
   clear(): void;
 }
 
-/** Server time, then id (§ ordering of the chat). */
+/** Chat order: the server's time, then the id for messages with the same time. */
 export function chatOrder(
   a: { createdAt: string; key: string },
   b: { createdAt: string; key: string },

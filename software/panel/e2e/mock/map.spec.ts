@@ -2,7 +2,7 @@
 // synthetic test pack is drawn at zoom 12, 15 and 18 (16-18 overzoomed from 15), with no
 // tile or glyph errors and the OpenStreetMap attribution visible.
 import type { MapConfig } from "@searchdrone/schemas";
-import { approval, charter, command, HOME, square, telemetry } from "../fixtures";
+import { charter, command, HOME, square, telemetry } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
 import { expectSafetyVisible, isMobile } from "../helpers/safety";
 
@@ -291,7 +291,6 @@ test("every layer is fed: drone, charter, pilot range, home, sectors, target, tr
       { timeout: 6_000 },
     )
     .toBe(true);
-  void approval;
 });
 
 test("draw a rectangle and set a pin: one POST each, shown on the map", async ({

@@ -96,7 +96,7 @@ const RESYNC = [
 ];
 
 describe("startLive", () => {
-  it("resyncs in the spec's order at start, not again on the first hello, again on a new epoch", async () => {
+  it("resyncs in the fixed order at start, not again on the first hello, again on a new epoch", async () => {
     const stop = startLive("sim-01");
     await settle();
     expect(calls).toEqual(RESYNC);
