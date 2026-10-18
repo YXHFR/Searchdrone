@@ -699,9 +699,9 @@ class Stack:
     def up(self) -> None:
         os.umask(0o077)
         self.placed = self.world_objects()
-        self.check_ports_free()
         if not self.renders_world():
             world.clear_truth(self.cfg.instance, self.repo)  # no world, so no facit
+        self.check_ports_free()
         self.make_secrets()
         self.inst_dir.mkdir(parents=True, exist_ok=True)
         (self.inst_dir / "ports.json").write_text(json.dumps(self.ports, indent=2), "utf-8")
