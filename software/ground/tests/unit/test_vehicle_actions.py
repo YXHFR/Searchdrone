@@ -27,7 +27,7 @@ from sd_ground.services.vehicle_actions import (
 from sd_ground.sources import EmergencyUnavailableError
 from sd_mav.vehicle import FcTelemetry
 from sd_schemas.base import SdModel, new_id
-from sd_schemas.link import OperatorOverrideNotice, StickAxes
+from sd_schemas.link import CommanderStatus, OperatorOverrideNotice, StickAxes
 from sd_testing import FakeClock
 
 OTHER = "sim-02"
@@ -46,8 +46,12 @@ class StubMav:
         self.submitted.append(action)
         return True
 
-    def takeover(self, takeover_id: str, action_seq: int | None = None) -> bool:
-        self.calls.append("takeover")
+    def takeover(self, takeover_id: str, action_seq: int, wait_s: float = 0.0) -> bool:
+        self.calls.append("takeover" if wait_s <= 0 else "takeover_after_notice")
+        return True
+
+    def takeover_acknowledged(self, takeover_id: str) -> bool:
+        self.calls.append("takeover_acknowledged")
         return True
 
     def handback(self) -> bool:
@@ -222,6 +226,70 @@ async def test_notice_that_fails_to_send_marks_sdlink_failed() -> None:
     assert outcome.paths["mavlink"] == "queued"
     assert "vehicle.stop" in g.types()  # the event is still written
     assert [t for t, _ in _published(g) if t == "vehicle.action"] == ["vehicle.action"]
+
+
+async def _drain_all(actions: VehicleActions, g: StubGround) -> None:
+    await actions.drain(g)
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.gather(*tasks)
+
+
+async def test_takeover_goes_to_the_mavlink_thread_at_the_click() -> None:
+    """With SD-link up the take-over is handed over at once, with its deadline; the
+    notice's ack only brings it forward."""
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=PerVehicleSink(up_for={VID}))
+    reply = actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    assert mav.calls == ["takeover_after_notice"]  # before any pump
+    g = StubGround(clock)
+    await _drain_all(actions, g)
+    assert mav.calls == ["takeover_after_notice", "takeover_acknowledged"]
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "sent"
+
+
+async def test_takeover_whose_notice_fails_still_goes_and_marks_sdlink_failed() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=BrokenSink())
+    reply = actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    g = StubGround(clock)
+    await _drain_all(actions, g)
+    assert mav.calls == ["takeover_after_notice"]  # LOITER comes at the deadline
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "failed"
+    assert "vehicle.takeover" in g.types()
+
+
+async def test_takeover_without_sdlink_goes_at_once() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink())
+    actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    assert mav.calls == ["takeover"]
+
+
+async def test_a_failing_takeover_task_is_logged_not_raised() -> None:
+    clock = FakeClock()
+    actions = _actions(clock, mav=StubMav(), notices=PerVehicleSink(up_for={VID}))
+
+    def broken(_g: object, _o: object) -> None:
+        raise RuntimeError("the event store went away")
+
+    actions._posted = broken  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    g = StubGround(clock)
+    await actions.drain(g)
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert actions._tasks == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_without_sdlink_nothing_is_acknowledged() -> None:
+    message = CommanderStatus(connected=True, state="ready")
+    assert await NoNoticeSink().send_acked(VID, message, 0.3) == "down"
 
 
 async def test_mavlink_events_are_published_only_for_alarms_and_vehicle() -> None:

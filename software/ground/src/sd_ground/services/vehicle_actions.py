@@ -21,12 +21,15 @@ routes). The battery guard, the companion watchdog and the operator-absence guar
 the same path with their own latch kinds (``system``). Only Resume lifts a latch, and
 no chat text ever creates a Resume.
 
-Steering by hand ("Ta över") is not an emergency: with SD-link up, the ``ManualTakeover``
-notice goes out first and LOITER follows once the onboard computer has acknowledged it
-(at most ``TAKEOVER_ACK_WAIT_S`` later). Seen the other way round, the onboard side
-would take the ground's LOITER for a stop it did not ask for and latch it. Without
-SD-link, LOITER goes at once. A newer action in the meantime (STOP, FLY HOME, a
-hand-back) wins: the waiting take-over never reaches the flight controller.
+Steering by hand ("Ta över"): with SD-link up, the ``ManualTakeover`` notice goes out
+first and LOITER follows once the onboard executor has acknowledged it. Seen the other
+way round, the onboard side would take the ground's LOITER for a stop it did not ask for
+and latch it. The take-over is handed to the MAVLink thread at the click with a deadline
+(``TAKEOVER_ACK_WAIT_S``): LOITER goes then at the latest, whatever the main loop and
+SD-link do; the acknowledgement only brings it forward. Without SD-link, LOITER goes at
+once. A newer action in the meantime (STOP, FLY HOME, a system action, a hand-back) or a
+move of the RC mode switch wins: the waiting take-over never reaches the flight
+controller.
 """
 
 from __future__ import annotations
@@ -100,7 +103,9 @@ class MavBackend(Protocol):
 
     def submit(self, action: ModeAction) -> bool: ...
 
-    def takeover(self, takeover_id: str, action_seq: int | None = None) -> bool: ...
+    def takeover(self, takeover_id: str, action_seq: int, wait_s: float = 0.0) -> bool: ...
+
+    def takeover_acknowledged(self, takeover_id: str) -> bool: ...
 
     def handback(self) -> bool: ...
 
@@ -109,7 +114,7 @@ class MavBackend(Protocol):
     def snapshot(self) -> MavSnapshot | None: ...
 
 
-NoticeResult = Literal["acked", "timeout", "down"]
+NoticeResult = Literal["acked", "refused", "timeout", "down"]
 
 
 class NoticeSink(Protocol):
@@ -120,8 +125,9 @@ class NoticeSink(Protocol):
     async def send(self, vehicle_id: str, message: SdModel) -> bool: ...
 
     async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
-        """Send and wait for the onboard ``Ack`` of this message: ``acked``, ``timeout``
-        (sent, no answer in time) or ``down`` (not sent)."""
+        """Send and wait for the onboard executor's ``Ack`` of this message, all within
+        ``timeout_s``: ``acked`` (done), ``refused`` (rejected, expired), ``timeout`` (no
+        answer in time) or ``down`` (not sent)."""
         ...
 
 
@@ -174,8 +180,8 @@ class _Post:
 
     outcome: ActionOutcome
     notice: SdModel | None
-    # A take-over whose LOITER waits for the onboard acknowledgement: (id, action_seq).
-    takeover: tuple[str, int] | None = None
+    # A take-over whose LOITER waits in the MAVLink thread for the notice's ack.
+    takeover: str | None = None
 
 
 @dataclass
@@ -391,7 +397,9 @@ class VehicleActions:
     def takeover(
         self, vehicle_id: str, *, client_action_id: str, by: Principal
     ) -> ActionDispatched:
-        """Ta över: LOITER now, the AI's orders pause onboard, the sticks come from here."""
+        """Ta över: the AI's orders pause onboard, LOITER once the onboard side knows (at
+        most ``TAKEOVER_ACK_WAIT_S`` later; at once without SD-link), the sticks come from
+        here."""
         return self._pilot_action("takeover", vehicle_id, client_action_id, by)
 
     def handback(
@@ -430,7 +438,7 @@ class VehicleActions:
             raise ActionRefusedError(exc.status, exc.code, exc.detail_sv) from None
         action_id = str(new_id())
         notice: SdModel
-        takeover_after: tuple[str, int] | None = None
+        takeover_after: str | None = None
         try:
             if action == "resume":
                 seq, _lifted = self.latches.release(vehicle_id)  # number and lift in one step
@@ -454,7 +462,9 @@ class VehicleActions:
             )
             if self.mav is not None:
                 if action == "takeover" and self.notices.up(vehicle_id):
-                    takeover_after = (action_id, seq)  # LOITER once onboard has the notice
+                    # LOITER once onboard has the notice, or at the deadline at the latest.
+                    self.mav.takeover(action_id, seq, TAKEOVER_ACK_WAIT_S)
+                    takeover_after = action_id
                 elif action == "takeover":
                     self.mav.takeover(action_id, seq)  # no SD-link: LOITER at once
                 else:
@@ -565,11 +575,14 @@ class VehicleActions:
                     _publish(g, "vehicle", item.type, item.payload, item.vehicle_id)
 
     async def _handle_post(self, g: GroundView, item: _Post) -> None:
-        if item.takeover is not None:
+        if item.takeover is not None and item.notice is not None:
             # Its own task: the pump (and with it every STOP notice) never waits for it.
-            task = asyncio.ensure_future(self._takeover_after_notice(g, item, item.takeover))
+            task = asyncio.get_running_loop().create_task(
+                self._takeover_after_notice(g, item.outcome, item.notice, item.takeover),
+                name="takeover-notice",
+            )
             self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            task.add_done_callback(self._task_done)
             return
         o = item.outcome
         vid = str(o.vehicle_id)
@@ -584,28 +597,29 @@ class VehicleActions:
         self._posted(g, o)
 
     async def _takeover_after_notice(
-        self, g: GroundView, item: _Post, takeover: tuple[str, int]
+        self, g: GroundView, o: ActionOutcome, notice: SdModel, takeover_id: str
     ) -> None:
-        """The take-over notice first, then LOITER: when the onboard side has acknowledged
-        it, or after ``TAKEOVER_ACK_WAIT_S`` (the onboard side then latches a stop, the
-        safe way round). ``GroundMav.takeover`` drops it if a newer action came first."""
-        o = item.outcome
+        """Send the take-over notice and tell the MAVLink thread when the onboard executor
+        has it, so LOITER need not wait for the deadline (which holds without this)."""
         vid = str(o.vehicle_id)
         result: NoticeResult = "down"
         try:
-            if item.notice is not None:
-                result = await self.notices.send_acked(vid, item.notice, TAKEOVER_ACK_WAIT_S)
+            result = await self.notices.send_acked(vid, notice, TAKEOVER_ACK_WAIT_S)
         except Exception as exc:
             log.warning("actions.notice_failed", error=type(exc).__name__)
-        finally:
-            if self.mav is not None:
-                self.mav.takeover(*takeover)
-        if result == "timeout":
-            log.warning("actions.takeover_unacknowledged", vehicle_id=vid)
-        sdlink = "sent" if result != "down" else "failed"
+        if result == "acked" and self.mav is not None:
+            self.mav.takeover_acknowledged(takeover_id)
+        elif result in ("refused", "timeout"):
+            log.warning("actions.takeover_unacknowledged", vehicle_id=vid, result=result)
+        sdlink = "failed" if result == "down" else "sent"
         o = o.model_copy(update={"paths": {**o.paths, "sdlink": sdlink}})
         self._store(o)
         self._posted(g, o)
+
+    def _task_done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.error("actions.task_failed", task=task.get_name(), error=repr(task.exception()))
 
     def _posted(self, g: GroundView, o: ActionOutcome) -> None:
         vid = str(o.vehicle_id)

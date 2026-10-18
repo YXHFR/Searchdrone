@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,9 @@ from sd_schemas.mission import OperatorLatch
 __all__ = ["COMMANDER_STATUS_S", "GroundLink", "InboundHandler"]
 
 COMMANDER_STATUS_S: Final = 1.0
-ACK_MEMORY_MS: Final = 10_000  # an Ack that came before anyone waited for it is kept this long
+ACK_MEMORY: Final = 256  # executor Acks kept for a send_acked that starts waiting late
+# The executor's own answers. "received" is the link's receipt before the executor has it.
+_EXECUTOR_ACKS: Final = frozenset({"done", "rejected", "failed", "expired", "superseded"})
 log = get_logger("sd_ground.link")
 
 
@@ -96,8 +99,8 @@ class GroundLink:
         self._on_event = on_event
         self._snapshots: dict[str, SnapshotSeen] = {}
         self._hellos: dict[str, Hello] = {}
-        self._ack_waiters: dict[uuid.UUID, asyncio.Future[None]] = {}
-        self._acked: dict[uuid.UUID, int] = {}  # ref_id -> when the Ack came (monotonic ms)
+        self._ack_waiters: dict[tuple[str, uuid.UUID], asyncio.Future[str]] = {}
+        self._acked: OrderedDict[tuple[str, uuid.UUID], str] = OrderedDict()  # -> stage
         self.server = LinkServer(
             tokens=tokens,
             is_known_vehicle=lambda v: v in self.vehicle_ids,
@@ -181,32 +184,38 @@ class GroundLink:
 
     async def send_acked(
         self, vehicle_id: str, message: SdModel, timeout_s: float
-    ) -> Literal["acked", "timeout", "down"]:
-        """Send one message and wait at most ``timeout_s`` for the onboard ``Ack`` that
-        names it (a take-over notice before its LOITER)."""
-        msg_id = await self.send_message(vehicle_id, message)
-        if msg_id is None:
-            return "down"
-        if msg_id in self._acked:  # answered while the send was still being queued
-            return "acked"
-        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._ack_waiters[msg_id] = waiter
+    ) -> Literal["acked", "refused", "timeout", "down"]:
+        """Send one message and wait for the onboard executor's ``Ack`` that names it, the
+        send and the wait together within ``timeout_s`` (a take-over notice before its
+        LOITER). ``done`` is ``acked``; ``rejected``, ``expired`` and the like ``refused``."""
         try:
-            await asyncio.wait_for(waiter, timeout_s)
+            async with asyncio.timeout(timeout_s):
+                msg_id = await self.send_message(vehicle_id, message)
+                if msg_id is None:
+                    return "down"
+                key = (vehicle_id, msg_id)
+                stage = self._acked.get(key)  # answered while the send was being queued
+                if stage is None:
+                    waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+                    self._ack_waiters[key] = waiter
+                    try:
+                        stage = await waiter
+                    finally:
+                        self._ack_waiters.pop(key, None)
         except TimeoutError:
             return "timeout"
-        finally:
-            self._ack_waiters.pop(msg_id, None)
-        return "acked"
+        return "acked" if stage == "done" else "refused"
 
-    def _on_ack(self, ack: Ack) -> None:
-        now = self.clock.monotonic_ms()
-        ref = uuid.UUID(str(ack.ref_id))
-        self._acked = {k: t for k, t in self._acked.items() if now - t <= ACK_MEMORY_MS}
-        self._acked[ref] = now
-        waiter = self._ack_waiters.get(ref)
+    def _on_ack(self, vehicle_id: str, ack: Ack) -> None:
+        if ack.stage not in _EXECUTOR_ACKS:
+            return
+        key = (vehicle_id, uuid.UUID(str(ack.ref_id)))
+        self._acked[key] = ack.stage
+        while len(self._acked) > ACK_MEMORY:
+            self._acked.popitem(last=False)
+        waiter = self._ack_waiters.get(key)
         if waiter is not None and not waiter.done():
-            waiter.set_result(None)
+            waiter.set_result(ack.stage)
 
     async def send_message(
         self,
@@ -276,7 +285,7 @@ class GroundLink:
                     if isinstance(event.body, StateSnapshot):
                         self._snapshots[vid] = SnapshotSeen(event.body, self.clock.monotonic_ms())
                     elif isinstance(event.body, Ack):
-                        self._on_ack(event.body)
+                        self._on_ack(vid, event.body)
                     if self.handler is not None:
                         await _quietly(self.handler.on_inbound(vid, event))
                 elif isinstance(event, Expired) and self.handler is not None:

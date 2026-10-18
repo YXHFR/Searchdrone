@@ -99,8 +99,11 @@ class RecordingSink:
 
     is_up: bool = True
     sent: list[SdModel] = field(default_factory=list[SdModel])
-    # How the onboard side answers a take-over notice: at once, or never (a timeout).
+    # How the onboard side answers a take-over notice: at once, or never (a timeout); or
+    # the send itself hangs, or raises.
     acks: bool = True
+    hangs: bool = False
+    raises: bool = False
     waits: list[float] = field(default_factory=list[float])
     clock: FakeClock | None = None  # the stack's clock, for the time a missing ack takes
 
@@ -114,6 +117,10 @@ class RecordingSink:
         return True
 
     async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        if self.raises:
+            raise ConnectionResetError("link went away mid-send")
+        if self.hangs:
+            await asyncio.Event().wait()
         if not await self.send(vehicle_id, message):
             return "down"
         if self.acks:
