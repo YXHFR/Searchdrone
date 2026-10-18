@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -18,6 +19,7 @@ from sd_sim.pytest_plugin import (
     SHARD_LIMIT_S,
     budget_problems,
     plan_shards,
+    scenario_id,
     worker_instance,
 )
 
@@ -172,13 +174,105 @@ def test_required_sitl_skip_fails(tmp_path: Path) -> None:
         str(test),
     ]
     env = {k: v for k, v in os.environ.items() if k != "SD_SIM__REQUIRE_SITL"}
+    env["SD_SIM__RUNS_DIR"] = str(tmp_path / "runs")
     assert subprocess.run(base, env=env, capture_output=True, check=False).returncode == 0
+    assert not (tmp_path / "runs").exists()  # skipped on purpose: no result
     env["SD_SIM__REQUIRE_SITL"] = "1"
     env["SD_ARDUCOPTER_BIN"] = sys.executable  # an existing file, so collection passes
     out = subprocess.run(base, env=env, capture_output=True, text=True, check=False)
     assert out.returncode == 1, out.stdout
     assert "hoppades över" in out.stdout
+    (result,) = (tmp_path / "runs").glob("*-test_x-i*/result.json")
+    assert json.loads(result.read_text())["passed"] is False
     env["SD_ARDUCOPTER_BIN"] = str(tmp_path / "missing")
     out = subprocess.run(base, env=env, capture_output=True, text=True, check=False)
     assert out.returncode != 0
     assert "SD_SIM__REQUIRE_SITL=1" in out.stdout + out.stderr
+
+
+def test_scenario_id() -> None:
+    assert scenario_id("test_sc02_stop_and_resume") == "SC02"
+    assert scenario_id("test_sc10a_ground_restart_mid_search") == "SC10A"
+    assert scenario_id("test_sc04_sc05_refusals_in_the_air") == "SC04"
+    assert scenario_id("test_sc09_x[case-a]") == "SC09"
+    assert scenario_id("test_demo_flight") == "test_demo_flight"
+    assert scenario_id("test_scale") == "test_scale"
+    assert scenario_id("test_demo_flight", "test_sc01") == "SC01"
+    assert scenario_id("test_sc02_x", "test_sc01") == "SC02"  # the test's own wins
+    assert scenario_id("test_gps_lost", "test_sc_failsafe") == "test_gps_lost"
+
+
+def test_every_simulator_test_writes_its_measurements(tmp_path: Path) -> None:
+    test = tmp_path / "test_x.py"
+    test.write_text(
+        "import pytest\n"
+        "from sd_sim.report import measure\n\n"
+        "@pytest.mark.sitl\n@pytest.mark.budget_s(10)\n"
+        "def test_sc02_ok():\n"
+        "    measure('BRAKE', 0.4, 2.0)\n"
+        "    measure('holds', 20.1, 20.0, at_most=False)\n\n"
+        "@pytest.mark.sitl\n@pytest.mark.budget_s(10)\n"
+        "def test_sc03_late():\n"
+        "    assert measure('flying home', 2.5, 2.0)\n\n"
+        "@pytest.mark.video\n"
+        "def test_video_plain():\n"
+        "    pass\n\n"
+        "def test_unit():\n"
+        "    pass\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "SD_SIM__REQUIRE_SITL"}
+    env["SD_SIM__RUNS_DIR"] = str(tmp_path / "runs")
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "sd_sim.pytest_plugin", "-q", "-p",
+         "no:cacheprovider", "--rootdir", str(tmp_path), "-c", "/dev/null", str(test)],
+        env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert out.returncode == 1, out.stdout
+    results = {
+        r["variant"]: r
+        for r in (json.loads(p.read_text()) for p in (tmp_path / "runs").glob("*/result.json"))
+    }
+    assert set(results) == {"test_sc02_ok", "test_sc03_late", "test_video_plain"}
+    ok = results["test_sc02_ok"]
+    assert ok["scenario"] == "SC02" and ok["passed"] is True
+    assert [(c["text"], c["measured"], c["limit"], c["bound"]) for c in ok["criteria"][:2]] == [
+        ("BRAKE", 0.4, 2.0, "max"),
+        ("holds", 20.1, 20.0, "min"),
+    ]
+    assert ok["criteria"][-1]["id"] == "T" and ok["criteria"][-1]["passed"] is True
+    late = results["test_sc03_late"]
+    assert late["passed"] is False
+    assert [c["passed"] for c in late["criteria"]] == [False, False]
+    assert results["test_video_plain"]["passed"] is True
+
+
+def test_a_repeated_attempt_leaves_one_result(tmp_path: Path) -> None:
+    test = tmp_path / "test_x.py"
+    marker = tmp_path / "first-done"
+    test.write_text(
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "from sd_sim.report import measure\n\n"
+        "class InfraError(Exception):\n    pass\n\n"
+        "@pytest.mark.sitl\n@pytest.mark.budget_s(10)\n"
+        "def test_sc02_flaky_rig():\n"
+        f"    first = not Path({str(marker)!r}).exists()\n"
+        f"    Path({str(marker)!r}).touch()\n"
+        "    measure('BRAKE', 9.0 if first else 0.5, 2.0)\n"
+        "    if first:\n"
+        "        raise InfraError('port busy')\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "SD_SIM__REQUIRE_SITL"}
+    env["SD_SIM__RUNS_DIR"] = str(tmp_path / "runs")
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "sd_sim.pytest_plugin", "-q", "-p",
+         "no:cacheprovider", "--reruns", "1", "--only-rerun", "InfraError",
+         "--rootdir", str(tmp_path), "-c", "/dev/null", str(test)],
+        env=env, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert out.returncode == 0, out.stdout
+    assert "1 rerun" in out.stdout
+    results = [json.loads(p.read_text()) for p in (tmp_path / "runs").glob("*/result.json")]
+    assert len(results) == 1, results
+    assert results[0]["passed"] is True
+    assert [c["measured"] for c in results[0]["criteria"]] == [0.5, "passed"]
