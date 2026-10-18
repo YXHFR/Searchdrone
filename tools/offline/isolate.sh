@@ -22,16 +22,17 @@ PROBE=https://example.com
 # curlimages/curl:8.16.0, published 2025-09-12 (multi-arch index digest)
 CURL_IMAGE=curlimages/curl@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6
 WORKSPACE="${GITHUB_WORKSPACE:-$PWD}"
-DATA="${SD_DATA_DIR:?SD_DATA_DIR saknas}"
+DATA="${SD_DATA_DIR:-}"  # needed by own and unblock
 
 rules() {
-    local op="$1"
-    sudo iptables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" ! -d 127.0.0.0/8 -j REJECT
-    sudo ip6tables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" ! -d ::1 -j REJECT
+    local op="$1" ok=false  # adding: a rule that fails stops the script
+    [ "$op" = -D ] && ok=:  # removing: each rule on its own, whatever is still there
+    sudo iptables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" ! -d 127.0.0.0/8 -j REJECT || $ok
+    sudo ip6tables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" ! -d ::1 -j REJECT || $ok
     if [ "$op" = -A ]; then
         sudo iptables -I DOCKER-USER -s "$SUBNET" ! -d "$SUBNET" -j REJECT
     else
-        sudo iptables -D DOCKER-USER -s "$SUBNET" ! -d "$SUBNET" -j REJECT
+        sudo iptables -D DOCKER-USER -s "$SUBNET" ! -d "$SUBNET" -j REJECT || :
     fi
 }
 
@@ -41,6 +42,7 @@ case "${1:-}" in
         echo "SD_E2E_USER=$(id -u "$USER_NAME"):$(id -g "$USER_NAME")"
         ;;
     own)
+        [ -n "$DATA" ] || { echo "SD_DATA_DIR saknas"; exit 1; }
         mkdir -p "$DATA"
         sudo chown -R "$USER_NAME:$USER_NAME" "$WORKSPACE" "$DATA"
         ;;
@@ -56,8 +58,13 @@ case "${1:-}" in
         echo "Spärren håller: varken $USER_NAME eller nätet $NETWORK når $PROBE."
         ;;
     unblock)
-        rules -D || true
-        sudo chown -R "$(id -u):$(id -g)" "$WORKSPACE" "$DATA"
+        # Also after a step that failed early: remove what is there, give back what exists.
+        if id "$USER_NAME" >/dev/null 2>&1; then
+            rules -D 2>/dev/null
+        fi
+        for path in "$WORKSPACE" "$DATA"; do
+            if [ -n "$path" ] && [ -e "$path" ]; then sudo chown -R "$(id -u):$(id -g)" "$path"; fi
+        done
         ;;
     *)
         echo "användning: isolate.sh user|own|block|unblock" >&2; exit 2

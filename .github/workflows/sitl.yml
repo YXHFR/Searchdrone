@@ -267,7 +267,7 @@ jobs:
           data="$RUNNER_TEMP/sd-data"
           sed -i "s|^SD_DATA_DIR=.*|SD_DATA_DIR=$data|" .env
           echo "SD_DATA_DIR=$data" >> "$GITHUB_ENV"
-          bash tools/offline/isolate.sh user >> "$GITHUB_ENV"
+          SD_DATA_DIR="$data" bash tools/offline/isolate.sh user >> "$GITHUB_ENV"
           pnpm --filter @searchdrone/panel build
       - name: Postgres on the network sd-offline, MediaMTX as the test user
         run: |
