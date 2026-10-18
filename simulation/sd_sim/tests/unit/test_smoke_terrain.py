@@ -128,7 +128,7 @@ def test_hover_gives_up_on_a_hanging_measurement() -> None:
     start = time.monotonic()
     smoke.hover_until(_Harness(), late, 0.3, result, checks)  # type: ignore[arg-type]
     release.set()
-    finished.wait(2.0)
+    assert finished.wait(2.0)
     assert time.monotonic() - start < 3.0
     # The late write changed nothing: the run stays failed.
     assert checks == {"camera": False} and "0.3" in result["measure_error"]
