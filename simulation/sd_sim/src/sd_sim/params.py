@@ -85,7 +85,8 @@ def layer_rules(
     """``SAFETY_RULES`` with a test layer's values as exact rules. A layer may not touch a
     ruled name or any name the safety file sets (``safety_names``, by default read from
     ``simulation/sitl/params/searchdrone-safety.parm``) unless ``TEST_LAYER_OVERRIDES``
-    allows that value, so it can never loosen them or change the flight modes."""
+    allows that value, so it can never loosen them (except SC16b's AVOID_ENABLE 2) or
+    change the flight modes."""
     if safety_names is None:
         path = paths.REPO / "simulation" / "sitl" / "params" / "searchdrone-safety.parm"
         safety_names = parse_parm(path.read_text(encoding="utf-8"), path.name)

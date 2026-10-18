@@ -105,7 +105,7 @@ def test_field_rules_pin_the_rc_failsafe_value() -> None:
     assert params.rule_violations({**real, "FS_THR_ENABLE": 2.0}, params.FIELD_RULES)
 
 
-def test_a_test_layer_can_only_make_the_rules_stricter() -> None:
+def test_a_test_layer_may_only_set_allowed_overrides() -> None:
     rules = {n: (op, v) for n, op, v in params.layer_rules({"FS_THR_ENABLE": 4.0})}
     assert rules["FS_THR_ENABLE"] == ("==", 4.0)
     assert rules["FENCE_ENABLE"] == ("==", 1.0)  # every other rule still applies
@@ -123,6 +123,24 @@ def test_a_test_layer_may_only_turn_off_the_fence_brake() -> None:
     for value in (0.0, 1.0, 7.0):
         with pytest.raises(params.ParamFileError, match="AVOID_ENABLE"):
             params.layer_rules({"AVOID_ENABLE": value})
+
+
+def test_only_sc16b_flies_without_the_fence_brake() -> None:
+    layers = SAFETY_FILE.parent / "tests"
+    no_brake = [
+        p.name
+        for p in sorted(layers.glob("*.parm"))
+        if "AVOID_ENABLE" in params.parse_parm(p.read_text(encoding="utf-8"), p.name)
+    ]
+    assert no_brake == ["fence_no_brake.parm"]
+    text = (layers / "fence_no_brake.parm").read_text(encoding="utf-8")
+    assert "# test: test_sc16b_fc_fence_height" in text.splitlines()
+    users = [
+        p.name
+        for p in sorted((paths.REPO / "simulation" / "tests").rglob("*.py"))
+        if "fence_no_brake.parm" in p.read_text(encoding="utf-8")
+    ]
+    assert users == ["test_sc_failsafe.py"]
 
 
 def test_a_test_layer_cannot_change_what_the_safety_file_sets() -> None:
