@@ -204,3 +204,66 @@ def test_every_value_has_a_source_row(params: dict[str, Any]) -> None:
         source, date = cells[-2], cells[-1]
         assert source, key
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}|-", date), (key, date)
+
+
+def test_covers_keep_their_margins(report: dict[str, Any], params: dict[str, Any]) -> None:
+    """The printed canopy and nose fairing: light enough, clear of the propellers, no
+    overlap, and the camera sees past the fairing through its window."""
+    import checks
+
+    assert report["cover_mass_g"] <= params["checks"]["cover_mass_max"] <= 80
+    covers = {"canopy", "nose_fairing"}
+    assert covers <= {pt["name"] for pt in report["parts"]}
+    assert not [o for o in report["overlaps"] if {o["a"], o["b"]} & covers]
+    assert not [h for h in report["fov_hits"] if h["part"] in covers]
+    assert checks.verdicts(report)["cover_mass"]
+
+
+def test_cover_to_prop_distance(drone: assembly.Drone, params: dict[str, Any]) -> None:
+    import checks
+
+    props = [pt for pt in drone.parts if pt.group == "prop"]
+    covers = [pt for pt in drone.parts if pt.group == "cover"]
+    for prop in props:
+        for cover in covers:
+            dist = prop.solid.distance(cover.solid)
+            assert dist >= params["checks"]["prop_margin_min"], (prop.name, cover.name, dist)
+    assert (
+        checks.verdicts({**checks.report(drone, params), "cover_mass_g": 80.1})["cover_mass"]
+        is False
+    )
+
+
+def test_covers_cut_drag(report: dict[str, Any]) -> None:
+    ae = report["aero"]
+    assert 0 < ae["frontal_area_before_m2"] <= ae["frontal_area_after_m2"]
+    assert 0 < ae["cda_after_m2"] < ae["cda_before_m2"]
+    assert ae["drag_after_n"] < ae["drag_before_n"]
+
+
+def test_every_part_has_its_own_step(tmp_path: Path, drone: assembly.Drone) -> None:
+    part = next(pt for pt in drone.parts if pt.name == "canopy")
+    out = tmp_path / "canopy.step"
+    assembly.write_part_step(part, out)
+    text = out.read_text(encoding="utf-8")
+    assert "PRODUCT('canopy'" in text
+    assert assembly.STEP_DATE in text
+
+
+def test_vendor_models_fit_their_envelopes(drone: assembly.Drone) -> None:
+    """The manufacturers' models (downloaded by `just cad-detailed`) sit where the simple
+    envelopes are and are no bigger than them, within 2 mm."""
+    import vendor
+
+    if not vendor.available():
+        pytest.skip("manufacturer models not downloaded; run just cad-detailed")
+    by_name = {pt.name: pt for pt in drone.parts}
+    for m in vendor.models():
+        model = vendor.placed(m, by_name[m["anchor"]].solid).BoundingBox()
+        env = cq.Compound.makeCompound([by_name[n].solid for n in m["replaces"]]).BoundingBox()
+        for lo, hi, elo, ehi in [
+            (model.xmin, model.xmax, env.xmin, env.xmax),
+            (model.ymin, model.ymax, env.ymin, env.ymax),
+            (model.zmin, model.zmax, env.zmin, env.zmax),
+        ]:
+            assert lo >= elo - 2 and hi <= ehi + 2, (m["name"], lo, hi, elo, ehi)

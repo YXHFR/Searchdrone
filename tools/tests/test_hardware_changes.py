@@ -123,7 +123,7 @@ def test_jobs_and_aggregate() -> None:
     assert any("ci_aggregate.jq" in str(s.get("run", "")) for s in ok["steps"])
     assert any("just hw-check" in str(s.get("run", "")) for s in jobs["hw-calc"]["steps"])
     cad_runs = [str(s.get("run", "")) for s in jobs["hw-cad"]["steps"]]
-    assert "just cad" in cad_runs
+    assert "just cad-detailed" in cad_runs
     assert "just cad-test" in cad_runs
     assert jobs["changes"]["outputs"]["run"]
 

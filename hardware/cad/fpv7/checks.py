@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 import cadquery as cq
 import yaml
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 if TYPE_CHECKING:
     from assembly import Drone, Part
@@ -106,6 +108,48 @@ def fov_hits(drone: Drone) -> list[dict[str, Any]]:
     return hits
 
 
+def frontal_area_mm2(parts: list[Part]) -> float:
+    """Area of the parts' silhouette seen from the front (projected on the y-z plane)."""
+    tris = []
+    for pt in parts:
+        vertices, triangles = pt.solid.tessellate(0.5, 0.3)
+        for tri in triangles:
+            poly = Polygon([(vertices[i].y, vertices[i].z) for i in tri])
+            if poly.area > 1e-6:
+                tris.append(poly)
+    return unary_union(tris).area if tris else 0.0
+
+
+def aero(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
+    """Frontal area and a rough drag estimate (Cd A, drag at ``aero.speed``) with and
+    without the printed covers, in level flight. Propeller discs are left out.
+
+    Without covers every part counts as a bluff body (``cd_bluff``). With them, the area
+    the covers hide behind their rounded noses counts at ``cd_faired`` and the rest stays
+    bluff. Both drag coefficients are rough textbook values (osäkert) and are meant to be
+    calibrated against flight logs.
+    """
+    a = p["aero"]
+    body = [pt for pt in drone.parts if pt.group != "prop"]
+    bare = [pt for pt in body if pt.group != "cover"]
+    covers = [pt for pt in body if pt.group == "cover"]
+    area_before = frontal_area_mm2(bare) * 1e-6
+    area_after = frontal_area_mm2(body) * 1e-6
+    faired = min(frontal_area_mm2(covers) * 1e-6, area_after)
+    cda_before = a["cd_bluff"] * area_before
+    cda_after = a["cd_faired"] * faired + a["cd_bluff"] * (area_after - faired)
+    q = 0.5 * a["air_density"] * a["speed"] ** 2
+    return {
+        "speed_m_s": a["speed"],
+        "frontal_area_before_m2": round(area_before, 6),
+        "frontal_area_after_m2": round(area_after, 6),
+        "cda_before_m2": round(cda_before, 6),
+        "cda_after_m2": round(cda_after, 6),
+        "drag_before_n": round(q * cda_before, 3),
+        "drag_after_n": round(q * cda_after, 3),
+    }
+
+
 def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
     mp = mass_properties(drone)
     ref = p["reference"]
@@ -122,6 +166,9 @@ def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
         "max_takeoff_mass_g": max_mass_g,
         "cog_mm": [round(v, 2) for v in mp["cog_mm"]],
         "cog_offset_max_mm": cog_max,
+        "cover_mass_g": round(sum(pt.mass_g for pt in drone.parts if pt.group == "cover"), 1),
+        "cover_mass_max_g": p["checks"]["cover_mass_max"],
+        "aero": aero(drone, p),
         "inertia_kg_m2": [[round(v, 6) for v in row] for row in mp["inertia_kg_m2"]],
         "inertia_diag_kg_m2": [round(v, 6) for v in diag],
         "reference_inertia_kg_m2": [v / 1000 for v in ref["inertia_g_m2"]],
@@ -158,6 +205,7 @@ def verdicts(r: dict[str, Any]) -> dict[str, bool]:
         "camera_view": not r["fov_hits"],
         "cog": cog_ok(r),
         "mass": r["mass_g"] <= r["max_takeoff_mass_g"],
+        "cover_mass": r["cover_mass_g"] <= r["cover_mass_max_g"],
     }
 
 
@@ -179,10 +227,22 @@ def markdown(r: dict[str, Any]) -> str:
     ):
         lines.append(f"| I{axis}{axis} (kg m^2) | {model:.5f} | {ref:.5f} | {model / ref:.2f} |")
     cx, cy, cz = r["cog_mm"]
+    ae = r["aero"]
     lines += [
         "",
         f"Centre of gravity: x = {cx:.1f} mm, y = {cy:.1f} mm, z = {cz:.1f} mm "
         "(x forward, y left, z up; z = 0 under the bottom plate).",
+        "",
+        f"Drag in level flight at {ae['speed_m_s']} m/s, without and with the printed covers "
+        "(osäkert: rough drag coefficients, to be calibrated against flight logs; "
+        "propeller discs left out):",
+        "",
+        "| Quantity | Without covers | With covers |",
+        "|---|---|---|",
+        f"| Frontal area (cm^2) | {ae['frontal_area_before_m2'] * 1e4:.0f} "
+        f"| {ae['frontal_area_after_m2'] * 1e4:.0f} |",
+        f"| Cd A (cm^2) | {ae['cda_before_m2'] * 1e4:.0f} | {ae['cda_after_m2'] * 1e4:.0f} |",
+        f"| Drag (N) | {ae['drag_before_n']:.2f} | {ae['drag_after_n']:.2f} |",
         "",
         "| Check | Result |",
         "|---|---|",
@@ -194,6 +254,8 @@ def markdown(r: dict[str, Any]) -> str:
         f"| {yes(v['cog'])} |",
         f"| Take-off mass <= {r['max_takeoff_mass_g']:.0f} g (hardware/limits.yaml) "
         f"| {yes(v['mass'])} |",
+        f"| Printed covers <= {r['cover_mass_max_g']} g | {yes(v['cover_mass'])} "
+        f"({r['cover_mass_g']:.1f} g) |",
         "",
         "| Propeller | Nearest part | Distance (mm) |",
         "|---|---|---|",

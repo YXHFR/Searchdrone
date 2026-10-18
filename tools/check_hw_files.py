@@ -35,6 +35,7 @@ CHECKED: dict[str, str] = {
     "hardware/limits.yaml": "hw-calc",
     "hardware/cad/fpv7/*.py": "hw-cad",
     "hardware/cad/fpv7/params.yaml": "hw-cad",
+    "hardware/cad/fpv7/vendor.yaml": "hw-cad",
     "hardware/cad/fpv7/README.md": "hw-cad",
     "hardware/cad/fpv7/tests/*.py": "hw-cad",
     # Added in the same PR as their check, e.g.

@@ -36,6 +36,7 @@ def test_limits_yaml_changed_passes(hw_repo: GitRepo, capsys: pytest.CaptureFixt
     [
         "hardware/cad/fpv7/parts.py",
         "hardware/cad/fpv7/params.yaml",
+        "hardware/cad/fpv7/vendor.yaml",
         "hardware/cad/fpv7/README.md",
         "hardware/cad/fpv7/tests/test_fpv7.py",
     ],

@@ -55,6 +55,40 @@ camera:                       # Raspberry Pi Camera Module 3, standard lens
 camera_mount: {length: 30, width: 30, height: 6, mass: 4}
 
 legs: {length: 20, width: 10, radius: 110, ground_clearance: 10, mass: 6}
+
+canopy:                       # printed top canopy over the companion computer
+  material: PETG
+  wall: 1.2
+  length: 144
+  width: 66
+  height: 44
+  nose_radius: 28
+  edge_radius: 12
+  x: 0                        # centre in x
+  rim_clearance: 6            # rim above the top of the propeller discs
+  intake: [30, 10]            # nose slot, width (y) and height (z)
+  vent: [46, 34]              # roof opening over the cooler and AI HAT, length (x), width (y)
+  exhaust: [30, 10]           # tail slot, width and height
+  mast_clearance: 1           # around the GPS mast
+nose_fairing:                 # printed nose under the frame, ahead of the battery
+  material: PETG
+  wall: 1.2
+  length: 62                  # from the tip back to the open rear end
+  width: 76
+  height: 47
+  nose_radius: 25
+  edge_radius: 10
+  rear_trim: 20               # extra length cut off so the rear end is open
+  x_tip: 117
+  window_extra_deg: 4         # camera window wider than the field of view on every side
+
+materials: {PETG: 1.27, ASA: 1.07}   # density, g/cm^3
+
+aero:                         # rough drag estimate, to be calibrated against flight logs
+  speed: 10                   # m/s
+  air_density: 1.225          # kg/m^3
+  cd_bluff: 1.05              # bluff, box-like parts
+  cd_faired: 0.5              # area behind a rounded printed nose
 misc: {mass: 80}              # wiring, XT60, screws, battery strap
 
 layout:                       # design defaults: where the parts sit (x, or [x, y])
@@ -74,5 +108,6 @@ reference:
 checks:
   prop_margin_min: 5
   cog_offset_max: 5
+  cover_mass_max: 80          # canopy and nose fairing together, g
   fov_length: 500
   stl_tolerance: 0.05

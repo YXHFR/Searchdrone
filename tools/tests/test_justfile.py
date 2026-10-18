@@ -53,6 +53,7 @@ RECIPES = [
     "hw-check",
     "cad",
     "cad-test",
+    "cad-detailed",
     "check-traceability",
     "brain-token",
 ]

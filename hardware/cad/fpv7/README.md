@@ -8,8 +8,9 @@ fits, what the drone weighs and where its centre of gravity is, and it is the st
 point for the simulator model and for 3D-printed mounts.
 
 ```bash
-just cad        # STEP, STL, report and picture in build/cad/fpv7/ (not committed)
-just cad-test   # overlaps, propeller margins, camera view, repeatable exports
+just cad            # STEP, STL, report and picture in build/cad/fpv7/ (not committed)
+just cad-detailed   # the same, plus fpv7_detailed.step with the manufacturers' 3D models
+just cad-test       # overlaps, propeller margins, camera view, repeatable exports
 ```
 
 | File | What it does |
@@ -19,11 +20,19 @@ just cad-test   # overlaps, propeller margins, camera view, repeatable exports
 | `assembly.py` | Puts the parts in place and writes the exports (`just cad`) |
 | `checks.py` | Mass, centre of gravity, inertia, overlaps, propeller margins, camera view |
 | `render.py` | The picture from three angles (`fpv7_views.png`) |
+| `vendor.py`, `vendor.yaml` | Download, check and place the manufacturers' 3D models (`just cad-detailed`) |
 | `tests/` | The acceptance checks (`just cad-test`) |
 
-Output in `build/cad/fpv7/`: `fpv7.step` (one named solid per part),
-`fpv7.stl` and `stl/<part>.stl`, `report.md` / `report.json` and `fpv7_views.png`. Two
-builds give byte-identical STEP, STL and report files.
+Output in `build/cad/fpv7/`:
+- `fpv7.step`: the whole assembly with one named solid per part, to open in FreeCAD or
+  Onshape;
+- `step/<part>.step`: every part on its own, in place in the drone's coordinates;
+- `fpv7.stl` and `stl/<part>.stl`: the printed parts (`canopy.stl`, `nose_fairing.stl`,
+  `pi_tray.stl`, `camera_mount.stl`, `leg_*.stl`, `gps_mast.stl`) go to the slicer;
+- `report.md` / `report.json` and `fpv7_views.png`;
+- `fpv7_detailed.step` (only with `just cad-detailed`).
+
+Two builds give byte-identical STEP, STL and report files.
 
 ## Axes and layout
 
@@ -42,8 +51,50 @@ bottom plate. Motors 1-4 sit at 45, 135, 225 and 315 degrees.
 - **Legs:** four printed legs under the arms that keep the battery 10 mm off the ground.
 - **Propellers:** HQ 7x4x3 as discs of 177.8 mm, 10 mm high, standing on the motor bells.
 
+- **Covers:** a printed top canopy over the companion computer and a printed nose under
+  the frame ahead of the battery (see below).
+
 Not modelled yet: receiver antennas, cables (their mass is a point mass, `misc.mass`),
 screws, a 4G modem and a stand-alone Remote ID beacon.
+
+## Printed covers
+
+Both covers print in PETG or ASA (`material`) with a `wall` of 1.2 mm; their mass is
+their volume times the material's density. Together they must stay under
+`checks.cover_mass_max` (80 g).
+
+- **Top canopy** (`canopy.stl`): a shell with a rounded nose over the Raspberry Pi, the
+  Active Cooler and the AI HAT, clipped to the Pi tray. Its rim stands
+  `canopy.rim_clearance` above the propeller discs. Openings: an intake slot in the nose,
+  a roof vent over the cooler fan and the AI HAT heatsink, an exhaust slot in the tail and
+  a hole for the GPS mast.
+- **Nose fairing** (`nose_fairing.stl`): a rounded nose hanging under the bottom plate in
+  front of the battery, around the camera. The camera looks through a window cut from
+  the field of view plus `nose_fairing.window_extra_deg` on every side. The fairing ends
+  ahead of the battery strap and the battery's XT60 lead, which stay free.
+
+The report gives the frontal area and a rough drag estimate (Cd A and drag at
+`aero.speed`) with and without the covers. Without covers every part counts as a bluff
+body (`aero.cd_bluff`); with them the area hidden behind the covers counts at
+`aero.cd_faired`. Both coefficients are **(osäkert)** and are to be calibrated against
+flight logs. Propeller discs are left out.
+
+## Manufacturer 3D models
+
+`just cad-detailed` downloads the models below from the manufacturer, checks each archive's
+SHA-256 (`vendor.yaml`) and writes `fpv7_detailed.step`, where they replace the
+simplified envelopes. The test suite then checks that each model sits within 2 mm of its
+envelope, so the checks on the simple model hold for the real parts. The files are never
+committed: the Raspberry Pi 5 model alone is 78 MB, and the detailed STEP about 280 MB.
+CI builds the detailed STEP but does not publish it.
+
+| Part | Model | Licence | In the repository | Checked |
+|---|---|---|---|---|
+| Raspberry Pi 5 | [RaspberryPi5-step.zip](https://datasheets.raspberrypi.com/rpi5/RaspberryPi5-step.zip) | MIT, Copyright (c) 2026 Raspberry Pi Ltd (`LICENSE.txt` in the zip) | No (size); downloaded | 2026-10-18 |
+| Camera Module 3 | [camera-module-3-step.zip](https://datasheets.raspberrypi.com/camera/camera-module-3-step.zip) | No licence in the file; Raspberry Pi's [design file terms](https://www.raspberrypi.com/licensing/) do not name 3D models | No; downloaded for local use only | 2026-10-18 |
+| Holybro Micro M10 | [Holybro downloads](https://docs.holybro.com/gps-and-rtk-system/m8n-m9n-m10-gps/micro-m10-m9n-gps/download) (`micro-gps_asm.stp`) | No licence; Holybro's terms of service forbid copying | No; drawn from the datasheet, download it yourself | 2026-10-18 |
+| Active Cooler, AI HAT+ 2 | none published (mechanical drawings only) | - | Drawn from the drawings | 2026-10-18 |
+| GEPRC Mark4 7", EMAX ECO II 2807, MicoAir743 V2, 55 A ESC, Matek BEC12S-PRO, RadioMaster RP4TD | none published | - | Drawn from published sizes; frame sizes marked (osäkert) are to be measured | 2026-10-18 |
 
 ## Checks
 
@@ -59,7 +110,11 @@ screws, a 4G modem and a stand-alone Remote ID beacon.
    and the take-off mass is within `max_takeoff_mass_kg` in `hardware/limits.yaml`.
 5. Mass, centre of gravity and inertia are computed from the model and compared with
    the reference values in a table (`report.md`).
-6. The STEP, STL and report files are the same on every build.
+6. The printed covers weigh at most 80 g, keep 5 mm from the propellers, overlap nothing
+   and leave the camera's view clear.
+7. With covers, Cd A and drag are lower than without (rough estimate, see above).
+8. The STEP, STL and report files are the same on every build.
+9. After `just cad-detailed`, every manufacturer model fits its envelope within 2 mm.
 
 ## Sources
 
@@ -168,6 +223,33 @@ is used only where the manufacturer publishes none.
 | `legs.radius` | 110 mm | (osäkert) from the centre, under each arm | Design default | - |
 | `legs.ground_clearance` | 10 mm | (osäkert) below the battery | Design default | - |
 | `legs.mass` | 6 g | (osäkert) each | Design default | - |
+| `canopy.wall` | 1.2 mm | printed wall | Design default | - |
+| `canopy.length` | 144 mm |  | Design default | - |
+| `canopy.width` | 66 mm |  | Design default | - |
+| `canopy.height` | 44 mm |  | Design default | - |
+| `canopy.nose_radius` | 28 mm | rounded nose | Design default | - |
+| `canopy.edge_radius` | 12 mm |  | Design default | - |
+| `canopy.x` | 0 mm | centre in x | Design default | - |
+| `canopy.rim_clearance` | 6 mm | rim above the propeller discs | Design default | - |
+| `canopy.intake` | 30, 10 mm | nose slot, width and height | Design default | - |
+| `canopy.vent` | 46, 34 mm | roof opening over the cooler and AI HAT | Design default | - |
+| `canopy.exhaust` | 30, 10 mm | tail slot | Design default | - |
+| `canopy.mast_clearance` | 1 mm | around the GPS mast | Design default | - |
+| `nose_fairing.wall` | 1.2 mm | printed wall | Design default | - |
+| `nose_fairing.length` | 62 mm | tip to open rear end | Design default | - |
+| `nose_fairing.width` | 76 mm |  | Design default | - |
+| `nose_fairing.height` | 47 mm |  | Design default | - |
+| `nose_fairing.nose_radius` | 25 mm |  | Design default | - |
+| `nose_fairing.edge_radius` | 10 mm |  | Design default | - |
+| `nose_fairing.rear_trim` | 20 mm | modelling aid: rounded rear end cut off | Design default | - |
+| `nose_fairing.x_tip` | 117 mm |  | Design default | - |
+| `nose_fairing.window_extra_deg` | 4 deg | camera window margin | Design default | - |
+| `materials.PETG` | 1.27 g/cm^3 | ISO 1183 | [Prusament PETG technical data sheet](https://storage.googleapis.com/prusa3d-content-prod-14e8-wordpress-prusament-prod/2023/10/9f8d2165-tds_prusament-petg_n_en.pdf) | 2026-10-18 |
+| `materials.ASA` | 1.07 g/cm^3 | ISO 1183 | [Prusament ASA technical data sheet](https://storage.googleapis.com/prusa3d-content-prod-14e8-wordpress-prusament-prod/2024/05/bc8551ef-tds_prusament-asa_2024_en.pdf) | 2026-10-18 |
+| `aero.speed` | 10 m/s | search speed | Design default | - |
+| `aero.air_density` | 1.225 kg/m^3 | ISA sea level, 15 C | Design default | - |
+| `aero.cd_bluff` | 1.05  | (osäkert) box-like bluff body | Rough textbook value, to be calibrated against flight logs | - |
+| `aero.cd_faired` | 0.5  | (osäkert) behind a rounded nose | Rough textbook value, to be calibrated against flight logs | - |
 | `misc.mass` | 80 g | (osäkert) wiring, XT60, screws, battery strap | Estimate, no drawing published | - |
 | `layout.stack_x` | 0 mm |  | Design default | - |
 | `layout.bec` | 55, 0 mm | [x, y], between the plates | Design default | - |
@@ -181,5 +263,6 @@ is used only where the manufacturer publishes none.
 | `reference.inertia_g_m2` | 5.5, 6.5, 9.0 g m^2 | (osäkert) hand estimate with point masses, made before purchase | Estimate, no drawing published | - |
 | `checks.prop_margin_min` | 5 mm | acceptance limit | Design default | - |
 | `checks.cog_offset_max` | 5 mm | acceptance limit, x and y | Design default | - |
+| `checks.cover_mass_max` | 80 g | canopy and nose fairing together | Design default | - |
 | `checks.fov_length` | 500 mm | how far below the camera the view is checked | Design default | - |
 | `checks.stl_tolerance` | 0.05 mm | STL chord tolerance | Design default | - |

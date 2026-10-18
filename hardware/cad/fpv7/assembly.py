@@ -1,11 +1,15 @@
 """The fpv7 assembly: every part in place, with its mass, and the exports behind `just cad`.
 
-    uv run --group cad python hardware/cad/fpv7/assembly.py [OUT_DIR]
+    uv run --group cad python hardware/cad/fpv7/assembly.py [OUT_DIR] [detailed]
 
 writes to OUT_DIR (default build/cad/fpv7):
 
 - ``fpv7.step``: the assembly with one named solid per part;
-- ``fpv7.stl`` and ``stl/<part>.stl``: the whole drone and every part on its own;
+- ``step/<part>.step``: every part on its own, in place, for further work in a CAD program;
+- ``fpv7_detailed.step`` (with ``detailed``, after vendor.py has downloaded the models):
+  the assembly with the manufacturers' Raspberry Pi 5 and Camera Module 3 models;
+- ``fpv7.stl`` and ``stl/<part>.stl``: the whole drone and every part on its own (the
+  printed parts, such as ``canopy.stl`` and ``nose_fairing.stl``, go to the slicer);
 - ``report.md`` and ``report.json``: mass, centre of gravity, inertia, overlaps,
   propeller margins and the camera's field of view (checks.py);
 - ``fpv7_views.png``: the drone from three angles (render.py).
@@ -56,6 +60,7 @@ COLORS: dict[str, tuple[float, float, float]] = {
     "computer": (0.75, 0.2, 0.2),
     "camera": (0.6, 0.2, 0.7),
     "printed": (0.9, 0.9, 0.85),
+    "cover": (0.95, 0.55, 0.15),
 }
 
 
@@ -95,6 +100,11 @@ def moved(solid: cq.Shape, x: float = 0, y: float = 0, z: float = 0, rz: float =
     """Rotate about the z axis by ``rz`` degrees, then move by (x, y, z)."""
     out = solid.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), rz) if rz else solid
     return out.translate(cq.Vector(x, y, z))
+
+
+def shell_mass(solid: cq.Shape, p: dict[str, Any], materials: dict[str, float]) -> float:
+    """Mass in grams of a printed part: its volume times the density (g/cm^3) of its material."""
+    return solid.Volume() / 1000 * materials[p["material"]]
 
 
 def heights(p: dict[str, Any]) -> dict[str, float]:
@@ -285,6 +295,39 @@ def build(p: dict[str, Any]) -> Drone:
         rz=90,
     )
 
+    # Printed aerodynamic covers. The top canopy's rim stands clear above the propeller
+    # discs; the nose fairing hangs under the frame ahead of the battery, with a window
+    # cut where the camera looks through it.
+    prop_top = z["arm_top"] + m["height"] + pr["gap_above_motor"] + pr["swept_height"]
+    can = p["canopy"]
+    canopy_solid = parts.canopy(
+        can,
+        vent_x=hat_x - can["x"],
+        mast_x=lay["gps_x"] - can["x"],
+        mast_diameter=gps["mast"]["diameter"],
+    )
+    out.append(
+        Part(
+            "canopy",
+            "cover",
+            moved(canopy_solid, can["x"], 0, prop_top + can["rim_clearance"]),
+            shell_mass(canopy_solid, can, p["materials"]),
+        )
+    )
+    nf = p["nose_fairing"]
+    extra = nf["window_extra_deg"]
+    window = moved(
+        parts.fov_pyramid(
+            cam["hfov_deg"] + 2 * extra, cam["vfov_deg"] + 2 * extra, p["checks"]["fov_length"]
+        ),
+        cam_x,
+        0,
+        cam_bottom,
+        rz=90,
+    )
+    fairing = moved(parts.nose_fairing(nf), nf["x_tip"]).cut(window)
+    out.append(Part("nose_fairing", "cover", fairing, shell_mass(fairing, nf, p["materials"])))
+
     points = [
         PointMass(
             "wiring_and_screws",
@@ -295,11 +338,9 @@ def build(p: dict[str, Any]) -> Drone:
     return Drone(out, points, fov, "camera")
 
 
-def write_step(drone: Drone, path: Path) -> None:
-    assy = cq.Assembly(name="fpv7")
-    for part in drone.parts:
-        assy.add(part.solid, name=part.name)
-    assy.export(str(path), "STEP")
+def normalise_step(path: Path) -> None:
+    """Make a STEP file the same on every build: fixed header date, assembly occurrences
+    numbered from 1, each on one line."""
     text = path.read_text(encoding="utf-8")
     text = STEP_DATE_RE.sub(rf"\g<1>{STEP_DATE}\g<2>", text, count=1)
     counter = itertools.count(1)
@@ -308,8 +349,25 @@ def write_step(drone: Drone, path: Path) -> None:
         rest = re.sub(r"\s*\n\s*", "", m[1])
         return f"NEXT_ASSEMBLY_USAGE_OCCURRENCE('{next(counter)}',{rest});"
 
-    text = STEP_NAUO_RE.sub(renumber, text)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(STEP_NAUO_RE.sub(renumber, text), encoding="utf-8")
+
+
+def write_step(drone: Drone, path: Path) -> None:
+    assy = cq.Assembly(name="fpv7")
+    for part in drone.parts:
+        assy.add(part.solid, name=part.name)
+    assy.export(str(path), "STEP")
+    normalise_step(path)
+
+
+def write_part_step(part: Part, path: Path) -> None:
+    """One part on its own, in place in the drone's coordinates, named after the part."""
+    # A named root with the solid as its child: a root that holds the solid itself gets an
+    # OCCT name with a process-wide counter in it.
+    assy = cq.Assembly(name=f"fpv7_{part.name}")
+    assy.add(part.solid, name=part.name)
+    assy.export(str(path), "STEP")
+    normalise_step(path)
 
 
 def write_stl(shape: cq.Shape, path: Path, tolerance: float) -> None:
@@ -321,11 +379,13 @@ def export(drone: Drone, p: dict[str, Any], out_dir: Path) -> dict[str, Any]:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "stl").mkdir(exist_ok=True)
+    (out_dir / "step").mkdir(exist_ok=True)
     tol = p["checks"]["stl_tolerance"]
     write_step(drone, out_dir / "fpv7.step")
     write_stl(cq.Compound.makeCompound([pt.solid for pt in drone.parts]), out_dir / "fpv7.stl", tol)
     for part in drone.parts:
         write_stl(part.solid, out_dir / "stl" / f"{part.name}.stl", tol)
+        write_part_step(part, out_dir / "step" / f"{part.name}.step")
     report = checks.report(drone, p)
     (out_dir / "report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -335,11 +395,33 @@ def export(drone: Drone, p: dict[str, Any], out_dir: Path) -> dict[str, Any]:
     return report
 
 
+def write_detailed_step(drone: Drone, path: Path) -> None:
+    """The assembly with the manufacturer models from vendor.yaml in place of the
+    envelope parts they replace (vendor.py must have downloaded them)."""
+    import vendor
+
+    by_name = {pt.name: pt for pt in drone.parts}
+    replaced = {name for m in vendor.models() for name in m["replaces"]}
+    assy = cq.Assembly(name="fpv7_detailed")
+    for part in drone.parts:
+        if part.name not in replaced:
+            assy.add(part.solid, name=part.name)
+    for m in vendor.models():
+        assy.add(vendor.placed(m, by_name[m["anchor"]].solid), name=m["name"])
+    assy.export(str(path), "STEP")
+    normalise_step(path)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    out_dir = Path(args[0]) if args else DEFAULT_OUT
+    detailed = "detailed" in args
+    paths = [a for a in args if a != "detailed"]
+    out_dir = Path(paths[0]) if paths else DEFAULT_OUT
     p = load_params()
-    report = export(build(p), p, out_dir)
+    drone = build(p)
+    report = export(drone, p, out_dir)
+    if detailed:
+        write_detailed_step(drone, out_dir / "fpv7_detailed.step")
     sys.stdout.write(checks.markdown(report))
     sys.stdout.write(f"\nSkrev STEP, STL, rapport och bild till {out_dir}\n")
     return 0 if report["ok"] else 1
