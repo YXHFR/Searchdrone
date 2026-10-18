@@ -4,17 +4,15 @@
   proposes follow_path by the path's name, the pilot approves the card, every point is
   passed within 3 m and the drone then hovers at the last one.
 * SC_PATH_stop: STOP halfway along the path: BRAKE within 1 s, the speed at least halved
-  after 2 s, standing still within 5 s (as SC02), and it stays there; the brake profile is
-  written to ``stop_trace.json``.
+  after 2 s, standing still within 5 s (as SC02), and it stays there.
 
-The distance to every point is written to ``runs/<run>/result.json`` (one criterion per
-point) and ``path_points.json``.
+The distance to every point and the brake times are measured values in the test's
+``runs/<run>/result.json``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import math
 import sys
 import time
@@ -36,8 +34,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_safety.targets import Plane, distance_m
-from sd_sim.report import Report
-from sd_sim.util import new_run_dir
+from sd_sim.report import measure
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -84,169 +81,84 @@ def closest_m(sc: Scenario, since: float) -> list[float]:
     return [min(math.dist(p, q) for p in xy) for q in PATH_ENU]
 
 
-def report(sc: Scenario, name: str, instance: int) -> Report:
-    run_dir = new_run_dir(instance, name)
-    return Report(name, run_dir, instance, "builtin", "scripted")
-
-
 @pytest.mark.budget_s(540)
 async def test_sc_path_points_within_3_m_then_hover(
-    sim: Any, migrated_db: Any, tmp_path: Path, sim_instance: int
+    sim: Any, migrated_db: Any, tmp_path: Path
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
-        rep = report(sc, "SC_PATH", sim_instance)
-        report_dir = rep.run_dir
-        try:
-            await sc.airborne_with_ai("SC_PATH")
-            t0 = time.monotonic()
-            cmd = await draw_and_fly(sc)
-            await sc.wait_command("follow_path", "running", 30, issuer_kind="brain")
-            await sc.wait_command("follow_path", "done", 240, issuer_kind="brain")
-            errors = closest_m(sc, t0)
-            for i, err in enumerate(errors, start=1):
-                rep.check(
-                    f"SC_PATH.{i}",
-                    f"Punkt {i} av {len(errors)} nås inom {POINT_LIMIT_M:g} m",
-                    err <= POINT_LIMIT_M,
-                    measured=round(err, 2),
-                    limit=POINT_LIMIT_M,
-                    unit="m",
-                )
-            # It hovers at the last point: LOITER, still, at the path's height.
-            end = sc.at(*PATH_ENU[-1])
-            await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 15, "still at the end")
-            await sc.hold_for(
-                HOVER_S,
-                lambda: (
-                    sc.mode() == "LOITER"
-                    and distance_m(*end, sc.tel.lat, sc.tel.lon) <= POINT_LIMIT_M
-                    and abs(sc.tel.alt_rel_home_m - ALT_M) <= 2.0
-                ),
-                "hovers at the last point",
-            )
-            rep.check(
-                "SC_PATH.hover",
-                f"Svävar vid sista punkten i {HOVER_S:g} s (LOITER)",
-                True,
-                measured=round(distance_m(*end, sc.tel.lat, sc.tel.lon), 2),
-                limit=POINT_LIMIT_M,
-                unit="m",
-            )
-            (report_dir / "path_points.json").write_text(
-                json.dumps(
-                    {
-                        "points_enu_m": PATH_ENU,
-                        "alt_m": ALT_M,
-                        "closest_m": [round(e, 2) for e in errors],
-                        "limit_m": POINT_LIMIT_M,
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            assert max(errors) <= POINT_LIMIT_M, errors
-            # The ground's gate asked for the click, then let the approved order go.
-            gates = await sc.gate(cmd["id"])
-            assert sorted(g["decision"] for g in gates if g["side"] == "ground") == [
-                "ALLOW",
-                "PENDING_APPROVAL",
-            ], gates
-            await sc.check_invariants()
-        except Exception as exc:
-            rep.error = f"{type(exc).__name__}: {exc}"[:500]
-            raise
-        finally:
-            rep.write()
+        await sc.airborne_with_ai("SC_PATH")
+        t0 = time.monotonic()
+        cmd = await draw_and_fly(sc)
+        await sc.wait_command("follow_path", "running", 30, issuer_kind="brain")
+        await sc.wait_command("follow_path", "done", 240, issuer_kind="brain")
+        errors = closest_m(sc, t0)
+        for i, err in enumerate(errors, start=1):
+            measure(f"vägpunkt {i} av {len(errors)} nådd", err, POINT_LIMIT_M, unit="m")
+        measure("sämsta vägpunkten", max(errors), POINT_LIMIT_M, unit="m")
+        assert max(errors) <= POINT_LIMIT_M, errors
+        # It hovers at the last point: LOITER, still, at the path's height.
+        end = sc.at(*PATH_ENU[-1])
+        await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 15, "still at the end")
+        await sc.hold_for(
+            HOVER_S,
+            lambda: (
+                sc.mode() == "LOITER"
+                and distance_m(*end, sc.tel.lat, sc.tel.lon) <= POINT_LIMIT_M
+                and abs(sc.tel.alt_rel_home_m - ALT_M) <= 2.0
+            ),
+            "svävar vid vägens sista punkt",
+        )
+        # The ground's gate asked for the click, then let the approved order go.
+        gates = await sc.gate(cmd["id"])
+        assert sorted(g["decision"] for g in gates if g["side"] == "ground") == [
+            "ALLOW",
+            "PENDING_APPROVAL",
+        ], gates
+        await sc.check_invariants()
 
 
 @pytest.mark.budget_s(480)
 async def test_sc_path_stop_halfway_brakes_at_once(
-    sim: Any, migrated_db: Any, tmp_path: Path, sim_instance: int
+    sim: Any, migrated_db: Any, tmp_path: Path
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
-        rep = report(sc, "SC_PATH_stop", sim_instance)
-        try:
-            await sc.airborne_with_ai("SC_PATH")
-            await draw_and_fly(sc)
-            await sc.wait_command("follow_path", "running", 30, issuer_kind="brain")
-            # Halfway: past the second point, flying at speed.
-            plane = Plane(*sc.r.home)
-            await sc.until(
-                lambda: (
-                    math.dist(plane.xy(sc.tel.lat, sc.tel.lon), PATH_ENU[2]) < 20
-                    and sc.tel.groundspeed_ms > 3.0
-                ),
-                180,
-                "halfway along the path at speed",
-            )
-            speed = sc.tel.groundspeed_ms
-            pressed = time.monotonic()
-            res = await sc.press("stop")
-            assert res.status_code == 202, res.text
-            await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 10, "still after STOP")
-            await asyncio.sleep(1.0)
-            # The test rig's own channel to the flight controller: mode and speed per sample.
-            after = [x for x in sc.track if x.t >= pressed]
-            trace = [
-                {
-                    "t_s": round(x.t - pressed, 2),
-                    "mode": x.mode,
-                    "groundspeed_ms": round(x.groundspeed_ms, 2),
-                }
-                for x in sc.track
-                if x.t >= pressed - 1.0
-            ]
-            (rep.run_dir / "stop_trace.json").write_text(
-                json.dumps(trace, indent=1) + "\n", encoding="utf-8"
-            )
-            brake_s = next(x.t for x in after if x.mode == "BRAKE") - pressed
-            at_2_s = next(x.groundspeed_ms for x in after if x.t - pressed >= 2.0)
-            still_s = next(x.t for x in after if x.groundspeed_ms < 0.5) - pressed
-            rep.check(
-                "SC_PATH_stop.1",
-                f"STOPP mitt på vägen: BRAKE inom {BRAKE_LIMIT_S:g} s",
-                brake_s <= BRAKE_LIMIT_S,
-                measured=round(brake_s, 2),
-                limit=BRAKE_LIMIT_S,
-                unit="s",
-                clock="host",
-                note=f"fart vid STOPP {speed:.1f} m/s",
-            )
-            rep.check(
-                "SC_PATH_stop.2",
-                "Farten är minst halverad 2 s efter STOPP",
-                at_2_s <= speed / 2,
-                measured=round(at_2_s, 2),
-                limit=round(speed / 2, 2),
-                unit="m/s",
-            )
-            rep.check(
-                "SC_PATH_stop.3",
-                f"Stillastående (under 0,5 m/s) inom {STILL_LIMIT_S:g} s, som SC02",
-                still_s <= STILL_LIMIT_S,
-                measured=round(still_s, 2),
-                limit=STILL_LIMIT_S,
-                unit="s",
-                clock="host",
-                note="målet 2 s styrs av flygkontrollerns BRAKE-trimning (se PR)",
-            )
-            assert sc.mode() == "BRAKE", sc.modes()
-            assert brake_s <= BRAKE_LIMIT_S and at_2_s <= speed / 2, (brake_s, at_2_s, speed)
-            assert still_s <= STILL_LIMIT_S, still_s
-            here = (sc.tel.lat, sc.tel.lon)
-            await sc.hold_for(
-                10.0,
-                lambda: distance_m(*here, sc.tel.lat, sc.tel.lon) <= 3.0,
-                "stands where it stopped",
-            )
-            rep.check("SC_PATH_stop.4", "Står kvar där den stoppades i 10 s", True)
-            res = await sc.press("return_home")
-            assert res.status_code == 202
-            await sc.until(lambda: not sc.tel.armed, 240, "landed at home")
-            await sc.check_invariants()
-        except Exception as exc:
-            rep.error = f"{type(exc).__name__}: {exc}"[:500]
-            raise
-        finally:
-            rep.write()
+        await sc.airborne_with_ai("SC_PATH")
+        await draw_and_fly(sc)
+        await sc.wait_command("follow_path", "running", 30, issuer_kind="brain")
+        # Halfway: near the third point, flying at speed.
+        plane = Plane(*sc.r.home)
+        await sc.until(
+            lambda: (
+                math.dist(plane.xy(sc.tel.lat, sc.tel.lon), PATH_ENU[2]) < 20
+                and sc.tel.groundspeed_ms > 3.0
+            ),
+            180,
+            "halfway along the path at speed",
+        )
+        speed = sc.tel.groundspeed_ms
+        pressed = time.monotonic()
+        res = await sc.press("stop")
+        assert res.status_code == 202, res.text
+        await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 10, "still after STOP")
+        await asyncio.sleep(1.0)
+        # The test rig's own channel to the flight controller: mode and speed per sample.
+        after = [x for x in sc.track if x.t >= pressed]
+        brake_s = next(x.t for x in after if x.mode == "BRAKE") - pressed
+        at_2_s = next(x.groundspeed_ms for x in after if x.t - pressed >= 2.0)
+        still_s = next(x.t for x in after if x.groundspeed_ms < 0.5) - pressed
+        measure("STOPP på vägen: BRAKE", brake_s, BRAKE_LIMIT_S)
+        measure("STOPP på vägen: fart efter 2 s", at_2_s, speed / 2, unit="m/s")
+        measure("STOPP på vägen: stillastående", still_s, STILL_LIMIT_S)
+        assert sc.mode() == "BRAKE", sc.modes()
+        assert brake_s <= BRAKE_LIMIT_S and at_2_s <= speed / 2, (brake_s, at_2_s, speed)
+        assert still_s <= STILL_LIMIT_S, still_s
+        here = (sc.tel.lat, sc.tel.lon)
+        await sc.hold_for(
+            10.0,
+            lambda: distance_m(*here, sc.tel.lat, sc.tel.lon) <= 3.0,
+            "står kvar där vägen stoppades",
+        )
+        res = await sc.press("return_home")
+        assert res.status_code == 202
+        await sc.until(lambda: not sc.tel.armed, 240, "landed at home")
+        await sc.check_invariants()
