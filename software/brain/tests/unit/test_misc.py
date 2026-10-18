@@ -102,9 +102,14 @@ def test_build_scripted_needs_file() -> None:
         )
 
 
-def test_cli_config_check_and_eval(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_config_check_and_eval(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     assert main(["config-check", "--config", str(ROOT / "config/brain.example.toml")]) == 0
     assert main(["config-check", "--config", "/nonexistent.toml"]) == 1
+    capsys.readouterr()
+    old = tmp_path / "brain.toml"
+    old.write_text('profile = "field"\n[cloud.provider]\nzdr = false\n')
+    assert main(["config-check", "--config", str(old)]) == 0
+    assert "zdr = false" in capsys.readouterr().err
     scen = ROOT / "software/brain/src/sd_brain/evals/scenarios"
     gold = ROOT / "software/brain/tests/golden"
     assert (

@@ -209,6 +209,10 @@ class FcTelemetry:
     groundspeed_ms: float = 0.0
     climb_ms: float = 0.0
     heading_deg: float = 0.0
+    attitude_mono_ms: int | None = None  # last ATTITUDE; None until the first one
+    roll_deg: float = 0.0
+    pitch_deg: float = 0.0
+    yaw_deg: float = 0.0
     battery_pct: float | None = None
     battery_charge_state: int | None = None
     battery_voltage_v: float | None = None
@@ -850,6 +854,15 @@ class Vehicle:
                     heading_deg=t.heading_deg if hdg == 65535 else hdg / 100.0,
                 )
                 notify = True
+            case "ATTITUDE":
+                # Display only, so no notify. A non-finite sample is dropped and the
+                # previous one ages out instead of being shown as a made-up horizon.
+                rpy = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+                if all(map(math.isfinite, rpy)):
+                    roll, pitch, yaw = map(math.degrees, rpy)
+                    t = replace(
+                        t, attitude_mono_ms=now, roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw
+                    )
             case "VFR_HUD":
                 t = replace(t, groundspeed_ms=float(msg.groundspeed), climb_ms=float(msg.climb))
             case "BATTERY_STATUS":

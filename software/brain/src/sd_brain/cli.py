@@ -72,6 +72,8 @@ def _ram_total_gb() -> float | None:
 def cmd_config_check(args: argparse.Namespace) -> int:
     cfg = _config(args)
     _out(f"Konfigurationen är giltig (backend {cfg.backend.kind}, profil {cfg.profile}).")
+    if warning := cfg.zdr_warning():
+        _err(warning)
     return 0
 
 
@@ -84,6 +86,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     secrets = load_secrets(cfg.token_file, os.environ)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     install_log_masking(secrets)
+    if warning := cfg.zdr_warning():
+        log.warning(warning)
     try:
         asyncio.run(run(cfg, secrets))
     except ScriptError as exc:

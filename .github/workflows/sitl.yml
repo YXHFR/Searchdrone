@@ -371,10 +371,11 @@ jobs:
       - *logs
 
   sitl-nightly-gz:
-    # Gazebo as a server with headless rendering (no window, no GPU). Not required.
+    # Gazebo as a server with headless rendering (no window, no GPU). Not required. The
+    # smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 150  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + margin
+    timeout-minutes: 170  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + 20 parity + margin
     steps:
       - *checkout
       - *check-ref
@@ -414,6 +415,17 @@ jobs:
           for f in runs/*-snapshot-i0/snapshots/summary.md; do
             if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
           done
+      - name: Our own vehicle in Gazebo (sd_quad14 takes off, hovers and lands like in SITL)
+        # Runs even when the smoke flight's checks fail: the two flights test different
+        # vehicles, and a red smoke flight must not hide this one.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        env:
+          SD_SIM__HEADLESS: "1"
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just test-sitl sc=test_model_parity_gz physics=gz
       - *summary
       - *scan
       - *results
