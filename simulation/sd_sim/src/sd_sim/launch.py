@@ -24,7 +24,7 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, paths, ports, procs, services, world
+from sd_sim import _args, config, gazebo, objects, paths, ports, procs, services, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -43,6 +43,7 @@ ALLOWED_KEYS = (
     "lan",
     "private_db",
     "dry",
+    "objects",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
@@ -130,6 +131,7 @@ class Stack:
         self.group = procs.ProcessGroup(self.inst_dir / "pids.json", run_dir / "logs")
         self.linksim_token = ""
         self.world: gazebo.World | None = None
+        self.placed: list[objects.WorldObject] = []
         self.login_url = ""
         self._ground_env: dict[str, str] = {}
         # How each service was started (argv, environment), for a test's restart.
@@ -201,9 +203,41 @@ class Stack:
         write_secret(self.secrets_dir, "linksim_token", self.linksim_token)
         check_secret_modes(self.secrets_dir)
 
+    def renders_world(self) -> bool:
+        """Only the Searchdrone world is rendered here, and only with Gazebo physics."""
+        return (
+            self.cfg.physics == "gz"
+            and self.cfg.vehicle == "sd_quad14"
+            and self.cfg.world == world.WORLD_NAME
+        )
+
+    def world_objects(self) -> list[objects.WorldObject]:
+        """Load and check ``objects=`` before anything starts; refuse it where it cannot apply."""
+        if not self.cfg.objects:
+            return []
+        if not self.renders_world():
+            raise InfraError(
+                f"objects= kräver physics=gz, vehicle=sd_quad14 och världen {world.WORLD_NAME}."
+            )
+        path = (self.repo / self.cfg.objects).resolve()
+        if not path.is_relative_to(self.repo.resolve()):
+            raise InfraError(f"objects={self.cfg.objects}: filen ska ligga i repot")
+        try:
+            placed: list[objects.WorldObject] = list(objects.load(path))
+            # The same checks the renderer makes, so a bad file stops here, not in Gazebo.
+            objects.check(placed, world.GROUND_SIZE_M / 2)
+            for obj in placed:
+                world.checked_fragment(obj)
+        except objects.ObjectError as exc:
+            raise InfraError(f"objects={self.cfg.objects}: {exc}") from exc
+        return placed
+
     def start_gazebo(self) -> None:
-        if self.cfg.vehicle == "sd_quad14" and self.cfg.world == world.WORLD_NAME:
-            world.render_world(self.cfg.world, self.cfg.instance, self.repo)
+        if self.renders_world():
+            placed = self.placed
+            world.render_world(self.cfg.world, self.cfg.instance, self.repo, placed)
+            if placed:
+                say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")
         self.world = gazebo.resolve_world(self.cfg, self.repo)
         if self.world.note:
             say(self.world.note)
@@ -658,6 +692,9 @@ class Stack:
 
     def up(self) -> None:
         os.umask(0o077)
+        self.placed = self.world_objects()
+        if not self.renders_world():
+            world.clear_truth(self.cfg.instance, self.repo)  # no world, so no facit
         self.check_ports_free()
         self.make_secrets()
         self.inst_dir.mkdir(parents=True, exist_ok=True)
