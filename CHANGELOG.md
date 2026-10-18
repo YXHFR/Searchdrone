@@ -39,10 +39,11 @@ All notable changes to this project are listed here. The format follows
   boxes (YOLO and COCO) computed from the simulator's facit and the camera's pose, plus a
   metadata file per picture. Each round passes a quality check; three failed rounds in a
   row stop the farm, `max_minutes=N` caps its run time, and it pauses while the GPU or
-  CPU is busy (optionally only when the computer is idle). Passed rounds stay in `build/simfarm/` or, with a key in
-  `config/simfarm.toml`, are uploaded once to Cloudflare R2 in the EU. Person models
-  (CC0, CC BY 4.0) are fetched pinned from Gazebo Fuel and credited. The Gazebo round
-  itself comes later; until then `just sim-farm` exits 2.
+  CPU is busy (optionally only when the computer is idle). Passed rounds stay in
+  `build/simfarm/` or, with a key in `config/simfarm.toml`, are uploaded once to
+  Cloudflare R2 in the EU. Person models (CC0, CC BY 4.0) are fetched pinned from Gazebo
+  Fuel and credited. The Gazebo round itself comes later; until then `just sim-farm`
+  exits 2.
 - A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
   Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
   OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain

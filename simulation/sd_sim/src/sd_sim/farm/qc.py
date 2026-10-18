@@ -7,7 +7,8 @@ The checks:
   ``MAX_BLACK_SHARE`` of them black or one flat colour;
 * **facit**: every person box the simulator's bounding-box camera reports lies inside a
   projected box (``labels.CONTAINED``), the median IoU of the open (unhidden) people is
-  at least ``MIN_MEDIAN_IOU``, and the round has at least ``MIN_LABELS`` labels.
+  at least ``MIN_MEDIAN_IOU``, at most ``MAX_STRAY_SHARE`` of the camera's person boxes
+  match no projected person, and the round has at least ``MIN_LABELS`` labels.
 """
 
 from __future__ import annotations

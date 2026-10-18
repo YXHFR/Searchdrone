@@ -182,6 +182,8 @@ def files_of(round_dir: Path) -> Iterator[Path]:
         )
         if linked or not path.is_file() or rel.parts[0] in SKIP_DIRS or rel.name == MANIFEST:
             continue
+        if path.stat().st_nlink > 1:  # a hard link could point at anything on the disk
+            continue
         if any(part.startswith(".") for part in rel.parts):
             continue
         yield path

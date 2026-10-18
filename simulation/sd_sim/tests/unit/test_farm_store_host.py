@@ -173,6 +173,8 @@ def test_upload_skips_symlinks_and_signs_encoded_keys(tmp_path: Path) -> None:
     assert all(not p.is_symlink() for p in store.files_of(d))
     assert "leak.png" not in {p.name for p in store.files_of(d)}
     assert not any("linked" in p.parts for p in store.files_of(d))
+    os.link(secret, d / "images" / "hard.png")
+    assert "hard.png" not in {p.name for p in store.files_of(d)}
     # A key that needs escaping is signed as sent, not escaped twice.
     url = "https://h.example/b/a%20b.png"
     h = store.sigv4_headers("PUT", url, {}, store.EMPTY_SHA256, "A", "S", NOW)

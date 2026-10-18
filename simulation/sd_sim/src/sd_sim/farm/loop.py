@@ -5,7 +5,8 @@ Settings (``key=value``, over ``config/simfarm.toml``): ``commander=script|sd-br
 running round is stopped and removed, and the farm exits 0), ``seed=N`` (the first
 round's seed; then N+1, ...),
 ``idle_only=true``, ``update=off`` (run rounds from this checkout instead of the newest
-main; for trying out a change) and the other ``[farm]`` keys.
+main; for trying out a change, and refused with an R2 key, which the round would then
+see) and the other ``[farm]`` keys.
 
 Every round:
 
@@ -73,6 +74,11 @@ ROUND_TIMEOUT_S = 3 * 3600
 STOP_GRACE_S = 30
 # Local, gitignored files the round needs from the owner's checkout (keys, local site).
 LINKED = (".env", "secrets")
+# The uv settings a round's ``uv run`` may use; never uv's index or publish credentials.
+UV_ENV_KEYS = (
+    "UV_CACHE_DIR", "UV_PYTHON", "UV_PYTHON_INSTALL_DIR", "UV_OFFLINE", "UV_NO_SYNC",
+    "UV_NATIVE_TLS", "UV_SYSTEM_CERTS", "UV_LINK_MODE", "UV_CONCURRENT_DOWNLOADS",
+)  # fmt: skip
 # What the round process may see of the farm's environment (as ``procs.clean_env``): uv,
 # the network proxy and certificates, and the display for a Gazebo window. Keys are read
 # from the linked ``.env`` by whoever needs them, never passed on here.
@@ -80,8 +86,8 @@ ROUND_ENV_KEYS = (
     *procs.GRAPHICS_ENV_KEYS,
     "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
     "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+    *UV_ENV_KEYS,
 )  # fmt: skip
-ROUND_ENV_PREFIXES = ("UV_",)
 # Git variables that would point the worktree's commands at another repository.
 GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
 
@@ -457,8 +463,7 @@ class Farm:
 
 def round_env(where: Path) -> dict[str, str]:
     """The round's environment: an allowlist, never the farm's whole environment."""
-    passthrough = (*ROUND_ENV_KEYS, *(k for k in os.environ if k.startswith(ROUND_ENV_PREFIXES)))
-    return procs.clean_env({"GZ_SIM_RESOURCE_PATH": _resource_path(where)}, passthrough)
+    return procs.clean_env({"GZ_SIM_RESOURCE_PATH": _resource_path(where)}, ROUND_ENV_KEYS)
 
 
 def _resource_path(where: Path) -> str:
@@ -491,6 +496,10 @@ def main(argv: Sequence[str], repo: Path = paths.REPO) -> int:
         cfg = farm_config.load({k: v for k, v in values.items() if k in CONFIG_KEYS}, repo)
     except farm_config.FarmConfigError as exc:
         _args.fail(f"sd_sim.farm: {exc}")
+    update = values.get("update", "on").lower() not in ("off", "0", "false", "no")
+    if not update and cfg.r2 is not None:
+        # Rounds would run in this checkout, where config/simfarm.toml holds the R2 key.
+        _args.fail("sd_sim.farm: update=off går inte med en R2-nyckel i config/simfarm.toml")
     missing = people.missing(repo)
     if missing:
         say(f"personmodellerna saknas ({', '.join(missing)}); hämtar dem en gång")
@@ -510,7 +519,7 @@ def main(argv: Sequence[str], repo: Path = paths.REPO) -> int:
         rounds_wanted=_int(values, "rounds", 0),
         max_minutes=_float(values, "max_minutes", 0.0),
         seed=_int(values, "seed", random.SystemRandom().randrange(1, 1_000_000_000)),
-        update=values.get("update", "on").lower() not in ("off", "0", "false", "no"),
+        update=update,
     )
     return farm.run()
 

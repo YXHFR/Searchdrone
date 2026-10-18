@@ -148,10 +148,17 @@ def test_ppm_and_black_pictures(tmp_path: Path) -> None:
 class FakeRunner:
     """Stills the way gz_stills writes them, over people in a flat world."""
 
-    def __init__(self, people: list[Person], heights: list[float], black: int = 0) -> None:
+    def __init__(
+        self,
+        people: list[Person],
+        heights: list[float],
+        black: int = 0,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         self.people = people
         self.heights = heights
         self.black = black
+        self.extra = {"run_dir": "runs/x"} if extra is None else extra
 
     def run(self, spec: farm_round.RoundSpec, work: Path) -> farm_round.RawRound:
         stills = work / "stills"
@@ -187,7 +194,7 @@ class FakeRunner:
             truth,
             {"world": "sd_lake_forest", "weather": "clear", "height_m": 40.0},
             CAM,
-            extra={"run_dir": "runs/x"},
+            extra=self.extra,
         )
 
 
@@ -266,6 +273,45 @@ def test_gazebo_round_is_not_built_yet(tmp_path: Path) -> None:
     result = farm_round.read_result(tmp_path)
     assert result is not None and result["status"] == "not_built"
     assert "inte byggt än" in result["error"]
+    assert "truth" not in result  # no truth.json was written
+
+
+PEOPLE_OK = [Person("person_0", "sd_person_walking", "standing", 3, 3, 0)]
+HEIGHTS_OK = [30.0, 35, 40, 40, 45, 50]
+
+
+def test_grader_sees_the_whole_round(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, Any] | None] = []
+
+    def grade(out: Path) -> dict[str, Any]:
+        seen.append(farm_round.read_result(out))
+        return {"is_exam": False}
+
+    monkeypatch.setattr(farm_round, "grade", grade)
+    assert farm_round.execute(spec(tmp_path), FakeRunner(PEOPLE_OK, HEIGHTS_OK)) == 0
+    (before,) = seen
+    assert before is not None and before["status"] == "ok" and before["truth"] == "truth.json"
+    result = farm_round.read_result(tmp_path)
+    assert result is not None and result["grade"] == {"is_exam": False}
+
+
+def test_runner_extra_never_replaces_the_contract(tmp_path: Path) -> None:
+    extra = {"status": "ok", "schema": "x", "round_id": "y", "runs": ["r1"]}
+    runner = FakeRunner(PEOPLE_OK, [0.3] * 6, extra=extra)
+    assert farm_round.execute(spec(tmp_path), runner) == farm_round.EXIT_QC
+    result = farm_round.read_result(tmp_path)
+    assert result is not None and result["status"] == "failed" and result["runs"] == ["r1"]
+    assert result["round_id"] != "y"
+
+
+def test_an_unexpected_error_is_exit_3(tmp_path: Path) -> None:
+    class Broken(FakeRunner):
+        def run(self, spec: farm_round.RoundSpec, work: Path) -> farm_round.RawRound:
+            raise TypeError("oväntat")
+
+    assert farm_round.execute(spec(tmp_path), Broken([], [])) == farm_round.EXIT_ERROR
+    (tmp_path / "bad.json").write_text("{")
+    assert farm_round.execute(tmp_path / "bad.json", Broken([], [])) == farm_round.EXIT_ERROR
 
 
 def test_spec_round_trip_and_bad_commander(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ The sim farm places these models from [Gazebo Fuel](https://app.gazebosim.org) i
 worlds. They are not in this repository: `just sim-farm-setup` fetches each pinned
 version into `build/simfarm/assets/people/` and checks its SHA-256. The files next to
 this one (`<id>.toml`) record where each comes from, its licence and its measured box.
-Every picture the farm makes lists the models in it with these credits.
+Every picture the farm makes lists the models in its round with these credits.
 
 | Model | Credit | Licence | Source |
 |---|---|---|---|

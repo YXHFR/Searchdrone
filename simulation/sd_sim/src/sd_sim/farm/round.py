@@ -277,16 +277,17 @@ def targets(truth: Mapping[str, Any]) -> list[dict[str, float]]:
 def write_result(out: Path, spec: RoundSpec, result: Mapping[str, Any]) -> None:
     """``round.json``, written last and by rename: a reader that sees it sees a whole round."""
     data = {
+        **result,  # the contract's own keys below always win
         "schema": ROUND_SCHEMA,
         "round_id": spec.round_id,
         "seed": spec.seed,
         "commit": spec.commit,
         "commander_requested": spec.commander,
         "created_utc": spec.created_utc,
-        "truth": "truth.json",
         "finished_utc": dt.datetime.now(dt.UTC).isoformat(),
-        **result,
     }
+    if (out / "truth.json").is_file():
+        data["truth"] = "truth.json"
     tmp = out / ".round.json.tmp"
     tmp.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
     tmp.replace(out / "round.json")
@@ -302,7 +303,16 @@ def read_result(out: Path) -> dict[str, Any] | None:
 
 
 def execute(spec_path: Path, runner: Runner) -> int:
-    """The round process: run, finalize, grade, write ``round.json``; returns the exit code."""
+    """The round process: run, finalize, write ``round.json``, grade; returns the exit code.
+    Anything unexpected is exit 3 (error), never 1 (a failed check)."""
+    try:
+        return _execute(spec_path, runner)
+    except Exception as exc:
+        print(f"sd_sim.farm round: {type(exc).__name__}: {exc}", file=sys.stderr)  # noqa: T201
+        return EXIT_ERROR
+
+
+def _execute(spec_path: Path, runner: Runner) -> int:
     out = spec_path.parent
     spec = RoundSpec.read(spec_path)
     work = out / "work"
@@ -316,16 +326,20 @@ def execute(spec_path: Path, runner: Runner) -> int:
         write_result(out, spec, {"status": "error", "error": f"{type(exc).__name__}: {exc}"})
         return EXIT_ERROR
     result: dict[str, Any] = {
+        **raw.extra,  # the runner's own keys (``runs``, ...) never replace the ones below
         "status": "ok" if check.ok else "failed",
         "error": None if check.ok else "; ".join(check.reasons),
         "scenario": dict(raw.scenario),
         "qc": check.as_dict(),
         "images": kept,
         "credits": credits(raw.truth),
-        **raw.extra,
     }
-    # Only a round that passed is graded: a failed one says something about the simulator
-    # or the recording, not about the decision maker.
-    result["grade"] = grade(out) if check.ok else {"skipped": "qc_failed"}
-    write_result(out, spec, result)
-    return EXIT_OK if check.ok else EXIT_QC
+    if not check.ok:
+        # Only a round that passed is graded: a failed one says something about the
+        # simulator or the recording, not about the decision maker.
+        write_result(out, spec, {**result, "grade": {"skipped": "qc_failed"}})
+        return EXIT_QC
+    # The grader reads the whole round, ``round.json`` included; its grade is added after.
+    write_result(out, spec, {**result, "grade": None})
+    write_result(out, spec, {**result, "grade": grade(out)})
+    return EXIT_OK

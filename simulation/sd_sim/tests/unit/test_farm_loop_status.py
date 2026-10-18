@@ -269,10 +269,25 @@ def test_round_env_is_an_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SD_GROUND__SECRET", "x")
     monkeypatch.setenv("UV_CACHE_DIR", "/c")
     monkeypatch.setenv("HTTPS_PROXY", "http://p")
+    monkeypatch.setenv("UV_INDEX_PRIVATE_PASSWORD", "pw")
     env = loop.round_env(Path("/w"))
-    assert "SD_GROUND__SECRET" not in env
+    assert "SD_GROUND__SECRET" not in env and "UV_INDEX_PRIVATE_PASSWORD" not in env
     assert env["UV_CACHE_DIR"] == "/c" and env["HTTPS_PROXY"] == "http://p"
     assert "GZ_SIM_RESOURCE_PATH" in env and "PATH" in env
+
+
+def test_update_off_is_refused_with_an_r2_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "simfarm.toml").write_text(
+        f'[r2]\naccount_id = "{R2.account_id}"\nbucket = "sd-simfarm"\n'
+        'access_key_id = "AK"\nsecret_access_key = "SK"\n'
+    )
+    with pytest.raises(SystemExit) as exc:
+        loop.main(["update=off"], repo=tmp_path)
+    assert exc.value.code == 2
+    assert "update=off går inte med en R2-nyckel" in capsys.readouterr().err
 
 
 def test_worktree_refuses_a_folder_that_is_not_its_own(tmp_path: Path) -> None:
