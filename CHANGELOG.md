@@ -195,3 +195,5 @@ All notable changes to this project are listed here. The format follows
   (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
   vehicle now starts with its legs on the ground in every world; in a site world they were
   inside the landing pad's box and stuck to it.
+- `sitl-nightly-gz` also flies `sd_quad14` (the parity flight), even when the smoke
+  flight's checks fail.

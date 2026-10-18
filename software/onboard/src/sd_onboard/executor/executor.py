@@ -1170,13 +1170,8 @@ class Executor:
             self.params_ok = await self._check_params()
         except (ForbiddenMavlinkError, ControlNotAllowedError):
             self.params_ok = False
-        try:
-            items = await download(self.vehicle, FENCE, origin=SendOrigin.STARTUP)
-            self.fence_ok = (
-                self.charter is not None and fence_hash(items) == self.charter.fence_hash
-            )
-        except (MissionError, ForbiddenMavlinkError, ControlNotAllowedError):
-            self.fence_ok = False
+        charter = self.charter
+        self.fence_ok = charter is not None and await self._fence_matches(charter)
 
     async def _fence_matches(self, charter: MissionCharter) -> bool:
         try:
