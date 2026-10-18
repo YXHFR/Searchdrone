@@ -14,7 +14,7 @@ const SIZE = 256;
 const EARTH = 40_075_016.686;
 const HOME_X = (HOME.lon / 360) * EARTH;
 const HOME_Y = (Math.asinh(Math.tan((HOME.lat * Math.PI) / 180)) / (2 * Math.PI)) * EARTH;
-export const IMAGERY_ATTRIBUTION = "Syntetisk testbild, genererad i koden";
+const IMAGERY_ATTRIBUTION = "Syntetisk testbild, genererad i koden";
 /** MapConfig.imagery for the fake ground, as sd-ground sends it for a photo pack. */
 export const IMAGERY = {
   pack_url: "/tiles/imagery.pmtiles",

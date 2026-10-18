@@ -113,7 +113,6 @@ time {
 /* --- buttons and inputs ------------------------------------------------------------ */
 .btn,
 .icon-btn,
-.select,
 .menu-item {
   font: inherit;
   color: var(--c-text);
@@ -168,10 +167,6 @@ time {
   padding: 0;
   background: transparent;
   border-color: transparent;
-}
-.select {
-  padding: 0 8px;
-  max-width: 140px;
 }
 .input {
   max-width: 100%;

@@ -290,7 +290,7 @@ export default function VideoView({ isCompact }: ViewProps) {
       {mode === "connecting" && <p className="video-note">{t("views.video.connecting")}</p>}
       {mode === "none" && (
         <div
-          className={`view-empty video-empty video-none${frozen ? " video-none-over" : ""}`}
+          className={`view-empty video-none${frozen ? " video-none-over" : ""}`}
           data-testid="video-none"
         >
           <p>{video ? t("views.video.noPicture") : t("views.video.none")}</p>

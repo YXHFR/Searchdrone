@@ -78,7 +78,7 @@ export function gpsText(fix: number, sats: number): string {
 
 const BARS: Record<LinkQuality, number> = { good: 4, weak: 2, lost: 0 };
 
-export function linkBars(q: LinkQuality, rttMs: number | null): number {
+function linkBars(q: LinkQuality, rttMs: number | null): number {
   if (q !== "good" || rttMs === null) return BARS[q];
   return rttMs <= 150 ? 4 : 3;
 }

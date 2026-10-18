@@ -38,10 +38,9 @@ test.describe("views and layout", () => {
     test.skip(isMobile(page), "desktop and tablet");
     withCamera(ground);
     await ground.open();
-    const phone = (await layoutOf(page)) === "phone";
     for (const v of VIEWS) {
       await showView(page, v);
-      if (!phone) await expect(page.locator(".side-col")).toBeVisible();
+      await expect(page.locator(".side-col")).toBeVisible();
     }
     await showView(page, "map");
     await expect(page.locator(".stage")).toHaveAttribute("data-main", "map");

@@ -39,7 +39,6 @@
   --c-scrim: rgb(10 11 12 / 0.72);
 
   --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", "IBM Plex Mono", "DejaVu Sans Mono", ui-monospace, monospace;
   --fs-body: 13.5px;
   --fs-small: 12px;
   --fs-label: 11px;
@@ -49,10 +48,6 @@
   --r-1: 2px;
   --r-2: 3px;
   --r-3: 4px;
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
   /* Control height: compact with a mouse, 44 px with a finger (see the pointer query below). */
   --hit: 32px;
 
