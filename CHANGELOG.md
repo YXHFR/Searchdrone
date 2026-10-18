@@ -21,6 +21,10 @@ All notable changes to this project are listed here. The format follows
   search area before saving it. SITL scenarios SC_PATH (every point within 3 m, then
   hover) and SC_PATH_stop (STOP halfway: BRAKE at once, standing still within 5 s as
   SC02).
+- Scenario objects in the simulator world (`sd_sim.objects`): boxes from a YAML file
+  (`just sim objects=<file>`) or any `WorldObject` from code are placed on the ground at
+  metres east/north of home, can carry a Gazebo semantic label, and their facit (world and
+  WGS84 position) is written to `build/sim/worlds/<world>_i<N>.truth.json`.
 - Status page on GitHub Pages (`.github/workflows/status-page.yml`, `tools/status_page/`):
   one row per capability (flight, safety, AI, link, video) with its expected and measured
   value, scenario, time and commit, the last 20 runs per capability and a demo film from
