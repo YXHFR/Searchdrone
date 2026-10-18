@@ -1549,12 +1549,14 @@ name = "sd-detect"
 version = "0.0.0"
 source = { editable = "software/detector" }
 dependencies = [
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "sd-schemas" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.0" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "sd-schemas", editable = "software/common/schemas" },
 ]
@@ -1760,6 +1762,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pymavlink" },
     { name = "pyyaml" },
+    { name = "sd-detect" },
     { name = "sd-hwcalc" },
     { name = "sd-safety" },
     { name = "shapely" },
@@ -1771,6 +1774,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4" },
     { name = "pymavlink", specifier = ">=2.4.47" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "sd-detect", editable = "software/detector" },
     { name = "sd-hwcalc", editable = "software/hwcalc" },
     { name = "sd-safety", editable = "software/common/safety" },
     { name = "shapely", specifier = ">=2.1" },

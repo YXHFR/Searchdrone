@@ -1,0 +1,35 @@
+{#
+  The stills camera without a vehicle, for rendering detector test pictures: a world-level
+  model (sd_sim.render_stills.StillRig) that gz_stills moves from shot to shot. Like on
+  sd_quad14 the cameras look along their x axis, pitched +90 degrees: straight down, the
+  top of the picture towards the model's front.
+#}
+<model name="{{ name }}">
+  <static>true</static>
+  <pose>{{ pose }}</pose>
+  <link name="link">
+{% for sensor, kind in [("stills", "camera"), ("boxes", "boundingbox_camera")] %}
+    <sensor name="{{ sensor }}" type="{{ kind }}">
+      <pose degrees="true">0 0 0 0 90 0</pose>
+      <topic>{{ topic_prefix }}/{{ sensor }}</topic>
+      <camera>
+        <horizontal_fov>{{ hfov_rad }}</horizontal_fov>
+        <image>
+          <width>{{ width }}</width>
+          <height>{{ height }}</height>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>2000</far>
+        </clip>
+{% if kind == "boundingbox_camera" %}
+        <box_type>2d</box_type>
+{% endif %}
+      </camera>
+      <always_on>1</always_on>
+      <update_rate>{{ rate_hz }}</update_rate>
+      <visualize>0</visualize>
+    </sensor>
+{% endfor %}
+  </link>
+</model>
