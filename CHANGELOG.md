@@ -170,6 +170,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The panel keeps a drawn path on the map (planned, flown part and progress) while the
+  pilot's Resume flies the rest of it after STOP, and shows it as flown when the drone
+  hovers at its end.
 - The onboard computer reads the flight controller's fence back right before every
   takeoff and refuses with `FENCE_NOT_VERIFIED` when it differs from the charter's.
 - When the onboard battery rule flies home by itself, the mission returns (cause
