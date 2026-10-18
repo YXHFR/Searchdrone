@@ -1,0 +1,22 @@
+# SC15: the emergency paths without helpers. The AI only takes off and flies to P1;
+# then a helper dies (or the ground's MAVLink is cut) and the pilot presses STOP or
+# FLY HOME.
+scenario: SC15
+timeout_s: 900
+expected_runtime_s: 240
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '^Flyg till P1\.$'
+    action: {skill: goto, params: {at: "fixture:P1", alt_m: 40}}
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

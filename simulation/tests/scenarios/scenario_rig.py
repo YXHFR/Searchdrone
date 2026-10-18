@@ -53,7 +53,7 @@ from sd_sim.errors import InfraError
 from sd_sim.invariants import Charter, Sample, Sent, Timeline
 from sd_sim.util import LOOPBACK_OPENER
 
-__all__ = ["SCRIPTS", "Scenario", "scenario"]
+__all__ = ["SCRIPTS", "VID", "Scenario", "scenario"]
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "simulation/scenarios/scripts"
@@ -553,11 +553,13 @@ class Scenario:
         assert not bad, "invarianter bröts: " + "; ".join(f"{r.id} {r.detail}" for r in bad)
 
     def _write_result(self, results: list[invariants.Result]) -> None:
+        built = [c for c in self.criteria if not c.get("not_built")]
         out = {
             "schema": 1,
             "scenario": self.name.split("[")[0].removeprefix("test_").upper(),
             "variant": self.name.split("[")[1].rstrip("]") if "[" in self.name else "default",
-            "passed": all(c["passed"] for c in self.criteria) and not invariants.failed(results),
+            "passed": all(c["passed"] for c in built) and not invariants.failed(results),
+            "not_built": len(self.criteria) - len(built),
             "duration_s": round(time.monotonic() - self._started, 1),
             "physics": "builtin",
             "brain": "scripted",
