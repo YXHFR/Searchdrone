@@ -153,6 +153,9 @@ describe("the path being flown", () => {
       created_at: "2026-10-18T12:01:30Z",
     } as Command;
     expect(resumedPath(resume, [stopped, refused, resume])).toBe(stopped);
+    // A hold in between keeps the resume point: the resume still continues the path.
+    const hold = { ...cmd("done", L, "h1"), skill: "hold", created_at: "2026-10-18T12:01:20Z" };
+    expect(resumedPath(resume, [stopped, hold as Command, resume])).toBe(stopped);
     const drone = { lon: at(0, 50)[0], lat: at(0, 50)[1] };
     // The resume's own onboard progress is over the rest only: the line's share is used.
     const snap = { active_command_id: "r1", progress_pct: 10 } as StateSnapshot;

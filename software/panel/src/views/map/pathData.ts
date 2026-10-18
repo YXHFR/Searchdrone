@@ -172,21 +172,25 @@ const NEVER_SENT = new Set([
   "expired",
 ]);
 
-/** The follow_path order a running resume continues: the last order sent before it, when
- * that was a path. Null for any other active order. */
+/** Orders that leave the vehicle's resume point as it was: a resume after them continues
+ * the order before them. */
+const KEEPS_RESUME_POINT = new Set(["resume", "hold"]);
+
+/** The follow_path order a running resume continues: the last order sent before it (holds
+ * aside), when that was a path. Null for any other active order. */
 export function resumedPath(active: Command | null, commands: Command[]): Command | null {
   if (active?.skill !== "resume") return null;
   let last: Command | null = null;
   for (const c of commands) {
-    if (c.id === active.id || c.skill === "resume" || NEVER_SENT.has(c.status)) continue;
+    if (KEEPS_RESUME_POINT.has(c.skill) || NEVER_SENT.has(c.status)) continue;
     if (c.created_at >= active.created_at) continue;
     if (!last || c.created_at > last.created_at) last = c;
   }
   return orderPath(last) ? last : null;
 }
 
-/** The path flown to its end by the last finished order: a follow_path, or a resume that
- * flew the rest of one (shown as done). Null when the last finished order was not a path. */
+/** The path flown to its end by the last finished follow_path or resume order (a resume
+ * that flew the rest of one is shown as done). Other orders are not considered. */
 export function finishedPath(commands: Command[]): Command | null {
   let last: Command | null = null;
   for (const c of commands) {
