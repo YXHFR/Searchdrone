@@ -9,7 +9,9 @@ size on the ground: the pipeline drops patches that are too small or too
 large once their size in metres is known, so a red car never counts as a red block.
 
 The score says how sure the colour is (how saturated the patch is and how much of its
-box it fills); it is not a probability that the thing is what the class says.
+box it fills); it is not a probability that the thing is what the class says. A class
+may set ``min_score``: a thin or ragged patch below it is not reported (a sliver of a red
+car's paint is not a block, and its size cannot be judged either).
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ class ColorRule:
     min_saturation: float
     min_value: float
     min_area_px: int
+    min_score: float = 0.0
 
     @classmethod
     def from_spec(cls, spec: ClassSpec) -> Self:
@@ -54,6 +57,7 @@ class ColorRule:
                 min_saturation=float(p["min_saturation"]),
                 min_value=float(p["min_value"]),
                 min_area_px=int(p["min_area_px"]),
+                min_score=float(p.get("min_score", 0.0)),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise RegistryError(f"class {spec.id!r}: bad colour settings ({exc})") from exc
@@ -61,6 +65,8 @@ class ColorRule:
             raise RegistryError(f"class {spec.id!r}: hue_deg ranges must lie in 0-360")
         if rule.min_area_px < 1:
             raise RegistryError(f"class {spec.id!r}: min_area_px must be at least 1")
+        if not 0 <= rule.min_score < 1:
+            raise RegistryError(f"class {spec.id!r}: min_score must lie in 0-1")
         return rule
 
 
@@ -144,6 +150,8 @@ class ColorDetector:
                     sat[y0 : y1 + 1, x0 : x1 + 1][mask[y0 : y1 + 1, x0 : x1 + 1]].mean()
                 )
                 score = min(0.99, max(0.05, 0.5 * fill + 0.5 * patch_sat))
+                if score < rule.min_score:
+                    continue
                 found.append(
                     Detection(
                         label=rule.label,

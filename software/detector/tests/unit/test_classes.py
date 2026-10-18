@@ -178,6 +178,11 @@ def test_register_file_ships_with_the_package() -> None:
             "{ hue_deg = [[0, 10]], min_saturation = 0.5, min_value = 0.3, min_area_px = 0 }",
             "min_area_px",
         ),
+        (
+            "{ hue_deg = [[0, 10]], min_saturation = 0.5, min_value = 0.3, min_area_px = 6, "
+            "min_score = 1.5 }",
+            "min_score",
+        ),
     ],
 )
 def test_bad_colour_settings(params: str, match: str) -> None:
@@ -200,3 +205,23 @@ def test_patch_cap_and_size_check_input() -> None:
     assert len(found) == color.MAX_PATCHES
     with pytest.raises(ValueError, match="px_per_m"):
         keep_plausible(found, 0.0, default_registry())
+
+
+def test_a_thin_sliver_of_red_is_no_block() -> None:
+    """A full red square is reported; a diagonal sliver of the same red (a bit of a red
+    car's paint between its windows and shadow) scores below the class's ``min_score``."""
+    w, h = 64, 64
+    px = bytearray(b"\x40\x80\x30" * (w * h))
+
+    def red(x: int, y: int) -> None:
+        px[(y * w + x) * 3 : (y * w + x) * 3 + 3] = b"\xd0\x20\x20"
+
+    for y in range(10, 22):  # a 12 x 12 square
+        for x in range(10, 22):
+            red(x, y)
+    for i in range(14):  # a diagonal line, 14 px long and 1 px wide
+        red(36 + i, 36 + i)
+    detector = ColorDetector.from_registry(default_registry())
+    found = detector.detect(Frame(width=w, height=h, rgb=bytes(px), ts_mono_ms=0))
+    assert [(d.bbox.x, d.bbox.y) for d in found] == [(10, 10)]
+    assert found[0].score >= detector.rules[0].min_score == 0.5
