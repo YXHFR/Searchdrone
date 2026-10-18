@@ -140,6 +140,7 @@ class FakeFlightController:
         self.silent = False  # no heartbeat or telemetry, no answers
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
+        self.attitude_rad = (0.0, 0.0, 0.0)  # roll, pitch, yaw sent in ATTITUDE
         self.rc_link = False  # an RC transmitter is on and its receiver is healthy
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
@@ -189,6 +190,7 @@ class FakeFlightController:
         while True:
             self.step(_TICK_S)
             self._send(self._position())
+            self._send(self._attitude())
             if tick % 2 == 0:
                 self._send(self.heartbeat())
                 if self.rc_mode_pwm is not None or self.rc_link:
@@ -248,6 +250,12 @@ class FakeFlightController:
             int(self.mode),
             status,
             3,
+        )
+
+    def _attitude(self) -> Any:
+        roll, pitch, yaw = self.attitude_rad
+        return mavlink.MAVLink_attitude_message(
+            int(self.clock.monotonic_ms()) & 0xFFFFFFFF, roll, pitch, yaw, 0.0, 0.0, 0.0
         )
 
     def _position(self) -> Any:
