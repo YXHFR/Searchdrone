@@ -2,11 +2,12 @@
 
     uv run --package sd-sim python -m sd_sim.render_stills [out=DIR] [seed=N] [instance=N]
 
-Builds the world ``sd_lake_forest`` with a scenario's targets (``sd_sim.targets``) and,
-instead of the vehicle, a free stills camera (``sd_still_rig``: the vehicle's stills
-camera plus a bounding-box camera with the same picture). Gazebo runs as a headless
-server; ``gz_stills.py shots`` (system Python) moves the camera to every pose in
-``shot_poses`` and saves a picture with the labelled boxes of the same moment. The
+Builds the world ``sd_lake_forest`` with a scenario's targets (``sd_sim.targets``) and a
+free stills camera (``StillRig``: the vehicle's stills camera plus a bounding-box camera
+with the same picture), all placed with ``world.render_world(..., placed=...)``; the
+vehicle stands on the pad as in every world. Gazebo runs as a headless server;
+``gz_stills.py shots`` (system Python) moves the camera to every pose in ``shot_poses``
+and saves a picture with the labelled boxes of the same moment. The
 pictures become PNG files and ``stills.json`` describes them: the camera, every pose
 (Gazebo's frame and the vehicle attitude it equals), the labelled boxes by class and the
 ground truth of the objects.
@@ -25,16 +26,19 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from sd_detect.classes import default_registry
-from sd_sim import _args, fixture, paths, targets, world
+from sd_safety.targets import Plane
+from sd_sim import _args, fixture, objects, paths, targets, world
 
-__all__ = ["CAMERA", "RIG_MODEL", "boxes_by_class", "render", "shot_poses"]
+__all__ = ["CAMERA", "RIG_MODEL", "StillRig", "boxes_by_class", "render", "shot_poses"]
 
 RIG_MODEL = "sd_still_rig"
 RIG_WORLD = "sd_lake_forest"
+RIG_TEMPLATE = "objects/sd_still_rig.sdf.jinja"
 # The stills camera in CI: 1280 x 720, 66 degrees across (the real camera's field of view).
 CAMERA = {"width": 1280, "height": 720, "hfov_deg": 66.0}
 DEFAULT_OUT = paths.REPO / "software" / "detector" / "tests" / "testdata" / "stills"
@@ -46,14 +50,14 @@ ALLOWED_KEYS = ("out", "seed", "instance")
 GZ_PYTHON = "/usr/bin/python3.12"
 
 
-def shot_poses(objects: list[targets.Target]) -> list[dict[str, Any]]:
+def shot_poses(scene: list[targets.Target]) -> list[dict[str, Any]]:
     """Camera poses over the scenario: every target from 20, 30 and 40 m (one near the
     picture's edge, one tilted), the decoys, context objects and places with nothing red.
 
     Each pose is ``name, east, north, height, compass yaw, roll, pitch`` (degrees, the
     vehicle's attitude convention); ``gz`` holds the same pose in Gazebo's frame."""
     plans: list[tuple[str, float, float, float, float, float, float]] = []
-    blocks = [t for t in objects if t.cls == "red_block"]
+    blocks = [t for t in scene if t.cls == "red_block"]
     for i, b in enumerate(blocks):
         e, n = b.east_m, b.north_m
         plans += [
@@ -66,17 +70,17 @@ def shot_poses(objects: list[targets.Target]) -> list[dict[str, Any]]:
         ("block0_edge", b0.east_m - 21.0, b0.north_m + 2.0, 35.0, 0.0, 0.0, 0.0),
         ("block0_tilted", b0.east_m + 2.0, b0.north_m - 3.0, 35.0, 300.0, 6.0, -8.0),
     ]
-    for t in objects:
+    for t in scene:
         if t.role == "decoy" or t.cls == "car":
             plans.append((f"{t.name}_h30", t.east_m + 2.0, t.north_m - 1.0, 30.0, 45.0, 0.0, 0.0))
-    road = next(t for t in objects if t.cls == "road")
+    road = next(t for t in scene if t.cls == "road")
     plans += [
         ("road_h30", road.east_m + 20.0, road.north_m, 30.0, 0.0, 0.0, 0.0),
         ("overview_h60", road.east_m, road.north_m + 8.0, 60.0, 0.0, 0.0, 0.0),
         ("empty_forest_h40", -205.0, 40.0, 40.0, 90.0, 0.0, 0.0),
         ("empty_lake_h40", 150.0, 120.0, 40.0, 0.0, 0.0, 0.0),
         ("empty_path_h30", -40.0, 125.0, 30.0, 20.0, 0.0, 0.0),
-        ("empty_pad_h25", 0.0, 0.0, 25.0, 353.0, 0.0, 0.0),
+        ("pad_h25", 0.0, 0.0, 25.0, 353.0, 0.0, 0.0),  # the vehicle on the pad, nothing red
     ]
     out = []
     for name, e, n, h, yaw, roll, pitch in plans:
@@ -118,32 +122,50 @@ def boxes_by_class(raw: list[dict[str, Any]], labels: dict[int, str]) -> list[di
     ]
 
 
-def _rig_sdf(instance: int) -> str:
-    template = world._env().get_template(f"models/{RIG_MODEL}/model.sdf.jinja")
-    return template.render(
-        name=f"{RIG_MODEL}_i{instance}",
-        topic_prefix=f"/sd_rig_i{instance}",
-        width=CAMERA["width"],
-        height=CAMERA["height"],
-        hfov_rad=round(math.radians(CAMERA["hfov_deg"]), 6),
-        rate_hz=2,
-    )
+@dataclass(frozen=True)
+class StillRig:
+    """The free stills camera as a ``WorldObject``. It starts a few metres up beside the
+    search box; ``gz_stills.py shots`` moves it to each shot's pose."""
+
+    instance: int
+    east_m: float = 0.0
+    north_m: float = 120.0
+    up_m: float = 5.0
+    yaw_deg: float = 0.0
+    label: int = 0
+    footprint_m: float = 0.1
+    truth: dict[str, Any] = field(default_factory=lambda: {"role": "camera"})
+
+    @property
+    def name(self) -> str:
+        return f"{RIG_MODEL}_i{self.instance}"
+
+    @property
+    def topic_prefix(self) -> str:
+        return f"/sd_rig_i{self.instance}"
+
+    def sdf(self, pose: objects.Pose) -> str:
+        template = world._env().get_template(RIG_TEMPLATE)
+        return template.render(
+            name=self.name,
+            pose=pose.sdf(),
+            topic_prefix=self.topic_prefix,
+            width=CAMERA["width"],
+            height=CAMERA["height"],
+            hfov_rad=round(math.radians(CAMERA["hfov_deg"]), 6),
+            rate_hz=2,
+        ).strip()
 
 
-def _write_models(instance: int, seed: int, repo: Path) -> tuple[Path, Path]:
-    rig = repo / "build" / "sim" / "models" / f"{RIG_MODEL}_i{instance}"
-    rig.mkdir(parents=True, exist_ok=True)
-    (rig / "model.sdf").write_text(_rig_sdf(instance), encoding="utf-8")
-    config = (world.GAZEBO_DIR / "models" / RIG_MODEL / "model.config").read_text(encoding="utf-8")
-    (rig / "model.config").write_text(
-        config.replace(f"<name>{RIG_MODEL}</name>", f"<name>{RIG_MODEL}_i{instance}</name>"),
-        encoding="utf-8",
-    )
-    names, truth = targets.render_targets(instance, "SK-RED", seed, repo)
-    sdf = world.world_sdf(RIG_WORLD, instance, vehicle=RIG_MODEL, includes=names)
-    path = repo / "build" / "sim" / "worlds" / f"{RIG_WORLD}_rig_i{instance}.sdf"
-    path.write_text(sdf, encoding="utf-8")
-    return path, truth
+def object_rows(objs: list[targets.Target], fix: fixture.Fixture) -> list[dict[str, Any]]:
+    """The scenario's objects for ``stills.json``: every field and the WGS84 position."""
+    plane = Plane(fix.home.lat, fix.home.lon)
+    rows = []
+    for t in objs:
+        lat, lon = plane.latlon(t.east_m, t.north_m)
+        row = {k: v for k, v in asdict(t).items() if k != "up_m"}
+        rows.append(row | {"lat": round(lat, 8), "lon": round(lon, 8)})
+    return rows
 
 
 def _gz_env(instance: int, repo: Path) -> dict[str, str]:
@@ -171,10 +193,11 @@ def _to_png(ppm: Path, png: Path) -> None:
 def render(
     out: Path = DEFAULT_OUT, seed: int = DEFAULT_SEED, instance: int = 7, repo: Path = paths.REPO
 ) -> Path:
-    world_path, truth_path = _write_models(instance, seed, repo)
     fix = fixture.load()
-    objects = targets.layout("SK-RED", seed, fix)
-    poses = shot_poses(objects)
+    scene = targets.layout("SK-RED", seed, fix)
+    rig = StillRig(instance)
+    world_path = world.render_world(RIG_WORLD, instance, repo, placed=[*scene, rig])
+    poses = shot_poses(scene)
     env = _gz_env(instance, repo)
     labels = {n: spec.id for n, spec in default_registry().by_gz_label().items()}
     out.mkdir(parents=True, exist_ok=True)
@@ -198,13 +221,13 @@ def render(
                     "--world",
                     RIG_WORLD,
                     "--model",
-                    f"{RIG_MODEL}_i{instance}",
+                    rig.name,
                     "--poses",
                     str(tmp / "poses.json"),
                     "--image-topic",
-                    f"/sd_rig_i{instance}/stills",
+                    f"{rig.topic_prefix}/stills",
                     "--boxes-topic",
-                    f"/sd_rig_i{instance}/boxes",
+                    f"{rig.topic_prefix}/boxes",
                     "--out",
                     str(tmp / "shots"),
                 ],
@@ -228,7 +251,6 @@ def render(
                 {k: v for k, v in pose.items() if k != "gz"}
                 | {"file": f"{name}.png", "boxes": boxes}
             )
-    truth = json.loads(truth_path.read_text(encoding="utf-8"))
     doc = {
         "about": (
             "Pictures rendered by Gazebo Harmonic (ogre2, headless) in the world "
@@ -236,9 +258,9 @@ def render(
             "`uv run --package sd-sim python -m sd_sim.render_stills`."
         ),
         "camera": CAMERA,
-        "scenario": truth["scenario"],
+        "scenario": "SK-RED",
         "seed": seed,
-        "objects": truth["objects"],
+        "objects": object_rows(scene, fix),
         "shots": shots,
     }
     (out / "stills.json").write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")

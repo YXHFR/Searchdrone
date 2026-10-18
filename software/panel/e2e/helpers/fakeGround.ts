@@ -140,6 +140,17 @@ export class FakeGround {
     page.on("console", (msg) => {
       if (/Content[- ]Security[- ]Policy/i.test(msg.text())) this.cspErrors.push(msg.text());
     });
+    // The browser's own report of each violation: which directive, what was blocked and
+    // where (some engines' console text names neither).
+    await page.addInitScript(() => {
+      const w = window as unknown as { __cspDetails: string[] };
+      w.__cspDetails = [];
+      document.addEventListener("securitypolicyviolation", (e) => {
+        w.__cspDetails.push(
+          `${e.violatedDirective} blocked=${e.blockedURI} at=${e.sourceFile}:${e.lineNumber} sample=${e.sample}`,
+        );
+      });
+    });
     // Anything not on the test origin is recorded and blocked.
     await page.route(
       (url) => url.origin !== this.origin && url.protocol.startsWith("http"),
@@ -269,7 +280,12 @@ export class FakeGround {
   async verify(): Promise<void> {
     expect(this.external, "requests to other hosts").toEqual([]);
     expect(this.unknown, "paths the fake ground does not know").toEqual([]);
-    expect(this.cspErrors, "CSP violations").toEqual([]);
+    const cspDetails = this.cspErrors.length
+      ? await this.page
+          .evaluate(() => (window as unknown as { __cspDetails?: string[] }).__cspDetails ?? [])
+          .catch(() => [])
+      : [];
+    expect(this.cspErrors, `CSP violations ${JSON.stringify(cspDetails)}`).toEqual([]);
     for (const r of this.requests.filter((x) => x.method !== "GET")) {
       expect(r.headers["x-sd-client"], `${r.method} ${r.path} X-SD-Client`).toBe("panel");
       // WHEP signalling is SDP, on the video paths only (the server's guard allows just that).
