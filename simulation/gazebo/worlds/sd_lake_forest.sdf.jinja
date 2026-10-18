@@ -212,6 +212,11 @@
 {% endfor %}
     </model>
 
+    <!-- Scenario objects (sd_sim.objects), already placed on the ground. -->
+{% for element in objects %}
+  {{ element | safe }}
+{% endfor %}
+
     <include>
       <uri>{{ model_uri }}</uri>
       <pose>0 0 0 0 0 {{ vehicle_yaw }}</pose>

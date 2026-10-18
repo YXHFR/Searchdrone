@@ -22,7 +22,7 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, paths, ports, procs, world
+from sd_sim import _args, config, gazebo, objects, paths, ports, procs, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -41,6 +41,7 @@ ALLOWED_KEYS = (
     "lan",
     "private_db",
     "dry",
+    "objects",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
@@ -184,9 +185,20 @@ class Stack:
         write_secret(self.secrets_dir, "linksim_token", self.linksim_token)
         check_secret_modes(self.secrets_dir)
 
+    def world_objects(self) -> list[objects.Box]:
+        if not self.cfg.objects:
+            return []
+        try:
+            return objects.load(self.repo / self.cfg.objects)
+        except objects.ObjectError as exc:
+            raise InfraError(f"objects={self.cfg.objects}: {exc}") from exc
+
     def start_gazebo(self) -> None:
         if self.cfg.vehicle == "sd_quad14" and self.cfg.world == world.WORLD_NAME:
-            world.render_world(self.cfg.world, self.cfg.instance, self.repo)
+            placed = self.world_objects()
+            world.render_world(self.cfg.world, self.cfg.instance, self.repo, placed)
+            if placed:
+                say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")
         self.world = gazebo.resolve_world(self.cfg, self.repo)
         if self.world.note:
             say(self.world.note)
