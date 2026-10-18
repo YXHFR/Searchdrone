@@ -12,35 +12,49 @@ Run its checks from the repository root: `just test` (all checks: `just check`).
 
 ## How it decides
 
-- **Best available engine.** With a cloud key (`SD_CLOUD_API_KEY` in `.env`) and a model
-  in `config/brain.toml` (`[cloud] model`, any OpenAI-compatible API, OpenRouter by
-  default), the cloud model answers first. When it fails or does not answer in time, the
-  local model (Qwen3-VL-4B in llama-server) answers in the same turn. Without a key
-  everything runs locally. Both get the same tools, and every order goes through the gate.
+- **The cloud model is the AI commander.** With a cloud key (`SD_CLOUD_API_KEY` in `.env`)
+  the model in `config/brain.toml` answers (`[cloud]`, any OpenAI-compatible API,
+  OpenRouter by default: `z-ai/glm-5.3-flash`, with `anthropic/claude-haiku-5.5` asked
+  when the main model returns an error). OpenRouter gets `reasoning: {effort}` (default
+  `low`) and `provider: {data_collection: "deny", require_parameters: true}`, both set in
+  `[cloud]` and `[cloud.provider]`. Every order goes through the gate.
+- **What leaves the machine.** With `SD_CLOUD_API_KEY` set, each turn (operator chat and
+  vehicle state) goes to OpenRouter and on to the main model's provider, and on an error
+  also to the fallback model's provider. `data_collection = "deny"` keeps it out of
+  training and storage; for real search areas consider `zdr = true` (zero-retention
+  endpoints only) or `fallback_model = ""` (one vendor only).
+- **The command mode is the only reserve.** Without network or key, or when the cloud
+  does not answer within `call_timeout_s`, there is no AI chat: the fixed command mode
+  (pure code, "hjälp" lists the commands) answers the same turn, the heartbeat says
+  `engine: "command"` and the panel shows "AI:n svarar inte" with fixed buttons. After a
+  failure the cloud rests for `retry_after_s` before it is asked again. The name is
+  `command`, not `none`, because something still answers: the command mode and the stop
+  words.
 - **One action per turn.** The AI keeps its plan in a note and is woken when a step is done.
 - **Rules without a model:** "fortsätt" during a stop is answered with the Resume card (the
   chat never releases a stop); a take-off after "Clear around the drone" when the operator
   asked for a start; a fixed command mode ("hjälp") while the model does not answer.
 - **Quick stop check.** Every chat line is also asked, in parallel, "does the operator want
-  to stop or fly home?" through the decision interface (`sd_brain.decide`: the local model,
-  Jev from TypeSafe AI or the OpenAI Decisions API, best available first; target under
-  0.5 s). The words `stopp`, `stop` and `flyg hem` always count. A yes is sent to the
-  ground station, which runs the same emergency path as the buttons. The STOP and FLY HOME
-  buttons never depend on the AI.
+  to stop or fly home?" through the decision interface (`sd_brain.decide`: Jev from
+  TypeSafe AI or the OpenAI Decisions API, best available first, only with their keys;
+  target under 0.5 s). The words `stopp`, `stop` and `flyg hem` always count. A yes is sent to the
+  ground station, which runs the same emergency path as the buttons. Without network or a hosted
+  key only these fixed words act in the chat (not free phrasings such as "stanna där"). The
+  STOP and FLY HOME buttons never depend on the AI.
 
 ## Running
 
 ```bash
-just setup-config        # config/brain.toml, .env with SD_LLM_API_KEY, secrets/brain_token
-just models-fetch        # the local model (about 2.5 GB) into models/, sha256 checked
-just llm-up              # llama-server on 127.0.0.1:8091 (needs an NVIDIA GPU and Docker)
+just setup-config        # config/brain.toml, .env, secrets/brain_token
+# put SD_CLOUD_API_KEY=... in .env for the AI chat (without it: the command mode)
 just ground              # the ground station (in another terminal)
 just brain               # the AI commander
 ```
 
-Other commands: `just brain-eval` (the golden evaluation, no GPU), `just brain-eval-model`
-(the model evaluation on your computer), `just check-model` (5 minutes of calls and the
-graphics memory), `just brain-token` (a new commander token; restart both processes),
+Other commands: `just brain-eval` (the golden evaluation, no network), `just
+brain-eval-cloud` (the same scenarios against the cloud model; needs the key), `just perf`
+(the cloud model's answer time per turn, p50/p95; skipped with a line without a key),
+`just brain-token` (a new commander token; restart both processes),
 `uv run sd-brain config-check` and `uv run sd-brain print-prompt --mission <id>`.
 
 ## Settings and keys
@@ -50,9 +64,12 @@ graphics memory), `just brain-token` (a new commander token; restart both proces
 
 | Name | What |
 |---|---|
-| `SD_LLM_API_KEY` | key between sd-brain and llama-server (made by `just setup-config`) |
-| `SD_CLOUD_API_KEY` | optional: the cloud model |
+| `SD_CLOUD_API_KEY` | the cloud model (the AI chat); without it the command mode answers |
 | `SD_JEV_API_KEY`, `SD_OPENAI_API_KEY` | optional: the decision engines for the stop check |
 
 The commander token is read from `secrets/brain_token`. sd-brain reads only these names
-from `.env`, never the ground station's passwords.
+from `.env`, never the ground station's passwords. Keys are masked in every log line; the
+reports of `just perf` and `just brain-eval-cloud` hold latencies and model names only.
+
+Older `config/brain.toml` files from the local-model era still load: `kind = "llm_local"`
+becomes `cloud`, and the removed `[llm]` keys and the `local` decision engine are dropped.

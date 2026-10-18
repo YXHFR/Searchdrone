@@ -15,6 +15,8 @@ interface LiveState {
   brainBusy: boolean;
   /** The AI process as chat.brain_status reports it (the ground sends it on every change). */
   brainState: "ready" | "busy" | "degraded" | "down" | null;
+  /** Who answers the chat now, from chat.brain_status: the cloud model or the command mode. */
+  brainEngine: "cloud" | "command" | null;
   /** When chat.brain_status turned busy ("AI:n tänker… N s"). */
   brainBusySince: number | null;
   /** Latest latch.updated; decides the Resume text when the onboard snapshot is missing. */
@@ -34,6 +36,7 @@ const empty = {
   mission: null,
   brainBusy: false,
   brainState: null,
+  brainEngine: null,
   brainBusySince: null,
   latch: null,
   aiDisconnected: false,

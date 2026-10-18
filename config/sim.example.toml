@@ -19,7 +19,7 @@ link_profile = "perfect"  # "perfect" | "field_typical" | "dead"
 dataflash_dir = "sitl/logs"
 
 [brain]
-kind = "llm_local"        # "llm_local" | "scripted" | "grammar" | "none"
+kind = "cloud"            # "cloud" | "scripted" | "grammar" | "none"
 script = ""
 
 [open]

@@ -100,6 +100,7 @@ def _rows() -> dict[tuple[ExecutorState, TriggerKey], Transition]:
         add({S.TAKEOFF}, key, {S.HOLD, S.PREFLIGHT}, "airborne_or_ground")
     add(_STEERING, skill_key("goto"), {S.TRANSIT}, "always")  # T6
     add(_STEERING, skill_key("survey_sector"), {S.SURVEY}, "always")  # T7
+    add(_STEERING, skill_key("follow_path"), {S.TRANSIT}, "always")  # T7b: a drawn path
     add(_STEERING, skill_key("hold"), {S.HOLD}, "always")  # T8
     add({S.HOLD}, skill_key("resume"), {S.TRANSIT, S.SURVEY}, "resume_target")  # T9
     add(_LIMITED, skill_key("return_home"), {S.RTL}, "always")  # T10

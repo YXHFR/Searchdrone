@@ -36,7 +36,7 @@ Seven parts: flight controller, onboard computer, radio link, ground station, AI
 
 ## Quick start (development)
 
-Requirements: Windows 11 with WSL2 Ubuntu 24.04 (or Ubuntu 24.04), git and curl. Docker Engine, an NVIDIA GPU with 8 GB VRAM and 16 GB RAM are needed for the simulator and the local AI model in later stages.
+Requirements: Windows 11 with WSL2 Ubuntu 24.04 (or Ubuntu 24.04), git and curl. Docker Engine, an NVIDIA GPU with 8 GB VRAM and 16 GB RAM are needed for the simulator in later stages. The AI chat uses a cloud model (`SD_CLOUD_API_KEY` in `.env`); without network or key a fixed command mode answers, and STOP and RETURN HOME never need either.
 
 ```bash
 git clone https://github.com/YXHFR/Searchdrone.git ~/Searchdrone
