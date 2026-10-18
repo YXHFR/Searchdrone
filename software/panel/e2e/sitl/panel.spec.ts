@@ -85,6 +85,39 @@ const sectorSummary = (page: Page): Promise<string> =>
       .join(", "),
   );
 
+/** STOP pressed → "Kvitterat" on the button, measured in the page (the click and the first
+ * DOM change that shows it), not by the test runner's polling. */
+async function stopAckMs(page: Page): Promise<number> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __stopAt?: { click?: number; ack?: number } };
+    const times: { click?: number; ack?: number } = {};
+    w.__stopAt = times;
+    const btn = () => document.querySelector('[data-testid="safety-stop"]');
+    document.addEventListener(
+      "click",
+      (e) => {
+        if ((e.target as Element | null)?.closest('[data-testid="safety-stop"]'))
+          times.click = performance.now();
+      },
+      { capture: true },
+    );
+    const seen = new MutationObserver(() => {
+      if (times.click !== undefined && btn()?.textContent?.includes("Kvitterat")) {
+        times.ack = performance.now();
+        seen.disconnect();
+      }
+    });
+    seen.observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  await page.getByTestId("safety-stop").click();
+  await expect(page.getByTestId("safety-stop")).toContainText("Kvitterat", { timeout: 10_000 });
+  const t = await page.evaluate(
+    () => (window as unknown as { __stopAt: { click?: number; ack?: number } }).__stopAt,
+  );
+  if (t.click === undefined || t.ack === undefined) throw new Error("STOP was not timed");
+  return Math.round(t.ack - t.click);
+}
+
 async function say(page: Page, text: string): Promise<void> {
   const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
   await box.fill(text);
@@ -156,10 +189,7 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
   await expect(page.getByTestId("pill-vehicle")).toHaveText("Söker", { timeout: 120_000 });
 
   // PS-3: STOP during the search; acknowledged within 1 s, the vehicle stops.
-  const pressed = Date.now();
-  await page.getByTestId("safety-stop").click();
-  await expect(page.getByTestId("safety-stop")).toContainText("Kvitterat", { timeout: 10_000 });
-  const ackMs = Date.now() - pressed;
+  const ackMs = await stopAckMs(page);
   test.info().annotations.push({ type: "stop-ack-ms", description: String(ackMs) });
   console.log(`STOPP kvitterat efter ${ackMs} ms`);
   expect(ackMs).toBeLessThan(1_000);
