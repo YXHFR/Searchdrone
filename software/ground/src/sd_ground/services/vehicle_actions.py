@@ -221,9 +221,11 @@ class VehicleActions:
         self._start_lock = threading.Lock()
         self._outcomes: OrderedDict[str, ActionOutcome] = OrderedDict()
         self._by_client: OrderedDict[tuple[str, str, str], ActionDispatched] = OrderedDict()
-        self._takeover_by: dict[str, str] = {}  # take-over id -> who took over
+        # vehicle -> {its take-over id: who took over}; one take-over per vehicle at a time
+        self._takeover_by: dict[str, dict[str, str]] = {}
         self._manual_mono: dict[str, float] = {}  # vehicle -> when its last stick value went on
         self._manual_next: dict[str, StickAxes] = {}  # vehicle -> newest value, held to its slot
+        self._manual_slots: dict[str, asyncio.Task[None]] = {}  # vehicle -> the task sending it
         self.post: queue.SimpleQueue[_Post | _Report | _Event] = queue.SimpleQueue()
         self._tasks: set[asyncio.Task[None]] = set()
         self._via: dict[str, Via] = {}
@@ -471,7 +473,7 @@ class VehicleActions:
             )
             if self.mav is not None:
                 if action == "takeover":
-                    self._takeover_by = {action_id: by.issuer_ref}  # one take-over at a time
+                    self._takeover_by[vehicle_id] = {action_id: by.issuer_ref}
                     if self.notices.up(vehicle_id):
                         # LOITER once onboard has the notice, or at the deadline at the latest.
                         self.mav.takeover(action_id, seq, TAKEOVER_ACK_WAIT_S)
@@ -479,7 +481,7 @@ class VehicleActions:
                     else:
                         self.mav.takeover(action_id, seq)  # no SD-link: LOITER at once
                 else:
-                    self._takeover_by = {}
+                    self._takeover_by.pop(vehicle_id, None)
                     self.mav.handback()
         sd_ok = self.notices.up(vehicle_id)
         paths: dict[str, Literal["queued", "unavailable"]] = {
@@ -511,7 +513,7 @@ class VehicleActions:
             {
                 "active": True,
                 "takeover_id": snap.manual_takeover_id,
-                "by": self._takeover_by.get(snap.manual_takeover_id),
+                "by": self._takeover_by.get(vehicle_id, {}).get(snap.manual_takeover_id),
                 "since": snap.manual_since,
                 "input_age_ms": snap.manual_input_age_ms,
             }
@@ -524,19 +526,21 @@ class VehicleActions:
         stick is never lost."""
         if by.role != "pilot" or vehicle_id not in self.vehicle_ids or self.mav is None:
             return False
-        if self._takeover_by.get(str(value.takeover_id)) != by.issuer_ref:
+        if self._takeover_by.get(vehicle_id, {}).get(str(value.takeover_id)) != by.issuer_ref:
             return False  # another pilot's take-over, or one handed back
         axes = StickAxes.model_validate(value.model_dump(exclude={"source"}))
         wait = self._manual_mono.get(vehicle_id, float("-inf")) + MANUAL_MIN_INTERVAL_S
         wait -= self.clock.monotonic()
         if wait > 0:
-            if vehicle_id not in self._manual_next:
+            self._manual_next[vehicle_id] = axes  # the newest wins
+            slot = self._manual_slots.get(vehicle_id)
+            if slot is None or slot.done():  # none waiting (one cancelled counts as none)
                 task = asyncio.get_running_loop().create_task(
                     self._manual_at_slot(self.mav, vehicle_id, wait), name="manual-slot"
                 )
+                self._manual_slots[vehicle_id] = task
                 self._tasks.add(task)
                 task.add_done_callback(self._task_done)
-            self._manual_next[vehicle_id] = axes  # the newest wins
             return True
         self._manual_mono[vehicle_id] = self.clock.monotonic()
         return self.mav.sticks(axes)
@@ -603,7 +607,7 @@ class VehicleActions:
                     log.error("actions.pump_failed", error=type(exc).__name__)
                 await self.clock.sleep(PUMP_S)
         finally:
-            waiting = list(self._tasks)  # take-over notices still waiting
+            waiting = list(self._tasks)  # take-over notices and stick values still waiting
             for task in waiting:
                 task.cancel()
             await asyncio.gather(*waiting, return_exceptions=True)

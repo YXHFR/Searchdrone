@@ -352,6 +352,18 @@ async def test_only_the_pilot_who_took_over_steers() -> None:
     assert mav.stick_values == [0.3]
 
 
+async def test_a_handback_on_one_vehicle_leaves_the_other_s_take_over() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink(), ids=[VID, OTHER])
+    mine = str(actions.takeover(VID, client_action_id=str(new_id()), by=PILOT).action_id)
+    theirs = str(actions.takeover(OTHER, client_action_id=str(new_id()), by=PILOT).action_id)
+    actions.handback(VID, client_action_id=str(new_id()), by=PILOT)
+    assert not actions.manual_input(VID, _stick(mine, 1, 0.1), PILOT)
+    assert actions.manual_input(OTHER, _stick(theirs, 1, 0.2), PILOT)
+    assert mav.stick_values == [0.2]
+
+
 async def test_fast_stick_values_are_held_and_the_newest_goes_at_its_slot() -> None:
     """At most 30 Hz per vehicle; a value in between is not lost, the newest goes next."""
     clock = FakeClock()
@@ -367,6 +379,24 @@ async def test_fast_stick_values_are_held_and_the_newest_goes_at_its_slot() -> N
     await clock.run_for(0.1)
     assert actions.manual_input(VID, _stick(tid, 4, 0.2), PILOT)  # slot free: at once
     assert mav.stick_values == [0.5, 0.0, 0.2]
+
+
+async def test_a_cancelled_stick_slot_does_not_block_the_sticks() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink())
+    tid = str(actions.takeover(VID, client_action_id=str(new_id()), by=PILOT).action_id)
+    actions.manual_input(VID, _stick(tid, 1, 0.5), PILOT)
+    actions.manual_input(VID, _stick(tid, 2, 0.4), PILOT)  # held for its slot
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await clock.run_for(0.1)
+    assert actions.manual_input(VID, _stick(tid, 3, 0.3), PILOT)  # goes at once again
+    assert actions.manual_input(VID, _stick(tid, 4, 0.1), PILOT)  # held: a new slot task
+    await clock.run_for(MANUAL_MIN_INTERVAL_S + 0.01)
+    assert mav.stick_values == [0.5, 0.3, 0.1]
 
 
 async def test_without_sdlink_nothing_is_acknowledged() -> None:
