@@ -260,3 +260,55 @@ def test_spec_round_trip_and_bad_commander(tmp_path: Path) -> None:
     assert got.seed == 42 and got.round_id.endswith("-s42-01234567")
     with pytest.raises(ValueError):
         farm_round.RoundSpec.new(1, "pilot", "abc")
+
+
+def test_ppm_pixels_that_look_like_whitespace(tmp_path: Path) -> None:
+    image = np.array([[[32, 10, 9], [200, 100, 50]]], dtype=np.uint8)
+    (tmp_path / "a.ppm").write_bytes(b"P6\n# gz\n2 1\n255\n" + image.tobytes())
+    assert np.array_equal(labels.read_ppm(tmp_path / "a.ppm"), image)
+    (tmp_path / "b.ppm").write_bytes(b"P6 2 1 255")
+    with pytest.raises(ValueError):
+        labels.read_ppm(tmp_path / "b.ppm")
+
+
+def test_person_at_the_picture_edge_is_no_stray() -> None:
+    pose = above(0.0, 0.0, 40.0)
+    edge = None
+    for i in range(200):  # walk the person out over the picture's right edge
+        p = Person("person_0", "sd_person_standing", "lying", 0.0, -25.0 - i * 0.02, 90.0)
+        got = box(CAM, pose, p.corners())
+        if got is not None and 0.05 < got[1] < labels.MIN_IN_VIEW:
+            edge = (p, got[0])
+            break
+    assert edge is not None
+    person, part = edge
+    f = labels.facit(truth_of(person), CAM, pose, [part])
+    assert f.unmatched_seen == [] and f.labels == []
+    tally = qc.RoundTally()
+    tally.add(f)
+    assert tally.stray == 0
+
+
+def test_spec_carries_the_worlds(tmp_path: Path) -> None:
+    s = farm_round.RoundSpec.new(3, "sd-brain", "abcdef0123", worlds=["w1", "w2"])
+    s.write(tmp_path / "spec.json")
+    back = farm_round.RoundSpec.read(tmp_path / "spec.json")
+    assert back == s and back.worlds == ("w1", "w2")
+    with pytest.raises(ValueError):
+        farm_round.RoundSpec.new(3, "script", "abc", worlds=[])
+
+
+def test_grade_hook(tmp_path: Path) -> None:
+    assert farm_round.grade(tmp_path, available=lambda: False) is None
+    calls: list[list[str]] = []
+
+    def run(cmd: list[str], **_kw: Any) -> None:
+        calls.append(cmd)
+        (tmp_path / "grade.json").write_text(json.dumps({"is_exam": True, "cost_sek": 0.4}))
+
+    got = farm_round.grade(tmp_path, available=lambda: True, run=run)
+    assert got == {"is_exam": True, "cost_sek": 0.4}
+    assert calls[0][-5:] == ["sd_brain", "eval", "grade", "--round", str(tmp_path)]
+    (tmp_path / "grade.json").unlink()
+    broken = farm_round.grade(tmp_path, available=lambda: True, run=lambda *a, **k: None)
+    assert broken is not None and "error" in broken

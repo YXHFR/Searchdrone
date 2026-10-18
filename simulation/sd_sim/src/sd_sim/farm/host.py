@@ -1,6 +1,6 @@
 """Keeping the farm polite on the owner's computer (WSL2 with an NVIDIA card).
 
-Before every round ``Gate.wait_turn()`` checks, and waits while any of these holds:
+Before every round the loop asks ``Gate.reason_to_wait()`` and waits while any of these holds:
 
 * the GPU is busy with something else (``busy_gpu_pct``, measured between rounds, when
   the farm itself renders nothing: a game, a video call) or too hot (``max_gpu_temp_c``);
@@ -11,7 +11,7 @@ Before every round ``Gate.wait_turn()`` checks, and waits while any of these hol
   mouse in Windows, asked through ``powershell.exe`` from WSL; where that cannot be
   asked, a quiet GPU and CPU for that long count as idle).
 
-Disk: ``disk_ok()`` is false when ``build/simfarm`` uses more than ``max_local_gb`` or
+Disk: ``disk_ok()`` gives a reason when ``build/simfarm/rounds`` uses more than ``max_local_gb`` or
 the disk has less than ``min_free_gb`` free; the loop then removes uploaded rounds,
 oldest first, and pauses if that is not enough. Rounds also run under ``nice``.
 """
@@ -168,5 +168,7 @@ class Gate:
             return f"för lite ledigt på disken ({free_gb:.1f} GB)"
         used = dir_size_gb(self.data_dir)
         if used > self.limits.max_local_gb:
-            return f"build/simfarm använder {used:.1f} GB (tak {self.limits.max_local_gb:g} GB)"
+            return (
+                f"build/simfarm/rounds använder {used:.1f} GB (tak {self.limits.max_local_gb:g} GB)"
+            )
         return None

@@ -1,6 +1,7 @@
 # Sim farm (`just sim-farm`). Copied to config/simfarm.toml by `just setup-config`.
 # config/simfarm.toml is gitignored: the R2 key belongs there and nowhere else.
-# Any [farm] key can also be given on the command line: `just sim-farm commander=sd-brain`.
+# On the command line: commander, idle_only, busy_gpu_pct, busy_cpu_load, max_duty and
+# max_failures override this file (`just sim-farm commander=sd-brain`); the rest is set here.
 
 [farm]
 commander = "script"          # "script" (the scripted commander) | "sd-brain" (the cloud model)

@@ -217,6 +217,9 @@ def test_config_with_a_key(tmp_path: Path) -> None:
         farm_config.load({"commander": "pilot"}, tmp_path)
     with pytest.raises(farm_config.FarmConfigError):
         farm_config.load({"max_duty": "2"}, tmp_path)
+    for bad in ("x", "0"):
+        with pytest.raises(farm_config.FarmConfigError):
+            farm_config.load({"max_failures": bad}, tmp_path)
 
 
 class Clock:

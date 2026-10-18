@@ -80,6 +80,16 @@ def _limits(table: dict[str, Any]) -> Limits:
     return limits
 
 
+def _max_failures(raw: Any) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise FarmConfigError(f"farm.max_failures: ogiltigt värde {raw!r}") from exc
+    if value < 1:
+        raise FarmConfigError("farm.max_failures ska vara minst 1")
+    return value
+
+
 def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> FarmConfig:
     merged: dict[str, Any] = {"farm": {}, "r2": {}}
     for path in (repo / EXAMPLE, repo / LOCAL):
@@ -110,6 +120,6 @@ def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> Fa
         worlds=tuple(str(w) for w in worlds),
         limits=_limits(farm),
         r2=r2,
-        max_failures=int(farm.get("max_failures", 3)),
+        max_failures=_max_failures(farm.get("max_failures", 3)),
         warnings=tuple(warnings),
     )

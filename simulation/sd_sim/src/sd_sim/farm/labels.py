@@ -70,7 +70,12 @@ class PersonLabel:
 
     @property
     def labelled(self) -> bool:
-        return self.seen is not None and self.box.w >= MIN_BOX_PX and self.box.h >= MIN_BOX_PX
+        return (
+            self.seen is not None
+            and self.in_view >= MIN_IN_VIEW
+            and self.box.w >= MIN_BOX_PX
+            and self.box.h >= MIN_BOX_PX
+        )
 
     def as_dict(self) -> dict[str, Any]:
         def b(v: Box | None) -> list[float] | None:
@@ -131,11 +136,13 @@ def facit(
     seen_boxes: Sequence[Box],
 ) -> ImageFacit:
     """Project every person and pair each with at most one bounding-box camera box (the
-    one most contained in it, greedily by containment then IoU)."""
+    one most contained in it, greedily by containment then IoU). A person mostly outside
+    the picture (``in_view`` below ``MIN_IN_VIEW``) is still matched, so the camera's box
+    of its visible part is not taken for a stray, but it gets no label."""
     projected: list[tuple[Person, Box, float]] = []
     for person, ground in people_in(truth):
         got = box(cam, pose, person.corners(ground))
-        if got is None or got[1] < MIN_IN_VIEW:
+        if got is None:
             continue
         projected.append((person, got[0], got[1]))
     pairs: list[tuple[float, float, int, int]] = []
@@ -211,11 +218,28 @@ class Coco:
 def read_ppm(path: Path) -> NDArray[np.uint8]:
     """A binary PPM (P6, 8 bit) as written by ``gz_stills``."""
     data = path.read_bytes()
-    parts = data.split(maxsplit=4)
-    if len(parts) < 5 or parts[0] != b"P6" or parts[3] != b"255":
+    tokens: list[bytes] = []
+    i = 0
+    while len(tokens) < 4 and i < len(data):
+        c = data[i : i + 1]
+        if c == b"#":  # a comment runs to the end of the line
+            end = data.find(b"\n", i)
+            i = len(data) if end < 0 else end + 1
+        elif c.isspace():
+            i += 1
+        else:
+            start = i
+            while i < len(data) and not data[i : i + 1].isspace():
+                i += 1
+            tokens.append(data[start:i])
+    # Exactly one whitespace byte ends the header; the pixels follow (any byte value).
+    if len(tokens) < 4 or tokens[0] != b"P6" or tokens[3] != b"255" or i >= len(data):
         raise ValueError(f"{path}: ingen 8-bitars P6-bild")
-    width, height = int(parts[1]), int(parts[2])
-    body = parts[4]
+    try:
+        width, height = int(tokens[1]), int(tokens[2])
+    except ValueError as exc:
+        raise ValueError(f"{path}: ingen 8-bitars P6-bild") from exc
+    body = data[i + 1 :]
     if len(body) < width * height * 3:
         raise ValueError(f"{path}: bilden är kortare än {width} x {height}")
     return np.frombuffer(body[: width * height * 3], dtype=np.uint8).reshape(height, width, 3)

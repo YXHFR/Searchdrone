@@ -197,6 +197,8 @@ class Farm:
     seed: int = 0
     update: bool = True
     sleep: Callable[[float], None] = time.sleep
+    clock: Callable[[], float] = time.monotonic
+    round_timeout_s: float = ROUND_TIMEOUT_S
     streak: int = 0
     errors: list[str] = field(default_factory=list)
     commit: str = ""
@@ -204,7 +206,7 @@ class Farm:
     interrupted: bool = False
 
     def time_up(self) -> bool:
-        return self.deadline is not None and time.monotonic() >= self.deadline
+        return self.deadline is not None and self.clock() >= self.deadline
 
     def halting(self) -> bool:
         """Ctrl+C, SIGTERM or the time cap."""
@@ -284,7 +286,9 @@ class Farm:
         ]  # fmt: skip
 
     def run_round(self, where: Path, seed: int) -> tuple[int, Path, farm_round.RoundSpec]:
-        spec = farm_round.RoundSpec.new(seed, self.cfg.commander, self.commit)
+        spec = farm_round.RoundSpec.new(
+            seed, self.cfg.commander, self.commit, worlds=self.cfg.worlds
+        )
         partial = self.rounds_dir / f".partial-{spec.round_id}"
         partial.mkdir(parents=True)
         spec.write(partial / "spec.json")
@@ -306,20 +310,24 @@ class Farm:
     def _wait(self, proc: subprocess.Popen[bytes]) -> int | None:
         """The round's exit code; ``None`` when it ran out of time. A round that does not
         stop within ``STOP_GRACE_S`` of a stop or a timeout is killed with its group."""
-        start = time.monotonic()
+        start = self.clock()
         stopping: float | None = None
+        late = False
         while True:
             try:
-                return proc.wait(timeout=1.0)
+                code = proc.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
-                pass
-            now = time.monotonic()
-            late = now - start > ROUND_TIMEOUT_S
-            if (self.halting() or late) and stopping is None:
-                self.interrupted = not late
-                _signal_group(proc, signal.SIGINT)
-                stopping = now
-            elif stopping is not None and now - stopping > STOP_GRACE_S:
+                code = None
+            if code is not None:
+                return None if late else code
+            now = self.clock()
+            if stopping is None:
+                late = now - start > self.round_timeout_s
+                self.interrupted = not late and self.halting()
+                if late or self.interrupted:
+                    _signal_group(proc, signal.SIGINT)
+                    stopping = now
+            elif now - stopping > STOP_GRACE_S:
                 _signal_group(proc, signal.SIGKILL)
                 proc.wait()
                 return None if late else proc.returncode
@@ -371,7 +379,7 @@ class Farm:
             + ("R2 i EU" if self.cfg.r2 else "bara lokalt (build/simfarm/)")
         )
         if self.max_minutes > 0:
-            self.deadline = time.monotonic() + self.max_minutes * 60.0
+            self.deadline = self.clock() + self.max_minutes * 60.0
         done = 0
         seed = self.seed
         while not self.halting() and (self.rounds_wanted == 0 or done < self.rounds_wanted):
@@ -394,9 +402,9 @@ class Farm:
                 self._nap(CHECK_EVERY_S)
                 continue
             self.state("running", f"varv med frö {seed}")
-            started = time.monotonic()
+            started = self.clock()
             code, partial, spec = self.run_round(where, seed)
-            took = time.monotonic() - started
+            took = self.clock() - started
             self.gate.round_took(took)
             if self.stop.requested or self.interrupted:
                 shutil.rmtree(partial, ignore_errors=True)
@@ -431,11 +439,11 @@ class Farm:
         return 0
 
     def _nap(self, seconds: float) -> None:
-        end = time.monotonic() + seconds
+        end = self.clock() + seconds
         if self.deadline is not None:
             end = min(end, self.deadline)
-        while not self.stop.requested and time.monotonic() < end:
-            self.sleep(min(1.0, end - time.monotonic()))
+        while not self.stop.requested and self.clock() < end:
+            self.sleep(min(1.0, end - self.clock()))
 
 
 def round_env(where: Path) -> dict[str, str]:

@@ -26,12 +26,11 @@ writes them) into that layout; it is independent of how the round was flown.
 from __future__ import annotations
 
 import datetime as dt
-import importlib.util
 import json
 import math
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -46,6 +45,11 @@ COMMANDERS = ("script", "sd-brain")
 EXIT_OK, EXIT_QC, EXIT_NOT_BUILT, EXIT_ERROR = 0, 1, 2, 3
 GRADE_MODULE = "sd_brain.evals.grade"
 GRADE_TIMEOUT_S = 600
+DEFAULT_WORLDS = ("sd_lake_forest",)
+# Asked in a child process, so sd_brain is never imported into the farm's own process.
+_HAS_GRADER = (
+    f"import importlib.util, sys; sys.exit(0 if importlib.util.find_spec({GRADE_MODULE!r}) else 1)"
+)
 
 
 class RoundError(RuntimeError):
@@ -63,19 +67,30 @@ class RoundSpec:
     commander: str
     commit: str
     created_utc: str
+    worlds: tuple[str, ...] = DEFAULT_WORLDS  # the worlds the scenario may draw from
     schema: str = SPEC_SCHEMA
 
     def __post_init__(self) -> None:
         if self.commander not in COMMANDERS:
             raise ValueError(f"commander ska vara {' eller '.join(COMMANDERS)}")
+        object.__setattr__(self, "worlds", tuple(self.worlds))
+        if not self.worlds:
+            raise ValueError("worlds får inte vara tom")
 
     @classmethod
     def new(
-        cls, seed: int, commander: str, commit: str, now: dt.datetime | None = None
+        cls,
+        seed: int,
+        commander: str,
+        commit: str,
+        now: dt.datetime | None = None,
+        worlds: Sequence[str] = DEFAULT_WORLDS,
     ) -> RoundSpec:
         now = now or dt.datetime.now(dt.UTC)
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
-        return cls(f"{stamp}-s{seed}-{commit[:8]}", seed, commander, commit, now.isoformat())
+        return cls(
+            f"{stamp}-s{seed}-{commit[:8]}", seed, commander, commit, now.isoformat(), tuple(worlds)
+        )
 
     def write(self, path: Path) -> None:
         path.write_text(json.dumps(asdict(self), indent=1) + "\n", encoding="utf-8")
@@ -214,15 +229,33 @@ def finalize(spec: RoundSpec, raw: RawRound, out: Path) -> tuple[qc.QcResult, in
     return qc.check(tally), kept
 
 
-def grade(out: Path) -> dict[str, Any] | None:
-    """Let the AI commander grade the round, when this checkout's sd-brain can: runs
-    ``python -m sd_brain eval grade --round <out>``, which writes ``grade.json``."""
-    if importlib.util.find_spec(GRADE_MODULE) is None:
+def _has_grader() -> bool:
+    try:
+        probe = subprocess.run(  # noqa: S603 - fixed argv
+            [sys.executable, "-c", _HAS_GRADER], capture_output=True, timeout=60, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
+
+
+def grade(
+    out: Path,
+    available: Callable[[], bool] = _has_grader,
+    run: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any] | None:
+    """Let the AI commander grade the round, when this checkout's sd-brain can
+    (``sd_brain.evals.grade`` exists): runs ``python -m sd_brain eval grade --round
+    <out>``, which writes ``grade.json``. ``None`` while there is no grader."""
+    if not available():
         return None
     cmd = [sys.executable, "-m", "sd_brain", "eval", "grade", "--round", str(out)]
     try:
-        subprocess.run(cmd, check=True, timeout=GRADE_TIMEOUT_S)  # noqa: S603 - fixed argv
-        return json.loads((out / "grade.json").read_text(encoding="utf-8"))
+        run(cmd, check=True, timeout=GRADE_TIMEOUT_S)
+        data = json.loads((out / "grade.json").read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("grade.json är inget objekt")
+        return data
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"error": f"betyget gick inte att räkna: {exc}"}
 

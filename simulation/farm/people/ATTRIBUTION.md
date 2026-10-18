@@ -14,9 +14,11 @@ Every picture the farm makes lists the models in it with these credits.
 | Rescue Randy v3 | Open Robotics (Ian Chen, Cole Biesemeyer) | CC BY 4.0 | https://app.gazebosim.org/OpenRobotics/fuel/models/Rescue%20Randy |
 | Rescue Randy Sitting v8 | Open Robotics (Ian Chen, Cole Biesemeyer) | CC0 1.0 | https://app.gazebosim.org/OpenRobotics/fuel/models/Rescue%20Randy%20Sitting |
 
-Rescue Randy is used under CC BY 4.0 (`LICENSES/CC-BY-4.0.txt`). The farm changes it only
-by placing it, turning it (lying) or giving it one solid colour. The other models are
-CC0 1.0 (`LICENSES/CC0-1.0.txt`).
+Rescue Randy is used under CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/). The farm changes it only by placing it,
+turning it (lying) or giving it one solid colour. The other models are CC0 1.0
+(https://creativecommons.org/publicdomain/zero/1.0/). The catalog files here are the
+project's own (Apache-2.0); the models' licences apply to the models only.
 
 The farm only labels "person". It never recognises who a person is, and the models'
 faces are never labelled.

@@ -15,7 +15,7 @@ from sd_sim.farm import loop, status
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.config import FarmConfig
 from sd_sim.farm.host import Gate, Limits
-from sd_sim.farm.store import Ledger
+from sd_sim.farm.store import Ledger, R2Config, UploadError
 
 # A stand-in for ``python -m sd_sim.farm round``: the next mode from a list decides
 # what the round does.
@@ -61,8 +61,18 @@ class FakeFarm(loop.Farm):
         return [sys.executable, "-c", FAKE_ROUND, str(spec_path), str(self.modes)]
 
 
-def farm(tmp_path: Path, modes: list[str], rounds: int = 0) -> FakeFarm:
-    cfg = FarmConfig("script", ("sd_lake_forest",), Limits(max_duty=1.0), None)
+# A disk budget the host's own disk can never trip.
+ROOMY = Limits(max_duty=1.0, max_local_gb=1e6, min_free_gb=0.0)
+
+
+def farm(
+    tmp_path: Path,
+    modes: list[str],
+    rounds: int = 0,
+    r2: R2Config | None = None,
+    limits: Limits = ROOMY,
+) -> FakeFarm:
+    cfg = FarmConfig("script", ("sd_lake_forest", "w2"), limits, r2)
     gate = Gate(
         cfg.limits,
         tmp_path / "build" / "simfarm" / "rounds",
@@ -137,6 +147,72 @@ def test_time_cap_stops_the_round_and_exits_cleanly(tmp_path: Path) -> None:
     assert list(f.rounds_dir.iterdir()) == []  # the stopped round was removed
     assert json.loads((f.base / "state.json").read_text())["reason"] == "tidstaket nått"
     assert f.modes.read_text() == "ok"
+
+
+def test_a_round_that_runs_too_long_is_an_error(tmp_path: Path) -> None:
+    f = farm(tmp_path, ["hang", "ok"], rounds=1)
+    f.round_timeout_s = 1.0
+    assert f.run() == 0
+    (failed,) = (f.base / "failed").iterdir()
+    assert json.loads((failed / "round.json").read_text())["error"] == "varvet tog för lång tid"
+    assert json.loads((failed / "spec.json").read_text())["worlds"] == ["sd_lake_forest", "w2"]
+    assert f.streak == 1
+
+
+R2 = R2Config("0123456789abcdef0123456789abcdef", "sd-simfarm", "AK", "SK")
+
+
+def test_make_room_removes_only_uploaded_rounds_oldest_first(tmp_path: Path) -> None:
+    f = farm(tmp_path, [], r2=R2, limits=Limits(max_duty=1.0, max_local_gb=4e-6, min_free_gb=0.0))
+    for name, size in (("r1", 2000), ("r2", 2000), ("r3", 1500)):
+        (f.rounds_dir / name).mkdir(parents=True)
+        (f.rounds_dir / name / "data").write_bytes(b"x" * size)
+    (f.base / "uploaded.jsonl").write_text('{"round": "r1"}\n{"round": "r3"}\n')
+    assert f.make_room() is None  # removing r1 is enough
+    assert sorted(p.name for p in f.rounds_dir.iterdir()) == ["r2", "r3"]
+    (f.rounds_dir / "r2" / "more").write_bytes(b"x" * 3000)
+    reason = f.make_room()  # r3 goes too, and r2 (not uploaded) still does not fit
+    assert reason is not None and "tak" in reason
+    assert sorted(p.name for p in f.rounds_dir.iterdir()) == ["r2"]
+
+
+def test_make_room_never_removes_without_an_upload(tmp_path: Path) -> None:
+    f = farm(tmp_path, [], limits=Limits(max_duty=1.0, max_local_gb=1e-6, min_free_gb=0.0))
+    (f.rounds_dir / "r1").mkdir(parents=True)
+    (f.rounds_dir / "r1" / "data").write_bytes(b"x" * 5000)
+    (f.base / "uploaded.jsonl").write_text('{"round": "r1"}\n')  # no key: the ledger is stale
+    assert f.make_room() is not None
+    assert (f.rounds_dir / "r1").is_dir()
+
+
+class FakeStore:
+    def __init__(self, fail_on: str | None = None) -> None:
+        self.sent: list[str] = []
+        self.fail_on = fail_on
+
+    def upload_round(self, d: Path) -> bool:
+        if d.name == self.fail_on:
+            raise UploadError("R2 svarar inte")
+        self.sent.append(d.name)
+        return True
+
+
+def test_upload_backlog_in_order_and_waits_on_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    f = farm(tmp_path, [], r2=R2)
+    for name in ("r1", "r2", "r3", ".partial-r4"):
+        (f.rounds_dir / name).mkdir(parents=True)
+    fake = FakeStore(fail_on="r2")
+    monkeypatch.setattr(f, "store", lambda: fake)
+    f.upload_backlog()
+    assert fake.sent == ["r1"]  # stops at the error and tries again next turn
+    fake.fail_on = None
+    f.upload_backlog()
+    assert fake.sent == ["r1", "r1", "r2", "r3"]  # never the half-made round
+    f.stop.requested = True
+    f.upload_backlog()
+    assert len(fake.sent) == 4
 
 
 def test_round_command_runs_under_nice_from_the_worktree(tmp_path: Path) -> None:

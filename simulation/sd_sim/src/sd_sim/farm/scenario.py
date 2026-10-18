@@ -175,15 +175,17 @@ def _spots(
     if x1 - x0 < 2 * EDGE_M or y1 - y0 < 2 * EDGE_M:
         raise ValueError("sökområdet är för litet")
     out: list[tuple[float, float]] = []
+    if count == 0:
+        return out
     for _ in range(20_000):
-        if len(out) == count:
-            return out
         e = round(rng.uniform(x0 + EDGE_M, x1 - EDGE_M), 2)
         n = round(rng.uniform(y0 + EDGE_M, y1 - EDGE_M), 2)
         if math.hypot(e, n) < objects.HOME_KEEP_OUT_M + 3.0:
             continue
         if all(math.hypot(e - a, n - b) >= MIN_GAP_M for a, b in out):
             out.append((e, n))
+            if len(out) == count:
+                return out
     raise ValueError(f"hittade inte {count} lediga platser i sökområdet")
 
 
