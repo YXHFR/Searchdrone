@@ -18,6 +18,11 @@ Run its checks from the repository root: `just test` (all checks: `just check`).
   when the main model returns an error). OpenRouter gets `reasoning: {effort}` (default
   `low`) and `provider: {data_collection: "deny", require_parameters: true}`, both set in
   `[cloud]` and `[cloud.provider]`. Every order goes through the gate.
+- **What leaves the machine.** With `SD_CLOUD_API_KEY` set, each turn (operator chat and
+  vehicle state) goes to OpenRouter and on to the main model's provider, and on an error
+  also to the fallback model's provider. `data_collection = "deny"` keeps it out of
+  training and storage; for real search areas consider `zdr = true` (zero-retention
+  endpoints only) or `fallback_model = ""` (one vendor only).
 - **The command mode is the only reserve.** Without network or key, or when the cloud
   does not answer within `call_timeout_s`, there is no AI chat: the fixed command mode
   (pure code, "hjälp" lists the commands) answers the same turn, the heartbeat says

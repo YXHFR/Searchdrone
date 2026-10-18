@@ -18,7 +18,7 @@ All notable changes to this project are listed here. The format follows
   `reasoning_effort` (default `low`) and `[cloud.provider]` (OpenRouter provider routing,
   `data_collection = "deny"` by default). Defaults: `z-ai/glm-5.3-flash` with
   `anthropic/claude-haiku-5.5` as fallback. The backend kind `llm_local` is now `cloud`
-  (old configs still load). `just perf` measures the cloud model's answer time when a key
+  (old `brain.toml` and `sim.toml` files still load). `just perf` measures the cloud model's answer time when a key
   is set and skips with a line otherwise; `just brain-eval-cloud` runs the chat scenarios
   against it.
 - **Breaking (`commander/v1`):** the decision engine `local` is gone. `DecisionLog.engine`

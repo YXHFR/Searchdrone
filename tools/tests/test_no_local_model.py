@@ -34,8 +34,11 @@ FORBIDDEN = re.compile(
     r"|models-fetch|check-model|brain-eval-model|llm-up|llm_http",
     re.IGNORECASE,
 )
-# Old configs are migrated on load; that one function names the old kind on purpose.
-ALLOWED = {("software/brain/src/sd_brain/config.py", "llm_local")}
+# Old configs are migrated on load; those two loaders name the old kind on purpose.
+ALLOWED = {
+    ("software/brain/src/sd_brain/config.py", "llm_local"),
+    ("simulation/sd_sim/src/sd_sim/config.py", "llm_local"),
+}
 
 
 def _tracked(paths: tuple[str, ...]) -> list[str]:
