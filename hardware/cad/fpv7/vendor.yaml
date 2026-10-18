@@ -10,6 +10,7 @@ models:
     url: https://datasheets.raspberrypi.com/rpi5/RaspberryPi5-step.zip
     sha256: 6841637b4cfa97637bf34b529bfe896f24d9634b2c40b57a156781f55d88f06f
     member: rpi-5b_no_graphics.step
+    max_download_bytes: 20000000
     max_bytes: 100000000
     license: MIT (LICENSE.txt in the zip, Copyright (c) 2026 Raspberry Pi Ltd)
     replaces: [pi5, pi5_ports]
@@ -22,6 +23,7 @@ models:
     url: https://datasheets.raspberrypi.com/camera/camera-module-3-step.zip
     sha256: b2e2026ea5322bddf1ddcbae97c094822ee9e0ca92d7bc5c748f60a8b5ef6683
     member: Camera_module_3_std_model_simple.stp
+    max_download_bytes: 20000000
     max_bytes: 60000000
     license: Raspberry Pi design file terms (https://www.raspberrypi.com/licensing/), not redistributed
     replaces: [camera]

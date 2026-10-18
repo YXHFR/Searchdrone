@@ -99,6 +99,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      # The manufacturer models change only with vendor.yaml (pinned SHA-256), so a
+      # cached copy spares the download; vendor.py checks the checksum either way.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/cad/vendor
+          key: cad-vendor-${{ hashFiles('hardware/cad/fpv7/vendor.yaml') }}
       - name: Build the CAD models (STEP, STL, report, picture, detailed STEP)
         run: just cad-detailed
       - name: Overlaps, propeller margins, camera view and repeatable exports
@@ -106,11 +112,10 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cad-fpv7
-          # The detailed STEP holds manufacturer models; it is built and checked here but
-          # not published (vendor.yaml says which licences allow sharing).
-          path: |
-            build/cad/fpv7/
-            !build/cad/fpv7/fpv7_detailed.step
+          # Only build/cad/fpv7/. The manufacturer models (build/cad/vendor/) and the
+          # detailed STEP (build/cad/fpv7-detailed/) are built and checked but never
+          # published: vendor.yaml says which licences allow sharing.
+          path: build/cad/fpv7/
           if-no-files-found: error
           retention-days: 14
 

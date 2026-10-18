@@ -12,8 +12,28 @@ import math
 from typing import Any
 
 import cadquery as cq
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCP.TopTools import TopTools_ListOfShape
 
 Params = dict[str, Any]
+
+
+def cut(shape: cq.Shape, *tools: cq.Shape) -> cq.Shape:
+    """``shape`` minus ``tools``, run single-threaded.
+
+    CadQuery runs boolean operations in parallel, and the result then differs in the last
+    digits from run to run; the exports must be the same on every build.
+    """
+    args, cutters = TopTools_ListOfShape(), TopTools_ListOfShape()
+    args.Append(shape.wrapped)
+    for t in tools:
+        cutters.Append(t.wrapped)
+    op = BRepAlgoAPI_Cut()
+    op.SetArguments(args)
+    op.SetTools(cutters)
+    op.SetRunParallel(False)
+    op.Build()
+    return cq.Shape.cast(op.Shape())
 
 
 def box(length: float, width: float, height: float) -> cq.Solid:
@@ -94,34 +114,54 @@ def fov_pyramid(hfov_deg: float, vfov_deg: float, length: float) -> cq.Solid:
     return cq.Solid.makeLoft([apex, base], True)  # type: ignore[arg-type]
 
 
-def _shell(p: Params) -> cq.Workplane:
-    """A printed shell: a box with a rounded nose (+x) and rounded edges, hollowed to
-    ``wall`` with the bottom face open (z = 0 up to ``height``)."""
-    return (
-        cq.Workplane("XY")
-        .box(p["length"], p["width"], p["height"], centered=(True, True, False))
-        .edges("|Z and >X")
-        .fillet(p["nose_radius"])
-        .edges(">Z")
-        .fillet(p["edge_radius"])
-        .faces("<Z")
-        .shell(-p["wall"])
-    )
-
-
-def canopy(p: Params, vent_x: float, mast_x: float, mast_diameter: float) -> cq.Solid:
+def canopy(
+    p: Params,
+    vent_x: float,
+    mast_x: float,
+    mast_diameter: float,
+    keep_out: list[tuple[float, float]],
+    keep_out_radius: float,
+) -> cq.Solid:
     """The top canopy over the companion computer, open underneath, centred on x = 0.
 
-    Openings: an intake slot in the nose, a roof vent over the cooler and AI HAT at
-    ``vent_x``, an exhaust slot in the tail and a hole for the GPS mast at ``mast_x``.
+    A box with a rounded nose (+x) and rounded top edges, with a scallop cut at every
+    ``keep_out`` point (the motor axes) so that, seen from above, it stays outside the
+    propeller discs; then hollowed to ``wall``. Openings: an intake slot in the nose, a
+    roof vent over the cooler and AI HAT at ``vent_x``, an exhaust slot in the tail and a
+    hole for the GPS mast at ``mast_x``.
     """
     half = p["length"] / 2
     top = p["height"]
+    t = p["wall"]
+
+    def rounded(length: float, width: float, height: float, inset: float) -> cq.Shape:
+        """The canopy's outer form shrunk by ``inset`` on every side but the open bottom."""
+        solid = (
+            cq.Workplane("XY")
+            .box(length, width, height, centered=(True, True, False))
+            .edges("|Z and >X")
+            .fillet(p["nose_radius"] - inset)
+            .edges(">Z")
+            .fillet(p["edge_radius"] - inset)
+            .val()
+        )
+        scallops = [
+            cylinder(2 * (keep_out_radius + inset), top + 4).translate(cq.Vector(x, y, -2))
+            for x, y in keep_out
+        ]
+        return cut(solid, *scallops) if scallops else solid
+
+    # Outer form minus inner form (open at the bottom), not OCCT's shell: its result
+    # differs in the last digits from run to run, and the exports must not.
+    outer = rounded(p["length"], p["width"], top, 0)
+    inner = rounded(p["length"] - 2 * t, p["width"] - 2 * t, top - t + 1, t).translate(
+        cq.Vector(0, 0, -1)
+    )
+    body = cut(outer, inner)
     iw, ih = p["intake"]
     vl, vw = p["vent"]
     ew, eh = p["exhaust"]
     slot_z = top * 0.45
-    body = _shell(p)
     cuts = [
         box(40, iw, ih).translate(cq.Vector(half - 15, 0, slot_z - ih / 2)),
         box(vl, vw, 20).translate(cq.Vector(vent_x, 0, top - 10)),
@@ -130,9 +170,7 @@ def canopy(p: Params, vent_x: float, mast_x: float, mast_diameter: float) -> cq.
             cq.Vector(mast_x, 0, -1)
         ),
     ]
-    for c in cuts:
-        body = body.cut(c)
-    return body.val()  # type: ignore[return-value]
+    return cut(body, *cuts)  # type: ignore[return-value]
 
 
 def nose_fairing(p: Params) -> cq.Solid:
@@ -143,20 +181,26 @@ def nose_fairing(p: Params) -> cq.Solid:
     """
     trim = p["rear_trim"]
     long = {**p, "length": p["length"] + trim}
-    body = (
-        cq.Workplane("XY")
-        .box(long["length"], p["width"], p["height"], centered=(True, True, False))
-        .edges("|Z and >X")
-        .fillet(p["nose_radius"])
-        .edges("<Z")
-        .fillet(p["edge_radius"])
-        .faces(">Z")
-        .shell(-p["wall"])
+    t = p["wall"]
+
+    def rounded(length: float, width: float, height: float, inset: float) -> cq.Shape:
+        return (
+            cq.Workplane("XY")
+            .box(length, width, height, centered=(True, True, False))
+            .edges("|Z and >X")
+            .fillet(p["nose_radius"] - inset)
+            .edges("<Z")
+            .fillet(p["edge_radius"] - inset)
+            .val()
+        )
+
+    # Outer form minus inner form (open at the top), not OCCT's shell (see canopy).
+    outer = rounded(long["length"], p["width"], p["height"], 0)
+    inner = rounded(long["length"] - 2 * t, p["width"] - 2 * t, p["height"], t).translate(
+        cq.Vector(0, 0, t)
     )
-    # Cut away the rear, rounded end so the shell is open towards the battery.
+    body = cut(outer, inner)
     rear = -long["length"] / 2
-    body = body.cut(
-        box(2 * trim, p["width"] + 2, p["height"] + 2).translate(cq.Vector(rear, 0, -1))
-    )
+    open_end = box(2 * trim, p["width"] + 2, p["height"] + 2).translate(cq.Vector(rear, 0, -1))
     # Front tip at x = 0, the shell hanging below z = 0.
-    return body.val().translate(cq.Vector(-long["length"] / 2, 0, -p["height"]))  # type: ignore[union-attr]
+    return cut(body, open_end).translate(cq.Vector(-long["length"] / 2, 0, -p["height"]))  # type: ignore[return-value]

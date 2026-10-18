@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import cadquery as cq
 import yaml
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 if TYPE_CHECKING:
@@ -96,6 +96,39 @@ def prop_margins(parts: list[Part], limit: float) -> list[dict[str, Any]]:
     return rows
 
 
+def _silhouette(solid: cq.Shape, axes: tuple[str, str]) -> Any:
+    """The solid's outline projected on the plane of two axes, as a shapely shape."""
+    vertices, triangles = solid.tessellate(0.5, 0.3)
+    a, b = axes
+    tris = [
+        Polygon([(getattr(vertices[i], a), getattr(vertices[i], b)) for i in tri])
+        for tri in triangles
+    ]
+    return unary_union([t for t in tris if t.area > 1e-6])
+
+
+def plan_margins(parts: list[Part]) -> list[dict[str, Any]]:
+    """Seen from above: how far each part above a propeller disc stays outside it.
+
+    A part whose lowest point is above the top of the discs must not hang over them,
+    even if it is far enough away in 3D: it would shade the inflow and a flexing blade
+    tip could reach it. Negative means it overlaps the disc by that much.
+    """
+    props = [pt for pt in parts if pt.group == "prop"]
+    rows = []
+    for prop in props:
+        box = prop.solid.BoundingBox()
+        centre, radius = Point(box.center.x, box.center.y), box.xlen / 2
+        best: tuple[float, str] = (float("inf"), "")
+        for other in parts:
+            if other.group == "prop" or other.solid.BoundingBox().zmin < box.zmax:
+                continue
+            gap = centre.distance(_silhouette(other.solid, ("x", "y"))) - radius
+            best = min(best, (gap, other.name))
+        rows.append({"prop": prop.name, "nearest": best[1], "distance_mm": round(best[0], 2)})
+    return rows
+
+
 def fov_hits(drone: Drone) -> list[dict[str, Any]]:
     """Parts inside the camera's field of view (the camera itself excluded)."""
     hits = []
@@ -110,14 +143,7 @@ def fov_hits(drone: Drone) -> list[dict[str, Any]]:
 
 def frontal_area_mm2(parts: list[Part]) -> float:
     """Area of the parts' silhouette seen from the front (projected on the y-z plane)."""
-    tris = []
-    for pt in parts:
-        vertices, triangles = pt.solid.tessellate(0.5, 0.3)
-        for tri in triangles:
-            poly = Polygon([(vertices[i].y, vertices[i].z) for i in tri])
-            if poly.area > 1e-6:
-                tris.append(poly)
-    return unary_union(tris).area if tris else 0.0
+    return unary_union([_silhouette(pt.solid, ("y", "z")) for pt in parts]).area if parts else 0.0
 
 
 def aero(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +201,8 @@ def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
         "overlaps": over,
         "prop_margins": margins,
         "prop_margin_min_mm": limit,
+        "plan_margins": plan_margins(drone.parts),
+        "plan_margin_min_mm": p["checks"]["plan_margin_min"],
         "fov_hits": hits,
         "parts": [
             *(
@@ -202,6 +230,7 @@ def verdicts(r: dict[str, Any]) -> dict[str, bool]:
     return {
         "overlaps": not r["overlaps"],
         "prop_margin": all(m["distance_mm"] >= r["prop_margin_min_mm"] for m in r["prop_margins"]),
+        "plan_margin": all(m["distance_mm"] >= r["plan_margin_min_mm"] for m in r["plan_margins"]),
         "camera_view": not r["fov_hits"],
         "cog": cog_ok(r),
         "mass": r["mass_g"] <= r["max_takeoff_mass_g"],
@@ -249,6 +278,9 @@ def markdown(r: dict[str, Any]) -> str:
         f"| No parts overlap | {yes(v['overlaps'])} ({len(r['overlaps'])} overlaps) |",
         f"| Propeller margin >= {r['prop_margin_min_mm']} mm | {yes(v['prop_margin'])} "
         f"(smallest {min(m['distance_mm'] for m in r['prop_margins']):.1f} mm) |",
+        f"| Seen from above, nothing over the discs (>= {r['plan_margin_min_mm']} mm) "
+        f"| {yes(v['plan_margin'])} "
+        f"(smallest {min(m['distance_mm'] for m in r['plan_margins']):.1f} mm) |",
         f"| Camera view clear | {yes(v['camera_view'])} ({len(r['fov_hits'])} parts in view) |",
         f"| Centre of gravity within {r['cog_offset_max_mm']} mm of the centre in x and y "
         f"| {yes(v['cog'])} |",

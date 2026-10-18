@@ -43,7 +43,7 @@ pi5:                          # Raspberry Pi 5: the board, ports and cooler as b
   ports: {length: 21, width: 53, height: 16, overhang: 3, mass: 0}
 cooler: {length: 63.5, width: 42.5, height: 13.7, offset_from_gpio_end: 33, mass: 29}
 ai_hat: {length: 65, width: 56.5, height: 15.6, standoff_height: 16, mass: 45}   # AI HAT+ 2 with heatsink
-pi_tray: {length: 92, width: 58, height: 3, damper_height: 8, mass: 20}
+pi_tray: {length: 86, width: 56, height: 3, damper_height: 8, mass: 20}
 
 camera:                       # Raspberry Pi Camera Module 3, standard lens
   length: 25
@@ -69,7 +69,8 @@ canopy:                       # printed top canopy over the companion computer
   intake: [30, 10]            # nose slot, width (y) and height (z)
   vent: [46, 34]              # roof opening over the cooler and AI HAT, length (x), width (y)
   exhaust: [30, 10]           # tail slot, width and height
-  mast_clearance: 1           # around the GPS mast
+  mast_clearance: 2.5         # around the GPS mast, room for a rubber grommet
+  prop_keep_out: 4            # seen from above, the canopy stays this far outside the discs
 nose_fairing:                 # printed nose under the frame, ahead of the battery
   material: PETG
   wall: 1.2
@@ -107,6 +108,7 @@ reference:
 
 checks:
   prop_margin_min: 5
+  plan_margin_min: 3          # seen from above: parts above the discs stay outside them
   cog_offset_max: 5
   cover_mass_max: 80          # canopy and nose fairing together, g
   fov_length: 500

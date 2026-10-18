@@ -124,6 +124,11 @@ def test_jobs_and_aggregate() -> None:
     assert any("just hw-check" in str(s.get("run", "")) for s in jobs["hw-calc"]["steps"])
     cad_runs = [str(s.get("run", "")) for s in jobs["hw-cad"]["steps"]]
     assert "just cad-detailed" in cad_runs
+    # Only the simple model is published; manufacturer models stay out of the artifact.
+    uploads = [st for st in jobs["hw-cad"]["steps"] if "upload-artifact" in str(st.get("uses"))]
+    assert [st["with"]["path"] for st in uploads] == ["build/cad/fpv7/"]
+    assembly = (ROOT / "hardware" / "cad" / "fpv7" / "assembly.py").read_text(encoding="utf-8")
+    assert '"build" / "cad" / "fpv7-detailed"' in assembly
     assert "just cad-test" in cad_runs
     assert jobs["changes"]["outputs"]["run"]
 

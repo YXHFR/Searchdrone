@@ -6,8 +6,9 @@ writes to OUT_DIR (default build/cad/fpv7):
 
 - ``fpv7.step``: the assembly with one named solid per part;
 - ``step/<part>.step``: every part on its own, in place, for further work in a CAD program;
-- ``fpv7_detailed.step`` (with ``detailed``, after vendor.py has downloaded the models):
-  the assembly with the manufacturers' Raspberry Pi 5 and Camera Module 3 models;
+- with ``detailed``, after vendor.py has downloaded the models:
+  ``build/cad/fpv7-detailed/fpv7_detailed.step``, the assembly with the manufacturers'
+  Raspberry Pi 5 and Camera Module 3 models (kept apart because it may not be shared);
 - ``fpv7.stl`` and ``stl/<part>.stl``: the whole drone and every part on its own (the
   printed parts, such as ``canopy.stl`` and ``nose_fairing.stl``, go to the slicer);
 - ``report.md`` and ``report.json``: mass, centre of gravity, inertia, overlaps,
@@ -40,6 +41,9 @@ import yaml
 HERE = Path(__file__).resolve().parent
 PARAMS = HERE / "params.yaml"
 DEFAULT_OUT = HERE.parents[2] / "build" / "cad" / "fpv7"
+# Outside DEFAULT_OUT on purpose: CI publishes DEFAULT_OUT, and the detailed STEP holds
+# manufacturer models that may not be shared.
+DETAILED_OUT = HERE.parents[2] / "build" / "cad" / "fpv7-detailed"
 
 # Fixed STEP header date so that two builds give the same bytes.
 STEP_DATE = "2000-01-01T00:00:00"
@@ -300,11 +304,17 @@ def build(p: dict[str, Any]) -> Drone:
     # cut where the camera looks through it.
     prop_top = z["arm_top"] + m["height"] + pr["gap_above_motor"] + pr["swept_height"]
     can = p["canopy"]
+    motors = [
+        (r * math.cos(math.radians(a)) - can["x"], r * math.sin(math.radians(a)))
+        for a in motor_angles
+    ]
     canopy_solid = parts.canopy(
         can,
         vent_x=hat_x - can["x"],
         mast_x=lay["gps_x"] - can["x"],
         mast_diameter=gps["mast"]["diameter"],
+        keep_out=motors,
+        keep_out_radius=pr["diameter_in"] * 25.4 / 2 + can["prop_keep_out"],
     )
     out.append(
         Part(
@@ -325,7 +335,7 @@ def build(p: dict[str, Any]) -> Drone:
         cam_bottom,
         rz=90,
     )
-    fairing = moved(parts.nose_fairing(nf), nf["x_tip"]).cut(window)
+    fairing = parts.cut(moved(parts.nose_fairing(nf), nf["x_tip"]), window)
     out.append(Part("nose_fairing", "cover", fairing, shell_mass(fairing, nf, p["materials"])))
 
     points = [
@@ -421,7 +431,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     drone = build(p)
     report = export(drone, p, out_dir)
     if detailed:
-        write_detailed_step(drone, out_dir / "fpv7_detailed.step")
+        DETAILED_OUT.mkdir(parents=True, exist_ok=True)
+        write_detailed_step(drone, DETAILED_OUT / "fpv7_detailed.step")
     sys.stdout.write(checks.markdown(report))
     sys.stdout.write(f"\nSkrev STEP, STL, rapport och bild till {out_dir}\n")
     return 0 if report["ok"] else 1

@@ -30,7 +30,8 @@ Output in `build/cad/fpv7/`:
 - `fpv7.stl` and `stl/<part>.stl`: the printed parts (`canopy.stl`, `nose_fairing.stl`,
   `pi_tray.stl`, `camera_mount.stl`, `leg_*.stl`, `gps_mast.stl`) go to the slicer;
 - `report.md` / `report.json` and `fpv7_views.png`;
-- `fpv7_detailed.step` (only with `just cad-detailed`).
+- `build/cad/fpv7-detailed/fpv7_detailed.step` (only with `just cad-detailed`), kept
+  outside `build/cad/fpv7/` because it holds manufacturer models.
 
 Two builds give byte-identical STEP, STL and report files.
 
@@ -64,10 +65,13 @@ their volume times the material's density. Together they must stay under
 `checks.cover_mass_max` (80 g).
 
 - **Top canopy** (`canopy.stl`): a shell with a rounded nose over the Raspberry Pi, the
-  Active Cooler and the AI HAT, clipped to the Pi tray. Its rim stands
-  `canopy.rim_clearance` above the propeller discs. Openings: an intake slot in the nose,
-  a roof vent over the cooler fan and the AI HAT heatsink, an exhaust slot in the tail and
-  a hole for the GPS mast.
+  Active Cooler and the AI HAT. Its rim stands `canopy.rim_clearance` above the propeller
+  discs, and seen from above it stays `canopy.prop_keep_out` outside them: each corner has
+  a scallop cut around the propeller disc. Openings: an intake slot in the nose, a roof
+  vent over the cooler fan and the AI HAT heatsink, an exhaust slot in the tail and a hole
+  for the GPS mast with room for a rubber grommet. It is meant to be fastened to the Pi
+  tray with clips or M2 screws; the fastening is not modelled yet. Check the Pi's and the
+  Hailo's temperatures with the canopy on during the first bench test.
 - **Nose fairing** (`nose_fairing.stl`): a rounded nose hanging under the bottom plate in
   front of the battery, around the camera. The camera looks through a window cut from
   the field of view plus `nose_fairing.window_extra_deg` on every side. The fairing ends
@@ -82,7 +86,7 @@ flight logs. Propeller discs are left out.
 ## Manufacturer 3D models
 
 `just cad-detailed` downloads the models below from the manufacturer, checks each archive's
-SHA-256 (`vendor.yaml`) and writes `fpv7_detailed.step`, where they replace the
+SHA-256 (`vendor.yaml`) and writes `build/cad/fpv7-detailed/fpv7_detailed.step`, where they replace the
 simplified envelopes. The test suite then checks that each model sits within 2 mm of its
 envelope, so the checks on the simple model hold for the real parts. The files are never
 committed: the Raspberry Pi 5 model alone is 78 MB, and the detailed STEP about 280 MB.
@@ -103,7 +107,8 @@ CI builds the detailed STEP but does not publish it.
 
 1. No two parts share volume.
 2. Every propeller disc is at least `checks.prop_margin_min` (5 mm) from every other part
-   and from the other discs; its own motor is the only exception.
+   and from the other discs; its own motor is the only exception. Seen from above,
+   nothing that sits above the discs hangs over them (`checks.plan_margin_min`, 3 mm).
 3. Nothing but the camera itself is inside the camera's field of view (66 x 41 degrees,
    checked to 500 mm below the lens).
 4. The centre of gravity is within `checks.cog_offset_max` (5 mm) of the centre in x and y,
@@ -112,9 +117,12 @@ CI builds the detailed STEP but does not publish it.
    the reference values in a table (`report.md`).
 6. The printed covers weigh at most 80 g, keep 5 mm from the propellers, overlap nothing
    and leave the camera's view clear.
-7. With covers, Cd A and drag are lower than without (rough estimate, see above).
+7. With covers, Cd A and drag are lower than without (rough estimate, see above); the
+   frontal area and drag formulas are tested against a hand calculation.
 8. The STEP, STL and report files are the same on every build.
 9. After `just cad-detailed`, every manufacturer model fits its envelope within 2 mm.
+10. The download checks in `vendor.py` (https only, also after redirects, pinned SHA-256,
+    size limits, only the named file extracted) are tested offline.
 
 ## Sources
 
@@ -203,8 +211,8 @@ is used only where the manufacturer publishes none.
 | `ai_hat.height` | 15.6 mm | (osäkert) 1.6 mm board (estimate) + 14 mm heatsink | [AI HAT+ 2 product brief](https://pip.raspberrypi.com/documents/RP-009655-MM-raspberry-pi-ai-hat-plus-2-product-brief.pdf) | 2026-10-18 |
 | `ai_hat.standoff_height` | 16 mm | 16 mm stacking header | [AI HAT+ 2 product brief](https://pip.raspberrypi.com/documents/RP-009655-MM-raspberry-pi-ai-hat-plus-2-product-brief.pdf) | 2026-10-18 |
 | `ai_hat.mass` | 45 g | (osäkert) not published; board with heatsink | Estimate, no drawing published | - |
-| `pi_tray.length` | 92 mm | (osäkert) printed tray | Design default | - |
-| `pi_tray.width` | 58 mm | (osäkert) | Design default | - |
+| `pi_tray.length` | 86 mm | (osäkert) printed tray, the size of the board | Design default | - |
+| `pi_tray.width` | 56 mm | (osäkert) | Design default | - |
 | `pi_tray.height` | 3 mm | (osäkert) | Design default | - |
 | `pi_tray.damper_height` | 8 mm | (osäkert) rubber dampers | Design default | - |
 | `pi_tray.mass` | 20 g | (osäkert) | Design default | - |
@@ -234,7 +242,8 @@ is used only where the manufacturer publishes none.
 | `canopy.intake` | 30, 10 mm | nose slot, width and height | Design default | - |
 | `canopy.vent` | 46, 34 mm | roof opening over the cooler and AI HAT | Design default | - |
 | `canopy.exhaust` | 30, 10 mm | tail slot | Design default | - |
-| `canopy.mast_clearance` | 1 mm | around the GPS mast | Design default | - |
+| `canopy.mast_clearance` | 2.5 mm | around the GPS mast, room for a rubber grommet | Design default | - |
+| `canopy.prop_keep_out` | 4 mm | seen from above, outside the propeller discs | Design default | - |
 | `nose_fairing.wall` | 1.2 mm | printed wall | Design default | - |
 | `nose_fairing.length` | 62 mm | tip to open rear end | Design default | - |
 | `nose_fairing.width` | 76 mm |  | Design default | - |
@@ -262,6 +271,7 @@ is used only where the manufacturer publishes none.
 | `reference.takeoff_mass_g` | 1500 g | (osäkert) planning target | Estimate, no drawing published | - |
 | `reference.inertia_g_m2` | 5.5, 6.5, 9.0 g m^2 | (osäkert) hand estimate with point masses, made before purchase | Estimate, no drawing published | - |
 | `checks.prop_margin_min` | 5 mm | acceptance limit | Design default | - |
+| `checks.plan_margin_min` | 3 mm | seen from above, parts above the discs stay outside them | Design default | - |
 | `checks.cog_offset_max` | 5 mm | acceptance limit, x and y | Design default | - |
 | `checks.cover_mass_max` | 80 g | canopy and nose fairing together | Design default | - |
 | `checks.fov_length` | 500 mm | how far below the camera the view is checked | Design default | - |

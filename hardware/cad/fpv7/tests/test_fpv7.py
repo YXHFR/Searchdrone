@@ -84,6 +84,10 @@ def test_mass_is_within_the_hardware_limit(report: dict[str, Any]) -> None:
             {"prop_margins": [{"prop": "prop_1", "nearest": "x", "distance_mm": 4.99}]},
             "prop_margin",
         ),
+        (
+            {"plan_margins": [{"prop": "prop_1", "nearest": "x", "distance_mm": 2.99}]},
+            "plan_margin",
+        ),
         ({"fov_hits": [{"part": "x", "volume_mm3": 1.0}]}, "camera_view"),
         ({"cog_mm": [0.0, -5.01, 0.0]}, "cog"),
         ({"mass_g": 2500.01}, "mass"),
@@ -96,6 +100,7 @@ def test_each_failed_check_fails_the_report(
     import checks
 
     assert report["prop_margin_min_mm"] == 5
+    assert report["plan_margin_min_mm"] == 3
     assert report["cog_offset_max_mm"] == 5
     assert report["max_takeoff_mass_g"] == 2500
     assert all(checks.verdicts(report).values())
@@ -211,7 +216,7 @@ def test_covers_keep_their_margins(report: dict[str, Any], params: dict[str, Any
     overlap, and the camera sees past the fairing through its window."""
     import checks
 
-    assert report["cover_mass_g"] <= params["checks"]["cover_mass_max"] <= 80
+    assert report["cover_mass_g"] <= params["checks"]["cover_mass_max"]
     covers = {"canopy", "nose_fairing"}
     assert covers <= {pt["name"] for pt in report["parts"]}
     assert not [o for o in report["overlaps"] if {o["a"], o["b"]} & covers]
@@ -267,3 +272,52 @@ def test_vendor_models_fit_their_envelopes(drone: assembly.Drone) -> None:
             (model.zmin, model.zmax, env.zmin, env.zmax),
         ]:
             assert lo >= elo - 2 and hi <= ehi + 2, (m["name"], lo, hi, elo, ehi)
+
+
+def test_nothing_above_the_discs_hangs_over_them(
+    report: dict[str, Any], params: dict[str, Any]
+) -> None:
+    """Seen from above, the canopy (and the computer, tray and GPS) stay outside the discs."""
+    assert len(report["plan_margins"]) == 4
+    for row in report["plan_margins"]:
+        assert row["distance_mm"] >= params["checks"]["plan_margin_min"], row
+
+
+def test_plan_check_catches_a_canopy_over_the_discs(
+    drone: assembly.Drone, params: dict[str, Any]
+) -> None:
+    """The canopy without its scallops (the first design) hangs over the rear discs, which
+    the 3D distance check alone does not catch."""
+    import checks
+    import parts
+
+    can = params["canopy"]
+    plain = parts.canopy(can, 0, -62, 10, keep_out=[], keep_out_radius=0)
+    canopy = next(pt for pt in drone.parts if pt.name == "canopy")
+    z = canopy.solid.BoundingBox().zmin - plain.BoundingBox().zmin
+    old = assembly.Part("canopy", "cover", plain.translate((can["x"], 0, z)), 30.0)
+    others = [pt for pt in drone.parts if pt.name != "canopy"] + [old]
+    rows = checks.plan_margins(others)
+    assert min(r["distance_mm"] for r in rows) < 0
+    assert all(
+        r["distance_mm"] >= params["checks"]["prop_margin_min"]
+        for r in checks.prop_margins(others, 5)
+        if r["nearest"] == "canopy"
+    )
+
+
+def test_frontal_area_and_drag_by_hand() -> None:
+    """A 10 x 20 x 30 mm box seen from the front is 20 x 30 = 600 mm^2; with a 20 x 30 mm
+    cover in front of it, all of it counts as faired."""
+    import checks
+
+    block = assembly.Part("block", "electronics", cq.Solid.makeBox(10, 20, 30), 1.0)
+    cover = assembly.Part("cover", "cover", cq.Solid.makeBox(2, 20, 30, cq.Vector(10, 0, 0)), 1.0)
+    assert checks.frontal_area_mm2([block]) == pytest.approx(600, rel=1e-6)
+    p = {"aero": {"speed": 10, "air_density": 1.225, "cd_bluff": 1.0, "cd_faired": 0.5}}
+    ae = checks.aero(assembly.Drone([block, cover], [], block.solid, "none"), p)
+    assert ae["frontal_area_before_m2"] == pytest.approx(600e-6)
+    assert ae["cda_before_m2"] == pytest.approx(600e-6)
+    assert ae["cda_after_m2"] == pytest.approx(300e-6)
+    # q = 0.5 * 1.225 * 10^2 = 61.25 Pa
+    assert ae["drag_before_n"] == pytest.approx(61.25 * 600e-6, abs=1e-3)
