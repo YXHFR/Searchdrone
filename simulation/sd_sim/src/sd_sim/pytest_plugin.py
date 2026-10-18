@@ -11,6 +11,10 @@
   required check can never go green without flying.
 * Fixtures ``sim_instance`` (one simulator instance per xdist worker) and
   ``sim_physics`` / ``sim_brain``.
+* Every ``sitl`` and ``video`` test that runs writes ``runs/<run>/result.json`` with its
+  outcome and the values it measured (``sd_sim.report.measure``), passed or not
+  (``SD_SIM__RUNS_DIR`` moves ``runs/``, for the plugin's own tests). A value measured
+  while a shared (module or session) fixture starts counts for the first test using it.
 """
 
 from __future__ import annotations
@@ -18,12 +22,17 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
+import warnings
 from collections.abc import Generator, Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from sd_sim import paths
+from sd_sim.report import Report, take_measured
 
 MARKERS = (
     "sitl: needs ArduPilot SITL",
@@ -46,6 +55,13 @@ MAX_INSTANCE = 7
 SHARD_LIMIT_S = 25 * 60
 MAX_NODE_S = 900
 _WORKER = re.compile(r"^gw(\d+)$")
+_SCENARIO = re.compile(r"(?:^|_)sc(\d+[a-z]?)(?=_|$)")
+_RESULT_MARKERS = ("sitl", "video")
+_STARTED = pytest.StashKey[tuple[str, float]]()
+# Reports of tests that ran in this process, until their teardown is logged, and each
+# test's logged outcomes per phase (setup, call, teardown) of its latest attempt.
+_pending: dict[str, Report] = {}
+_logged: dict[str, dict[str, str]] = {}
 
 
 @dataclass(frozen=True)
@@ -160,6 +176,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     items[:] = selected
 
 
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    take_measured()  # nothing a previous test left behind
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    item.stash[_STARTED] = (stamp, time.monotonic())
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
@@ -168,7 +190,70 @@ def pytest_runtest_makereport(
     if report.skipped and require_sitl() and item.get_closest_marker("sitl"):
         report.outcome = "failed"
         report.longrepr = f"SITL-testet hoppades över ({call.when}) men SD_SIM__REQUIRE_SITL=1"
+    if report.when == "teardown" and any(item.get_closest_marker(m) for m in _RESULT_MARKERS):
+        # Written once the reports are logged: pytest-rerunfailures marks an attempt it
+        # repeats as "rerun" only after this hook, when it logs them.
+        _pending[item.nodeid] = result_report(item)
     return report
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    phases = _logged.setdefault(report.nodeid, {})
+    if report.when == "setup":
+        phases.clear()  # a new attempt
+    phases[report.when or ""] = report.outcome
+    if report.when != "teardown":
+        return
+    _logged.pop(report.nodeid, None)
+    rep = _pending.pop(report.nodeid, None)  # only in the process that ran the test
+    if rep is not None and wants_result(phases):
+        try:
+            write_test_result(rep, phases)
+        except OSError as exc:
+            warnings.warn(f"result.json för {report.nodeid} skrevs inte: {exc}", stacklevel=1)
+
+
+def scenario_id(test_name: str, module: str = "") -> str:
+    """``test_sc02_stop_and_resume`` -> ``SC02``; else the module's scenario
+    (``test_demo_flight`` in ``test_sc01.py`` -> ``SC01``); else the name stays."""
+    m = _SCENARIO.search(test_name.split("[", 1)[0]) or _SCENARIO.search(module)
+    return f"SC{m[1].upper()}" if m else test_name
+
+
+def wants_result(phases: dict[str, str]) -> bool:
+    """A test that ran to its end: a test skipped on purpose writes nothing, and an
+    attempt pytest-rerunfailures repeats leaves the result to the repeat."""
+    if "rerun" in phases.values():
+        return False
+    return phases.get("setup") != "skipped" and phases.get("call") != "skipped"
+
+
+def result_report(item: pytest.Item) -> Report:
+    """The test's report with what it measured; its run folder is made when written."""
+    instance = worker_instance()
+    label = re.sub(r"[^A-Za-z0-9_.-]+", "-", item.name).strip("-")[:80]
+    runs = Path(os.environ.get("SD_SIM__RUNS_DIR") or paths.runs_dir())
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    rep = Report(
+        scenario_id(item.name, item.path.stem),
+        runs / f"{stamp}-{label}-i{instance}",
+        instance,
+        str(item.config.getoption("--physics", "builtin")),
+        str(item.config.getoption("--brain", "scripted")),
+        variant=item.name,
+    )
+    if _STARTED in item.stash:
+        rep.started_utc, rep._t0 = item.stash[_STARTED]
+    rep.criteria = take_measured()
+    return rep
+
+
+def write_test_result(rep: Report, phases: dict[str, str]) -> Path:
+    """``runs/<run>/result.json`` for one test: what it measured, then its outcome."""
+    failed = [f"{when}: {outcome}" for when, outcome in phases.items() if outcome != "passed"]
+    rep.check("T", "Testet godkänt", not failed, measured="; ".join(failed) or "passed")
+    rep.run_dir.mkdir(parents=True, exist_ok=True)
+    return rep.write()
 
 
 @pytest.fixture

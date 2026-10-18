@@ -19,7 +19,13 @@ All notable changes to this project are listed here. The format follows
   numbers in the Swedish message. The panel shows drawn paths, the planned path
   (dashed), the flown part (solid) and the progress in %, and refuses a path outside the
   search area before saving it. SITL scenarios SC_PATH (every point within 3 m, then
-  hover) and SC_PATH_stop (STOP halfway: still within 2 s).
+  hover) and SC_PATH_stop (STOP halfway: BRAKE at once, standing still within 5 s as
+  SC02).
+- Status page on GitHub Pages (`.github/workflows/status-page.yml`, `tools/status_page/`):
+  one row per capability (flight, safety, AI, link, video) with its expected and measured
+  value, scenario, time and commit, the last 20 runs per capability and a demo film from
+  the panel's SITL browser test. Rebuilt after every push to `main` and nightly. Every
+  SITL and video test now writes `runs/<run>/result.json` with the values it measured.
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password
