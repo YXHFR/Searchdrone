@@ -40,6 +40,7 @@ from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, ru
 from sd_ground.services.latches import HOME_LATCHES, Latches
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
+from sd_mav.failsafe_signals import text_signal
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import (
     MODE_FRESH_S,
@@ -153,9 +154,9 @@ def vehicle_events(
     sink: EventSink, now: Callable[[], float] | None = None
 ) -> Callable[[str, dict[str, Any]], None]:
     """The ``Vehicle``'s events that the ground station keeps; status texts at warning
-    level or worse become ``fc.statustext``. At most one per kind and second (the rest
-    are counted in the next one), so a flood on the MAVLink channel cannot fill the
-    main loop's queue."""
+    level or worse, and failsafe texts at any level, become ``fc.statustext``. At most one
+    per kind and second (the rest are counted in the next one), so a flood on the MAVLink
+    channel cannot fill the main loop's queue."""
     clock = now or time.monotonic
     last: dict[str, float] = {}
     dropped: dict[str, int] = {}
@@ -171,7 +172,10 @@ def vehicle_events(
 
     def on_event(kind: str, details: dict[str, Any]) -> None:
         if kind == "mav.statustext":
-            if int(details.get("severity", 7)) <= 4:  # MAV_SEVERITY_WARNING
+            # Warnings and worse, and every failsafe text (ArduCopter sends a fence breach
+            # as a notice).
+            failsafe = text_signal(str(details.get("text", ""))) is not None
+            if int(details.get("severity", 7)) <= 4 or failsafe:
                 emit("fc.statustext", "warning", details)
             return
         mapped = _VEHICLE_EVENTS.get(kind)

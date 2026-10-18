@@ -473,6 +473,7 @@ class Scenario:
         return list(res.json())
 
     async def events(self, type_: str | None = None) -> list[dict[str, Any]]:
+        await self.r.g.flush_events()  # the ground writes events in batches
         params = {"limit": "1000"} | ({} if type_ is None else {"type": type_})
         res = await self.r.panel.get(f"/api/v1/missions/{self.mid}/events", params=params)
         return list(res.json())

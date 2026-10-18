@@ -128,6 +128,7 @@ class _VehicleWatch:
     closing: bool = False
     armed: bool = False
     flown: bool = False  # in the air since it last stood disarmed outside a flight state
+    battery_rtl: bool = False  # the onboard battery rule is flying home
 
 
 @dataclass
@@ -619,6 +620,21 @@ class MissionFlow:
             await self.transition(mid, Trigger.CONTROL_TAKEN)
         if state is ExecutorState.FAILSAFE and before is not ExecutorState.FAILSAFE:
             await self.transition(mid, Trigger.FC_FAILSAFE)
+        if snap.battery_rtl_active and not watch.battery_rtl:
+            # The onboard battery rule flies home by itself: the mission returns, the
+            # pilot is told and the AI's orders meet the battery failsafe.
+            changed = await self.transition(mid, Trigger.BATTERY_RTL)
+            if changed is not None:
+                self.alert(
+                    "BATTERY_RTL",
+                    "critical",
+                    "Batteriet är nere på reserven. Drönaren flyger hem.",
+                    vehicle_id=vehicle_id,
+                    mission_id=mid,
+                    details={"battery_pct": snap.battery_pct, "source": "onboard"},
+                )
+                await commands_service.cancel_open(self, vehicle_id, "BATTERY_RTL")
+        watch.battery_rtl = snap.battery_rtl_active
         await commands_service.on_snapshot(self, mission, snap)
 
     # --- the run task ------------------------------------------------------------------

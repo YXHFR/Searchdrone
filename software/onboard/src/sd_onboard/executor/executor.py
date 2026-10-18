@@ -120,6 +120,7 @@ from sd_schemas.link import (
     SkillCommand,
     StateSnapshot,
 )
+from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.skills import (
     SKILL_REGISTRY,
@@ -648,14 +649,22 @@ class Executor:
         except ValidationError:
             self._ack(cmd.command_id, "rejected", ("SCHEMA_INVALID",))
             return
-        code = self._onboard_checks(cmd, spec, params)
-        if code is not None:
-            self._ack(cmd.command_id, "rejected", (code,))
+        target = self._order_problem(cmd, spec, params)
+        if not isinstance(target, ExecutorState):
+            self._ack(cmd.command_id, "rejected", (target,))
             return
-        target = self.target_of(skill_key(spec.name))
-        if isinstance(target, Refusal):
-            self._ack(cmd.command_id, "rejected", (target.code or "ONB_INVALID_TRANSITION",))
-            return
+        if spec.name == "takeoff":
+            if await self._fence_changed():
+                self._refuse_fence(cmd)
+                return
+            if deadline_ms is not None and self.now_ms() >= deadline_ms:
+                self._ack(cmd.command_id, "rejected", ("ONB_ORDER_EXPIRED",))
+                return
+            # The read took time: STOP, another order or the pilot may have come since.
+            target = self._order_problem(cmd, spec, params)
+            if not isinstance(target, ExecutorState):
+                self._ack(cmd.command_id, "rejected", (target,))
+                return
         if self.charter is None:
             raise RuntimeError("no charter installed")
         handler: SkillHandler = (
@@ -693,6 +702,54 @@ class Executor:
             self._ack(cmd.command_id, "done")
             return
         self._accept(cmd, spec, handler, plan, target)
+
+    def _order_problem(
+        self, cmd: SkillCommand, spec: SkillSpec, params: SkillParams
+    ) -> ExecutorState | str:
+        """The onboard checks and the transition: where the order would take the
+        executor, or the refusal code."""
+        code = self._onboard_checks(cmd, spec, params)
+        if code is not None:
+            return code
+        target = self.target_of(skill_key(spec.name))
+        if isinstance(target, Refusal):
+            return target.code or "ONB_INVALID_TRANSITION"
+        return target
+
+    async def _fence_changed(self) -> bool:
+        """PF7 once more right before arming: the fence in the flight controller may have
+        changed since the charter was installed (it is read back, never written)."""
+        charter = self.charter
+        if charter is None or self.state != S.PREFLIGHT:
+            return False  # the other checks refuse this order
+        self.fence_ok = await self._fence_matches(charter)
+        self._run_preflight()
+        return not self.fence_ok
+
+    def _refuse_fence(self, cmd: SkillCommand) -> None:
+        decision = GateDecision(
+            decision="REJECT",
+            reason_codes=["FENCE_NOT_VERIFIED"],
+            rule_ids=["R-FENCE"],
+            message_sv=GATE_REASON_CODES["FENCE_NOT_VERIFIED"],
+            details={"preflight": "PF7"},
+            side="onboard",
+        )
+        self.emit(
+            "gate_disagreement",
+            {
+                "command_id": str(cmd.command_id),
+                "skill": "takeoff",
+                "codes": ["FENCE_NOT_VERIFIED"],
+            },
+        )
+        self._ack(
+            cmd.command_id,
+            "rejected",
+            ("FENCE_NOT_VERIFIED",),
+            detail_sv=decision.message_sv,
+            gate=decision,
+        )
 
     def _accept(
         self,
@@ -1107,7 +1164,8 @@ class Executor:
         self._preflight_task = asyncio.ensure_future(self._preflight_reads())
 
     async def _preflight_reads(self) -> None:
-        """PF6 (parameters) and PF7 (the fence), once per charter, never in flight."""
+        """PF6 (parameters) and PF7 (the fence), once per charter, never in flight (the
+        fence is read again before every takeoff, see ``_fence_changed``)."""
         try:
             self.params_ok = await self._check_params()
         except (ForbiddenMavlinkError, ControlNotAllowedError):
