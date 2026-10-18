@@ -40,6 +40,8 @@ CANOPY_EDGE_M = 30.0
 # The lake bottom under the water surface.
 LAKE_DEPTH_M = 1.0
 FOREST_KINDS = ("forest",)
+# The world's mesh step; home's canopy weight is worked out on the same grid.
+HOME_STEP_M = 5.0
 WATER_KINDS = ("water",)
 
 Xy = tuple[float, float]
@@ -152,11 +154,7 @@ class Site:
 
     def heights(self, east: Grid, north: Grid) -> Grid:
         """Ground height above sea level on a regular grid of points (2-D arrays)."""
-        z = self.dem.sample(east, north)
-        if self.surface == "dsm" and self.canopy_m > 0:
-            forest = raster.coverage(self.union(*FOREST_KINDS), east, north)
-            soft = raster.soften(forest, CANOPY_EDGE_M / _step(east, north))
-            z = z - self.canopy_m * soft
+        z = self.dem.sample(east, north) - self.canopy_m * self.canopy_weight(east, north)
         for geom, level in self.water_levels:
             inside = raster.coverage(geom, east, north) > 0.5
             z = np.where(inside, np.minimum(z, level - LAKE_DEPTH_M), z)
@@ -165,15 +163,23 @@ class Site:
         blend = blend * blend * (3 - 2 * blend)  # smoothstep
         return self.home_alt + (z - self.home_alt) * blend
 
+    def canopy_weight(self, east: Grid, north: Grid) -> Grid:
+        """How much of the canopy to take off (0-1), soft over CANOPY_EDGE_M at the forest's
+        edge; zero for bare-ground sources."""
+        if self.surface != "dsm" or self.canopy_m <= 0:
+            return np.zeros_like(east)
+        forest = raster.coverage(self.union(*FOREST_KINDS), east, north)
+        return raster.soften(forest, CANOPY_EDGE_M / _step(east, north))
+
     @cached_property
     def home_alt(self) -> float:
-        """The pad's height above sea level (raw height at home, canopy removed if any)."""
-        z = self.raw_home_alt
-        if self.surface == "dsm" and self.canopy_m > 0:
-            forest = self.union(*FOREST_KINDS)
-            if not forest.is_empty and forest.distance(shapely.Point(0, 0)) < CANOPY_EDGE_M:
-                z -= self.canopy_m
-        return round(z, 2)
+        """The pad's height above sea level: the height at home with the canopy taken off
+        exactly as the terrain around it has it (same grid step as the world's mesh)."""
+        xs = np.arange(-60.0, 60.0 + HOME_STEP_M / 2, HOME_STEP_M)
+        east, north = np.meshgrid(xs, xs[::-1])
+        weight = self.canopy_weight(east, north)
+        centre = len(xs) // 2
+        return round(self.raw_home_alt - self.canopy_m * float(weight[centre, centre]), 2)
 
     @property
     def home_arg(self) -> str:

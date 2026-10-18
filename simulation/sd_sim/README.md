@@ -10,12 +10,56 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 |---|---|
 | `just sim-setup` | Installs ArduPilot SITL (`~/ardupilot`), Gazebo Harmonic and ArduPilot's Gazebo plugin at the versions in `simulation/versions.lock`. Safe to run again. |
 | `just sim-doctor [physics=builtin]` | Checks the environment and that every simulator port listens on 127.0.0.1 only. |
-| `just sim-smoke [physics=gz\|builtin] [gui=false]` | GUIDED, arm, take off to 20 m, land. Writes `runs/<run>/result.json`; exit 0 when it passed. |
+| `just sim-smoke [physics=gz\|builtin] [gui=false] [world=sd_hellasgarden]` | GUIDED, arm, take off to 20 m, land, with ArduPilot's quad at CMAC or with `world=` our vehicle in a terrain world. Writes `runs/<run>/result.json` with Gazebo's real-time factor while hovering with the camera on; exit 0 when it passed. |
+| `just world-snapshot [world=sd_hellasgarden]` | Pictures from the vehicle's camera at 40 m and 100 m and from the side, with the road's width and the map overlap measured in them (`runs/<run>/snapshots/`). |
+| `just world-fetch site=<site>` | Fetches a site's heights and map layers (see Worlds). |
 | `just sim` / `just sim-headless` | Starts the simulator stack for one instance in the foreground (Ctrl-C stops it). |
 | `just stop` | Stops what `just sim` started. |
 | `just test-sitl [sc=SC00] [physics=builtin\|gz] [mode=pr\|nightly] [workers=N] [shard=N shards=M]` | Runs the scenario tests (pytest with `sd_sim.pytest_plugin`). Each test writes `runs/<run>/result.json`; the run writes `runs/summary.md`. |
 | `just test-video [physics=builtin\|gz]` | Video tests against MediaMTX (`just video-up`; the browser test also needs `just db-up migrate` and Google Chrome): publishing password, loopback-only ports, the delay read from the time code strip, recordings per mission, LAN mode. |
 | `just ci-sitl [same keys]` | Runs the same tests inside the SITL image, exactly like the `sitl` CI job. |
+
+## Worlds
+
+| World | Where | Used by |
+|---|---|---|
+| `sd_hellasgarden` | A real place: the public Hellasgården outdoor area in Nacka, 1.2 × 1.2 km around its home pad | `just sim` and `just demo` (default), `just sim-smoke world=sd_hellasgarden`, `just world-snapshot` |
+| `sd_lake_forest` | A flat made-up world at ArduPilot's public SITL site (CMAC) | The test suites (`just test-sitl`, the model and video tests) |
+
+A world from a real site is built from three files in `simulation/gazebo/sites/<site>/`:
+`site.toml` (home, size, height source), `dem.asc` (heights every 20 m from Copernicus
+DEM GLO-30) and `osm.geojson` (forest, water, open land, roads, buildings and parking from
+OpenStreetMap). `just world-fetch site=<site>` fetches the last two again (needs GDAL's
+`gdal-bin` and internet). `sd_sim.terrain` turns them into a Gazebo model in
+`build/sim/models/sd_site_<site>/`, without downloads and without third-party textures or
+meshes:
+
+- The terrain is a textured mesh every 5 m, in 16 tiles of 300 m with a 2048-pixel texture
+  each (about 0.15 m per pixel). The texture is painted from the map: forest floor, meadow,
+  wetland, lake, asphalt with edge and centre lines, and gravel paths.
+- About 25 000 spruce, pine and birch trees stand on the ground at real heights (10–26 m).
+- Buildings are the map's footprints at their tagged or typical height, with gabled roofs on
+  rectangular houses. Cars of 4.5 × 1.8 × 1.5 m are parked in the parking areas.
+- The heights come from a surface model, so the forest canopy (`canopy_m`, 12 m) is taken
+  off inside the forest. Lakes are set below their water level, and the pad around home is
+  flat.
+- The ground collides as a heightmap, which is cheap enough to keep the real-time factor of
+  the flat world. Trees, cars and water are visual only, while buildings and the pad collide.
+- The same inputs always give the same files (`python -m sd_sim.terrain site=<site> twice=1`
+  checks this). A build is reused until the inputs change.
+
+The world's origin is home on the pad: Gazebo's `<spherical_coordinates>`, SITL's `--home`
+(the pad's height above sea level) and the panel's map pack (`just maps-fetch
+site=<site>`) all use the same point. No ground station sends SITL terrain data, and terrain following
+(`TERRAIN_FOLLOW`, `RTL_ALT_TYPE`) stays at ArduPilot's default, off. Heights are therefore relative to home and the ground under the vehicle rises and falls
+with the hills (−13 to +37 m from home in `sd_hellasgarden`). The site's fixture
+(`build/sim/worlds/<world>.fixture.yaml`) therefore sets the search height at least 25 m
+above the highest ground plus the tallest tree under `charter_test`.
+
+Your own area: copy `config/site.example.toml` to `config/site.local.toml`, enter your
+Geotorget login and run `just world-fetch site=<name>`. Lantmäteriet's 1 m height model and
+orthophoto (CC BY 4.0, © Lantmäteriet) are written to `build/sites/<name>/` only, and the
+orthophoto becomes the ground's texture. Nothing of it is committed or uploaded.
 
 ## Parts
 

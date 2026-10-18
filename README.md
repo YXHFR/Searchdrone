@@ -102,4 +102,6 @@ Searchdrone is open source and open hardware.
 - **Software** is licensed under [Apache-2.0](LICENSES/Apache-2.0.txt).
 - **Hardware** (everything under `hardware/`: PCB designs, mechanical/CAD files, BOMs) is licensed under the [CERN Open Hardware Licence v2 – Strongly Reciprocal](LICENSES/CERN-OHL-S-2.0.txt).
 
+- **Simulator site data** under `simulation/gazebo/sites/` keeps its own licence: map layers © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) ([ODbL-1.0](LICENSES/ODbL-1.0.txt)); heights produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved ([licence](LICENSES/LicenseRef-Copernicus-WorldDEM-30.txt)). The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. Nothing in the project is endorsed by them.
+
 Licensing follows the [REUSE](https://reuse.software) specification; see [`REUSE.toml`](REUSE.toml). A possible Ultralytics detector plugin (later) would be AGPL and kept separate from the Apache-2.0 packages.

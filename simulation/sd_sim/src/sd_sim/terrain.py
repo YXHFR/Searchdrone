@@ -31,7 +31,7 @@ import shutil
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import shapely
@@ -57,7 +57,7 @@ PARKING_STALL_M = (2.6, 5.2)
 PARKING_OCCUPANCY = 0.5
 CAR_SIZE_M = (4.5, 1.8, 1.5)
 
-Grid = NDArray[np.float64]
+Grid = NDArray[np.floating[Any]]
 Rgb = tuple[int, int, int]
 
 
@@ -116,7 +116,7 @@ class Mesh:
     groups: dict[str, list[NDArray[np.int64]]] = field(default_factory=dict)
     count: int = 0
 
-    def add(self, material: str, verts: NDArray[np.float64], faces: NDArray[np.int64]) -> None:
+    def add(self, material: str, verts: Grid, faces: NDArray[np.int64]) -> None:
         self.vertices.append(np.asarray(verts, dtype=np.float64).reshape(-1, 3))
         self.groups.setdefault(material, []).append(np.asarray(faces, dtype=np.int64) + self.count)
         self.count += len(self.vertices[-1])
@@ -255,7 +255,8 @@ def terrain_obj(mesh: Mesh, ground: Ground, ti: int, tj: int) -> str:
     west = -ground.half + tj * size
     south = ground.half - (ti + 1) * size
     # Smooth normals from the whole grid, so neighbouring tiles shade alike at the seam.
-    gz_n, gz_e = np.gradient(ground.z, ground.step)
+    grad: Any = np.gradient(ground.z, ground.step)
+    gz_n, gz_e = grad
     n = ground.z.shape[0]
     col = np.round((verts[:, 0] + ground.half) / ground.step).astype(np.int64)
     row = np.round((ground.half - verts[:, 1]) / ground.step).astype(np.int64)
@@ -662,6 +663,7 @@ def plan_buildings(site: Site, ground: Ground) -> list[Building]:
         geoms = list(layer.geom.geoms) if hasattr(layer.geom, "geoms") else [layer.geom]
         for k, poly in enumerate(g for g in geoms if isinstance(g, Polygon) and g.area > 4):
             poly = shapely.orient_polygons(poly.simplify(0.05))
+            poly = cast(Polygon, poly)
             coords = np.asarray(poly.exterior.coords)
             z = ground.at(coords[:, 0], coords[:, 1])
             kind = str(layer.props.get("building", "yes"))
@@ -677,7 +679,7 @@ def plan_buildings(site: Site, ground: Ground) -> list[Building]:
                 and poly.area > 0.9 * rect.area
                 and poly.area < 600
             )
-            short = min(_rect_sides(rect))
+            short = min(_rect_sides(cast(Polygon, rect)))
             ridge = math.tan(math.radians(27)) * short / 2 if gabled else 0.0
             eave = float(height) - ridge if gabled else float(height)
             out.append(
@@ -717,13 +719,13 @@ def building_mesh(buildings: Sequence[Building]) -> Mesh:
         else:
             tris = shapely.constrained_delaunay_triangles(b.footprint)
             for tri in tris.geoms:
-                c = np.asarray(shapely.orient_polygons(tri).exterior.coords)[:3]
+                c = np.asarray(cast(Polygon, shapely.orient_polygons(tri)).exterior.coords)[:3]
                 mesh.add(b.roof, np.column_stack([c, np.full(3, top)]), np.array([[0, 1, 2]]))
     return mesh
 
 
 def mesh_roof_gabled(mesh: Mesh, b: Building, top: float) -> None:
-    c = np.asarray(b.footprint.minimum_rotated_rectangle.exterior.coords)[:4]
+    c = np.asarray(cast(Polygon, b.footprint.minimum_rotated_rectangle).exterior.coords)[:4]
     a, bb = _rect_sides(Polygon(c))
     if a < bb:  # make c[0]-c[1] a long side
         c = np.roll(c, -1, axis=0)
@@ -773,7 +775,7 @@ def park_cars(site: Site, ground: Ground) -> list[Car]:
     for layer in site.of_kind("parking"):
         geoms = list(layer.geom.geoms) if hasattr(layer.geom, "geoms") else [layer.geom]
         for poly in (g for g in geoms if isinstance(g, Polygon)):
-            rect = np.asarray(poly.minimum_rotated_rectangle.exterior.coords)[:4]
+            rect = np.asarray(cast(Polygon, poly.minimum_rotated_rectangle).exterior.coords)[:4]
             a, b = rect[1] - rect[0], rect[3] - rect[0]
             if np.linalg.norm(a) < np.linalg.norm(b):
                 a, b = b, a
@@ -1086,3 +1088,38 @@ def model_sdf(
   </model>
 </sdf>
 """
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """``python -m sd_sim.terrain site=<name> [twice=1]``: build a site's model; with
+    ``twice=1`` build it a second time from scratch and fail unless every file is the same."""
+    import sys
+
+    from sd_sim import _args
+    from sd_sim import site as site_mod
+    from sd_sim.util import say
+
+    values = _args.parse(
+        list(sys.argv[1:] if argv is None else argv), ("site", "twice"), "sd_sim.terrain"
+    )
+    s = site_mod.load(values.get("site", "hellasgarden"))
+    build(s, force=True, progress=lambda m: say(f"    {m}"))
+    first = json.loads((out_dir(s) / "manifest.json").read_text(encoding="utf-8"))
+    say(json.dumps(first["stats"], indent=1))
+    if values.get("twice") != "1":
+        return 0
+    build(s, force=True)
+    second = json.loads((out_dir(s) / "manifest.json").read_text(encoding="utf-8"))
+    differ = sorted(
+        k
+        for k in set(first["files"]) | set(second["files"])
+        if first["files"].get(k) != second["files"].get(k)
+    )
+    say(f"Två byggen: {len(first['files'])} filer, {len(differ)} skiljer sig")
+    for name in differ:
+        say(f"  skiljer sig: {name}")
+    return 1 if differ else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

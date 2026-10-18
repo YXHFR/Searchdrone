@@ -47,6 +47,8 @@ RECIPES = [
     "sim-setup",
     "models-fetch",
     "maps-fetch",
+    "world-fetch",
+    "world-snapshot",
     "accept",
     "showcase",
     "release-prep",

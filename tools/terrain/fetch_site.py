@@ -42,7 +42,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import shapely
@@ -125,6 +125,7 @@ class SiteDef:
     name: str
     lat: float
     lon: float
+    heading_deg: float
     half_size_m: float
     dem_source: str  # "copernicus-glo30" | "lantmateriet-mhm"
     cell_m: float
@@ -197,6 +198,7 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
         name=name,
         lat=_num(home, "lat", where),
         lon=_num(home, "lon", where),
+        heading_deg=float(home.get("heading_deg", 0.0)),
         half_size_m=_num(area, "half_size_m", where),
         dem_source=source,
         cell_m=_num(dem, "cell_m", where),
@@ -447,7 +449,7 @@ def parse_osm(raw: bytes, into: OsmData | None = None) -> OsmData:
         if el.tag == "node":
             data.nodes[oid] = (float(el.get("lon", "0")), float(el.get("lat", "0")))
         elif el.tag == "way":
-            data.ways[oid] = ([int(n.get("ref", "0")) for n in el.iter("and")], tags)
+            data.ways[oid] = ([int(n.get("ref", "0")) for n in el.iter("nd")], tags)
         elif el.tag == "relation":
             members = [
                 (m.get("type", ""), int(m.get("ref", "0")), m.get("role", ""))
@@ -529,7 +531,8 @@ def _polygon_from_rings(
         poly = Polygon(ring)
         inside = [h.exterior.coords for h in holes if poly.contains(h.representative_point())]
         polys.append(Polygon(ring, inside))
-    return shapely.make_valid(MultiPolygon(polys) if len(polys) > 1 else polys[0])
+    valid = shapely.make_valid(MultiPolygon(polys) if len(polys) > 1 else polys[0])
+    return cast(MultiPolygon | Polygon, valid)
 
 
 def _round_geom(geom: Any) -> Any:
@@ -623,6 +626,20 @@ def site_clip(site: SiteDef) -> Polygon:
     return box(min_lon, min_lat, max_lon, max_lat)
 
 
+def write_local_site_toml(site: SiteDef) -> None:
+    """The definition the world generator reads, next to the local data; no login."""
+    surface = "dtm" if site.dem_source == "lantmateriet-mhm" else "dsm"
+    (site.out / "site.toml").write_text(
+        "# Written by tools/terrain/fetch_site.py from config/site.local.toml; local only.\n"
+        f'name = "{site.name}"\nworld = "sd_{site.name}"\ntitle = "{site.name} (local)"\n'
+        f"[home]\nlat = {site.lat}\nlon = {site.lon}\nheading_deg = {site.heading_deg}\n"
+        f"[area]\nhalf_size_m = {site.half_size_m}\n"
+        f'[dem]\nsource = "{site.dem_source}"\ncell_m = {site.cell_m}\n'
+        f'surface = "{surface}"\ncanopy_m = {0 if surface == "dtm" else 12}\n',
+        encoding="utf-8",
+    )
+
+
 # --- main -----------------------------------------------------------------------------
 
 
@@ -640,6 +657,8 @@ def run(argv: Sequence[str], root: Path = ROOT) -> int:
         if site.ortho:
             print("==> ortofoto (Lantmäteriet)")
             ortho = fetch_ortho(site, login, work, site.out / "ortho.npy")
+    if not site.public:
+        write_local_site_toml(site)
     print("==> OpenStreetMap")
     features = osm_features(fetch_osm(site), site_clip(site))
     geojson = {"type": "FeatureCollection", "features": features}

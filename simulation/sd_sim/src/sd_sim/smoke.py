@@ -70,7 +70,7 @@ def check_listeners(stack: Stack) -> list[str]:
     return [str(item) for item in bad]
 
 
-def count_frames(stack: Stack, result: dict[str, Any]) -> int:
+def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
     """Camera frames through the radio in FRAME_WINDOW_S, and Gazebo's real-time factor
     over the same window (camera rendering is the costly part on a computer without GPU)."""
 
@@ -84,7 +84,8 @@ def count_frames(stack: Stack, result: dict[str, Any]) -> int:
     start, t_start = frames(), gazebo.world_times(stack.world, stack.cfg.instance)
     time.sleep(FRAME_WINDOW_S)
     t_end = gazebo.world_times(stack.world, stack.cfg.instance)
-    result["real_time_factor"] = gazebo.real_time_factor(t_start, t_end)
+    if result is not None:
+        result["real_time_factor"] = gazebo.real_time_factor(t_start, t_end)
     return frames() - start
 
 
