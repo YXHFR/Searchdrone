@@ -289,8 +289,9 @@ def test_fixture_charters_inherit_from_their_base() -> None:
     assert batt.area == test.area and batt.alt_max_agl_m == test.alt_max_agl_m
     over = fx.charter("charter_overcap", "x")
     std = SafetyLimits()
-    assert over.alt_max_agl_m > std.max_alt_agl_m
-    assert over.max_speed_ms > std.max_speed_ms
+    assert over.alt_max_agl_m is not None and over.alt_max_agl_m > std.max_alt_agl_m
+    assert over.max_speed_ms is not None and over.max_speed_ms > std.max_speed_ms
+    assert over.max_range_from_pilot_m is not None
     assert over.max_range_from_pilot_m > std.max_range_from_pilot_m
     toofar = fx.charter("charter_toofar", "x")
     assert toofar.area != fx.charter("charter_wide", "x").area

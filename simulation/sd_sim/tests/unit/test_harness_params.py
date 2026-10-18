@@ -80,8 +80,20 @@ def test_timeout_is_infra_error() -> None:
 
 def test_read_param_by_name() -> None:
     conn = FakeConn(5, set(), answer_rereads=False)
-    conn.queue.extend([Msg(1, 5, "OTHER", 9.0), Msg(2, 5, "P2", 2.0)])
+
+    def answer(*_a: Any) -> None:
+        conn.queue.extend([Msg(1, 5, "OTHER", 9.0), Msg(2, 5, "P2", 2.0)])
+
+    conn.mav.param_request_read_send = answer  # type: ignore[method-assign]
     assert make(conn).read_param("P2", timeout=3) == 2.0
+
+
+def test_read_param_drops_a_stale_answer() -> None:
+    """An answer that was already waiting (from an earlier request) does not count."""
+    conn = FakeConn(5, set(), answer_rereads=False)
+    conn.queue.append(Msg(2, 5, "P2", 2.0))
+    with pytest.raises(InfraError, match="P2"):
+        make(conn).read_param("P2", timeout=0.5)
 
 
 def test_read_param_timeout_is_infra_error() -> None:

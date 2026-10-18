@@ -147,7 +147,7 @@ def _circle_polygon(centre: LatLon, radius_m: float) -> dict[str, Any]:
     reach = radius_m / math.cos(math.pi / _CIRCLE_CORNERS)
     dlat = math.degrees(reach / _EARTH_RADIUS_M)
     dlon = dlat / math.cos(math.radians(centre.lat))
-    ring = []
+    ring: list[list[float]] = []
     for i in range(_CIRCLE_CORNERS):
         a = 2 * math.pi * i / _CIRCLE_CORNERS
         ring.append([centre.lon + dlon * math.sin(a), centre.lat + dlat * math.cos(a)])

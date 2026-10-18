@@ -118,7 +118,7 @@ def to_yaml(entries: list[Entry]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Generate the traceability file.")
     parser.add_argument("--ids")
     parser.add_argument("--out")
     args = parser.parse_args(argv)
