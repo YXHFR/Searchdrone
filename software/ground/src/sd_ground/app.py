@@ -31,7 +31,7 @@ from sd_ground.api import search as search_api
 from sd_ground.api import tiles as tiles_api
 from sd_ground.api import video_proxy as video_api
 from sd_ground.api.deps import install_error_handlers
-from sd_ground.auth import BrainToken
+from sd_ground.auth import ServiceToken
 from sd_ground.config import Loaded, check, limit_caps, parse_bind
 from sd_ground.context import Ground, lan_addresses
 from sd_ground.control_socket import ControlSocket, socket_path
@@ -313,8 +313,8 @@ async def _serve(loaded: Loaded) -> int:
     g = Ground(
         loaded=loaded,
         clock=MonotonicClock(),
-        brain_token=BrainToken(token),
-        search_token=BrainToken(read_search_token(loaded)),
+        brain_token=ServiceToken(token),
+        search_token=ServiceToken(read_search_token(loaded)),
     )
     if cfg.lan.enabled:
         g.lan_hosts = lan_addresses()
@@ -489,7 +489,9 @@ def openapi_documents() -> dict[str, dict[str, Any]]:
     from sd_obs.clock import MonotonicClock
 
     loaded = Loaded(config=GroundConfig(), root=Path("/nonexistent"), env={})
-    g = Ground(loaded=loaded, clock=MonotonicClock(), brain_token=BrainToken(None), version="0.0.0")
+    g = Ground(
+        loaded=loaded, clock=MonotonicClock(), brain_token=ServiceToken(None), version="0.0.0"
+    )
     return {
         "panel": create_panel_app(g).openapi(),
         "commander": create_commander_app(g).openapi(),

@@ -182,3 +182,36 @@ def test_video_server_only_on_loopback(root: Path, key: str, url: str) -> None:
 
 def test_video_defaults_are_loopback(root: Path) -> None:
     assert not any(e.startswith("video.") for e in _errors(root))
+
+
+def test_search_token_is_optional_but_private(root: Path) -> None:
+    assert _errors(root) == []  # no search token file: the search API is off
+    token = root / "secrets" / "search_token"
+    token.write_text("x")
+    token.chmod(0o600)
+    assert _errors(root) == []
+    token.chmod(0o640)
+    assert any("search_token kan läsas av andra" in e for e in _errors(root))
+
+
+def test_init_writes_both_service_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import argparse
+    import stat
+
+    from sd_ground.__main__ import cmd_init
+
+    repo = Path(__file__).resolve().parents[4]
+    (tmp_path / "config").mkdir()
+    example = (repo / "config" / "ground.example.toml").read_text(encoding="utf-8")
+    data = tmp_path / "data"
+    example = example.replace('data_dir = "', f'data_dir = "{data}" #', 1)
+    (tmp_path / "config" / "ground.example.toml").write_text(example, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert cmd_init(argparse.Namespace(lan=False)) == 0
+    for name in ("brain_token", "search_token"):
+        path = tmp_path / "secrets" / name
+        assert len(path.read_text().strip()) >= 40
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    first = (tmp_path / "secrets" / "search_token").read_text()
+    assert cmd_init(argparse.Namespace(lan=False)) == 0  # a second run keeps the tokens
+    assert (tmp_path / "secrets" / "search_token").read_text() == first

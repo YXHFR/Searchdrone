@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from sd_ground.app import commander_asgi, create_commander_app, openapi_documents
-from sd_ground.auth import BrainToken
+from sd_ground.auth import ServiceToken
 from sd_ground.context import Ground
 
 SEARCH = "search-token-for-tests-0123456789abcdef"
@@ -26,7 +26,7 @@ SAMPLE_ID = "0192f49e-0b3a-7c55-8e2f-1a2b3c4d5e6f"
 
 @pytest.fixture
 def searching(ground: Ground) -> Ground:
-    ground.search_token = BrainToken(SEARCH)
+    ground.search_token = ServiceToken(SEARCH)
     return ground
 
 

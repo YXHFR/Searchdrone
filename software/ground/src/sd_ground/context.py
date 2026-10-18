@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any
 
-from sd_ground.auth import BrainToken, PendingLogins, SessionRecord, SessionStore
+from sd_ground.auth import PendingLogins, ServiceToken, SessionRecord, SessionStore
 from sd_ground.bus import EventBus
 from sd_ground.config import Loaded, parse_bind
 from sd_ground.db.repo import EventRow, Repo, new_event
@@ -54,8 +54,8 @@ def lan_addresses() -> list[str]:
 class Ground:
     loaded: Loaded
     clock: Clock
-    brain_token: BrainToken
-    search_token: BrainToken = field(default_factory=lambda: BrainToken(None))
+    brain_token: ServiceToken
+    search_token: ServiceToken = field(default_factory=lambda: ServiceToken(None))
     repo: Repo | None = None
     vehicle_link: VehicleLink = field(default_factory=NoVehicleLink)
     sdlink: SdLink = field(default_factory=NoSdLink)

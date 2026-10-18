@@ -155,7 +155,7 @@ class PanelGuard:
         allowed_hosts: Callable[[], Iterable[str]],
         is_commander_token: Callable[[str], bool],
         profile: str,
-        is_search_token: Callable[[str], bool] = lambda _: False,
+        is_search_token: Callable[[str], bool],
     ) -> None:
         self.app = app
         self._allowed_hosts = allowed_hosts

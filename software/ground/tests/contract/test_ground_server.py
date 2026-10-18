@@ -31,7 +31,7 @@ from sd_ground.app import (
     create_panel_app,
     panel_asgi,
 )
-from sd_ground.auth import BrainToken
+from sd_ground.auth import ServiceToken
 from sd_ground.config import GroundConfig, Loaded
 from sd_ground.context import Ground
 from sd_ground.db.engine import make_engine
@@ -110,7 +110,7 @@ async def _ground(db: Db, tmp_path: Path, clock: Any = None, **sections: Any) ->
         env={},
     )
     g = Ground(
-        loaded=loaded, clock=clock or FakeClock(), brain_token=BrainToken(BRAIN), version="0.0.0"
+        loaded=loaded, clock=clock or FakeClock(), brain_token=ServiceToken(BRAIN), version="0.0.0"
     )
     g.repo = Repo(make_engine(_app_url(db)))
     g.db_ok = True

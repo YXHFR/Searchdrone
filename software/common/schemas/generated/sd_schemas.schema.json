@@ -770,7 +770,7 @@
     },
     "BBox": {
       "additionalProperties": false,
-      "description": "A box in image pixels: top-left corner, width and height (as ``sd_detect.BBox``).",
+      "description": "A box in image pixels: top-left corner, width and height (also ``sd_detect.BBox``).",
       "properties": {
         "h": {
           "exclusiveMinimum": 0,
@@ -4510,7 +4510,7 @@
     },
     "KeepoutInstall": {
       "additionalProperties": false,
-      "description": "Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.\n\n``install_seq`` grows with every list; a lower one than the last seen is ignored, so a\nlate resend never brings back a removed cylinder or drops a new one.",
+      "description": "Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.\n\n``install_seq`` grows with every list; a lower one than the last seen is ignored, so a\nlate resend never brings back a removed cylinder or drops a new one. The installed\nlist stays in force until a list with a higher ``install_seq`` arrives: the envelope's\n``ttl_ms`` only limits how late the message may be delivered, never how long the\ncylinders apply.",
       "properties": {
         "install_seq": {
           "minimum": 0,

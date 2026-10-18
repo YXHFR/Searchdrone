@@ -25,7 +25,7 @@ import httpx
 from sqlalchemy import URL
 
 from sd_ground.app import commander_asgi, create_commander_app, create_panel_app, panel_asgi
-from sd_ground.auth import BrainToken, SessionRecord, new_token
+from sd_ground.auth import ServiceToken, SessionRecord, new_token
 from sd_ground.auth import hash_token as hash_session_token
 from sd_ground.config import GroundConfig, Loaded
 from sd_ground.context import Ground
@@ -478,7 +478,7 @@ async def ground_stack(
         root=tmp_path,
         env={},
     )
-    g = Ground(loaded=loaded, clock=clock, brain_token=BrainToken(BRAIN), version="0.0.0")
+    g = Ground(loaded=loaded, clock=clock, brain_token=ServiceToken(BRAIN), version="0.0.0")
     engine = make_engine(app_url(db_name, app_password))
     g.repo = Repo(engine)
     g.db_ok = True

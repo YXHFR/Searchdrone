@@ -384,7 +384,7 @@ JpegBytes = Annotated[
 
 
 class BBox(SdModel):
-    """A box in image pixels: top-left corner, width and height (as ``sd_detect.BBox``)."""
+    """A box in image pixels: top-left corner, width and height (also ``sd_detect.BBox``)."""
 
     x: float = Field(ge=0)
     y: float = Field(ge=0)
@@ -487,7 +487,10 @@ class KeepoutInstall(SdModel):
     """Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.
 
     ``install_seq`` grows with every list; a lower one than the last seen is ignored, so a
-    late resend never brings back a removed cylinder or drops a new one.
+    late resend never brings back a removed cylinder or drops a new one. The installed
+    list stays in force until a list with a higher ``install_seq`` arrives: the envelope's
+    ``ttl_ms`` only limits how late the message may be delivered, never how long the
+    cylinders apply.
     """
 
     install_seq: int = Field(ge=0)

@@ -28,11 +28,11 @@ __all__ = [
     "SESSION_COOKIE",
     "SESSION_HEADROOM",
     "AuthMode",
-    "BrainToken",
     "LoginError",
     "PendingLogins",
     "Principal",
     "Role",
+    "ServiceToken",
     "SessionRecord",
     "SessionStore",
     "hash_token",
@@ -374,7 +374,7 @@ class SessionStore:
             return list(self._by_hash.values())
 
 
-class BrainToken:
+class ServiceToken:
     """A service token (commander or search): only its hash is kept; compared in
     constant time."""
 
