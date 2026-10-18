@@ -2,9 +2,8 @@
 
 Run on the owner's computer, in the WSL clone, with ``gh`` logged in as the owner. Every
 GitHub call only reads (``gh api`` GET). The list of requirement IDs comes from the local
-acceptance file (``$SD_ACCEPT_IDS``, default ``docs/spec/grunden-v1/accept-ids.toml``,
-never in the repository; the format is in ``tools/gen_traceability.py``); without it the
-script stops with exit 2.
+acceptance file named by ``$SD_ACCEPT_IDS`` (never in the repository; the format is in
+``tools/gen_traceability.py``); without it the script stops with exit 2.
 
 * ``phase=pre`` checks every ID except the after-release ones (``POST_IDS``),
   ``phase=post`` only those. ``sha`` is the release commit (default: ``main``'s head).
@@ -40,7 +39,6 @@ from typing import Any, Protocol
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPO = "YXHFR/Searchdrone"
-DEFAULT_IDS = "docs/spec/grunden-v1/accept-ids.toml"
 MANUAL_FILE = "data/reports/accept-manual-v0.1.0.toml"
 REPORTS = "data/reports"
 POST_IDS = frozenset({"V-02", "V-04", "R-04b"})
@@ -294,7 +292,8 @@ def _merged_gates(ctx: Context) -> Result:
 
 def _hardware_owner_ok(ctx: Context) -> Result:
     """R-09: every merged pull request touching hardware/ or CODEOWNERS has the owner's OK
-    (the label owner-ok, B20; GitHub's Approve is not possible on the owner's own PRs)."""
+    (the label owner-ok after the owner's OK in the chat; GitHub's Approve is not
+    possible on the owner's own pull requests)."""
     pulls = ctx.api(f"repos/{REPO}/pulls?state=closed&per_page=100")
     missing = []
     for pr in pulls:
@@ -486,13 +485,14 @@ def main(
     ap.add_argument("--phase", choices=("pre", "post"), default="pre")
     ap.add_argument("--sha", default="")
     args = ap.parse_args(argv)
-    ids_path = Path(os.environ.get("SD_ACCEPT_IDS", "") or root / DEFAULT_IDS)
-    if not ids_path.is_file():
+    raw_ids = os.environ.get("SD_ACCEPT_IDS", "")
+    if not raw_ids or not Path(raw_ids).is_file():
         print(
-            f"Acceptanslistan saknas ({ids_path}). Sätt SD_ACCEPT_IDS till den lokala filen.",
+            "Acceptanslistan saknas. Sätt SD_ACCEPT_IDS till sökvägen till den lokala filen.",
             file=sys.stderr,
         )
         return 2
+    ids_path = Path(raw_ids)
     gh = gh or GhCli()
     runner = runner or LocalRunner(root)
     now = now or dt.datetime.now(dt.UTC)

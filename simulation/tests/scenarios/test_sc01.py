@@ -43,6 +43,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 )
 from stack_rig import VID, Pilot, live_stack  # pyright: ignore[reportMissingImports]
 
+from sd_geo.coverage import REACH_EXTRA_M, coverage_fraction
 from sd_safety.targets import Plane, distance_m
 from sd_sim.invariants import check_all
 from sd_sim.mp4 import probe
@@ -54,7 +55,7 @@ ALT_M = 40.0
 SPACING_M = 30.0
 MIN_COVERAGE = 0.95
 SURVEY_LIMIT_S = 240.0
-CARD_LIMIT_S = 2.0  # the scripted commander's charter card (08 D3)
+CARD_LIMIT_S = 2.0  # the scripted commander's charter card must show this fast
 D7_AFTER_S = 5.0  # into the search before "climb to 200 m" (past the AI's rate limit)
 DEMO_LIMIT_S = 600.0  # D5-D9
 CLOSE_LIMIT_S = 30.0  # LANDED -> CLOSED 10 s after disarming, plus the folder
@@ -145,6 +146,16 @@ async def test_sc01_demo_end_to_end() -> None:
         survey_to = dt.datetime.now(dt.UTC)
         t_survey_done = time.monotonic()
         assert t_survey_done - t_survey <= SURVEY_LIMIT_S
+        # Coverage as the executor counts it (sd_geo), on the track the panel got; the
+        # same again in PostGIS below.
+        plane = Plane(float(CMAC["lat"]), float(CMAC["lon"]))
+        seen = [
+            (*plane.xy(s.lat, s.lon), s.alt_m)
+            for s in p.track
+            if t_survey <= s.t <= t_survey_done and s.armed
+        ]
+        got = coverage_fraction(survey_box_enu(), seen, ALT_M, SPACING_M)
+        assert got >= MIN_COVERAGE, f"coverage {got:.3f}"
 
         # D9: home, landed, disarmed; D5-D9 in at most 10 min.
         await p.command(mid, "return_home", ("done",), 300)
@@ -289,7 +300,7 @@ async def _database_checks(
             ALT_M - 2.0,
             ALT_M + 2.0,
             _box_wkt(),
-            SPACING_M / 0.8 / 2,
+            SPACING_M / 2 + REACH_EXTRA_M,
         )
         assert covered is not None and covered >= MIN_COVERAGE, f"coverage {covered}"
 
@@ -329,7 +340,7 @@ def _box_wkt() -> str:
 
 
 # Covered share of the box in UTM zone 55 S (CMAC): the track flown during the search
-# inside the height band, buffered by half the swath ($7: lane spacing / 0.8 / 2).
+# inside the height band, buffered by the executor's own reach ($7: sd_geo.coverage).
 COVERAGE_SQL = """
 WITH pts AS (
   SELECT ST_Transform(ST_Force2D(pos), 32755) AS p, t FROM telemetry

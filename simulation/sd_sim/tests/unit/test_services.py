@@ -78,10 +78,24 @@ def test_brain_kinds(tmp_path: Path, brain: str, kind: str) -> None:
         f"http://127.0.0.1:{st.ports['ground_commander']}/commander/v1"
     )
     assert ("SD_BRAIN__BACKEND__SCRIPTED_FILE" in env) == (brain == "scripted")
+    # Never the local model: its address answers nothing, the stop check is hosted only.
+    assert env["SD_BRAIN__LLM__ROOT_URL"] == "http://127.0.0.1:9"
+    assert "local" not in json.loads(env["SD_BRAIN__DECIDE__ENGINES"])
     if brain == "scripted":
         assert env["SD_BRAIN__BACKEND__SCRIPTED_FILE"] == str(
             st.repo / "simulation/scenarios/scripts/SC01.yaml"
         )
+
+
+def test_brain_mode_follows_the_commanders_health(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    st = _stack(tmp_path)
+    monkeypatch.setattr(services, "health", lambda _s: {"parts": {"brain": "degraded"}})
+    assert services.brain_mode(st).startswith("kommandoläget")
+    monkeypatch.setattr(services, "health", lambda _s: {"parts": {"brain": "ok"}})
+    assert services.brain_mode(st) == "språkmodellen i molnet"
+    assert services.brain_mode(_stack(tmp_path / "g", brain="grammar")).startswith("kommando")
 
 
 def test_no_brain_and_the_health_parts(tmp_path: Path) -> None:
@@ -198,3 +212,24 @@ def test_mp4_probe_survives_a_cut_file(tmp_path: Path) -> None:
     path = tmp_path / "cut.mp4"
     path.write_bytes(_box(b"ftyp", b"iso5")[:-2] + b"\x00\x00\x01\x00moov")
     assert mp4.probe(path).video() is None
+
+
+def test_service_variables_agree_with_ports_yaml(tmp_path: Path) -> None:
+    """Each port that simulation/ports.yaml gives an ``env:`` variable reaches its service
+    in that variable, with that port (the remote listener is off in the simulator)."""
+    import yaml
+
+    from sd_sim import paths
+
+    rows = yaml.safe_load(paths.PORTS_YAML.read_text(encoding="utf-8"))
+    st = _stack(tmp_path, lan="1")
+    lay = services.layout_for(st)
+    env = {**services.ground_env(st, lay, video=True), **services.onboard_env(st, lay)}
+    named = {name: row["env"] for name, row in rows.items() if "env" in row}
+    assert named, "ports.yaml names no service variables"
+    for name, var in named.items():
+        if name == "ground_remote":
+            assert var not in env
+            continue
+        assert var in env, var
+        assert env[var].endswith(f":{st.ports[name]}"), (var, env[var])

@@ -8,12 +8,22 @@
 #
 # Everything the stack runs (the simulator container, MediaMTX) runs as sdtest, and its
 # containers (the database) on the network sd-offline (compose.offline.yaml). The rules:
-#   OUTPUT:      sdtest may only reach loopback (IPv4 and IPv6);
+#   OUTPUT:      sdtest may only reach loopback (IPv4 and IPv6), and no name server at all
+#                (also not the runner's local resolver on 127.0.0.53);
 #   DOCKER-USER: 172.31.250.0/24 may only reach itself.
+# Left open on purpose: Docker's own resolver answers the database container's name
+# lookups (dockerd runs as root); the database never looks a name up.
 # The runner's own traffic (to GitHub, the image registry) is not touched. Before the
-# test the block is shown to hold: curl as sdtest and from the network sd-offline both
-# fail. Needs sudo; run it on a throwaway CI runner, never on your own computer.
+# test the block is shown to hold: a name lookup and curl as sdtest, and curl from the
+# network sd-offline, all fail. Needs sudo, and it changes the firewall, users and file
+# owners: it refuses to run outside GitHub Actions (SD_ISOLATE_OUTSIDE_CI=1 overrides it
+# for a throwaway machine).
 set -euo pipefail
+
+if [ "${GITHUB_ACTIONS:-}" != true ] && [ "${SD_ISOLATE_OUTSIDE_CI:-}" != 1 ]; then
+    echo "isolate.sh körs bara i CI (en engångsmaskin). Den ändrar brandvägg, användare och ägare." >&2
+    exit 2
+fi
 
 USER_NAME=sdtest
 SUBNET=172.31.250.0/24
@@ -27,6 +37,10 @@ DATA="${SD_DATA_DIR:-}"  # needed by own and unblock
 rules() {
     local op="$1" ok=false  # adding: a rule that fails stops the script
     [ "$op" = -D ] && ok=:  # removing: each rule on its own, whatever is still there
+    for proto in udp tcp; do
+        sudo iptables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" -p "$proto" --dport 53 -j REJECT || $ok
+        sudo ip6tables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" -p "$proto" --dport 53 -j REJECT || $ok
+    done
     sudo iptables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" ! -d 127.0.0.0/8 -j REJECT || $ok
     sudo ip6tables "$op" OUTPUT -m owner --uid-owner "$USER_NAME" ! -d ::1 -j REJECT || $ok
     if [ "$op" = -A ]; then
@@ -49,6 +63,9 @@ case "${1:-}" in
     block)
         docker pull -q "$CURL_IMAGE" >/dev/null  # before the block
         rules -A
+        if sudo -u "$USER_NAME" getent hosts "${PROBE#https://}" >/dev/null; then
+            echo "Spärren håller inte: $USER_NAME kan slå upp namn."; exit 1
+        fi
         if sudo -u "$USER_NAME" curl -sS -m 5 -o /dev/null "$PROBE"; then
             echo "Spärren håller inte: $USER_NAME når $PROBE."; exit 1
         fi

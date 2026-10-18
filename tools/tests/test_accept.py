@@ -239,3 +239,133 @@ def test_the_template_never_passes() -> None:
     template = Path(__file__).resolve().parents[1] / "accept/accept-manual.example.toml"
     data = tomllib.loads(template.read_text(encoding="utf-8"))
     assert data and all(v["pass"] is False for v in data.values())
+
+
+# --- each check on its own, green and red ----------------------------------------------
+
+
+class ScriptedRunner:
+    """Commands answer by their first two words; everything else succeeds."""
+
+    def __init__(self, answers: dict[tuple[str, ...], tuple[int, str]] | None = None) -> None:
+        self.answers = answers or {}
+        self.calls: list[list[str]] = []
+
+    def run(self, argv: Sequence[str]) -> tuple[int, str]:
+        self.calls.append(list(argv))
+        return self.answers.get(tuple(argv[:2]), (0, ""))
+
+
+def _ctx(root: Path, gh: Any = None, runner: Any = None) -> Any:
+    return accept.Context(
+        sha=SHA, root=root, gh=gh or FakeGh(), runner=runner or ScriptedRunner(), now=NOW
+    )
+
+
+GOOD_README = f"""# Searchdrone
+## Safety warning
+Never expose {", ".join(accept.README_PORTS)} to the internet.
+## Quick start
+bash tools/setup/wsl-setup.sh
+bash tools/bootstrap.sh
+just demo
+## Requirements
+## Licences
+![demo]({accept.GIF_URL})
+"""
+
+
+def test_readme_check_green_and_red(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(GOOD_README, encoding="utf-8")
+    assert accept._readme(_ctx(tmp_path))[0] is True
+    (tmp_path / "README.md").write_text(GOOD_README.replace(":8889", ""), encoding="utf-8")
+    ok, detail = accept._readme(_ctx(tmp_path))
+    assert ok is False and ":8889" in detail
+
+
+def test_readme_from_scratch_report(tmp_path: Path) -> None:
+    reports = tmp_path / accept.REPORTS
+    reports.mkdir(parents=True)
+    assert accept._readme_check(_ctx(tmp_path))[0] is False  # no report
+    path = reports / "readme-check-20261018T100000Z.json"
+    path.write_text(json.dumps({"code": 0, "git_sha": SHA, "method": "container"}), "utf-8")
+    assert accept._readme_check(_ctx(tmp_path))[0] is True
+    path.write_text(json.dumps({"code": 1, "git_sha": SHA, "method": "container"}), "utf-8")
+    assert accept._readme_check(_ctx(tmp_path))[0] is False
+
+
+def _pulls(labels: list[str]) -> dict[str, Any]:
+    return {
+        f"repos/{accept.REPO}/pulls?state=closed&per_page=100": [
+            {
+                "number": 4,
+                "merged_at": "2026-10-16T10:00:00Z",
+                "labels": [{"name": n} for n in labels],
+            },
+            {"number": 5, "merged_at": None, "labels": []},  # closed, never merged
+            {"number": 6, "merged_at": "2026-10-16T11:00:00Z", "labels": []},
+        ],
+        f"repos/{accept.REPO}/pulls/4/files?per_page=100": [{"filename": "hardware/drone.yaml"}],
+        f"repos/{accept.REPO}/pulls/6/files?per_page=100": [{"filename": "README.md"}],
+    }
+
+
+def test_hardware_needs_the_owners_label(tmp_path: Path) -> None:
+    assert accept._hardware_owner_ok(_ctx(tmp_path, FakeGh(_pulls(["owner-ok"]))))[0] is True
+    ok, detail = accept._hardware_owner_ok(_ctx(tmp_path, FakeGh(_pulls([]))))
+    assert ok is False and "#4" in detail and "#6" not in detail
+
+
+def test_gif_on_the_release(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(GOOD_README, encoding="utf-8")
+    assert accept._gif(_ctx(tmp_path))[0] is True
+    assert (
+        accept._gif(_ctx(tmp_path, runner=ScriptedRunner({("curl", "-sfIL"): (22, "")})))[0]
+        is False
+    )
+    tracked = ScriptedRunner({("git", "ls-files"): (0, "demo.gif\n")})
+    assert accept._gif(_ctx(tmp_path, runner=tracked))[0] is False
+
+
+def test_private_patterns_need_the_owners_file(tmp_path: Path) -> None:
+    ok, detail = accept._private_patterns(_ctx(tmp_path))
+    assert ok is False and "saknas" in detail
+    (tmp_path / "config/local").mkdir(parents=True)
+    (tmp_path / "config/local/private-patterns.txt").write_text("", encoding="utf-8")
+    assert accept._private_patterns(_ctx(tmp_path))[0] is True
+    hit = ScriptedRunner({("uv", "run"): (1, "fynd")})
+    assert accept._private_patterns(_ctx(tmp_path, runner=hit))[0] is False
+
+
+def test_release_assets_are_checked_for_private_patterns(tmp_path: Path) -> None:
+    assert accept._release_assets(_ctx(tmp_path))[0] is False  # no pattern file
+    (tmp_path / "config/local").mkdir(parents=True)
+    (tmp_path / "config/local/private-patterns.txt").write_text("", encoding="utf-8")
+    runner = ScriptedRunner()
+    assert accept._release_assets(_ctx(tmp_path, runner=runner))[0] is True
+    assert runner.calls[0][:3] == ["gh", "release", "download"]
+    failed = ScriptedRunner({("gh", "release"): (1, "")})
+    assert accept._release_assets(_ctx(tmp_path, runner=failed))[0] is False
+
+
+def test_merged_gates_needs_its_tool(tmp_path: Path) -> None:
+    ok, detail = accept._merged_gates(_ctx(tmp_path))
+    assert ok is False and "B1-18" in detail
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools/check_merged_pr_gates.py").write_text("", encoding="utf-8")
+    assert accept._merged_gates(_ctx(tmp_path))[0] is True
+    red = ScriptedRunner({("uv", "run"): (1, "")})
+    assert accept._merged_gates(_ctx(tmp_path, runner=red))[0] is False
+
+
+def test_gh_merges_paged_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Done:
+        returncode = 0
+        stdout = json.dumps([{"total": 3, "check_runs": [1, 2]}, {"total": 3, "check_runs": [3]}])
+        stderr = ""
+
+    monkeypatch.setattr(accept.subprocess, "run", lambda *a, **k: Done())
+    assert accept.GhCli().api("repos/x/y/commits/z/check-runs") == {
+        "total": 3,
+        "check_runs": [1, 2, 3],
+    }

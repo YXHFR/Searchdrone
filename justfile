@@ -364,8 +364,11 @@ e2e *args:
     sync='uv sync --all-packages --frozen'
     [ "${SD_E2E_SYNC:-1}" = 0 ] && sync=true
     run=' && uv run --no-sync python -m sd_sim.e2e "$@"'
-    [ "${SD_E2E_PREPARE:-0}" = 1 ] && run=''
-    docker run --rm --network host --user "${SD_E2E_USER:-$(id -u):$(id -g)}" \
+    user="${SD_E2E_USER:-$(id -u):$(id -g)}"
+    # Preparing runs as the caller (who owns the checkout), never as SD_E2E_USER.
+    if [ "${SD_E2E_PREPARE:-0}" = 1 ]; then run=''; user="$(id -u):$(id -g)"; fi
+    mkdir -p build
+    docker run --rm --network host --user "$user" \
         -v "$PWD:/w" -w /w -v "$data:$data" -e "SD_DATA_DIR=$data" -e HOME=/tmp/home \
         -e UV_PROJECT_ENVIRONMENT=/w/build/e2e-venv -e UV_CACHE_DIR=/w/build/e2e-uv-cache \
         -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL -e SD_SIM__REQUIRE_VIDEO \

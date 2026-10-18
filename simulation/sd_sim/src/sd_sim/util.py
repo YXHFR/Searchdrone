@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import urllib.request
 from datetime import UTC, datetime
@@ -70,3 +71,28 @@ def port_taken(name: str, port: int) -> bool:
 
 def busy_ports(ports: dict[str, int], names: list[str] | tuple[str, ...]) -> list[int]:
     return [ports[name] for name in names if name in ports and port_taken(name, ports[name])]
+
+
+def read_env_value(path: Path, key: str) -> str:
+    """One value from ``.env`` (the process environment wins), without reading the rest."""
+    if os.environ.get(key):
+        return os.environ[key]
+    if not path.is_file():
+        return ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        name, sep, value = raw.strip().partition("=")
+        if sep and name.strip() == key:
+            return value.strip().strip('"').strip("'")
+    return ""
+
+
+def write_secret(directory: Path, name: str, value: str) -> Path:
+    """Write a secret file with mode 0600 inside a 0700 folder."""
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
+    path = directory / name
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write(value)
+    path.chmod(0o600)
+    return path

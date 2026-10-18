@@ -126,6 +126,7 @@ class MavConnection:
         self._tlog_lock = threading.Lock()
         self.read_errors = 0
         self.dispatch_errors = 0
+        self.tlog_errors = 0  # telemetry-log writes that failed (the log was then closed)
 
     @property
     def source_system(self) -> int:
@@ -177,20 +178,31 @@ class MavConnection:
             self.dispatch_errors += 1
 
     def _log(self, msg: Any) -> None:
+        """Write one message to the telemetry log. A failing write (disk full, I/O error)
+        closes the log and is counted; it never stops the reader (the log is a record,
+        the messages are the flight)."""
         with self._tlog_lock:
-            if self._tlog is not None and self._tlog_clock is not None:
+            if self._tlog is None or self._tlog_clock is None:
+                return
+            try:
                 usec = int(self._tlog_clock.utc_now().timestamp() * 1e6) & ~3
                 self._tlog.write(struct.pack(">Q", usec) + msg.get_msgbuf())
+            except (OSError, ValueError):
+                self.tlog_errors += 1
+                with contextlib.suppress(OSError, ValueError):
+                    self._tlog.close()
+                self._tlog = None
 
     def start_tlog(self, path: Path, clock: Clock) -> None:
         """Record every received message in a telemetry log (``flight.tlog``).
 
         Same format as pymavlink's logs: an 8-byte big-endian UTC time in microseconds
-        before each message, so ``mavutil.mavlink_connection(path)`` reads it back.
+        before each message, so ``mavutil.mavlink_connection(path)`` reads it back. An
+        existing file is appended to (a restarted ground station keeps what it wrote).
         """
         self.stop_tlog()
         with self._tlog_lock:
-            self._tlog = path.open("wb")
+            self._tlog = path.open("ab")
             self._tlog_clock = clock
 
     def stop_tlog(self) -> None:

@@ -106,12 +106,9 @@ def test_exit_codes(
     ("brain", "marks"),
     [
         ("scripted", "sitl and not gz and not llm and not nightly and not panel and not e2e"),
-        ("grammar", "sitl and not gz and not llm and not nightly and not panel and not e2e"),
-        ("llm_local", "sitl and not gz and not nightly and not panel and not e2e"),
-        (
-            "none",
-            "sitl and not gz and not llm and not nightly and not brain and not panel and not e2e",
-        ),
+        ("grammar", "sitl and not gz and not llm and not nightly and not panel"),
+        ("llm_local", "sitl and not gz and not nightly and not panel"),
+        ("none", "sitl and not gz and not llm and not nightly and not brain and not panel"),
     ],
 )
 def test_brain_reaches_pytest(brain: str, marks: str) -> None:

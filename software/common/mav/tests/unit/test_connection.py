@@ -107,6 +107,48 @@ def test_udp_connection_receives_and_sends(tmp_path) -> None:  # type: ignore[no
     asyncio.run(run())
 
 
+def test_a_failing_tlog_write_never_stops_the_reader(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Disk full while recording ``flight.tlog``: the log closes, messages still arrive."""
+
+    async def run() -> None:
+        port = _free_udp_port()
+        conn = connect(
+            f"udpin:127.0.0.1:{port}", role=Role.ONBOARD, source_system=1, source_component=191
+        )
+        assert isinstance(conn, MavConnection)
+        conn.start_tlog(tmp_path / "flight.tlog", MonotonicClock())
+
+        class Full:
+            def write(self, _data: bytes) -> int:
+                raise OSError(28, "No space left on device")
+
+            def close(self) -> None:
+                return None
+
+        conn._tlog = Full()  # pyright: ignore[reportAttributeAccessIssue,reportPrivateUsage]
+        vehicle = Vehicle(conn, role=Role.ONBOARD, clock=MonotonicClock())
+        await vehicle.start()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        encoder = mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
+        hb = mavlink.MAVLink_heartbeat_message(
+            mavlink.MAV_TYPE_QUADROTOR, mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA, 1, 5, 3, 3
+        )
+        try:
+            for _ in range(40):
+                sock.sendto(bytes(hb.pack(encoder)), ("127.0.0.1", port))
+                if vehicle.telemetry.fc_connected and conn.tlog_errors:
+                    break
+                await asyncio.sleep(0.05)
+            assert vehicle.telemetry.fc_connected
+            assert conn.tlog_errors == 1  # closed after the first failure, not retried
+            assert conn._reader is not None and conn._reader.is_alive()  # pyright: ignore[reportPrivateUsage]
+        finally:
+            sock.close()
+            await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_read_errors_do_not_stop_the_reader() -> None:
     """A failing read (an unplugged serial port) is retried and the port reopened."""
 

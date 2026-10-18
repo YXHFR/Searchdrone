@@ -15,8 +15,9 @@ in ``.env``, which the services read themselves; nothing secret is put in argv.
 * Onboard computer: the MAVLink port behind mavtap and SD-link through linksim (the
   simulated radio). SITL has no RC transmitter, so ``require_rc`` is off (``sim`` only).
 * AI commander: ``brain=llm_local`` is the language model chain in ``config/brain.toml``
-  (the cloud model when its key is in ``.env``); when no model answers, the commander's
-  own command mode takes over. The local model server is never started.
+  (the cloud model when its key is in ``.env``) without the local model: its address
+  points where nothing answers and the stop check uses only hosted engines. When no
+  model answers, the commander's own command mode takes over.
   ``brain=scripted`` plays a script, ``brain=grammar`` is the command mode only,
   ``brain=none`` starts no commander.
 """
@@ -26,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -37,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from sd_sim import procs
 from sd_sim.errors import InfraError
-from sd_sim.util import LOOPBACK_OPENER, say, tcp_port_taken
+from sd_sim.util import LOOPBACK_OPENER, read_env_value, say, tcp_port_taken, write_secret
 
 if TYPE_CHECKING:
     from sd_sim.launch import Stack
@@ -67,6 +69,10 @@ PANEL_DIST = Path("software/panel/dist")
 # The AI commander in its command mode (no model answers) is ready too: without a cloud
 # model that is how the demo runs (only buttons, menus and fixed commands).
 READY_STATES = {"brain": ("ok", "degraded")}
+# Port 9 (discard) on loopback: nothing of ours listens there, so the local model is
+# always "not answering" and never used.
+NO_LOCAL_MODEL_URL = "http://127.0.0.1:9"
+HOSTED_DECIDE_ENGINES = ["jev", "openai_decisions"]
 DB_PASSWORD_KEY = "SD_GROUND__DB_PASSWORD"  # noqa: S105 - a variable name
 DATA_DIR_KEY = "SD_DATA_DIR"
 
@@ -86,8 +92,6 @@ class ServiceLayout:
 
 
 def default_data_dir(repo: Path) -> Path:
-    from sd_sim.launch import read_env_value
-
     raw = read_env_value(repo / ".env", DATA_DIR_KEY)
     return Path(raw).expanduser() if raw else Path.home() / ".local/share/searchdrone"
 
@@ -169,6 +173,11 @@ def brain_env(stack: Stack, lay: ServiceLayout) -> dict[str, str]:
         ),
         "SD_BRAIN__GROUND__VEHICLE_ID": VEHICLE_ID,
         "SD_BRAIN__BACKEND__KIND": BRAIN_KINDS[stack.cfg.brain],
+        # No local language model, whatever answers on its port (the owner's own model
+        # server for measurements): the chat and the stop check use only hosted engines,
+        # and with none answering the commander's command mode takes over.
+        "SD_BRAIN__LLM__ROOT_URL": NO_LOCAL_MODEL_URL,
+        "SD_BRAIN__DECIDE__ENGINES": json.dumps(HOSTED_DECIDE_ENGINES),
     }
     if stack.cfg.brain == "scripted":
         script = Path(stack.cfg.script)
@@ -185,8 +194,11 @@ def _python_argv(module: str, *args: str) -> list[str]:
     return [sys.executable, "-m", module, *args]
 
 
-def _run(stack: Stack, step: str, argv: list[str], env: dict[str, str]) -> str:
-    """A one-shot command of a service (set-up), its output masked into the run's log."""
+def _run(
+    stack: Stack, step: str, argv: list[str], env: dict[str, str], *, log_output: bool = True
+) -> str:
+    """A one-shot command of a service (set-up), its output masked into the run's log
+    (``log_output=False``: only that it ran, for output that is itself a secret)."""
     res = subprocess.run(  # noqa: S603 - argv is built here, never a shell
         argv,
         cwd=stack.repo,
@@ -199,7 +211,7 @@ def _run(stack: Stack, step: str, argv: list[str], env: dict[str, str]) -> str:
     log = stack.run_dir / "logs" / f"{step}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as out:
-        out.write(stack.mask(res.stdout + res.stderr))
+        out.write(stack.mask(res.stdout + res.stderr) if log_output else f"kod {res.returncode}\n")
     if res.returncode != 0:
         tail = "\n".join(stack.mask(res.stderr or res.stdout).splitlines()[-15:])
         raise InfraError(f"Steget '{step}' misslyckades (kod {res.returncode}).\n{tail}")
@@ -257,8 +269,6 @@ async def _provision(port: int, password: str, name: str, *, fresh: bool) -> Non
 
 def start_database(stack: Stack, lay: ServiceLayout) -> None:
     """Postgres answering on 127.0.0.1:5433, this instance's database at the schema head."""
-    from sd_sim.launch import read_env_value
-
     port = stack.ports["postgres_local"]
     if not tcp_port_taken(port):
         _docker_compose_up(stack, "db")
@@ -275,11 +285,7 @@ def start_database(stack: Stack, lay: ServiceLayout) -> None:
 
 
 def _write_token(path: Path) -> None:
-    import secrets as _secrets
-
-    from sd_sim.launch import write_secret
-
-    write_secret(path.parent, path.name, _secrets.token_urlsafe(32))
+    write_secret(path.parent, path.name, secrets.token_urlsafe(32))
 
 
 def make_service_secrets(stack: Stack, lay: ServiceLayout) -> None:
@@ -408,12 +414,12 @@ def brain_mode(stack: Stack) -> str:
     """How the AI commander answers, in words for the start-up summary."""
     if stack.cfg.brain == "none":
         return "ingen AI (bara knapparna och stopporden)"
+    if stack.cfg.brain == "scripted":
+        return "skriptad (test)"
     part = ((health(stack) or {}).get("parts") or {}).get("brain")
-    if part == "degraded":
+    if stack.cfg.brain == "grammar" or part == "degraded":
         return "kommandoläget (ingen språkmodell svarar; fasta kommandon och knappar)"
-    return {"scripted": "skriptad (test)", "grammar": "kommandoläget"}.get(
-        stack.cfg.brain, "språkmodellen (molnet när nyckeln finns i .env)"
-    )
+    return "språkmodellen i molnet"
 
 
 def not_ready_parts(stack: Stack) -> str:
@@ -429,6 +435,7 @@ def login_link(stack: Stack, lay: ServiceLayout) -> str:
         "login-link",
         _python_argv("sd_ground", "login-link"),
         ground_env(stack, lay, video=False),
+        log_output=False,  # a one-time login code
     )
     return out.strip().splitlines()[-1] if out.strip() else ""
 

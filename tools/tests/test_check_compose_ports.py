@@ -187,3 +187,26 @@ def test_only_the_media_port_may_follow_the_lan_bind(key: str, ok: bool) -> None
       {key}: "${{SD_VIDEO_BIND:-127.0.0.1}}:8189"
 """
     assert (ccp.check_compose(text) == []) is ok
+
+
+def test_offline_overlay_is_checked_with_the_same_rules(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "compose.yaml").write_text(DB_OK, encoding="utf-8")
+    overlay = tmp_path / "compose.offline.yaml"
+    overlay.write_text("services:\n  db:\n    networks: [sd-offline]\n", encoding="utf-8")
+    assert ccp.main(["--root", str(tmp_path)]) == 0
+    assert "compose.offline.yaml" in capsys.readouterr().out
+    overlay.write_text('services:\n  db:\n    ports: ["0.0.0.0:5433:5432"]\n', encoding="utf-8")
+    assert ccp.main(["--root", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "compose.offline.yaml: port:" in out and "compose.yaml: port:" not in out
+
+
+def test_other_compose_files_in_the_root_still_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "compose.yaml").write_text(DB_OK, encoding="utf-8")
+    (tmp_path / "compose.remote.yaml").write_text(DB_OK, encoding="utf-8")
+    assert ccp.main(["--root", str(tmp_path)]) == 1
+    assert "compose.remote.yaml: location:" in capsys.readouterr().out

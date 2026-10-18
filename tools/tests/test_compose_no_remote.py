@@ -113,3 +113,36 @@ def test_mediamtx_config_has_no_real_password() -> None:
     # The user without a password may only read; the control API needs a password.
     assert [p["action"] for p in users[1]["permissions"]] == ["read"]
     assert [p["action"] for p in users[2]["permissions"]] == ["api"]
+
+
+@pytest.mark.skipif(DOCKER is None, reason="docker is not installed")
+def test_offline_overlay_renders_with_compose_yaml(tmp_path: Path) -> None:
+    """compose.yaml + compose.offline.yaml: the database on sd-offline (172.31.250.0/24),
+    still published on 127.0.0.1 only, and nothing else added."""
+    env = tmp_path / "env"
+    env.write_text("".join(f"{k}={v}\n" for k, v in DUMMY_ENV.items()), encoding="utf-8")
+    assert DOCKER is not None
+    res = subprocess.run(
+        [
+            DOCKER,
+            "compose",
+            "--env-file",
+            str(env),
+            "-f",
+            str(COMPOSE),
+            "-f",
+            str(ROOT / "compose.offline.yaml"),
+            "config",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, res.stderr
+    data = yaml.safe_load(res.stdout)
+    defaults = {n for n, svc in _services().items() if not svc.get("profiles")}
+    assert set(data["services"]) == defaults
+    assert set(data["services"]["db"]["networks"]) == {"sd-offline"}
+    assert all(p["host_ip"] == "127.0.0.1" for p in data["services"]["db"]["ports"])
+    [subnet] = data["networks"]["sd-offline"]["ipam"]["config"]
+    assert subnet["subnet"] == "172.31.250.0/24"

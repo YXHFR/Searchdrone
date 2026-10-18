@@ -14,6 +14,7 @@ launcher can wait for a healthy vehicle.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -398,8 +399,6 @@ def observe(instance: int, state_file: Path, *, rc_pilot: bool = False) -> int:
     throttle centred in the air, down on the ground. It never steers."""
     harness = Harness.for_instance(instance)
     sticks = RcSticks(ports.for_instance(instance)["sitl_rc_in"]) if rc_pilot else None
-    if sticks is not None:
-        sticks.__enter__()
     stopping = False
 
     def stop(_sig: int, _frame: object) -> None:
@@ -409,17 +408,18 @@ def observe(instance: int, state_file: Path, *, rc_pilot: bool = False) -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     tmp = state_file.with_suffix(".tmp")
-    while not stopping:
-        harness.pump(0.5)
+    with contextlib.ExitStack() as stack:
+        stack.callback(harness.close)
         if sticks is not None:
-            st = harness.state
-            sticks.throttle = pilot_throttle(armed=st.armed, alt_m=st.rel_alt_m, mode=st.mode)
-        payload = {**asdict(harness.state), "ready": harness.state.ready, "pid": os.getpid()}
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
-        tmp.replace(state_file)
-    if sticks is not None:
-        sticks.__exit__()
-    harness.close()
+            stack.enter_context(sticks)
+        while not stopping:
+            harness.pump(0.5)
+            if sticks is not None:
+                st = harness.state
+                sticks.throttle = pilot_throttle(armed=st.armed, alt_m=st.rel_alt_m, mode=st.mode)
+            payload = {**asdict(harness.state), "ready": harness.state.ready, "pid": os.getpid()}
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(state_file)
     return 0
 
 

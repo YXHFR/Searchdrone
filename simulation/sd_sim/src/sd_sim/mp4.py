@@ -104,7 +104,8 @@ def probe(path: Path) -> Mp4Info:
     data = path.read_bytes()
     info = Mp4Info()
     by_id: dict[int, Mp4Track] = {}
-    fragments: dict[int, int] = {}
+    defaults: dict[int, int] = {}  # track id -> trex default sample duration
+    durations: dict[int, int] = {}  # track id -> summed fragment durations
 
     def walk(start: int, end: int, track: Mp4Track | None, frag: list[int]) -> None:
         for kind, body, stop in _boxes(data, start, end):
@@ -132,17 +133,17 @@ def probe(path: Path) -> Mp4Info:
                     track.codec = entries[0][0].decode("ascii", errors="replace")
             elif kind == b"trex":
                 track_id, _, default = struct.unpack_from(">III", data, body + 4)
-                fragments.setdefault(-track_id, default)
+                defaults.setdefault(track_id, default)
             elif kind == b"tfhd":
                 track_id, default = _tfhd(data, body)
                 frag[0] = track_id
-                frag[1] = default if default is not None else fragments.get(-track_id, 0)
+                frag[1] = default if default is not None else defaults.get(track_id, 0)
             elif kind == b"trun":
-                fragments[frag[0]] = fragments.get(frag[0], 0) + _trun(data, body, frag[1])
+                durations[frag[0]] = durations.get(frag[0], 0) + _trun(data, body, frag[1])
 
     walk(0, len(data), None, [0, 0])
     for track_id, t in by_id.items():
-        t.default_sample_duration = fragments.get(-track_id, 0)
+        t.default_sample_duration = defaults.get(track_id, 0)
         if t.duration == 0:
-            t.duration = fragments.get(track_id, 0)
+            t.duration = durations.get(track_id, 0)
     return info

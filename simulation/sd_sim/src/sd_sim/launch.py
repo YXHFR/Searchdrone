@@ -34,6 +34,10 @@ from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
 from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
 
+# Re-exported: the tests and video helpers read .env and write secrets through them.
+from sd_sim.util import read_env_value as read_env_value
+from sd_sim.util import write_secret as write_secret
+
 ALLOWED_KEYS = (
     "physics",
     "gui",
@@ -49,7 +53,7 @@ ALLOWED_KEYS = (
     "dry",
 )
 COMMANDS = ("up", "down", "status")
-FLAGS = ("--demo", "--with-db")
+FLAGS = ("--demo",)  # the database always starts with the services
 DEMO_READY_S = 180.0  # every service ready within this, on the owner's computer
 HEALTH_LINK_S = 10.0
 HEALTH_HEARTBEAT_S = 60.0
@@ -61,31 +65,6 @@ VIDEO_PASSWORD_KEY = "SD_GROUND__VIDEO_PUBLISH_PASSWORD"  # noqa: S105 - a varia
 VIDEO_API_PASSWORD_KEY = "SD_GROUND__VIDEO_API_PASSWORD"  # noqa: S105 - a variable name
 VIDEO_API_USER = "ground"
 PLACEHOLDERS = {"", "change_me", "change-me", "changeme"}
-
-
-def read_env_value(path: Path, key: str) -> str:
-    """One value from ``.env`` (the process environment wins), without reading the rest."""
-    if os.environ.get(key):
-        return os.environ[key]
-    if not path.is_file():
-        return ""
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        name, sep, value = raw.strip().partition("=")
-        if sep and name.strip() == key:
-            return value.strip().strip('"').strip("'")
-    return ""
-
-
-def write_secret(directory: Path, name: str, value: str) -> Path:
-    """Write a secret file with mode 0600 inside a 0700 folder."""
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    directory.chmod(0o700)
-    path = directory / name
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as out:
-        out.write(value)
-    path.chmod(0o600)
-    return path
 
 
 def check_secret_modes(directory: Path) -> None:
