@@ -203,3 +203,15 @@ def test_mediamtx_refused_password_is_an_error(
     with pytest.raises(InfraError, match="SD_GROUND__VIDEO_API_PASSWORD"):
         stack.mediamtx_get("/v3/config/global/get")
     assert seen and seen[0].startswith("Basic ")
+
+
+def test_ground_started_without_login_code_in_its_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sd-ground's output goes to logs/sd-ground.log (a CI artifact): no login code or PIN."""
+    stack = _stack(tmp_path, monkeypatch, "pw-123456")
+    monkeypatch.setattr(stack, "ground_process_env", dict)
+    stack.start_ground()
+    ((name, argv),) = stack.group.started  # pyright: ignore[reportAttributeAccessIssue]
+    assert name == "sd-ground"
+    assert argv[1:] == ["-m", "sd_ground", "serve", "--no-login-link"]

@@ -571,7 +571,9 @@ class Stack:
 
     def start_ground(self) -> procs.Proc:
         env = self.ground_process_env()
-        proc = self._start_service("sd-ground", [sys.executable, "-m", "sd_ground", "serve"], env)
+        # Our output goes to logs/sd-ground.log (a CI artifact): no login code or PIN there.
+        argv = [sys.executable, "-m", "sd_ground", "serve", "--no-login-link"]
+        proc = self._start_service("sd-ground", argv, env)
         self._wait(
             "sd-ground",
             proc,
