@@ -54,6 +54,12 @@ export const TIMING = {
 } as const;
 
 const FINAL_OK = new Set(["acked", "already_active"]);
+/** At most this many outcomes are kept while a press waits for its 202. */
+const EARLY_MAX = 16;
+
+function isEmergency(a: VehicleAction): a is "stop" | "return_home" {
+  return a === "stop" || a === "return_home";
+}
 
 export interface MachineDeps {
   fetch: typeof fetch;
@@ -82,6 +88,11 @@ export class VehicleActionMachine {
   private timers = new Set<Timer>();
   /** action_id → vehicle_id for the current press; value true once that vehicle acked. */
   private pending = new Map<string, { vehicleId: string; acked: boolean }>();
+  /**
+   * Outcomes that came over the live socket while this press waited for its 202: the
+   * vehicle can answer before the HTTP reply arrives. Applied when the reply names them.
+   */
+  private early = new Map<string, ActionOutcome>();
   private readonly now: () => number;
   /** Target of the current press (null = all vehicles). */
   private target: string | null = null;
@@ -105,10 +116,12 @@ export class VehicleActionMachine {
 
   /** New press: always sends, with a new client_action_id, even mid-attempt. */
   trigger(): void {
-    if (this.action === "resume" && this.vehicleId() === null) return; // Resume needs a vehicle
+    // Only STOP and RETURN HOME have an all-vehicles form; the rest need a vehicle.
+    if (!isEmergency(this.action) && this.vehicleId() === null) return;
     this.clearTimers();
     this.generation += 1;
     this.pending.clear();
+    this.early.clear();
     this.pressedAt = this.now();
     this.target = this.vehicleId();
     const id = uuidv7();
@@ -135,7 +148,12 @@ export class VehicleActionMachine {
   /** ActionOutcome from WS `vehicle.action` or from polling. */
   outcome(o: ActionOutcome): void {
     const entry = this.pending.get(o.action_id);
-    if (!entry) return; // older press or another client's action
+    if (!entry) {
+      // Our 202 may still be on its way; anything else is an older press or another client.
+      const waiting = this.snap.state === "sending" || this.snap.state === "retrying";
+      if (waiting && this.early.size < EARLY_MAX) this.early.set(o.action_id, o);
+      return;
+    }
     const st = this.snap.state;
     if (st !== "sent" && st !== "unconfirmed") return;
     if (o.paths.sdlink === "sent") this.set({ ...this.snap, onboardReceived: true });
@@ -155,7 +173,7 @@ export class VehicleActionMachine {
 
   private url(): string {
     if (this.target !== null) return paths.vehicleAction(this.target, this.action);
-    // trigger() never starts a Resume without a vehicle, so this is stop or return_home.
+    // trigger() never starts another action without a vehicle.
     return paths.allVehiclesAction(this.action as "stop" | "return_home");
   }
 
@@ -230,6 +248,10 @@ export class VehicleActionMachine {
     }
     this.set({ ...this.snap, state: "sent", text: { key: "safety.state.sent" } });
     this.deps.log("info", `${this.action}: skickat`);
+    const early = [...this.early.values()].filter((o) => this.pending.has(o.action_id));
+    this.early.clear();
+    for (const o of early) this.outcome(o);
+    if (this.snap.state !== "sent") return; // already acknowledged (or failed)
     this.after(TIMING.ackWaitMs, () => {
       if (gen === this.generation && this.snap.state === "sent") {
         this.set({ ...this.snap, state: "unconfirmed", text: { key: "safety.state.unconfirmed" } });

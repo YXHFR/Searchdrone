@@ -73,6 +73,7 @@ __all__ = [
 
 TICK_S: Final = 0.05
 STICK_RESEND_S: Final = 0.1  # 10 Hz while the panel's values are fresh
+TAKEOVER_POLL_S: Final = 0.01  # how often a waiting take-over looks for its notice's ack
 BATTERY_CONFIRM_S: Final = 0.5  # two BATTERY_STATUS at 2 Hz
 _IN_AIR: Final = frozenset({"in_air", "takeoff", "landing"})
 _FLYING_HOME: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL, CopterMode.LAND})
@@ -119,6 +120,11 @@ class MavSnapshot:
     airborne_since: dt.datetime | None
     manual: bool
     watchdog_phase: str
+    # The take-over the pilot steers with ("Ta över"), when it started (wall clock) and
+    # the age of the last stick value; None without a take-over.
+    manual_takeover_id: str | None = None
+    manual_since: dt.datetime | None = None
+    manual_input_age_ms: int | None = None
 
     @property
     def fc_mode(self) -> CopterMode | None:
@@ -200,8 +206,19 @@ class HeartbeatGate:
 
 
 @dataclass
+class _PendingTakeover:
+    """A take-over whose LOITER waits for the onboard side to know about it."""
+
+    takeover_id: str
+    action_seq: int
+    rc_at_click: int | None
+    acknowledged: bool = False
+
+
+@dataclass
 class _Manual:
     takeover_id: str
+    since: dt.datetime
     axes: StickAxes | None = None
     received_mono: float = 0.0
     sent_mono: float = 0.0
@@ -245,6 +262,7 @@ class GroundMav:
         self._tracks = _Tracks()
         self._tick_task: asyncio.Task[None] | None = None
         self._manual: _Manual | None = None
+        self._pending: _PendingTakeover | None = None
         self._airborne_since: dt.datetime | None = None
         self._flown = False
         self._battery_low_since: float | None = None
@@ -301,6 +319,7 @@ class GroundMav:
             t.onboard_seen_mono_ms is not None
             and now - t.onboard_seen_mono_ms <= COMPANION_WATCHDOG_S * 1000
         )
+        m = self._manual
         snap = MavSnapshot(
             vehicle_id=self.vehicle_id,
             connected=connected,
@@ -309,8 +328,15 @@ class GroundMav:
             in_flight=flying,
             onboard_alive=onboard,
             airborne_since=self._airborne_since,
-            manual=self._manual is not None,
+            manual=m is not None,
             watchdog_phase=self.watchdog.phase,
+            manual_takeover_id=None if m is None else m.takeover_id,
+            manual_since=None if m is None else m.since,
+            manual_input_age_ms=(
+                None
+                if m is None or m.axes is None
+                else int((self.clock.monotonic() - m.received_mono) * 1000)
+            ),
         )
         with self._lock:
             self._snap = snap
@@ -322,6 +348,7 @@ class GroundMav:
         if action.vehicle_id != self.vehicle_id:
             return
         self._manual = None  # STOP and FLY HOME end steering by hand
+        self._pending = None  # and a take-over that still waits never starts
         # The 10 s watch counts from here, on this thread's own clock.
         # So does the RC mode switch's position: a person moving it afterwards wins.
         rc_at_click = self.vehicle.telemetry.rc_mode_pwm
@@ -383,9 +410,59 @@ class GroundMav:
 
     # --- steering by hand -------------------------------------------------------------
 
-    def takeover(self, takeover_id: str) -> None:
-        self._manual = _Manual(takeover_id)
-        seq = self.latches.latest_seq(self.vehicle_id)
+    def takeover(self, takeover_id: str, action_seq: int, wait_s: float = 0.0) -> None:
+        """Steer by hand from here: LOITER, then the panel's sticks.
+
+        With ``wait_s`` (SD-link up), LOITER waits until the onboard side has acknowledged
+        the take-over notice (``takeover_acknowledged``) or ``wait_s`` has passed, counted
+        here on this thread's own clock: a hung main loop or SD-link cannot hold it up
+        longer. A newer action in the meantime (STOP, FLY HOME, a system action, a
+        hand-back, another take-over) or a move of the RC mode switch drops it."""
+        pending = _PendingTakeover(takeover_id, action_seq, self.vehicle.telemetry.rc_mode_pwm)
+        self._pending = pending
+        if wait_s <= 0:
+            self._start_takeover(pending)
+            return
+
+        async def after_the_notice() -> None:
+            deadline = self.clock.monotonic() + wait_s
+            while not pending.acknowledged and self.clock.monotonic() < deadline:
+                await self.clock.sleep(TAKEOVER_POLL_S)
+            self._start_takeover(pending)
+
+        self._spawn(after_the_notice())
+
+    def takeover_acknowledged(self, takeover_id: str) -> None:
+        """The onboard side has the take-over notice: LOITER may go now."""
+        pending = self._pending
+        if pending is not None and pending.takeover_id == takeover_id:
+            pending.acknowledged = True
+
+    def _start_takeover(self, pending: _PendingTakeover) -> None:
+        if self._pending is not pending:
+            return  # STOP, FLY HOME, a hand-back or a newer take-over came first
+        self._pending = None
+        seq = pending.action_seq
+        if self.latches.latest_seq(self.vehicle_id) != seq:
+            # A newer action that never comes here (Resume) took a number while it waited:
+            # say so, the pilot pressed Ta över and no LOITER follows. STOP, FLY HOME and
+            # system actions clear the take-over in submit(), with events of their own.
+            self._on_event(
+                "vehicle.takeover_dropped",
+                "warning",
+                {"takeover_id": pending.takeover_id, "reason": "newer_action"},
+            )
+            return
+        if rc_switch_moved(self.vehicle, pending.rc_at_click):
+            # A person at the RC transmitter chose a mode meanwhile: it goes first.
+            self._on_event(
+                "alarm.TAKEOVER_FAILED",
+                "critical",
+                {"takeover_id": pending.takeover_id, "reason": "rc_switch"},
+            )
+            return
+        self._manual = _Manual(pending.takeover_id, self.clock.utc_now())
+        takeover_id = pending.takeover_id
 
         async def loiter() -> None:
             result = await set_mode_with_fallback(
@@ -401,6 +478,7 @@ class GroundMav:
 
     def handback(self) -> None:
         self._manual = None
+        self._pending = None
 
     def sticks(self, axes: StickAxes) -> None:
         m = self._manual
@@ -462,6 +540,13 @@ class GroundMav:
 
     def _landed(self) -> None:
         self._manual = None
+        if self._pending is not None:  # a take-over still waiting: no LOITER on the ground
+            self._on_event(
+                "vehicle.takeover_dropped",
+                "warning",
+                {"takeover_id": self._pending.takeover_id, "reason": "landed"},
+            )
+            self._pending = None
         self._battery_low_since = None
         latch = self.latches.landed(self.vehicle_id)
         self._on_event(
@@ -543,8 +628,11 @@ class ThreadSafeMav:
     def submit(self, action: ModeAction) -> bool:
         return self._call(self.core.submit, action)
 
-    def takeover(self, takeover_id: str) -> bool:
-        return self._call(self.core.takeover, takeover_id)
+    def takeover(self, takeover_id: str, action_seq: int, wait_s: float = 0.0) -> bool:
+        return self._call(self.core.takeover, takeover_id, action_seq, wait_s)
+
+    def takeover_acknowledged(self, takeover_id: str) -> bool:
+        return self._call(self.core.takeover_acknowledged, takeover_id)
 
     def handback(self) -> bool:
         return self._call(self.core.handback)

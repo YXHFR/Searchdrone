@@ -199,6 +199,18 @@ class _Fixture:
         ):
             if key in c:
                 body[key] = c[key]
+        # The fixture's own sectors (an area by name); without them the server cuts the area.
+        sectors = [
+            {
+                "sector_id": s["sector_id"],
+                "name": s.get("name", s["sector_id"]),
+                "area": self.polygon(s["from"]),
+                "order_idx": i,
+            }
+            for i, s in enumerate(c.get("sectors") or [])
+        ]
+        if sectors:
+            body["sectors"] = sectors
         return CharterProposal.model_validate(body)
 
 
@@ -218,8 +230,10 @@ def _resolve(params: dict[str, Any], fx: _Fixture) -> dict[str, Any]:
     return out
 
 
-def _event_body(turn: TurnInput) -> dict[str, Any]:
-    return dict((turn.events[-1].get("body") or {}) if turn.events else {})
+def _event_bodies(turn: TurnInput) -> list[dict[str, Any]]:
+    """The turn's event bodies, newest first. A turn can carry more than one event (an
+    onboard refusal and its alert arrive together), and ``when`` matches any of them."""
+    return [dict(e.get("body") or {}) for e in reversed(turn.events)] or [{}]
 
 
 def _matches_when(when: dict[str, Any], body: dict[str, Any]) -> bool:
@@ -247,14 +261,14 @@ class ScriptedBackend:
         return cls(script, fixture)
 
     def _pick(self, turn: TurnInput) -> ScriptTurn | None:
-        body = _event_body(turn)
+        bodies = _event_bodies(turn)
         text = next((m.text for m in reversed(turn.chat_tail) if m.role == "operator"), "")
         for i, t in enumerate(self.script.turns):
             if t.on != turn.trigger or (t.once and i in self._used):
                 continue
             if t.match is not None and re.fullmatch(t.match, text) is None:
                 continue
-            if not _matches_when(t.when, body):
+            if not any(_matches_when(t.when, body) for body in bodies):
                 continue
             if t.once:
                 self._used.add(i)

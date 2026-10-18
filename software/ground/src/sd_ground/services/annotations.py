@@ -33,7 +33,7 @@ def _publish(
     extra: dict[str, Any] | None = None,
 ) -> None:
     flow.publish(
-        "map",
+        "mission",
         type_,
         {**ann.model_dump(mode="json"), **(extra or {})},
         vehicle_id=mission.vehicle_id,
@@ -91,7 +91,7 @@ async def delete(flow: MissionFlow, annotation_id: str) -> None:
     mission = await flow.open_mission_of(str(row["mission_id"]))
     await flow.repo.delete_annotation(annotation_id, flow.now())
     flow.publish(
-        "map",
+        "mission",
         "annotation.deleted",
         {"id": annotation_id},
         vehicle_id=mission.vehicle_id,

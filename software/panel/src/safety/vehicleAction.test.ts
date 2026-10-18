@@ -127,6 +127,29 @@ describe("VehicleActionMachine", () => {
     expect(m.snapshot.state).toBe("idle");
   });
 
+  it("an ack over the socket before the 202 arrives is kept and gives acked at once", async () => {
+    const { m, calls } = setup([json(202, DISPATCHED)], () =>
+      json(200, outcome({ result: "dispatched" })),
+    );
+    m.trigger();
+    expect(m.snapshot.state).toBe("sending");
+    m.outcome(outcome({ action_id: "other", result: "acked" })); // not ours: never applied
+    m.outcome(outcome({ result: "acked", mode_confirmed: "BRAKE" })); // ours, before the 202
+    await flush();
+    expect(m.snapshot.state).toBe("acked");
+    expect(calls.filter((c) => !c.init?.method || c.init.method === "GET")).toEqual([]);
+  });
+
+  it("an early outcome for another action does not ack this press", async () => {
+    const { m } = setup([json(202, DISPATCHED)], () =>
+      json(200, outcome({ result: "dispatched" })),
+    );
+    m.trigger();
+    m.outcome(outcome({ action_id: "other", result: "acked" }));
+    await flush();
+    expect(m.snapshot.state).toBe("sent");
+  });
+
   it("a late ack after unconfirmed still gives acked", async () => {
     const { m } = setup([json(202, DISPATCHED)], () =>
       json(200, outcome({ result: "dispatched" })),

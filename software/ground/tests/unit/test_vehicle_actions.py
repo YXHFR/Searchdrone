@@ -12,21 +12,26 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+import structlog.testing
 from stop_helpers import OBSERVER, PILOT, VID, RecordingSink, StubGround
 
+from sd_ground.auth import Principal
 from sd_ground.mav.thread import ActionReport, MavSnapshot, ModeAction
 from sd_ground.services.latches import Latches
 from sd_ground.services.vehicle_actions import (
+    MANUAL_MIN_INTERVAL_S,
     OUTCOMES_MAX,
     ActionRefusedError,
     NoNoticeSink,
+    NoticeResult,
     OperatorPresence,
     VehicleActions,
 )
 from sd_ground.sources import EmergencyUnavailableError
 from sd_mav.vehicle import FcTelemetry
+from sd_schemas.api import ManualControlInput
 from sd_schemas.base import SdModel, new_id
-from sd_schemas.link import OperatorOverrideNotice, StickAxes
+from sd_schemas.link import CommanderStatus, OperatorOverrideNotice, StickAxes
 from sd_testing import FakeClock
 
 OTHER = "sim-02"
@@ -40,13 +45,18 @@ class StubMav:
     connected: bool = True
     submitted: list[ModeAction] = field(default_factory=list[ModeAction])
     calls: list[str] = field(default_factory=list[str])
+    stick_values: list[float] = field(default_factory=list[float])
 
     def submit(self, action: ModeAction) -> bool:
         self.submitted.append(action)
         return True
 
-    def takeover(self, takeover_id: str) -> bool:
-        self.calls.append("takeover")
+    def takeover(self, takeover_id: str, action_seq: int, wait_s: float = 0.0) -> bool:
+        self.calls.append("takeover" if wait_s <= 0 else "takeover_after_notice")
+        return True
+
+    def takeover_acknowledged(self, takeover_id: str) -> bool:
+        self.calls.append("takeover_acknowledged")
         return True
 
     def handback(self) -> bool:
@@ -54,6 +64,7 @@ class StubMav:
         return True
 
     def sticks(self, axes: StickAxes) -> bool:
+        self.stick_values.append(axes.pitch)
         return True
 
     def snapshot(self) -> MavSnapshot | None:
@@ -82,9 +93,15 @@ class PerVehicleSink:
     async def send(self, vehicle_id: str, message: SdModel) -> bool:
         return vehicle_id in self.up_for
 
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        return "acked" if vehicle_id in self.up_for else "down"
+
 
 class BrokenSink(RecordingSink):
     async def send(self, vehicle_id: str, message: SdModel) -> bool:
+        raise ConnectionResetError("link went away mid-send")
+
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
         raise ConnectionResetError("link went away mid-send")
 
 
@@ -215,6 +232,176 @@ async def test_notice_that_fails_to_send_marks_sdlink_failed() -> None:
     assert outcome.paths["mavlink"] == "queued"
     assert "vehicle.stop" in g.types()  # the event is still written
     assert [t for t, _ in _published(g) if t == "vehicle.action"] == ["vehicle.action"]
+
+
+async def _drain_all(actions: VehicleActions, g: StubGround) -> None:
+    await actions.drain(g)
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    await asyncio.gather(*tasks)
+
+
+async def test_takeover_goes_to_the_mavlink_thread_at_the_click() -> None:
+    """With SD-link up the take-over is handed over at once, with its deadline; the
+    notice's ack only brings it forward."""
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=PerVehicleSink(up_for={VID}))
+    reply = actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    assert mav.calls == ["takeover_after_notice"]  # before any pump
+    g = StubGround(clock)
+    await _drain_all(actions, g)
+    assert mav.calls == ["takeover_after_notice", "takeover_acknowledged"]
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "sent"
+
+
+async def test_takeover_whose_notice_fails_still_goes_and_marks_sdlink_failed() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=BrokenSink())
+    reply = actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    g = StubGround(clock)
+    await _drain_all(actions, g)
+    assert mav.calls == ["takeover_after_notice"]  # LOITER comes at the deadline
+    outcome = actions.outcome(VID, str(reply.action_id))
+    assert outcome is not None and outcome.paths["sdlink"] == "failed"
+    assert "vehicle.takeover" in g.types()
+
+
+async def test_takeover_without_sdlink_goes_at_once() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink())
+    actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    assert mav.calls == ["takeover"]
+
+
+async def test_a_failing_takeover_task_is_logged_not_raised() -> None:
+    clock = FakeClock()
+    actions = _actions(clock, mav=StubMav(), notices=PerVehicleSink(up_for={VID}))
+
+    def broken(_g: object, _o: object) -> None:
+        raise RuntimeError("the event store went away")
+
+    actions._posted = broken  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    g = StubGround(clock)
+    with structlog.testing.capture_logs() as logs:
+        await actions.drain(g)
+        tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.sleep(0)
+    assert actions._tasks == set()  # pyright: ignore[reportPrivateUsage]
+    assert [e["event"] for e in logs] == ["actions.task_failed"]
+
+
+class SlowToCancelSink(RecordingSink):
+    """A notice whose send cleans up over a few loop turns when cancelled."""
+
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            for _ in range(3):
+                await asyncio.sleep(0)
+        return "down"  # never reached: it is only ever cancelled
+
+
+async def test_stopping_the_pump_cancels_a_waiting_takeover_notice() -> None:
+    clock = FakeClock()
+    actions = _actions(clock, mav=StubMav(), notices=SlowToCancelSink())
+    pump = asyncio.ensure_future(actions.pump(StubGround(clock)))
+    actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    await clock.run_for(0.1)
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    assert tasks
+    seen_at_end: list[bool] = []  # recorded the moment the pump itself finishes
+    pump.add_done_callback(lambda _: seen_at_end.extend(t.cancelled() for t in tasks))
+    pump.cancel()
+    await asyncio.gather(pump, return_exceptions=True)
+    assert seen_at_end == [True] * len(tasks)  # the pump waited for them
+
+
+def _stick(takeover_id: str, seq: int, pitch: float) -> ManualControlInput:
+    return ManualControlInput.model_validate(
+        {
+            "takeover_id": takeover_id,
+            "input_seq": seq,
+            "pitch": pitch,
+            "roll": 0.0,
+            "throttle": 0.5,
+            "yaw": 0.0,
+            "source": "touch",
+        }
+    )
+
+
+async def test_only_the_pilot_who_took_over_steers() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink())
+    reply = actions.takeover(VID, client_action_id=str(new_id()), by=PILOT)
+    other = Principal(role="pilot", issuer_ref="operator:other", auth_mode="local")
+    assert not actions.manual_input(VID, _stick(str(reply.action_id), 1, 0.1), other)
+    assert not actions.manual_input(VID, _stick(str(new_id()), 1, 0.2), PILOT)  # not this one
+    assert actions.manual_input(VID, _stick(str(reply.action_id), 1, 0.3), PILOT)
+    assert mav.stick_values == [0.3]
+    actions.handback(VID, client_action_id=str(new_id()), by=PILOT)
+    await clock.run_for(0.1)
+    assert not actions.manual_input(VID, _stick(str(reply.action_id), 2, 0.4), PILOT)
+    assert mav.stick_values == [0.3]
+
+
+async def test_a_handback_on_one_vehicle_leaves_the_other_s_take_over() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink(), ids=[VID, OTHER])
+    mine = str(actions.takeover(VID, client_action_id=str(new_id()), by=PILOT).action_id)
+    theirs = str(actions.takeover(OTHER, client_action_id=str(new_id()), by=PILOT).action_id)
+    actions.handback(VID, client_action_id=str(new_id()), by=PILOT)
+    assert not actions.manual_input(VID, _stick(mine, 1, 0.1), PILOT)
+    assert actions.manual_input(OTHER, _stick(theirs, 1, 0.2), PILOT)
+    assert mav.stick_values == [0.2]
+
+
+async def test_fast_stick_values_are_held_and_the_newest_goes_at_its_slot() -> None:
+    """At most 30 Hz per vehicle; a value in between is not lost, the newest goes next."""
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink())
+    tid = str(actions.takeover(VID, client_action_id=str(new_id()), by=PILOT).action_id)
+    assert actions.manual_input(VID, _stick(tid, 1, 0.5), PILOT)
+    assert actions.manual_input(VID, _stick(tid, 2, 0.4), PILOT)  # same instant: held
+    assert actions.manual_input(VID, _stick(tid, 3, 0.0), PILOT)  # the stick let go
+    assert mav.stick_values == [0.5]
+    await clock.run_for(MANUAL_MIN_INTERVAL_S + 0.01)
+    assert mav.stick_values == [0.5, 0.0]  # the newest, at the next slot
+    await clock.run_for(0.1)
+    assert actions.manual_input(VID, _stick(tid, 4, 0.2), PILOT)  # slot free: at once
+    assert mav.stick_values == [0.5, 0.0, 0.2]
+
+
+async def test_a_cancelled_stick_slot_does_not_block_the_sticks() -> None:
+    clock = FakeClock()
+    mav = StubMav()
+    actions = _actions(clock, mav=mav, notices=NoNoticeSink())
+    tid = str(actions.takeover(VID, client_action_id=str(new_id()), by=PILOT).action_id)
+    actions.manual_input(VID, _stick(tid, 1, 0.5), PILOT)
+    actions.manual_input(VID, _stick(tid, 2, 0.4), PILOT)  # held for its slot
+    tasks = list(actions._tasks)  # pyright: ignore[reportPrivateUsage]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await clock.run_for(0.1)
+    assert actions.manual_input(VID, _stick(tid, 3, 0.3), PILOT)  # goes at once again
+    assert actions.manual_input(VID, _stick(tid, 4, 0.1), PILOT)  # held: a new slot task
+    await clock.run_for(MANUAL_MIN_INTERVAL_S + 0.01)
+    assert mav.stick_values == [0.5, 0.3, 0.1]
+
+
+async def test_without_sdlink_nothing_is_acknowledged() -> None:
+    message = CommanderStatus(connected=True, state="ready")
+    assert await NoNoticeSink().send_acked(VID, message, 0.3) == "down"
 
 
 async def test_mavlink_events_are_published_only_for_alarms_and_vehicle() -> None:

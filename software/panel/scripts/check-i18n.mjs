@@ -18,11 +18,12 @@ function files(dir) {
 const problems = [];
 for (const file of files(SRC).filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))) {
   const text = readFileSync(file, "utf8");
-  // t("a.b"), and plain "x.y.z" literals that look like i18n keys passed around as data.
+  // t("a.b"), and plain "x.y.z" literals that look like i18n keys passed around as data
+  // (not `case "chat.message":`, which is a live-event type).
   for (const m of text.matchAll(/\bt\(\s*"([a-zA-Z0-9_.]+)"/g))
     if (!has(m[1])) problems.push(`${file}: missing key ${m[1]}`);
   for (const m of text.matchAll(
-    /"((?:safety|pills|orders|login|layout|views|status|resume|chat|manual)\.[a-zA-Z0-9_.]+)"/g,
+    /(?<!case )"((?:safety|pills|orders|login|layout|views|status|resume|chat|manual)\.[a-zA-Z0-9_.]+)"/g,
   )) {
     if (!has(m[1])) problems.push(`${file}: missing key ${m[1]}`);
   }

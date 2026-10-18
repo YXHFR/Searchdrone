@@ -52,7 +52,7 @@ from sd_ground.auth import Principal
 from sd_ground.liveness import LoopLiveness
 from sd_ground.mav.thread import GroundMav, HeartbeatGate, ThreadSafeMav
 from sd_ground.services.latches import Latches
-from sd_ground.services.vehicle_actions import VehicleActions
+from sd_ground.services.vehicle_actions import NoticeResult, VehicleActions
 from sd_link.session import LinkSession
 from sd_link_testing import FakeGround, LossyProxy
 from sd_mav import CopterMode, Role, Vehicle
@@ -89,6 +89,10 @@ class SessionSink:
             return False
         await self.session.send(message)
         return True
+
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        # The raw session here does not pair acks with messages: sent, not confirmed.
+        return "timeout" if await self.send(vehicle_id, message) else "down"
 
 
 @dataclass

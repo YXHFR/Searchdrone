@@ -137,6 +137,29 @@ export function replaceView(
   return normalize({ ...s, root, maximized: null, presetId: "custom" }, vp);
 }
 
+/** Path of the pane with the largest share of the screen. */
+export function largestLeafPath(
+  n: LayoutNode,
+  share = 100,
+  path: Path = [],
+): { path: Path; share: number } {
+  if (n.kind === "view") return { path, share };
+  let best: { path: Path; share: number } = { path, share: -1 };
+  n.children.forEach((c, i) => {
+    const r = largestLeafPath(c, (share * (n.sizes[i] ?? 0)) / 100, [...path, i]);
+    if (r.share > best.share) best = r;
+  });
+  return best;
+}
+
+/** Make `view` visible: leave a full-screen view, or put it in the largest pane. */
+export function showView(s: LayoutState, view: ViewId, vp: Viewport = "desktop"): LayoutState {
+  if (s.maximized === view) return s;
+  const plain = restore(s);
+  if (leaves(plain.root).includes(view)) return plain;
+  return replaceView(plain, largestLeafPath(plain.root).path, view, vp);
+}
+
 /** A pane can be split if the new split stays within the depth limit and the view budget. */
 export function canSplitAt(s: LayoutState, path: Path, vp: Viewport): boolean {
   return path.length < MAX_SPLIT_DEPTH && leaves(s.root).length < MAX_VIEWS[vp];

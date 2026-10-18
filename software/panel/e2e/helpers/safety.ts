@@ -32,3 +32,14 @@ export async function expectSafetyVisible(page: Page, label = ""): Promise<void>
 }
 
 export const isMobile = (page: Page): boolean => (page.viewportSize()?.width ?? 1280) < 768;
+
+/** Bring a view up: the tab on a phone, the first pane's "show here" menu otherwise. */
+export async function showView(page: Page, view: string): Promise<void> {
+  if (isMobile(page)) {
+    await page.getByTestId(`tab-${view}`).click();
+    return;
+  }
+  await expect(page.locator("[data-view]").first()).toBeVisible();
+  if ((await page.locator(`[data-view="${view}"]`).count()) > 0) return; // already on screen
+  await page.locator("[data-view]").first().locator("select").first().selectOption(view);
+}

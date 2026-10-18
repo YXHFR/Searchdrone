@@ -137,9 +137,12 @@ export function ViewFrame({ view, path, vehicleId }: Props) {
           ) : null}
         </div>
       </header>
-      <div className="frame-body">
+      {/* A view taller than its pane must scroll from the keyboard too (axe
+          scrollable-region-focusable), even when it has nothing else to focus. */}
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region needs a tab stop */}
+      <section className="frame-body" tabIndex={0}>
         <ViewContent view={view} vehicleId={vehicleId} isMaximized={maximized} isCompact={false} />
-      </div>
+      </section>
     </section>
   );
 }

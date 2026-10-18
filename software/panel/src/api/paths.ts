@@ -2,7 +2,7 @@
 const enc = encodeURIComponent;
 const API = "/api/v1";
 
-export type VehicleAction = "stop" | "return_home" | "resume";
+export type VehicleAction = "stop" | "return_home" | "resume" | "takeover" | "handback";
 
 export const paths = {
   health: () => `${API}/health`,
@@ -18,6 +18,31 @@ export const paths = {
   allVehiclesAction: (action: "stop" | "return_home") => `${API}/actions/${action}_all`,
   missionOpen: (vehicleId: string) => `${API}/vehicles/${enc(vehicleId)}/missions/open`,
   missionActive: (vehicleId: string) => `${API}/missions/active?vehicle_id=${enc(vehicleId)}`,
+  mission: (missionId: string) => `${API}/missions/${enc(missionId)}`,
+  missionLimits: (missionId: string) => `${API}/missions/${enc(missionId)}/limits`,
+  missionAutonomy: (missionId: string) => `${API}/missions/${enc(missionId)}/autonomy`,
+  missionClearance: (missionId: string) => `${API}/missions/${enc(missionId)}/clearance`,
+  missionEnd: (missionId: string) => `${API}/missions/${enc(missionId)}/end`,
+  missionCharters: (missionId: string) => `${API}/missions/${enc(missionId)}/charters`,
+  missionSectors: (missionId: string) => `${API}/missions/${enc(missionId)}/sectors`,
+  missionApprovals: (missionId: string, status?: "pending") =>
+    `${API}/missions/${enc(missionId)}/approvals${status ? `?status=${status}` : ""}`,
+  missionCommands: (missionId: string, status?: string) =>
+    `${API}/missions/${enc(missionId)}/commands${status ? `?status=${enc(status)}` : ""}`,
+  approvalDecision: (approvalId: string) => `${API}/approvals/${enc(approvalId)}/decision`,
   missionChat: (missionId: string) => `${API}/missions/${enc(missionId)}/chat`,
+  missionChatPage: (
+    missionId: string,
+    q: { after_seq?: number; before_seq?: number; limit?: number },
+  ) => {
+    const p = new URLSearchParams();
+    if (q.after_seq !== undefined) p.set("after_seq", String(q.after_seq));
+    if (q.before_seq !== undefined) p.set("before_seq", String(q.before_seq));
+    p.set("limit", String(q.limit ?? 50));
+    return `${API}/missions/${enc(missionId)}/chat?${p.toString()}`;
+  },
+  missionAnnotations: (missionId: string) => `${API}/missions/${enc(missionId)}/annotations`,
+  annotation: (annotationId: string) => `${API}/annotations/${enc(annotationId)}`,
+  missionTrack: (missionId: string) => `${API}/missions/${enc(missionId)}/track?max_points=5000`,
   liveSocket: () => "/ws/v1/live",
 } as const;

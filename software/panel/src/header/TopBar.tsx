@@ -1,10 +1,12 @@
-import { LayoutGrid, MoreVertical } from "lucide-react";
+import { BellRing, LayoutGrid, MoreVertical } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { PRESET_IDS } from "../layout/layoutModel";
+import { useBrainState } from "../state/brain";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLiveStore } from "../state/liveStore";
+import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
 import { useUiStore } from "../state/uiStore";
 import { Menu } from "./Menu";
@@ -43,7 +45,7 @@ function StatusPills() {
   const vehicle = useLiveStore((s) => s.vehicle);
   const ws = useLiveStore((s) => s.ws);
   const mission = useLiveStore((s) => s.mission);
-  const brain = useLiveStore((s) => s.system?.parts.brain?.state ?? null);
+  const brain = useBrainState();
   const busy = useLiveStore((s) => s.brainBusy);
   const rtl = useSessionStore(
     (s) => mission?.limits.battery_rtl_pct ?? s.config?.limits_default.battery_rtl_pct ?? 15,
@@ -101,6 +103,29 @@ function StatusPills() {
   );
 }
 
+/** Pending approval cards, also when the chat is hidden; pressing it shows the chat. */
+function PendingApprovalsBadge() {
+  const { t } = useTranslation();
+  const n = useMissionStore(
+    (s) =>
+      Object.values(s.approvals).filter((a) => a.status === "pending" && a.kind !== "resume")
+        .length,
+  );
+  if (n === 0) return null;
+  return (
+    <button
+      type="button"
+      className="pill pill-yellow badge-btn"
+      data-testid="pending-badge"
+      aria-label={t("cards.pending", { n })}
+      onClick={() => useLayoutStore.getState().showView("chat")}
+    >
+      <BellRing aria-hidden="true" size={14} />
+      {n}
+    </button>
+  );
+}
+
 export function TopBar() {
   const { t } = useTranslation();
   const title = useLiveStore((s) => s.mission?.title ?? null);
@@ -115,6 +140,7 @@ export function TopBar() {
         {title ?? t("app.noMission")}
       </span>
       <StatusPills />
+      <PendingApprovalsBadge />
       <div className="topbar-tools">
         {vp !== "mobile" ? (
           <Menu

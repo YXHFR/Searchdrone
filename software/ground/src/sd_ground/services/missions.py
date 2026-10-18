@@ -197,7 +197,7 @@ class MissionFlow:
             vehicle_id=vehicle_id,
             payload=payload,
         )
-        self.publish("alert", "alert", payload, vehicle_id=vehicle_id, mission_id=mission_id)
+        self.publish("alerts", "alert", payload, vehicle_id=vehicle_id, mission_id=mission_id)
 
     def spawn(self, work: Awaitable[Any], name: str) -> None:
         task = asyncio.ensure_future(work)

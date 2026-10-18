@@ -1,0 +1,42 @@
+# The scripted commander for the panel's browser test on SITL (`just test-panel-sitl`):
+# a search request in the chat gets the demo charter as a card; after the pilot's
+# approval and "Fritt runt drönaren" it takes off (the request was the operator's ask to
+# start; "Starta" also works), searches sector A and flies home. Every order goes through the ground's gate like the real AI's. Every turn may run
+# again (once: false): the browser test flies more than one mission.
+scenario: panel_demo
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '(?is).*\bsök\b.*'
+    say: ["Jag föreslår en ram runt rutan norr om hem. Granska kortet och godkänn om den stämmer."]
+    charter_proposal: {from_fixture: charter_test}
+    once: false
+  - on: operator_message
+    match: '(?i)\s*starta\.?\s*'
+    say: ["Lyfter till sökhöjden."]
+    action: {skill: takeoff, params: {alt_m: 40}}
+    once: false
+  - on: skill_event
+    when: {skill: takeoff, status: done}
+    say: ["Söker av sektor A."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
+    once: false
+  - on: skill_event
+    when: {skill: survey_sector, status: done}
+    say: ["Sökningen är klar. Flyger hem."]
+    action: {skill: return_home}
+    once: false
+  - on: operator_message           # after STOP and Resume the pilot asks to go on
+    match: '(?is).*\bfortsätt\b.*'
+    say: ["Fortsätter sökningen."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
+    once: false
+  - on: gate_reject_retry          # an order right at a state change (STATE_CHANGED): once more
+    say: ["Försöker igen med det nya läget."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
+    once: false
+  - on: skill_event                # sent on "done" before the onboard state reached HOLD
+    when: {skill: survey_sector, status: rejected_onboard}
+    say: ["Försöker igen med det nya läget."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 40}}
+    once: false

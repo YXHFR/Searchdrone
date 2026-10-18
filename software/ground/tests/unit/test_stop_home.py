@@ -6,12 +6,18 @@ A fake flight controller and a fake clock; the real ``GroundMav``, ``Latches`` a
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from stop_helpers import OBSERVER, PILOT, VID, Stack, ground_disarms, ground_modes, stack
 
 from sd_ground.emergency import EmergencyRefusedError, check_role
-from sd_ground.services.vehicle_actions import ActionRefusedError
+from sd_ground.services.vehicle_actions import (
+    TAKEOVER_ACK_WAIT_S,
+    ActionRefusedError,
+    NoticeResult,
+)
 from sd_ground.sources import EmergencyUnavailableError
 from sd_mav.modes import HOME_MODES, STOP_MODES, CopterMode
 from sd_schemas.link import ManualTakeover, OperatorOverrideNotice, OperatorRelease
@@ -413,6 +419,225 @@ async def test_takeover_loiter_and_sticks_from_the_ground() -> None:
         assert s.core.sticks_sent == after
 
 
+class _OrderSink:
+    """Notes the flight controller's mode each time the take-over notice goes out."""
+
+    def __init__(self, s: Stack) -> None:
+        self.s = s
+        self.mode_at_notice: list[CopterMode] = []
+        self.ground_loiter_at_notice: list[bool] = []
+
+    def watch(self) -> None:
+        original = self.s.sink.send_acked
+
+        async def send_acked(vehicle_id: str, message: Any, timeout_s: float) -> NoticeResult:
+            if isinstance(message, ManualTakeover):
+                self.mode_at_notice.append(self.s.fc.mode)
+                self.ground_loiter_at_notice.append(CopterMode.LOITER in ground_modes(self.s.fc))
+            return await original(vehicle_id, message, timeout_s)
+
+        self.s.sink.send_acked = send_acked  # type: ignore[method-assign]
+
+
+async def test_takeover_notice_goes_out_before_loiter() -> None:
+    """The onboard side has the notice (and acknowledged it) before the ground asks for
+    LOITER, so it never takes the mode change for a stop."""
+    async with stack() as s:
+        s.fly()
+        await s.run(0.5)
+        order = _OrderSink(s)
+        order.watch()
+        s.actions.takeover(VID, client_action_id="t-order", by=PILOT)
+        assert CopterMode.LOITER not in ground_modes(s.fc)  # nothing before the notice
+        await s.run(1.0)
+        assert order.ground_loiter_at_notice == [False]
+        assert order.mode_at_notice == [CopterMode.GUIDED]
+        assert s.fc.mode == CopterMode.LOITER
+        assert s.sink.waits == []  # acknowledged: no waiting
+        assert _takeover_outcome(s)["paths"]["sdlink"] == "sent"
+
+
+async def test_takeover_without_an_ack_loiters_after_the_wait() -> None:
+    """No acknowledgement: LOITER after TAKEOVER_ACK_WAIT_S (the onboard side then
+    latches a stop and the pilot presses Fortsätt, the safe way round)."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-late", by=PILOT)
+        await s.run(TAKEOVER_ACK_WAIT_S / 2)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.LOITER
+        assert s.sink.waits == [TAKEOVER_ACK_WAIT_S]
+        assert s.core.snapshot().manual  # type: ignore[union-attr]
+        assert _takeover_outcome(s)["paths"]["sdlink"] == "sent"
+
+
+async def test_takeover_without_sdlink_loiters_at_once() -> None:
+    async with stack(sink_up=False) as s:
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-nolink", by=PILOT)
+        await s.clock.run_for(0.3, step=0.01)  # no pump needed: straight to the MAVLink thread
+        assert CopterMode.LOITER in ground_modes(s.fc)
+        assert s.sink.sent == [] and s.sink.waits == []
+
+
+async def test_stop_during_the_takeover_wait_is_untouched_and_wins() -> None:
+    """STOP while the take-over notice waits for its ack: STOP's notice goes out at once
+    (the pump never waits for the take-over), its mode change stands, and the waiting
+    take-over is dropped when it comes due."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-stop", by=PILOT)
+        await s.run(0.05)  # the take-over task now waits for its ack
+        s.stop()
+        await s.run(0.05)
+        assert [type(m) for m in s.sink.sent] == [ManualTakeover, OperatorOverrideNotice]
+        assert s.fc.mode in STOP_MODES
+        await s.run(1.0)  # the take-over's wait is over
+        assert s.fc.mode in STOP_MODES
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+
+
+async def test_handback_during_the_takeover_wait_drops_the_takeover() -> None:
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-back", by=PILOT)
+        await s.run(0.05)
+        s.actions.handback(VID, client_action_id="h-back", by=PILOT)
+        await s.run(1.0)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+
+
+async def test_resume_during_the_takeover_wait_drops_it_and_says_so() -> None:
+    """Resume never reaches the MAVLink thread, but it is newer: no LOITER follows, and
+    the pilot is told the take-over did not happen."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        reply = s.actions.takeover(VID, client_action_id="t-resume", by=PILOT)
+        await s.run(0.05)
+        s.resume()
+        await s.run(1.0)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        dropped = [p for t, _, p in s.g.events if t == "vehicle.takeover_dropped"]
+        assert [(p["takeover_id"], p["reason"]) for p in dropped] == [
+            (str(reply.action_id), "newer_action")
+        ]
+
+
+async def test_landing_during_the_takeover_wait_drops_it() -> None:
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        # It touches down and disarms as the pilot clicks; the MAVLink thread sees the
+        # landing (about 0.2 s here) while the take-over still waits.
+        s.fc.alt_rel, s.fc.armed = 0.0, False
+        reply = s.actions.takeover(VID, client_action_id="t-land", by=PILOT)
+        await s.run(1.0)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        dropped = [p for t, _, p in s.g.events if t == "vehicle.takeover_dropped"]
+        assert [(p["takeover_id"], p["reason"]) for p in dropped] == [
+            (str(reply.action_id), "landed")
+        ]
+
+
+def _takeover_outcome(s: Stack) -> dict[str, Any]:
+    return [o for o in s.outcomes() if o["action"] == "takeover"][-1]
+
+
+async def test_takeover_loiters_at_the_deadline_without_the_main_loop() -> None:
+    """The deadline is kept in the MAVLink thread: with no pump at all (a hung main loop)
+    LOITER still goes after TAKEOVER_ACK_WAIT_S."""
+    async with stack() as s:
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-hung", by=PILOT)
+        await s.clock.run_for(TAKEOVER_ACK_WAIT_S / 2, step=0.01)
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        await s.clock.run_for(1.0, step=0.01)  # still no drain: the notice never went out
+        assert s.sink.sent == []
+        assert s.fc.mode == CopterMode.LOITER
+
+
+async def test_takeover_loiters_at_the_deadline_when_the_send_hangs() -> None:
+    async with stack() as s:
+        s.sink.hangs = True
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-hang", by=PILOT)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.LOITER
+
+
+async def test_takeover_loiters_when_the_send_fails() -> None:
+    async with stack() as s:
+        s.sink.raises = True
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-raise", by=PILOT)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.LOITER
+        assert _takeover_outcome(s)["paths"]["sdlink"] == "failed"
+
+
+async def test_a_second_takeover_in_the_wait_replaces_the_first() -> None:
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-one", by=PILOT)
+        await s.run(0.05)
+        second = s.actions.takeover(VID, client_action_id="t-two", by=PILOT)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.LOITER
+        manual = s.core._manual  # pyright: ignore[reportPrivateUsage]
+        assert manual is not None and manual.takeover_id == str(second.action_id)
+
+
+async def test_a_system_action_during_the_takeover_wait_wins() -> None:
+    """The battery guard flies home while a take-over waits: it never becomes LOITER."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-batt", by=PILOT)
+        await s.run(0.05)
+        s.actions.system(VID, "battery_rtl")
+        await s.run(1.5)
+        assert s.fc.mode in HOME_MODES
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+
+
+async def test_an_rc_switch_flip_during_the_takeover_wait_wins() -> None:
+    """A person at the RC transmitter chooses a mode while the take-over waits: its LOITER
+    never goes, and the pilot sees that the take-over did not happen."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        s.fc.rc_mode_pwm = 1100
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-rc", by=PILOT)
+        await s.run(0.05)
+        s.fc.rc_mode_switch(1500, CopterMode.ALT_HOLD)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.ALT_HOLD
+        assert CopterMode.LOITER not in ground_modes(s.fc)
+        assert "alarm.TAKEOVER_FAILED" in s.g.types()
+
+
 async def test_takeover_refused_while_flying_home() -> None:
     async with stack() as s:
         s.fly()
@@ -424,15 +649,24 @@ async def test_takeover_refused_while_flying_home() -> None:
 
 
 async def test_stop_ends_steering_by_hand() -> None:
+    """STOP ends the take-over, and the state the panel reads (``vehicle.manual``) says so."""
     async with stack() as s:
         s.fly()
         await s.run(0.5)
-        s.actions.takeover(VID, client_action_id="t3", by=PILOT)
+        reply = s.actions.takeover(VID, client_action_id="t3", by=PILOT)
         await s.run(1.0)
+        held = s.actions.manual_state(VID)
+        assert held is not None and held.active
+        assert str(held.takeover_id) == str(reply.action_id)
+        assert held.by == PILOT.issuer_ref and held.since is not None
+        assert held.input_age_ms is None  # no stick value yet
         s.stop()
         await s.run(1.0)
         assert s.fc.mode in STOP_MODES
         assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        ended = s.actions.manual_state(VID)
+        assert ended is not None and not ended.active and ended.takeover_id is None
+        assert s.actions.manual_state("other-vehicle") is None
 
 
 # --- the chat's stop path -------------------------------------------------------------------

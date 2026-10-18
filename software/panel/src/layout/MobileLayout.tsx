@@ -16,12 +16,13 @@ export function MobileLayout({ vehicleId }: { vehicleId: string }) {
   const store = useLayoutStore.getState;
   const main: ViewId = layout.root.kind === "view" ? layout.root.view : "chat";
   const pipChoice = main === "map" ? "video" : "map";
+  const mainTitle = t(VIEW_REGISTRY[main].titleKey);
 
   return (
     <>
       <main className="mobile-main" id="main" data-testid={`view-${main}`} data-view={main}>
         <div className="mobile-head">
-          <h2 className="frame-title">{t(VIEW_REGISTRY[main].titleKey)}</h2>
+          <h2 className="frame-title">{mainTitle}</h2>
           <button
             type="button"
             className="icon-btn"
@@ -37,9 +38,12 @@ export function MobileLayout({ vehicleId }: { vehicleId: string }) {
             <PictureInPicture2 aria-hidden="true" size={18} />
           </button>
         </div>
-        <div className="frame-body">
+        {/* A view taller than the screen must scroll from the keyboard too (axe
+            scrollable-region-focusable), even when it has nothing else to focus. */}
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region needs a tab stop */}
+        <section className="frame-body" aria-label={mainTitle} tabIndex={0}>
           <ViewContent view={main} vehicleId={vehicleId} isMaximized={false} isCompact={false} />
-        </div>
+        </section>
         {pip ? (
           <div className={`pip pip-${corner}`} data-testid="pip" data-view={pip}>
             <button

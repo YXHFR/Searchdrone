@@ -1,5 +1,8 @@
 """Telemetry: 5 Hz to the panel over WebSocket, 2 Hz into the database.
 
+The vehicle state (``vehicle.state``: executor state, link, latch, airborne) goes to the
+panel at 2 Hz as well; the panel's Resume and "clear around the drone" depend on it.
+
 Samples are stored while a vehicle's open mission is flying (``ACTIVE`` up to closing) and
 written in batches of 10 rows (one transaction about every 5 s). If the database does not
 answer, up to 3 600 rows (30 min) are kept in memory; beyond that the oldest are dropped and
@@ -15,6 +18,7 @@ from typing import Any
 from sd_ground.context import Ground
 from sd_ground.db.repo import TelemetryRow
 from sd_ground.logging import get_logger
+from sd_ground.services.health import vehicle_state
 from sd_schemas.api import Telemetry
 from sd_schemas.mission import MissionState
 
@@ -95,6 +99,26 @@ class TelemetryService:
                     mission_id=self._recording.get(vid),
                 )
 
+    def publish_state(self) -> None:
+        """``vehicle.state`` for each vehicle. A failure skips one sample and never stops
+        the telemetry loop (5 Hz telemetry and the recording go on)."""
+        actions = self.g.vehicle_actions
+        for vid in self._vehicles:
+            try:
+                latch = None if actions is None else actions.latches.get(vid)
+                live = vehicle_state(self.g, vid, latch)
+            except Exception as exc:  # one sample is lost; the loop lives on
+                log.error("telemetry.state_failed", vehicle_id=vid, error=type(exc).__name__)
+                continue
+            self.g.bus.publish(
+                "vehicle",
+                "vehicle.state",
+                live.model_dump(mode="json"),
+                ts=self.g.now(),
+                vehicle_id=vid,
+                mission_id=self._recording.get(vid),
+            )
+
     def sample(self) -> None:
         for vid, mission_id in self._recording.items():
             t = self.g.vehicle_link.telemetry(vid)
@@ -138,6 +162,7 @@ class TelemetryService:
                 if next_publish < now:
                     next_publish = now + PUBLISH_S
             if now >= next_sample:
+                self.publish_state()
                 self.sample()
                 await self.flush()
                 next_sample += SAMPLE_S

@@ -530,6 +530,8 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
     elif event.type == "mission.state_changed":
         kind = "event.mission"
         body = {
+            # A new mission (the panel opened one): sd-brain follows it from here on.
+            "created": bool(d.get("created", False)),
             "status": d.get("to"),
             "previous": d.get("from"),
             "paused_by": d.get("paused_by"),

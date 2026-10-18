@@ -5,7 +5,9 @@ Authenticated with the session cookie (same origin), or for scripts with
 combination). The server says ``hello``; the client subscribes and may resume with
 ``server_epoch`` + ``since_seq``; otherwise it gets ``resync_required`` and reloads over
 REST. ``ping`` every 10 s; 30 s without one closes the socket. A pilot WebSocket counts as
-an operator who is present.
+an operator who is present. While a pilot steers by hand ("Ta över") the panel sends its
+stick values here as ``{"op": "manual", ...ManualControlInput}`` for the subscribed
+vehicle; anything malformed, or from an observer, is dropped without closing the socket.
 """
 
 from __future__ import annotations
@@ -13,14 +15,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sd_ground.api.deps import ground, principal_from
 from sd_ground.api.tasks import until_first_done
 from sd_ground.bus import BusEvent
+from sd_schemas.api import ManualControlInput
+
+if TYPE_CHECKING:
+    from sd_ground.auth import Principal
+    from sd_ground.context import Ground
 
 __all__ = ["PING_TIMEOUT_S", "router"]
 
@@ -58,6 +65,18 @@ def _for_client(event: BusEvent, sub: _Subscribe) -> bool:
     if sub.vehicle_id is not None and event.vehicle_id not in (None, sub.vehicle_id):
         return False
     return not (sub.mission_id is not None and event.mission_id not in (None, sub.mission_id))
+
+
+def _manual(g: Ground, vehicle_id: str | None, msg: dict[str, Any], who: Principal) -> None:
+    """One stick value from the pilot. The vehicle actions keep the rate down and check
+    who took over; the ground's own watchdog stops sending when they stop coming."""
+    if who.role != "pilot" or vehicle_id is None or g.vehicle_actions is None:
+        return
+    try:
+        value = ManualControlInput.model_validate({k: v for k, v in msg.items() if k != "op"})
+    except ValidationError:
+        return
+    g.vehicle_actions.manual_input(vehicle_id, value, who)
 
 
 @router.websocket("/ws/v1/live")
@@ -117,6 +136,8 @@ async def live(ws: WebSocket) -> None:
                     if isinstance(msg.get("client_ns"), int):
                         pong["server_ns"] = time.clock_gettime_ns(time.CLOCK_REALTIME)
                     await ws.send_json(pong)
+                elif msg.get("op") == "manual":
+                    _manual(g, sub.vehicle_id, msg, who)
 
         async def writer() -> None:
             while True:

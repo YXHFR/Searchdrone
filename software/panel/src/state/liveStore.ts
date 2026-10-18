@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Mission, SystemStatus, Telemetry, VehicleLive } from "../api/types";
+import type { Mission, OperatorLatch, SystemStatus, Telemetry, VehicleLive } from "../api/types";
 
 export type WsState = "connecting" | "up" | "down";
 
@@ -13,6 +13,14 @@ interface LiveState {
   system: SystemStatus | null;
   mission: Mission | null;
   brainBusy: boolean;
+  /** The AI process as chat.brain_status reports it (the ground sends it on every change). */
+  brainState: "ready" | "busy" | "degraded" | "down" | null;
+  /** When chat.brain_status turned busy ("AI:n tänker… N s"). */
+  brainBusySince: number | null;
+  /** Latest latch.updated; decides the Resume text when the onboard snapshot is missing. */
+  latch: OperatorLatch | null;
+  /** Alert BRAIN_DISCONNECTED seen and the AI not back to "ok" since. */
+  aiDisconnected: boolean;
   setWs(ws: WsState): void;
   patch(p: Partial<Omit<LiveState, "setWs" | "patch" | "reset">>): void;
   reset(): void;
@@ -25,6 +33,10 @@ const empty = {
   system: null,
   mission: null,
   brainBusy: false,
+  brainState: null,
+  brainBusySince: null,
+  latch: null,
+  aiDisconnected: false,
 };
 
 export const useLiveStore = create<LiveState>((set, get) => ({

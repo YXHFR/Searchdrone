@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../api/http";
 import { paths } from "../../api/paths";
 import type { SystemStatus } from "../../api/types";
+import { noteVideoFps } from "../../lib/testHooks";
 import { useSessionStore } from "../../state/sessionStore";
 import type { ViewProps } from "../registry";
 import { startWhep, type WhepSession } from "./whepClient";
@@ -172,6 +173,7 @@ export default function VideoView(_: ViewProps) {
   useEffect(() => {
     if (mode !== "webrtc" && mode !== "hls") {
       setInfo(null);
+      noteVideoFps(null);
       return;
     }
     let frames = ref.current?.getVideoPlaybackQuality?.().totalVideoFrames ?? 0;
@@ -181,6 +183,7 @@ export default function VideoView(_: ViewProps) {
       const now = el.getVideoPlaybackQuality?.().totalVideoFrames;
       const fps = now === undefined ? null : now - frames;
       frames = now ?? frames;
+      noteVideoFps(fps);
       setInfo({ width: el.videoWidth, height: el.videoHeight, fps });
     }, 1000);
     return () => clearInterval(timer);
