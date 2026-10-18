@@ -1,0 +1,34 @@
+# Manufacturer 3D models used by `just cad-detailed`. They are downloaded from the
+# manufacturer into build/cad/vendor/ and checked against the SHA-256 below; they are
+# never committed. Each one replaces the simplified envelope parts it lists, in place.
+# Placement: the model's board centre (centre_x, centre_y, in the model's own axes) goes
+# to the part's position, after a turn of rotate_z degrees about z; z_offset moves the
+# model's own z = 0 to the given height above the envelope's base.
+schema_version: 1
+models:
+  - name: raspberry_pi_5
+    url: https://datasheets.raspberrypi.com/rpi5/RaspberryPi5-step.zip
+    sha256: 6841637b4cfa97637bf34b529bfe896f24d9634b2c40b57a156781f55d88f06f
+    member: rpi-5b_no_graphics.step
+    max_download_bytes: 20000000
+    max_bytes: 100000000
+    license: MIT (LICENSE.txt in the zip, Copyright (c) 2026 Raspberry Pi Ltd)
+    replaces: [pi5, pi5_ports]
+    anchor: pi5             # placed relative to this envelope part
+    centre_x: 42.5          # board is 85 x 56 mm from the model origin
+    centre_y: 28.0
+    rotate_z: 180           # the model has the USB and Ethernet ports at +x; ours face -x
+    z_offset: 0             # model z = 0 is the underside of the board
+  - name: camera_module_3
+    url: https://datasheets.raspberrypi.com/camera/camera-module-3-step.zip
+    sha256: b2e2026ea5322bddf1ddcbae97c094822ee9e0ca92d7bc5c748f60a8b5ef6683
+    member: Camera_module_3_std_model_simple.stp
+    max_download_bytes: 20000000
+    max_bytes: 60000000
+    license: Raspberry Pi design file terms (https://www.raspberrypi.com/licensing/), not redistributed
+    replaces: [camera]
+    anchor: camera
+    centre_x: 11.931
+    centre_y: 12.5
+    rotate_z: 0             # the lens already points down (-z)
+    z_offset: 8.9           # model top (z = 2.6) at the envelope top (11.5 mm); lens tip inside
