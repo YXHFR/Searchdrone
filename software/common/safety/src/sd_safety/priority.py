@@ -36,7 +36,7 @@ def _detailed(code: str, details: Mapping[str, Any], skill: str | None) -> str |
             )
         if code == "PATH_TOO_LONG":
             return (
-                f"Vägen är för lång: {_sv(details['route_m'] / 1000, 1)} km, "
+                f"Vägen är för lång: {_sv(details['path_m'] / 1000, 1)} km, "
                 f"högst {_sv(details['path_max_m'] / 1000, 1)} km."
             )
         if code == "OUTSIDE_CHARTER" and skill == "follow_path":

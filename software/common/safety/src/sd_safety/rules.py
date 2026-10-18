@@ -482,7 +482,7 @@ def _route_battery(f: Facts) -> list[Finding]:
     out = _one(
         drawn_m > PATH_MAX_LENGTH_M,
         "PATH_TOO_LONG",
-        route_m=_finite(round(drawn_m)),
+        path_m=_finite(round(drawn_m)),
         path_max_m=PATH_MAX_LENGTH_M,
     )
     pct = f.battery_pct

@@ -10,6 +10,7 @@ from gate_fixtures import ctx, onboard_ctx, point, req, vehicle
 
 from sd_safety import evaluate
 from sd_safety.constants import ROUTE_BATTERY_PCT_PER_MIN
+from sd_safety.targets import line_length_m
 
 
 def path(*corners: tuple[float, float], alt_m: float = 40.0, **extra: Any) -> dict[str, Any]:
@@ -89,9 +90,23 @@ def test_a_path_over_five_km_is_too_long() -> None:
     laps = [(-250 if i % 2 else 250, -250 + 25 * i) for i in range(12)]  # 11 x ~500 m
     d = evaluate(req("follow_path", path(*laps)), ctx(vehicle=vehicle(battery_pct=100)))
     assert d.reason_codes[0] == "PATH_TOO_LONG"
-    assert d.details["route_m"] > 5_000
+    assert d.details["path_m"] > 5_000
     assert d.message_sv.startswith("Vägen är för lång: 5,")
     assert "km, högst 5,0 km." in d.message_sv
+
+
+def test_the_too_long_message_shows_the_drawn_length_also_with_the_battery_code() -> None:
+    """Both codes fire: the message and ``path_m`` give the drawn line, ``route_m`` (the
+    battery's) adds the way to its start."""
+    laps = [(-250 if i % 2 else 250, 250 - 25 * i) for i in range(12)]  # from far north
+    p = path(*laps)
+    d = evaluate(req("follow_path", p), ctx(vehicle=vehicle(battery_pct=50)))
+    assert d.reason_codes[:2] == ["PATH_TOO_LONG", "ROUTE_BATTERY"]
+    drawn = line_length_m([(q["lat"], q["lon"]) for q in p["points"]])
+    assert d.details["path_m"] == round(drawn)
+    assert d.details["route_m"] > d.details["path_m"] + 200  # the way there: about 300 m
+    km = f"{drawn / 1000:.1f}".replace(".", ",")
+    assert d.message_sv.startswith(f"Vägen är för lång: {km} km, högst 5,0 km.")
 
 
 def test_the_length_cap_counts_the_drawn_line_not_the_way_there() -> None:
