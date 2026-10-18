@@ -151,6 +151,18 @@ def test_keys_override_config() -> None:
     assert (s.maxzoom, s.name, s.dry) == (13, "sim-area", True)
 
 
+def test_site_centres_the_pack_on_its_home() -> None:
+    """The pack for a simulator site is centred on the same home as its world and SITL."""
+    s = fetch.load_settings(ROOT, {"site": "hellasgarden"})
+    home = tomllib.loads(
+        (ROOT / "simulation" / "gazebo" / "sites" / "hellasgarden" / "site.toml").read_text()
+    )["home"]
+    min_lon, min_lat, max_lon, max_lat = s.bbox
+    assert abs((min_lat + max_lat) / 2 - home["lat"]) < 1e-9
+    assert abs((min_lon + max_lon) / 2 - home["lon"]) < 1e-9
+    assert abs((max_lat - min_lat) * 110_540 - 6000) < 40
+
+
 def test_local_config_wins_over_example(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
     shutil.copyfile(
@@ -190,6 +202,9 @@ def test_bad_arguments_exit_2(
         {"name": "-demo"},
         {"name": "Demo"},
         {"name": "a" * 65},
+        {"site": "nowhere"},
+        {"site": "../evil"},
+        {"site": "hellasgarden", "bbox": "149.14,-35.38,149.19,-35.34"},
     ],
 )
 def test_bad_values_exit_2(args: dict[str, str]) -> None:

@@ -10,6 +10,7 @@ Searchdrone world ``sd_lake_forest`` with ``sd_quad14`` before Gazebo starts
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -95,6 +96,33 @@ def world_running(world: World, instance: int) -> bool:
     except subprocess.TimeoutExpired:
         return False
     return res.returncode == 0 and bool(res.stdout.strip())
+
+
+_TIME = re.compile(r"(sim_time|real_time)\s*\{\s*(?:sec:\s*(\d+))?\s*(?:nsec:\s*(\d+))?\s*\}")
+
+
+def world_times(world: World, instance: int) -> tuple[float, float] | None:
+    """(simulated, wall-clock) seconds from one ``/world/<name>/stats`` message."""
+    try:
+        res = _gz(["topic", "-e", "-n", "1", "-t", f"/world/{world.name}/stats"], instance, 10)
+    except subprocess.TimeoutExpired:
+        return None
+    found = {
+        m.group(1): int(m.group(2) or 0) + int(m.group(3) or 0) / 1e9
+        for m in _TIME.finditer(res.stdout)
+    }
+    if "sim_time" not in found or "real_time" not in found:
+        return None
+    return found["sim_time"], found["real_time"]
+
+
+def real_time_factor(
+    start: tuple[float, float] | None, end: tuple[float, float] | None
+) -> float | None:
+    """Simulated time over wall-clock time between two ``world_times`` samples."""
+    if start is None or end is None or end[1] <= start[1]:
+        return None
+    return round((end[0] - start[0]) / (end[1] - start[1]), 3)
 
 
 def enable_camera(instance: int, timeout: float = CAMERA_WAIT_S) -> str:

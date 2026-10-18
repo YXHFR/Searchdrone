@@ -204,6 +204,21 @@ def test_coordinates_inside_allowlist_pass(tmp_path: Path) -> None:
     assert findings(tmp_path, rel) == []
 
 
+def test_free_pair_where_both_orders_are_valid_positions() -> None:
+    """At a site like 59 N 18 E the swapped pair (18 N 59 E) is a real position too; the
+    order that lies inside the site decides, in GeoJSON (lon, lat) and in (lat, lon) form."""
+    site = cff.Place("site", 59.2884, 18.1595, 2000.0)
+    for body in ("[18.15953, 59.28842]", "(59.28842, 18.15953)"):
+        assert cff.check_coordinates("x.geojson", [body], [site]) == []
+    far_lon, far_lat = 18 + 0.95953, 59 + 0.98842  # about 80 km away, built so this file passes
+    far = cff.check_coordinates("x.geojson", [f"[{far_lon:.5f}, {far_lat:.5f}]"], [site])
+    assert [f.rule for f in far] == ["coordinate"]
+    # Keyed values have one order: a swapped keyed pair is still flagged.
+    lat, lon = 18 + 0.15953, 59 + 0.28842
+    keyed = [f"lat: {lat:.5f}", f"lon: {lon:.5f}"]
+    assert [f.rule for f in cff.check_coordinates("x.yaml", keyed, [site])] == ["coordinate"]
+
+
 def test_three_decimal_pair_without_key_is_ignored(tmp_path: Path) -> None:
     rel = write(tmp_path, "software/x/a.py", "RATIO = (30.123, -40.456)\n")
     assert findings(tmp_path, rel) == []
