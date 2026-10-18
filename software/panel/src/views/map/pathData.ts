@@ -162,6 +162,42 @@ function project(coords: Pos[], at: LatLon): { leg: number; along: Pos; pct: num
   return { leg: best.leg, along, pct: total > 0 ? (100 * done) / total : 0 };
 }
 
+/** Orders that never reached the vehicle: they cannot be what a resume continues. */
+const NEVER_SENT = new Set([
+  "pending_approval",
+  "rejected_by_gate",
+  "rejected_by_operator",
+  "approval_expired",
+  "rejected_onboard",
+  "expired",
+]);
+
+/** The follow_path order a running resume continues: the last order sent before it, when
+ * that was a path. Null for any other active order. */
+export function resumedPath(active: Command | null, commands: Command[]): Command | null {
+  if (active?.skill !== "resume") return null;
+  let last: Command | null = null;
+  for (const c of commands) {
+    if (c.id === active.id || c.skill === "resume" || NEVER_SENT.has(c.status)) continue;
+    if (c.created_at >= active.created_at) continue;
+    if (!last || c.created_at > last.created_at) last = c;
+  }
+  return orderPath(last) ? last : null;
+}
+
+/** The path flown to its end by the last finished order: a follow_path, or a resume that
+ * flew the rest of one (shown as done). Null when the last finished order was not a path. */
+export function finishedPath(commands: Command[]): Command | null {
+  let last: Command | null = null;
+  for (const c of commands) {
+    if (c.status !== "done" || (c.skill !== "follow_path" && c.skill !== "resume")) continue;
+    if (!last || c.updated_at > last.updated_at) last = c;
+  }
+  if (last?.skill !== "resume") return last;
+  const path = resumedPath(last, commands);
+  return path ? { ...path, status: "done" } : null;
+}
+
 export interface ActivePath {
   command: Command;
   coords: Pos[];
@@ -169,29 +205,30 @@ export interface ActivePath {
   running: boolean;
 }
 
-/** The path to show: the running follow_path order, else one waiting on a card, else the
- * last order when it was a path flown to its end (the drone hovers there). */
+/** The path to show: the running follow_path order (or the one a running resume
+ * continues), else one waiting on a card, else the last order when it was a path flown to
+ * its end (the drone hovers there). */
 export function activePath(
   active: Command | null,
   pending: Command[],
   latest: Command | null,
   drone: LatLon | null,
   snapshot: StateSnapshot | null | undefined,
+  resumed: Command | null = null,
 ): ActivePath | null {
-  const running = orderPath(active) ? active : null;
+  const running = orderPath(active) ? active : resumed;
   const finished = latest?.status === "done" && orderPath(latest) ? latest : null;
   const pick = running ?? pending.find((c) => orderPath(c) !== null) ?? finished;
   const coords = orderPath(pick);
   if (!pick || !coords) return null;
   let pct = 0;
-  if (pick.status === "done") pct = 100;
-  else if (running) {
+  if (running) {
     const onboard =
       snapshot?.active_command_id === pick.id && typeof snapshot.progress_pct === "number"
         ? snapshot.progress_pct
         : null;
     pct = onboard ?? (drone ? project(coords, drone).pct : 0);
-  }
+  } else if (pick.status === "done") pct = 100;
   return { command: pick, coords, pct: Math.max(0, Math.min(100, pct)), running: running !== null };
 }
 
