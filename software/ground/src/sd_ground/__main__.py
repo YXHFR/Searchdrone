@@ -91,7 +91,7 @@ def _ensure_env(root: Path, data_dir: Path) -> list[str]:
     return filled
 
 
-def _make_cert(tls: Path) -> None:
+def make_lan_cert(tls: Path) -> None:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -149,7 +149,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         _say(f"skapade {loaded.config.auth.brain_token_file}")
     _private_dir(loaded.data_dir)  # mission data and logs: only for the owner
     if args.lan:
-        _make_cert(loaded.path(loaded.config.lan.tls_dir))
+        make_lan_cert(loaded.path(loaded.config.lan.tls_dir))
         _say(f"skapade certifikat i {loaded.config.lan.tls_dir}")
     _say("sd-ground init klar")
     return 0

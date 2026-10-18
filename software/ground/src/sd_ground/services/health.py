@@ -69,6 +69,10 @@ def vehicle_state(g: Ground, vehicle_id: str, latch: OperatorLatch | None) -> Ve
 
 
 async def vehicle_live(g: Ground, vehicle_id: str) -> VehicleLive:
+    """REST ``/state``. The latch comes from the emergency path's own latches, as in the
+    live ``vehicle.state``; the database copy (written a pump step later) only without."""
+    if g.vehicle_actions is not None:
+        return vehicle_state(g, vehicle_id, g.vehicle_actions.latches.get(vehicle_id))
     latch = None
     if g.repo is not None and g.db_ok:
         latch = await g.repo.latch(vehicle_id)

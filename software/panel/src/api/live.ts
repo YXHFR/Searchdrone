@@ -365,7 +365,9 @@ export function startLive(vehicleId: string): () => void {
     {
       onState: (s) => useLiveStore.getState().setWs(s),
       onEnvelope: (e) => {
-        if (resyncing && e.seq !== null) held.push(e);
+        // A STOP / FLY HOME outcome is not snapshot state: it goes on at once, so
+        // "Kvitterat" never waits for a resync.
+        if (resyncing && e.seq !== null && e.type !== "vehicle.action") held.push(e);
         else apply(e, vehicleId);
       },
       onNewEpoch: (_epoch, reason) => {

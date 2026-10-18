@@ -202,9 +202,11 @@ export class FakeGround {
     // resync on connect cannot bring back an older state.
     if (topic === "vehicle" && type === "vehicle.state") this.vehicleState = data;
     this.remember(type, data);
-    this.seq += 1;
+    // Periodic events (telemetry, vehicle.state) carry no seq, as on the real bus.
+    const periodic = topic === "telemetry" || type === "vehicle.state";
+    if (!periodic) this.seq += 1;
     const msg = JSON.stringify({
-      seq: topic === "telemetry" ? null : this.seq,
+      seq: periodic ? null : this.seq,
       ts: new Date().toISOString(),
       topic,
       type,

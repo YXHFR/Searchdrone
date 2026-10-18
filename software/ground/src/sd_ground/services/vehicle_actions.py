@@ -79,6 +79,7 @@ __all__ = [
 OUTCOMES_MAX: Final = 512
 PUMP_S: Final = 0.05
 TAKEOVER_ACK_WAIT_S: Final = 0.3  # the onboard acknowledgement of a take-over notice
+MANUAL_MIN_INTERVAL_S: Final = 1 / 30  # the panel sends 15 Hz; anything faster is dropped
 SYSTEM: Final = "system:ground"
 log = get_logger("sd_ground.actions")
 
@@ -221,6 +222,8 @@ class VehicleActions:
         self._outcomes: OrderedDict[str, ActionOutcome] = OrderedDict()
         self._by_client: OrderedDict[tuple[str, str, str], ActionDispatched] = OrderedDict()
         self._takeover_by: dict[str, str] = {}  # take-over id -> who took over
+        self._manual_mono: dict[str, float] = {}  # vehicle -> when its last stick value went on
+        self._manual_next: dict[str, StickAxes] = {}  # vehicle -> newest value, held to its slot
         self.post: queue.SimpleQueue[_Post | _Report | _Event] = queue.SimpleQueue()
         self._tasks: set[asyncio.Task[None]] = set()
         self._via: dict[str, Via] = {}
@@ -476,6 +479,7 @@ class VehicleActions:
                     else:
                         self.mav.takeover(action_id, seq)  # no SD-link: LOITER at once
                 else:
+                    self._takeover_by = {}
                     self.mav.handback()
         sd_ok = self.notices.up(vehicle_id)
         paths: dict[str, Literal["queued", "unavailable"]] = {
@@ -499,7 +503,7 @@ class VehicleActions:
         snap = self._snapshot(vehicle_id)
         if snap is None:
             return None
-        if not snap.manual or snap.manual_takeover_id is None:
+        if not snap.manual or snap.manual_takeover_id is None:  # the id is set with manual
             return ManualControlState(
                 active=False, takeover_id=None, by=None, since=None, input_age_ms=None
             )
@@ -514,11 +518,34 @@ class VehicleActions:
         )
 
     def manual_input(self, vehicle_id: str, value: ManualControlInput, by: Principal) -> bool:
-        """One stick value from the panel (10-20 Hz). Only the pilot steers."""
+        """One stick value from the panel (10-20 Hz). Only the pilot who took over steers.
+        Values go on at most ``MANUAL_MIN_INTERVAL_S`` apart per vehicle, from all their
+        sockets; a faster one is held and the newest goes at the next slot, so a released
+        stick is never lost."""
         if by.role != "pilot" or vehicle_id not in self.vehicle_ids or self.mav is None:
             return False
+        if self._takeover_by.get(str(value.takeover_id)) != by.issuer_ref:
+            return False  # another pilot's take-over, or one handed back
         axes = StickAxes.model_validate(value.model_dump(exclude={"source"}))
+        wait = self._manual_mono.get(vehicle_id, float("-inf")) + MANUAL_MIN_INTERVAL_S
+        wait -= self.clock.monotonic()
+        if wait > 0:
+            if vehicle_id not in self._manual_next:
+                task = asyncio.get_running_loop().create_task(
+                    self._manual_at_slot(self.mav, vehicle_id, wait), name="manual-slot"
+                )
+                self._tasks.add(task)
+                task.add_done_callback(self._task_done)
+            self._manual_next[vehicle_id] = axes  # the newest wins
+            return True
+        self._manual_mono[vehicle_id] = self.clock.monotonic()
         return self.mav.sticks(axes)
+
+    async def _manual_at_slot(self, mav: MavBackend, vehicle_id: str, wait: float) -> None:
+        await self.clock.sleep(wait)
+        axes = self._manual_next.pop(vehicle_id)
+        self._manual_mono[vehicle_id] = self.clock.monotonic()
+        mav.sticks(axes)
 
     # --- the chat's stop path ---------------------------------------------------------
 

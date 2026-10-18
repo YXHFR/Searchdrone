@@ -1,8 +1,9 @@
 // The panel against the whole stack on ArduCopter SITL with the scripted commander:
 // step 1 of the demo from the panel (PS-2), STOP in the air and Resume (PS-3), and FLY
-// HOME with the AI process stopped (PS-4). Video (PS-1) is e2e/video/panel.spec.ts, run by
+// HOME with the AI process stopped, after a take-over with the sticks (PS-4). Video (PS-1) is e2e/video/panel.spec.ts, run by
 // `just test-video` with Google Chrome; the ground-station restart (PS-5) is not covered.
 import { expect, type Page, test } from "@playwright/test";
+import { showView } from "../helpers/safety";
 import { stackUrl, stopBrain } from "./stack";
 
 interface Hooks {
@@ -222,7 +223,7 @@ test("steg 1 genom panelen, STOPP i luften och Fortsätt (PS-2, PS-3)", async ({
   expect(errors).toEqual([]);
 });
 
-test("FLYG HEM med AI:n avstängd (PS-4)", async ({ page }) => {
+test("Ta över och FLYG HEM med AI:n avstängd (PS-4)", async ({ page }) => {
   await page.goto(stackUrl());
   await expect(page.getByTestId("mission-title")).toContainText("Uppdrag", { timeout: 30_000 });
   // A flight left in the air by the test before is used as it is; otherwise a new one.
@@ -241,6 +242,26 @@ test("FLYG HEM med AI:n avstängd (PS-4)", async ({ page }) => {
   stopBrain();
   await expect(page.getByTestId("brain-row")).toContainText("AI:n är nere", { timeout: 6_000 });
   await expect(page.getByTestId("ai-down-banner")).toBeVisible({ timeout: 6_000 });
+
+  // Ta över with the AI down: the take-over, then the panel's 15 Hz sticks through the real
+  // ground (live socket → stick path → MAVLink thread → LOITER), and back again.
+  await showView(page, "manual");
+  await page.getByTestId("takeover").click();
+  await expect
+    .poll(() => live<boolean | undefined>(page, "vehicle.manual.active"), { timeout: 5_000 })
+    .toBe(true);
+  await expect
+    .poll(() => live<string | undefined>(page, "telemetry.flight_mode"), { timeout: 5_000 })
+    .toBe("LOITER");
+  await expect
+    .poll(() => live<number | null | undefined>(page, "vehicle.manual.input_age_ms"), {
+      timeout: 5_000,
+    })
+    .toBeLessThan(500); // the ground has the panel's sticks
+  await page.getByTestId("handback").click();
+  await expect
+    .poll(() => live<boolean | undefined>(page, "vehicle.manual.active"), { timeout: 5_000 })
+    .toBe(false);
 
   await page.getByTestId("safety-home").click();
   await expect(page.getByTestId("safety-home")).toContainText("Kvitterat", { timeout: 5_000 });

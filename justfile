@@ -256,9 +256,10 @@ test-panel-sitl *args:
     ex=build/panel-sitl
     mkdir -p "$ex"
     rm -f "$ex/stack.json" "$ex/stop-brain" "$ex/done.json"
+    export SD_SITL_NAME="sd-panel-sitl-$$"  # so an interrupted run can stop its container
     {{_just}} ci-sitl mode=panel physics=builtin brain=scripted "$@" &
     stack=$!
-    trap 'kill "$stack" 2>/dev/null || true' EXIT
+    trap 'kill "$stack" 2>/dev/null || true; docker stop "$SD_SITL_NAME" >/dev/null 2>&1 || true' EXIT
     set +e
     pnpm --filter @searchdrone/panel e2e:sitl
     code=$?
@@ -331,6 +332,7 @@ ci-sitl *args:
     docker run --rm --network host --user "$(id -u):$(id -g)" "${sock[@]}" \
         -v "$PWD:/w" -w /w -e SD_SIM__HEADLESS=1 -e HOME=/tmp/home \
         -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL \
+        ${SD_SITL_NAME:+--name "$SD_SITL_NAME"} \
         "$image" bash -lc 'uv sync --all-packages --frozen && uv run --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
 
 # Full demo locked to the public CMAC home (keys: lan, record, ...)

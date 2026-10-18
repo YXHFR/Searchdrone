@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+import structlog.testing
 from fastapi.testclient import TestClient
 
 from sd_ground.bus import RING_SIZE, EventBus
@@ -220,9 +222,8 @@ def test_manual_op_from_an_observer_never_reaches_the_stick_path(
     assert sticks.got == []
 
 
-def test_manual_op_faster_than_30_hz_is_dropped(
-    logged_in: TestClient, ground: Ground, clock: FakeClock
-) -> None:
+def test_every_manual_op_goes_to_the_vehicle_actions(logged_in: TestClient, ground: Ground) -> None:
+    """The socket passes each value on; the vehicle actions keep the rate per vehicle."""
     sticks = _Sticks()
     ground.vehicle_actions = sticks  # type: ignore[assignment]
     with logged_in.websocket_connect(URL) as ws:
@@ -230,11 +231,7 @@ def test_manual_op_faster_than_30_hz_is_dropped(
         _sub(ws, ground, ["system"], None)
         ws.receive_json()
         ws.send_json({"op": "manual", **_STICKS, "input_seq": 1})
-        ws.send_json({"op": "manual", **_STICKS, "input_seq": 2})  # same instant: dropped
-        ws.send_json({"op": "ping"})
-        assert ws.receive_json()["type"] == "pong"
-        clock.advance(0.05)
-        ws.send_json({"op": "manual", **_STICKS, "input_seq": 3, "pitch": 0.25})
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 2, "pitch": 0.25})
         ws.send_json({"op": "ping"})
         assert ws.receive_json()["type"] == "pong"
     assert sticks.got == [("sim-01", 0.5, "pilot"), ("sim-01", 0.25, "pilot")]
@@ -260,3 +257,64 @@ async def test_vehicle_state_goes_live_at_2_hz(
     assert states[-1].data["vehicle_id"] == "sim-01"
     assert set(states[-1].data) >= {"snapshot", "link", "latch", "airborne", "telemetry"}
     assert ground.bus.replay(ground.bus.server_epoch, 0) == []
+
+
+async def test_a_failing_vehicle_state_never_stops_the_telemetry(
+    ground: Ground, clock: FakeClock, vehicle_link: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One lost ``vehicle.state`` sample is logged; 5 Hz telemetry goes on."""
+    from sd_schemas.api import Telemetry
+
+    vehicle_link.values["sim-01"] = Telemetry(  # type: ignore[attr-defined]
+        t=clock.utc_now(),
+        time_boot_ms=1,
+        lat=-35.363261,
+        lon=149.16523,
+        alt_amsl_m=584,
+        alt_rel_home_m=0,
+        heading_deg=0,
+        groundspeed_ms=0,
+        climb_ms=0,
+        battery_pct=90,
+        battery_v=16,
+        flight_mode="LOITER",
+        armed=False,
+        landed_state="on_ground",
+        gps_fix=3,
+        gps_sats=12,
+        home=None,
+        dist_to_pilot_m=0,
+    )
+
+    def broken(vehicle_id: str) -> object:
+        raise RuntimeError("the link went away")
+
+    monkeypatch.setattr(ground.sdlink, "link_status", broken)
+    sub = ground.bus.subscribe(["telemetry", "vehicle"])
+    task = asyncio.create_task(TelemetryService(ground).run())
+    with structlog.testing.capture_logs() as logs:
+        await clock.run_for(2.0)
+    task.cancel()
+    types = []
+    while not sub.queue.empty():
+        event = sub.queue.get_nowait()
+        assert event is not None
+        types.append(event.type)
+    assert "vehicle.state" not in types
+    assert types.count("telemetry") >= 9
+    assert "telemetry.state_failed" in {e["event"] for e in logs}
+
+
+async def test_the_rest_state_has_the_same_latch_as_the_live_one(ground: Ground) -> None:
+    """``/state`` reads the emergency path's own latches, as ``vehicle.state`` does."""
+    from sd_ground.services import health
+    from sd_ground.services.latches import Latches
+    from sd_ground.services.vehicle_actions import NoNoticeSink, VehicleActions
+
+    latches = Latches(ground.clock)
+    ground.vehicle_actions = VehicleActions(
+        ground.clock, latches, vehicle_ids=["sim-01"], notices=NoNoticeSink()
+    )
+    latches.start("sim-01", "stop", "operator:demo")
+    live = await health.vehicle_live(ground, "sim-01")
+    assert live.latch is not None and live.latch.action == "stop"

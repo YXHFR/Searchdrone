@@ -49,7 +49,7 @@ from test_mission_flow_sitl import (  # pyright: ignore[reportMissingImports]
 )
 from test_onboard_sitl import Sim, _vehicle, sim  # pyright: ignore[reportMissingImports]
 
-from sd_ground.__main__ import _make_cert  # pyright: ignore[reportPrivateUsage]
+from sd_ground.__main__ import make_lan_cert
 from sd_ground.app import create_panel_app, panel_asgi
 from sd_mav import Role
 from sd_obs.clock import MonotonicClock
@@ -185,7 +185,7 @@ async def test_panel_in_a_browser_on_sitl(sim: Sim, migrated_db: Any, tmp_path: 
     ground = _vehicle(f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}", Role.GROUND)
     panel_port, commander_port, lan_port = free_port(), free_port(), free_port()
     tls = tmp_path / "tls"
-    _make_cert(tls)  # the same self-signed certificate `sd-ground init` makes for LAN mode
+    make_lan_cert(tls)  # the same self-signed certificate `sd-ground init` makes for LAN mode
 
     def onboard(_clock: WallClock, url: str, token: str) -> SitlOnboard:
         return SitlOnboard(sim, url, token)

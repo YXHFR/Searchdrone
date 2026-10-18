@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { actionBus } from "../state/actionBus";
 import { useChatStore } from "../state/chatStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
@@ -168,6 +169,30 @@ describe("startLive", () => {
     release();
     await settle();
     expect(useMissionStore.getState().approvals.AP1?.status).toBe("approved");
+    stop();
+  });
+
+  it("passes a STOP / FLY HOME outcome on at once, even during a resync", async () => {
+    let release: () => void = () => undefined;
+    gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const seen: string[] = [];
+    const off = actionBus.subscribe((o) => seen.push(`${o.action_id}:${o.result}`));
+    const stop = startLive("sim-01");
+    hello("e1");
+    send({
+      seq: 7,
+      topic: "vehicle",
+      type: "vehicle.action",
+      vehicle_id: "sim-01",
+      data: { action_id: "A1", result: "acked" },
+    });
+    expect(seen).toEqual(["A1:acked"]); // not held back until the resync ends
+    release();
+    await settle();
+    expect(seen).toEqual(["A1:acked"]);
+    off();
     stop();
   });
 
