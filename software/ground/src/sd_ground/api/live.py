@@ -67,14 +67,24 @@ def _for_client(event: BusEvent, sub: _Subscribe) -> bool:
     return not (sub.mission_id is not None and event.mission_id not in (None, sub.mission_id))
 
 
-def _manual(g: Ground, vehicle_id: str | None, msg: dict[str, Any], who: Principal) -> None:
-    """One stick value. The ground's own watchdog stops sending when they stop coming."""
-    if vehicle_id is None or g.vehicle_actions is None:
+MANUAL_MIN_INTERVAL_S = 1 / 30  # the panel sends 15 Hz; anything faster is dropped
+
+
+def _manual(
+    g: Ground, vehicle_id: str | None, msg: dict[str, Any], who: Principal, last: list[float]
+) -> None:
+    """One stick value from the pilot. The ground's own watchdog stops sending when they
+    stop coming. ``last`` is when this socket's previous value was passed on."""
+    if who.role != "pilot" or vehicle_id is None or g.vehicle_actions is None:
         return
     try:
         value = ManualControlInput.model_validate({k: v for k, v in msg.items() if k != "op"})
     except ValidationError:
         return
+    now = g.clock.monotonic()
+    if now - last[0] < MANUAL_MIN_INTERVAL_S:
+        return
+    last[0] = now
     g.vehicle_actions.manual_input(vehicle_id, value, who)
 
 
@@ -113,6 +123,7 @@ async def live(ws: WebSocket) -> None:
         g.pilot_ws += 1
         g.operator_seen_mono = g.clock.monotonic()
     last_ping = [g.clock.monotonic()]
+    last_manual = [float("-inf")]
     try:
         replay = g.bus.replay(sub.server_epoch, sub.since_seq)
         if replay is None:
@@ -136,7 +147,7 @@ async def live(ws: WebSocket) -> None:
                         pong["server_ns"] = time.clock_gettime_ns(time.CLOCK_REALTIME)
                     await ws.send_json(pong)
                 elif msg.get("op") == "manual":
-                    _manual(g, sub.vehicle_id, msg, who)
+                    _manual(g, sub.vehicle_id, msg, who, last_manual)
 
         async def writer() -> None:
             while True:

@@ -19,9 +19,12 @@ from typing import Any
 
 from sd_schemas.base import new_id
 
-__all__ = ["RING_SIZE", "BusEvent", "EventBus", "Subscription"]
+__all__ = ["PERIODIC", "RING_SIZE", "BusEvent", "EventBus", "Subscription"]
 
 RING_SIZE = 2000
+# The periodic streams (telemetry 5 Hz, vehicle.state 2 Hz) carry no seq and stay out of
+# the replay ring: the next sample replaces a missed one.
+PERIODIC = frozenset({"telemetry", "vehicle.state"})
 QUEUE_SIZE = 1000
 
 
@@ -83,9 +86,7 @@ class EventBus:
         mission_id: str | None = None,
     ) -> BusEvent:
         seq: int | None = None
-        # The periodic streams (telemetry 5 Hz, vehicle.state 2 Hz) carry no seq and stay
-        # out of the replay ring: the next sample replaces a missed one.
-        if topic != "telemetry" and type_ != "vehicle.state":
+        if type_ not in PERIODIC:
             self._seq += 1
             seq = self._seq
         event = BusEvent(seq, ts, topic, type_, vehicle_id, mission_id, data)

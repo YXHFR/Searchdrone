@@ -172,6 +172,74 @@ def test_manual_op_reaches_the_stick_path(logged_in: TestClient, ground: Ground)
     assert sticks.got == [("sim-01", 0.5, "pilot")]
 
 
+_STICKS = {
+    "takeover_id": "0192f000-0000-7000-8000-000000000001",
+    "pitch": 0.5,
+    "roll": 0.0,
+    "throttle": 0.5,
+    "yaw": 0.0,
+    "source": "touch",
+}
+
+
+def test_manual_op_from_an_observer_never_reaches_the_stick_path(
+    panel: TestClient, ground: Ground, clock: FakeClock
+) -> None:
+    """An observer's socket may send ``op: manual``; it is dropped before validation."""
+    import datetime as dt
+
+    from sd_ground.auth import SessionRecord, hash_token, new_token
+
+    sticks = _Sticks()
+    ground.vehicle_actions = sticks  # type: ignore[assignment]
+    token = new_token()
+    now = clock.utc_now()
+    ground.sessions.load(
+        [
+            SessionRecord(
+                id="o1",
+                kind="token",
+                role="observer",
+                issuer_ref="operator:guest",
+                auth_mode="cli",
+                token_sha256=hash_token(token),
+                created_at=now,
+                last_used_at=now,
+                expires_at=now + dt.timedelta(hours=1),
+                name="guest",
+            )
+        ]
+    )
+    with panel.websocket_connect(URL, headers={"Authorization": f"Bearer {token}"}) as ws:
+        ws.receive_json()
+        _sub(ws, ground, ["system"], None)
+        ws.receive_json()
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 1})
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"
+    assert sticks.got == []
+
+
+def test_manual_op_faster_than_30_hz_is_dropped(
+    logged_in: TestClient, ground: Ground, clock: FakeClock
+) -> None:
+    sticks = _Sticks()
+    ground.vehicle_actions = sticks  # type: ignore[assignment]
+    with logged_in.websocket_connect(URL) as ws:
+        ws.receive_json()
+        _sub(ws, ground, ["system"], None)
+        ws.receive_json()
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 1})
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 2})  # same instant: dropped
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"
+        clock.advance(0.05)
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 3, "pitch": 0.25})
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"
+    assert sticks.got == [("sim-01", 0.5, "pilot"), ("sim-01", 0.25, "pilot")]
+
+
 async def test_vehicle_state_goes_live_at_2_hz(
     ground: Ground, clock: FakeClock, vehicle_link: object
 ) -> None:

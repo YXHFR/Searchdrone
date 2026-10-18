@@ -40,7 +40,12 @@ from sd_ground.services.latches import LatchChange, Latches, LatchRefusedError
 from sd_ground.sources import EmergencyAction, EmergencyUnavailableError
 from sd_obs.clock import Clock
 from sd_safety.constants import OPERATOR_ABSENT_S
-from sd_schemas.api import ActionDispatched, ActionOutcome, ManualControlInput
+from sd_schemas.api import (
+    ActionDispatched,
+    ActionOutcome,
+    ManualControlInput,
+    ManualControlState,
+)
 from sd_schemas.base import SdModel, new_id
 from sd_schemas.link import ManualTakeover, OperatorOverrideNotice, OperatorRelease, StickAxes
 from sd_schemas.mission import LatchAction
@@ -186,6 +191,7 @@ class VehicleActions:
         self._start_lock = threading.Lock()
         self._outcomes: OrderedDict[str, ActionOutcome] = OrderedDict()
         self._by_client: OrderedDict[tuple[str, str, str], ActionDispatched] = OrderedDict()
+        self._takeover_by: dict[str, str] = {}  # take-over id -> who took over
         self.post: queue.SimpleQueue[_Post | _Report | _Event] = queue.SimpleQueue()
         self._via: dict[str, Via] = {}
 
@@ -429,6 +435,7 @@ class VehicleActions:
             )
             if self.mav is not None:
                 if action == "takeover":
+                    self._takeover_by = {action_id: by.issuer_ref}  # one take-over at a time
                     self.mav.takeover(action_id)
                 else:
                     self.mav.handback()
@@ -448,6 +455,25 @@ class VehicleActions:
         self._remember(key, reply)
         self.post.put(_Post(outcome, notice))
         return reply
+
+    def manual_state(self, vehicle_id: str) -> ManualControlState | None:
+        """Whether someone steers by hand, as the MAVLink thread holds it (None: unknown)."""
+        snap = self._snapshot(vehicle_id)
+        if snap is None:
+            return None
+        if not snap.manual or snap.manual_takeover_id is None:
+            return ManualControlState(
+                active=False, takeover_id=None, by=None, since=None, input_age_ms=None
+            )
+        return ManualControlState.model_validate(
+            {
+                "active": True,
+                "takeover_id": snap.manual_takeover_id,
+                "by": self._takeover_by.get(snap.manual_takeover_id),
+                "since": snap.manual_since,
+                "input_age_ms": snap.manual_input_age_ms,
+            }
+        )
 
     def manual_input(self, vehicle_id: str, value: ManualControlInput, by: Principal) -> bool:
         """One stick value from the panel (10-20 Hz). Only the pilot steers."""

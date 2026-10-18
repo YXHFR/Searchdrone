@@ -118,6 +118,11 @@ class MavSnapshot:
     airborne_since: dt.datetime | None
     manual: bool
     watchdog_phase: str
+    # The take-over the pilot steers with ("Ta över"), when it started (wall clock) and
+    # the age of the last stick value; None without a take-over.
+    manual_takeover_id: str | None = None
+    manual_since: dt.datetime | None = None
+    manual_input_age_ms: int | None = None
 
     @property
     def fc_mode(self) -> CopterMode | None:
@@ -198,6 +203,7 @@ class HeartbeatGate:
 @dataclass
 class _Manual:
     takeover_id: str
+    since: dt.datetime
     axes: StickAxes | None = None
     received_mono: float = 0.0
     sent_mono: float = 0.0
@@ -297,6 +303,7 @@ class GroundMav:
             t.onboard_seen_mono_ms is not None
             and now - t.onboard_seen_mono_ms <= COMPANION_WATCHDOG_S * 1000
         )
+        m = self._manual
         snap = MavSnapshot(
             vehicle_id=self.vehicle_id,
             connected=connected,
@@ -305,8 +312,15 @@ class GroundMav:
             in_flight=flying,
             onboard_alive=onboard,
             airborne_since=self._airborne_since,
-            manual=self._manual is not None,
+            manual=m is not None,
             watchdog_phase=self.watchdog.phase,
+            manual_takeover_id=None if m is None else m.takeover_id,
+            manual_since=None if m is None else m.since,
+            manual_input_age_ms=(
+                None
+                if m is None or m.axes is None
+                else int((self.clock.monotonic() - m.received_mono) * 1000)
+            ),
         )
         with self._lock:
             self._snap = snap
@@ -380,7 +394,7 @@ class GroundMav:
     # --- steering by hand -------------------------------------------------------------
 
     def takeover(self, takeover_id: str) -> None:
-        self._manual = _Manual(takeover_id)
+        self._manual = _Manual(takeover_id, self.clock.utc_now())
         seq = self.latches.latest_seq(self.vehicle_id)
 
         async def loiter() -> None:

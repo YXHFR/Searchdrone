@@ -14,6 +14,7 @@ export type {
   CommandResult,
   GateDecision,
   ManualControlInput,
+  ManualControlState,
   Mission,
   MissionCharter,
   MissionDetail,

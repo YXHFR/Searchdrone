@@ -5,8 +5,10 @@ import { api, HttpError } from "../../api/http";
 import { liveSend } from "../../api/live";
 import { paths } from "../../api/paths";
 import type { ActionDispatched } from "../../api/types";
+import { useNow } from "../../lib/useNow";
 import { uuidv7 } from "../../lib/uuidv7";
 import { useLiveStore } from "../../state/liveStore";
+import { manualView, useManualStore } from "../../state/manualStore";
 import { useIsPilot, useSessionStore } from "../../state/sessionStore";
 import { useUiStore } from "../../state/uiStore";
 import type { ViewProps } from "../registry";
@@ -33,7 +35,9 @@ function readGamepad(): Axes | null {
  * view is open the sticks (on screen or a game controller) are sent 15 times a second over
  * the live socket. Released sticks hold position. If the values stop (view closed, network
  * gone) the ground station stops sending within 1 s and the vehicle stands still. "Lämna
- * tillbaka" gives control back to the AI. A physical RC transmitter always wins.
+ * tillbaka" gives control back to the AI. A physical RC transmitter always wins. Whether we
+ * steer follows the ground's own report (`vehicle.manual`): STOP, FLY HOME and landing end
+ * the take-over there, and the view goes back to "Ta över".
  */
 export default function ManualView({ vehicleId }: ViewProps) {
   const { t } = useTranslation();
@@ -41,31 +45,22 @@ export default function ManualView({ vehicleId }: ViewProps) {
   const enabled = useSessionStore((s) => s.config?.features.manual_control !== false);
   const manual = useLiveStore((s) => s.vehicle?.manual ?? null);
   const gamepad = useGamepadName();
-  const [takeoverId, setTakeoverId] = useState<string | null>(null);
+  const takeoverId = useManualStore((s) => s.takeoverId);
+  const acceptedAt = useManualStore((s) => s.acceptedAt);
+  const now = useNow(250);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [axes, setAxes] = useState<Axes>(NEUTRAL);
   const left = useRef({ x: 0, y: 0 });
   const right = useRef({ x: 0, y: 0 });
   const seq = useRef(0);
-  const serverActive = manual?.active === true;
-  // We steer from the moment our take-over is accepted until the ground reports another one
-  // (or none: the effect below then clears ours).
-  const steering =
-    takeoverId !== null &&
-    !(serverActive && manual?.takeover_id != null && manual.takeover_id !== takeoverId);
-  const otherActive = serverActive && !steering;
+  const { steering, otherActive, oursEnded } = manualView(manual, takeoverId, acceptedAt, now);
 
   useEffect(() => {
-    if (
-      manual &&
-      manual.active === false &&
-      takeoverId !== null &&
-      manual.takeover_id === takeoverId
-    ) {
-      setTakeoverId(null); // handed back elsewhere, or the ground ended it
-    }
-  }, [manual, takeoverId]);
+    if (!oursEnded) return;
+    useManualStore.getState().ended(); // handed back elsewhere, or the ground ended it
+    setAxes(NEUTRAL);
+  }, [oursEnded]);
 
   useEffect(() => {
     if (!steering || takeoverId === null) return;
@@ -98,9 +93,9 @@ export default function ManualView({ vehicleId }: ViewProps) {
       });
       if (action === "takeover") {
         seq.current = 0;
-        setTakeoverId(r.action_id);
+        useManualStore.getState().tookOver(r.action_id, Date.now());
       } else {
-        setTakeoverId(null);
+        useManualStore.getState().ended();
         setAxes(NEUTRAL);
       }
       useUiStore

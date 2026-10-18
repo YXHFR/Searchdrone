@@ -100,10 +100,16 @@ class TelemetryService:
                 )
 
     def publish_state(self) -> None:
+        """``vehicle.state`` for each vehicle. A failure skips one sample and never stops
+        the telemetry loop (5 Hz telemetry and the recording go on)."""
         actions = self.g.vehicle_actions
         for vid in self._vehicles:
-            latch = None if actions is None else actions.latches.get(vid)
-            live = vehicle_state(self.g, vid, latch)
+            try:
+                latch = None if actions is None else actions.latches.get(vid)
+                live = vehicle_state(self.g, vid, latch)
+            except Exception as exc:  # one sample is lost; the loop lives on
+                log.error("telemetry.state_failed", vehicle_id=vid, error=type(exc).__name__)
+                continue
             self.g.bus.publish(
                 "vehicle",
                 "vehicle.state",

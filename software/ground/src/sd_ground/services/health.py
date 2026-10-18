@@ -64,6 +64,7 @@ def vehicle_state(g: Ground, vehicle_id: str, latch: OperatorLatch | None) -> Ve
         latch=latch,
         airborne=telemetry is not None and telemetry.landed_state == "in_air",
         in_flight=g.vehicle_link.in_flight(vehicle_id),
+        manual=None if g.vehicle_actions is None else g.vehicle_actions.manual_state(vehicle_id),
     )
 
 
