@@ -30,11 +30,14 @@ All notable changes to this project are listed here. The format follows
 - Perception chain: `sd-onboard` takes stills from a camera folder (`[perception]` in
   `config/onboard.toml`, off by default), runs the class register's detector sources,
   places each detection on the ground with the flight controller's position and attitude
-  (`ATTITUDE` is now read) and sends a `PerceptionReport` with JPEG thumbnails of targets
-  over SD-link, in its own lowest-priority queue. `sd-ground` queues reports per vehicle
-  off the link's inbound loop, stores detections (append-only table `detections`,
-  migration `0003_detections`), joins them into one find per object (rebuilt from the
-  table by find id after a restart), saves thumbnails in the mission folder and serves
+  (`ATTITUDE` is now read) and sends a `PerceptionReport` followed by a `CropData` JPEG
+  for each target over SD-link, in its own lowest-priority queue. A detection may now
+  carry its class (`GeoDetectionMsg.label` and `source`). `sd-ground` queues reports per
+  vehicle off the link's inbound loop, waits a moment for a report's crops, stores the
+  still and its classed detections (`perception_stills` and `detections`; migration
+  `0004_detections` adds `label`, `kind`, `source` and `find_id`), joins them into one
+  find per object (rebuilt from the table by find id after a restart), saves thumbnails
+  in the mission folder and serves
   `GET /missions/{id}/detections`, `/finds` and `/detections/{id}/crop`; live events
   `detection.new`, `find.new` and `find.updated` on the `detections` topic. The AI
   commander gets `event.detection` for new finds and wakes on targets (trigger

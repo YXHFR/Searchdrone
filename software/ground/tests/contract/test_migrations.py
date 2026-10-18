@@ -1,4 +1,4 @@
-"""Migration 0001_initial: round trip, grants and the append-only guards."""
+"""Migrations 0001-0003: round trip, grants and the append-only guards."""
 
 from __future__ import annotations
 
@@ -34,9 +34,18 @@ TABLES = {
     "auth_sessions",
     "brain_memory",
     "brain_decisions",
+    # 0003_search
+    "search_profiles",
+    "perception_stills",
     "detections",
+    "candidates",
+    "candidate_observations",
+    "candidate_assessments",
+    "candidate_decisions",
+    "probability_maps",
+    "cloud_usage",
 }
-APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions", "detections")
+APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions")
 
 # Public CMAC test field (ArduPilot's default SITL home), never a private place.
 LON, LAT = 149.165230, -35.363261
@@ -63,7 +72,6 @@ def test_roundtrip(fresh_db: Db) -> None:
     db.upgrade()
 
     assert _tables(db) == TABLES
-    assert "candidates" not in _tables(db)
     assert "3.6" in db.run("SELECT postgis_full_version() AS v")[0]["v"]
     head = db.run("SELECT version_num FROM alembic_version", role="sd_app")
     assert [r["version_num"] for r in head] == ["0004_detections"]
@@ -122,16 +130,6 @@ def _seed(db: Db) -> str:
         "INSERT INTO brain_decisions (id, mission_id, vehicle_id, turn_id, body) "
         "VALUES (uuidv7(), $1::uuid, 'sim-01', uuidv7(), '{}')",
         mission,
-        role="sd_app",
-    )
-    db.run(
-        "INSERT INTO detections (id, mission_id, vehicle_id, find_id, still_id, captured_at, "
-        "label, kind, source, score, bbox, lat, lon, sigma95_m, size_m, synthetic) "
-        "VALUES (uuidv7(), $1::uuid, 'sim-01', uuidv7(), uuidv7(), now(), 'red_block', "
-        "'target', 'color', 0.7, '[1, 2, 3, 4]', $2, $3, 4.0, 0.6, true)",
-        mission,
-        LAT,
-        LON,
         role="sd_app",
     )
     return mission
@@ -324,28 +322,27 @@ def test_one_approved_charter_and_one_active_clearance(migrated_db: Db) -> None:
         ("label", "'Red Block'"),
         ("source", "'guess'"),
         ("kind", "'other'"),
-        ("score", "1.5"),
-        ("crop_path", "'../x.jpg'"),
-        ("lat", "91"),
+        ("kind", "NULL"),  # a class comes with its kind and source
     ],
 )
-def test_detection_rows_are_checked(migrated_db: Db, column: str, value: str) -> None:
+def test_detection_classes_are_checked(migrated_db: Db, column: str, value: str) -> None:
     db = migrated_db
     mission = _seed(db)
-    row = {
-        "label": "'car'",
-        "kind": "'context'",
-        "source": "'oracle'",
-        "score": "1",
-        "lat": "0",
-        "crop_path": "NULL",
-    } | {column: value}
+    still = db.run(
+        "INSERT INTO perception_stills (mission_id, vehicle_id, still_id, captured_utc, sensor, "
+        "pose, footprint, px_per_m, detector) VALUES ($1::uuid, 'sim-01', uuidv7(), now(), "
+        "'rgb', '{}', ST_GeomFromText('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))', 4326), 50, '{}') "
+        "RETURNING still_id::text",
+        mission,
+        role="sd_app",
+    )[0]["still_id"]
+    row = {"label": "'car'", "kind": "'context'", "source": "'oracle'"} | {column: value}
     # Column names and values come from the fixed lists above, never from input.
     sql = (
-        "INSERT INTO detections (id, mission_id, vehicle_id, find_id, still_id, captured_at, "  # noqa: S608
-        f"bbox, lon, sigma95_m, size_m, synthetic, {', '.join(row)}) VALUES (uuidv7(), "
-        "$1::uuid, 'sim-01', uuidv7(), uuidv7(), now(), '[]', 0, 0, 0, true, "
-        f"{', '.join(row.values())})"
+        "INSERT INTO detections (mission_id, vehicle_id, detection_id, still_id, score, bbox, "  # noqa: S608
+        f"geom, sigma95_m, px_size, find_id, {', '.join(row)}) VALUES ($1::uuid, 'sim-01', "
+        "uuidv7(), $2::uuid, 0.6, '{}', ST_GeomFromText('POINT(0.5 0.5)', 4326), 4.5, 90, "
+        f"uuidv7(), {', '.join(row.values())})"
     )
     with pytest.raises(asyncpg.CheckViolationError):
-        db.run(sql, mission, role="sd_app")
+        db.run(sql, mission, still, role="sd_app")

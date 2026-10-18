@@ -56,6 +56,7 @@ LABEL_IDS = {
     ("Sector", "sector_id"),
     ("SurveySectorParams", "sector_id"),
     ("PanelConfig", "default_vehicle_id"),
+    ("DetectorInfo", "profile_id"),  # the detector profile "det_<model>_vN"
 }
 # Field names that are references of another kind: "operator:<alias>", a model name,
 # or the onboard boot counter.

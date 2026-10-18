@@ -9,7 +9,6 @@ ground truth.
 from __future__ import annotations
 
 import asyncio
-import base64
 import io
 import json
 import math
@@ -158,25 +157,27 @@ def test_report_places_the_block_on_the_truth(tmp_path: Path, name: str) -> None
     lp = loop(tmp_path, clock, {})
     captured = lp.source.poll()
     assert captured is not None
-    report = lp.handle(captured, telemetry(name, clock.monotonic_ms()), clock.monotonic_ms())
-    assert report is not None and report.synthetic
+    out = lp.handle(captured, telemetry(name, clock.monotonic_ms()), clock.monotonic_ms())
+    assert out is not None and out.report.synthetic
+    report = out.report
+    crops = {c.ref_id: c for c in out.crops}
     blocks = [d for d in report.detections if d.label == "red_block"]
     assert blocks, report
     for d in blocks:
         assert d.source == "color"
         assert truth_error_m(d.lat, d.lon) <= 0.5
-        assert 0.4 <= d.size_m <= 1.2
+        assert 0.4 <= d.px_size / report.px_per_m <= 1.2  # the block's size on the ground
         assert d.sigma95_m > 0
-        assert d.crop_jpeg_b64 is not None
-        with Image.open(io.BytesIO(base64.b64decode(d.crop_jpeg_b64))) as thumb:
-            assert thumb.format == "JPEG" and max(thumb.size) <= 128
-            assert not thumb.getexif()
-    assert report.sources == ["color"] and report.skipped_sources == {
-        "model": "inte byggd än",
-        "oracle": "bara i simulatorn",
-    }
+        assert d.crop_inline
+        crop = crops[d.detection_id]
+        assert crop.purpose == "detection" and crop.still_id == report.still_id
+        with Image.open(io.BytesIO(crop.jpeg)) as thumb:
+            assert thumb.format == "JPEG" and thumb.size == (crop.width, crop.height)
+            assert max(thumb.size) <= 128 and not thumb.getexif()
+    assert report.detector.name == "sd_detect:color" and report.detector.placement == "onboard"
     assert len(report.footprint) == 4
-    assert len(report.model_dump_json()) < 64 * 1024  # inside the link's message limit
+    for message in (report, *out.crops):  # each inside the link's message limit
+        assert len(message.model_dump_json()) < 64 * 1024
 
 
 def test_oracle_context_in_the_simulator(tmp_path: Path) -> None:
@@ -185,12 +186,14 @@ def test_oracle_context_in_the_simulator(tmp_path: Path) -> None:
     lp = loop(tmp_path, clock, SIM, keep=tmp_path / "kept")
     captured = lp.source.poll()
     assert captured is not None
-    report = lp.handle(captured, telemetry("block0_h40", 0), 0)
-    assert report is not None
+    out = lp.handle(captured, telemetry("block0_h40", 0), 0)
+    assert out is not None
+    report = out.report
     got = {(d.label, d.source) for d in report.detections}
     assert ("red_block", "color") in got and ("car", "oracle") in got and ("road", "oracle") in got
     assert report.detections[0].label == "red_block"  # targets first
-    assert all(d.crop_jpeg_b64 is None for d in report.detections if d.source == "oracle")
+    assert all(not d.crop_inline for d in report.detections if d.source == "oracle")
+    assert len(out.crops) == 1  # the block's
     kept = sorted(p.suffix for p in (tmp_path / "kept").iterdir())
     assert kept == [".jpg", ".json"]
     assert lp.stats.by_label["red_block"] == 1
@@ -201,8 +204,8 @@ def test_red_car_is_not_reported_as_a_block(tmp_path: Path) -> None:
     lp = loop(tmp_path, FakeClock(), {})
     captured = lp.source.poll()
     assert captured is not None
-    report = lp.handle(captured, telemetry("red_car_0_h30", 0), 0)
-    assert report is not None and report.detections == []
+    out = lp.handle(captured, telemetry("red_car_0_h30", 0), 0)
+    assert out is not None and out.report.detections == [] and out.crops == []
 
 
 def test_stale_pose_or_ground_gives_no_report(tmp_path: Path) -> None:
@@ -231,25 +234,32 @@ async def test_reports_go_after_events_on_the_link(tmp_path: Path) -> None:
     lp = loop(tmp_path, FakeClock(), {})
     captured = lp.source.poll()
     assert captured is not None
-    report = lp.handle(captured, telemetry("block0_h30", 0), 0)
-    assert report is not None
+    out = lp.handle(captured, telemetry("block0_h30", 0), 0)
+    assert out is not None and len(out.crops) == 1
     link = OnboardLink(
         url="ws://127.0.0.1:1/x", token="t" * 40, vehicle_id="sim-01", clock=MonotonicClock()
     )
-    link.perception(report)
-    link.perception(report)
+    link.perception(out)
+    link.perception(out)
     link.event("executor.state_changed", "info", {"to": "HOLD"})
     session = _Session()
     flush = asyncio.ensure_future(link._flush(session))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
     try:
         for _ in range(100):
-            if session.sent.count("PerceptionReport") == 2:
+            if len(session.sent) == 5:
                 break
             await asyncio.sleep(0.01)
     finally:
         flush.cancel()
         await asyncio.gather(flush, return_exceptions=True)
-    assert session.sent == ["OnboardEvent", "PerceptionReport", "PerceptionReport"]
+    # Each report followed by its crop, all after the event.
+    assert session.sent == [
+        "OnboardEvent",
+        "PerceptionReport",
+        "CropData",
+        "PerceptionReport",
+        "CropData",
+    ]
 
 
 def test_queue_keeps_the_newest_reports(tmp_path: Path) -> None:
@@ -257,13 +267,13 @@ def test_queue_keeps_the_newest_reports(tmp_path: Path) -> None:
     lp = loop(tmp_path, FakeClock(), {})
     captured = lp.source.poll()
     assert captured is not None
-    report = lp.handle(captured, telemetry("block0_h30", 0), 0)
-    assert report is not None
+    out = lp.handle(captured, telemetry("block0_h30", 0), 0)
+    assert out is not None and len(out.crops) == 1
     link = OnboardLink(
         url="ws://127.0.0.1:1/x", token="t" * 40, vehicle_id="sim-01", clock=MonotonicClock()
     )
     for _ in range(12):
-        link.perception(report)
+        link.perception(out)
     assert link.dropped_perception == 2
 
 
@@ -275,9 +285,9 @@ def test_kept_stills_are_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         write_still(tmp_path / "in", "block0_h30")
         captured = lp.source.poll()
         assert captured is not None
-        report = lp.handle(captured, telemetry("block0_h30", 0), 0)
-        assert report is not None and report.detections
-        ids.append(str(report.still_id))
+        out = lp.handle(captured, telemetry("block0_h30", 0), 0)
+        assert out is not None and out.report.detections
+        ids.append(str(out.report.still_id))
     kept = sorted(p.name for p in (tmp_path / "kept").iterdir())
     assert kept == sorted(f"{i}{ext}" for i in ids[1:] for ext in (".jpg", ".json"))
 
@@ -326,7 +336,7 @@ async def test_run_skips_a_failing_still_sends_reports_and_stops(tmp_path: Path)
     stop.set()
     await asyncio.wait_for(task, 2)
     assert lp.stats.failed == 1
-    assert len(sent) == 1 and sent[0].detections[0].label == "red_block"
+    assert len(sent) == 1 and sent[0].report.detections[0].label == "red_block"
     assert threading.current_thread().name not in source.threads  # never on the event loop
 
 
@@ -347,12 +357,12 @@ async def test_a_report_too_large_to_send_never_holds_up_events(tmp_path: Path) 
     lp = loop(tmp_path, FakeClock(), {})
     captured = lp.source.poll()
     assert captured is not None
-    report = lp.handle(captured, telemetry("block0_h30", 0), 0)
-    assert report is not None
+    out = lp.handle(captured, telemetry("block0_h30", 0), 0)
+    assert out is not None and len(out.crops) == 1
     link = OnboardLink(
         url="ws://127.0.0.1:1/x", token="t" * 40, vehicle_id="sim-01", clock=MonotonicClock()
     )
-    link.perception(report)
+    link.perception(out)
     session = _TooLarge()
     flush = asyncio.ensure_future(link._flush(session))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
     try:
@@ -370,7 +380,7 @@ async def test_a_report_too_large_to_send_never_holds_up_events(tmp_path: Path) 
         flush.cancel()
         await asyncio.gather(flush, return_exceptions=True)
     assert link.dropped_perception == 1
-    assert session.sent == ["OnboardEvent"]
+    assert session.sent == ["OnboardEvent"]  # the report's crop went with it
 
 
 def test_attitude_rate_between_samples() -> None:

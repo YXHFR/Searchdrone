@@ -583,7 +583,7 @@ class MissionFlow:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
         from sd_ground.services import perception as perception_service
-        from sd_schemas.link import Ack, CharterAck, OnboardEvent, PerceptionReport
+        from sd_schemas.link import Ack, CharterAck, CropData, OnboardEvent, PerceptionReport
 
         body = inbound.body
         if isinstance(body, Ack):
@@ -603,6 +603,8 @@ class MissionFlow:
             await self._on_snapshot(vehicle_id, body)
         elif isinstance(body, PerceptionReport):
             perception_service.enqueue(self, vehicle_id, body)  # never waits for storage
+        elif isinstance(body, CropData):
+            perception_service.add_crop(self, vehicle_id, body)  # kept until its report is stored
 
     async def _on_snapshot(self, vehicle_id: str, snap: StateSnapshot) -> None:
         from sd_ground.services import commands as commands_service
