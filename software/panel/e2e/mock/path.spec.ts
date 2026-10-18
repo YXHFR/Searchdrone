@@ -92,7 +92,10 @@ async function feats(page: Page, id: string) {
 
 async function shot(page: Page, name: string): Promise<void> {
   await page.waitForTimeout(300); // let the map draw the last change
-  // caret "initial": hiding the caret injects a stylesheet, which the panel's CSP refuses.
+  // WebKit's screenshot injects a stylesheet, which the panel's CSP rightly refuses (and the
+  // fake ground counts as a violation): the pictures come from the Chromium projects.
+  if (page.context().browser()?.browserType().name() === "webkit") return;
+  // caret "initial": hiding the caret injects a stylesheet too.
   await page.screenshot({
     path: `test-results/path-flow/${test.info().project.name}-${name}.png`,
     caret: "initial",
