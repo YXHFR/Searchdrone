@@ -292,6 +292,46 @@ async def test_sc16b_fc_fence_height(sim_no_brake: Any, migrated_db: Any, tmp_pa
 
 
 @pytest.mark.budget_s(300)
+async def test_sc16b_fc_fence_height_braked(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
+    """The same climb with the normal settings (the FC brakes before the fence): it ends in
+    the height fence's RTL/LAND, or with the drone held just under FENCE_ALT_MAX; either
+    way it never goes more than 5 m above it."""
+    limit = SAFETY["FENCE_ALT_MAX"]
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.airborne()
+        assert await sc.harness(sim.harness.read_param, "AVOID_ENABLE") == 3.0
+        stop = {"done": False}
+        flight = asyncio.ensure_future(
+            sc.harness(sim.harness.guided_velocity, 0.0, 0.0, -3.0, 60.0, lambda: stop["done"])
+        )
+
+        def held() -> bool:
+            """Still within 0.5 m for the last 10 s, near the fence."""
+            recent = [x.alt_m for x in sc.track if x.t >= time.monotonic() - 10.0]
+            first = sc.track[0].t if sc.track else time.monotonic()
+            return (
+                time.monotonic() - first > 10.0
+                and bool(recent)
+                and min(recent) >= limit - 10.0
+                and max(recent) - min(recent) <= 0.5
+            )
+
+        try:
+            await sc.until(
+                lambda: sc.fc_mode() in (*HOME_MODES, "LAND") or held(), 90, "fence or brake"
+            )
+        finally:
+            stop["done"] = True
+            await flight
+        if sc.fc_mode() not in (*HOME_MODES, "LAND"):
+            await sc.harness(sim.harness.set_mode, "RTL")  # held by the brake: bring it down
+        await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
+        top = max(x.alt_m for x in sc.track)
+        assert top <= limit + 5.0, top
+        await sc.check_invariants(exempt=("INV1", "INV3"))
+
+
+@pytest.mark.budget_s(300)
 async def test_gps_lost_during_flight(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     """GPS lost on the way to P1: the flight controller's own EKF failsafe
     (FS_EKF_ACTION) takes over, the onboard computer sends no more targets and the
