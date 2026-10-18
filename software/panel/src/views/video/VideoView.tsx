@@ -196,6 +196,12 @@ export default function VideoView({ isCompact }: ViewProps) {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
+  // React sets `muted` only as a property. Autoplay policies and checkers such as axe read the
+  // attribute; without it axe waits for the metadata of what looks like a video with sound.
+  useEffect(() => {
+    ref.current?.setAttribute("muted", "");
+  }, []);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt restarts the stream
   useEffect(() => {
     const el = ref.current;

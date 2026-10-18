@@ -79,6 +79,8 @@ test.describe("video view (P-22)", () => {
     expect(Date.now() - start).toBeLessThan(6000);
     expect(ground.posts(WHEP).length).toBeGreaterThanOrEqual(1);
     expect(ground.posts(WHEP)[0]?.headers["content-type"]).toContain("application/sdp");
+    // Autoplay policies read the attribute, not React's property.
+    await expect(page.getByTestId("video-element")).toHaveAttribute("muted", "");
   });
 
   test("an accepted session is deleted exactly once when the view closes", async ({
