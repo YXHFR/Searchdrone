@@ -855,13 +855,14 @@ class Vehicle:
                 )
                 notify = True
             case "ATTITUDE":
-                t = replace(
-                    t,
-                    attitude_mono_ms=now,
-                    roll_deg=math.degrees(float(msg.roll)),
-                    pitch_deg=math.degrees(float(msg.pitch)),
-                    yaw_deg=math.degrees(float(msg.yaw)),
-                )
+                # Display only, so no notify. A non-finite sample is dropped and the
+                # previous one ages out instead of being shown as a made-up horizon.
+                rpy = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+                if all(map(math.isfinite, rpy)):
+                    roll, pitch, yaw = map(math.degrees, rpy)
+                    t = replace(
+                        t, attitude_mono_ms=now, roll_deg=roll, pitch_deg=pitch, yaw_deg=yaw
+                    )
             case "VFR_HUD":
                 t = replace(t, groundspeed_ms=float(msg.groundspeed), climb_ms=float(msg.climb))
             case "BATTERY_STATUS":

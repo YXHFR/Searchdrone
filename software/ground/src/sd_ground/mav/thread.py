@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
+import math
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -719,6 +720,8 @@ def to_telemetry(snap: MavSnapshot, now: dt.datetime) -> Telemetry:
 def _attitude(t: FcTelemetry, now_mono_ms: int) -> Attitude | None:
     """The latest ATTITUDE, or None when it is older than ``ATTITUDE_FRESH_S``."""
     if t.attitude_mono_ms is None or now_mono_ms - t.attitude_mono_ms > ATTITUDE_FRESH_S * 1000:
+        return None
+    if not all(map(math.isfinite, (t.roll_deg, t.pitch_deg, t.yaw_deg))):
         return None
     yaw = t.yaw_deg % 360.0
     return Attitude(

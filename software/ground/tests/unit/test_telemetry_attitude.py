@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
+
+import pytest
 
 from sd_ground.mav.thread import ATTITUDE_FRESH_S, MavSnapshot, to_telemetry
 from sd_mav.vehicle import FcTelemetry
@@ -46,3 +49,10 @@ def test_rounding_at_the_edges_stays_inside_the_schema() -> None:
     att = to_telemetry(_snap(t, 0), NOW).attitude
     assert att is not None
     assert att.roll_deg == 180.0 and att.pitch_deg == 90.0 and 0.0 <= att.yaw_deg < 360.0
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize("axis", ["roll_deg", "pitch_deg", "yaw_deg"])
+def test_non_finite_attitude_is_dropped_not_clamped(axis: str, bad: float) -> None:
+    t = FcTelemetry(attitude_mono_ms=0, **{axis: bad})
+    assert to_telemetry(_snap(t, 0), NOW).attitude is None

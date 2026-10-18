@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -416,6 +417,22 @@ def test_attitude_is_parsed_in_degrees() -> None:
         t = vehicle.telemetry
         assert abs(t.roll_deg - 11.459) < 1e-3 and abs(t.pitch_deg + 5.730) < 1e-3
         assert abs(t.yaw_deg - 85.944) < 1e-3
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_non_finite_attitude_is_ignored() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        vehicle.fc.attitude_rad = (0.2, -0.1, 1.5)
+        await clock.run_for(0.5)
+        before = vehicle.telemetry
+        vehicle.fc.attitude_rad = (math.nan, 0.0, math.inf)
+        await clock.run_for(0.5)
+        t = vehicle.telemetry
+        assert t.attitude_mono_ms == before.attitude_mono_ms  # ages out instead
+        assert (t.roll_deg, t.yaw_deg) == (before.roll_deg, before.yaw_deg)
         await vehicle.close()
 
     asyncio.run(run())

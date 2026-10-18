@@ -87,8 +87,13 @@ class TelemetryService:
         self._vehicles = vehicles or [self.g.config.default_vehicle_id]
 
     def publish(self) -> None:
+        """``telemetry`` for each vehicle. A failure skips one sample, like ``publish_state``."""
         for vid in self._vehicles:
-            t = self.g.vehicle_link.telemetry(vid)
+            try:
+                t = self.g.vehicle_link.telemetry(vid)
+            except Exception as exc:  # one sample is lost; the loop lives on
+                log.error("telemetry.sample_failed", vehicle_id=vid, error=type(exc).__name__)
+                continue
             if t is not None:
                 self.g.bus.publish(
                     "telemetry",
@@ -121,7 +126,11 @@ class TelemetryService:
 
     def sample(self) -> None:
         for vid, mission_id in self._recording.items():
-            t = self.g.vehicle_link.telemetry(vid)
+            try:
+                t = self.g.vehicle_link.telemetry(vid)
+            except Exception as exc:  # one row is lost; the recording goes on
+                log.error("telemetry.sample_failed", vehicle_id=vid, error=type(exc).__name__)
+                continue
             if t is None:
                 continue
             self.buffer.append(_row(vid, mission_id, t))
