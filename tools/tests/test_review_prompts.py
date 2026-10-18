@@ -69,6 +69,8 @@ def test_architecture_scope_rule() -> None:
     scope = text.split("## stage_scope: v0.2.0", 1)[1].split("## Permanent scope rule")[0]
     for item in ("`find_me`", "Thermal cameras", "language model", "AGPL", "wfb-ng"):
         assert item in scope, item
+    assert "gimbal" not in scope.lower()
+    assert "steerable camera (tilt, pan, zoom)" in scope.replace("\n", " ")
 
 
 @pytest.mark.parametrize("name", [*ROLE_FILES.values(), "common.md", "retro.md"])

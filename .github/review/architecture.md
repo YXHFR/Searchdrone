@@ -47,7 +47,8 @@ candidates against the profile, the skills `inspect_detection`, `orbit` and
 `capture_stills`, and following a confirmed find (`follow_track`, `stop_follow`). The
 detector on a companion computer with an AI accelerator, the bench and flight tests of
 the 7-inch quad, the link over IP on a 4G modem, and importing an onboard recording
-after landing are in scope as well.
+after landing are in scope as well. A steerable camera (tilt, pan, zoom) is allowed
+in the simulator and as a tilt servo on the drone.
 
 **Reject (`major`) a software change that builds any of the following**, except as a
 stub that returns "not implemented":
@@ -58,7 +59,6 @@ stub that returns "not implemented":
   affected by this rule.
 - A vision-language model on board, a Jetson, more than one drone or swarms.
 - Thermal cameras. Interfaces may carry `sensor = "thermal"` as a value, nothing more.
-- Camera gimbals or camera tilt (`set_camera_tilt` stays a stub).
 - `follow_me`, `find_me` and the phone's position.
 - Reinforcement learning for where the drone searches.
 - An agent simulation of how the missing person moves.
