@@ -35,9 +35,20 @@ All notable changes to this project are listed here. The format follows
   telemetry latency and the chat's answer time, then times the cloud model's answers
   (`sd-brain perf-cloud`). The report goes to `data/reports/perf-<time>.json` and `.md`;
   the run exits 0 only when every limit holds.
-- The simulator world steps at 1.25 ms (800 Hz) and the drone's IMU runs at 800 Hz: at
+- Both simulator worlds step at 1.25 ms (800 Hz) and the drone's IMU runs at 800 Hz: at
   1 ms Gazebo in WSL2 reached only about 0.7 real time in lockstep with SITL, and
   ArduPilot arms only with the gyro at 1.8 times its 400 Hz loop.
+- A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
+  Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
+  OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain
+  with roads and road markings, about 25 000 spruce, pine and birch trees, buildings from
+  the map's footprints, parked cars and lakes. It is the default for `just sim`;
+  `just demo`, `brain=scripted` and the test suites keep the flat world at CMAC. Gazebo,
+  SITL's home and the panel's map pack (`just maps-fetch site=hellasgarden`) share one origin.
+  `just world-fetch` refreshes a site, or fetches your own area from Lantmäteriet into
+  `build/` only. `just world-snapshot` takes pictures at 40 m and 100 m and from the side,
+  and measures a road's width and the map overlap in them. `just sim-smoke world=...`
+  flies in a terrain world and reports Gazebo's real-time factor.
 - Fly a drawn path: the pilot draws a path on the map ("Rita väg", `pa-1`, ...: a
   `path` annotation, a GeoJSON LineString of 2-50 points) and asks for it in the chat. The
   AI proposes `follow_path` by the path's name only; sd-brain takes the points from the
@@ -181,3 +192,10 @@ All notable changes to this project are listed here. The format follows
 - `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
   executor) asks before every single write, retries included.
 - The six onboard skills of the foundation are `implemented` in the skill registry.
+
+### Fixed
+
+- The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
+  (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
+  vehicle now starts with its legs on the ground in every world; in a site world they were
+  inside the landing pad's box and stuck to it.

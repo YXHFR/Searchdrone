@@ -284,6 +284,170 @@ def _decision_log() -> dict[str, Any]:
     }
 
 
+# A tiny JPEG header is enough for the schema; real crops come from the camera chain.
+JPEG = b"\xff\xd8\xff\xe0" + bytes(60) + b"\xff\xd9"
+STILL = UUID("0192f49e-4000-7000-8000-000000000004")
+DETECTION = UUID("0192f49e-5000-7000-8000-000000000005")
+CANDIDATE = UUID("0192f49e-6000-7000-8000-000000000006")
+PROFILE = UUID("0192f49e-7000-7000-8000-000000000007")
+
+
+def _search_examples() -> list[BaseModel]:
+    """Stage 2: the search profile, candidates and the perception messages."""
+    pose = s.Pose(
+        lat=HOME_LAT,
+        lon=HOME_LON,
+        alt_amsl_m=624.0,
+        agl_m=40.0,
+        roll_deg=0.5,
+        pitch_deg=-1.0,
+        yaw_deg=90.0,
+        source_ts_ms=120_500,
+    )
+    box = s.BBox(x=1200, y=800, w=40, h=90)
+    garment = s.Garment(part="outer", kind="jacka", colors=[s.ColorName.RED], certainty="certain")
+    detection = s.GeoDetectionMsg(
+        detection_id=DETECTION,
+        bbox=box,
+        score=0.62,
+        lat=-35.36146,
+        lon=149.16523,
+        sigma95_m=4.5,
+        px_size=90,
+        crop_inline=True,
+    )
+    keepout = s.Keepout(
+        keepout_id=OTHER,
+        lat=-35.36146,
+        lon=149.16523,
+        radius_m=34.5,
+        source="detection",
+        source_id=DETECTION,
+    )
+    return [
+        pose,
+        box,
+        s.DetectorInfo(
+            name="oracle",
+            license="Apache-2.0",
+            version="1",
+            placement="onboard",
+            ok=True,
+            tiles=15,
+            latency_ms=12.5,
+            rate_hz=1.0,
+        ),
+        detection,
+        s.PerceptionReport(
+            still_id=STILL,
+            command_id=COMMAND,
+            captured_utc=T,
+            sensor="rgb",
+            pose=pose,
+            footprint=[
+                s.LatLon(lat=-35.3612, lon=149.1648),
+                s.LatLon(lat=-35.3612, lon=149.1657),
+                s.LatLon(lat=-35.3618, lon=149.1657),
+                s.LatLon(lat=-35.3618, lon=149.1648),
+            ],
+            px_per_m=50.0,
+            synthetic=True,
+            detector=s.DetectorInfo(
+                name="oracle",
+                license="Apache-2.0",
+                version="1",
+                placement="onboard",
+                ok=True,
+                tiles=15,
+                latency_ms=12.5,
+                rate_hz=1.0,
+            ),
+            detections=[detection],
+        ),
+        s.CropData(
+            ref_id=DETECTION,
+            purpose="detection",
+            still_id=STILL,
+            bbox_in_still=box,
+            width=384,
+            height=384,
+            jpeg=JPEG,
+        ),
+        s.CropRequest(
+            request_id=OTHER, still_id=STILL, center_px=(1220, 845), side_px=768, max_px=512
+        ),
+        keepout,
+        s.KeepoutInstall(install_seq=3, keepouts=[keepout]),
+        garment,
+        s.Item(kind="backpack", colors=[s.ColorName.BLUE], certainty="likely"),
+        s.Hair(color=s.ColorName.GRAY, length="short", certainty="unsure"),
+        s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T, heading_deg=270.0),
+        s.SearchProfile(
+            profile_id=PROFILE,
+            profile_version=1,
+            mission_id=MISSION,
+            subject_category="dementia",
+            garments=[garment],
+            last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            approved_by="operator:demo",
+            approved_at=T,
+        ),
+        s.Candidate(
+            candidate_id=CANDIDATE,
+            rev=2,
+            mission_id=MISSION,
+            seq=3,
+            state=s.CandidateState.READY,
+            lat=-35.36146,
+            lon=149.16523,
+            sigma95_m=4.5,
+            n_seen=3,
+            n_in_view=4,
+            best_detector_score=0.62,
+            priority=0.48,
+            first_seen_utc=T,
+            last_seen_utc=T,
+        ),
+        s.CandidateAssessment(
+            candidate_id=CANDIDATE,
+            profile_version=1,
+            engine="code",
+            model_id="colors_v1",
+            person="unsure",
+            person_p=0.6,
+            fields={"garment:0": "match"},
+            overall=0.55,
+            explanation_sv="Röd överdel syns.",
+            crops_used=[DETECTION],
+            latency_ms=3,
+            evidence={"garment:0:red": 0.41},
+        ),
+        s.CandidateDecision(decision="unsure", note="oklart", subject_rev=2),
+        s.CandidateCard(
+            candidate_id=CANDIDATE,
+            rev=2,
+            seq=3,
+            state=s.CandidateState.READY,
+            priority=0.48,
+            priority_class="medium",
+            lat=-35.36146,
+            lon=149.16523,
+            sigma95_m=4.5,
+            n_seen=3,
+            n_in_view=4,
+            best_detector_score=0.62,
+            thumb_detection_id=DETECTION,
+            engine="code",
+            person="unsure",
+            fields={"garment:0": "match"},
+            assessed_profile_version=1,
+            current_profile_version=1,
+            first_seen_utc=T,
+            last_seen_utc=T,
+        ),
+    ]
+
+
 def examples() -> dict[type[BaseModel], BaseModel]:
     """One instance per exported model, keyed by its class."""
     items: list[BaseModel] = [
@@ -731,6 +895,7 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             latency_ms=180,
         ),
     ]
+    items += _search_examples()
     out: dict[type[BaseModel], BaseModel] = {}
     for item in items:
         assert type(item) not in out, f"two examples for {type(item).__name__}"

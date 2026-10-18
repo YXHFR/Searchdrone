@@ -197,6 +197,10 @@ ground:
 brain-token:
     uv run --no-sync python tools/brain_token.py
 
+# Write a new token for the search service sd-search (restart sd-ground afterwards)
+search-token:
+    uv run --no-sync python tools/search_token.py
+
 # --- AI commander (sd-brain) -----------------------------------------------------------
 
 # Start the AI commander (reads config/brain.toml; keys from .env)
@@ -389,9 +393,20 @@ perf *args:
 
 alias bench := perf
 
-# Download the offline map pack to <data_dir>/tiles/ (keys: bbox, maxzoom, name, dry)
+# Download the offline map pack to <data_dir>/tiles/ (keys: site, bbox, maxzoom, name, dry)
 maps-fetch *args:
     uv run --no-sync python tools/maps/fetch.py "$@"
+
+# Heights and map layers for a simulator site (keys: site; needs gdal-bin and internet).
+# A public site is written next to its site.toml; a local one (config/site.local.toml)
+# to build/sites/<site>/ with Lantmäteriet's data, never committed
+world-fetch *args:
+    uv run --no-sync python tools/terrain/fetch_site.py "$@"
+
+# Pictures of a site world from the camera at 40 m and 100 m and from the side, with the
+# road's width and the map overlap measured in them (keys: world, instance)
+world-snapshot *args:
+    uv run --package sd-sim python -m sd_sim.snapshot "$@"
 
 # --- hardware, acceptance and release ------------------------------------------------
 
