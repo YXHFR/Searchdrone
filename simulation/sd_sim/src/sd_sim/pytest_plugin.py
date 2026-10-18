@@ -204,6 +204,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     phases[report.when or ""] = report.outcome
     if report.when != "teardown":
         return
+    _logged.pop(report.nodeid, None)
     rep = _pending.pop(report.nodeid, None)  # only in the process that ran the test
     if rep is not None and wants_result(phases):
         try:

@@ -88,7 +88,8 @@ jobs:
 
   page:
     needs: film
-    if: always()
+    # A failed film still builds the page (with the published film); a cancel stops it.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     permissions:
