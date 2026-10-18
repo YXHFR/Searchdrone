@@ -3,9 +3,10 @@
 Runs beside the executor in its own task and only reads: the flight controller's latest
 telemetry (``Vehicle.telemetry``) and the still source. It never sends anything to the
 flight controller and never touches the executor. Reports go to the link's
-lowest-priority queue (``OnboardLink.perception``). The detector work runs in a worker
-thread so a slow picture never blocks the event loop the executor ticks on. A failing
-still is logged and skipped; the loop keeps going.
+lowest-priority queue (``OnboardLink.perception``). Reading the still and the detector
+work run in a worker thread so a slow picture never blocks the event loop the executor
+ticks on. A failing still is logged and skipped; the loop keeps going. Kept stills (for
+a run's record) are capped at ``KEEP_MAX``, the oldest removed first.
 """
 
 from __future__ import annotations
@@ -25,10 +26,11 @@ from sd_onboard.perception.sources import CapturedStill, StillSource
 from sd_schemas.base import new_id
 from sd_schemas.link import PerceptionReport
 
-__all__ = ["MAX_POSE_AGE_MS", "PerceptionLoop", "PerceptionStats", "pose_from"]
+__all__ = ["KEEP_MAX", "MAX_POSE_AGE_MS", "PerceptionLoop", "PerceptionStats", "pose_from"]
 
 log = logging.getLogger("sd_onboard.perception")
 MAX_POSE_AGE_MS = 1000  # older position or attitude: the still is skipped
+KEEP_MAX = 200  # kept stills (JPEG + JSON pairs) in ``keep_dir``
 
 
 @dataclass
@@ -137,21 +139,24 @@ class PerceptionLoop:
             report.model_dump_json(exclude={"detections": {"__all__": {"crop_jpeg_b64"}}}),
             encoding="utf-8",
         )
+        kept = sorted(folder.glob("*.json"))  # still ids are time-ordered (UUIDv7)
+        for old in kept[: max(0, len(kept) - KEEP_MAX)]:
+            old.with_suffix(".jpg").unlink(missing_ok=True)
+            old.unlink(missing_ok=True)
 
     async def run(self, stop: asyncio.Event) -> None:
         log.info(
             "perception on: sources %s, skipped %s", sorted(self.built.sources), self.built.skipped
         )
         while not stop.is_set():
-            captured = self.source.poll()
-            if captured is not None:
-                t, now_ms = self.telemetry(), self.clock.monotonic_ms()
-                try:
+            try:  # one bad still must not end perception
+                captured = await asyncio.to_thread(self.source.poll)
+                if captured is not None:
+                    t, now_ms = self.telemetry(), self.clock.monotonic_ms()
                     report = await asyncio.to_thread(self.handle, captured, t, now_ms)
-                except Exception:  # one bad still must not end perception
-                    self.stats.failed += 1
-                    log.exception("perception failed on still %s", captured.name)
-                    report = None
-                if report is not None:
-                    self.send(report)
+                    if report is not None:
+                        self.send(report)
+            except Exception:
+                self.stats.failed += 1
+                log.exception("perception failed on a still")
             await self.clock.sleep(self.period_s)

@@ -62,8 +62,7 @@ class PerceptionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = False
-    # A folder a camera process writes stills to (<name>.ppm + <name>.json); in the
-    # simulator the launcher sets it to the Gazebo stills camera's folder.
+    # A folder a camera process writes stills to (<name>.ppm + <name>.json).
     still_dir: str = ""
     width_px: int = Field(default=1280, ge=16, le=8192)
     height_px: int = Field(default=720, ge=16, le=8192)

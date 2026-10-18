@@ -18,8 +18,8 @@ def test_candidates_are_an_empty_stub(logged_in: TestClient) -> None:
 
 
 def test_stubs_need_a_login(panel: TestClient) -> None:
-    for what in ("candidates", "detections"):
-        assert panel.get(f"/api/v1/missions/{MISSION}/{what}").status_code == 401
+    for what in ("candidates", "detections", "finds", f"detections/{MISSION}/crop"):
+        assert panel.get(f"/api/v1/missions/{MISSION}/{what}").status_code == 401, what
 
 
 def test_stubs_have_no_write_route(logged_in: TestClient) -> None:

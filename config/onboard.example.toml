@@ -21,7 +21,7 @@ expected_param_files = ["simulation/sitl/params/searchdrone-safety.parm"]
 takeoff_delay_after_arm_s = 0.0
 
 [perception]                                      # stills -> detections -> reports to the ground
-enabled = false                                   # needs a camera; the simulator turns it on
+enabled = false                                   # needs a camera writing stills to still_dir
 still_dir = ""                                    # folder the camera writes <name>.ppm + .json to
 width_px = 1280                                   # the stills camera
 height_px = 720

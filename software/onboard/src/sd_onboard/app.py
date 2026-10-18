@@ -126,7 +126,11 @@ def _perception(
     if not p.enabled:
         return None
     return PerceptionLoop(
-        DirStillSource(loaded.path(p.still_dir), synthetic=loaded.config.profile == "sim"),
+        DirStillSource(
+            loaded.path(p.still_dir),
+            synthetic=loaded.config.profile == "sim",
+            max_size=(p.width_px, p.height_px),
+        ),
         lambda: vehicle.telemetry,
         link.perception,
         clock,

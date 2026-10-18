@@ -24,6 +24,7 @@ from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
 from sd_obs.clock import MonotonicClock
 from sd_onboard.link_client import OnboardLink
+from sd_onboard.perception import loop as loop_module
 from sd_onboard.perception.loop import MAX_POSE_AGE_MS, PerceptionLoop, pose_from
 from sd_onboard.perception.sources import DirStillSource, read_ppm
 from sd_safety.targets import Plane
@@ -105,9 +106,23 @@ def truth_error_m(lat: float, lon: float) -> float:
 def test_read_ppm() -> None:
     f = read_ppm(b"P6\n2 1\n255\n" + bytes(6))
     assert (f.width, f.height, len(f.rgb)) == (2, 1, 6)
-    for bad in (b"P5 2 1 255\n" + bytes(2), b"P6 2 1 65535\n" + bytes(12), b"P6 2"):
+    for bad in (
+        b"P5 2 1 255\n" + bytes(2),
+        b"P6 2 1 65535\n" + bytes(12),
+        b"P6 2",
+        b"P6 2 1 255\n" + bytes(5),  # truncated pixel data
+    ):
         with pytest.raises(ValueError):
             read_ppm(bad)
+    with pytest.raises(ValueError, match="out of range"):
+        read_ppm(b"P6 4 1 255\n" + bytes(12), max_size=(2, 2))
+
+
+def test_a_still_larger_than_the_camera_is_not_read(tmp_path: Path) -> None:
+    write_still(tmp_path, "block0_h30")  # 1280 x 720
+    src = DirStillSource(tmp_path, synthetic=True, max_size=(640, 360))
+    assert src.poll() is None
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_source_takes_the_newest_still_and_drops_older_ones(tmp_path: Path) -> None:
@@ -244,3 +259,109 @@ def test_queue_keeps_the_newest_reports(tmp_path: Path) -> None:
     for _ in range(12):
         link.perception(report)
     assert link.dropped_perception == 2
+
+
+def test_kept_stills_are_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(loop_module, "KEEP_MAX", 2)
+    lp = loop(tmp_path / "in", FakeClock(), {}, keep=tmp_path / "kept")
+    ids = []
+    for _ in range(3):
+        write_still(tmp_path / "in", "block0_h30")
+        captured = lp.source.poll()
+        assert captured is not None
+        report = lp.handle(captured, telemetry("block0_h30", 0), 0)
+        assert report is not None and report.detections
+        ids.append(str(report.still_id))
+    kept = sorted(p.name for p in (tmp_path / "kept").iterdir())
+    assert kept == sorted(f"{i}{ext}" for i in ids[1:] for ext in (".jpg", ".json"))
+
+
+class _FlakySource:
+    """Raises on the first poll, then gives one real still, then nothing."""
+
+    def __init__(self, folder: Path) -> None:
+        self.inner = DirStillSource(folder, synthetic=True)
+        self.polls = 0
+        self.threads: set[str] = set()
+
+    def poll(self) -> Any:
+        import threading
+
+        self.threads.add(threading.current_thread().name)
+        self.polls += 1
+        if self.polls == 1:
+            raise RuntimeError("camera folder gone")
+        return self.inner.poll()
+
+
+async def test_run_skips_a_failing_still_sends_reports_and_stops(tmp_path: Path) -> None:
+    import threading
+
+    write_still(tmp_path, "block0_h30")
+    clock = MonotonicClock()
+    sent: list[Any] = []
+    source = _FlakySource(tmp_path)
+    lp = PerceptionLoop(
+        source,
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),  # read when the still arrives
+        sent.append,
+        clock,
+        CAM,
+        period_s=0.01,
+        env={},
+    )
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(lp.run(stop))
+    for _ in range(500):
+        if sent:
+            break
+        await asyncio.sleep(0.01)
+    assert not task.done()  # the failing poll did not end the loop
+    stop.set()
+    await asyncio.wait_for(task, 2)
+    assert lp.stats.failed == 1
+    assert len(sent) == 1 and sent[0].detections[0].label == "red_block"
+    assert threading.current_thread().name not in source.threads  # never on the event loop
+
+
+class _TooLarge:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send(self, body: Any, **_: Any) -> None:
+        from sd_link.envelope import MessageTooLargeError
+
+        if type(body).__name__ == "PerceptionReport":
+            raise MessageTooLargeError("too large")
+        self.sent.append(type(body).__name__)
+
+
+async def test_a_report_too_large_to_send_never_holds_up_events(tmp_path: Path) -> None:
+    write_still(tmp_path, "block0_h30")
+    lp = loop(tmp_path, FakeClock(), {})
+    captured = lp.source.poll()
+    assert captured is not None
+    report = lp.handle(captured, telemetry("block0_h30", 0), 0)
+    assert report is not None
+    link = OnboardLink(
+        url="ws://127.0.0.1:1/x", token="t" * 40, vehicle_id="sim-01", clock=MonotonicClock()
+    )
+    link.perception(report)
+    session = _TooLarge()
+    flush = asyncio.ensure_future(link._flush(session))  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    try:
+        for _ in range(100):
+            if link.dropped_perception:
+                break
+            await asyncio.sleep(0.01)
+        link.event("executor.state_changed", "info", {"to": "HOLD"})
+        for _ in range(100):
+            if session.sent:
+                break
+            await asyncio.sleep(0.01)
+        assert not flush.done()
+    finally:
+        flush.cancel()
+        await asyncio.gather(flush, return_exceptions=True)
+    assert link.dropped_perception == 1
+    assert session.sent == ["OnboardEvent"]

@@ -3,6 +3,7 @@ source."""
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -187,7 +188,7 @@ def test_bad_colour_settings(params: str, match: str) -> None:
 
 
 def test_patch_cap_and_size_check_input() -> None:
-    w, h = 64, 64
+    w, h = 128, 128
     px = bytearray(b"\x40\x80\x30" * (w * h))
     for i in range(100):  # 100 separate red dots of 3 x 3 pixels
         x0, y0 = 2 + (i % 10) * 6, 2 + (i // 10) * 6
@@ -200,3 +201,13 @@ def test_patch_cap_and_size_check_input() -> None:
     assert len(found) == color.MAX_PATCHES
     with pytest.raises(ValueError, match="px_per_m"):
         keep_plausible(found, 0.0, default_registry())
+
+
+def test_a_picture_mostly_in_the_colour_finds_nothing_quickly() -> None:
+    w, h = 1280, 720
+    red = Frame(width=w, height=h, rgb=b"\xd0\x20\x20" * (w * h), ts_mono_ms=0)
+    det = ColorDetector.from_registry(default_registry())
+    start = time.monotonic()
+    assert det.detect(red) == []
+    assert time.monotonic() - start < 1.0  # no flood fill over a million pixels
+    assert det.skipped_large == 1

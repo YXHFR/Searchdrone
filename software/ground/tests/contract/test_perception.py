@@ -81,6 +81,16 @@ async def send(r: Rig, rep: PerceptionReport) -> None:
     await r.onboard.session.send(rep)
 
 
+async def handled(r: Rig, n: int) -> None:
+    """Wait until the ground has taken ``n`` reports off its queue."""
+
+    def done() -> bool:
+        q = r.flow.reports.get(VID)
+        return q is not None and q.handled >= n and not q.running
+
+    await r.until(done, 10, f"{n} reports handled")
+
+
 async def detections(r: Rig, mid: str) -> list[dict[str, Any]]:
     res = await r.panel.get(f"/api/v1/missions/{mid}/detections")
     assert res.status_code == 200, res.text
@@ -143,11 +153,42 @@ async def test_report_becomes_detections_finds_and_events(r: Rig) -> None:
 
 async def test_finds_survive_a_restart_of_the_ground(r: Rig) -> None:
     mid = await r.open_mission()
-    await send(r, report(r, detection(r, "red_block", 10.0, 200.0)))
-    await r.until(lambda: mid in r.flow.finds and r.flow.finds[mid].items, 10, "a find")
+    first = detection(r, "red_block", 10.0, 200.0, score=0.6)
+    seen_again = detection(r, "red_block", 13.0, 200.0, score=0.8, crop_jpeg_b64=_jpeg())
+    car = detection(r, "car", 40.0, 170.0, source="oracle")
+    car_seen = detection(r, "car", 41.0, 170.0, source="model", score=0.5)
+    await send(r, report(r, first, car))
+    await send(r, report(r, seen_again, car_seen))
+    await handled(r, 2)
+    before = (await r.panel.get(f"/api/v1/missions/{mid}/finds")).json()
+
     r.flow.finds.clear()  # what a restart loses
-    finds = (await r.panel.get(f"/api/v1/missions/{mid}/finds")).json()
-    assert [(f["label"], f["count"]) for f in finds] == [("red_block", 1)]
+    after = (await r.panel.get(f"/api/v1/missions/{mid}/finds")).json()
+    assert after == before
+    block = next(f for f in after if f["label"] == "red_block")
+    assert block["find_id"] == str(first.detection_id) and block["count"] == 2
+    assert block["thumb_detection_id"] == str(seen_again.detection_id)
+    assert block["score"] == 0.8
+    car_find = next(f for f in after if f["label"] == "car")
+    assert car_find["source"] == "model"  # a real detector saw it too
+
+    # A resend after the restart is neither stored nor counted again.
+    await send(r, report(r, seen_again))
+    await handled(r, 3)
+    again = (await r.panel.get(f"/api/v1/missions/{mid}/finds")).json()
+    assert again == before
+    assert len(await detections(r, mid)) == 4
+
+
+async def test_finds_cache_is_bounded(r: Rig) -> None:
+    from sd_ground.services.perception import MAX_CACHED_MISSIONS, finds_for
+
+    mid = await r.open_mission()
+    for _ in range(MAX_CACHED_MISSIONS + 2):
+        await finds_for(r.flow, str(new_id()))  # e.g. the panel reading old missions
+    await finds_for(r.flow, mid)
+    assert len(r.flow.finds) == MAX_CACHED_MISSIONS
+    assert mid in r.flow.finds
 
 
 async def test_unknown_classes_bad_crops_and_resends(r: Rig) -> None:
@@ -157,7 +198,7 @@ async def test_unknown_classes_bad_crops_and_resends(r: Rig) -> None:
     rep = report(r, block, detection(r, "submarine", 0.0, 160.0))
     await send(r, rep)
     await send(r, rep)  # a resend after a reconnect: stored once
-    await r.until(lambda: mid in r.flow.finds, 10, "the report")
+    await handled(r, 2)
     await r.g.flush_events()
     rows = await detections(r, mid)
     assert [(d["label"], d["has_crop"]) for d in rows] == [("red_block", False)]

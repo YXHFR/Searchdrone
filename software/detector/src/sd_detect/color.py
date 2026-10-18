@@ -25,9 +25,10 @@ from sd_detect.api import BBox, Detection, Frame, SourceKind
 from sd_detect.classes import ClassRegistry, ClassSpec, RegistryError
 from sd_detect.still import Still
 
-__all__ = ["MAX_PATCHES", "ColorDetector", "ColorRule", "hsv"]
+__all__ = ["MAX_MASK_FRACTION", "MAX_PATCHES", "ColorDetector", "ColorRule", "hsv"]
 
 MAX_PATCHES = 64  # per class and picture; more is noise, not finds
+MAX_MASK_FRACTION = 0.15  # more of the picture in a class's colour: that rule finds nothing
 _NEIGHBOURS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 
 FloatImage = npt.NDArray[np.float32]
@@ -117,6 +118,7 @@ class ColorDetector:
 
     def __init__(self, rules: list[ColorRule]) -> None:
         self.rules = rules
+        self.skipped_large = 0  # pictures a rule skipped: too much of them in the colour
 
     @classmethod
     def from_registry(cls, registry: ClassRegistry) -> Self:
@@ -132,6 +134,12 @@ class ColorDetector:
             for lo, hi in rule.hue_deg:
                 in_hue |= (hue >= lo) & (hue <= hi)
             mask = in_hue & (sat >= rule.min_saturation) & (val >= rule.min_value)
+            if int(mask.sum()) > MAX_MASK_FRACTION * mask.size:
+                # Most of the picture in the colour (a roof up close, a red cloth over the
+                # lens): no object of the class fits, and joining every pixel would hold
+                # the worker thread for seconds.
+                self.skipped_large += 1
+                continue
             found: list[Detection] = []
             for x0, y0, x1, y1, count in _patches(mask):
                 if count < rule.min_area_px:

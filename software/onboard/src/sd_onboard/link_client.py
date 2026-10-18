@@ -272,7 +272,11 @@ class OnboardLink:
                     self._events.popleft()
                 # One report per round, and only with nothing more urgent waiting.
                 if self._perception and not self._acks and not self._events:
-                    await session.send(self._perception[0])
+                    try:
+                        await session.send(self._perception[0])
+                    except ValueError as exc:  # too large: dropped, never in the way
+                        self.dropped_perception += 1
+                        log.warning("perception report dropped: %s", exc)
                     self._perception.popleft()
                     if self._perception:
                         self._wake.set()
