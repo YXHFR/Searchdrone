@@ -4,7 +4,8 @@
   proposes follow_path by the path's name, the pilot approves the card, every point is
   passed within 3 m and the drone then hovers at the last one.
 * SC_PATH_stop: STOP halfway along the path: BRAKE within 1 s, the speed at least halved
-  after 2 s, standing still within 5 s (as SC02), and it stays there.
+  after 2 s, standing still within 5 s and holding there for 20 s (as SC02); after the
+  pilot's Resume the AI flies the rest of the path and the drone hovers at its end.
 
 The distance to every point and the brake times are measured values in the test's
 ``runs/<run>/result.json``.
@@ -117,7 +118,7 @@ async def test_sc_path_points_within_3_m_then_hover(
         await sc.check_invariants()
 
 
-@pytest.mark.budget_s(480)
+@pytest.mark.budget_s(600)
 async def test_sc_path_stop_halfway_brakes_at_once(
     sim: Any, migrated_db: Any, tmp_path: Path
 ) -> None:
@@ -152,12 +153,36 @@ async def test_sc_path_stop_halfway_brakes_at_once(
         assert sc.mode() == "BRAKE", sc.modes()
         assert brake_s <= BRAKE_LIMIT_S and at_2_s <= speed / 2, (brake_s, at_2_s, speed)
         assert still_s <= STILL_LIMIT_S, still_s
-        here = (sc.tel.lat, sc.tel.lon)
+        # Holds where it stopped, with SC02's limits: 20 s within 3 m and 1 m in height.
+        here = (sc.tel.lat, sc.tel.lon, sc.tel.alt_rel_home_m)
         await sc.hold_for(
-            10.0,
-            lambda: distance_m(*here, sc.tel.lat, sc.tel.lon) <= 3.0,
+            20.0,
+            lambda: (
+                distance_m(here[0], here[1], sc.tel.lat, sc.tel.lon) <= 3.0
+                and abs(sc.tel.alt_rel_home_m - here[2]) <= 1.0
+            ),
             "står kvar där vägen stoppades",
         )
+
+        # The pilot's Resume: the AI's resume flies the rest of the path, as a path
+        # (TRANSIT), and the drone hovers at its last point.
+        before = [c["id"] for c in await sc.commands()]
+        res = await sc.press("resume")
+        assert res.status_code == 202, res.text
+        await sc.wait_command("resume", "running", 30, issuer_kind="brain", besides=before)
+        state = await sc.onboard_state()
+        assert state["executor_state"] == "TRANSIT", state
+        await sc.wait_command("resume", "done", 180, issuer_kind="brain", besides=before)
+        end = sc.at(*PATH_ENU[-1])
+        rest = closest_m(sc, pressed)[3:]  # the points still left when it stopped
+        measure(
+            "Fortsätt efter STOPP: sämsta återstående vägpunkt", max(rest), POINT_LIMIT_M, unit="m"
+        )
+        assert max(rest) <= POINT_LIMIT_M, rest
+        await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 15, "still at the end after Resume")
+        assert sc.mode() == "LOITER", sc.modes()
+        assert distance_m(*end, sc.tel.lat, sc.tel.lon) <= POINT_LIMIT_M
+
         res = await sc.press("return_home")
         assert res.status_code == 202
         await sc.until(lambda: not sc.tel.armed, 240, "landed at home")

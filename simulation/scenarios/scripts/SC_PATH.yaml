@@ -1,7 +1,8 @@
 # SC-PATH: fly a path the pilot drew. The AI takes off, and on "Flyg vägen pa-1." proposes
 # follow_path by the path's name only (ai: true: the adapter takes the points from the
 # drawn path, the script never writes coordinates); the pilot approves the card. After
-# the last point the drone hovers. Test data for the scripted commander.
+# the last point the drone hovers. After the pilot's STOP and Resume, the AI resumes the
+# path. Test data for the scripted commander.
 scenario: SC_PATH
 timeout_s: 900
 expected_runtime_s: 300
@@ -18,6 +19,10 @@ turns:
     match: '^Flyg vägen (?P<name>pa-\d+)\.$'
     once: false
     action: {skill: follow_path, ai: true, params: {path: pa-1, alt_m: 30, speed_ms: 5}}
+  - on: operator_override
+    when: {action: resume}
+    say: ["Fortsätter längs vägen."]
+    action: {skill: resume, params: {}}
   - on: skill_event
     when: {skill: follow_path, status: done}
     say: ["Jag är vid vägens slut och svävar här."]
