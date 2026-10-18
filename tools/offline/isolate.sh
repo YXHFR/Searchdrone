@@ -51,6 +51,14 @@ esac
 # station refuses a .env that others can read); `just ci-sitl` mounts it over .env.
 writable=(runs build "$data")
 env_copy=build/offline/env
+# The local settings (config/<part>.toml from `just setup-config`, 0600) are lent to
+# the test user for the run and given back by `down`.
+shopt -s nullglob
+local_config=()
+for f in config/*.toml; do
+    [[ "$f" == *.example.toml ]] || local_config+=("$f")
+done
+shopt -u nullglob
 
 case "${1:-}" in
     prepare)
@@ -62,6 +70,7 @@ case "${1:-}" in
         install -d build/offline/venv  # the virtualenv, filled before the cut
         install -m 600 -o "$USER_NAME" -g "$USER_NAME" .env "$env_copy"
         chown -R "$USER_NAME:$USER_NAME" "${writable[@]}"
+        [ "${#local_config[@]}" -eq 0 ] || chown "$USER_NAME:$USER_NAME" "${local_config[@]}"
         say "hämtar avbilder före spärren"
         docker pull -q "$CURL_IMAGE" >/dev/null
         echo "SD_OFFLINE_UID=$(id -u "$USER_NAME")"
@@ -92,6 +101,7 @@ case "${1:-}" in
         for dir in "${writable[@]}"; do
             [ -e "$dir" ] && chown -R "$owner" "$dir"
         done
+        [ "${#local_config[@]}" -eq 0 ] || chown "$owner" "${local_config[@]}"
         say "spärren borttagen"
         ;;
     *)
