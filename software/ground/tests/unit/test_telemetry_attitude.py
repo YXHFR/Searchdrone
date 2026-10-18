@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import math
-from dataclasses import replace
 
 import pytest
 
@@ -55,7 +55,7 @@ def test_rounding_at_the_edges_stays_inside_the_schema() -> None:
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
 @pytest.mark.parametrize("axis", ["roll_deg", "pitch_deg", "yaw_deg"])
 def test_non_finite_attitude_is_dropped_not_clamped(axis: str, bad: float) -> None:
-    t = replace(FcTelemetry(attitude_mono_ms=0), **{axis: bad})
+    t = dataclasses.replace(FcTelemetry(attitude_mono_ms=0), **{axis: bad})
     assert to_telemetry(_snap(t, 0), NOW).attitude is None
 
 
