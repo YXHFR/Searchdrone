@@ -26,6 +26,7 @@ class ModelError(RuntimeError):
     """The model server failed (HTTP error, bad answer). ``kind`` goes to the turn log."""
 
     kind: Literal["http_error", "timeout", "parse_error"] = "http_error"
+    status: int | None = None  # the HTTP status when the server answered with an error
 
 
 class ModelTimeoutError(ModelError):
@@ -161,7 +162,9 @@ async def openai_chat(
     except httpx.HTTPError as exc:
         raise ModelError(f"model server unreachable: {type(exc).__name__}") from None
     if resp.status_code != 200:
-        raise ModelError(f"model server answered HTTP {resp.status_code}")
+        err = ModelError(f"model server answered HTTP {resp.status_code}")
+        err.status = resp.status_code
+        raise err
     try:
         data = resp.json()
     except ValueError:

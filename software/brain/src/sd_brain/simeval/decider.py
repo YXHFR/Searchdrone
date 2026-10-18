@@ -6,9 +6,11 @@ answers each turn with text or one order, exactly like ``sd-brain run``. It neve
 the order goes through the gate, and the executor and ArduPilot fly it.
 
 A flight starts with the cloud model when a key is set and the day's cost cap has room
-(``make_decision_maker``). If the cap is reached or the cloud stops answering during the
-flight, the script takes over for the rest of it and the flight no longer counts as an
-exam (``exam`` false); it is still good image data for the farm.
+(``make_decision_maker``). If the cap is reached, the provider refuses the key or the cloud
+stops answering during the flight, the script takes over for the rest of it and the flight
+no longer counts as an exam (``exam`` false); it is still good image data for the farm.
+``switch_reason`` says why: ``key_invalid`` (no key, or the provider refused it),
+``budget`` or ``cloud_error``.
 """
 
 from __future__ import annotations
@@ -19,16 +21,16 @@ from sd_brain.backends.base import ToolExecutor
 from sd_brain.backends.llm import LlmCommander
 from sd_brain.config import BehaviourConfig
 from sd_brain.context import ContextBuilder
-from sd_brain.runtime.base import Sampling
+from sd_brain.runtime.base import ModelRuntime, Sampling
 from sd_brain.simeval.budget import MeteredRuntime
 from sd_brain.state_view import motion_block
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.skills import FORBIDDEN_SKILL_NAMES, SKILL_REGISTRY, SkillRegistry
 
-__all__ = ["DecisionMaker", "SearchScript", "make_decision_maker"]
+__all__ = ["DecisionMaker", "SearchScript", "cloud_commander", "make_decision_maker"]
 
 DeciderKind = Literal["cloud", "script"]
-SwitchReason = Literal["no_key", "budget", "cloud_error"]
+SwitchReason = Literal["key_invalid", "budget", "cloud_error"]
 
 
 class SearchScript:
@@ -81,7 +83,7 @@ class DecisionMaker:
         script: SearchScript | None = None,
         *,
         reg: SkillRegistry = SKILL_REGISTRY,
-        no_cloud_reason: SwitchReason = "no_key",
+        no_cloud_reason: SwitchReason = "key_invalid",
     ) -> None:
         self.cloud = cloud
         self.meter = meter
@@ -109,8 +111,9 @@ class DecisionMaker:
                 self.forbidden_calls.append(name)
 
     async def decide(self, turn: TurnInput, tools: ToolExecutor) -> TurnOutput:
-        if self.kind == "cloud" and self.cloud is not None and self.meter is not None:
-            if not self.meter.can_afford():
+        meter = self.meter
+        if self.kind == "cloud" and self.cloud is not None:
+            if meter is not None and not meter.can_afford():
                 self._switch("budget")
             else:
                 out = await self.cloud.decide(turn, tools)
@@ -118,8 +121,15 @@ class DecisionMaker:
                 failed = out.diagnostics.error in ("timeout", "http_error")
                 if not failed or out.has_action() or out.messages:
                     return out
-                self._switch("budget" if not self.meter.can_afford() else "cloud_error")
+                self._switch(self._failure_reason())
         return await self.script.decide(turn, tools)
+
+    def _failure_reason(self) -> SwitchReason:
+        if self.meter is None:
+            return "cloud_error"
+        if self.meter.key_invalid:
+            return "key_invalid"
+        return "budget" if not self.meter.can_afford() else "cloud_error"
 
 
 def make_decision_maker(
@@ -129,11 +139,24 @@ def make_decision_maker(
     reg: SkillRegistry = SKILL_REGISTRY,
     sampling: Sampling | None = None,
 ) -> DecisionMaker:
-    """A decision maker for one flight. ``meter`` None (no key) gives the script."""
-    if meter is None:
+    """A decision maker for one flight. No key, or a key refused before, gives the script."""
+    if meter is None or meter.key_invalid:
         return DecisionMaker(None, None, reg=reg)
     if not meter.can_afford():
         return DecisionMaker(None, None, reg=reg, no_cloud_reason="budget")
+    return DecisionMaker(
+        cloud_commander(meter, behaviour, reg=reg, sampling=sampling), meter, reg=reg
+    )
+
+
+def cloud_commander(
+    runtime: ModelRuntime,
+    behaviour: BehaviourConfig,
+    *,
+    reg: SkillRegistry = SKILL_REGISTRY,
+    sampling: Sampling | None = None,
+) -> LlmCommander:
+    """The model side of an exam: the same context and sampling in a live run and a replay."""
     ctx = ContextBuilder(reg, takeoff_policy=behaviour.takeoff_policy, prompt_budget_tokens=6000)
     smp = sampling or Sampling(temperature=0.2, top_p=0.8, max_tokens=512)
-    return DecisionMaker(LlmCommander(meter, ctx, reg, behaviour, smp), meter, reg=reg)
+    return LlmCommander(runtime, ctx, reg, behaviour, smp)

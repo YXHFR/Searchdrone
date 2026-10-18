@@ -1,9 +1,15 @@
-"""The example bank: highly graded exam flights kept for fine-tuning the local model later.
+"""The example bank: graded exam flights, kept to improve the commander's instructions.
 
-Each kept flight is one gzipped JSON file: the grade, the scenario seed and, per turn, the
-messages the model saw, the tool calls it made, what it said and did, and what the gate
-answered. Kept only for exams (the cloud model decided the whole flight) that passed with
-at least ``BANK_MIN_TOTAL`` points.
+Each kept flight is one gzipped JSON file: the grade, the scenario seed, the cloud model's
+answers in order and, per turn, the messages the model saw, the tool calls it made, what it
+said and did, and what the gate answered. Only exams are kept (the cloud model decided the
+whole flight):
+
+- a flight that passed with at least ``BANK_MIN_TOTAL`` points (``good-<id>``) can become a
+  replay fixture that ``just brain-eval`` flies again in CI without a network
+  (``sd-brain bank export-golden``, see ``simeval.golden``);
+- a flight that failed (``fail-<id>``) shows where the instructions went wrong; the list
+  of them is ``sd-brain bank failures``.
 
 Where it goes: a Cloudflare R2 bucket in the EU jurisdiction when ``SD_BANK_R2_ENDPOINT``,
 ``SD_BANK_R2_BUCKET``, ``SD_BANK_R2_ACCESS_KEY_ID`` and ``SD_BANK_R2_SECRET_ACCESS_KEY`` are
@@ -39,6 +45,7 @@ __all__ = [
     "LocalBank",
     "R2Bank",
     "bank_from_env",
+    "bank_name",
     "example_record",
     "worth_keeping",
 ]
@@ -58,13 +65,21 @@ class BankError(RuntimeError):
 
 
 def worth_keeping(score: FlightScore) -> bool:
-    return score.exam and score.passed and score.total >= BANK_MIN_TOTAL
+    """A good exam (a replay fixture candidate) or a failed one (for the failure list)."""
+    return score.exam and (not score.passed or score.total >= BANK_MIN_TOTAL)
+
+
+def bank_name(score: FlightScore) -> str:
+    return f"{'good' if score.passed else 'fail'}-{score.flight_id}"
 
 
 def example_record(
-    score: FlightScore, records: list[TurnRecord], scenario: Mapping[str, Any]
+    score: FlightScore,
+    records: list[TurnRecord],
+    scenario: Mapping[str, Any],
+    replies: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """One flight as a training example (decisions, context and outcome)."""
+    """One flight: the decisions, what the model saw, the model's answers and the outcome."""
     turns = []
     for r in records:
         out = r.output
@@ -85,6 +100,7 @@ def example_record(
         "schema": "sd-brain-example/1",
         "score": score.model_dump(mode="json"),
         "scenario": dict(scenario),
+        "replies": list(replies or []),
         "turns": turns,
     }
 

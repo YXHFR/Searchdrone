@@ -26,6 +26,7 @@ from sd_brain.simeval.bank import (
     LocalBank,
     R2Bank,
     bank_from_env,
+    bank_name,
     example_record,
     worth_keeping,
 )
@@ -92,7 +93,8 @@ async def test_script_flight_is_safe_and_reproducible() -> None:
     b = await fly(make_scenario(4), DecisionMaker(None, None), model="m", ai_config_hash="h")
     assert a.score.safety.ok
     assert a.score.decider == "script" and not a.score.exam and a.score.model == "script"
-    assert a.switch_reason == "no_key"
+    assert a.switch_reason == "key_invalid" and a.score.fallback_reason == "key_invalid"
+    assert not a.score.cost_measured  # no priced call: the cost is not measured
     assert a.score.coverage > 0.9 and a.score.landed_home
     assert (a.score.total, a.score.found, a.score.duration_s) == (
         b.score.total,
@@ -287,14 +289,36 @@ async def test_cloud_error_hands_the_flight_to_the_script(tmp_path: Path) -> Non
     assert res.score.safety.ok and res.score.cost_sek == 0
 
 
+async def test_a_refused_key_is_key_invalid_and_the_cost_is_not_measured(tmp_path: Path) -> None:
+    with FakeOpenAI() as fake:
+        fake.behaviour = {"z-ai/glm-5.3-flash": "401"}
+        async with httpx.AsyncClient(trust_env=False) as client:
+            cfg = CloudConfig(base_url=fake.base_url, fallback_model="")
+            meter = MeteredRuntime(CloudModelRuntime(cfg, KEY, client), _ledger(tmp_path))
+            decider = make_decision_maker(meter, BehaviourConfig())
+            res = await fly(make_scenario(6), decider, model="m", ai_config_hash="h", meter=meter)
+            asked = len(fake.requests)
+            nxt = make_decision_maker(meter, BehaviourConfig())
+    assert meter.key_invalid and asked == 1  # one refusal, then the script flies
+    assert res.switch_reason == "key_invalid" and not res.score.exam
+    assert not res.score.cost_measured and res.score.safety.ok
+    assert nxt.kind == "script" and nxt.switch_reason == "key_invalid"
+
+
 # --- the example bank -------------------------------------------------------------------
 
 
-async def test_bank_keeps_only_good_exams_and_never_in_a_tracked_folder(tmp_path: Path) -> None:
+async def test_bank_keeps_good_and_failed_exams_never_in_a_tracked_folder(tmp_path: Path) -> None:
     res = await fly(make_scenario(4), DecisionMaker(None, None), model="m", ai_config_hash="h")
     assert not worth_keeping(res.score)  # a script flight is no exam
-    exam = res.score.model_copy(update={"exam": True, "decider": "cloud"})
-    assert worth_keeping(exam) == (exam.total >= 75)
+    exam = res.score.model_copy(
+        update={"exam": True, "decider": "cloud", "total": 80.0, "passed": True}
+    )
+    assert worth_keeping(exam)
+    middling = exam.model_copy(update={"total": 60.0, "passed": True})
+    failed = exam.model_copy(update={"total": 0.0, "passed": False})
+    assert not worth_keeping(middling) and worth_keeping(failed)  # failures feed the list
+    assert bank_name(failed).startswith("fail-") and bank_name(exam).startswith("good-")
     rec = example_record(exam, res.records, {"seed": 4})
     assert rec["schema"] == "sd-brain-example/1" and len(rec["turns"]) == len(res.records)
     path = LocalBank(tmp_path / "bank").put("f1", rec)
@@ -374,7 +398,8 @@ def test_cli_sim_without_a_key_flies_the_script(
     args = ["eval", "--backend", "sim", "--flights", "2", "--seed", "7"]
     assert main([*args, "--report-dir", "reports", "--bank-dir", "bank"]) == 0
     out = capsys.readouterr().out
-    assert "inget prov: no_key" in out and '"exams": 0' in out
+    assert "inget prov: key_invalid" in out and '"exams": 0' in out
+    assert "kostnad ej uppmätt" in out and '"cost_sek": null' in out
     assert len(list((tmp_path / "data/brain-scores").glob("*/*.json"))) == 2
     assert len(list((tmp_path / "reports").glob("eval-sim-*.json"))) == 1
     assert main(["scores"]) == 0

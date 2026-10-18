@@ -126,6 +126,8 @@ class MeteredRuntime:
         self.calls = 0
         self.unmeasured_calls = 0
         self.dearest_sek = 0.0
+        self.key_invalid = False  # the provider refused the key (HTTP 401 or 403)
+        self.replies: list[dict[str, Any]] = []  # every answer, for replay fixtures
 
     @property
     def name(self) -> str:
@@ -157,7 +159,20 @@ class MeteredRuntime:
     ) -> ModelReply:
         if not self.can_afford():
             raise BudgetExhaustedError("kostnadstaket är nått; skriptet tar över")
-        reply = await self.inner.chat(messages, tools, timeout_s, sampling)
+        try:
+            reply = await self.inner.chat(messages, tools, timeout_s, sampling)
+        except ModelError as exc:
+            if exc.status in (401, 403):
+                self.key_invalid = True
+            raise
+        self.replies.append(
+            {
+                "content": reply.content,
+                "tool_calls": [
+                    {"name": c.name, "arguments": c.arguments_json} for c in reply.tool_calls
+                ],
+            }
+        )
         sek, measured = reply_cost_sek(reply)
         self.ledger.charge(sek, measured=measured)
         self.cost_sek += sek
