@@ -203,7 +203,7 @@
     "command": {
       "status": "Status",
       "hold": "Håll position",
-      "resume": "Fortsätt",
+      "resume": "Fortsätt sökningen",
       "help": "Hjälp"
     },
     "brainDown": "AI:n är nere. Använd STOPP, FLYG HEM och Fortsätt."

@@ -616,6 +616,7 @@ class CommanderLoop:
         self, turn: TurnInput, executor: _ReadTools, err: TurnError | None
     ) -> TurnOutput:
         start = self.clock.monotonic()
+        # Runs after the turn deadline, so the fallback must stay pure code with no I/O.
         out = await self.fallback.decide(turn, executor)
         if not out.messages and out.action is None and turn.trigger == "operator_message":
             out.messages = [OutMessage(text=COMMAND_MODE_TEXT)]
@@ -1069,10 +1070,10 @@ class _ReadTools:
         return {"error": f"unknown tool {name}"}
 
 
-def _wire_backend(name: str) -> Literal["grammar", "scripted", "cloud"]:
+def _wire_backend(name: str) -> Literal["llm", "grammar", "scripted"]:
     if name == "grammar" or name == "scripted":
         return name
-    return "cloud"
+    return "llm"
 
 
 def _fmt(value: Any) -> str:

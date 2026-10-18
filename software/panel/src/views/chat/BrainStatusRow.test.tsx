@@ -54,7 +54,7 @@ describe("BrainStatusRow", () => {
     expect([...buttons].map((b) => b.textContent)).toEqual([
       "Status",
       "Håll position",
-      "Fortsätt",
+      "Fortsätt sökningen",
       "Hjälp",
     ]);
     await act(async () => {
