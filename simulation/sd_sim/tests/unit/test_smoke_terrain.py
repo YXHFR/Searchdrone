@@ -99,26 +99,40 @@ def test_hover_keeps_the_heartbeat_while_measuring() -> None:
     harness = _Harness()
     done = threading.Event()
 
-    def measure() -> None:
+    def measure(out: dict[str, Any], out_checks: dict[str, bool]) -> None:
         time.sleep(0.1)
+        out["camera_frames_10s"] = 150
+        out_checks["camera"] = True
         done.set()
 
     result: dict[str, Any] = {}
     checks: dict[str, bool] = {}
     smoke.hover_until(harness, measure, 5.0, result, checks)  # type: ignore[arg-type]
     assert done.is_set() and harness.pumped > 0
-    assert "measure_error" not in result and checks == {}
+    assert "measure_error" not in result and checks == {"camera": True}
+    assert result["camera_frames_10s"] == 150
 
 
 def test_hover_gives_up_on_a_hanging_measurement() -> None:
     release = threading.Event()
+    finished = threading.Event()
+
+    def late(out: dict[str, Any], out_checks: dict[str, bool]) -> None:
+        release.wait()
+        out_checks["camera"] = True  # arrives after the time limit
+        out["camera_frames_10s"] = 150
+        finished.set()
+
     result: dict[str, Any] = {}
     checks: dict[str, bool] = {}
     start = time.monotonic()
-    smoke.hover_until(_Harness(), release.wait, 0.3, result, checks)  # type: ignore[arg-type]
+    smoke.hover_until(_Harness(), late, 0.3, result, checks)  # type: ignore[arg-type]
     release.set()
-    assert time.monotonic() - start < 2.0
+    finished.wait(2.0)
+    assert time.monotonic() - start < 3.0
+    # The late write changed nothing: the run stays failed.
     assert checks == {"camera": False} and "0.3" in result["measure_error"]
+    assert "camera_frames_10s" not in result
 
 
 def test_camera_frames_follow_simulated_time() -> None:

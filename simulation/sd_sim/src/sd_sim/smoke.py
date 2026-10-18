@@ -99,16 +99,23 @@ def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
     return frames() - start
 
 
+Measure = Callable[[dict[str, Any], dict[str, bool]], None]
+
+
 def hover_until(
     harness: Harness,
-    measure: Callable[[], None],
+    measure: Measure,
     limit_s: float,
     result: dict[str, Any],
     checks: dict[str, bool],
 ) -> None:
     """Run ``measure`` in a thread while the harness keeps pumping (and so sending its
-    heartbeat); give up after ``limit_s`` and mark the camera check failed."""
-    worker = threading.Thread(target=measure, daemon=True)
+    heartbeat). The thread writes into its own dictionaries, which are taken over only
+    when it finishes within ``limit_s``; after that a late write can change nothing, and
+    the camera check is failed."""
+    own_result: dict[str, Any] = {}
+    own_checks: dict[str, bool] = {}
+    worker = threading.Thread(target=measure, args=(own_result, own_checks), daemon=True)
     worker.start()
     end = time.monotonic() + limit_s
     while worker.is_alive() and time.monotonic() < end:
@@ -116,6 +123,9 @@ def hover_until(
     if worker.is_alive():
         result["measure_error"] = f"mätningen tog längre än {limit_s:g} s"
         checks["camera"] = False
+        return
+    result.update(own_result)
+    checks.update(own_checks)
 
 
 def fly(
@@ -156,23 +166,22 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         harness = Harness(stack.ports["harness_mavlink"])
         stack.up()
         fly_start = time.monotonic()
-        bad: list[str] = []
 
-        def measure() -> None:
+        def measure(out: dict[str, Any], out_checks: dict[str, bool]) -> None:
             try:
-                bad.extend(check_listeners(stack))
+                out["non_loopback_listeners"] = check_listeners(stack)
                 if cfg.physics == "gz" and not cfg.gui and stack.world is not None:
-                    frames = count_frames(stack, result)
-                    result["camera_frames_10s"] = frames
-                    result["camera_frames_min"] = min_frames(
-                        stack.world.vehicle, result.get("sim_seconds", FRAME_WINDOW_S)
+                    frames = count_frames(stack, out)
+                    out["camera_frames_10s"] = frames
+                    out["camera_frames_min"] = min_frames(
+                        stack.world.vehicle, out.get("sim_seconds", FRAME_WINDOW_S)
                     )
-                    checks["camera"] = frames >= result["camera_frames_min"]
-                    rtf = result.get("real_time_factor")
-                    checks["real_time_factor"] = rtf is not None and rtf >= MIN_REAL_TIME_FACTOR
+                    out_checks["camera"] = frames >= out["camera_frames_min"]
+                    rtf = out.get("real_time_factor")
+                    out_checks["real_time_factor"] = rtf is not None and rtf >= MIN_REAL_TIME_FACTOR
             except Exception as exc:  # reported in result.json, never lost in the thread
-                result["measure_error"] = stack.mask(f"{type(exc).__name__}: {exc}")
-                checks["camera"] = False
+                out["measure_error"] = stack.mask(f"{type(exc).__name__}: {exc}")
+                out_checks["camera"] = False
 
         def in_hover() -> None:
             # Listeners, camera and real-time factor are measured while the vehicle hovers
@@ -185,8 +194,8 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         result["flight_s"] = round(time.monotonic() - fly_start, 1)
         result["max_alt_m"] = round(harness.state.max_rel_alt_m, 2)
         checks["altitude"] = abs(result["max_alt_m"] - TAKEOFF_ALT_M) <= ALT_TOLERANCE_M
-        result["non_loopback_listeners"] = bad
-        checks["loopback_only"] = not bad
+        # Not measured (the measurement timed out) counts as a failed check.
+        checks["loopback_only"] = result.get("non_loopback_listeners") == []
     except (InfraError, VehicleError) as exc:
         result["error"] = stack.mask(str(exc))
         checks["completed"] = False
