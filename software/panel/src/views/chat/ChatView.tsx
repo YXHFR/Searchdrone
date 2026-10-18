@@ -11,7 +11,7 @@ import { uuidv7 } from "../../lib/uuidv7";
 import { ClearanceControl } from "../../safety/ClearanceControl";
 import { ResumeButton, ResumeRow } from "../../safety/ResumeButton";
 import { resumeView } from "../../safety/resume";
-import { useBrainState } from "../../state/brain";
+import { useBrainEngine, useBrainState } from "../../state/brain";
 import { chatOrder, type PanelChatMessage, useChatStore } from "../../state/chatStore";
 import { useLiveStore } from "../../state/liveStore";
 import { useMissionStore } from "../../state/missionStore";
@@ -24,6 +24,47 @@ import { OrderButtons } from "./OrderButtons";
 /** The server's limit for one chat message (ChatPost.text). */
 export const CHAT_MAX_CHARS = 4000;
 const COUNTER_FROM = 3800;
+
+/** The fixed commands the command mode understands, offered as buttons while the AI does
+ * not answer. Each sends its text as an ordinary chat line. */
+const COMMAND_BUTTONS = [
+  { key: "status", text: "status" },
+  { key: "hold", text: "håll position" },
+  { key: "resume", text: "fortsätt" },
+  { key: "help", text: "hjälp" },
+] as const;
+
+/** Post one operator chat line (shown at once as "sending", marked failed on error). */
+async function postChat(missionId: string, body: string, replyTo: string | null): Promise<void> {
+  const clientMsgId = uuidv7();
+  const chat = useChatStore.getState();
+  chat.addLocal({
+    key: clientMsgId,
+    clientMsgId,
+    seq: null,
+    role: "operator",
+    kind: "text",
+    text: body,
+    createdAt: new Date().toISOString(),
+    status: "sending",
+    inReplyTo: replyTo,
+    proposedAction: null,
+  });
+  try {
+    const saved = await api<ChatMessage>(paths.missionChat(missionId), {
+      method: "POST",
+      body: {
+        client_msg_id: clientMsgId,
+        text: body,
+        annotation_ids: [],
+        ...(replyTo ? { in_reply_to: replyTo } : {}),
+      },
+    });
+    chat.receive({ ...saved, refs: { ...saved.refs, client_msg_id: clientMsgId } });
+  } catch {
+    chat.markFailed(clientMsgId);
+  }
+}
 
 type Item =
   | { type: "msg"; key: string; createdAt: string; msg: PanelChatMessage }
@@ -153,31 +194,53 @@ function MessageList({ vehicleId }: ViewProps) {
   );
 }
 
-/** "AI:n tänker… N s", or the command-mode / AI-down notices (one line above the composer). */
-function BrainStatusRow() {
+/** "AI:n tänker… N s", or the command-mode / AI-down notices (one line above the composer).
+ * In the command mode the fixed commands are offered as buttons below the line. */
+export function BrainStatusRow() {
   const { t } = useTranslation();
   const since = useLiveStore((s) => s.brainBusySince);
+  const missionId = useLiveStore((s) => s.mission?.id ?? null);
+  const isPilot = useIsPilot();
   const brain = useBrainState();
+  const engine = useBrainEngine();
   const now = useNow(500);
+  const command = brain !== "down" && (brain === "degraded" || engine === "command");
   let text: string | null = null;
   let warn = false;
   if (brain === "down") {
     text = t("chat.brainDown");
     warn = true;
-  } else if (brain === "degraded") {
+  } else if (command) {
     text = t("chat.brainDegraded");
     warn = true;
   } else if (since !== null) {
     text = t("chat.thinking", { s: Math.max(0, Math.floor((now - since) / 1000)) });
   }
   return (
-    <p
-      className={warn ? "brain-row brain-row-warn" : "brain-row"}
-      aria-live="polite"
-      data-testid="brain-row"
-    >
-      {text ?? ""}
-    </p>
+    <>
+      <p
+        className={warn ? "brain-row brain-row-warn" : "brain-row"}
+        aria-live="polite"
+        data-testid="brain-row"
+      >
+        {text ?? ""}
+      </p>
+      {command && isPilot && missionId !== null ? (
+        <fieldset className="orders" data-testid="command-buttons">
+          <legend className="sr-only">{t("chat.commandButtons")}</legend>
+          {COMMAND_BUTTONS.map((b) => (
+            <button
+              key={b.key}
+              type="button"
+              className="btn btn-small btn-outline"
+              onClick={() => void postChat(missionId, b.text, null)}
+            >
+              {t(`chat.command.${b.key}`)}
+            </button>
+          ))}
+        </fieldset>
+      ) : null}
+    </>
   );
 }
 
@@ -197,37 +260,10 @@ function Composer() {
 
   async function send(): Promise<void> {
     if (!canSend || missionId === null) return;
-    const clientMsgId = uuidv7();
     const body = text;
     const replyTo = draft.replyTo?.id ?? null;
     useUiStore.getState().setDraft({ text: "", replyTo: null });
-    const chat = useChatStore.getState();
-    chat.addLocal({
-      key: clientMsgId,
-      clientMsgId,
-      seq: null,
-      role: "operator",
-      kind: "text",
-      text: body,
-      createdAt: new Date().toISOString(),
-      status: "sending",
-      inReplyTo: replyTo,
-      proposedAction: null,
-    });
-    try {
-      const saved = await api<ChatMessage>(paths.missionChat(missionId), {
-        method: "POST",
-        body: {
-          client_msg_id: clientMsgId,
-          text: body,
-          annotation_ids: [],
-          ...(replyTo ? { in_reply_to: replyTo } : {}),
-        },
-      });
-      chat.receive({ ...saved, refs: { ...saved.refs, client_msg_id: clientMsgId } });
-    } catch {
-      chat.markFailed(clientMsgId);
-    }
+    await postChat(missionId, body, replyTo);
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>): void {

@@ -6,6 +6,22 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The cloud model is the AI commander and the local language model is gone: no
+  llama-server in `compose.yaml`, no `just models-fetch`, `just llm-up`, `just check-model`
+  or `just brain-eval-model`, and no local decision engine. Without network or key, or
+  when the cloud does not answer in time, the fixed command mode answers the same turn;
+  the brain's heartbeat, `chat.brain_status` and `/system/status` say which engine
+  answers (`cloud` or `command`), and the panel shows "AI:n svarar inte" with fixed
+  command buttons. `[cloud]` gains `fallback_model` (asked when the main model errors),
+  `reasoning_effort` (default `low`) and `[cloud.provider]` (OpenRouter provider routing,
+  `data_collection = "deny"` by default). Defaults: `z-ai/glm-5.3-flash` with
+  `anthropic/claude-haiku-5.5` as fallback. The backend kind `llm_local` is now `cloud`
+  (old configs still load). `just perf` measures the cloud model's answer time when a key
+  is set and skips with a line otherwise; `just brain-eval-cloud` runs the chat scenarios
+  against it.
+
 ### Added
 
 - Status page on GitHub Pages (`.github/workflows/status-page.yml`, `tools/status_page/`):

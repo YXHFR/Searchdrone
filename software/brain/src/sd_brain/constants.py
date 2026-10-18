@@ -40,7 +40,7 @@ DEGRADED_MIN_S = 60.0
 HEALTH_INTERVAL_S = 2.0
 HEALTH_TIMEOUT_S = 1.0
 TAKEOFF_REQUEST_TTL_S = 120.0
-CLOUD_RETRY_AFTER_S = 60.0  # after a cloud failure, turns go straight to the local model
+CLOUD_RETRY_AFTER_S = 60.0  # after a cloud failure, turns go straight to the command mode
 EXPOSED_STAGE = 1
 # A skill's end, and the pilot's Resume, reach the AI before the snapshot that shows the
 # vehicle after them (the onboard computer sends snapshots at 5 Hz; the ground lifts the

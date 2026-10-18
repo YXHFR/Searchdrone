@@ -3110,7 +3110,7 @@
               {
                 "enum": [
                   "cloud",
-                  "local"
+                  "command"
                 ],
                 "type": "string"
               },

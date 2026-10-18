@@ -3,8 +3,8 @@
 Each scenario (``scenarios/*.yaml``) sets up a situation from a fixture, feeds operator
 lines and server events step by step and checks what the AI did (``expect``). With
 ``--backend replay`` the model answers come from hand-written golden files, so CI tests
-the commander's logic without a GPU; with ``--backend llm_local`` the real model answers
-and the report states the latency, the repair rate and the Swedish check.
+the commander's logic without a network; with ``--backend cloud`` the cloud model answers
+(the owner's key) and the report states the latency, the repair rate and the Swedish check.
 """
 
 from __future__ import annotations

@@ -539,7 +539,7 @@ export interface CharterValidationError {
  * via the `definition` "ChatIntentReport".
  */
 export interface ChatIntentReport {
-  engine: ("local" | "jev" | "openai_decisions") | "rule";
+  engine: ("jev" | "openai_decisions") | "rule";
   intent: "stop" | "return_home";
   latency_ms: number;
   location: "cloud" | "local";
@@ -893,8 +893,8 @@ export interface DecideResult {
     [k: string]: NoulAnswer | ChoiceAnswer | ScoreAnswer | BoxAnswer;
   };
   created_at: string;
-  engine: "local" | "jev" | "openai_decisions";
-  fallback_from?: ("local" | "jev" | "openai_decisions") | null;
+  engine: "jev" | "openai_decisions";
+  fallback_from?: ("jev" | "openai_decisions") | null;
   latency_ms: number;
   location: "cloud" | "local";
   model_id: string | null;
@@ -926,7 +926,7 @@ export interface DecisionLog {
   backend: "llm" | "grammar" | "scripted" | "rule" | "cloud";
   command_id: string | null;
   completion_tokens: number;
-  engine?: ("cloud" | "local") | null;
+  engine?: ("cloud" | "command") | null;
   error: ("deadline" | "timeout" | "http_error" | "parse_error" | "round_limit") | null;
   gate_decision: ("ALLOW" | "REJECT" | "PENDING_APPROVAL") | null;
   id: string;
@@ -964,7 +964,7 @@ export interface DecisionLogStored {
   backend: "llm" | "grammar" | "scripted" | "rule" | "cloud";
   command_id: string | null;
   completion_tokens: number;
-  engine?: ("cloud" | "local") | null;
+  engine?: ("cloud" | "command") | null;
   error: ("deadline" | "timeout" | "http_error" | "parse_error" | "round_limit") | null;
   gate_decision: ("ALLOW" | "REJECT" | "PENDING_APPROVAL") | null;
   id: string;
@@ -1978,7 +1978,7 @@ export interface SurveySectorParams {
  * via the `definition` "SystemStatus".
  */
 export interface SystemStatus {
-  brain_engine?: ("cloud" | "local") | null;
+  brain_engine?: ("cloud" | "command") | null;
   internet: "up" | "down" | "unknown";
   operator_present: boolean;
   parts: {

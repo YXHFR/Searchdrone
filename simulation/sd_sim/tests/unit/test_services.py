@@ -69,8 +69,10 @@ def test_scripted_brain_needs_a_script(tmp_path: Path) -> None:
     p = ports.for_instance(0)
     with pytest.raises(InfraError):
         services.brain_env(p, _paths(tmp_path), "scripted", None)
-    env = services.brain_env(p, _paths(tmp_path), "llm_local", None)
+    env = services.brain_env(p, _paths(tmp_path), "cloud", None)
     assert "SD_BRAIN__BACKEND__SCRIPTED_FILE" not in env
+    assert env["SD_BRAIN__BACKEND__KIND"] == "cloud"
+    assert not any("LLM" in k for k in env)
     assert env["SD_BRAIN__GROUND__COMMANDER_URL"] == (
         f"http://127.0.0.1:{p['ground_commander']}/commander/v1"
     )

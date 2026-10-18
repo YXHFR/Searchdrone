@@ -45,7 +45,7 @@ class SimConfig:
     speedup: int = 1
     qgc: bool = False
     link_profile: str = "perfect"
-    brain: str = "llm_local"
+    brain: str = "cloud"
     script: str = ""
     lan: bool = False
     private_db: bool = False
@@ -136,7 +136,7 @@ def load(
         "link_profile", merged.get("link_profile", "perfect"), ("perfect", "field_typical", "dead")
     )
     cfg.brain = _choice(
-        "brain", merged.get("brain", "llm_local"), ("llm_local", "scripted", "grammar", "none")
+        "brain", merged.get("brain", "cloud"), ("cloud", "scripted", "grammar", "none")
     )
     cfg.script = str(merged.get("script", ""))
     cfg.lan = _bool("lan", merged.get("lan", False))

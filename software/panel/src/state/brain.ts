@@ -14,3 +14,18 @@ export function useBrainState(): BrainState {
     return part === "ok" || part === "degraded" || part === "down" ? part : null;
   });
 }
+
+export type BrainEngine = "cloud" | "command" | null;
+
+/**
+ * Who answers the chat: the cloud model or the command mode (fixed commands). The live
+ * chat.brain_status first, else the system status loaded at start; null while the AI is
+ * down or has not said.
+ */
+export function useBrainEngine(): BrainEngine {
+  return useLiveStore((s) => {
+    if (s.brainState === "down") return null;
+    if (s.brainState !== null) return s.brainEngine;
+    return s.system?.brain_engine ?? null;
+  });
+}

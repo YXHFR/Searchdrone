@@ -227,7 +227,7 @@ def _r(content: str | None = None, *calls: tuple[str, str]) -> ModelReply:
             RawToolCall(id=f"c{i}", name=n, arguments_json=a) for i, (n, a) in enumerate(calls)
         ],
         finish_reason="stop",
-        engine="local",
+        engine="cloud",
     )
 
 

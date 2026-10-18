@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from sd_ground.api.commander import clean_text
 from sd_ground.app import openapi_documents
 from sd_ground.context import Ground
+from sd_ground.services.health import system_status
 
 BRAIN = "brain-token-for-tests-0123456789abcdef"  # same as conftest.BRAIN_TOKEN
 AUTH = {"Authorization": f"Bearer {BRAIN}"}
@@ -200,6 +202,40 @@ def test_only_one_commander_and_intruders_cannot_take_the_place(
             ws.receive_json()
         assert second.value.code == 4409
         assert ground.brain_state == "ready"  # the first commander is still the one connected
+
+
+def _until(check: Any, within_s: float = 3.0) -> bool:
+    end = time.monotonic() + within_s
+    while time.monotonic() < end:
+        if check():
+            return True
+        time.sleep(0.02)
+    return check()
+
+
+def test_heartbeat_engine_reaches_the_health_strip(commander: TestClient, ground: Ground) -> None:
+    """The brain says who answers the chat (cloud model or command mode); the ground
+    passes it on in chat.brain_status and /system/status and forgets it when it goes."""
+    url = "ws://127.0.0.1:7700/commander/v1/ws"
+    since = ground.bus.last_seq
+
+    def sent() -> list[Any]:
+        events = ground.bus.replay(ground.bus.server_epoch, since) or []
+        return [e.data["engine"] for e in events if e.type == "chat.brain_status"]
+
+    with commander.websocket_connect(url, headers=AUTH) as ws:
+        ws.receive_json()
+        ws.send_json({"type": "brain.hello", "body": {"server_epoch": None}})
+        ws.receive_json()
+        for status, engine in (("ready", "cloud"), ("degraded", "command"), ("ready", "x")):
+            ws.send_json({"type": "brain.heartbeat", "body": {"status": status, "engine": engine}})
+        assert _until(lambda: len(sent()) == 4)
+        assert ground.brain_state == "ready"
+        assert ground.brain_engine == "command"  # an unknown name keeps the last one
+        assert system_status(ground).brain_engine == "command"
+    assert _until(lambda: ground.brain_state == "down")
+    assert ground.brain_engine is None
+    assert sent() == [None, "cloud", "command", "command", None]
 
 
 def test_commander_resume_stream(commander: TestClient, ground: Ground) -> None:

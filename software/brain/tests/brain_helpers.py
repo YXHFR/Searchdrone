@@ -55,6 +55,7 @@ def make_loop(
     cfg: BrainConfig | None = None,
     decide: DecisionService | None = None,
     chat_intents: Literal["acted", "refused", "down"] = "acted",
+    engine: Callable[[], Any] | None = None,
 ) -> tuple[CommanderLoop, FakeGround, EvalClock]:
     fx = fixture(name)
     clock = EvalClock()
@@ -75,6 +76,7 @@ def make_loop(
         health=HealthState(clock.monotonic, has_probe=False),
         decide=decide if decide is not None else DecisionService([]),
         clock=clock,  # type: ignore[arg-type]
+        engine=engine,
     )
     loop.mission_id = fg.mission_id
     loop.ready_since = clock.utc_now()

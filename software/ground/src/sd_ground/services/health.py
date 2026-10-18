@@ -48,6 +48,7 @@ def system_status(g: Ground) -> SystemStatus:
         parts={name: PartStatus(state=state, since=None) for name, state in p.items()},
         internet=internet,
         operator_present=g.pilot_ws > 0,
+        brain_engine=g.brain_engine,
         version=g.version,
         profile=g.config.profile,
     )

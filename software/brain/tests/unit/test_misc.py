@@ -8,11 +8,10 @@ from pathlib import Path
 import pytest
 from brain_helpers import REG, with_stub
 
-from sd_brain.ai_config import ai_config_hash, model_sha256, prompt_text
+from sd_brain.ai_config import ai_config_hash, prompt_text
 from sd_brain.app import build, registry_mismatch
-from sd_brain.checkmodel import vram_peak, write_report
 from sd_brain.cli import _git_sha, _ram_total_gb, main
-from sd_brain.config import BrainConfig
+from sd_brain.config import BrainConfig, CloudConfig
 from sd_brain.health import HealthState
 from sd_brain.runtime.base import Sampling
 from sd_brain.secrets import Secrets
@@ -61,9 +60,11 @@ def test_ai_config_hash() -> None:
     h = ai_config_hash(REG, Sampling())
     assert h == ai_config_hash(REG, Sampling()) and len(h) == 64
     assert h != ai_config_hash(REG, Sampling(temperature=0.3))
-    assert h != ai_config_hash(REG, Sampling(), cloud_model="vendor/model")
+    cloud = ai_config_hash(REG, Sampling(), cloud=CloudConfig())
+    assert h != cloud
+    assert cloud != ai_config_hash(REG, Sampling(), cloud=CloudConfig(reasoning_effort="high"))
+    assert cloud != ai_config_hash(REG, Sampling(), cloud=CloudConfig(fallback_model="other/m"))
     assert h != ai_config_hash(with_stub("report"), Sampling())
-    assert len(model_sha256()) == 64
     assert "You are the mission commander AI" in prompt_text("system_v1.md")
 
 
@@ -79,17 +80,20 @@ def test_registry_mismatch() -> None:
 
 
 async def test_build_wires_everything() -> None:
-    secrets = Secrets(brain_token="t" * 40, llm_api_key="k" * 40, cloud_api_key="c" * 40)
+    secrets = Secrets(brain_token="t" * 40, cloud_api_key="c" * 40)
     b = build(BrainConfig.model_validate({"cloud": {"model": "vendor/model"}}), secrets)
     assert b.runtime.engine() == "cloud"
-    assert b.loop.heartbeat()["engine"] == "cloud"
-    assert b.loop.decide is not None and b.loop.decide.available() == ["local"]
+    assert b.loop.heartbeat() == {"status": "idle", "backend": "cloud", "engine": "cloud"}
+    assert b.loop.decide is not None and b.loop.decide.available() == []
     await b.http.aclose()
     assert b.cloud_http is not None
     await b.cloud_http.aclose()
-    local = build(BrainConfig(), Secrets(brain_token="t" * 40, llm_api_key="k" * 40))
-    assert local.runtime.engine() == "local" and local.cloud_http is None
-    await local.http.aclose()
+    offline = build(BrainConfig(), Secrets(brain_token="t" * 40))
+    assert offline.runtime.engine() == "command" and offline.cloud_http is None
+    beat = offline.loop.heartbeat()
+    assert beat["engine"] == "command" and beat["status"] == "degraded"
+    assert beat["backend"] == "grammar"  # the command mode answers
+    await offline.http.aclose()
 
 
 def test_build_scripted_needs_file() -> None:
@@ -98,7 +102,7 @@ def test_build_scripted_needs_file() -> None:
     with pytest.raises(StartError):
         build(
             BrainConfig.model_validate({"backend": {"kind": "scripted"}}),
-            Secrets("t" * 40, "k" * 40),
+            Secrets("t" * 40),
         )
 
 
@@ -126,18 +130,22 @@ def test_cli_config_check_and_eval(capsys: pytest.CaptureFixture[str]) -> None:
     assert "EV-01: ok" in capsys.readouterr().out
 
 
-def test_cli_check_model_refuses_weak_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("SD_LLM_API_KEY", "CHANGE_ME")
+def test_cli_perf_cloud_skips_without_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("SD_CLOUD_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)  # no .env here
+    assert main(["perf-cloud", "--runs", "1", "--report-dir", str(tmp_path / "r")]) == 0
+    assert "hoppar över molnets svarstid" in capsys.readouterr().out
+    assert not (tmp_path / "r").exists()
+
+
+def test_cli_eval_cloud_needs_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SD_CLOUD_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
-    assert main(["check-model", "--duration-s", "1"]) == 2
+    assert main(["eval", "--backend", "cloud", "--config", "/none"]) == 1
 
 
-def test_vram_and_reports(tmp_path: Path) -> None:
-    log = tmp_path / "smi.csv"
-    log.write_text("3500\n6800\nbad\n4000, x\n")
-    assert vram_peak(log) == 6800
-    assert vram_peak(None) is None and vram_peak(tmp_path / "none") is None
-    path = write_report(tmp_path / "r", {"calls": 1})
-    assert json.loads(path.read_text()) == {"calls": 1}
+def test_cli_helpers(tmp_path: Path) -> None:
     assert _git_sha(tmp_path) is None
     assert _ram_total_gb() is None or _ram_total_gb() > 0  # type: ignore[operator]

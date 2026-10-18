@@ -139,7 +139,6 @@ def brain_env(
         ),
         "SD_BRAIN__GROUND__VEHICLE_ID": VEHICLE_ID,
         "SD_BRAIN__BACKEND__KIND": kind,
-        "SD_BRAIN__LLM__ROOT_URL": f"http://127.0.0.1:{ports['llm_http']}",
     }
     if kind == "scripted":
         if script is None:
