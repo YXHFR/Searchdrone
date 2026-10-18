@@ -123,14 +123,14 @@ def _seed(db: Db) -> str:
 
 def test_upgrade_and_downgrade(fresh_db: Db) -> None:
     db = fresh_db
-    db.upgrade("0002_mission_flow")
+    db.upgrade("0003_path_annotations")
     assert not set(SEARCH_TABLES) & _tables(db)
     db.upgrade()
     assert set(SEARCH_TABLES) <= _tables(db)
     assert "found_candidate_id" in _columns(db, "missions")
     assert "poa_hint" in _columns(db, "map_annotations")
     _seed(db)
-    db.downgrade("0002_mission_flow")
+    db.downgrade("0003_path_annotations")
     assert not set(SEARCH_TABLES) & _tables(db)
     assert "found_candidate_id" not in _columns(db, "missions")
     assert "poa_hint" not in _columns(db, "map_annotations")

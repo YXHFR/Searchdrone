@@ -544,6 +544,9 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
         if d.get("kind") == "area":
             kind = "event.area_drawn"
             body = {"area_id": d.get("id"), "label": d.get("label"), "area_m2": d.get("area_m2")}
+        elif d.get("kind") == "path":
+            kind = "event.path_drawn"
+            body = {"path_id": d.get("label"), "length_m": d.get("length_m")}
         else:
             kind = "event.pin_set"
             coords = geometry.get("coordinates") or [None, None]

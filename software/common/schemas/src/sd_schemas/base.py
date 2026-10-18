@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
+from itertools import pairwise
 from typing import Annotated, Any, cast
 
 import uuid_utils
@@ -12,6 +13,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 
 __all__ = [
     "ISSUER_PATTERN",
+    "MAX_LINE_POINTS",
     "MAX_POLYGON_POINTS",
     "MIN_POLYGON_POINTS",
     "OPERATOR_REF_PATTERN",
@@ -20,6 +22,7 @@ __all__ = [
     "REFS_MAX_BYTES",
     "SKILL_NAME_PATTERN",
     "VEHICLE_ID_PATTERN",
+    "GeoJsonLineString",
     "GeoJsonPoint",
     "GeoJsonPolygon",
     "Id",
@@ -141,11 +144,34 @@ def _check_polygon(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+MAX_LINE_POINTS = 50  # a drawn path: at most 50 points
+
+
+def _check_line(value: dict[str, Any]) -> dict[str, Any]:
+    """Shape checks only: 2-50 positions, no two neighbours equal. Length and the charter
+    are checked by the gate."""
+    if set(value) != {"type", "coordinates"} or value["type"] != "LineString":
+        raise ValueError('expected {"type": "LineString", "coordinates": [[lon, lat], ...]}')
+    coords: object = value["coordinates"]
+    if not isinstance(coords, list):
+        raise ValueError("a line is a list of positions")
+    positions = cast("list[object]", coords)
+    if not 2 <= len(positions) <= MAX_LINE_POINTS:
+        raise ValueError(f"a line has 2-{MAX_LINE_POINTS} positions")
+    points = [_position(p) for p in positions]
+    if any(a == b for a, b in pairwise(points)):
+        raise ValueError("two neighbouring positions are the same")
+    return value
+
+
 GeoJsonPoint = Annotated[dict[str, Any], AfterValidator(_check_point)]
 """GeoJSON Point ``{"type": "Point", "coordinates": [lon, lat]}``."""
 
 GeoJsonPolygon = Annotated[dict[str, Any], AfterValidator(_check_polygon)]
 """GeoJSON Polygon with one closed outer ring of 4-201 positions and no holes."""
+
+GeoJsonLineString = Annotated[dict[str, Any], AfterValidator(_check_line)]
+"""GeoJSON LineString with 2-50 positions (a drawn path)."""
 
 
 def json_bytes_at_most(limit: int) -> AfterValidator:

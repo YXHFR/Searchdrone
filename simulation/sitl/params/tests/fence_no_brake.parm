@@ -1,0 +1,4 @@
+# test: test_sc16b_fc_fence_height
+# No braking before the fence (bit 0 of AVOID_ENABLE off, the proximity bit kept), so the
+# climb breaches FENCE_ALT_MAX every time instead of stopping just below it.
+AVOID_ENABLE 2

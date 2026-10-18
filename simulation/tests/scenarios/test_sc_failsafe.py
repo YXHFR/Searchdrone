@@ -20,6 +20,7 @@ import asyncio
 import re
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     pin,
     scenario,
     sim,
+    sim_stack,
 )
 
 from sd_safety.constants import LINK_LOSS_DETECT_S, SDLINK_GRACE_S
@@ -255,12 +257,25 @@ async def test_sc16_fc_fence_is_the_last_line(sim: Any, migrated_db: Any, tmp_pa
         await sc.check_invariants(exempt=("INV1", "INV3", "INV4"))
 
 
+NO_BRAKE_LAYER = PARAMS / "tests/fence_no_brake.parm"
+
+
+@pytest.fixture
+def sim_no_brake() -> Iterator[Any]:
+    """SITL without the flight controller's braking before the fence (AVOID_ENABLE 2):
+    with it, the climb can stop just below FENCE_ALT_MAX and the fence is never breached."""
+    with sim_stack("fence_no_brake", (NO_BRAKE_LAYER,)) as s:
+        yield s
+
+
 @pytest.mark.budget_s(300)
-async def test_sc16b_fc_fence_height(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
+async def test_sc16b_fc_fence_height(sim_no_brake: Any, migrated_db: Any, tmp_path: Path) -> None:
     """The harness climbs straight up past the gate: the FC's height fence takes over and
     the drone never goes more than 5 m above FENCE_ALT_MAX."""
-    async with scenario(sim, migrated_db, tmp_path) as sc:
+    sim = sim_no_brake
+    async with scenario(sim, migrated_db, tmp_path, param_layers=(NO_BRAKE_LAYER,)) as sc:
         await sc.airborne()
+        assert await sc.harness(sim.harness.read_param, "AVOID_ENABLE") == 2.0
         stop = {"done": False}
         flight = asyncio.ensure_future(
             sc.harness(sim.harness.guided_velocity, 0.0, 0.0, -3.0, 60.0, lambda: stop["done"])

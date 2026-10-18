@@ -14,7 +14,7 @@ worked out counts as outside or too far.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
@@ -27,6 +27,7 @@ __all__ = [
     "Polygon",
     "Xy",
     "distance_m",
+    "line_length_m",
     "polygon_from_geojson",
 ]
 
@@ -88,6 +89,11 @@ def distance_m(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
             )
             return _B * k_a * (sigma - d_sigma)
     return math.inf  # nearly antipodal points: never near a drone, so too far
+
+
+def line_length_m(points: Iterable[tuple[float, float]]) -> float:
+    """Length of a line through ``(lat, lon)`` points, leg by leg, in metres."""
+    return sum(distance_m(*a, *b) for a, b in pairwise(points))
 
 
 @dataclass(frozen=True, slots=True)

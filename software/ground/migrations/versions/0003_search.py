@@ -10,7 +10,7 @@ state does not change) and ``map_annotations.poa_hint`` (an operator's hint for 
 area on the probability map).
 
 Revision ID: 0003_search
-Revises: 0002_mission_flow
+Revises: 0003_path_annotations
 Create Date: 2026-10-18
 """
 
@@ -20,7 +20,7 @@ from alembic import op
 from sqlalchemy.util import await_only
 
 revision: str = "0003_search"
-down_revision: str | None = "0002_mission_flow"
+down_revision: str | None = "0003_path_annotations"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
