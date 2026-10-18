@@ -8,6 +8,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY
+  10000` in `searchdrone-safety.parm` with the reserves kept at 15 % and 7 %
+  (`BATT_LOW_MAH 1500`, `BATT_CRT_MAH 700`), `capacity_mah` in `hardware/drone.yaml` and
+  `battCapacityAh` in the SITL frame `sd_quad14.json`.
 - The cloud model is the AI commander and the local language model is gone: no
   llama-server in `compose.yaml`, no `just models-fetch`, `just llm-up`, `just check-model`
   or `just brain-eval-model`, and no local decision engine. Without network or key, or
@@ -27,6 +31,24 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- "Too windy" warning on the ground station (`sd_ground.services.wind`), a warning only:
+  nothing on board or on the ground acts on it, and STOP, FLY HOME and the flight
+  controller's failsafes are unchanged. `Telemetry.wind` (`WindCheck`) carries three
+  checks: the mean tilt over 10 s in the air against `ATC_ANGLE_MAX` - 10 deg
+  (`TILT_MARGIN`), the energy to fly home now at `RTL_SPEED_MS` and the measured current
+  x 1.3 against what is left above `BATT_LOW_MAH` (`ENERGY_HOME`), and the flight
+  controller's MAVLink WIND over the stage's limit (`WIND_LIMIT`; `[wind] stage` in
+  `ground.toml`: `first_flights` 4 m/s, `until_calibrated` 8 m/s mean and 12 m/s gusts).
+  ArduCopter sends WIND only with `EK3_DRAG_*` set, so that check is silent until the drag
+  is measured. Nothing is calibrated yet (`calibrated: false`). The event log and the
+  `vehicle` topic get `vehicle.wind_warning` and `vehicle.wind_ok` when the reasons change.
+  The ground station now also reads the battery current and the WIND message.
+- SITL wind tests with ArduPilot's own wind (`simulation/tests/model/test_wind_sitl.py`,
+  all marked uncalibrated): W1 hold in 10 m/s (and with turbulence), W2 RTL home against
+  12 m/s within 1.5 x the model's time and its mAh + 20 %, W3 a 10 s gust from 8 to 15 m/s
+  on a survey leg, W4 the flight controller's battery failsafe 500 m out against 10 m/s.
+  The nightly SITL job sweeps W2 over 0-18 m/s and is red only if the drone does not get
+  home in 12 m/s or less.
 - Fly a drawn path: the pilot draws a path on the map ("Rita väg", `pa-1`, ...: a
   `path` annotation, a GeoJSON LineString of 2-50 points) and asks for it in the chat. The
   AI proposes `follow_path` by the path's name only; sd-brain takes the points from the

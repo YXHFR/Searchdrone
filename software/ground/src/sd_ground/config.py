@@ -126,6 +126,12 @@ class SimConfig(_Section):
     dataflash_dir: str = ""
 
 
+class WindConfig(_Section):
+    # The owner's wind limit on flight height for the warning (sd_ground.services.wind):
+    # first_flights = 4 m/s, until_calibrated = 8 m/s mean and 12 m/s gusts.
+    stage: Literal["first_flights", "until_calibrated"] = "first_flights"
+
+
 class RemoteConfig(_Section):
     enabled: bool = False  # reserved; true is refused in v0.1.0
 
@@ -146,6 +152,7 @@ class GroundConfig(_Section):
     map: MapConfig = MapConfig()
     health: HealthConfig = HealthConfig()
     sim: SimConfig = SimConfig()
+    wind: WindConfig = WindConfig()
     remote: RemoteConfig = RemoteConfig()
 
 

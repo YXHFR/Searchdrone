@@ -61,5 +61,8 @@ internet_probe = false
 [sim]
 dataflash_dir = ""                      # set by the simulator (where SITL writes *.BIN)
 
+[wind]
+stage = "first_flights"                 # wind warning limit: first_flights 4 m/s; until_calibrated 8/12 m/s
+
 [remote]
 enabled = false                         # reserved; true is refused in v0.1.0
