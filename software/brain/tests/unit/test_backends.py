@@ -150,6 +150,7 @@ charters:
   charter_test:
     area_enu: [[-150,-100],[150,-100],[150,300],[-150,300]]
     geofence_buffer_m: 20
+    sectors: [{ sector_id: "A", name: "survey_box", from: survey_box }]
 """
 
 
@@ -170,6 +171,10 @@ async def test_scripted_backend(tmp_path: Path) -> None:
         prop.ready_proposal is not None
         and prop.messages[0].text == "Jag föreslår ramen charter_test."
     )
+    sectors = prop.ready_proposal.sectors  # the fixture's search box, not the whole area
+    assert sectors is not None and [(s.sector_id, s.name) for s in sectors] == [("A", "survey_box")]
+    lats = [p[1] for p in sectors[0].area["coordinates"][0]]
+    assert max(lats) - min(lats) == pytest.approx(100 / 111_320, rel=0.02)
     take = await b.decide(_turn("Starta."), _NoTools())
     assert take.action is not None and take.action.adapted and take.action.params == {"alt_m": 40}
     ev = [{"type": "event.skill", "body": {"skill": "takeoff", "status": "done"}}]

@@ -101,10 +101,7 @@ async def _rc_pilot(r: Rig, sim: Sim) -> None:
         snap = r.core.snapshot()
         tel = None if snap is None else snap.telemetry
         if tel is not None:
-            in_air = tel.armed and str(tel.landed_state) not in (
-                "ON_GROUND",
-                "LandedState.ON_GROUND",
-            )
+            in_air = tel.armed and tel.landed_state != "on_ground"
             sim.rc.throttle = 1500 if in_air and tel.alt_rel_home_m > 2.0 else 1000
         await asyncio.sleep(0.2)
 
@@ -227,9 +224,10 @@ async def test_panel_in_a_browser_on_sitl(sim: Sim, migrated_db: Any, tmp_path: 
                 "lan_url": f"https://127.0.0.1:{lan_port}",
                 "pin": pin,
             }
-            path = EXCHANGE / "stack.json"
-            path.write_text(json.dumps(stack), encoding="utf-8")
-            path.chmod(0o600)
+            # Readable only by this user from the first byte: a login code and a PIN.
+            fd = os.open(EXCHANGE / "stack.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(stack))
             result = await _browser_done(BROWSER_LIMIT_S)
             if result != 0:
                 await _report(r, panel_port)

@@ -199,6 +199,18 @@ class _Fixture:
         ):
             if key in c:
                 body[key] = c[key]
+        # The fixture's own sectors (an area by name); without them the server cuts the area.
+        sectors = [
+            {
+                "sector_id": s["sector_id"],
+                "name": s.get("name", s["sector_id"]),
+                "area": self.polygon(s["from"]),
+                "order_idx": i,
+            }
+            for i, s in enumerate(c.get("sectors") or [])
+        ]
+        if sectors:
+            body["sectors"] = sectors
         return CharterProposal.model_validate(body)
 
 
