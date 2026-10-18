@@ -108,7 +108,8 @@
 
     <include>
       <uri>{{ model_uri }}</uri>
-      <pose>0 0 0 0 0 {{ vehicle_yaw }}</pose>
+      <!-- Legs on the pad: inside its box they would stick to it. -->
+      <pose>0 0 {{ vehicle_z }} 0 0 {{ vehicle_yaw }}</pose>
     </include>
   </world>
 </sdf>

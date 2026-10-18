@@ -41,6 +41,9 @@ WORLD_NAME = "sd_lake_forest"
 SEED = 42
 
 # The vehicle.
+# The body origin above the leg tips. A world that places the vehicle with <include> must
+# lift it this much: the include's pose replaces the model's own.
+STAND_M = 0.2
 ARM_M = 0.29  # half the 0.58 m motor-to-motor diagonal
 ROTOR_XY_M = ARM_M / math.sqrt(2)  # 0.205 m in x and y for an X frame
 INERTIA_KG_M2 = (0.045, 0.045, 0.080)  # mass in the middle of the frame; CAD values later
@@ -119,6 +122,7 @@ def model_context(instance: int, drone: Drone | None = None) -> dict[str, Any]:
         "instance": instance,
         "fdm_port_in": ports_i["sitl_json_fdm"],
         "video_port": ports_i["video_raw_udp"],
+        "stand_m": STAND_M,
         "base_mass": round(base_mass, 6),
         "inertia": INERTIA_KG_M2,
         "imu_mass": IMU_MASS_KG,
@@ -251,6 +255,7 @@ def world_context(
         "model_uri": f"model://{MODEL_NAME}_i{instance}",
         "home": home,
         # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
+        "vehicle_z": STAND_M,
         "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
         "ground_size": GROUND_SIZE_M,
         "pad_size": PAD_SIZE_M,

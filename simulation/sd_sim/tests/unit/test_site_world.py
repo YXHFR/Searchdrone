@@ -288,6 +288,27 @@ def test_site_world_home_matches_sitl_and_the_map() -> None:
     ]
 
 
+def test_vehicle_stands_on_the_pad_with_its_legs() -> None:
+    # The include's pose replaces the model's own lift; legs started inside the pad's box
+    # stick to it, and the vehicle cannot take off.
+    from sd_sim import world
+
+    s = site.load(PUBLIC)
+    root = ET.fromstring(site_world.world_sdf(s, terrain.ground_grid(s), 0))  # noqa: S314
+    include = next(i for i in root.iter("include") if i.findtext("uri") == "model://sd_quad14_i0")
+    assert float((include.findtext("pose") or "").split()[2]) == world.STAND_M
+    model = ET.fromstring(world.model_sdf(0))  # noqa: S314 - our own rendered file
+    assert float((model.findtext("model/pose") or "").split()[2]) == world.STAND_M
+    pad = root.find("world/model[@name='landing_pad']/link/collision/pose")
+    assert pad is not None
+    legs = [c for c in model.iter("collision") if c.get("name", "").startswith("leg_")]
+    leg_bottom = min(
+        float((c.findtext("pose") or "").split()[2]) - float(c.findtext(".//length") or 0) / 2
+        for c in legs
+    )
+    assert world.STAND_M + leg_bottom == pytest.approx(0.0, abs=0.01)  # the pad's top
+
+
 def test_objects_stand_on_the_terrain() -> None:
     s = site.load(PUBLIC)
     ground = terrain.ground_grid(s)

@@ -63,6 +63,7 @@ def world_sdf(
             objects=[world.checked_fragment(obj, fr) for obj in placed],
             cameras=list(cameras),
             model_uri=f"model://{world.MODEL_NAME}_i{instance}",
+            vehicle_z=world.STAND_M,
             vehicle_yaw=round(math.radians(90.0 - s.heading_deg), 6),
         )
     )

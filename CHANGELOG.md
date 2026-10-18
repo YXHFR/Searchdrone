@@ -142,3 +142,10 @@ All notable changes to this project are listed here. The format follows
 - `sd_mav.Vehicle` takes an optional send gate that the owner of the link (the onboard
   executor) asks before every single write, retries included.
 - The six onboard skills of the foundation are `implemented` in the skill registry.
+
+### Fixed
+
+- The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
+  (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
+  vehicle now starts with its legs on the ground in every world; in a site world they were
+  inside the landing pad's box and stuck to it.
