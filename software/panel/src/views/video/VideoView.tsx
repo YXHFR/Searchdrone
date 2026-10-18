@@ -12,9 +12,11 @@ import { startWhep, type WhepSession } from "./whepClient";
 export const WHEP_PLAY_MS = 5000;
 /** No picture at all within this time: show "no video" and retry this often. */
 export const NO_VIDEO_MS = 10_000;
+/** A started picture that stops moving this long (or a lost WebRTC link): "no video". */
+export const STALL_MS = 3000;
 const POLL_MS = 250;
 
-type Mode = "connecting" | "webrtc" | "hls" | "none";
+export type Mode = "connecting" | "webrtc" | "hls" | "none";
 
 interface Info {
   width: number;
@@ -22,10 +24,16 @@ interface Info {
   fps: number | null;
 }
 
-/** Playing = there is a frame (readyState >= 2) and the time moves on. */
-function playing(el: HTMLVideoElement, last: { t: number }): boolean {
-  const moved = el.currentTime > last.t;
+/**
+ * Playing = there is a frame (readyState >= 2) and the picture moves on: new decoded
+ * frames where the browser counts them, else the time. A WebRTC element's time can keep
+ * running after the frames stop (camera gone, link still up), so frames come first.
+ */
+function playing(el: HTMLVideoElement, last: { t: number; f: number }): boolean {
+  const frames = el.getVideoPlaybackQuality?.().totalVideoFrames ?? 0;
+  const moved = frames > 0 ? frames > last.f : el.currentTime > last.t;
   last.t = el.currentTime;
+  last.f = frames;
   return el.readyState >= 2 && moved;
 }
 
@@ -51,10 +59,11 @@ function startHls(el: HTMLVideoElement, url: string): boolean {
 
 /**
  * One attempt at the live picture: WHEP first, HLS when WebRTC gives no picture within
- * 5 s, "no video" after 10 s. Returns a function that stops everything (and ends the
- * WHEP session).
+ * 5 s, "no video" after 10 s. Once the picture plays, it ends at "no video" when the
+ * picture stands still for 3 s or the WebRTC connection is lost. Returns a function that
+ * stops everything (and ends the WHEP session).
  */
-function connect(
+export function connect(
   el: HTMLVideoElement,
   whepUrl: string,
   hlsUrl: string | null,
@@ -64,7 +73,9 @@ function connect(
   let whep: WhepSession | null = null;
   const abort = new AbortController();
   const timers: ReturnType<typeof setTimeout>[] = [];
-  const last = { t: -1 };
+  const last = { t: -1, f: -1 };
+  let started = false;
+  let still = 0; // polls in a row without progress after the picture started
   let mode: Mode = "connecting";
   const set = (m: Mode) => {
     mode = m;
@@ -86,9 +97,23 @@ function connect(
     startHls(el, hlsUrl); // without native HLS the no-video timer ends the attempt
   };
 
+  const lose = () => {
+    if (stopped || mode === "none") return;
+    dropWhep();
+    el.removeAttribute("src");
+    el.load();
+    set("none"); // the view tries again after NO_VIDEO_MS
+  };
+
   const tick = setInterval(() => {
     if (stopped || mode === "none") return;
-    if (playing(el, last) && mode === "connecting") set("webrtc");
+    if (playing(el, last)) {
+      started = true;
+      still = 0;
+      if (mode === "connecting") set("webrtc");
+    } else if (started && ++still * POLL_MS >= STALL_MS) {
+      lose();
+    }
   }, POLL_MS);
 
   timers.push(
@@ -102,9 +127,9 @@ function connect(
     }, NO_VIDEO_MS),
   );
 
-  void startWhep(whepUrl, abort.signal)
+  void startWhep(whepUrl, abort.signal, () => (mode === "connecting" ? toHls() : lose()))
     .then((s) => {
-      if (stopped) {
+      if (stopped || mode !== "connecting") {
         void s.close();
         return;
       }

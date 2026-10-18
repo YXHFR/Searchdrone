@@ -1,6 +1,7 @@
 // P-22: the video view. WHEP first; when the WHEP mock says 404 the view switches to HLS
 // within 6 s; a WHEP session that the mock accepts gets exactly one DELETE when the view
-// closes; no video configured shows "Ingen video" with a retry button.
+// closes; a stream that stops after LIVE ends at "Ingen video" and reconnects by itself;
+// no video configured shows "Ingen video" with a retry button.
 //
 // The accepting WHEP mock answers with a real SDP answer, made in the page by a second
 // RTCPeerConnection that sends a canvas, so the view really plays (no network involved).
@@ -98,6 +99,42 @@ test.describe("video view (P-22)", () => {
     await page.waitForTimeout(500);
     expect(deletes).toEqual([SESSION]);
   });
+
+  // Frames stop with the connection still up (camera gone) and the whole peer gone
+  // (link or MediaMTX gone): the stall check and the connection-state check each end it.
+  const stops = {
+    "frames stop, connection stays": () => {
+      const pc = (window as unknown as { __sender: RTCPeerConnection }).__sender;
+      return Promise.all(pc.getSenders().map((s) => s.replaceTrack(null))).then(() => undefined);
+    },
+    "the peer connection closes": () => {
+      (window as unknown as { __sender: RTCPeerConnection }).__sender.close();
+    },
+  };
+  for (const [name, stop] of Object.entries(stops)) {
+    test(`stream stops after LIVE (${name}): badge goes, then a new WHEP POST`, async ({
+      page,
+      ground,
+    }) => {
+      test.setTimeout(45_000);
+      ground.setConfig({ video: { whep_url: WHEP, hls_url: null } });
+      const { deletes, posts } = await acceptWhep(page);
+      await ground.open();
+      await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 8000 });
+      expect(posts()).toBe(1);
+
+      await page.evaluate(stop);
+      await expect(page.getByTestId("video-badge")).toHaveCount(0, { timeout: 6000 });
+      await expect(page.getByTestId("video-none")).toContainText("Ingen video");
+      await expect(page.getByTestId("video-retry")).toBeVisible();
+      await expectSafetyVisible(page, "video lost");
+      await expect.poll(() => deletes).toEqual([SESSION]);
+
+      // The automatic retry (every 10 s) posts a new offer and the picture comes back.
+      await expect.poll(posts, { timeout: 15_000 }).toBe(2);
+      await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 8000 });
+    });
+  }
 
   test("no video configured: 'Ingen video' and a retry button", async ({ page, ground }) => {
     ground.setConfig({ video: null });
