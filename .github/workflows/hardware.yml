@@ -2,7 +2,8 @@
 # (no path filter at workflow level, so the required check `hardware-ok` always reports).
 # `changes` decides whether the hardware jobs need to run; `hw-files` fails closed on any
 # file under hardware/ that has no automatic check yet (tools/check_hw_files.py), and
-# `hw-calc` checks mass and flight time against hardware/limits.yaml (`just hw-check`).
+# `hw-calc` checks mass and flight time against hardware/limits.yaml (`just hw-check`), and
+# `hw-cad` builds the CAD models and runs their checks (`just cad-detailed`, `just cad-test`).
 # The owner's approval for hardware/ is a separate check (`gate/owner`, owner-gate.yml).
 name: hardware
 
@@ -88,9 +89,39 @@ jobs:
       - name: Mass and flight time within the hardware limits
         run: just hw-check
 
+  hw-cad:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      # The manufacturer models change only with vendor.yaml (pinned SHA-256), so a
+      # cached copy spares the download; vendor.py checks the checksum either way.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/cad/vendor
+          key: cad-vendor-${{ hashFiles('hardware/cad/fpv7/vendor.yaml') }}
+      - name: Build the CAD models (STEP, STL, report, picture, detailed STEP)
+        run: just cad-detailed
+      - name: Overlaps, propeller margins, camera view and repeatable exports
+        run: just cad-test
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cad-fpv7
+          # Only build/cad/fpv7/. The manufacturer models (build/cad/vendor/) and the
+          # detailed STEP (build/cad/fpv7-detailed/) are built and checked but never
+          # published: vendor.yaml says which licences allow sharing.
+          path: build/cad/fpv7/
+          if-no-files-found: error
+          retention-days: 14
+
   hardware-ok:
     if: always()
-    needs: [changes, hw-files, hw-calc]
+    needs: [changes, hw-files, hw-calc, hw-cad]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
