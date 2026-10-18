@@ -1,0 +1,186 @@
+# The status page: what the drone can do on main right now, built from the sitl
+# workflow's results (runs/**/result.json) and a demo film from the panel's SITL browser
+# test, published on GitHub Pages. Runs on every push to main and nightly (after the
+# nightly SITL suites). A pull request that changes the page builds it without publishing,
+# with screenshots as an artifact.
+name: status-page
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/status-page.yml
+      - tools/status_page/**
+      - simulation/sd_sim/src/sd_sim/report.py
+      - simulation/sd_sim/src/sd_sim/pytest_plugin.py
+  schedule:
+    - cron: "15 5 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: status-page-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  film:
+    # The panel against the whole stack on SITL with the scripted commander (map, chat,
+    # search, STOP, FLY HOME), recorded by Playwright and sped up to at most 85 s.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Start Postgres from compose.yaml
+        run: docker compose --env-file .env up -d --wait db
+      - name: SITL image (pull, or build when the tag is not published)
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          image="$(bash tools/sitl_image_tag.sh --image)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          pulled=false
+          if echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin; then
+            docker pull "$image" && pulled=true
+            docker logout ghcr.io
+          fi
+          if [ "$pulled" != true ]; then
+            docker build -f simulation/docker/sitl.Dockerfile -t "$image" .
+          fi
+      - name: Browsers for Playwright and ffmpeg
+        run: |
+          pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - name: Panel against SITL, recorded
+        # A red browser test still leaves its recording; the page shows the tests' state.
+        continue-on-error: true
+        timeout-minutes: 35
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SD_PW_VIDEO: "1"
+        run: just test-panel-sitl
+      - name: Film from the recordings
+        # Only panel.spec.ts (Playwright names its folders after the spec file): the LAN
+        # test types a pairing PIN, which must not end up in a public film.
+        run: |
+          mapfile -t clips < <(find software/panel/test-results -path '*/panel-*' \
+            -name '*.webm' -printf '%T@ %p\n' | sort -n | cut -d' ' -f2-)
+          bash tools/status_page/film.sh "$RUNNER_TEMP/film" "${clips[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: status-page-film
+          path: ${{ runner.temp }}/film/
+          if-no-files-found: error
+          retention-days: 7
+
+  page:
+    needs: film
+    # A failed film still builds the page (with the published film); a cancel stops it.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: The sitl run to show (waits until it is done)
+        id: sitl
+        timeout-minutes: 115
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash tools/status_page/wait_for_sitl.sh
+      - name: Results, film and the published page's history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SITL_RUN: ${{ steps.sitl.outputs.run_id }}
+          THIS_RUN: ${{ github.run_id }}
+          FILM: ${{ needs.film.result }}
+        run: |
+          gh run download "$SITL_RUN" --repo "$REPO" --pattern 'sitl-results-*' \
+            --dir "$RUNNER_TEMP/results" || echo "::warning::sitl-körningen har inga resultat"
+          mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/film" "$RUNNER_TEMP/prev"
+          site="https://${REPO%%/*}.github.io/${REPO#*/}"
+          site="${site,,}"
+          if [ "$FILM" = success ]; then
+            gh run download "$THIS_RUN" --repo "$REPO" --name status-page-film \
+              --dir "$RUNNER_TEMP/film"
+          else
+            # Keep the published film when no new one was made.
+            for f in demo.mp4 demo.webm; do
+              curl -fsSL -o "$RUNNER_TEMP/film/$f" "$site/$f" || rm -f "$RUNNER_TEMP/film/$f"
+            done
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/prev/history.json" "$site/history.json" \
+            || echo "ingen tidigare historik"
+      - name: Build the page
+        env:
+          SHA: ${{ steps.sitl.outputs.sha }}
+          DATE: ${{ steps.sitl.outputs.date }}
+          RUN_URL: ${{ steps.sitl.outputs.run_url }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          uv run --no-sync python tools/status_page/build.py "results=$RUNNER_TEMP/results" \
+            "out=$RUNNER_TEMP/site" "sha=$SHA" "date=$DATE" "run_url=$RUN_URL" \
+            "repo_url=$SERVER/$REPO" "history=$RUNNER_TEMP/prev/history.json" \
+            "film=$RUNNER_TEMP/film"
+      - name: No secrets on the page
+        run: |
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tgz}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" dir "$RUNNER_TEMP/site" --config .gitleaks.toml --redact \
+            --exit-code 1
+      - name: Screenshots, and the film plays in Chromium
+        run: |
+          pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+          pnpm --filter @searchdrone/panel exec node ../../tools/status_page/screenshot.mjs \
+            "$RUNNER_TEMP/site" "$RUNNER_TEMP/screenshots"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: status-page-screenshots
+          path: ${{ runner.temp }}/screenshots/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request'
+        with:
+          path: ${{ runner.temp }}/site/
+
+  deploy:
+    needs: page
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

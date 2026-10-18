@@ -34,6 +34,7 @@ from sd_sim import config, paths
 from sd_sim.invariants import Sample
 from sd_sim.launch import Stack, read_env_value
 from sd_sim.pytest_plugin import worker_instance
+from sd_sim.report import measure
 from sd_sim.services import DB_HOST, DB_PORT, VEHICLE_ID, database_name
 from sd_sim.util import new_run_dir
 
@@ -122,8 +123,11 @@ class Demo:
             if asyncio.iscoroutine(value):
                 value = await value
             if value:
-                return time.monotonic() - start
+                took = time.monotonic() - start
+                measure(what, took, limit_s, passed=True)  # the condition held: passed
+                return took
             if time.monotonic() - start > limit_s:
+                measure(what, time.monotonic() - start, limit_s)
                 t = self.tel
                 raise AssertionError(
                     f"{what}: inte inom {limit_s} s (läge {t.get('flight_mode')}, "

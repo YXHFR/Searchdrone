@@ -5,6 +5,8 @@ import { readStack } from "./stack";
 
 const { defaultBrowserType: _browser, ...pixel7 } = devices["Pixel 7"];
 test.use({ ...pixel7, ignoreHTTPSErrors: true, storageState: { cookies: [], origins: [] } });
+// Never recorded: it types the pairing PIN, and recordings can become the public demo film.
+test.use({ video: "off" });
 
 test("PIN-inloggning i LAN-läget på en mobil", async ({ page }) => {
   const stack = readStack();

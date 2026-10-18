@@ -1,0 +1,206 @@
+# What the status page shows: one row per capability, in this order, grouped.
+#
+# variant  the test whose result.json the row reads (the test function's name, as the
+#          pytest plugin writes it; SC00 writes its own report with variant "default")
+# scenario only needed when the variant is not unique (SC00's "default")
+# measure  the measured value to show: the criterion's text, as the test or the scenario
+#          rig's until()/hold_for() names it. Without it the row shows the test's outcome.
+#
+# tools/tests/test_status_page.py checks that every test named here exists.
+
+groups = ["Flygning", "Säkerhet", "AI", "Länk", "Video"]
+
+[[capability]]
+group = "Flygning"
+name = "Simulatorn startar frisk"
+scenario = "SC00"
+variant = "default"
+measure = "Stacken frisk (HEARTBEAT, EKF och GPS)"
+
+[[capability]]
+group = "Flygning"
+name = "Uppdraget klart att starta"
+variant = "test_demo_flight"
+measure = "uppdraget READY"
+
+[[capability]]
+group = "Flygning"
+name = "Sökning av sökrutan"
+variant = "test_demo_flight"
+measure = "täckning av sökrutan"
+
+[[capability]]
+group = "Flygning"
+name = "Landning vid hem"
+variant = "test_demo_flight"
+measure = "landning från hem"
+
+[[capability]]
+group = "Flygning"
+name = "Hela demon, lyft till landning"
+variant = "test_demo_flight"
+measure = "lyft till landning"
+
+[[capability]]
+group = "Säkerhet"
+name = "STOPP"
+variant = "test_sc02_stop_and_resume"
+measure = "BRAKE"
+
+[[capability]]
+group = "Säkerhet"
+name = "Står still efter STOPP"
+variant = "test_sc02_stop_and_resume"
+measure = "holds where it stopped"
+
+[[capability]]
+group = "Säkerhet"
+name = "FLYG HEM"
+variant = "test_sc03_fly_home_mid_search"
+measure = "flying home"
+
+[[capability]]
+group = "Säkerhet"
+name = "Manuellt övertagande med spakarna"
+variant = "test_sc01_takeover_on_sitl"
+measure = "LOITER after the takeover"
+
+[[capability]]
+group = "Säkerhet"
+name = "Batterilarm: flyger hem vid reserven"
+variant = "test_sc06a_battery_reserve_flies_home"
+measure = "flying home"
+
+[[capability]]
+group = "Säkerhet"
+name = "Flygkontrollens egen batterifailsafe"
+variant = "test_sc06c_fc_battery_failsafe_alone"
+measure = "the FC's battery failsafe"
+
+[[capability]]
+group = "Säkerhet"
+name = "Geofence i sidled"
+variant = "test_sc16_fc_fence_is_the_last_line"
+measure = "the FC fence"
+
+[[capability]]
+group = "Säkerhet"
+name = "Geofence i höjd"
+variant = "test_sc16b_fc_fence_height"
+measure = "the FC fence"
+
+[[capability]]
+group = "Säkerhet"
+name = "GPS-bortfall"
+variant = "test_gps_lost_during_flight"
+measure = "the EKF failsafe"
+
+[[capability]]
+group = "Säkerhet"
+name = "Grinden nekar order utanför ramen"
+variant = "test_sc04_sc05_refusals_in_the_air"
+
+[[capability]]
+group = "Säkerhet"
+name = "Start kräver ram och klartecken"
+variant = "test_sc09_takeoff_needs_charter_and_clearance"
+
+[[capability]]
+group = "Säkerhet"
+name = "Ändrat staket stoppar starten"
+variant = "test_sc09g_fence_changed_after_install"
+
+[[capability]]
+group = "Säkerhet"
+name = "Start kräver RC-sändaren"
+variant = "test_sc09_takeoff_needs_the_rc_transmitter"
+
+[[capability]]
+group = "Säkerhet"
+name = "API-skydd"
+variant = "test_sc18_api_guards"
+
+[[capability]]
+group = "Säkerhet"
+name = "Operatören borta: väntar, flyger inte hem"
+variant = "test_sc19_operator_absent"
+measure = "no flight home"
+
+[[capability]]
+group = "AI"
+name = "AI:n föreslår en ram"
+variant = "test_demo_flight"
+measure = "AI:ns ramkort"
+
+[[capability]]
+group = "AI"
+name = "Elak befälhavare stoppas"
+variant = "test_sc13_malicious_commander"
+
+[[capability]]
+group = "AI"
+name = "AI:n dör mitt i sökningen"
+variant = "test_sc08a_ai_dies_mid_search"
+measure = "executor HOLD"
+
+[[capability]]
+group = "AI"
+name = "Läge A: varje steg väntar på ett klick"
+variant = "test_sc11_mode_a_every_step_waits_for_a_click"
+
+[[capability]]
+group = "AI"
+name = "Läge B: klick där det krävs"
+variant = "test_sc12_clicks_in_mode_b"
+
+[[capability]]
+group = "AI"
+name = "Stoppord i chatten utan AI:n"
+variant = "test_chat_stop_words_without_the_ai"
+measure = "flying home"
+
+[[capability]]
+group = "Länk"
+name = "Radion nere 10 s"
+variant = "test_sc07a_radio_down_10s"
+measure = "SD-link back"
+
+[[capability]]
+group = "Länk"
+name = "Tappad länk 90 s: flyger hem"
+variant = "test_sc07b_radio_down_90s"
+measure = "the GCS failsafe"
+
+[[capability]]
+group = "Länk"
+name = "SD-link nere 30 s"
+variant = "test_sc14b_sdlink_down_30s"
+measure = "link lost"
+
+[[capability]]
+group = "Länk"
+name = "Omstart av markdatorn"
+variant = "test_sc10a_ground_restart_mid_search"
+measure = "HEARTBEAT från markstationen efter omstarten"
+
+[[capability]]
+group = "Video"
+name = "Video når videoservern"
+variant = "test_stream_reaches_mediamtx_with_low_delay"
+measure = "fördröjning, median"
+
+[[capability]]
+group = "Video"
+name = "Video i webbläsaren"
+variant = "test_browser_plays_through_the_proxy"
+measure = "första bilden i webbläsaren"
+
+[[capability]]
+group = "Video"
+name = "Radion av stoppar bilden"
+variant = "test_radio_off_stops_the_picture"
+
+[[capability]]
+group = "Video"
+name = "Inspelning i H.264"
+variant = "test_mission_recording_is_h264_and_long_enough"
