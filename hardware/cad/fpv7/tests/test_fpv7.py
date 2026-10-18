@@ -12,6 +12,8 @@ import assembly
 import cadquery as cq
 import cfd
 import pytest
+from OCP.Bnd import Bnd_Box
+from OCP.BRepBndLib import BRepBndLib
 
 README = Path(assembly.__file__).with_name("README.md")
 
@@ -59,8 +61,13 @@ def test_overlap_check_sees_an_overlap(drone: assembly.Drone) -> None:
 def test_mass_matches_the_parts(report: dict[str, Any], params: dict[str, Any]) -> None:
     listed = sum(pt["mass_g"] for pt in report["parts"])
     assert report["mass_g"] == pytest.approx(listed, abs=0.5)
-    frame = sum(pt["mass_g"] for pt in report["parts"] if pt["group"] == "frame")
-    assert frame == pytest.approx(params["frame"]["mass"], abs=0.1)
+    # The frame kit: its plates, arms and standoffs, and its own screws and nuts.
+    kit = [
+        pt
+        for pt in report["parts"]
+        if pt["group"] == "frame" or pt["name"].split("_")[0] in ("screw", "nut")
+    ]
+    assert sum(pt["mass_g"] for pt in kit) == pytest.approx(params["frame"]["mass"], abs=0.1)
 
 
 def test_centre_of_gravity_is_near_the_middle(report: dict[str, Any]) -> None:
@@ -126,13 +133,17 @@ def test_overweight_fails_the_report_and_just_cad(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A take-off mass limit below the model's mass makes ``ok`` false and main() exit 1."""
+    """A take-off mass limit below the model's mass makes ``ok`` false and main() exit 1.
+    main() gets the session's drone and skips the files (test_exports_are_repeatable
+    writes them), so only its exit code is tested here."""
     import checks
 
     limits = tmp_path / "limits.yaml"
     limits.write_text("max_takeoff_mass_kg: 1.0\n", encoding="utf-8")
     monkeypatch.setattr(checks, "LIMITS", limits)
     assert checks.report(drone, params)["ok"] is False
+    monkeypatch.setattr(assembly, "build", lambda p: drone)
+    monkeypatch.setattr(assembly, "export", lambda d, p, out: checks.report(d, p))
     assert assembly.main([str(tmp_path / "out")]) == 1
 
 
@@ -318,6 +329,15 @@ def test_every_part_has_its_own_step(tmp_path: Path, drone: assembly.Drone) -> N
     assert "COLOUR_RGB('',0.95" in text
 
 
+def exact_box(shape: cq.Shape) -> tuple[float, ...]:
+    """(xmin, ymin, zmin, xmax, ymax, zmax) from the geometry. Shape.BoundingBox() uses a
+    triangulation when the shape has one, and the pictures and the drag estimate leave a
+    coarse one on every part, which can stick out of a curved surface by millimetres."""
+    box = Bnd_Box()
+    BRepBndLib.AddOptimal_s(shape.wrapped, box, False, False)
+    return box.Get()
+
+
 def test_canopy_form_is_a_clean_solid(drone: assembly.Drone) -> None:
     """The canopy's outer form for editing in Fusion: one closed solid with few faces,
     from which the canopy is the form minus the form shrunk by the wall."""
@@ -328,13 +348,7 @@ def test_canopy_form_is_a_clean_solid(drone: assembly.Drone) -> None:
     assert len(solid.Solids()) == 1
     assert len(solid.Faces()) <= 12
     canopy = next(pt for pt in drone.parts if pt.name == "canopy")
-    box, cbox = solid.BoundingBox(), canopy.solid.BoundingBox()
-    for lo, hi, clo, chi in [
-        (box.xmin, box.xmax, cbox.xmin, cbox.xmax),
-        (box.ymin, box.ymax, cbox.ymin, cbox.ymax),
-        (box.zmin, box.zmax, cbox.zmin, cbox.zmax),
-    ]:
-        assert lo == pytest.approx(clo, abs=0.5) and hi == pytest.approx(chi, abs=0.5)
+    assert exact_box(solid) == pytest.approx(exact_box(canopy.solid), abs=0.5)
 
 
 def test_blades_stay_inside_their_discs(drone: assembly.Drone, params: dict[str, Any]) -> None:
@@ -467,7 +481,7 @@ def test_wake_and_hidden_parts_by_hand() -> None:
     rod = assembly.Part(
         "standoff_1",
         "frame",
-        cq.Solid.makeCylinder(2, 6, cq.Vector(5, 10, 12), cq.Vector(1, 0, 0)),
+        cq.Solid.makeCylinder(2, 4, cq.Vector(5, 10, 12), cq.Vector(1, 0, 0)),
         1,
     )
     inside = aero.drag([box("front", 0), rod], AERO)

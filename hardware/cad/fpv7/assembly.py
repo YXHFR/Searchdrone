@@ -41,6 +41,7 @@ import cadquery as cq
 import checks
 import parts
 import yaml
+from OCP.BRepTools import BRepTools
 
 HERE = Path(__file__).resolve().parent
 PARAMS = HERE / "params.yaml"
@@ -808,6 +809,9 @@ def write_part_step(part: Part, path: Path) -> None:
 
 
 def write_stl(shape: cq.Shape, path: Path, tolerance: float) -> None:
+    # Drop any triangulation left by the pictures or the drag estimate: the exporter
+    # reuses one that is fine enough, so the file would depend on what ran before.
+    BRepTools.Clean_s(shape.wrapped)
     cq.exporters.export(shape, str(path), "STL", tolerance=tolerance, angularTolerance=0.2)
 
 

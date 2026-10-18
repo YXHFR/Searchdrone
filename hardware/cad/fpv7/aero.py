@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from assembly import Drone, Part
 
 PIXEL = 0.5  # mm
+TOUCH = 1e-6  # mm: faces this close count as touching
 ROUND_PARTS = ("motor", "fastener", "cable")
 ROUND_NAMES = ("standoff", "arm_standoff", "gps_mast")
 FLAT_NAMES = ("bottom_plate", "top_plate", "arm", "reinforce", "strap")
@@ -144,10 +145,11 @@ def weights(prints: list[Footprint], wake_factor: float, wake_length: float) -> 
             with np.errstate(invalid="ignore"):
                 # b's front face inside a (a reaches further upstream and further down):
                 # ties go to the part listed first, so two equal parts do not hide each other.
-                inside = (front_a >= front_b) & (back_a <= front_b)
+                inside = (front_a >= front_b) & (back_a < front_b - TOUCH)
                 if a > b:
                     inside &= front_a > front_b
-                ahead = (back_a > front_b) & (back_a - front_b <= wake_length)
+                # a wholly ahead of b, touching it or up to wake_length away.
+                ahead = (back_a >= front_b - TOUCH) & (back_a - front_b <= wake_length)
             hidden[sb] |= inside
             shaded[sb] |= ahead
         weight = np.where(shaded, wake_factor, 1.0)
