@@ -141,7 +141,7 @@ def test_vehicle_stands_on_its_legs_in_the_world() -> None:
         if (c.get("name") or "").startswith("leg_")
     ]
     assert len(legs) == 4 and all(abs(body_z + low) < 1e-9 for low in legs)  # feet at z = 0
-    world_root = ET.fromstring(world.world_sdf(world.WORLD_NAME, 0))  # noqa: S314
+    world_root = ET.fromstring(world.world_sdf(world.WORLD_NAME, 0))  # noqa: S314 - our own rendered file
     include = next(
         i
         for i in world_root.iter("include")
