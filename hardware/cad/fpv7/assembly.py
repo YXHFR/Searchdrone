@@ -40,9 +40,10 @@ DEFAULT_OUT = HERE.parents[2] / "build" / "cad" / "fpv7"
 # Fixed STEP header date so that two builds give the same bytes.
 STEP_DATE = "2000-01-01T00:00:00"
 STEP_DATE_RE = re.compile(r"(FILE_NAME\('[^']*',')[^']*(')")
-# OCCT numbers assembly occurrences with a counter that lives as long as the process;
-# they are renumbered from 1 in file order.
-STEP_NAUO_RE = re.compile(r"(NEXT_ASSEMBLY_USAGE_OCCURRENCE\(')\d+(')")
+# OCCT numbers assembly occurrences with a counter that lives as long as the process,
+# and wraps the line where the number's length puts it. Each occurrence is rewritten on
+# one line, numbered from 1 in file order.
+STEP_NAUO_RE = re.compile(r"NEXT_ASSEMBLY_USAGE_OCCURRENCE\('\d+',(.*?)\);", re.DOTALL)
 
 # One colour per group for the PNG. The STEP file has none: OCCT writes colour styles in a
 # different order on every run, and the exports must be repeatable.
@@ -302,7 +303,12 @@ def write_step(drone: Drone, path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = STEP_DATE_RE.sub(rf"\g<1>{STEP_DATE}\g<2>", text, count=1)
     counter = itertools.count(1)
-    text = STEP_NAUO_RE.sub(lambda m: f"{m[1]}{next(counter)}{m[2]}", text)
+
+    def renumber(m: re.Match[str]) -> str:
+        rest = re.sub(r"\s*\n\s*", "", m[1])
+        return f"NEXT_ASSEMBLY_USAGE_OCCURRENCE('{next(counter)}',{rest});"
+
+    text = STEP_NAUO_RE.sub(renumber, text)
     path.write_text(text, encoding="utf-8")
 
 

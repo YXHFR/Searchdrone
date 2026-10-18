@@ -80,22 +80,53 @@ def test_mass_is_within_the_hardware_limit(report: dict[str, Any]) -> None:
     ("change", "check"),
     [
         ({"overlaps": [{"a": "x", "b": "y", "volume_mm3": 1.0}]}, "overlaps"),
-        ({"prop_margins": [{"prop": "prop_1", "nearest": "x", "distance_mm": 4.9}]}, "prop_margin"),
+        (
+            {"prop_margins": [{"prop": "prop_1", "nearest": "x", "distance_mm": 4.99}]},
+            "prop_margin",
+        ),
         ({"fov_hits": [{"part": "x", "volume_mm3": 1.0}]}, "camera_view"),
-        ({"cog_mm": [0.0, -5.1, 0.0]}, "cog"),
-        ({"mass_g": 2500.1}, "mass"),
+        ({"cog_mm": [0.0, -5.01, 0.0]}, "cog"),
+        ({"mass_g": 2500.01}, "mass"),
     ],
 )
 def test_each_failed_check_fails_the_report(
     report: dict[str, Any], change: dict[str, Any], check: str
 ) -> None:
-    """Every check decides ``ok``, the exit code of `just cad`, on its own."""
+    """Every check fails its verdict on its own, just past the limits (5 mm, 2.5 kg)."""
     import checks
 
+    assert report["prop_margin_min_mm"] == 5
+    assert report["cog_offset_max_mm"] == 5
+    assert report["max_takeoff_mass_g"] == 2500
     assert all(checks.verdicts(report).values())
     bad = checks.verdicts({**report, **change})
     assert [k for k, ok in bad.items() if not ok] == [check]
     assert "FEL" in checks.markdown({**report, **change})
+
+
+def test_cog_off_centre_fails_the_report(drone: assembly.Drone, params: dict[str, Any]) -> None:
+    """A CoG limit tighter than the model's offset makes ``ok`` (the exit code) false."""
+    import checks
+
+    strict = {**params, "checks": {**params["checks"], "cog_offset_max": 0.0}}
+    assert checks.report(drone, strict)["ok"] is False
+    assert checks.report(drone, params)["ok"] is True
+
+
+def test_overweight_fails_the_report_and_just_cad(
+    drone: assembly.Drone,
+    params: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A take-off mass limit below the model's mass makes ``ok`` false and main() exit 1."""
+    import checks
+
+    limits = tmp_path / "limits.yaml"
+    limits.write_text("max_takeoff_mass_kg: 1.0\n", encoding="utf-8")
+    monkeypatch.setattr(checks, "LIMITS", limits)
+    assert checks.report(drone, params)["ok"] is False
+    assert assembly.main([str(tmp_path / "out")]) == 1
 
 
 def test_prop_margin_check_sees_a_part_too_close(drone: assembly.Drone) -> None:
