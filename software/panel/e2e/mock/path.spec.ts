@@ -83,7 +83,11 @@ async function feats(page: Page, id: string) {
 
 async function shot(page: Page, name: string): Promise<void> {
   await page.waitForTimeout(300); // let the map draw the last change
-  await page.screenshot({ path: `test-results/path-flow/${test.info().project.name}-${name}.png` });
+  // caret "initial": hiding the caret injects a stylesheet, which the panel's CSP refuses.
+  await page.screenshot({
+    path: `test-results/path-flow/${test.info().project.name}-${name}.png`,
+    caret: "initial",
+  });
 }
 
 function setUp(ground: import("../helpers/fakeGround").FakeGround): void {
