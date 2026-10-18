@@ -42,16 +42,19 @@ from shapely.ops import substring
 from sd_sim import paths, png, raster
 from sd_sim.site import Site
 
-GENERATOR_VERSION = 2
+GENERATOR_VERSION = 5
+# Gazebo needs a square heightmap of 2^n + 1 pixels: 257 gives 4.7 m over 1.2 km.
+HEIGHTMAP_PX = 257
+HEIGHTMAP = "ground_collision.png"
 MESH_STEP_M = 5.0
 TILES = 4
 TEXTURE_PX = 2048
 # Trees per square metre of forest (200 per hectare: a managed Swedish forest has
 # 500-1500, but the canopy painted on the ground under them closes the gaps from above).
-TREE_DENSITY = 0.02
+TREE_DENSITY = 0.03
 TREE_KEEP_OUT_M = 2.5  # from roads, buildings and water
 PARKING_STALL_M = (2.6, 5.2)
-PARKING_OCCUPANCY = 0.65
+PARKING_OCCUPANCY = 0.5
 CAR_SIZE_M = (4.5, 1.8, 1.5)
 
 Grid = NDArray[np.float64]
@@ -157,7 +160,13 @@ class Material:
 
     def mtl(self) -> str:
         r, g, b = self.rgb
-        out = [f"newmtl {self.name}", f"Ka {r:.3f} {g:.3f} {b:.3f}", f"Kd {r:.3f} {g:.3f} {b:.3f}"]
+        # Ambient at 60 % of the diffuse colour keeps shaded sides darker than lit ones.
+        ka = (0.6 * r, 0.6 * g, 0.6 * b)
+        out = [
+            f"newmtl {self.name}",
+            "Ka {:.3f} {:.3f} {:.3f}".format(*ka),
+            f"Kd {r:.3f} {g:.3f} {b:.3f}",
+        ]
         out.append(f"Ks {self.specular:.3f} {self.specular:.3f} {self.specular:.3f}")
         out.append("Ns 10")
         if self.texture:
@@ -173,7 +182,14 @@ def write_obj(folder: Path, stem: str, mesh: Mesh, materials: Iterable[Material]
 
 
 def _rgb(c: Rgb) -> tuple[float, float, float]:
-    return (c[0] / 255, c[1] / 255, c[2] / 255)
+    """An sRGB colour as the linear value the renderer expects in a material (textures are
+    sRGB pictures and are converted by the renderer itself)."""
+
+    def linear(v: int) -> float:
+        x = v / 255
+        return x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+
+    return (linear(c[0]), linear(c[1]), linear(c[2]))
 
 
 # --- the terrain -----------------------------------------------------------------------
@@ -249,7 +265,12 @@ def terrain_obj(mesh: Mesh, ground: Ground, ti: int, tj: int) -> str:
     del n
     lines = [f"mtllib terrain_{ti}_{tj}.mtl", f"usemtl terrain_{ti}_{tj}"]
     lines += [f"v {x:.3f} {y:.3f} {z:.3f}" for x, y, z in verts]
-    lines += [f"vt {(x - west) / size:.6f} {(y - south) / size:.6f}" for x, y, _ in verts]
+    # Texture coordinates stay half a pixel inside the tile, so the renderer never
+    # samples the opposite edge of the picture at a seam.
+    edge = 0.5 / TEXTURE_PX
+    u = np.clip((verts[:, 0] - west) / size, edge, 1 - edge)
+    v = np.clip((verts[:, 1] - south) / size, edge, 1 - edge)
+    lines += [f"vt {a:.6f} {b:.6f}" for a, b in zip(u, v, strict=True)]
     lines += [f"vn {a:.4f} {b:.4f} {c:.4f}" for a, b, c in normals]
     faces = mesh.groups[f"terrain_{ti}_{tj}"][0]
     lines += [
@@ -467,7 +488,7 @@ class Tree:
 
     @property
     def crown_radius(self) -> float:
-        return {"spruce": 0.17, "pine": 0.16, "birch": 0.2}[self.species] * self.height
+        return {"spruce": 0.19, "pine": 0.2, "birch": 0.21}[self.species] * self.height
 
 
 SPECIES = (("spruce", 0.5, (14.0, 26.0)), ("pine", 0.3, (14.0, 24.0)), ("birch", 0.2, (10.0, 20.0)))
@@ -567,33 +588,33 @@ def tree_meshes(trees: Sequence[Tree], half: float) -> dict[tuple[int, int], Mes
         parts: list[tuple[str, tuple[Grid, NDArray[np.int64]]]] = []
         if t.species == "spruce":
             parts.append(("trunk", _prism(0.02 * h, -0.3, 0.25 * h, 4, t.yaw)))
-            parts.append((f"spruce_{shade}", _cone(0.17 * h, 0.12 * h, h, 7, t.yaw)))
+            parts.append((f"spruce_{shade}", _cone(0.19 * h, 0.08 * h, h, 8, t.yaw)))
         elif t.species == "pine":
-            parts.append(("pine_trunk", _prism(0.025 * h, -0.3, 0.72 * h, 4, t.yaw)))
-            parts.append((f"pine_{shade}", _blob(0.16 * h, 0.17 * h, 0.8 * h, t.yaw)))
+            parts.append(("pine_trunk", _prism(0.022 * h, -0.3, 0.7 * h, 4, t.yaw)))
+            parts.append((f"pine_{shade}", _blob(0.2 * h, 0.2 * h, 0.8 * h, t.yaw)))
         else:
             parts.append(("birch_trunk", _prism(0.02 * h, -0.3, 0.55 * h, 4, t.yaw)))
-            parts.append((f"birch_{shade}", _blob(0.2 * h, 0.3 * h, 0.66 * h, t.yaw)))
+            parts.append((f"birch_{shade}", _blob(0.21 * h, 0.32 * h, 0.64 * h, t.yaw)))
         for material, (verts, faces) in parts:
             mesh.add(material, verts + np.array([t.east, t.north, t.z]), faces)
     return out
 
 
 TREE_MATERIALS = [
-    Material("trunk", _rgb((74, 56, 40))),
-    Material("pine_trunk", _rgb((128, 84, 56))),
-    Material("birch_trunk", _rgb((210, 206, 196))),
+    Material("trunk", _rgb((58, 44, 32))),
+    Material("pine_trunk", _rgb((92, 62, 42))),
+    Material("birch_trunk", _rgb((196, 192, 182))),
     *[
         Material(f"spruce_{i}", _rgb(c))
-        for i, c in enumerate([(30, 56, 34), (36, 64, 38), (26, 50, 32)])
+        for i, c in enumerate([(20, 40, 24), (26, 48, 28), (16, 34, 22)])
     ],
     *[
         Material(f"pine_{i}", _rgb(c))
-        for i, c in enumerate([(52, 76, 40), (60, 84, 44), (46, 70, 38)])
+        for i, c in enumerate([(34, 54, 26), (42, 62, 30), (30, 48, 24)])
     ],
     *[
         Material(f"birch_{i}", _rgb(c))
-        for i, c in enumerate([(92, 124, 52), (104, 134, 58), (84, 116, 50)])
+        for i, c in enumerate([(58, 92, 36), (68, 100, 40), (52, 84, 34)])
     ],
 ]
 
@@ -951,6 +972,7 @@ def build(
             bool(buildings),
             bool(cars),
             not water.empty,
+            write_heightmap(ground, meshes / HEIGHTMAP),
         ),
         encoding="utf-8",
     )
@@ -974,6 +996,18 @@ def build(
         json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8"
     )
     return model
+
+
+def write_heightmap(ground: Ground, path: Path) -> tuple[float, float, float]:
+    """The collision heightmap (16-bit PNG, HEIGHTMAP_PX square, row 0 north);
+    returns (size, lowest z, height range) for the SDF."""
+    xs = np.linspace(-ground.half, ground.half, HEIGHTMAP_PX)
+    east, north = np.meshgrid(xs, xs[::-1])
+    z = ground.at(east, north)
+    zmin, zmax = float(z.min()), float(z.max())
+    zrange = max(zmax - zmin, 0.01)
+    path.write_bytes(png.encode_gray16(np.round((z - zmin) / zrange * 65535).astype(np.uint16)))
+    return 2 * ground.half, round(zmin, 3), round(zrange, 3)
 
 
 def load_ground(site: Site, repo: Path = paths.REPO) -> Ground:
@@ -1002,17 +1036,22 @@ def model_sdf(
     buildings: bool,
     cars: bool,
     water: bool,
+    collision: tuple[float, float, float],
 ) -> str:
     base = f"model://{model_name(site)}/meshes"
     links = []
     parts = []
+    # The ground collides as a heightmap: a heightfield in ODE (which Gazebo's DART uses
+    # for collisions) costs a fraction of triangle meshes at 1000 physics steps per second.
+    # It lies 10 cm under the visible ground, so that at home only the pad's box touches
+    # the vehicle (two contact surfaces at the same height make the IMU jitter).
+    size, zmin, zrange = collision
+    parts.append(
+        f'      <collision name="ground"><pose>0 0 {zmin - 0.1:.3f} 0 0 0</pose><geometry>'
+        f"<heightmap><uri>{base}/{HEIGHTMAP}</uri><size>{size:g} {size:g} {zrange:.3f}</size>"
+        "<pos>0 0 0</pos></heightmap></geometry></collision>"
+    )
     for stem in terrain:
-        # 10 cm under the visible ground, so that at home only the pad's box touches the
-        # vehicle (two contact surfaces at the same height make the IMU jitter).
-        parts.append(
-            f'      <collision name="{stem}"><pose>0 0 -0.1 0 0 0</pose>'
-            f"{_mesh(f'{base}/{stem}.obj')}</collision>"
-        )
         parts.append(f'      <visual name="{stem}">{_mesh(f"{base}/{stem}.obj")}</visual>')
     links.append(("terrain", parts))
     links.append(

@@ -38,6 +38,23 @@ def encode(image: NDArray[np.uint8]) -> bytes:
     )
 
 
+def encode_gray16(image: NDArray[np.uint16]) -> bytes:
+    """A 16-bit greyscale PNG (Gazebo heightmaps)."""
+    if image.dtype != np.uint16 or image.ndim != 2:
+        raise ValueError("väntade en tvådimensionell uint16-bild")
+    height, width = image.shape
+    header = struct.pack(">IIBBBBB", width, height, 16, 0, 0, 0, 0)
+    rows = np.zeros((height, 1 + 2 * width), dtype=np.uint8)
+    rows[:, 1:] = image.astype(">u2").view(np.uint8).reshape(height, 2 * width)
+    body = zlib.compress(rows.tobytes(), ZLIB_LEVEL)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", header)
+        + _chunk(b"IDAT", body)
+        + _chunk(b"IEND", b"")
+    )
+
+
 def write(path: Path, image: NDArray[np.uint8]) -> None:
     path.write_bytes(encode(image))
 
