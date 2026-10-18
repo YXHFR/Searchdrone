@@ -3,9 +3,11 @@
 // Every pixel is computed from its position in metres, so tiles and zoom levels line up.
 import { crc32, deflateSync, gzipSync } from "node:zlib";
 import { zxyToTileId } from "pmtiles";
+import { HOME } from "./index";
 
-const HOME = { lat: -35.363261, lon: 149.16523 };
-const SPAN = { lat: 0.01, lon: 0.012 };
+/** Half the covered extent around HOME, in degrees north-south and east-west. */
+const HALF_NS = 0.01;
+const HALF_EW = 0.012;
 const MIN_ZOOM = 12;
 const MAX_ZOOM = 16;
 const SIZE = 256;
@@ -181,10 +183,10 @@ function varints(values: number[]): Buffer {
 
 /** A PMTiles v3 archive: header, root directory, metadata, then PNG tiles in id order. */
 function pack(): Buffer {
-  const lon0 = HOME.lon - SPAN.lon;
-  const lon1 = HOME.lon + SPAN.lon;
-  const lat0 = HOME.lat - SPAN.lat;
-  const lat1 = HOME.lat + SPAN.lat;
+  const lon0 = HOME.lon - HALF_EW;
+  const lon1 = HOME.lon + HALF_EW;
+  const lat0 = HOME.lat - HALF_NS;
+  const lat1 = HOME.lat + HALF_NS;
   const tiles: { id: number; data: Buffer }[] = [];
   for (let z = MIN_ZOOM; z <= MAX_ZOOM; z++)
     for (let x = tileX(z, lon0); x <= tileX(z, lon1); x++)
