@@ -199,8 +199,11 @@ def scenario_id(test_name: str) -> str:
 
 
 def wants_result(item: pytest.Item, phases: dict[str, str]) -> bool:
-    """A simulator test that ran (a test skipped on purpose writes nothing)."""
+    """A simulator test that ran (a test skipped on purpose writes nothing, and an attempt
+    pytest-rerunfailures repeats leaves the result to the repeat)."""
     if not any(item.get_closest_marker(m) for m in _RESULT_MARKERS):
+        return False
+    if "rerun" in phases.values():
         return False
     return phases.get("setup") != "skipped" and phases.get("call") != "skipped"
 

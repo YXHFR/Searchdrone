@@ -158,7 +158,7 @@ async def test_demo_flight(demo_stack: Stack) -> None:
         box = box_enu()
         flown = [(*d.plane.xy(s.lat, s.lon), s.alt_m) for s in sweep]
         got = coverage_fraction(box, flown, ALT_M, SPACING_M)
-        measure("täckning av sökrutan", got, MIN_COVERAGE, at_most=False, unit="")
+        measure("täckning av sökrutan", 100 * got, 100 * MIN_COVERAGE, at_most=False, unit="%")
         assert got >= MIN_COVERAGE, f"täckning {got:.3f}"
         survey_gates = await d.gate(survey["id"])
         assert [g["decision"] for g in survey_gates if g["side"] == "ground"] == ["ALLOW"]
