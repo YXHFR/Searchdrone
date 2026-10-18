@@ -170,8 +170,11 @@ async def test_sc_path_stop_halfway_brakes_at_once(
         res = await sc.press("resume")
         assert res.status_code == 202, res.text
         await sc.wait_command("resume", "running", 30, issuer_kind="brain", besides=before)
-        state = await sc.onboard_state()
-        assert state["executor_state"] == "TRANSIT", state
+
+        async def flies_on_as_a_path() -> bool:
+            return (await sc.onboard_state())["executor_state"] == "TRANSIT"
+
+        await sc.until(flies_on_as_a_path, 5, "Fortsätt: vägen flygs vidare i TRANSIT")
         await sc.wait_command("resume", "done", 180, issuer_kind="brain", besides=before)
         end = sc.at(*PATH_ENU[-1])
         rest = closest_m(sc, pressed)[3:]  # the points still left when it stopped
