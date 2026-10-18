@@ -16,6 +16,7 @@ members = [
     "sd-onboard",
     "sd-safety",
     "sd-schemas",
+    "sd-searchsim",
     "sd-sim",
     "sd-testing",
     "searchdrone-workspace",
@@ -1750,6 +1751,17 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13" },
     { name = "uuid-utils", specifier = ">=1.0,<2" },
 ]
+
+[[package]]
+name = "sd-searchsim"
+version = "0.0.0"
+source = { editable = "simulation/searchsim" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=2.4" }]
 
 [[package]]
 name = "sd-sim"

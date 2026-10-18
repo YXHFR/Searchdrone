@@ -14,6 +14,7 @@ root_packages =
     sd_brain
     sd_hwcalc
     sd_sim
+    sd_searchsim
 include_external_packages = True
 
 [importlinter:contract:schemas-leaf]
@@ -225,3 +226,42 @@ source_modules = sd_brain
 forbidden_modules =
     socket
 allow_indirect_imports = True
+
+[importlinter:contract:searchsim-standalone]
+name = the search policy simulator cannot reach the vehicle, the gate or the network
+type = forbidden
+source_modules = sd_searchsim
+forbidden_modules =
+    sd_schemas
+    sd_safety
+    sd_geo
+    sd_mav
+    sd_link
+    sd_obs
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_hwcalc
+    sd_sim
+    pymavlink
+    serial
+    mavsdk
+    dronekit
+    MAVProxy
+    httpx
+    socket
+    subprocess
+
+[importlinter:contract:searchsim-not-wired]
+name = no flight-path package uses the learned search policy (it only suggests, offline)
+type = forbidden
+source_modules =
+    sd_safety
+    sd_mav
+    sd_link
+    sd_onboard
+    sd_ground
+    sd_brain
+forbidden_modules =
+    sd_searchsim

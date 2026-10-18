@@ -59,6 +59,8 @@ RECIPES = [
     "brain-token",
     "brain-eval",
     "brain-eval-cloud",
+    "rl-train",
+    "rl-eval",
 ]
 ALIASES = ["gen-schemas", "sim-up", "sim-down", "bench"]
 
