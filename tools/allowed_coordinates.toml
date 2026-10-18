@@ -6,3 +6,11 @@ name = "CMAC (ArduPilot SITL default)"
 lat = -35.363261
 lon = 149.165230
 radius_m = 5000
+
+[[place]]
+# The owner chose one public Swedish site for the simulator's terrain world. Its data
+# reach about 860 m from home (the corners of the 1.2 km square).
+name = "Hellasgården, Nacka (public simulator site, simulation/gazebo/sites/hellasgarden)"
+lat = 59.28842
+lon = 18.15953
+radius_m = 1000

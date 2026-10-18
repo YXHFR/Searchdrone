@@ -285,8 +285,11 @@ def _keyed_values(lines: list[str], key: str, int_only: bool) -> list[tuple[int,
     return found
 
 
-def find_coordinates(lines: list[str]) -> list[tuple[int, float, float]]:
-    """Rule e patterns 1-6. Returns (line, lat, lon) candidates."""
+def find_coordinates(
+    lines: list[str], free: set[tuple[int, float, float]] | None = None
+) -> list[tuple[int, float, float]]:
+    """Rule e patterns 1-6. Returns (line, lat, lon) candidates; ``free`` collects those
+    that came from a free number pair without keys (tried in both orders)."""
     found: list[tuple[int, float, float]] = []
     key_lines: set[int] = set()
     for pairs, int_only in ((KEY_PAIRS, False), (INT_ONLY_PAIRS, True)):
@@ -314,6 +317,8 @@ def find_coordinates(lines: list[str]) -> list[tuple[int, float, float]]:
             # Both orders: "lat, lon" and GeoJSON-style "lon, lat".
             found.append((no, first, second))
             found.append((no, second, first))
+            if free is not None:
+                free.update({(no, first, second), (no, second, first)})
         for m in DMS.finditer(line):
             lat = int(m.group(1)) + int(m.group(2)) / 60 + float(m.group(3)) / 3600
             lon = int(m.group(5)) + int(m.group(6)) / 60 + float(m.group(7)) / 3600
@@ -328,10 +333,19 @@ def check_coordinates(path: str, lines: list[str], places: list[Place]) -> list[
         return []
     out: list[Finding] = []
     seen: set[int] = set()
-    for no, lat, lon in find_coordinates(lines):
-        if no in seen:
-            continue
-        if any(haversine_m(lat, lon, p.lat, p.lon) <= p.radius_m for p in places):
+    free: set[tuple[int, float, float]] = set()
+    found = find_coordinates(lines, free)
+
+    def allowed(lat: float, lon: float) -> bool:
+        return any(haversine_m(lat, lon, p.lat, p.lon) <= p.radius_m for p in places)
+
+    # A free pair is tried in both orders; at a site where the swapped pair is also a valid
+    # position (Sweden: 59 N 18 E against 18 N 59 E), the order that is allowed decides.
+    # Pairs with keys (lat/lon) have one order and get no such exemption.
+    allowed_here = {(no, lat, lon) for no, lat, lon in found if allowed(lat, lon)}
+    for no, lat, lon in found:
+        swapped_ok = (no, lat, lon) in free and (no, lon, lat) in allowed_here
+        if no in seen or (no, lat, lon) in allowed_here or swapped_ok:
             continue
         seen.add(no)
         out.append(Finding(path, no, "coordinate", "coordinate outside the public test sites"))

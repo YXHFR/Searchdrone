@@ -1,7 +1,8 @@
 """Download the offline map pack for the panel: ``just maps-fetch [key=value ...]``.
 
-Keys (all optional): ``bbox=min_lon,min_lat,max_lon,max_lat``, ``maxzoom=15``,
-``name=demo``, ``dry=1`` (only show how large the pack would be).
+Keys (all optional): ``site=<name>`` (centre the pack on a simulator site's home, the
+same point as its Gazebo world and SITL home), ``bbox=min_lon,min_lat,max_lon,max_lat``,
+``maxzoom=15``, ``name=demo``, ``dry=1`` (only show how large the pack would be).
 
 1. Installs ``go-pmtiles`` in the locked version as ``~/.local/bin/sd-pmtiles-<version>``
    (SHA-256 of the download and of the program are checked, ``tools/maps/maps-extract.toml``).
@@ -42,7 +43,7 @@ from sd_ground.api.tiles import PACK_NAME
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCK = ROOT / "tools" / "maps" / "maps-extract.toml"
-KEYS = ("bbox", "maxzoom", "name", "dry")
+KEYS = ("site", "bbox", "maxzoom", "name", "dry")
 BUILDS_PAGE = "https://maps.protomaps.com/builds"
 TIMEOUT_S = 60
 MAX_BINARY_BYTES = 200 * 1024 * 1024
@@ -104,6 +105,18 @@ def parse_bbox(text: str) -> Bbox:
     return min_lon, min_lat, max_lon, max_lat
 
 
+def site_home(root: Path, name: str) -> tuple[float, float]:
+    """Home of a simulator site: a local one (``build/sites``) or a public one."""
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", name):
+        raise FetchError("site: a-z, 0-9 och _, högst 32 tecken, först en bokstav.", 2)
+    for folder in (root / "build" / "sites", root / "simulation" / "gazebo" / "sites"):
+        path = folder / name / "site.toml"
+        if path.is_file():
+            home = tomllib.loads(path.read_text(encoding="utf-8")).get("home", {})
+            return float(home["lat"]), float(home["lon"])
+    raise FetchError(f"platsen {name} finns inte.", 2)
+
+
 def load_settings(root: Path, args: dict[str, str]) -> Settings:
     conf: dict[str, Any] = {}
     for path in (root / "config" / "maps.example.toml", root / "config" / "maps.toml"):
@@ -121,8 +134,13 @@ def load_settings(root: Path, args: dict[str, str]) -> Settings:
         raise FetchError("maxzoom ska vara ett heltal.", 2) from None
     if not 0 <= maxzoom <= 15:
         raise FetchError("maxzoom ska vara 0 till 15 (kartan förstoras själv över 15).", 2)
+    if "bbox" in args and "site" in args:
+        raise FetchError("ange site= eller bbox=, inte båda.", 2)
     if "bbox" in args:
         bbox = parse_bbox(args["bbox"])
+    elif "site" in args:
+        lat, lon = site_home(root, args["site"])
+        bbox = bbox_around(lat, lon, float(conf["half_size_m"]))
     else:
         bbox = bbox_around(
             float(conf["center_lat"]), float(conf["center_lon"]), float(conf["half_size_m"])
