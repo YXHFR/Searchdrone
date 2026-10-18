@@ -304,9 +304,6 @@ class Executor:
         self.control_suspended = False
         self.auth = Authority()
         self.over = OverrideState()
-        # The stop latch was set by one unrequested LOITER, and by nothing before it: a
-        # take-over notice inside the classification window names that change the pilot's.
-        self._latch_from_mode_change = False
         self.fallback = OverrideFallback(
             vehicle,
             clock,
@@ -899,7 +896,6 @@ class Executor:
         rule = self.over.apply_notice(notice)
         if rule is None:
             return
-        self._latch_from_mode_change = False
         # Only sends if the ground's MAVLink does not get through (override_fallback.py).
         self.fallback.start(notice.kind, notice.action_seq, rule.steps)
         now = self.now_ms()
@@ -930,22 +926,7 @@ class Executor:
             self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
             return
         if takeover.active:
-            now = self.now_ms()
-            change = self.auth.change
-            if (
-                self._latch_from_mode_change
-                and self.state == S.HELD
-                and self.held_by == "external"
-                and change is not None
-                and self.auth.in_window(now)
-                and self.vehicle.telemetry.fc_mode == change.mode  # no other change since
-            ):
-                # The ground station switches to LOITER at once and its notice can come a
-                # moment later: that one change was this take-over, not a stop. A latch
-                # set before it (a real STOP) is never lifted here.
-                self.over.stop_latch = False
-            self._latch_from_mode_change = False
-            self.auth.notice(now)
+            self.auth.notice(self.now_ms())
             target = self.target_of(Trigger.OPERATOR_OVERRIDE)
             if not isinstance(target, Refusal):
                 self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
@@ -967,7 +948,6 @@ class Executor:
         self._release(ref_id, keep_latch=False)
 
     def _release(self, ref_id: UUID, *, keep_latch: bool) -> None:
-        self._latch_from_mode_change = False
         if self.state not in (S.HELD, S.FAILSAFE):
             if not self.over.battery_rtl_active and not keep_latch:
                 self.over.released()
@@ -1344,7 +1324,6 @@ class Executor:
         self.resume_point = None
         self.auth.reset()
         self.over.landed()
-        self._latch_from_mode_change = False
         self.limits.reset()
         self.clearance = None
         self.ai_silent_after_step = False
@@ -1368,11 +1347,7 @@ class Executor:
                     else "external"
                 )
                 if change.mode in _STOPPING_MODES and held_by == "external":
-                    latched_before = self.over.stop_latch
                     self.over.stop_latch = True  # an unrequested BRAKE/LOITER means stop
-                    self._latch_from_mode_change = (
-                        not latched_before and change.mode == CopterMode.LOITER.name
-                    )
                 target = self.target_of(Trigger.UNEXPECTED_MODE)
                 if not isinstance(target, Refusal):
                     self.control_suspended = True  # first, so nothing more goes out
