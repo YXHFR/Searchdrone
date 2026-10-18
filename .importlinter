@@ -257,9 +257,13 @@ forbidden_modules =
 name = no flight-path package uses the learned search policy (it only suggests, offline)
 type = forbidden
 source_modules =
+    sd_schemas
     sd_safety
+    sd_geo
     sd_mav
     sd_link
+    sd_obs
+    sd_detect
     sd_onboard
     sd_ground
     sd_brain

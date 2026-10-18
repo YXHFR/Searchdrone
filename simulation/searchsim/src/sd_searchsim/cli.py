@@ -1,6 +1,6 @@
 """``sd-searchsim train|eval key=value ...`` (behind ``just rl-train`` and ``just rl-eval``).
 
-train: size=full|ci (default full), seed=<int>, workers=<int>, out=<policy file>
+train: size=full|ci (default full), seed=<0..9>, workers=<int>, out=<policy file>
 eval:  size=full|ci (default full), workers=<int>, policy=<policy file>, out=<result file>
 
 The policy file and the results land in ``build/rl/`` by default, which git ignores:
@@ -73,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "train":
         seed = _int(args, "seed", 0, command)
+        if seed > train.MAX_SEED:
+            _fail(f"rl-train: seed ska vara 0 till {train.MAX_SEED}.")
         out = Path(args.get("out", DEFAULT_DIR / "policy.json"))
         theta, log = train.train(
             size, cfg, seed=seed, workers=workers, progress=lambda m: print(m, flush=True)

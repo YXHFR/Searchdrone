@@ -17,7 +17,7 @@ just rl-eval                  # compare on 1000 held-out scenarios -> build/rl/e
 just rl-eval size=ci          # 300 scenarios
 ```
 
-Keys: `size=full|ci`, `seed=<int>` (train), `workers=<int>` (default: every core),
+Keys: `size=full|ci`, `seed=0..9` (train), `workers=<int>` (default: every core),
 `out=<file>`, `policy=<file>` (eval). The policy is written to `build/rl/policy.json`,
 which git ignores; trained weights never go into the repository. Without a policy file
 `rl-eval` compares only the baselines.

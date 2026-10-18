@@ -75,11 +75,12 @@ def test_every_flight_keeps_the_reserve_and_the_fence(name: str) -> None:
         while not ep.done:
             sector = choose(ep.observe())
             assert sc.allowed.ravel()[sector]
+            # The plan for this sortie leaves the reserve after the survey and the flight
+            # home (checked before the step, since a swap afterwards refills the battery).
+            transit = float(ep._transit_min(ep.centres[sector]))
+            left = ep.battery - transit - CFG.sweep_min - ep.home_min[sector]
+            assert left >= reserve - 1e-9
             ep.step(sector)
-            if ep.done:
-                break
-            # After every survey the drone can still get home above the reserve.
-            assert ep.battery - ep.home_min[sector] >= reserve - 1e-9
         r = ep.result()
         assert 0.0 <= r.p_find <= 1.0
         assert 0.0 <= r.score <= 1.0

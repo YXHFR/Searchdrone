@@ -20,7 +20,9 @@ class SimConfig:
     swath_m: float = 50.0  # ground width one survey lane sees, overlap already taken off
     turn_s: float = 10.0  # per lane change in a sector survey
     battery_min: float = 25.0
-    reserve_frac: float = 0.15  # never planned below this; the gate's own limit still applies
+    # Never planned below this; the gate's own limit still applies. Keep it equal to the
+    # gate's return-home default (tools/tests/test_searchsim_reserve.py checks it).
+    reserve_frac: float = 0.15
     swap_min: float = 4.0  # land, change battery, take off
     horizon_min: float = 180.0
     # What the belief assumes; the scenario draws the truth around these.

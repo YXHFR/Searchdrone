@@ -60,6 +60,20 @@ class TrainLog:
     seconds: float = 0.0
 
 
+SEED_STRIDE = 1_000_000  # training scenarios per run seed, so runs never share scenarios
+MAX_SEED = (VAL_SEED_BASE - TRAIN_SEED_BASE) // SEED_STRIDE - 1
+
+
+def train_seeds(size: RunSize, seed: int, it: int) -> range:
+    """Scenario seeds for ES iteration ``it`` (1-based); never in the validation range."""
+    if not 0 <= seed <= MAX_SEED:
+        raise ValueError(f"seed must be 0..{MAX_SEED}")
+    if (size.iterations + 1) * size.train_scenarios > SEED_STRIDE:
+        raise ValueError("run size too large for the training seed range")
+    base = TRAIN_SEED_BASE + seed * SEED_STRIDE + it * size.train_scenarios
+    return range(base, base + size.train_scenarios)
+
+
 def train(
     size: RunSize,
     cfg: SimConfig | None = None,
@@ -72,6 +86,7 @@ def train(
     cfg = cfg or SimConfig()
     if size.population % 2:
         raise ValueError("population must be even (antithetic pairs)")
+    train_seeds(size, seed, size.iterations)  # fail before any work on a bad seed
     rng = np.random.default_rng(seed)
     theta = initial_params()
     m = np.zeros_like(theta)
@@ -89,9 +104,7 @@ def train(
         for it in range(1, size.iterations + 1):
             eps = rng.standard_normal((half, theta.size))
             cands = np.concatenate([theta + sigma * eps, theta - sigma * eps])
-            base = TRAIN_SEED_BASE + (seed * 1_000_000) + it * size.train_scenarios
-            seeds = range(base, base + size.train_scenarios)
-            fit = score_candidates(pool, cands, seeds, cfg)
+            fit = score_candidates(pool, cands, train_seeds(size, seed, it), cfg)
             ranks = _centred_ranks(fit)
             grad = (ranks[:half] - ranks[half:]) @ eps / (size.population * sigma)
             # Adam ascent

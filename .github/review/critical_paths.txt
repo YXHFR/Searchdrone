@@ -47,6 +47,8 @@ simulation/tests/**
 simulation/sd_sim/**
 simulation/gazebo/**
 simulation/scenarios/**
+# The offline search simulator: its battery, reserve and no-fly check, before it is wired in
+simulation/searchsim/**
 
 # The AI commander: which tools it gets, the turn loop, the stop check and the prompt (B1-10)
 software/brain/src/sd_brain/tools.py

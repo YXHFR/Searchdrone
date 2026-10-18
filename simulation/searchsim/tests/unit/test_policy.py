@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from sd_searchsim import cli, policies
-from sd_searchsim.config import SIZES, RunSize
+from sd_searchsim.config import EVAL_SEED_BASE, SIZES, VAL_SEED_BASE, RunSize
 from sd_searchsim.env import Episode, run_episode
 from sd_searchsim.evaluate import evaluate
 from sd_searchsim.policies import (
@@ -20,7 +20,7 @@ from sd_searchsim.policies import (
     spiral_order,
 )
 from sd_searchsim.scenario import make_scenario
-from sd_searchsim.train import train
+from sd_searchsim.train import MAX_SEED, train, train_seeds
 
 TINY = RunSize(
     iterations=2, population=4, train_scenarios=2, val_scenarios=3, eval_scenarios=3, val_every=1
@@ -123,3 +123,28 @@ def test_cli_rejects_bad_arguments(argv: list[str]) -> None:
 def test_cli_eval_missing_named_policy(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         cli.main(["eval", "size=ci", f"policy={tmp_path / 'none.json'}"])
+
+
+@pytest.mark.parametrize("name", list(SIZES))
+def test_training_seeds_never_reach_validation_or_evaluation(name: str) -> None:
+    size = SIZES[name]
+    used = {
+        s
+        for seed in (0, MAX_SEED)
+        for it in (1, size.iterations)
+        for s in train_seeds(size, seed, it)
+    }
+    val = range(VAL_SEED_BASE, VAL_SEED_BASE + size.val_scenarios)
+    ev = range(EVAL_SEED_BASE, EVAL_SEED_BASE + size.eval_scenarios)
+    assert max(used) < VAL_SEED_BASE
+    assert max(val) < EVAL_SEED_BASE
+    assert not used & set(val) and not used & set(ev)
+
+
+def test_a_seed_outside_the_training_range_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(ValueError, match="seed"):
+        train_seeds(SIZES["ci"], MAX_SEED + 1, 1)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["train", "size=ci", f"seed={MAX_SEED + 1}"])
+    assert exc.value.code == 2
+    assert "seed" in capsys.readouterr().err
