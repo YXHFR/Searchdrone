@@ -28,8 +28,11 @@ holds.
 stills from a camera folder, runs the detector sources of the class register
 (`sd_detect`), places each detection on the ground from the flight controller's position
 and attitude and sends a `PerceptionReport` to the ground. It only reads telemetry, never
-steers, and its reports wait behind every ack and event on the link; a failing still is
-skipped and logged, never a reason to stop.
+steers, and its reports wait behind every ack and event on the link (a report too large
+to send is dropped, never in their way). Reading a still and the detectors run in a worker
+thread; a still larger than the configured camera is not read. A failing still is skipped
+and logged, and a dying perception task is logged, never a reason to stop. Kept stills
+(`keep_stills`) are capped at the newest 200.
 
 | Module | Contents |
 |---|---|

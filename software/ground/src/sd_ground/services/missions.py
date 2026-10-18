@@ -150,6 +150,7 @@ class MissionFlow:
     clearances: Clearances = field(default_factory=Clearances)
     rates: dict[str, BrainRate] = field(default_factory=dict[str, BrainRate])
     finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
+    reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
@@ -601,7 +602,7 @@ class MissionFlow:
         elif isinstance(body, StateSnapshot):
             await self._on_snapshot(vehicle_id, body)
         elif isinstance(body, PerceptionReport):
-            await perception_service.on_report(self, vehicle_id, body)
+            perception_service.enqueue(self, vehicle_id, body)  # never waits for storage
 
     async def _on_snapshot(self, vehicle_id: str, snap: StateSnapshot) -> None:
         from sd_ground.services import commands as commands_service

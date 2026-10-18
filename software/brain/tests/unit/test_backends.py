@@ -324,6 +324,23 @@ async def test_scripted_flies_to_a_target_find_and_asks_the_pilot(tmp_path: Path
     ).action is None
 
 
+async def test_scripted_regex_groups_win_over_event_fields(tmp_path: Path) -> None:
+    script = tmp_path / "clash.yaml"
+    script.write_text(
+        "scenario: SK-RED\n"
+        "turns:\n"
+        "  - on: operator_message\n"
+        "    match: '^Vad är (?P<label>\\w+)\\?$'\n"
+        "    once: false\n"
+        '    say: ["{label}"]\n',
+        encoding="utf-8",
+    )
+    b = ScriptedBackend.from_file(script)
+    ev = [{"type": "event.detection", "body": {"label": "red_block", "kind": "target"}}]
+    out = await b.decide(_turn("Vad är bil?", events=ev), _NoTools())
+    assert [m.text for m in out.messages] == ["bil"]  # no TypeError over the shared key
+
+
 def test_event_find_only_for_at(tmp_path: Path) -> None:
     from sd_brain.backends.scripted import _Fixture, _resolve  # pyright: ignore[reportPrivateUsage]
 

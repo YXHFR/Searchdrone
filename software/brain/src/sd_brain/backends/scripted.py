@@ -318,7 +318,7 @@ class ScriptedBackend:
             groups = {k: v for k, v in (m.groupdict() if m else {}).items() if v is not None}
         event = next((b for b in _event_bodies(turn) if _matches_when(t.when, b)), {})
         fields = {k: str(v) for k, v in event.items() if isinstance(v, str | int | float)}
-        out.messages = [OutMessage(text=line.format(**fields, **groups)) for line in t.say]
+        out.messages = [OutMessage(text=line.format(**{**fields, **groups})) for line in t.say]
         if t.charter_proposal is not None:
             name = t.charter_proposal.get("from_fixture", "").format(**groups)
             out.ready_proposal = self.fixture.charter(name, f"Ram {name} ur manuset.")

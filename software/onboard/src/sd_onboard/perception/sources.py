@@ -5,7 +5,8 @@ plus ``<name>.json`` with the size and, in the simulator, the bounding-box camer
 labelled boxes (``boxes``: ``label``, ``x0``, ``y0``, ``x1``, ``y1``). The JSON file is
 written last, so a still is complete once its JSON exists. The source returns the newest
 complete still and deletes it and every older one: a detector that falls behind skips
-stills instead of building a backlog.
+stills instead of building a backlog. A still larger than the configured camera is
+refused before it is read.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Protocol
 
 from sd_detect import BBox, Frame, SimBox, Still
 
-__all__ = ["CapturedStill", "DirStillSource", "StillSource", "read_ppm"]
+__all__ = ["MAX_SIDE_PX", "CapturedStill", "DirStillSource", "StillSource", "read_ppm"]
 
 log = logging.getLogger("sd_onboard.perception")
 MAX_SIDE_PX = 8192
@@ -35,8 +36,12 @@ class StillSource(Protocol):
     def poll(self) -> CapturedStill | None: ...
 
 
-def read_ppm(data: bytes) -> Frame:
-    """A binary PPM (``P6``, maxval 255) as a frame."""
+Size = tuple[int, int]
+_HEADER_MAX = 64  # bytes a PPM header may take
+
+
+def read_ppm(data: bytes, max_size: Size = (MAX_SIDE_PX, MAX_SIDE_PX)) -> Frame:
+    """A binary PPM (``P6``, maxval 255, at most ``max_size``) as a frame."""
     parts: list[bytes] = []
     pos = 0
     while len(parts) < 4:
@@ -52,16 +57,21 @@ def read_ppm(data: bytes) -> Frame:
     if parts[0] != b"P6" or parts[3] != b"255":
         raise ValueError("only binary 8-bit PPM (P6, 255) is read")
     width, height = int(parts[1]), int(parts[2])
-    if not (0 < width <= MAX_SIDE_PX and 0 < height <= MAX_SIDE_PX):
-        raise ValueError("PPM size out of range")
+    if not (0 < width <= max_size[0] and 0 < height <= max_size[1]):
+        raise ValueError(f"PPM size {width}x{height} out of range")
     rgb = data[pos : pos + width * height * 3]
+    if len(rgb) != width * height * 3:
+        raise ValueError("truncated PPM pixel data")
     return Frame(width=width, height=height, rgb=rgb, ts_mono_ms=0)
 
 
 class DirStillSource:
-    def __init__(self, folder: Path, *, synthetic: bool) -> None:
+    def __init__(
+        self, folder: Path, *, synthetic: bool, max_size: Size = (MAX_SIDE_PX, MAX_SIDE_PX)
+    ) -> None:
         self.folder = folder
         self.synthetic = synthetic
+        self.max_size = max_size
         self.skipped = 0
 
     def poll(self) -> CapturedStill | None:
@@ -76,7 +86,10 @@ class DirStillSource:
             self.skipped += 1
         try:
             meta = json.loads(newest.read_text(encoding="utf-8"))
-            frame = read_ppm(newest.with_suffix(".ppm").read_bytes())
+            ppm = newest.with_suffix(".ppm")
+            if ppm.stat().st_size > self.max_size[0] * self.max_size[1] * 3 + _HEADER_MAX:
+                raise ValueError("still larger than the camera")
+            frame = read_ppm(ppm.read_bytes(), self.max_size)
             boxes = meta.get("boxes")
             sim_boxes = (
                 None

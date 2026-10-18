@@ -1131,26 +1131,58 @@ class FlowRepo:
 
     # --- detections ------------------------------------------------------------------
 
-    async def add_detections(self, rows: list[dict[str, Any]]) -> int:
-        """Insert detections; a detection id already stored is skipped (a resent report)."""
+    async def add_detections(self, rows: list[dict[str, Any]]) -> set[str]:
+        """Insert detections in one statement; returns the ids stored now (an id already
+        stored is skipped: a resent report)."""
         if not rows:
-            return 0
+            return set()
+        cols = (
+            "id, mission_id, vehicle_id, find_id, still_id, captured_at, label, kind, source, "
+            "score, bbox, lat, lon, sigma95_m, size_m, synthetic, crop_path"
+        )
+        names = [c.strip() for c in cols.split(",")]
+        values: list[str] = []
+        params: dict[str, Any] = {}
+        for i, r in enumerate(rows):
+            marks = [f"CAST(:{n}_{i} AS jsonb)" if n == "bbox" else f":{n}_{i}" for n in names]
+            values.append("(" + ", ".join(marks) + ")")
+            params |= {f"{n}_{i}": r[n] for n in names}
+            params[f"bbox_{i}"] = json.dumps(r["bbox"])
         async with self.engine.begin() as conn:
-            count = 0
-            for r in rows:
-                res = await conn.execute(
-                    text(
-                        "INSERT INTO detections (id, mission_id, vehicle_id, find_id, still_id, "
-                        "captured_at, label, kind, source, score, bbox, lat, lon, sigma95_m, "
-                        "size_m, synthetic, crop_path) VALUES (:id, :mission_id, :vehicle_id, "
-                        ":find_id, :still_id, :captured_at, :label, :kind, :source, :score, "
-                        "CAST(:bbox AS jsonb), :lat, :lon, :sigma95_m, :size_m, :synthetic, "
-                        ":crop_path) ON CONFLICT (id) DO NOTHING"
-                    ),
-                    {**r, "bbox": json.dumps(r["bbox"])},
-                )
-                count += res.rowcount
-            return count
+            res = await conn.execute(
+                text(
+                    f"INSERT INTO detections ({cols}) VALUES {', '.join(values)} "  # noqa: S608
+                    "ON CONFLICT (id) DO NOTHING RETURNING id::text"
+                ),
+                params,
+            )
+            return {str(row[0]) for row in res}
+
+    async def stored_detection_ids(self, ids: list[str]) -> set[str]:
+        if not ids:
+            return set()
+        rows = await self._all(
+            "SELECT id::text FROM detections WHERE id = ANY(CAST(:ids AS uuid[]))", ids=ids
+        )
+        return {str(r["id"]) for r in rows}
+
+    async def find_groups(self, mission_id: str) -> list[dict[str, Any]]:
+        """Every find of a mission as the table holds it: the detections grouped by their
+        stored find id, oldest find first (mean position, best score, best thumbnail, a
+        real detector's source before the simulator's labels)."""
+        rows = await self._all(
+            "SELECT find_id::text AS find_id, min(label) AS label, "
+            "COALESCE(min(source) FILTER (WHERE source <> 'oracle'), 'oracle') AS source, "
+            "avg(lat) AS lat, avg(lon) AS lon, min(sigma95_m) AS sigma95_m, "
+            "max(score) AS score, count(*) AS count, bool_or(synthetic) AS synthetic, "
+            "(array_agg(id::text ORDER BY score DESC, created_at, id) "
+            "FILTER (WHERE crop_path IS NOT NULL))[1] AS thumb_detection_id, "
+            "max(score) FILTER (WHERE crop_path IS NOT NULL) AS thumb_score "
+            "FROM detections WHERE mission_id = :m GROUP BY find_id "
+            "ORDER BY min(created_at), find_id",
+            m=mission_id,
+        )
+        return [dict(r) for r in rows]
 
     async def detections(self, mission_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         rows = await self._all(
