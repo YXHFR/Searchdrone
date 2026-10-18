@@ -1,0 +1,14 @@
+# A person model for the sim farm: where it comes from and its measured box. The model
+# itself is fetched by `just sim-farm-setup` into build/ and checked against sha256.
+id = "sd_person_rescue_randy"
+owner = "OpenRobotics"
+fuel_name = "Rescue Randy"
+version = 3
+sha256 = "abf964e3c417318156ad8fe6d34bc815f6be0b0843cea4ce73fa76883d40f4d2"
+license = "CC-BY-4.0"
+credit = "Rescue Randy by Open Robotics (Ian Chen, Cole Biesemeyer), Gazebo Fuel"
+mesh = "meshes/rescue_randy.dae"
+pose = "standing"            # the model's own pose: standing (can also lie) or sitting
+# Box in the model frame, metres, z up: x min, x max, y min, y max, z min, z max
+bounds_m = [-0.69, 0.69, -0.18, 0.18, 0.0, 1.83]
+albedo_map = "materials/textures/rescue_randy_albedo.png"  # a texture the SDF names itself (PBR)
