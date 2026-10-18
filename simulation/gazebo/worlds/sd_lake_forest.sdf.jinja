@@ -216,5 +216,12 @@
       <uri>{{ model_uri }}</uri>
       <pose>0 0 0 0 0 {{ vehicle_yaw }}</pose>
     </include>
+{% for uri in includes %}
+
+    <!-- Scenario objects (search targets, decoys, labelled context), placed by sd_sim. -->
+    <include>
+      <uri>{{ uri }}</uri>
+    </include>
+{% endfor %}
   </world>
 </sdf>

@@ -1,36 +1,41 @@
-"""The person-detector interface: one image in, a list of detections out.
+"""The detector interface: one image in, a list of detections out.
 
-Only the names ``Detector`` and ``detect()`` are stable. The fields of ``Frame`` and
-``Detection`` are preliminary and may grow before stage 2. The interface assumes no model
-type: a class-and-score detector (RF-DETR, YOLOX) and an embedding model both fit.
+Only the names ``Detector`` and ``detect()`` are stable. The interface assumes no model
+type: a class-and-score detector (RF-DETR, YOLOX), a colour threshold and an embedding
+model all fit. A detection's label is a class id from the class register
+(``sd_detect.classes``); ``source`` says what kind of source found it, so a simulator
+label (``"oracle"``) is never mistaken for a real model.
 
 Nothing here steers the vehicle or reaches the safety gate: a detection is only a hint
-for a person to look at, and only a person confirms a find. There is no face recognition
-and no search for anything but people.
+for a person to look at, and only a person confirms a find. There is no face recognition.
 """
 
 from __future__ import annotations
 
 from typing import ClassVar, Literal, Protocol, Self, runtime_checkable
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
+from sd_detect.classes import CLASS_ID_PATTERN, is_forbidden_class
 from sd_schemas.base import SdModel
 
 __all__ = [
     "EMBEDDING_MAX_LEN",
     "FRAME_MAX_SIDE_PX",
-    "LABELS",
+    "SOURCES",
     "BBox",
     "Detection",
     "Detector",
     "Frame",
+    "SourceKind",
 ]
 
 FRAME_MAX_SIDE_PX = 8192
 EMBEDDING_MAX_LEN = 4096
-LABELS: tuple[Literal["person"], ...] = ("person",)
-"""The only label a detector may report: Searchdrone searches for people, not objects."""
+SourceKind = Literal["model", "color", "oracle"]
+SOURCES: tuple[SourceKind, ...] = ("model", "color", "oracle")
+"""What found a detection: a trained model, a colour threshold on real pixels, or the
+simulator's own labels (only in the simulator; never a measure of real ability)."""
 
 
 class Frame(SdModel):
@@ -58,22 +63,25 @@ class BBox(SdModel):
 
 
 class Detection(SdModel):
-    """Something that may be a person in one image. Never a decision: a person confirms.
+    """Something of one class in one image. Never a decision: a person confirms.
 
-    ``embedding`` is a generic appearance vector for matching against a description. It is
-    never a face or other biometric identity vector.
+    ``label`` is a class id (``sd_detect.classes``); the pipeline drops labels that are not
+    in the register. ``embedding`` is a generic appearance vector for matching against a
+    description. It is never a face or other biometric identity vector.
     """
 
-    label: str
+    label: str = Field(pattern=CLASS_ID_PATTERN)
     score: float = Field(ge=0, le=1)
     bbox: BBox
     embedding: list[float] | None = Field(default=None, max_length=EMBEDDING_MAX_LEN)
+    source: SourceKind | None = None
 
-    @model_validator(mode="after")
-    def _person_only(self) -> Self:
-        if self.label not in LABELS:
-            raise ValueError("a detector may only report people (label 'person')")
-        return self
+    @field_validator("label")
+    @classmethod
+    def _no_forbidden_class(cls, value: str) -> str:
+        if is_forbidden_class(value):
+            raise ValueError("a detector never reports faces, plates or other identities")
+        return value
 
 
 @runtime_checkable

@@ -1,0 +1,598 @@
+{
+  "about": "Pictures rendered by Gazebo Harmonic (ogre2, headless) in the world sd_lake_forest with the SK-RED targets; regenerate with `uv run --package sd-sim python -m sd_sim.render_stills`.",
+  "camera": {
+    "width": 1280,
+    "height": 720,
+    "hfov_deg": 66.0
+  },
+  "scenario": "SK-RED",
+  "seed": 11,
+  "objects": [
+    {
+      "name": "road_0",
+      "cls": "road",
+      "role": "context",
+      "east_m": 0.0,
+      "north_m": 202.57,
+      "yaw_deg": 90.0,
+      "size_m": [140.0, 6.0, 0.02],
+      "rgb": [0.25, 0.25, 0.27],
+      "gz_label": 12,
+      "lat": -35.36143518,
+      "lon": 149.16523
+    },
+    {
+      "name": "red_block_0",
+      "cls": "red_block",
+      "role": "target",
+      "east_m": -1.19,
+      "north_m": 223.57,
+      "yaw_deg": 89.2,
+      "size_m": [0.5, 0.5, 0.5],
+      "rgb": [0.8, 0.05, 0.05],
+      "gz_label": 1,
+      "lat": -35.3612459,
+      "lon": 149.16521691
+    },
+    {
+      "name": "red_block_1",
+      "cls": "red_block",
+      "role": "target",
+      "east_m": 33.78,
+      "north_m": 232.04,
+      "yaw_deg": 36.3,
+      "size_m": [0.5, 0.5, 0.5],
+      "rgb": [0.8, 0.05, 0.05],
+      "gz_label": 1,
+      "lat": -35.36116956,
+      "lon": 149.16560169
+    },
+    {
+      "name": "red_block_2",
+      "cls": "red_block",
+      "role": "target",
+      "east_m": -3.83,
+      "north_m": 192.54,
+      "yaw_deg": 23.6,
+      "size_m": [0.5, 0.5, 0.5],
+      "rgb": [0.8, 0.05, 0.05],
+      "gz_label": 1,
+      "lat": -35.36152558,
+      "lon": 149.16518786
+    },
+    {
+      "name": "red_car_0",
+      "cls": "car",
+      "role": "decoy",
+      "east_m": -35.04,
+      "north_m": 177.06,
+      "yaw_deg": 155.3,
+      "size_m": [4.5, 1.8, 1.5],
+      "rgb": [0.8, 0.05, 0.05],
+      "gz_label": 10,
+      "lat": -35.36166511,
+      "lon": 149.16484445
+    },
+    {
+      "name": "car_1",
+      "cls": "car",
+      "role": "context",
+      "east_m": 22.7,
+      "north_m": 215.05,
+      "yaw_deg": 99.6,
+      "size_m": [4.5, 1.8, 1.5],
+      "rgb": [0.1, 0.2, 0.55],
+      "gz_label": 10,
+      "lat": -35.36132269,
+      "lon": 149.16547977
+    },
+    {
+      "name": "building_0",
+      "cls": "building",
+      "role": "decoy",
+      "east_m": 22.65,
+      "north_m": 165.87,
+      "yaw_deg": 31.0,
+      "size_m": [10.0, 7.0, 5.0],
+      "rgb": [0.5, 0.11, 0.08],
+      "gz_label": 11,
+      "lat": -35.36176597,
+      "lon": 149.16547922
+    }
+  ],
+  "shots": [
+    {
+      "name": "block0_h20",
+      "east_m": 1.81,
+      "north_m": 221.57,
+      "height_m": 20.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 15.0
+      },
+      "file": "block0_h20.png",
+      "boxes": [
+        {
+          "cls": "red_block",
+          "x": 452.0,
+          "y": 286.0,
+          "w": 34.0,
+          "h": 31.0
+        }
+      ]
+    },
+    {
+      "name": "block0_h30",
+      "east_m": -5.19,
+      "north_m": 228.57,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 100.0
+      },
+      "file": "block0_h30.png",
+      "boxes": [
+        {
+          "cls": "red_block",
+          "x": 769.0,
+          "y": 190.0,
+          "w": 21.0,
+          "h": 21.0
+        }
+      ]
+    },
+    {
+      "name": "block0_h40",
+      "east_m": 6.81,
+      "north_m": 226.57,
+      "height_m": 40.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 200.0
+      },
+      "file": "block0_h40.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 0.0,
+          "w": 114.0,
+          "h": 41.0
+        },
+        {
+          "cls": "red_block",
+          "x": 48.0,
+          "y": 706.0,
+          "w": 20.0,
+          "h": 13.0
+        },
+        {
+          "cls": "red_block",
+          "x": 792.0,
+          "y": 213.0,
+          "w": 17.0,
+          "h": 17.0
+        },
+        {
+          "cls": "car",
+          "x": 96.0,
+          "y": 189.0,
+          "w": 136.0,
+          "h": 69.0
+        }
+      ]
+    },
+    {
+      "name": "block1_h20",
+      "east_m": 36.78,
+      "north_m": 230.04,
+      "height_m": 20.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 55.0
+      },
+      "file": "block1_h20.png",
+      "boxes": [
+        {
+          "cls": "red_block",
+          "x": 454.0,
+          "y": 409.0,
+          "w": 35.0,
+          "h": 32.0
+        }
+      ]
+    },
+    {
+      "name": "block1_h30",
+      "east_m": 29.78,
+      "north_m": 237.04,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 140.0
+      },
+      "file": "block1_h30.png",
+      "boxes": [
+        {
+          "cls": "red_block",
+          "x": 635.0,
+          "y": 136.0,
+          "w": 19.0,
+          "h": 22.0
+        }
+      ]
+    },
+    {
+      "name": "block1_h40",
+      "east_m": 41.78,
+      "north_m": 235.04,
+      "height_m": 40.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 240.0
+      },
+      "file": "block1_h40.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 0.0,
+          "w": 8.0,
+          "h": 14.0
+        },
+        {
+          "cls": "red_block",
+          "x": 667.0,
+          "y": 142.0,
+          "w": 15.0,
+          "h": 17.0
+        }
+      ]
+    },
+    {
+      "name": "block2_h20",
+      "east_m": -0.83,
+      "north_m": 190.54,
+      "height_m": 20.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 95.0
+      },
+      "file": "block2_h20.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 0.0,
+          "w": 224.0,
+          "h": 719.0
+        },
+        {
+          "cls": "red_block",
+          "x": 537.0,
+          "y": 500.0,
+          "w": 32.0,
+          "h": 35.0
+        }
+      ]
+    },
+    {
+      "name": "block2_h30",
+      "east_m": -7.83,
+      "north_m": 197.54,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 180.0
+      },
+      "file": "block2_h30.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 427.0,
+          "w": 1279.0,
+          "h": 196.0
+        },
+        {
+          "cls": "red_block",
+          "x": 496.0,
+          "y": 182.0,
+          "w": 22.0,
+          "h": 23.0
+        }
+      ]
+    },
+    {
+      "name": "block2_h40",
+      "east_m": 4.17,
+      "north_m": 195.54,
+      "height_m": 40.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 280.0
+      },
+      "file": "block2_h40.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 677.0,
+          "y": 0.0,
+          "w": 276.0,
+          "h": 719.0
+        },
+        {
+          "cls": "red_block",
+          "x": 524.0,
+          "y": 169.0,
+          "w": 15.0,
+          "h": 16.0
+        },
+        {
+          "cls": "car",
+          "x": 1170.0,
+          "y": 671.0,
+          "w": 72.0,
+          "h": 48.0
+        }
+      ]
+    },
+    {
+      "name": "block0_edge",
+      "east_m": -22.19,
+      "north_m": 225.57,
+      "height_m": 35.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 0.0
+      },
+      "file": "block0_edge.png",
+      "boxes": [
+        {
+          "cls": "red_block",
+          "x": 1224.0,
+          "y": 409.0,
+          "w": 22.0,
+          "h": 14.0
+        }
+      ]
+    },
+    {
+      "name": "block0_tilted",
+      "east_m": 0.81,
+      "north_m": 220.57,
+      "height_m": 35.0,
+      "attitude": {
+        "roll_deg": 6.0,
+        "pitch_deg": -8.0,
+        "yaw_deg": 300.0
+      },
+      "file": "block0_tilted.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 0.0,
+          "w": 573.0,
+          "h": 719.0
+        },
+        {
+          "cls": "red_block",
+          "x": 45.0,
+          "y": 482.0,
+          "w": 22.0,
+          "h": 16.0
+        },
+        {
+          "cls": "red_block",
+          "x": 780.0,
+          "y": 113.0,
+          "w": 20.0,
+          "h": 21.0
+        }
+      ]
+    },
+    {
+      "name": "red_car_0_h30",
+      "east_m": -33.04,
+      "north_m": 176.06,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 45.0
+      },
+      "file": "red_car_0_h30.png",
+      "boxes": [
+        {
+          "cls": "car",
+          "x": 483.0,
+          "y": 328.0,
+          "w": 166.0,
+          "h": 112.0
+        }
+      ]
+    },
+    {
+      "name": "car_1_h30",
+      "east_m": 24.7,
+      "north_m": 214.05,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 45.0
+      },
+      "file": "car_1_h30.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 674.0,
+          "y": 114.0,
+          "w": 605.0,
+          "h": 605.0
+        },
+        {
+          "cls": "car",
+          "x": 485.0,
+          "y": 314.0,
+          "w": 162.0,
+          "h": 140.0
+        }
+      ]
+    },
+    {
+      "name": "building_0_h30",
+      "east_m": 24.65,
+      "north_m": 164.87,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 45.0
+      },
+      "file": "building_0_h30.png",
+      "boxes": [
+        {
+          "cls": "building",
+          "x": 357.0,
+          "y": 147.0,
+          "w": 396.0,
+          "h": 482.0
+        }
+      ]
+    },
+    {
+      "name": "road_h30",
+      "east_m": 20.0,
+      "north_m": 202.57,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 0.0
+      },
+      "file": "road_h30.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 261.0,
+          "w": 1279.0,
+          "h": 197.0
+        }
+      ]
+    },
+    {
+      "name": "overview_h60",
+      "east_m": 0.0,
+      "north_m": 210.57,
+      "height_m": 60.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 0.0
+      },
+      "file": "overview_h60.png",
+      "boxes": [
+        {
+          "cls": "road",
+          "x": 0.0,
+          "y": 442.0,
+          "w": 1279.0,
+          "h": 98.0
+        },
+        {
+          "cls": "red_block",
+          "x": 571.0,
+          "y": 651.0,
+          "w": 10.0,
+          "h": 12.0
+        },
+        {
+          "cls": "red_block",
+          "x": 1189.0,
+          "y": 0.0,
+          "w": 15.0,
+          "h": 12.0
+        },
+        {
+          "cls": "red_block",
+          "x": 616.0,
+          "y": 140.0,
+          "w": 8.0,
+          "h": 10.0
+        },
+        {
+          "cls": "car",
+          "x": 974.0,
+          "y": 263.0,
+          "w": 87.0,
+          "h": 43.0
+        }
+      ]
+    },
+    {
+      "name": "empty_forest_h40",
+      "east_m": -205.0,
+      "north_m": 40.0,
+      "height_m": 40.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 90.0
+      },
+      "file": "empty_forest_h40.png",
+      "boxes": []
+    },
+    {
+      "name": "empty_lake_h40",
+      "east_m": 150.0,
+      "north_m": 120.0,
+      "height_m": 40.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 0.0
+      },
+      "file": "empty_lake_h40.png",
+      "boxes": []
+    },
+    {
+      "name": "empty_path_h30",
+      "east_m": -40.0,
+      "north_m": 125.0,
+      "height_m": 30.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 20.0
+      },
+      "file": "empty_path_h30.png",
+      "boxes": []
+    },
+    {
+      "name": "empty_pad_h25",
+      "east_m": 0.0,
+      "north_m": 0.0,
+      "height_m": 25.0,
+      "attitude": {
+        "roll_deg": 0.0,
+        "pitch_deg": 0.0,
+        "yaw_deg": 353.0
+      },
+      "file": "empty_pad_h25.png",
+      "boxes": []
+    }
+  ]
+}

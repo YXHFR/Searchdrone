@@ -174,11 +174,22 @@ def trees(seed: int = SEED) -> list[Tree]:
     ]
 
 
-def world_context(name: str, instance: int, fix: fixture.Fixture) -> dict[str, Any]:
+def world_context(
+    name: str,
+    instance: int,
+    fix: fixture.Fixture,
+    *,
+    vehicle: str = MODEL_NAME,
+    includes: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """``vehicle`` is the model placed on the landing pad (normally sd_quad14);
+    ``includes`` are further rendered models by name (``model://<name>``), such as a
+    scenario's targets (``sd_sim.targets``)."""
     home = fix.home
     return {
         "name": name,
-        "model_uri": f"model://{MODEL_NAME}_i{instance}",
+        "model_uri": f"model://{vehicle}_i{instance}",
+        "includes": [f"model://{inc}" for inc in includes],
         "home": home,
         # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
         "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
@@ -214,10 +225,17 @@ def model_config(instance: int) -> str:
     return template.replace(f"<name>{MODEL_NAME}</name>", f"<name>{MODEL_NAME}_i{instance}</name>")
 
 
-def world_sdf(name: str, instance: int, fix: fixture.Fixture | None = None) -> str:
+def world_sdf(
+    name: str,
+    instance: int,
+    fix: fixture.Fixture | None = None,
+    *,
+    vehicle: str = MODEL_NAME,
+    includes: tuple[str, ...] = (),
+) -> str:
     fix = fixture.load() if fix is None else fix
     template = _env().get_template(f"worlds/{name}.sdf.jinja")
-    return template.render(**world_context(name, instance, fix))
+    return template.render(**world_context(name, instance, fix, vehicle=vehicle, includes=includes))
 
 
 def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
