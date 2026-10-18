@@ -237,7 +237,7 @@ def test_world_generates(tmp_path: Path) -> None:
     world_el = root.find("world")
     assert world_el is not None and world_el.get("name") == world.WORLD_NAME
     assert {child.tag for child in world_el} <= WORLD_CHILDREN
-    assert world_el.findtext("physics/max_step_size") == "0.001"
+    assert world_el.findtext("physics/max_step_size") == "0.00125"
     assert world_el.findtext("physics/real_time_factor") == "1.0"
     assert world_el.findtext("scene/shadows") == "false"
     sensors = world_el.find("plugin[@name='gz::sim::systems::Sensors']")

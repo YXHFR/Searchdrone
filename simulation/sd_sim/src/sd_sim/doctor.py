@@ -70,25 +70,10 @@ def check_glx() -> Row:
     return Row(
         "Grafik (glxinfo -B)",
         WARN,
-        "Inget NVIDIA-kort syns, Gazebo ritar med processorn. Prova "
-        "MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA eller gui=false.",
+        "Inget NVIDIA-kort syns, Gazebo ritar med processorn. Kör bash "
+        "tools/setup/wsl-setup.sh sim (sätter GALLIUM_DRIVER=d3d12) och öppna en ny "
+        "terminal, prova MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA eller gui=false.",
     )
-
-
-def check_render_node(node: Path = Path("/dev/dri/renderD128")) -> Row:
-    """Gazebo's camera renders off screen through the render node, unlike the window
-    (glxinfo); without access it falls back to software and the world slows down."""
-    name = "Grafikkortet för kameran (renderD128)"
-    if not node.exists():
-        return Row(name, WARN, f"{node} saknas; kamerabilden ritas med processorn.")
-    if not os.access(node, os.R_OK | os.W_OK):
-        return Row(
-            name,
-            FAIL,
-            "Ingen åtkomst: kör bash tools/setup/wsl-setup.sh sim (lägger dig i gruppen "
-            "render) och sedan wsl --shutdown i PowerShell.",
-        )
-    return Row(name, OK)
 
 
 def check_ardupilot() -> Row:
@@ -186,7 +171,7 @@ def check_loopback(physics: str) -> Row:
 
 def run_checks(physics: str) -> list[Row]:
     checks: list[Callable[[], Row]] = [check_ubuntu, check_repo_location, check_ardupilot]
-    gz_checks = [check_glx, check_render_node, check_gz_version, check_gz_plugin, check_gz_ip]
+    gz_checks = [check_glx, check_gz_version, check_gz_plugin, check_gz_ip]
     if physics == "gz":
         checks += gz_checks
     checks += [check_docker, check_ports_free, check_ram]

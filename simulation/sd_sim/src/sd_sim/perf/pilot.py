@@ -4,8 +4,9 @@ A port of the pilot in ``simulation/tests/scenarios/demo_rig.py`` (test-only) to
 threads, so the synchronous perf driver can use it: a CLI pilot token on the panel API
 over real HTTP (loopback, never a proxy), a watcher that reads the vehicle's state five
 times a second, and the live WebSocket with pings, which keeps the operator present (no
-SC19 hold). The demo's opening is the same as SC01's: the request in the chat, "Godkänn
-ram" in mode B, the onboard checks, "Fritt runt drönaren" and the AI's take-off.
+SC19 hold). The demo's opening is the same as SC01's, plus the pin P1 on the map that a
+real AI (unlike the scripted one) needs: the request in the chat, "Godkänn ram" in mode B,
+the onboard checks, "Fritt runt drönaren" and the AI's take-off.
 
 ``chat_latencies_s`` reads the instance's database afterwards: for every operator chat
 message the AI answered, the time from the message to its first reply, an order or a chat
@@ -19,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import os
 import threading
 import time
@@ -30,6 +32,7 @@ from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from sd_sim import fixture
 from sd_sim.errors import InfraError, VehicleError
 from sd_sim.launch import read_env_value
 from sd_sim.services import DB_HOST, DB_PORT, VEHICLE_ID, database_name
@@ -58,6 +61,10 @@ DEMO_REQUEST = (
     "Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd. "
     "Landa hemma sen."
 )
+DEMO_PIN = "P1"  # the pin the request names; the AI only knows the pins on the map
+# The pilot's answer when the AI asks in the chat instead of showing its charter card.
+DEMO_YES = "Ja, godkänn."
+EARTH_RADIUS_M = 6_378_137.0
 HEADERS = {"X-SD-Client": "panel", "Content-Type": "application/json"}
 POLL_S = 0.2  # the watcher: five times a second, as demo_rig
 PING_S = 5.0  # the live WebSocket's pings (demo_rig's _present)
@@ -143,6 +150,15 @@ def latencies_s(rows: Iterable[tuple[datetime | None, datetime | None]]) -> list
 def remaining_s(deadline: float, now: float | None = None) -> float:
     """The seconds left until a ``time.monotonic()`` deadline, never below zero."""
     return max(0.0, deadline - (time.monotonic() if now is None else now))
+
+
+def pin_latlon(fx: fixture.Fixture, name: str) -> tuple[float, float]:
+    """A fixture pin as (lat, lon): metres east/north of home on a flat earth, as the
+    world is (a few hundred metres, so the error is millimetres)."""
+    pin, home = fx.pins[name], fx.home
+    lat = home.lat + math.degrees(pin.north_m / EARTH_RADIUS_M)
+    lon = home.lon + math.degrees(pin.east_m / (EARTH_RADIUS_M * math.cos(math.radians(home.lat))))
+    return lat, lon
 
 
 def newest_brain_command(commands: Sequence[dict[str, Any]], skill: str) -> dict[str, Any] | None:
@@ -380,6 +396,25 @@ class Pilot:
     def status(self) -> str:
         return str(self._get(f"/api/v1/missions/{self.mid}")["mission"]["status"])
 
+    def place_pin(self, name: str) -> None:
+        """The pilot's pin on the map, where the demo fixture has it."""
+        lat, lon = pin_latlon(fixture.load(), name)
+        body = {
+            "kind": "pin",
+            "label": name,
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        }
+        self._post(f"/api/v1/missions/{self.mid}/annotations", body, 201, f"nålen {name}")
+
+    def brain_asked(self) -> bool:
+        """The newest chat line is the AI's question (the small local model sometimes
+        asks "Vill du godkänna detta?" instead of proposing the charter as a card)."""
+        page = self._get(f"/api/v1/missions/{self.mid}/chat", limit="200")
+        items = sorted(page.get("items", []), key=lambda m: int(m.get("seq", 0)))
+        return (
+            bool(items) and items[-1].get("role") == "brain" and items[-1].get("kind") == "question"
+        )
+
     def say(self, text: str) -> None:
         body = {"client_msg_id": str(new_uuid7()), "text": text}
         self._post(f"/api/v1/missions/{self.mid}/chat", body, 201, "chatten")
@@ -403,19 +438,27 @@ class Pilot:
         return found
 
     def fly_demo_until_airborne(self, timeout_s: float = 300.0) -> str:
-        """The demo's opening (D2-D5): open a mission, the request in the chat, "Godkänn
+        """The demo's opening (D2-D5): open a mission, the pin P1 on the map (the AI
+        places its search box by the pin's label), the request in the chat (answered
+        once with "Ja, godkänn." if the AI asks instead of proposing), "Godkänn
         ram" in mode B, the onboard checks, "Fritt runt drönaren" and the AI's take-off to
         40 m. Every step may use what is left of ``timeout_s``. Returns the mission id."""
         self.start()
         deadline = time.monotonic() + timeout_s
         opened = self._post(f"/api/v1/vehicles/{VEHICLE_ID}/missions/open", {}, 200, "uppdraget")
         self.mid = str(opened["id"])
+        self.place_pin(DEMO_PIN)
         self.say(DEMO_REQUEST)
         cards: list[dict[str, Any]] = []
+        answered = False
 
         def card() -> bool:
+            nonlocal answered
             pending = self._get(f"/api/v1/missions/{self.mid}/approvals", status="pending")
             cards[:] = [a for a in pending if a.get("kind") == "charter"]
+            if not cards and not answered and self.brain_asked():
+                self.say(DEMO_YES)  # as a pilot would, once
+                answered = True
             return bool(cards)
 
         self._until(card, remaining_s(deadline), "AI:ns ramkort")

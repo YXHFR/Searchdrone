@@ -34,9 +34,8 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol
 
-from sd_sim import _args, config, doctor, paths, ports, procs, services
+from sd_sim import _args, config, paths, ports, procs, services
 from sd_sim import report as sim_report
-from sd_sim.doctor import FAIL, OK
 from sd_sim.errors import InfraError, StopRequestedError, VehicleError
 from sd_sim.launch import Stack, read_env_value
 from sd_sim.perf import report as perf_report
@@ -156,12 +155,13 @@ def perf_config(args: PerfArgs) -> config.SimConfig:
 class PreflightFacts:
     chrome: str | None  # google-chrome on PATH
     docker: str | None
-    docker_runtimes: str  # `docker info --format '{{json .Runtimes}}'`, "" when it failed
+    # `docker info` runtimes plus CDI devices (Docker 28+ finds the toolkit's
+    # nvidia.com/gpu without the nvidia runtime), "" when it failed
+    docker_runtimes: str
     llm_up: bool  # llama-server already answers (then the graphics card works)
     model_file: Path
     nvidia_smi: str | None
     busy: list[int]
-    render_node: str = OK  # sim-doctor's render-node row status (Gazebo's camera on the GPU)
 
 
 def preflight_errors(facts: PreflightFacts) -> list[str]:
@@ -187,11 +187,6 @@ def preflight_errors(facts: PreflightFacts) -> list[str]:
         )
     if not facts.model_file.is_file():
         errors.append(f"Modellfilen models/{facts.model_file.name} saknas. Kör just models-fetch.")
-    if facts.render_node == FAIL:
-        errors.append(
-            "Gazebos kamera får inte använda grafikkortet (/dev/dri/renderD128), så världen "
-            "går för långsamt. Kör bash tools/setup/wsl-setup.sh sim och sedan wsl --shutdown."
-        )
     if facts.busy:
         ports_text = ", ".join(str(p) for p in facts.busy)
         errors.append(f"Port {ports_text} är upptagen. Kör just stop och försök igen.")
@@ -215,7 +210,13 @@ def _run_text(argv: list[str], timeout: float = 20.0) -> str:
 
 def gather_preflight(repo: Path, stack_ports: dict[str, int]) -> PreflightFacts:
     docker = shutil.which("docker")
-    runtimes = _run_text([docker, "info", "--format", "{{json .Runtimes}}"]) if docker else ""
+    runtimes = ""
+    if docker:
+        # Separate calls: an older Docker without DiscoveredDevices fails that template.
+        runtimes = " ".join(
+            _run_text([docker, "info", "--format", f"{{{{json .{field}}}}}"])
+            for field in ("Runtimes", "DiscoveredDevices")
+        )
     return PreflightFacts(
         chrome=shutil.which("google-chrome"),
         docker=docker,
@@ -224,7 +225,6 @@ def gather_preflight(repo: Path, stack_ports: dict[str, int]) -> PreflightFacts:
         model_file=model_file(repo),
         nvidia_smi=shutil.which("nvidia-smi"),
         busy=busy_ports(stack_ports, list(STACK_PORTS)),
-        render_node=doctor.check_render_node().status,
     )
 
 

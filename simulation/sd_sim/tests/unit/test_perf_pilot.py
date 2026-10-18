@@ -12,10 +12,12 @@ from typing import Any, cast
 
 import pytest
 
+from sd_sim import fixture
 from sd_sim.errors import InfraError, VehicleError
 from sd_sim.perf import pilot as pilot_mod
 from sd_sim.perf.pilot import (
     DEMO_REQUEST,
+    DEMO_YES,
     Pilot,
     flight_done,
     is_brake,
@@ -23,6 +25,7 @@ from sd_sim.perf.pilot import (
     new_uuid7,
     newest_brain_command,
     not_brake,
+    pin_latlon,
     remaining_s,
 )
 
@@ -59,6 +62,9 @@ class FakePanel:
         self.status = "DRAFT"
         self.commands: list[dict[str, Any]] = []
         self.stop_status = 202
+        self.chat: list[dict[str, Any]] = []
+        self.card = True  # the AI's charter card is pending
+        self.card_after_yes = False  # the card appears once the pilot answers "Ja"
 
     def request(
         self,
@@ -73,13 +79,17 @@ class FakePanel:
             return 200, self.state
         if path == f"/api/v1/vehicles/{VID}/missions/open":
             return 200, {"id": "m1"}
+        if path == "/api/v1/missions/m1/chat" and method == "GET":
+            return 200, {"items": self.chat, "next_before": None}
         if path == "/api/v1/missions/m1/chat":
+            if self.card_after_yes and body is not None and body["text"] == DEMO_YES:
+                self.card = True
+            return 201, {}
+        if path == "/api/v1/missions/m1/annotations":
             return 201, {}
         if path == "/api/v1/missions/m1/approvals":
-            return 200, [
-                {"id": "other", "kind": "command", "subject_version": 9},
-                {"id": "a1", "kind": "charter", "subject_version": 3},
-            ]
+            card = [{"id": "a1", "kind": "charter", "subject_version": 3}] if self.card else []
+            return 200, [{"id": "other", "kind": "command", "subject_version": 9}, *card]
         if path == "/api/v1/approvals/a1/decision":
             self.status = "READY"
             return 200, {}
@@ -146,6 +156,16 @@ def test_latencies_s() -> None:
     ]
     assert latencies_s(rows) == [2.5, 0.8]
     assert latencies_s([]) == []
+
+
+def test_pin_latlon_is_metres_from_home() -> None:
+    fx = fixture.load()
+    lat, lon = pin_latlon(fx, "P1")  # 200 m north of home
+    assert lon == pytest.approx(fx.home.lon)
+    assert (lat - fx.home.lat) * 111_320 == pytest.approx(200.0, rel=1e-2)
+    lat, lon = pin_latlon(fx, "OUT")  # 250 m east
+    assert lat == pytest.approx(fx.home.lat)
+    assert lon > fx.home.lon
 
 
 def test_remaining_s() -> None:
@@ -232,14 +252,19 @@ def test_fly_demo_until_airborne(tmp_path: Path) -> None:
     posts = panel.posts()
     assert [path for path, _ in posts] == [
         f"/api/v1/vehicles/{VID}/missions/open",
+        "/api/v1/missions/m1/annotations",
         "/api/v1/missions/m1/chat",
         "/api/v1/approvals/a1/decision",
         "/api/v1/missions/m1/clearance",
     ]
-    chat = posts[1][1]
+    pin = posts[1][1]
+    assert pin is not None and pin["kind"] == "pin" and pin["label"] == "P1"
+    lon, lat = pin["geometry"]["coordinates"]
+    assert (lat, lon) == pytest.approx(pin_latlon(fixture.load(), "P1"))
+    chat = posts[2][1]
     assert chat is not None and chat["text"] == DEMO_REQUEST
     assert uuid.UUID(chat["client_msg_id"]).version == 7
-    assert posts[2][1] == {
+    assert posts[3][1] == {
         "decision": "approve",
         "subject_version": 3,
         "autonomy_mode": "WITHIN_CHARTER",
@@ -357,3 +382,29 @@ def test_http_panel_sends_the_token_and_reads_errors() -> None:
         pilot_mod.HttpPanel(f"http://127.0.0.1:{server.server_port}", "tok", 1.0).request(
             "GET", "/x"
         )
+
+
+def test_the_pilot_answers_once_when_the_ai_asks_instead_of_proposing(tmp_path: Path) -> None:
+    panel = FakePanel()
+    panel.card, panel.card_after_yes = False, True
+    panel.chat = [
+        {"seq": 2, "role": "brain", "kind": "question", "text": "Vill du godkänna detta?"},
+        {"seq": 1, "role": "operator", "kind": "text", "text": DEMO_REQUEST},
+    ]
+    p, _ = make(tmp_path, panel)
+    try:
+        assert p.fly_demo_until_airborne(5.0) == "m1"
+    finally:
+        p.close()
+    chats = [b for path, b in panel.posts() if path == "/api/v1/missions/m1/chat"]
+    assert [b["text"] for b in chats if b is not None] == [DEMO_REQUEST, DEMO_YES]
+
+
+def test_the_pilot_does_not_answer_its_own_line(tmp_path: Path) -> None:
+    panel = FakePanel()
+    panel.chat = [{"seq": 1, "role": "operator", "kind": "text", "text": DEMO_REQUEST}]
+    p, _ = make(tmp_path, panel)
+    p.mid = "m1"
+    assert not p.brain_asked()
+    panel.chat.append({"seq": 2, "role": "brain", "kind": "text", "text": "Ok."})
+    assert not p.brain_asked()

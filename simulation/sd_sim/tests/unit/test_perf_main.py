@@ -115,6 +115,11 @@ def test_a_running_model_server_proves_the_gpu_runtime(tmp_path: Path) -> None:
     assert perf.preflight_errors(_facts(tmp_path, docker_runtimes="", llm_up=True)) == []
 
 
+def test_preflight_accepts_the_gpu_as_a_cdi_device(tmp_path: Path) -> None:
+    cdi = '{"runc":{}} [{"Source":"cdi","ID":"nvidia.com/gpu=all"}]'
+    assert perf.preflight_errors(_facts(tmp_path, docker_runtimes=cdi)) == []
+
+
 def test_model_file_comes_from_the_lock(tmp_path: Path) -> None:
     lock = tmp_path / "software/brain/runtime.lock.toml"
     lock.parent.mkdir(parents=True)
@@ -468,8 +473,3 @@ def test_a_stop_request_during_the_flight_ends_the_run_without_a_report(
     assert perf.main(["runs=3"]) == 1
     assert flights == [1, 1]  # main started no second run
     assert reports == []
-
-
-def test_preflight_fails_without_the_render_node(tmp_path: Path) -> None:
-    facts = _facts(tmp_path, render_node="FEL")
-    assert any("renderD128" in e for e in perf.preflight_errors(facts))

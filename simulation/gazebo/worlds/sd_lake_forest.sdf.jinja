@@ -6,8 +6,11 @@
 -->
 <sdf version="1.9">
   <world name="{{ name }}">
-    <physics name="1ms" type="ignore">
-      <max_step_size>0.001</max_step_size>
+    <!-- 1.25 ms (800 Hz): at 1 ms Gazebo in WSL2 reaches only about 0.7 real time on a
+         desktop processor in lockstep with SITL. ArduPilot arms only when the gyro runs at
+         least 1.8 x its 400 Hz loop (720 Hz), so 800 Hz is the slowest step that flies. -->
+    <physics name="1.25ms" type="ignore">
+      <max_step_size>0.00125</max_step_size>
       <real_time_factor>1.0</real_time_factor>
     </physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">

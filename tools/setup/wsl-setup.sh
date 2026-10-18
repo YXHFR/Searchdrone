@@ -94,16 +94,6 @@ sim_setup() {
     # 2. Graphics check (WSLg); only warnings
     glxinfo -B 2>/dev/null | grep -E "OpenGL renderer" || warn "glxinfo visar ingen grafik"
     command -v nvidia-smi >/dev/null && nvidia-smi -L || warn "inget NVIDIA-kort syns i WSL (se reservvägarna i guiden)"
-    # Gazebo's camera renders through /dev/dri/renderD128, which belongs to the group render.
-    local relogin=0
-    if [ -e /dev/dri/renderD128 ]; then
-        local rgroup
-        rgroup="$(stat -c %G /dev/dri/renderD128)"
-        if ! id -nG "$USER" | grep -qw "$rgroup"; then
-            sudo usermod -aG "$rgroup" "$USER"
-            relogin=1
-        fi
-    fi
 
     # 2b. NVIDIA Container Toolkit: llama-server runs in Docker and needs the GPU there
     if command -v nvidia-smi >/dev/null; then
@@ -204,7 +194,10 @@ sim_setup() {
             && cmake --build build -j"$(nproc)")
     fi
 
-    # 6. Environment: ONE file that ~/.bashrc reads
+    # 6. Environment: ONE file that ~/.bashrc reads. Under WSLg Mesa otherwise picks the
+    # virtual render node (vgem) and draws with the processor; d3d12 uses the Windows GPU.
+    local gl_env=""
+    [ -e /dev/dxg ] && gl_env="export GALLIUM_DRIVER=d3d12             # WSLg: draw on the Windows GPU"
     cat > "$HOME/.searchdrone_env" <<EOF
 # Written by tools/setup/wsl-setup.sh sim. Read by ~/.bashrc.
 export GZ_VERSION=harmonic
@@ -214,13 +207,14 @@ export SD_ARDUCOPTER_BIN="\$HOME/ardupilot/build/sitl/bin/arducopter"
 export SD_ARDUPILOT_GAZEBO_HOME="$agz"
 export GZ_SIM_SYSTEM_PLUGIN_PATH="$agz/build:\${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
 export GZ_SIM_RESOURCE_PATH="$REPO/simulation/gazebo/models:$REPO/build/sim/models:$agz/models:$agz/worlds:\${GZ_SIM_RESOURCE_PATH:-}"
+$gl_env
 EOF
     grep -q searchdrone_env "$HOME/.bashrc" || echo '. "$HOME/.searchdrone_env"' >> "$HOME/.bashrc"
     # shellcheck source=/dev/null
     . "$HOME/.searchdrone_env"
 
     # 7. Check the result
-    if ! id -nG | grep -qw docker || [ "$relogin" = 1 ]; then
+    if ! id -nG | grep -qw docker; then
         echo "Kör wsl --shutdown i PowerShell, öppna Ubuntu och kör just sim-doctor."
         exit 0
     fi
