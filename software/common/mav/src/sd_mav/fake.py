@@ -136,6 +136,7 @@ class FakeFlightController:
         self.refuse_modes: set[int] = set()
         self.drop_acks = 0  # the next n COMMAND_ACKs are lost (the command still acts)
         self.drop_commands = 0  # the next n COMMAND_LONGs are lost on the way
+        self.drop_mission_items = 0  # the next n mission item answers are lost (a slow read)
         self.silent = False  # no heartbeat or telemetry, no answers
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
@@ -483,7 +484,9 @@ class FakeFlightController:
         elif kind == "MISSION_REQUEST_INT":
             items = self.missions.get(mtype, [])
             seq = int(msg.seq)
-            if 0 <= seq < len(items):
+            if self.drop_mission_items > 0:
+                self.drop_mission_items -= 1
+            elif 0 <= seq < len(items):
                 reply = items[seq].to_message(link.source_system)
                 reply.target_component = link.source_component
                 self._send(reply, link)
