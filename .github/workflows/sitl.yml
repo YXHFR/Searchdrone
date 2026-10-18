@@ -375,7 +375,7 @@ jobs:
     # smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 170  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + 20 parity + margin
+    timeout-minutes: 215  # 60 install + 15 smoke + 15 before + 30 trees + 20 twice-build + 15 + 15 + 20 parity + margin
     steps:
       - *checkout
       - *check-ref
@@ -389,6 +389,30 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just sim-smoke physics=gz gui=false
+      - name: Pictures of the terrain world before its real trees (generated forest)
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just world-snapshot
+          for d in runs/*-snapshot-i0; do mv "$d" "runs/before-real-trees-$(basename "$d")"; done
+      # The tree list and the raster stay in build/: never committed (see fetch_trees.py).
+      # A cached copy spares Skogsstyrelsen's server the county file every night.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: trees
+        with:
+          path: |
+            build/trees
+            build/tree_models
+          key: real-trees-${{ hashFiles('tools/terrain/fetch_trees.py', 'tools/terrain/fetch_tree_models.py', 'simulation/gazebo/sites/hellasgarden/site.toml') }}
+      - name: The real trees and the tree pictures
+        if: steps.trees.outputs.cache-hit != 'true'
+        timeout-minutes: 30
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends gdal-bin
+          just trees-fetch site=hellasgarden
+          just tree-pictures-fetch
       - name: The terrain world built twice from scratch gives the same files
         timeout-minutes: 20
         run: uv run --package sd-sim python -m sd_sim.terrain site=hellasgarden twice=1
@@ -413,7 +437,12 @@ jobs:
               >> "$GITHUB_STEP_SUMMARY"
           done
           for f in runs/*-snapshot-i0/snapshots/summary.md; do
-            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+            [ -f "$f" ] || continue
+            case "$f" in
+              runs/before-real-trees-*) echo "### Before: generated forest" ;;
+              *) echo "### After: real trees" ;;
+            esac >> "$GITHUB_STEP_SUMMARY"
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
           done
       - name: Our own vehicle in Gazebo (sd_quad14 takes off, hovers and lands like in SITL)
         # Runs even when the smoke flight's checks fail: the two flights test different

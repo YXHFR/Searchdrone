@@ -5,7 +5,9 @@ tool writes its data next to that file, ready to commit after review:
 
 - ``dem.asc``: heights in metres above sea level on a square grid in the site's local
   east/north plane (azimuthal equidistant around home), from Copernicus DEM GLO-30
-  (no account needed). Cropped to the site and resampled to ``[dem] cell_m``.
+  (no account needed), or from Lantmäteriet's Markhöjdmodell 1 m (bare ground, CC BY 4.0,
+  needs a Geotorget login) when the site sets ``[dem] source = "lantmateriet-mhm"`` and
+  ``surface = "dtm"``. Cropped to the site and resampled to ``[dem] cell_m``.
 - ``osm.geojson``: forest, water, open land, roads, buildings and parking from
   OpenStreetMap (ODbL), clipped to the site, in WGS84.
 - ``data.toml``: where and when the data came from.
@@ -173,7 +175,7 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
     if public.is_file():
         data = tomllib.loads(public.read_text(encoding="utf-8"))
         where = str(public.relative_to(root))
-        out, is_public, login = public.parent, True, {}
+        out, is_public = public.parent, True
     else:
         local = root / "config" / "site.local.toml"
         if not local.is_file():
@@ -187,18 +189,16 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
             raise FetchError(
                 "inloggningen hör inte hemma i filen: använd SD_LM_USER och SD_LM_PASSWORD", 2
             )
-        login = {
-            "user": os.environ.get("SD_LM_USER", ""),
-            "password": os.environ.get("SD_LM_PASSWORD", ""),
-        }
     home = data.get("home", {})
     dem = data.get("dem", {})
     area = data.get("area", {})
     source = str(dem.get("source", "copernicus-glo30" if is_public else "lantmateriet-mhm"))
     if source not in ("copernicus-glo30", "lantmateriet-mhm"):
         raise FetchError(f"{where}: dem.source ska vara copernicus-glo30 eller lantmateriet-mhm", 2)
-    if is_public and source != "copernicus-glo30":
-        raise FetchError(f"{where}: en offentlig plats använder copernicus-glo30", 2)
+    # A public site may use Lantmäteriet's Markhöjdmodell (CC BY 4.0, with the owner's
+    # login) instead of Copernicus; it is bare ground, so the site must say so.
+    if is_public and source == "lantmateriet-mhm" and dem.get("surface") != "dtm":
+        raise FetchError(f'{where}: lantmateriet-mhm är markhöjd: sätt dem.surface = "dtm"', 2)
     ortho = bool(data.get("ortho", False))
     if is_public and ortho:
         raise FetchError(f"{where}: flygfoton hämtas bara för lokala platser", 2)
@@ -218,6 +218,12 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
         raise FetchError(f"{where}: area.half_size_m ska vara 100-2500", 2)
     if not 1.0 <= site.cell_m <= 50.0:
         raise FetchError(f"{where}: dem.cell_m ska vara 1-50", 2)
+    login: dict[str, str] = {}
+    if source == "lantmateriet-mhm" or ortho:
+        login = {
+            "user": os.environ.get("SD_LM_USER", ""),
+            "password": os.environ.get("SD_LM_PASSWORD", ""),
+        }
     if source == "lantmateriet-mhm" and not (login.get("user") and login.get("password")):
         raise FetchError("Lantmäteriets inloggning saknas (SD_LM_USER och SD_LM_PASSWORD)", 2)
     return site, login

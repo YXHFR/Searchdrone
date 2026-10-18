@@ -47,6 +47,15 @@ ATTRIBUTION = """Pictures rendered by Searchdrone's simulator (Apache-2.0) from:
   all rights reserved. The organisations in charge of the Copernicus programme by law or
   by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
 """
+TREES_ATTRIBUTION = """\
+- Trees: positions and heights from Skogsstyrelsen's Trädhöjd (tree height raster), based
+  on Laserdata Nedladdning, skog (c) Lantmäteriet, CC BY 4.0; processed. Species from
+  Nationella Marktäckedata 2023, källa: NMD, Naturvårdsverket (CC0).
+"""
+TREE_MODELS_ATTRIBUTION = """\
+- Tree pictures made from Poly Haven's fir_tree_01, pine_tree_01, island_tree_02,
+  pine_bark and bark_brown_02 (CC0, https://polyhaven.com).
+"""
 WIDTH_TOLERANCE = 0.10
 ROAD_CLEAR_M = 3.0
 OFFSET_LIMIT_M = 2.0
@@ -321,9 +330,29 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
         json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (out / "summary.md").write_text(summary(result), encoding="utf-8")
-    (out / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")
+    stats = result["stats"]
+    attribution = ATTRIBUTION
+    if stats.get("tree_source") == "raster":
+        attribution += TREES_ATTRIBUTION
+    if stats.get("tree_models") == "poly-haven-cc0":
+        attribution += TREE_MODELS_ATTRIBUTION
+    (out / "ATTRIBUTION.txt").write_text(attribution, encoding="utf-8")
     shutil.rmtree(frames, ignore_errors=True)
     return (0 if result["passed"] else 1), out
+
+
+def _tree_lines(stats: dict[str, Any]) -> list[str]:
+    if stats.get("tree_source") != "raster":
+        return [f"- Forest: generated ({stats.get('tree_triangles', '-')} triangles)."]
+    return [
+        f"- Forest: {stats['trees']} real trees from the tree height raster "
+        f"({stats.get('trees_left_out', 0)} on roads, roofs, water or car parks left out), "
+        f"{stats.get('trees_near', '-')} detailed near home; "
+        f"{stats.get('tree_triangles', '-')} triangles; models {stats.get('tree_models', '-')}.",
+        f"- Tree height against the raster: mean error "
+        f"{stats.get('tree_height_vs_raster_mean_abs_m', '-')} m, tallest "
+        f"{stats.get('tree_height_max_m', '-')} m.",
+    ]
 
 
 def summary(r: dict[str, Any]) -> str:
@@ -335,6 +364,7 @@ def summary(r: dict[str, Any]) -> str:
         f"cars {r['stats']['cars']}; "
         f"ground {r['stats']['ground_min_m']:.0f} to {r['stats']['ground_max_m']:.0f} m from home "
         f"(home {r['home_alt_m']} m above sea level).",
+        *_tree_lines(r["stats"]),
         f"- Road width in the 40 m picture: {road.get('width_m', '-')} m, "
         f"map {road.get('expected_width_m', '-')} m "
         f"({'ok' if r['checks'].get('road_width') else 'FAIL'}, limit 10 %).",

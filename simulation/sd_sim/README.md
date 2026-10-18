@@ -36,18 +36,31 @@ A world from a real site is built from three files in `simulation/gazebo/sites/<
 DEM GLO-30) and `osm.geojson` (forest, water, open land, roads, buildings and parking from
 OpenStreetMap). `just world-fetch site=<site>` fetches the last two again (needs GDAL's
 `gdal-bin` and internet). `sd_sim.terrain` turns them into a Gazebo model in
-`build/sim/models/sd_site_<site>/`, without downloads and without third-party textures or
-meshes:
+`build/sim/models/sd_site_<site>/`, without downloads:
 
 - The terrain is a textured mesh every 5 m, in 16 tiles of 300 m with a 2048-pixel texture
   each (about 0.15 m per pixel). The texture is painted from the map: forest floor, meadow,
   wetland, lake, asphalt with edge and centre lines, and gravel paths.
-- About 25 000 spruce, pine and birch trees stand on the ground at real heights (10–26 m).
+- The real trees, when they are fetched: `just trees-fetch site=<site>` reads every tree's
+  position and height from Skogsstyrelsen's tree height raster (Trädhöjd, 1 m, from
+  Lantmäteriet's laser scanning) with a local-maximum filter whose radius grows with the
+  height, and its species (spruce, pine or deciduous) from Naturvårdsverket's land cover map
+  NMD 2023 (CC0). `just tree-pictures-fetch` makes one texture atlas (colour with alpha,
+  normal, occlusion-roughness-metallic) from Poly Haven's CC0 tree and bark scans. Trees
+  within 150 m of home are card models of 580–950 triangles, the rest 6-triangle
+  impostors, in 64 glTF tiles sharing one material. Both go to `build/` only, never into
+  the repository (see `ATTRIBUTION`): `sd_hellasgarden` gets about 14 700 trees of up to
+  34 m, with a mean height error of 0.3 m against the raster.
+- Without them, about 25 000 generated spruce, pine and birch trees (10–26 m) stand in the
+  map's forest instead.
 - Buildings are the map's footprints at their tagged or typical height, with gabled roofs on
   rectangular houses. Cars of 4.5 × 1.8 × 1.5 m are parked in the parking areas.
-- The heights come from a surface model, so the forest canopy (`canopy_m`, 12 m) is taken
-  off inside the forest. Lakes are set below their water level, and the pad around home is
-  flat.
+- With the real trees the heights are Copernicus's as they are. Copernicus is a surface
+  model, but the old fixed 12 m taken off inside the forest made forest lower than the open
+  ground beside it, which the raw model did not. Only the generated trees still take
+  `canopy_m` off. `[dem] source = "lantmateriet-mhm"` with `surface = "dtm"` uses
+  Lantmäteriet's 1 m ground model instead (Geotorget login). Lakes are set below their water
+  level, and the pad around home is flat.
 - The ground collides as a heightmap, which is cheap enough to keep the real-time factor of
   the flat world. Trees, cars and water are visual only, while buildings and the pad collide.
 - The same inputs always give the same files (`python -m sd_sim.terrain site=<site> twice=1`
@@ -57,7 +70,7 @@ The world's origin is home on the pad: Gazebo's `<spherical_coordinates>`, SITL'
 (the pad's height above sea level) and the panel's map pack (`just maps-fetch
 site=<site>`) all use the same point. No ground station sends SITL terrain data, and terrain following
 (`TERRAIN_FOLLOW`, `RTL_ALT_TYPE`) stays at ArduPilot's default, off. Heights are therefore relative to home and the ground under the vehicle rises and falls
-with the hills (−13 to +37 m from home in `sd_hellasgarden`). The site's fixture
+with the hills (−5 to +49 m from home in `sd_hellasgarden` with the real trees). The site's fixture
 (`build/sim/worlds/<world>.fixture.yaml`) therefore sets the search height at least 25 m
 above the highest ground plus the tallest tree under `charter_test`; it is written for
 scenarios that will fly in this world (none reads it yet). Return home (RTL) climbs to

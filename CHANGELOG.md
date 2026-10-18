@@ -34,6 +34,18 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Real trees in `sd_hellasgarden`: `just trees-fetch site=<site>` takes every tree's
+  position and height from Skogsstyrelsen's tree height raster (1 m) and its species from
+  Naturvårdsverket's NMD 2023, and `just tree-pictures-fetch` makes a PBR texture atlas from
+  Poly Haven's CC0 tree scans. The world then has about 14 700 trees of up to 34 m (mean
+  height error 0.3 m against the raster), detailed card models within 150 m of home and
+  cheap impostors further out, in glTF tiles. The tree list and pictures stay in `build/`
+  and the nightly Gazebo job fetches them; its snapshot artifact has pictures from before
+  and after. With the real trees the ground heights are Copernicus's as they are (no fixed
+  12 m canopy taken off), and a public site can use Lantmäteriet's 1 m ground model with
+  `[dem] source = "lantmateriet-mhm"`, `surface = "dtm"`. Sources and licences are in
+  `ATTRIBUTION`.
+
 - A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
   Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
   OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain
