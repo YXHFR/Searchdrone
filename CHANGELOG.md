@@ -8,6 +8,14 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `just perf` (alias `just bench`, keys `runs`, `gui`, `eval`): the performance run on
+  the owner's computer. It starts the demo with Gazebo, camera video and only the local
+  model (the cloud model is off), flies SC01 with a test rig pilot and measures cold
+  start, Gazebo's real time factor, video frames in headless Google Chrome, memory in
+  WSL, Windows and the graphics card, STOP latency from the radio log, telemetry latency
+  and the chat's answer time, then runs the model evaluation against the same
+  llama-server. The report goes to `data/reports/perf-<time>.json` and `.md`; the run
+  exits 0 only when every limit holds and suggests `gui=false` as the fallback.
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password

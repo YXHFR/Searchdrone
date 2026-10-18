@@ -401,9 +401,14 @@ e2e *args:
     # networks and user (compose recreates a service whose settings differ).
     SD_SIM__REQUIRE_VIDEO=1 {{_just}} ci-sitl mode=e2e "runs=$runs" workers=4
 
-# Performance measurement on the owner's computer (keys: runs)
+# Performance measurement on the owner's computer: the demo with Gazebo and the local
+# model, P0-P8 and the model's response time, report in data/reports/ (keys: runs, gui, eval)
 perf *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv run --no-sync python tools/just_args.py perf "$@"
+    [[ " $* " == *" dry=1 "* ]] && exit 0
+    uv run --all-packages python -m sd_sim.perf "$@"
 
 alias bench := perf
 

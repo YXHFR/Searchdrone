@@ -128,9 +128,18 @@ def onboard_env(ports: dict[str, int], paths: StackPaths) -> dict[str, str]:
 
 
 def brain_env(
-    ports: dict[str, int], paths: StackPaths, kind: str, script: Path | None
+    ports: dict[str, int],
+    paths: StackPaths,
+    kind: str,
+    script: Path | None,
+    *,
+    cloud: bool = True,
 ) -> dict[str, str]:
-    """``sd-brain`` against this instance's commander API (keys: it reads ``.env``)."""
+    """``sd-brain`` against this instance's commander API (keys: it reads ``.env``).
+
+    ``cloud=False`` turns the cloud model off whatever ``.env`` and ``brain.toml`` say
+    (an empty model disables it; the process environment wins), so only the local model
+    answers (``just perf``)."""
     env = {
         "SD_BRAIN__PROFILE": "sim",
         "SD_BRAIN__TOKEN_FILE": str(paths.brain_token),
@@ -145,6 +154,8 @@ def brain_env(
         if script is None:
             raise InfraError("brain=scripted kräver ett manus (script=...).")
         env["SD_BRAIN__BACKEND__SCRIPTED_FILE"] = str(script)
+    if not cloud:
+        env["SD_BRAIN__CLOUD__MODEL"] = ""
     return env
 
 

@@ -94,6 +94,58 @@ sim_setup() {
     # 2. Graphics check (WSLg); only warnings
     glxinfo -B 2>/dev/null | grep -E "OpenGL renderer" || warn "glxinfo visar ingen grafik"
     command -v nvidia-smi >/dev/null && nvidia-smi -L || warn "inget NVIDIA-kort syns i WSL (se reservvägarna i guiden)"
+    # Gazebo's camera renders through /dev/dri/renderD128, which belongs to the group render.
+    local relogin=0
+    if [ -e /dev/dri/renderD128 ]; then
+        local rgroup
+        rgroup="$(stat -c %G /dev/dri/renderD128)"
+        if ! id -nG "$USER" | grep -qw "$rgroup"; then
+            sudo usermod -aG "$rgroup" "$USER"
+            relogin=1
+        fi
+    fi
+
+    # 2b. NVIDIA Container Toolkit: llama-server runs in Docker and needs the GPU there
+    if command -v nvidia-smi >/dev/null; then
+        local nct
+        nct="$(ver nvidia_container_toolkit_version)"
+        if ! dpkg -s nvidia-container-toolkit 2>/dev/null | grep -q "^Version: ${nct}$"; then
+            say "NVIDIA Container Toolkit $nct"
+            tmpkey="$(mktemp)"
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey -o "$tmpkey"
+            # NVIDIA's signing key for libnvidia-container (docs.nvidia.com container-toolkit)
+            key_is "$tmpkey" C95B321B61E88C1809C4F759DDCAE044F796ECB0 \
+                || { echo "Fel fingeravtryck på NVIDIAs nyckel"; exit 1; }
+            sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg "$tmpkey"
+            rm -f "$tmpkey"
+            echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/\$(ARCH) /" \
+                | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y "nvidia-container-toolkit=$nct" "nvidia-container-toolkit-base=$nct" \
+                "libnvidia-container-tools=$nct" "libnvidia-container1=$nct"
+        fi
+        if ! docker info 2>/dev/null | grep -q "nvidia"; then
+            sudo nvidia-ctk runtime configure --runtime=docker
+            sudo systemctl restart docker
+        fi
+    fi
+
+    # 2c. Google Chrome: Playwright's own Chromium cannot play H.264 (video tests, just perf)
+    if ! command -v google-chrome >/dev/null; then
+        say "Google Chrome"
+        tmpkey="$(mktemp)"
+        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o "$tmpkey"
+        # Google's Linux package signing key (google.com/linuxrepositories)
+        key_is "$tmpkey" EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 \
+            || { echo "Fel fingeravtryck på Googles nyckel"; exit 1; }
+        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/google-chrome.gpg "$tmpkey"
+        rm -f "$tmpkey"
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+            | sudo tee /etc/apt/sources.list.d/google-chrome.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    fi
+    sudo apt-get install -y ffmpeg   # ffprobe for the video tests
 
     # 3. ArduPilot SITL at the locked tag, built under ~/ardupilot (never under /mnt/c)
     if [ -f "$ap/.sd_version" ] && [ "$(cat "$ap/.sd_version")" = "$tag" ] \
@@ -168,7 +220,7 @@ EOF
     . "$HOME/.searchdrone_env"
 
     # 7. Check the result
-    if ! id -nG | grep -qw docker; then
+    if ! id -nG | grep -qw docker || [ "$relogin" = 1 ]; then
         echo "Kör wsl --shutdown i PowerShell, öppna Ubuntu och kör just sim-doctor."
         exit 0
     fi

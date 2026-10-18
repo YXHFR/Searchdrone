@@ -112,8 +112,12 @@ class Stack:
         param_layers: tuple[Path, ...] = (),
         services: bool = False,
         test_rig: bool = False,
+        cloud: bool = True,
     ) -> None:
         self.cfg = cfg
+        # cloud: sd-brain may use the cloud model when .env has a key; off, only the
+        # local model answers (`just perf` measures the local model).
+        self.cloud = cloud
         # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
         # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
         self.services = services
@@ -621,7 +625,9 @@ class Stack:
                 if not self._compose("--profile", "ai", "up", "-d", "--wait", "llm"):
                     say("llama-server startade inte; AI:n får använda molnet eller kommandoläget")
         env = procs.clean_env(
-            services.brain_env(self.ports, self.stack_paths(), kind, self.brain_script())
+            services.brain_env(
+                self.ports, self.stack_paths(), kind, self.brain_script(), cloud=self.cloud
+            )
         )
         config_file = self.repo / "config" / "brain.toml"
         if not config_file.is_file():

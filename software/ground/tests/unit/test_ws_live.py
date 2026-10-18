@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 import structlog.testing
@@ -44,10 +45,14 @@ def test_hello_then_resume_exactly_the_missed_events(logged_in: TestClient, grou
         _sub(ws, ground, ["mission"], since)
         replay = ws.receive_json()
         assert (replay["data"], replay["seq"]) == ({"n": 3}, since + 2)
+        before = time.monotonic_ns()
         ws.send_json({"op": "ping", "client_ns": 1})
         pong = ws.receive_json()
+        after = time.monotonic_ns()
         assert pong["type"] == "pong"
         assert isinstance(pong["server_ns"], int)
+        # The same clock that stamps Telemetry.time_boot_ms (sd_obs MonotonicClock).
+        assert before <= pong["server_mono_ns"] <= after
 
 
 def test_other_epoch_or_old_seq_needs_resync(logged_in: TestClient, ground: Ground) -> None:

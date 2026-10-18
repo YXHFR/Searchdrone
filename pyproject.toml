@@ -62,6 +62,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PTH", "TID
 "tools/**" = ["T20"]
 "simulation/sd_sim/src/sd_sim/launch.py" = ["T20"]
 "simulation/sd_sim/src/sd_sim/testrun.py" = ["T20"]
+"simulation/sd_sim/src/sd_sim/perf/__main__.py" = ["T20"]
 "simulation/sd_sim/src/sd_sim/_args.py" = ["T20"]
 # Hand-written SQL migrations keep one column per line (B0-04)
 "software/ground/migrations/versions/**" = ["E501"]

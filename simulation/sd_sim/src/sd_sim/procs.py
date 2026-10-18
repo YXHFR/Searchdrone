@@ -198,13 +198,80 @@ def identity(pid: int) -> dict[str, Any]:
     return {"pid": pid, "cmd": _cmdline(pid), "start": _start_time(pid)}
 
 
+def _proc_table() -> dict[int, tuple[int, int, str, str]]:
+    """Every process as pid -> (parent pid, process group, start time, state)."""
+    table: dict[int, tuple[int, int, str, str]] = {}
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text(encoding="utf-8", errors="replace").rsplit(")", 1)[-1].split()
+            table[int(stat.parent.name)] = (int(fields[1]), int(fields[2]), fields[19], fields[0])
+        except (OSError, ValueError, IndexError):
+            continue
+    return table
+
+
+def _descendants(pid: int) -> dict[int, str]:
+    """Children, grandchildren and so on of ``pid`` as pid -> start time."""
+    table = _proc_table()
+    children: dict[int, list[int]] = {}
+    for child, (ppid, _, _, _) in table.items():
+        children.setdefault(ppid, []).append(child)
+    found: dict[int, str] = {}
+    todo = list(children.get(pid, []))
+    while todo:
+        child = todo.pop()
+        if child not in found:
+            found[child] = table[child][2]
+            todo.extend(children.get(child, []))
+    return found
+
+
+def _stop_descendants(known: dict[int, str]) -> None:
+    """SIGTERM, then SIGKILL, what is left of ``known`` (found before the stop).
+
+    ``gz sim`` with a window forks a server and a GUI that each move to their own process
+    group, ignore SIGTERM and outlive their parent; stopping the parent's group alone
+    leaves them running. Only processes that are still the same ones (same start time)
+    are signalled; a descendant that leads its own group gets the whole group.
+    """
+
+    def left() -> dict[int, int]:
+        table = _proc_table()
+        return {
+            pid: row[1]
+            for pid, start in known.items()
+            if (row := table.get(pid)) and row[2] == start and row[3] != "Z"
+        }
+
+    def send(sig: int, alive: dict[int, int]) -> None:
+        for pid, pgid in alive.items():
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                if pgid in alive and alive[pgid] == pgid:
+                    os.killpg(pgid, sig)
+                else:
+                    os.kill(pid, sig)
+
+    alive = left()
+    if not alive:
+        return
+    send(signal.SIGTERM, alive)
+    end = time.monotonic() + STOP_GRACE_S
+    while time.monotonic() < end:
+        if not (alive := left()):
+            return
+        time.sleep(0.1)
+    send(signal.SIGKILL, left())
+
+
 def stop_pid(pid: int, popen: subprocess.Popen[bytes] | None = None) -> None:
     """SIGTERM, then SIGKILL. Signals the whole process group only when ``pid`` leads
-    its own group (every process we start does); otherwise just that pid."""
+    its own group (every process we start does); otherwise just that pid. Descendants
+    that left the group are stopped afterwards (see ``_stop_descendants``)."""
     try:
         pgid = os.getpgid(pid)
     except ProcessLookupError:
         return
+    known = _descendants(pid)
 
     def send(sig: int) -> None:
         with contextlib.suppress(ProcessLookupError):
@@ -213,19 +280,22 @@ def stop_pid(pid: int, popen: subprocess.Popen[bytes] | None = None) -> None:
             else:
                 os.kill(pid, sig)
 
+    def gone() -> bool:
+        if popen is not None:
+            return popen.poll() is not None
+        return not Path(f"/proc/{pid}").exists()
+
     send(signal.SIGTERM)
     end = time.monotonic() + STOP_GRACE_S
-    while time.monotonic() < end:
-        if popen is not None:
-            if popen.poll() is not None:
-                return
-        elif not Path(f"/proc/{pid}").exists():
-            return
+    while time.monotonic() < end and not gone():
         time.sleep(0.1)
-    send(signal.SIGKILL)
-    if popen is not None:
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            popen.wait(timeout=2)
+    if not gone():
+        known.update(_descendants(pid))
+        send(signal.SIGKILL)
+        if popen is not None:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                popen.wait(timeout=2)
+    _stop_descendants(known)
 
 
 def read_recorded(pids_file: Path) -> dict[str, Any]:

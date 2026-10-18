@@ -76,6 +76,15 @@ def test_scripted_brain_needs_a_script(tmp_path: Path) -> None:
     )
 
 
+def test_cloud_off_empties_the_cloud_model(tmp_path: Path) -> None:
+    p = ports.for_instance(0)
+    default = services.brain_env(p, _paths(tmp_path), "llm_local", None)
+    assert "SD_BRAIN__CLOUD__MODEL" not in default
+    off = services.brain_env(p, _paths(tmp_path), "llm_local", None, cloud=False)
+    assert off["SD_BRAIN__CLOUD__MODEL"] == ""
+    assert {k: v for k, v in off.items() if k != "SD_BRAIN__CLOUD__MODEL"} == default
+
+
 def test_health_reads_parts() -> None:
     h = services.Health(True, {"db": "ok", "brain": "down"})
     assert h.ok("db") and not h.ok("db", "brain")
@@ -87,3 +96,30 @@ def test_stack_starts_no_services_unless_asked(tmp_path: Path) -> None:
     cfg = config.load({"physics": "builtin", "gui": "false", "video": "off", "instance": "3"})
     assert Stack(cfg, tmp_path).services is False
     assert Stack(cfg, tmp_path, services=True).services is True
+
+
+class _StartedError(Exception):
+    pass
+
+
+def test_stack_without_cloud_gives_brain_no_cloud_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sd_sim import config
+
+    cfg = config.load({"physics": "builtin", "gui": "false", "video": "off", "instance": "3"})
+    cfg.brain = "grammar"  # no llama-server start
+    assert Stack(cfg, tmp_path).cloud is True
+    stack = Stack(cfg, tmp_path, services=True, cloud=False)
+    seen: dict[str, str] = {}
+
+    def fake_start(name: str, argv: list[str], env: dict[str, str]) -> None:
+        seen.update(env)
+        raise _StartedError
+
+    monkeypatch.setattr(stack, "stack_paths", lambda: _paths(tmp_path))
+    monkeypatch.setattr(stack, "_start_service", fake_start)
+    with pytest.raises(_StartedError):
+        stack.start_brain()
+    assert seen["SD_BRAIN__CLOUD__MODEL"] == ""
+    assert seen["SD_BRAIN__BACKEND__KIND"] == "grammar"

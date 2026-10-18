@@ -21,12 +21,14 @@ def test_bad_input_exits_2(argv: list[str]) -> None:
 
 
 def test_not_built(capsys: pytest.CaptureFixture[str]) -> None:
-    assert just_args.main(["perf", "runs=3"]) == 2
-    assert "inte byggt än (B1-17)" in capsys.readouterr().out
+    assert just_args.main(["showcase", "stage=b1"]) == 2
+    assert "inte byggt än (B1-18)" in capsys.readouterr().out
 
 
 def test_built_recipe_only_checks_its_keys(capsys: pytest.CaptureFixture[str]) -> None:
     assert just_args.main(["e2e", "runs=3", "offline=1"]) == 0
     assert just_args.main(["accept", "phase=pre"]) == 0
+    assert just_args.main(["perf", "runs=2", "gui=false", "eval=0"]) == 0
     assert capsys.readouterr().out == ""
     assert just_args.main(["accept", "runs=1"]) == 2
+    assert just_args.main(["perf", "foo=1"]) == 2

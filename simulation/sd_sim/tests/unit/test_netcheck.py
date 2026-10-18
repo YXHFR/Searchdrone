@@ -44,9 +44,10 @@ def test_allowlist_is_short_and_known() -> None:
 def test_ephemeral_rule_is_narrow() -> None:
     allow = netcheck.load_allowlist()
     p = ports.for_instance(0)
-    sitl = netcheck.Listener("udp", "0.0.0.0", 44201, "arducopter", 9)  # noqa: S104
-    other = netcheck.Listener("udp", "0.0.0.0", 44202, "python3", 9)  # noqa: S104
-    tcp = netcheck.Listener("tcp", "0.0.0.0", 44203, "arducopter", 9)  # noqa: S104
+    low, _ = netcheck.ephemeral_range()  # this machine's range (WSL mirrored mode narrows it)
+    sitl = netcheck.Listener("udp", "0.0.0.0", low + 1, "arducopter", 9)  # noqa: S104
+    other = netcheck.Listener("udp", "0.0.0.0", low + 2, "python3", 9)  # noqa: S104
+    tcp = netcheck.Listener("tcp", "0.0.0.0", low + 3, "arducopter", 9)  # noqa: S104
     on_known = netcheck.Listener("udp", "0.0.0.0", p["harness_mavlink"], "arducopter", 9)  # noqa: S104
     fixed = netcheck.Listener("udp", "0.0.0.0", 1234, "arducopter", 9)  # noqa: S104
     bad = netcheck.violations([sitl, other, tcp, on_known, fixed], p, allow, owned_pids={9})
