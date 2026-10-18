@@ -128,6 +128,10 @@ def test_local_site_needs_a_login_and_writes_to_build(
     conf.write_text(body)
     with pytest.raises(fetch.FetchError, match="inloggning"):
         fetch.load_site("mine", tmp_path)
+    conf.write_text(body.replace("ortho = true\n", 'ortho = true\nlm_password = "x"\n'))
+    with pytest.raises(fetch.FetchError, match="SD_LM_USER"):
+        fetch.load_site("mine", tmp_path)
+    conf.write_text(body)
     monkeypatch.setenv("SD_LM_USER", "u")
     monkeypatch.setenv("SD_LM_PASSWORD", "p")
     site, login = fetch.load_site("mine", tmp_path)

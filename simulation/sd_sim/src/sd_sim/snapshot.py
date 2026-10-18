@@ -39,6 +39,14 @@ from sd_sim import _args, gazebo, objects, paths, png, site, site_world, terrain
 from sd_sim.util import new_run_dir, say
 
 ALLOWED_KEYS = ("world", "instance")
+# The pictures show map and height data; their notices travel with them.
+ATTRIBUTION = """Pictures rendered by Searchdrone's simulator (Apache-2.0) from:
+- Map layers: (c) OpenStreetMap contributors, ODbL-1.0, https://www.openstreetmap.org/copyright
+- Heights: produced using Copernicus WorldDEM-30 (c) DLR e.V. 2010-2014 and (c) Airbus
+  Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA;
+  all rights reserved. The organisations in charge of the Copernicus programme by law or
+  by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
+"""
 WIDTH_TOLERANCE = 0.10
 ROAD_CLEAR_M = 3.0
 OFFSET_LIMIT_M = 2.0
@@ -313,6 +321,7 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
         json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (out / "summary.md").write_text(summary(result), encoding="utf-8")
+    (out / "ATTRIBUTION.txt").write_text(ATTRIBUTION, encoding="utf-8")
     shutil.rmtree(frames, ignore_errors=True)
     return (0 if result["passed"] else 1), out
 

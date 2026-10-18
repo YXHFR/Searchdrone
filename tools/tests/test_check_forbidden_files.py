@@ -213,6 +213,10 @@ def test_free_pair_where_both_orders_are_valid_positions() -> None:
     far_lon, far_lat = 18 + 0.95953, 59 + 0.98842  # about 80 km away, built so this file passes
     far = cff.check_coordinates("x.geojson", [f"[{far_lon:.5f}, {far_lat:.5f}]"], [site])
     assert [f.rule for f in far] == ["coordinate"]
+    # Keyed values have one order: a swapped keyed pair is still flagged.
+    lat, lon = 18 + 0.15953, 59 + 0.28842
+    keyed = [f"lat: {lat:.5f}", f"lon: {lon:.5f}"]
+    assert [f.rule for f in cff.check_coordinates("x.yaml", keyed, [site])] == ["coordinate"]
 
 
 def test_three_decimal_pair_without_key_is_ignored(tmp_path: Path) -> None:

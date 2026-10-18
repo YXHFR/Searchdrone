@@ -338,9 +338,34 @@ def test_launch_world_brings_its_home_tests_keep_cmac(repo: Path) -> None:
     assert personal.home == "1,2,3,4" and personal.personal_home
 
 
-def test_demo_uses_the_site_home(repo: Path) -> None:
-    cfg = config.load({}, repo=repo, demo=True, environ={}, default_world=config.LAUNCH_WORLD)
+def test_public_site_world_in_the_demo_uses_its_home(repo: Path) -> None:
+    cfg = config.load({"world": "sd_hellasgarden"}, repo=repo, demo=True, environ={})
     assert cfg.home == site.load(PUBLIC).home_arg and not cfg.personal_home
+
+
+def _local_site(repo: Path) -> None:
+    src = repo / "simulation" / "gazebo" / "sites" / PUBLIC
+    dest = repo / "build" / "sites" / "mine"
+    shutil.copytree(src, dest)
+    toml = (dest / "site.toml").read_text(encoding="utf-8")
+    toml = toml.replace('name = "hellasgarden"', 'name = "mine"')
+    (dest / "site.toml").write_text(toml.replace('world = "sd_hellasgarden"', 'world = "sd_mine"'))
+
+
+def test_local_site_is_a_personal_home(repo: Path) -> None:
+    _local_site(repo)
+    cfg = config.load({"world": "sd_mine"}, repo=repo, environ={})
+    assert cfg.personal_home
+    with pytest.raises(config.DemoHomeError):
+        config.load({"world": "sd_mine"}, repo=repo, demo=True, environ={})
+    with pytest.raises(config.DemoHomeError):
+        config.load({}, repo=repo, demo=True, environ={"SD_SIM__WORLD": "sd_mine"})
+
+
+def test_scripted_commander_only_in_the_flat_world(repo: Path) -> None:
+    with pytest.raises(config.ConfigError, match="brain=scripted"):
+        config.load({"world": "sd_hellasgarden", "brain": "scripted"}, repo=repo, environ={})
+    assert config.load({"brain": "scripted"}, repo=repo, environ={}).world == config.TEST_WORLD
 
 
 # --- the snapshot's road measurement ----------------------------------------------------

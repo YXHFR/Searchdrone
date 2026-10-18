@@ -23,8 +23,13 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 
 | World | Where | Used by |
 |---|---|---|
-| `sd_hellasgarden` | A real place: the public Hellasgården outdoor area in Nacka, 1.2 × 1.2 km around its home pad | `just sim` and `just demo` (default), `just sim-smoke world=sd_hellasgarden`, `just world-snapshot` |
-| `sd_lake_forest` | A flat made-up world at ArduPilot's public SITL site (CMAC) | The test suites (`just test-sitl`, the model and video tests) |
+| `sd_hellasgarden` | A real place: the public Hellasgården outdoor area in Nacka, 1.2 × 1.2 km around its home pad | `just sim` (default), `just sim-smoke world=sd_hellasgarden`, `just world-snapshot` |
+| `sd_lake_forest` | A flat made-up world at ArduPilot's public SITL site (CMAC) | `just demo` and the test suites (`just test-sitl`, the model and video tests) |
+
+`just demo` and `brain=scripted` stay in the flat world: the scripted commander's scenarios
+(SC01 and the scenario tests) have pins, charters and a 40 m search height for that world,
+and the launcher refuses `brain=scripted` in a terrain world. A local site (your own area)
+counts as a personal home: `just sim` warns, and the demo refuses it.
 
 A world from a real site is built from three files in `simulation/gazebo/sites/<site>/`:
 `site.toml` (home, size, height source), `dem.asc` (heights every 20 m from Copernicus
@@ -54,7 +59,11 @@ site=<site>`) all use the same point. No ground station sends SITL terrain data,
 (`TERRAIN_FOLLOW`, `RTL_ALT_TYPE`) stays at ArduPilot's default, off. Heights are therefore relative to home and the ground under the vehicle rises and falls
 with the hills (−13 to +37 m from home in `sd_hellasgarden`). The site's fixture
 (`build/sim/worlds/<world>.fixture.yaml`) therefore sets the search height at least 25 m
-above the highest ground plus the tallest tree under `charter_test`.
+above the highest ground plus the tallest tree under `charter_test`; scenarios that fly in
+this world read their pins, charter and height from there. Return home (RTL) climbs to
+ArduPilot's default 15 m above home, so where the ground on the way home lies higher than
+that, the simulated vehicle can hit it: give a charter in the terrain world a return
+altitude above its highest ground.
 
 Your own area: copy `config/site.example.toml` to `config/site.local.toml`, enter your
 Geotorget login and run `just world-fetch site=<name>`. Lantmäteriet's 1 m height model and

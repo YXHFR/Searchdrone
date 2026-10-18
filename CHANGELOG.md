@@ -12,9 +12,9 @@ All notable changes to this project are listed here. The format follows
   Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
   OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain
   with roads and road markings, about 25 000 spruce, pine and birch trees, buildings from
-  the map's footprints, parked cars and lakes. It is the default for `just sim` and
-  `just demo`; the test suites keep the flat world at CMAC. Gazebo, SITL's home and the
-  panel's map pack (`just maps-fetch site=hellasgarden`) share one origin.
+  the map's footprints, parked cars and lakes. It is the default for `just sim`;
+  `just demo`, `brain=scripted` and the test suites keep the flat world at CMAC. Gazebo,
+  SITL's home and the panel's map pack (`just maps-fetch site=hellasgarden`) share one origin.
   `just world-fetch` refreshes a site, or fetches your own area from Lantmäteriet into
   `build/` only. `just world-snapshot` takes pictures at 40 m and 100 m and from the side,
   and measures a road's width and the map overlap in them. `just sim-smoke world=...`

@@ -33,6 +33,9 @@ TAKEOFF_ALT_M = 20.0
 ALT_TOLERANCE_M = 1.5
 MAX_DURATION_S = 180.0
 FRAME_WINDOW_S = 10.0
+# Listeners, camera frames and real-time factor while hovering: 10 s of frames plus a few
+# gz calls; anything longer means a call hangs.
+MEASURE_LIMIT_S = 60.0
 FRAME_SHARE = 0.9  # at least 90 % of the camera's nominal frames must arrive
 
 
@@ -47,9 +50,9 @@ def harden(cfg: config.SimConfig) -> config.SimConfig:
     only in Gazebo server mode."""
     cfg.qgc = False
     cfg.objects = ""
-    public = {w: name for w, name in site.world_sites().items() if site.load(name).public}
-    if cfg.world in public:
-        cfg.home, cfg.personal_home = site.load(public[cfg.world]).home_arg, False
+    name = site.world_sites().get(cfg.world)
+    if name is not None and site.folder_for(name)[1]:  # public sites only
+        cfg.home, cfg.personal_home = site.load(name).home_arg, False
         cfg.vehicle = "sd_quad14"
     else:
         cfg.home, cfg.personal_home = CMAC_HOME, False
@@ -87,6 +90,25 @@ def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
     if result is not None:
         result["real_time_factor"] = gazebo.real_time_factor(t_start, t_end)
     return frames() - start
+
+
+def hover_until(
+    harness: Harness,
+    measure: Callable[[], None],
+    limit_s: float,
+    result: dict[str, Any],
+    checks: dict[str, bool],
+) -> None:
+    """Run ``measure`` in a thread while the harness keeps pumping (and so sending its
+    heartbeat); give up after ``limit_s`` and mark the camera check failed."""
+    worker = threading.Thread(target=measure, daemon=True)
+    worker.start()
+    end = time.monotonic() + limit_s
+    while worker.is_alive() and time.monotonic() < end:
+        harness.pump(0.5)
+    if worker.is_alive():
+        result["measure_error"] = f"mätningen tog längre än {limit_s:g} s"
+        checks["camera"] = False
 
 
 def fly(
@@ -146,10 +168,7 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
             # at 20 m; the harness keeps sending its heartbeat meanwhile (GCS failsafe).
             if harness is None:
                 return
-            worker = threading.Thread(target=measure, daemon=True)
-            worker.start()
-            while worker.is_alive():
-                harness.pump(0.5)
+            hover_until(harness, measure, MEASURE_LIMIT_S, result, checks)
 
         fly(harness, result, t0, in_hover)
         result["flight_s"] = round(time.monotonic() - fly_start, 1)

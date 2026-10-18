@@ -5,13 +5,12 @@
 # never committed or uploaded. Then run `just sim` with SD_SIM__WORLD=sd_<name>, or
 # world = "sd_<name>" in config/sim.toml.
 #
-# The login can also come from the environment: SD_LM_USER and SD_LM_PASSWORD.
+# The login is read only from the environment, never from this file:
+#   SD_LM_USER=... SD_LM_PASSWORD=... just world-fetch site=example
 # Lantmäteriet's data is CC BY 4.0: "© Lantmäteriet", processed by Searchdrone.
 
 [sites.example]
 ortho = true                  # the orthophoto as the ground's texture
-lm_user = ""
-lm_password = ""
 
 [sites.example.home]          # the landing pad (here: the public ArduPilot SITL site)
 lat = -35.363261

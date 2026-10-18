@@ -21,10 +21,16 @@ DEMO_HOME_REFUSED = (
     "Demo kräver en offentlig startplats (CMAC eller en offentlig världs hem). "
     "Ta bort home_override eller kör just sim."
 )
-# `just sim` and `just demo` use the public terrain world unless a world is set; the
-# test suites keep the flat world at CMAC.
+# `just sim` uses the public terrain world unless a world is set. `just demo` and the
+# test suites keep the flat world at CMAC: the scripted commander's scenarios (SC01) have
+# pins, charters and heights for that world only.
 LAUNCH_WORLD = "sd_hellasgarden"
 TEST_WORLD = "sd_lake_forest"
+DEMO_LOCAL_SITE_REFUSED = "Demo kräver en offentlig värld. En lokal plats är ditt eget område."
+SCRIPTED_SITE_REFUSED = (
+    "brain=scripted fungerar bara i den platta testvärlden sd_lake_forest: manusen har "
+    "nålar, ramar och höjder för den."
+)
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
 _TRUE = ("1", "true", "yes", "on")
@@ -159,9 +165,17 @@ def load(
         cfg.home = home
         cfg.personal_home = True
     sites = site.world_sites(repo)
-    if cfg.world in sites and not cfg.personal_home:
+    if cfg.world in sites:
+        if cfg.brain == "scripted":
+            raise ConfigError(SCRIPTED_SITE_REFUSED)
         try:
-            cfg.home = site.load(sites[cfg.world], repo).home_arg
+            _, public = site.folder_for(sites[cfg.world], repo)
+            if demo and not public:
+                raise DemoHomeError(DEMO_LOCAL_SITE_REFUSED)
+            if not cfg.personal_home:
+                cfg.home = site.load(sites[cfg.world], repo).home_arg
+                # A local site is the owner's own area: the same care as a personal home.
+                cfg.personal_home = not public
         except site.SiteError as exc:
             raise ConfigError(str(exc)) from exc
     return cfg

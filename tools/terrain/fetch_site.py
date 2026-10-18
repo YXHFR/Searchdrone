@@ -13,9 +13,13 @@ tool writes its data next to that file, ready to commit after review:
 A *local* site is defined in the gitignored ``config/site.local.toml`` (see
 ``config/site.example.toml``). It uses Lantmäteriet's Markhöjdmodell (1 m) and orthophoto
 through their STAC API, with the owner's own Geotorget login, and writes everything to
-``build/sites/<name>/``, which is never committed or uploaded. The login is read from
-that file or from ``SD_LM_USER`` / ``SD_LM_PASSWORD`` and handed to GDAL in its
-environment, never on a command line.
+``build/sites/<name>/``, which is never committed or uploaded. The login is read only from
+``SD_LM_USER`` / ``SD_LM_PASSWORD`` in the environment (never from a file in the
+repository) and handed to GDAL in its environment, never on a command line.
+
+OpenStreetMap is read through its main API (``/api/0.6/map`` for the site's box, plus the
+site's multipolygons whole): a handful of requests for a rare, manual refresh of one
+small site, well within the API's usage policy.
 
 Needs internet and GDAL's command-line tools (``gdalwarp``, ``gdal_translate``;
 ``sudo apt-get install gdal-bin``) only while it runs. The simulator itself reads the
@@ -179,9 +183,13 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
             raise FetchError(f"platsen {name} saknas i config/site.local.toml", 2)
         data, where = sites[name], f"config/site.local.toml [sites.{name}]"
         out, is_public = root / "build" / "sites" / name, False
+        if "lm_user" in data or "lm_password" in data:
+            raise FetchError(
+                "inloggningen hör inte hemma i filen: använd SD_LM_USER och SD_LM_PASSWORD", 2
+            )
         login = {
-            "user": os.environ.get("SD_LM_USER", str(data.get("lm_user", ""))),
-            "password": os.environ.get("SD_LM_PASSWORD", str(data.get("lm_password", ""))),
+            "user": os.environ.get("SD_LM_USER", ""),
+            "password": os.environ.get("SD_LM_PASSWORD", ""),
         }
     home = data.get("home", {})
     dem = data.get("dem", {})
@@ -211,7 +219,7 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
     if not 1.0 <= site.cell_m <= 50.0:
         raise FetchError(f"{where}: dem.cell_m ska vara 1-50", 2)
     if source == "lantmateriet-mhm" and not (login.get("user") and login.get("password")):
-        raise FetchError("Lantmäteriets inloggning saknas (lm_user/lm_password eller SD_LM_*)", 2)
+        raise FetchError("Lantmäteriets inloggning saknas (SD_LM_USER och SD_LM_PASSWORD)", 2)
     return site, login
 
 
@@ -255,7 +263,24 @@ def _get(url: str, *, data: bytes | None = None, headers: Mapping[str, str] = {}
 def _gdal(argv: Sequence[str], env: Mapping[str, str] | None = None) -> None:
     if shutil.which(argv[0]) is None:
         raise FetchError(f"{argv[0]} saknas. Installera GDAL: sudo apt-get install gdal-bin", 2)
-    full_env = {**os.environ, "GDAL_HTTP_USERAGENT": USER_AGENT, **(env or {})}
+    # A minimal environment: the program path, a home for GDAL's cache and the proxy and
+    # certificate settings a network may need; nothing else from the caller's environment.
+    keep = (
+        "PATH",
+        "HOME",
+        "LANG",
+        "TMPDIR",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+        "GDAL_DATA",
+        "PROJ_DATA",
+    )
+    base = {k: os.environ[k] for k in keep if k in os.environ}
+    full_env = {**base, "GDAL_HTTP_USERAGENT": USER_AGENT, **(env or {})}
     res = subprocess.run(argv, env=full_env, capture_output=True, text=True, check=False)  # noqa: S603
     if res.returncode != 0:
         raise FetchError(f"{argv[0]} misslyckades: {res.stderr.strip()[-500:]}")
