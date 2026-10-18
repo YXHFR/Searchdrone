@@ -296,12 +296,13 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       break;
     }
     case "chat.brain_status": {
-      const state = (e.data as { state?: string }).state;
+      const { state, engine } = e.data as { state?: string; engine?: string | null };
       const busy = state === "busy";
       const known = state === "ready" || busy || state === "degraded" || state === "down";
       live.patch({
         brainBusy: busy,
         brainState: known ? state : live.brainState,
+        brainEngine: engine === "cloud" || engine === "command" ? engine : null,
         brainBusySince: busy ? (live.brainBusySince ?? Date.now()) : null,
         aiDisconnected: state === "ready" || busy ? false : live.aiDisconnected,
       });

@@ -1,10 +1,12 @@
 # AI mission commander (sd-brain). Copied to config/brain.toml by `just setup-config`.
 # Override any key with an environment variable SD_BRAIN__<SECTION>__<KEY>,
-# e.g. SD_BRAIN__LLM__ROOT_URL. Keys live in .env, never here.
+# e.g. SD_BRAIN__CLOUD__MODEL. Keys live in .env, never here.
 #
-# The best available engine decides: the cloud model when SD_CLOUD_API_KEY and
-# [cloud] model are set and it answers in time; otherwise the local model takes over
-# automatically in the same turn. Every order goes through the safety gate either way.
+# The cloud model is the AI commander when SD_CLOUD_API_KEY is set in .env and it answers
+# in time. Without network or key, or when it does not answer, there is no AI chat: the
+# command mode (fixed commands, pure code) answers and the panel shows "AI:n svarar inte"
+# with fixed buttons. STOP and FLY HOME never go through the AI. Every order goes through
+# the safety gate either way.
 profile = "sim"                       # sim | bench | field; scripted only in sim
 token_file = "secrets/brain_token"    # the commander token (just brain-token)
 
@@ -13,33 +15,39 @@ commander_url = "http://127.0.0.1:7700/commander/v1"   # loopback only
 vehicle_id = "sim-01"
 
 [backend]
-kind = "llm_local"                    # llm_local | scripted | grammar
-fallback = "grammar"                  # command mode while the model does not answer
+kind = "cloud"                        # cloud | scripted | grammar
+fallback = "grammar"                  # command mode while the cloud model does not answer
 scripted_file = ""                    # only for kind = scripted
 
-[llm]                                 # the local model in llama-server
-root_url = "http://127.0.0.1:8091"    # /health, /tokenize, /metrics; /v1 is added
-model = "qwen3-vl-4b-instruct-q4_k_m"
-call_timeout_s = 15                   # per HTTP call
+[llm]                                 # how a turn uses the language model
 temperature = 0.2
 top_p = 0.8
 max_tokens = 512
-seed = 42                             # only used in evaluations
+seed = 42                             # only used in evaluations (not sent to the cloud)
 context_tokens = 8192
 prompt_budget_tokens = 6000
-health_interval_s = 2
-health_timeout_s = 1
 
-[cloud]                               # any OpenAI-compatible API
+[cloud]                               # any OpenAI-compatible API, default OpenRouter
 base_url = "https://openrouter.ai/api/v1"
-model = ""                            # e.g. a model id from openrouter.ai/models
-call_timeout_s = 15
-retry_after_s = 60                    # after a cloud failure, use the local model this long
+model = "z-ai/glm-5.3-flash"          # open weights (MIT)
+fallback_model = "anthropic/claude-haiku-5.5"   # asked when the main model errors; "" = none
+reasoning_effort = "low"              # none | minimal | low | medium | high | xhigh | max; "" = not sent
+call_timeout_s = 15                   # per call; after it the command mode answers the turn
+retry_after_s = 60                    # after a cloud failure, the command mode answers this long
+
+[cloud.provider]                      # OpenRouter provider routing (the "provider" field)
+send = true                           # false for an API that is not OpenRouter
+data_collection = "deny"              # only providers that do not store or train on the data
+require_parameters = true             # only providers that support tools and reasoning
+zdr = false                           # true = only zero-data-retention endpoints
+only = []                             # e.g. ["deepinfra"]; empty = any allowed provider
+order = []                            # preferred providers, tried first
 
 [decide]                              # the decision interface (quick stop check)
 # Best first. A hosted engine is used only when its key is in .env (SD_JEV_API_KEY,
 # SD_OPENAI_API_KEY); it then receives the text of each pilot chat line (nothing else).
-engines = ["jev", "openai_decisions", "local"]
+# Without one, the fixed stop words ("stopp", "stop", "flyg hem") still act at once.
+engines = ["jev", "openai_decisions"]
 stop_check = true
 stop_check_timeout_s = 0.5
 stop_threshold = 0.5
