@@ -55,19 +55,6 @@ export function setSweptLook(map: maplibregl.Map, flavor: MapFlavor, photo: bool
   );
 }
 
-/** Layers that the "Lager" menu can switch off (the drone and the charter always stay). */
-export const TOGGLEABLE: SourceId[] = [
-  "charter-preview",
-  "sectors",
-  "swept",
-  "pilot-range",
-  "home",
-  "target",
-  "track",
-  "areas",
-  "pins",
-];
-
 /** Adds every source (empty) and its layers. `labels` only when the style has glyphs. */
 export function addOverlay(map: maplibregl.Map, labels: boolean, flavor: MapFlavor): void {
   const C = PALETTE[flavor];

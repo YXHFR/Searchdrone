@@ -72,14 +72,6 @@
       "failsafe": "Failsafe",
       "raw": "Okänt läge"
     },
-    "battery": "Batteri {{v}} %",
-    "alt": "Höjd {{v}} m",
-    "stale": "(gammal)",
-    "link": {
-      "good": "Länk bra",
-      "weak": "Länk svag",
-      "lost": "Länk borta"
-    },
     "mode": {
       "a": "Läge A: du godkänner varje steg",
       "b": "Läge B: AI:n flyger inom ramen"
@@ -331,7 +323,6 @@
       "a": "A – varje steg godkänns",
       "b": "B – AI:n flyger fritt inom ramen"
     },
-    "pending": "{{n}} väntande godkännanden – visa chatten",
     "toast": "Väntar på ditt godkännande: {{title}}",
     "announce": "Godkännande krävs: {{title}}",
     "show": "Visa",

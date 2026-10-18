@@ -11,37 +11,11 @@ export interface ViewProps {
   isCompact: boolean;
 }
 
-export interface ViewDef {
-  id: ViewId;
-  titleKey: string;
-  component: ComponentType<ViewProps>;
-}
-
-export const VIEW_REGISTRY: Record<ViewId, ViewDef> = {
-  chat: { id: "chat", titleKey: "views.chat.title", component: ChatView },
-  map: {
-    id: "map",
-    titleKey: "views.map.title",
-    component: lazy(() => import("./map/MapView")),
-  },
-  video: {
-    id: "video",
-    titleKey: "views.video.title",
-    component: lazy(() => import("./video/VideoView")),
-  },
-  candidates: {
-    id: "candidates",
-    titleKey: "views.candidates.title",
-    component: lazy(() => import("./candidates/CandidatesView")),
-  },
-  status: {
-    id: "status",
-    titleKey: "views.status.title",
-    component: lazy(() => import("./status/StatusView")),
-  },
-  manual: {
-    id: "manual",
-    titleKey: "views.manual.title",
-    component: lazy(() => import("./manual/ManualView")),
-  },
+export const VIEW_REGISTRY: Record<ViewId, ComponentType<ViewProps>> = {
+  chat: ChatView,
+  map: lazy(() => import("./map/MapView")),
+  video: lazy(() => import("./video/VideoView")),
+  candidates: lazy(() => import("./candidates/CandidatesView")),
+  status: lazy(() => import("./status/StatusView")),
+  manual: lazy(() => import("./manual/ManualView")),
 };

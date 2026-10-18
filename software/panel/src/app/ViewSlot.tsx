@@ -11,7 +11,7 @@ function Crash(): never {
 /** One view behind its own error boundary: a view that fails never takes the panel along. */
 export function ViewSlot({ view, ...props }: ViewProps & { view: ViewId }) {
   const { t } = useTranslation();
-  const Comp = VIEW_REGISTRY[view].component;
+  const Comp = VIEW_REGISTRY[view];
   return (
     <ErrorBoundary
       fallback={(reset) => (

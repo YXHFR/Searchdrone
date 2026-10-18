@@ -1,20 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { square } from "../../e2e/fixtures";
 import type { SectorFeature } from "../state/missionStore";
 import { coverage, doneCount, sectorRows } from "./mission";
-
-// A square of about 100 m x 100 m at 59° N.
-const square = (lon: number, lat: number, dLon = 0.00175, dLat = 0.0009) => ({
-  type: "Polygon",
-  coordinates: [
-    [
-      [lon, lat],
-      [lon + dLon, lat],
-      [lon + dLon, lat + dLat],
-      [lon, lat + dLat],
-      [lon, lat],
-    ],
-  ],
-});
 
 const sector = (
   id: string,
@@ -23,7 +10,7 @@ const sector = (
   extra: Record<string, unknown> = {},
 ): SectorFeature => ({
   type: "Feature",
-  geometry: square(18, 59),
+  geometry: square(50),
   properties: { sector_id: id, name: id, status, progress, ...extra },
 });
 
@@ -51,7 +38,7 @@ describe("coverage", () => {
 
   it("sums the reported footprint against the sectors' area", () => {
     const c = coverage([
-      sector("S1", "done", 1, { area_m2: 40_000, covered: square(18, 59) }),
+      sector("S1", "done", 1, { area_m2: 40_000, covered: square(50) }),
       sector("S2", "active", 0.4, { area_m2: 60_000 }),
     ]);
     expect(c?.totalHa).toBeCloseTo(10, 5);

@@ -3,7 +3,7 @@ import { House, OctagonX, X } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useVehicleAction } from "./useVehicleAction";
-import type { ActionText } from "./vehicleAction";
+import type { ActionState, ActionText } from "./vehicleAction";
 
 export function actionText(t: (k: string) => string, text: ActionText | null): string | null {
   if (!text) return null;
@@ -19,12 +19,12 @@ interface Props {
 
 const hm = new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" });
 /** States that follow a request that left the panel: shown with the time it was sent. */
-const AFTER_SEND = new Set(["sent", "acked", "unconfirmed"]);
+const AFTER_SEND = new Set<ActionState>(["sent", "acked", "unconfirmed"]);
 
 /** The status line, prefixed with the time it was sent once the request has left the panel. */
 export function sentFeedback(
   t: TFunction,
-  state: string,
+  state: ActionState,
   status: string | null,
   pressedAt: number | null,
 ): string | null {
