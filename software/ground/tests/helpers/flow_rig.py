@@ -94,6 +94,7 @@ class FakeOnboard:
     accept_charters: bool = True
     order_outcome: str = "done"  # or "running" (stays), "rejected"
     reject_gate: Any = None  # with "rejected": the onboard gate's own decision
+    battery_rtl_active: bool = False  # the onboard battery rule flies home
     boot_id: int = 1
     state_seq: int = 0
     last_transition_seq: int = 0
@@ -157,7 +158,7 @@ class FakeOnboard:
                 "preflight": {},
                 "limits_active": [],
                 "stop_latch": self.stop_latch,
-                "battery_rtl_active": False,
+                "battery_rtl_active": self.battery_rtl_active,
                 "sector_progress": {},
                 "tick_ms_p95": 5.0,
             }

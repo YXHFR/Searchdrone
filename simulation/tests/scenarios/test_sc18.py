@@ -23,7 +23,7 @@ import contextlib
 import datetime as dt
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
@@ -100,7 +100,7 @@ async def _served_panel(sc: Scenario, port: int) -> AsyncIterator[str]:
         await asyncio.wait_for(task, 10)
 
 
-async def _token(sc: Scenario, role: str) -> str:
+async def _token(sc: Scenario, role: Literal["pilot", "observer"]) -> str:
     """A CLI token as ``sd-ground token create`` makes it."""
     repo = sc.r.g.repo
     assert repo is not None

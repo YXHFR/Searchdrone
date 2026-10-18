@@ -1,6 +1,10 @@
-"""The onboard computer's own gate refuses an order the ground let through: the order
-ends ``rejected_onboard``, the ground logs ``gate.mismatch`` with the onboard reasons,
-raises the ``GATE_MISMATCH`` alert and stores the onboard decision."""
+"""What the ground station does when the onboard computer acts on its own.
+
+* Its gate refuses an order the ground let through: the order ends ``rejected_onboard``,
+  the ground logs ``gate.mismatch`` with the onboard reasons and stores the decision.
+* Its battery rule flies home: the mission returns (cause battery), the pilot gets the
+  ``BATTERY_RTL`` alert and the AI's orders meet the battery failsafe.
+"""
 
 from __future__ import annotations
 
@@ -70,3 +74,24 @@ async def test_onboard_refusal_is_logged_as_a_mismatch(r: Rig) -> None:
     gates = await r.flow.repo.gate_decisions(mid, 10, command_id=out["command_id"])
     assert {g.side for g in gates} == {"ground", "onboard"}
     assert any(g.side == "onboard" and g.decision == "REJECT" for g in gates)
+
+
+async def test_onboard_battery_rule_is_seen_by_the_ground(r: Rig) -> None:
+    mid = await r.ready_mission()
+    d = ScriptDriver(r.commander, mid, {"p1": r.at(60.0, 40.0)})
+    assert (await r.clearance(mid)).status_code == 200
+    await r.until(lambda: r.onboard.clearances, 5, "clearance onboard")
+    assert (await d.order("takeoff", {"alt_m": 40})).json()["decision"] == "ALLOW"
+    r.fly(40.0)
+    await r.until(lambda: r.flow.seen_flying("sim-01"), 10, "flight seen by the flow")
+    await r.wait_status(mid, "ACTIVE")
+    r.onboard.set_state(ExecutorState.RTL)
+    r.onboard.battery_rtl_active = True
+    await r.wait_status(mid, "RETURNING")
+    assert (await r.mission(mid))["mission"]["returning_cause"] == "battery"
+    await r.g.flush_events()
+    events = (await r.panel.get(f"/api/v1/missions/{mid}/events")).json()
+    assert [e for e in events if e["type"] == "alarm.BATTERY_RTL"], events
+    await asyncio.sleep(3.1)
+    out = (await d.order("goto", {"at": "p1", "alt_m": 40})).json()
+    assert out["decision"] == "REJECT" and "FAILSAFE_ACTIVE" in out["reason_codes"], out

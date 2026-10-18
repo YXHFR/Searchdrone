@@ -530,7 +530,11 @@ class Scenario:
                     autonomy_mode=str(body["autonomy_mode"]),
                     approved_by=c.get("approved_by"),
                     status=c.get("status", "approved"),
-                    install_status=c.get("install_status") or "installed",
+                    # Installed once its fence was verified; a reinstall after an
+                    # SD-link outage makes the row briefly "pending" again.
+                    install_status=(
+                        "installed" if c.get("fence_verified_at") else c["install_status"]
+                    ),
                 )
             )
 
