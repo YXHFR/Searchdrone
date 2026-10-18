@@ -209,7 +209,9 @@ class FcTelemetry:
     groundspeed_ms: float = 0.0
     climb_ms: float = 0.0
     heading_deg: float = 0.0
-    attitude_mono_ms: int | None = None  # ATTITUDE: roll right, pitch nose up, yaw from north
+    attitude_mono_ms: int | None = (
+        None  # last ATTITUDE (roll right, pitch nose up, yaw from north); None until the first one
+    )
     roll_deg: float = 0.0
     pitch_deg: float = 0.0
     yaw_deg: float = 0.0
@@ -855,13 +857,19 @@ class Vehicle:
                 )
                 notify = True
             case "ATTITUDE":
-                t = replace(
-                    t,
-                    attitude_mono_ms=now,
-                    roll_deg=math.degrees(float(msg.roll)),
-                    pitch_deg=math.degrees(float(msg.pitch)),
-                    yaw_deg=math.degrees(float(msg.yaw)) % 360.0,
-                )
+                # No notify: the panel and perception read the latest. A non-finite sample
+                # is dropped and the previous one ages out instead of being shown as a
+                # made-up horizon.
+                rpy = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+                if all(map(math.isfinite, rpy)):
+                    roll, pitch, yaw = map(math.degrees, rpy)
+                    t = replace(
+                        t,
+                        attitude_mono_ms=now,
+                        roll_deg=roll,
+                        pitch_deg=pitch,
+                        yaw_deg=yaw % 360.0,  # compass, 0-360
+                    )
             case "VFR_HUD":
                 t = replace(t, groundspeed_ms=float(msg.groundspeed), climb_ms=float(msg.climb))
             case "BATTERY_STATUS":
