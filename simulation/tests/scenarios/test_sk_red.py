@@ -15,7 +15,7 @@ the pilot to confirm, searches on, then flies home and lands. Passes when:
 * every red block has a find within 3 m of the ground truth, and there is no other red
   block find (the red car and the red house are no blocks);
 * the oracle reported the cars as cars;
-* the AI asked the pilot to confirm, and never confirmed anything itself;
+* the AI asked the pilot to confirm, and never called a find confirmed itself;
 * the drone landed at home and the invariants held.
 
 Time to the first find and every error are written to ``runs/<run>/search/result.json``
@@ -187,9 +187,9 @@ async def test_sk_red(gz_sim: Sim, migrated_db: Any, tmp_path: Path, scenario_id
     assert any(f["label"] == "car" and f["source"] == "oracle" for f in finds), finds
     assert not any(f["label"] == "red_block" and f["source"] == "oracle" for f in finds)
     assert asked, "the AI never asked the pilot to confirm a find"
-    assert not any(
-        "bekräftat" in str(m.get("text", "")).lower() for m in chat if m.get("role") == "brain"
-    )
+    # Only a person confirms a find ("fritt runt är bekräftat", the clearance, is fine).
+    said = [str(m.get("text", "")).lower() for m in chat if m.get("role") == "brain"]
+    assert not [t for t in said if "bekräftat" in t and ("block" in t or "fynd" in t)], said
     assert stats.failed == 0
     assert first_s is not None
     assert home_m <= 3.0
