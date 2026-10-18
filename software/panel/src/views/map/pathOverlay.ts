@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import type { Command } from "../../api/types";
 import { useLiveStore } from "../../state/liveStore";
 import { useMissionStore } from "../../state/missionStore";
-import { type ActivePath, activePath, pathFlownData, pathPlanData, pathsData } from "./pathData";
+import {
+  type ActivePath,
+  activePath,
+  finishedPath,
+  pathFlownData,
+  pathPlanData,
+  pathsData,
+  resumedPath,
+} from "./pathData";
 
 type MapLike = import("maplibre-gl").Map;
 type MapMod = typeof import("./createMap");
@@ -20,20 +28,13 @@ function current(): ActivePath | null {
   // step), until the vehicle does something else.
   const snap = live.vehicle?.snapshot;
   const hovering = snap?.executor_state === "HOLD" && snap.hold_reason === "skill_done";
-  const latest = hovering
-    ? (Object.values(m.commands)
-        .filter((c) => c.skill === "follow_path" && c.status === "done")
-        .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] ?? null)
-    : null;
+  const latest = hovering ? finishedPath(Object.values(m.commands)) : null;
   const tel = live.telemetry;
   const drone = tel && Number.isFinite(tel.lat) ? { lat: tel.lat, lon: tel.lon } : null;
-  return activePath(
-    m.activeCommandId ? (m.commands[m.activeCommandId] ?? null) : null,
-    pending,
-    latest,
-    drone,
-    live.vehicle?.snapshot,
-  );
+  const active = m.activeCommandId ? (m.commands[m.activeCommandId] ?? null) : null;
+  // After STOP and Resume the resume order flies the rest of the path: keep showing it.
+  const resumed = resumedPath(active, Object.values(m.commands));
+  return activePath(active, pending, latest, drone, live.vehicle?.snapshot, resumed);
 }
 
 /** Pushes the path layers while the map is ready; returns the path being shown. */

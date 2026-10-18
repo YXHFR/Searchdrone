@@ -46,6 +46,8 @@ RECIPES = [
     "e2e",
     "sim-setup",
     "maps-fetch",
+    "world-fetch",
+    "world-snapshot",
     "accept",
     "showcase",
     "release-prep",

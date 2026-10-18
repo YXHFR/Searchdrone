@@ -22,7 +22,7 @@ import math
 import random
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,7 +32,7 @@ import jinja2
 from sd_hwcalc.calc import compute
 from sd_hwcalc.model import Drone, load_drone
 from sd_safety.targets import Plane
-from sd_sim import fixture, objects, paths, ports
+from sd_sim import fixture, objects, paths, ports, site
 
 GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
@@ -41,13 +41,13 @@ WORLD_NAME = "sd_lake_forest"
 SEED = 42
 
 # The vehicle.
+# The body origin above the leg tips. A world that places the vehicle with <include> must
+# lift it this much: the include's pose replaces the model's own.
+STAND_M = 0.2
 ARM_M = 0.29  # half the 0.58 m motor-to-motor diagonal
 ROTOR_XY_M = ARM_M / math.sqrt(2)  # 0.205 m in x and y for an X frame
 INERTIA_KG_M2 = (0.045, 0.045, 0.080)  # mass in the middle of the frame; CAD values later
 IMU_MASS_KG = 0.01
-# Body origin above the ground so the landing legs (0.2 m below it) just touch it. The
-# world's <include> pose replaces the model's own pose, so both use this height.
-SPAWN_Z_M = 0.2
 MAX_ROTOR_RAD_S = 650.0  # about 6 200 rpm for a 14-inch propeller
 THRUST_TO_WEIGHT = 2.0
 # LiftDrag surfaces: lift = 0.5 * rho * area * cl * v^2 with cl = CLA * angle of attack and
@@ -130,10 +130,10 @@ def model_context(
     ports_i = ports.for_instance(instance)
     return {
         "name": f"{MODEL_NAME}_i{instance}",
-        "spawn_z": SPAWN_Z_M,
         "instance": instance,
         "fdm_port_in": ports_i["sitl_json_fdm"],
         "video_port": ports_i["video_raw_udp"],
+        "stand_m": STAND_M,
         "base_mass": round(base_mass, 6),
         "inertia": INERTIA_KG_M2,
         "imu_mass": IMU_MASS_KG,
@@ -209,11 +209,28 @@ def ground_z(east_m: float, north_m: float) -> float:
     return 0.0
 
 
-def object_pose(obj: objects.WorldObject) -> objects.Pose:
+@dataclass(frozen=True)
+class Frame:
+    """Where a world's origin is (home on the ground) and how high the ground is."""
+
+    lat: float
+    lon: float
+    alt_amsl_m: float
+    half_m: float  # the world reaches this far east, west, north and south of home
+    ground: Callable[[float, float], float] = ground_z
+
+
+def lake_forest_frame(fix: fixture.Fixture | None = None) -> Frame:
+    fix = fixture.load() if fix is None else fix
+    return Frame(fix.home.lat, fix.home.lon, fix.home.alt_amsl_m, GROUND_SIZE_M / 2)
+
+
+def object_pose(obj: objects.WorldObject, frame: Frame | None = None) -> objects.Pose:
+    ground = ground_z if frame is None else frame.ground
     return objects.Pose(
         obj.east_m,
         obj.north_m,
-        ground_z(obj.east_m, obj.north_m) + obj.up_m,
+        ground(obj.east_m, obj.north_m) + obj.up_m,
         objects.yaw_enu(obj.yaw_deg),
     )
 
@@ -222,10 +239,10 @@ LABEL_PLUGIN = "gz-sim-label-system"
 REMOTE = re.compile(r"(?i)https?://|fuel\.")
 
 
-def checked_fragment(obj: objects.WorldObject) -> str:
+def checked_fragment(obj: objects.WorldObject, frame: Frame | None = None) -> str:
     """The object's SDF, refused unless it is one ``<model>``/``<actor>`` named like the
     object and names no remote URI (Gazebo would download it)."""
-    text = obj.sdf(object_pose(obj))
+    text = obj.sdf(object_pose(obj, frame))
     try:
         root = ET.fromstring(text)  # noqa: S314 - SDF built by our own object classes
     except ET.ParseError as exc:
@@ -259,8 +276,8 @@ def world_context(
         "model_uri": f"model://{MODEL_NAME}_i{instance}",
         "home": home,
         # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
+        "vehicle_z": STAND_M,
         "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
-        "spawn_z": SPAWN_Z_M,
         "ground_size": GROUND_SIZE_M,
         "pad_size": PAD_SIZE_M,
         "lake": lake_polygon(),
@@ -308,25 +325,28 @@ def world_sdf(
 
 
 def world_truth(
-    name: str, placed: Sequence[objects.WorldObject], fix: fixture.Fixture | None = None
+    name: str,
+    placed: Sequence[objects.WorldObject],
+    fix: fixture.Fixture | None = None,
+    frame: Frame | None = None,
 ) -> dict[str, Any]:
     """The facit: where every object really is, in the world frame and in WGS84."""
-    fix = fixture.load() if fix is None else fix
-    plane = Plane(fix.home.lat, fix.home.lon)
+    frame = lake_forest_frame(fix) if frame is None else frame
+    plane = Plane(frame.lat, frame.lon)
     rows = []
     for obj in placed:
-        pose = object_pose(obj)
+        pose = object_pose(obj, frame)
         lat, lon = plane.latlon(pose.x, pose.y)
         rows.append(
             {
                 "name": obj.name,
                 "east_m": round(pose.x, 3),
                 "north_m": round(pose.y, 3),
-                "ground_m": round(ground_z(obj.east_m, obj.north_m), 3),
+                "ground_m": round(frame.ground(obj.east_m, obj.north_m), 3),
                 "up_m": round(obj.up_m, 3),
                 "lat": round(lat, 8),
                 "lon": round(lon, 8),
-                "alt_amsl_m": round(fix.home.alt_amsl_m + pose.z, 3),
+                "alt_amsl_m": round(frame.alt_amsl_m + pose.z, 3),
                 "yaw_deg": round(obj.yaw_deg, 3),
                 "label": obj.label,
                 "truth": dict(obj.truth),
@@ -334,7 +354,7 @@ def world_truth(
         )
     return {
         "world": name,
-        "home": {"lat": fix.home.lat, "lon": fix.home.lon, "alt_amsl_m": fix.home.alt_amsl_m},
+        "home": {"lat": frame.lat, "lon": frame.lon, "alt_amsl_m": frame.alt_amsl_m},
         "objects": rows,
     }
 
@@ -384,6 +404,11 @@ def render_model(
     return out
 
 
+def known_worlds(repo: Path = paths.REPO) -> set[str]:
+    """Worlds this module can render: the flat one and every site's world."""
+    return {WORLD_NAME, *site.world_sites(repo)}
+
+
 def truth_path(name: str, instance: int, repo: Path = paths.REPO) -> Path:
     return repo / "build" / "sim" / "worlds" / f"{name}_i{instance}.truth.json"
 
@@ -408,7 +433,13 @@ def render_world(
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
     the layer only depends on the fixture's home and the fixed scenery. The facit
-    (``<name>_i<N>.truth.json``) is per instance, since each may run other objects."""
+    (``<name>_i<N>.truth.json``) is per instance, since each may run other objects.
+    A world built from a site (``sd_sim.site_world``) is rendered there."""
+    sites = site.world_sites(repo)
+    if name in sites:
+        from sd_sim import site_world
+
+        return site_world.render(sites[name], instance, repo, placed, stills=stills, video=video)
     render_model(instance, repo, stills=stills, video=video)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
