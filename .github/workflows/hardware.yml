@@ -93,8 +93,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    # Building the model and its 52 tests took about 20 min on the runner,
-    # so the old limit of 20 min left no margin.
+    # The CAD build plus its tests take about 20 min on the runner; 35 leaves headroom.
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
