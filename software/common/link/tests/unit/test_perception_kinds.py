@@ -227,6 +227,8 @@ async def test_wrong_vehicle_id_closes_the_link(body: SdModel, side: str) -> Non
 
 
 def test_golden_files_for_stage2_kinds() -> None:
-    kinds = {json.loads(p.read_text(encoding="utf-8"))["kind"] for p in GOLDEN.glob("*.json")}
-    assert kinds >= TTL_REQUIRED_KINDS
-    assert VEHICLE  # the golden files use the test vehicle
+    files = [json.loads(p.read_text(encoding="utf-8")) for p in GOLDEN.glob("*.json")]
+    assert {f["kind"] for f in files} >= TTL_REQUIRED_KINDS
+    for f in files:
+        if f["kind"] in TTL_REQUIRED_KINDS:
+            assert f["vehicle_id"] == VEHICLE and f["ttl_ms"] is not None, f["kind"]

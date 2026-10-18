@@ -335,6 +335,18 @@ def check(loaded: Loaded) -> list[str]:
     search_token = loaded.path(cfg.auth.search_token_file)  # optional until sd-search runs
     if search_token.is_file() and not _private_mode(search_token):
         errors.append(f"{cfg.auth.search_token_file} kan läsas av andra. Kör: chmod 600 på filen")
+    if (
+        search_token.is_file()
+        and token.is_file()
+        and (
+            search_token.resolve() == token.resolve()
+            or search_token.read_text(encoding="utf-8").strip()
+            == token.read_text(encoding="utf-8").strip()
+        )
+    ):
+        errors.append(
+            "Söktjänstens och befälhavarens token måste vara olika. Kör: just search-token"
+        )
     try:
         limit_caps(loaded)
     except ConfigError as exc:

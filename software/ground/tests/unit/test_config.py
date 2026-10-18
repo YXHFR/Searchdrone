@@ -215,3 +215,15 @@ def test_init_writes_both_service_tokens(tmp_path: Path, monkeypatch: pytest.Mon
     first = (tmp_path / "secrets" / "search_token").read_text()
     assert cmd_init(argparse.Namespace(lan=False)) == 0  # a second run keeps the tokens
     assert (tmp_path / "secrets" / "search_token").read_text() == first
+
+
+def test_search_token_must_differ_from_the_commander_token(root: Path) -> None:
+    brain = (root / "secrets" / "brain_token").read_text()
+    token = root / "secrets" / "search_token"
+    token.write_text(brain)
+    token.chmod(0o600)
+    assert any("måste vara olika" in e for e in _errors(root))
+    token.write_text("another-value")
+    assert _errors(root) == []
+    same = _errors(root, '[auth]\nsearch_token_file = "secrets/brain_token"\n')
+    assert any("måste vara olika" in e for e in same)
