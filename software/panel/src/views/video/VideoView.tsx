@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/http";
 import { paths } from "../../api/paths";
 import type { SystemStatus } from "../../api/types";
 import { noteVideoFps } from "../../lib/testHooks";
+import { useNow } from "../../lib/useNow";
 import { useSessionStore } from "../../state/sessionStore";
 import type { ViewProps } from "../registry";
+import { Hud } from "./Hud";
 import { startWhep, type WhepSession } from "./whepClient";
 
 /** No playing picture within this time over WebRTC: switch to HLS. */
@@ -14,6 +16,8 @@ export const WHEP_PLAY_MS = 5000;
 export const NO_VIDEO_MS = 10_000;
 /** A started picture that stops moving this long (or a lost WebRTC link): "no video". */
 export const STALL_MS = 3000;
+/** How often the last picture is kept, to show frozen and grey when the stream is lost. */
+const SNAPSHOT_MS = 1000;
 const POLL_MS = 250;
 
 export type Mode = "connecting" | "webrtc" | "hls" | "none";
@@ -150,10 +154,36 @@ export function connect(
   };
 }
 
-export default function VideoView(_: ViewProps) {
+/** Keeps the last good frame in a canvas while the picture plays; returns when it was taken. */
+function useLastFrame(
+  video: RefObject<HTMLVideoElement | null>,
+  canvas: RefObject<HTMLCanvasElement | null>,
+  playing: boolean,
+): number | null {
+  const [at, setAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!playing) return;
+    const grab = (): void => {
+      const v = video.current;
+      const c = canvas.current;
+      if (!v || !c || v.videoWidth === 0) return;
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      c.getContext("2d")?.drawImage(v, 0, 0);
+      setAt(Date.now());
+    };
+    grab();
+    const timer = setInterval(grab, SNAPSHOT_MS);
+    return () => clearInterval(timer);
+  }, [playing, video, canvas]);
+  return at;
+}
+
+export default function VideoView({ isCompact }: ViewProps) {
   const { t } = useTranslation();
   const video = useSessionStore((s) => s.config?.video ?? null);
   const ref = useRef<HTMLVideoElement>(null);
+  const frame = useRef<HTMLCanvasElement>(null);
   const [mode, setMode] = useState<Mode>(video ? "connecting" : "none");
   const [attempt, setAttempt] = useState(0);
   const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
@@ -214,6 +244,10 @@ export default function VideoView(_: ViewProps) {
     return () => clearInterval(timer);
   }, [mode]);
 
+  const live = mode === "webrtc" || mode === "hls";
+  const frameAt = useLastFrame(ref, frame, live);
+  const now = useNow(1_000);
+  const frozen = !live && frameAt !== null;
   const badge =
     mode === "webrtc" ? t("views.video.live") : mode === "hls" ? t("views.video.hls") : null;
   return (
@@ -229,6 +263,13 @@ export default function VideoView(_: ViewProps) {
         disablePictureInPicture
         hidden={mode === "none"}
       />
+      <canvas ref={frame} className="video-frozen" data-testid="video-frozen" hidden={!frozen} />
+      {frozen && frameAt !== null ? (
+        <div className="video-badge video-badge-stale" data-testid="video-stale">
+          {t("views.video.old", { s: Math.max(0, Math.round((now - frameAt) / 1000)) })}
+        </div>
+      ) : null}
+      {live && !isCompact ? <Hud /> : null}
       {badge && (
         <div className="video-badge" data-testid="video-badge">
           <span>{badge}</span>
@@ -242,7 +283,10 @@ export default function VideoView(_: ViewProps) {
       )}
       {mode === "connecting" && <p className="video-note">{t("views.video.connecting")}</p>}
       {mode === "none" && (
-        <div className="view-empty video-empty video-none" data-testid="video-none">
+        <div
+          className={`view-empty video-empty video-none${frozen ? " video-none-over" : ""}`}
+          data-testid="video-none"
+        >
           <p>{video ? t("views.video.noPicture") : t("views.video.none")}</p>
           <button type="button" className="btn" data-testid="video-retry" onClick={retry}>
             {t("views.video.retry")}

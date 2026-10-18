@@ -68,7 +68,7 @@ export function createMap(
     "top-right",
   );
   map.on("load", () => {
-    addOverlay(map, cfg !== null);
+    addOverlay(map, cfg !== null, flavor);
     onReady(map);
   });
   return map;

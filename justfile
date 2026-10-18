@@ -247,6 +247,12 @@ test-panel-e2e:
     pnpm --filter @searchdrone/panel build:test
     pnpm --filter @searchdrone/panel e2e
 
+# Screenshots of every panel state, both themes, at 1440×900, 1920×1080 and 390×844
+# (software/panel/screens/, kept out of git)
+panel-screens:
+    pnpm --filter @searchdrone/panel build:test
+    pnpm --filter @searchdrone/panel screens
+
 # The stack runs in the SITL container and Playwright beside it on this machine.
 # Panel in a browser against SITL and the scripted commander (keys as ci-sitl)
 test-panel-sitl *args:

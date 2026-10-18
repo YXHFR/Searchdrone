@@ -84,6 +84,7 @@ node_modules/
 software/panel/dist/
 software/panel/dist-test/
 software/panel/e2e/sitl/.auth/
+software/panel/screens/
 playwright-report/
 test-results/
 

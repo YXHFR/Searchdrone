@@ -5,6 +5,7 @@ import { LoginPage } from "../auth/LoginPage";
 import { SafetyBar } from "../safety/SafetyBar";
 import { useSessionStore } from "../state/sessionStore";
 import { useUiStore } from "../state/uiStore";
+import { useTheme } from "../theme/theme";
 import { EmergencyPage } from "./EmergencyPage";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Shell } from "./Shell";
@@ -32,7 +33,7 @@ function AuthGate() {
 /** DOM order: skip link, safety bar (fixed at the bottom), then everything else. */
 export function App() {
   const { t } = useTranslation();
-  const theme = useUiStore((s) => s.theme);
+  const theme = useTheme();
   const alert = useUiStore((s) => s.alert);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

@@ -11,6 +11,7 @@ import { uuidv7 } from "../../lib/uuidv7";
 import { ClearanceControl } from "../../safety/ClearanceControl";
 import { ResumeButton, ResumeRow } from "../../safety/ResumeButton";
 import { resumeView } from "../../safety/resume";
+import { useAiGone } from "../../side/CommandPanel";
 import { useBrainState } from "../../state/brain";
 import { chatOrder, type PanelChatMessage, useChatStore } from "../../state/chatStore";
 import { useLiveStore } from "../../state/liveStore";
@@ -153,7 +154,7 @@ function MessageList({ vehicleId }: ViewProps) {
   );
 }
 
-/** "AI:n tänker… N s", or the command-mode / AI-down notices (one line above the composer). */
+/** "AI:n tänker… N s", or that the AI is slow. That it is gone is said once, in the command panel. */
 function BrainStatusRow() {
   const { t } = useTranslation();
   const since = useLiveStore((s) => s.brainBusySince);
@@ -161,10 +162,7 @@ function BrainStatusRow() {
   const now = useNow(500);
   let text: string | null = null;
   let warn = false;
-  if (brain === "down") {
-    text = t("chat.brainDown");
-    warn = true;
-  } else if (brain === "degraded") {
+  if (brain === "degraded") {
     text = t("chat.brainDegraded");
     warn = true;
   } else if (since !== null) {
@@ -288,12 +286,13 @@ function Composer() {
 }
 
 export function ChatView(props: ViewProps) {
+  const aiGone = useAiGone();
   return (
     <div className="view-body chat" id="chat">
       <MessageList {...props} />
       <ResumeRow vehicleId={props.vehicleId} />
       <ClearanceControl />
-      <OrderButtons />
+      {aiGone ? null : <OrderButtons />}
       <BrainStatusRow />
       <Composer />
     </div>

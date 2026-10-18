@@ -3,7 +3,8 @@
     "name": "Searchdrone",
     "simulator": "SIMULATOR",
     "noMission": "Inget aktivt uppdrag",
-    "skip": "Hoppa till innehållet"
+    "skip": "Hoppa till innehållet",
+    "sim": "Simulator"
   },
   "common": {
     "loading": "Laddar…",
@@ -28,10 +29,10 @@
     "state": {
       "sending": "Skickar…",
       "retrying": "Inget svar – försöker igen… Använd RC om det dröjer",
-      "sent": "Skickat – väntar på drönaren",
+      "sent": "väntar på drönaren",
       "onboardReceived": "Ombord har tagit emot",
       "acked": "Kvitterat ✓",
-      "unconfirmed": "Skickat – kvittens saknas. Kontrollera drönaren, använd RC",
+      "unconfirmed": "kvittens saknas. Kontrollera drönaren, använd RC",
       "failed": "Misslyckades – tryck igen"
     },
     "error": {
@@ -43,7 +44,13 @@
     },
     "dismiss": "Stäng meddelandet",
     "notLoggedIn": "Inte inloggad – STOPP och FLYG HEM fungerar inte förrän du loggat in. Använd RC.",
-    "noVehicleContact": "Ingen kontakt med drönaren"
+    "noVehicleContact": "Ingen kontakt med drönaren",
+    "caption": "Säkerhetsknappar · går direkt till drönaren, förbi AI:n",
+    "feedback": "Skickat {{time}} · {{state}}",
+    "done": {
+      "stop": "Kvitterat, svävar",
+      "home": "Kvitterat, flyger hem"
+    }
   },
   "resume": {
     "button": "Fortsätt",
@@ -91,38 +98,9 @@
   },
   "menu": {
     "label": "Meny",
-    "themeLight": "Byt till dagsljus",
-    "themeDark": "Byt till mörkt tema",
-    "logout": "Logga ut"
-  },
-  "layout": {
-    "menu": "Layout",
-    "preset": {
-      "standard": "Standard",
-      "map_video": "Karta och video",
-      "chat_only": "Bara chatt",
-      "quad": "Fyra rutor",
-      "flight": "Flygning"
-    },
-    "maximize": "Helskärm: {{view}}",
-    "restore": "Avsluta helskärm: {{view}}",
-    "showHere": "Visa en annan vy i stället för {{view}}",
-    "showHereShort": "Visa här…",
-    "split": "Dela rutan {{view}}",
-    "splitShort": "Dela…",
-    "splitRight": "{{view}} till höger",
-    "splitBelow": "{{view}} under",
-    "close": "Stäng {{view}}",
-    "tabs": "Vyer",
-    "pipOn": "Visa {{view}} i en liten ruta",
-    "pipOff": "Stäng den lilla rutan",
-    "pipSwap": "Byt plats med {{view}}",
-    "corner": {
-      "tl": "Flytta rutan uppe till vänster",
-      "tr": "Flytta rutan uppe till höger",
-      "bl": "Flytta rutan nere till vänster",
-      "br": "Flytta rutan nere till höger"
-    }
+    "logout": "Logga ut",
+    "status": "Status och gränser",
+    "manual": "Styr själv"
   },
   "views": {
     "chat": {
@@ -136,9 +114,9 @@
       "noPosition": "Ingen position från drönaren ännu",
       "position": "Drönaren: {{lat}}, {{lon}}",
       "tools": "Kartverktyg",
-      "centreDrone": "Centrera på drönaren",
-      "centreHome": "Centrera på hem",
-      "showCharter": "Visa hela ramen",
+      "centreDrone": "Följ drönaren",
+      "centreHome": "Hem",
+      "showCharter": "Hela området",
       "layers": "Lager",
       "layer": {
         "charter-preview": "Väntande ram",
@@ -148,7 +126,8 @@
         "target": "Aktuellt mål",
         "track": "Flugen bana",
         "areas": "Ritade områden",
-        "pins": "Nålar"
+        "pins": "Nålar",
+        "swept": "Avsökt yta"
       }
     },
     "video": {
@@ -158,7 +137,8 @@
       "noPicture": "Ingen video. Kontrollera simulatorn/kameran.",
       "retry": "Försök igen",
       "live": "LIVE · WebRTC",
-      "hls": "HLS · fördröjning ca 2–4 s"
+      "hls": "HLS · fördröjning ca 2–4 s",
+      "old": "Gammal bild · {{s}} s sedan"
     },
     "candidates": {
       "title": "Kandidater",
@@ -338,7 +318,10 @@
     "pending": "{{n}} väntande godkännanden – visa chatten",
     "toast": "Väntar på ditt godkännande: {{title}}",
     "announce": "Godkännande krävs: {{title}}",
-    "show": "Visa"
+    "show": "Visa",
+    "approveArea": "Godkänn sökområde",
+    "approveChange": "Godkänn ändringen",
+    "holdHint": "håll in 0,8 s"
   },
   "charter": {
     "allFields": "Alla fält i ramen (version {{v}})",
@@ -395,6 +378,13 @@
       "allowed_skills": "Tillåtna färdigheter",
       "no_personal_data": "Personuppgifter",
       "notes": "Anteckning"
+    },
+    "key": {
+      "area": "Område",
+      "alt": "Höjd",
+      "speed": "Fart",
+      "rtl": "Hem vid",
+      "rtlValue": "{{pct}} % batteri"
     }
   },
   "limits": {
@@ -487,6 +477,115 @@
     "selfIntersects": "Området korsar sig självt",
     "tooBig": "Området är större än {{cap}} km²",
     "saved": "Område {{label}} sparat ({{ha}} ha). Skriv t.ex. \"sök området jag ritade\".",
-    "failed": "Det gick inte att spara på kartan."
+    "failed": "Det gick inte att spara på kartan.",
+    "menu": "Rita"
+  },
+  "mission": {
+    "title": "Uppdrag",
+    "state": {
+      "DRAFT": "Utkast",
+      "CHARTER_PROPOSED": "Ram föreslagen",
+      "READY": "Redo",
+      "ACTIVE": "Aktivt",
+      "PAUSED": "Pausat",
+      "HELD": "Stoppat",
+      "FAILSAFE": "Failsafe",
+      "RETURNING": "Flyger hem",
+      "LANDED": "Landat",
+      "CLOSED": "Avslutat"
+    },
+    "started": "Startat",
+    "mode": "Läge",
+    "modeA": "Du godkänner varje steg",
+    "modeB": "AI:n flyger inom ramen",
+    "timeLeftNone": "drönaren rapporterar inte",
+    "toYou": "Till dig",
+    "toYouHint": "fågelvägen",
+    "none": "Inget uppdrag pågår. Beskriv i chatten vem ni söker, så föreslår AI:n ett sökområde.",
+    "notStarted": "Uppdraget har inte startat. Inget flygs förrän du har godkänt ett sökområde.",
+    "sectors": "Sektorer",
+    "sectorsDone": "{{n}} av {{of}} klara",
+    "noSectors": "Sektorer skapas när sökområdet godkänns.",
+    "sector": {
+      "pending": "Väntar",
+      "active": "Pågår",
+      "done": "Klar",
+      "skipped": "Hoppad"
+    },
+    "sweptLead": "Avsökt",
+    "sweptOf": "av {{total}} ha i sökområdet",
+    "column": "Uppdrag och fynd"
+  },
+  "finds": {
+    "title": "Fynd",
+    "later": "Fynd från kamerans sökning visas här när kandidatkön finns (etapp 2).",
+    "open": "Öppna Granska"
+  },
+  "minimap": {
+    "label": "Karta över föreslaget sökområde, hem och redan avsökt yta",
+    "proposed": "föreslaget",
+    "swept": "avsökt",
+    "range": "max räckvidd"
+  },
+  "command": {
+    "flag": "Kommandoläge",
+    "droneNow": "Drönaren nu",
+    "works": "Fungerar"
+  },
+  "side": {
+    "label": "Samtal och händelser",
+    "chat": "AI-befälhavaren",
+    "events": "Händelser",
+    "mission": "Uppdrag"
+  },
+  "hud": {
+    "noAttitude": "Ingen horisont – drönaren skickar ingen attityd",
+    "age": "Senaste data för {{s}} s"
+  },
+  "stage": {
+    "bigMap": "Stor karta",
+    "bigVideo": "Stor video",
+    "noCamera": "Ingen kamerabild",
+    "sheetUp": "Dra upp",
+    "sheetDown": "Fäll ned",
+    "backToFly": "Tillbaka till Flyg"
+  },
+  "theme": {
+    "label": "Tema",
+    "auto": "Auto (följer datorn)",
+    "dark": "Mörkt",
+    "light": "Dagsljus"
+  },
+  "strip": {
+    "view": "Vy",
+    "fly": "Flyg",
+    "review": "Granska",
+    "mode": "Läge",
+    "modeA": "A · du godkänner",
+    "modeB": "B · inom ramen",
+    "clock": "Klockan",
+    "waiting": "{{n}} väntar på dig",
+    "age": "Senast",
+    "ageValue": "{{v}} sedan",
+    "battery": "Batteri",
+    "timeLeft": "Tid kvar",
+    "timeLeftNone": "Drönaren rapporterar ingen återstående tid",
+    "alt": "Höjd",
+    "speed": "Fart",
+    "heading": "Kurs",
+    "fromYou": "Från dig",
+    "link": "Länk",
+    "linkQ": {
+      "good": "Länken är bra",
+      "weak": "Länken är svag",
+      "lost": "Länken är borta"
+    },
+    "gps": "GPS",
+    "label": "Instrument",
+    "linkShort": {
+      "good": "Bra",
+      "weak": "Svag",
+      "lost": "Borta"
+    }
   }
 }

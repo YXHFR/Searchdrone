@@ -1,0 +1,772 @@
+/* The fixed layout: top bar, left column (desktop), stage, side column or phone sheet. */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--safety-h));
+  overflow: hidden;
+}
+.shell-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--left-w) minmax(0, 1fr) var(--chat-w);
+}
+.shell[data-vp="medium"] .shell-body {
+  grid-template-columns: minmax(0, 1fr) var(--chat-w);
+}
+.shell[data-vp="phone"] .shell-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+.left-col,
+.side-col {
+  min-height: 0;
+  background: var(--c-panel);
+}
+.left-col {
+  overflow-y: auto;
+  border-right: 1px solid var(--c-line);
+}
+.side-col {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--c-line);
+}
+.centre {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-bg);
+}
+
+/* --- top bar ------------------------------------------------------------------------- */
+.topbar {
+  flex: none;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: stretch;
+  background: var(--c-panel);
+  border-bottom: 1px solid var(--c-line);
+  min-width: 0;
+}
+.topbar > * {
+  flex: none;
+}
+.brand-block {
+  flex: none;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+.shell[data-vp="desktop"] .brand-block {
+  width: var(--left-w);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.brand-mark {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--c-acc);
+  border-radius: var(--r-1);
+  box-shadow:
+    inset 0 0 0 2px var(--c-panel),
+    inset 0 0 0 6px var(--c-acc);
+}
+.mission-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-mute);
+}
+.topbar > .seg {
+  align-self: center;
+  margin: 0 10px;
+}
+.state-chip {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 10px;
+  margin-right: 4px;
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.state-chip[data-tone="green"] .dot,
+.ai-status[data-tone="ok"] .dot {
+  background: var(--c-ok);
+}
+.state-chip[data-tone="blue"] .dot {
+  background: var(--c-acc);
+}
+.state-chip[data-tone="yellow"],
+.state-chip[data-tone="orange"] {
+  border-color: var(--c-warn);
+  color: var(--c-warn);
+}
+.state-chip[data-tone="yellow"] .dot,
+.state-chip[data-tone="orange"] .dot,
+.ai-status[data-tone="warn"] .dot {
+  background: var(--c-warn);
+}
+.state-chip[data-tone="red"] {
+  border-color: var(--c-bad);
+  color: var(--c-bad);
+}
+.state-chip[data-tone="red"] .dot,
+.ai-status[data-tone="bad"] .dot {
+  background: var(--c-bad);
+}
+.cells {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+.cell {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 9px;
+  border-left: 1px solid var(--c-line);
+  white-space: nowrap;
+}
+.cell-label {
+  font-size: var(--fs-label);
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-faint);
+}
+.cell-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.cell[data-tone="warn"] .cell-value {
+  color: var(--c-warn);
+}
+.cell[data-tone="bad"] .cell-value {
+  color: var(--c-bad);
+}
+.cell[data-tone="stale"] .cell-value {
+  color: var(--c-faint);
+  font-weight: 500;
+}
+.cell[data-cell="age"] {
+  background: var(--c-warn-soft);
+}
+.cell[data-cell="age"] .cell-label {
+  color: var(--c-warn);
+}
+.fc-mode {
+  font-size: var(--fs-label);
+  font-weight: 500;
+  color: var(--c-faint);
+  letter-spacing: 0.04em;
+}
+.battery-bar {
+  position: relative;
+  width: 26px;
+  height: 7px;
+  border: 1px solid var(--c-line-strong);
+  border-radius: 1px;
+}
+.battery-bar > span {
+  position: absolute;
+  inset: 1px auto 1px 1px;
+  max-width: calc(100% - 2px);
+  background: currentColor;
+}
+.battery-bar > i {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--c-home);
+}
+.cell[data-tone="stale"] .battery-bar > i {
+  background: var(--c-faint);
+}
+.bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 11px;
+}
+.bars > span {
+  width: 3px;
+  background: var(--c-line-strong);
+}
+.bars > span[data-on="true"] {
+  background: currentColor;
+}
+/* Below 1600 px the strip keeps the instruments and drops the mission name, the heading (the
+   drone arrow on the map, the HUD on the video) and the clock (the HUD, and the time on every
+   sent command). */
+@media (max-width: 1599px) {
+  .shell[data-vp="desktop"] .brand-block {
+    width: auto;
+  }
+  .mission-title,
+  .cell[data-cell="heading"],
+  .cell[data-cell="clock"] {
+    display: none;
+  }
+  .cell {
+    padding: 0 8px;
+  }
+}
+.topbar-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+}
+.pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--c-warn);
+  background: transparent;
+  border: 1px solid var(--c-warn);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pending-badge .dot {
+  background: var(--c-warn);
+}
+.ai-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+  white-space: nowrap;
+}
+/* Two rows of four on a phone: every value visible, nothing to scroll sideways. */
+.phone-strip {
+  flex: none;
+  background: var(--c-panel);
+  border-bottom: 1px solid var(--c-line);
+}
+.phone-strip .cells {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.phone-strip .cell {
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  border-top: 1px solid var(--c-line);
+}
+.phone-strip .cell:nth-child(-n + 4) {
+  border-top: 0;
+}
+.phone-strip .cell:nth-child(4n + 1) {
+  border-left: 0;
+}
+.phone-strip .cell-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shell[data-vp="phone"] .brand-name,
+.shell[data-vp="phone"] .side-head .ai-status-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.shell[data-vp="phone"] .state-chip {
+  margin-left: auto;
+}
+.shell[data-vp="phone"] .topbar-tools {
+  margin-left: 0;
+  padding-left: 4px;
+}
+
+/* --- left column ---------------------------------------------------------------------- */
+.lc-sec {
+  padding: 0 14px 14px;
+  border-bottom: 1px solid var(--c-line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  margin: 0 -14px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--c-line);
+}
+.lc-head h2 {
+  font-size: var(--fs-label);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--c-mute);
+}
+.lc-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+}
+.lc-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--c-faint);
+}
+.lc-state[data-status="ACTIVE"] {
+  color: var(--c-ok);
+}
+.lc-state[data-status="ACTIVE"]::before {
+  background: var(--c-ok);
+}
+.lc-state[data-status="RETURNING"]::before,
+.lc-state[data-status="HELD"]::before,
+.lc-state[data-status="PAUSED"]::before,
+.lc-state[data-status="FAILSAFE"]::before {
+  background: var(--c-warn);
+}
+.lc-sec .kv dt {
+  color: var(--c-mute);
+}
+.lc-sub {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--fs-small);
+}
+.lc-empty {
+  color: var(--c-mute);
+}
+.lc-foot {
+  color: var(--c-mute);
+}
+.lc-foot b {
+  color: var(--c-text);
+  font-weight: 600;
+}
+.readouts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-2);
+}
+.readouts > div {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px;
+}
+.readouts > div + div {
+  border-left: 1px solid var(--c-line);
+}
+.readouts b {
+  font-size: var(--fs-big);
+  font-weight: 600;
+  line-height: 1.25;
+}
+.readouts small {
+  font-size: var(--fs-label);
+  color: var(--c-faint);
+}
+.readouts[data-stale="true"] b {
+  color: var(--c-faint);
+}
+.sectors {
+  list-style: none;
+  padding: 0;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-2);
+}
+.sectors li {
+  display: grid;
+  grid-template-columns: 34px 1fr 46px 52px;
+  align-items: center;
+  gap: 8px;
+  height: 31px;
+  padding: 0 10px;
+}
+.sectors li + li {
+  border-top: 1px solid var(--c-line);
+}
+.sec-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sec-bar {
+  height: 3px;
+  background: var(--c-line);
+}
+.sec-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--c-mute);
+}
+.sec-pct {
+  text-align: right;
+  color: var(--c-mute);
+}
+.sec-st {
+  font-size: var(--fs-small);
+  color: var(--c-faint);
+}
+.sectors li[data-status="active"] .sec-name,
+.sectors li[data-status="active"] .sec-st {
+  color: var(--c-acc);
+}
+.sectors li[data-status="active"] .sec-bar > i {
+  background: var(--c-acc);
+}
+.sectors li[data-status="skipped"] .sec-name {
+  color: var(--c-faint);
+  text-decoration: line-through;
+}
+
+/* --- side column ------------------------------------------------------------------------ */
+.side-head {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px 0 4px;
+  border-bottom: 1px solid var(--c-line);
+}
+.side-tabs {
+  display: flex;
+  min-width: 0;
+}
+.side-tabs > button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--c-faint);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.side-tabs > button[aria-selected="true"] {
+  color: var(--c-text);
+}
+.side-tabs > button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--c-acc);
+}
+.count {
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-1);
+  font-size: 10.5px;
+  letter-spacing: 0;
+  color: var(--c-mute);
+}
+.side-head .ai-status {
+  align-self: center;
+}
+.side-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.side-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.side-chat[hidden] {
+  display: none;
+}
+.side-mission {
+  overflow-y: auto;
+}
+.side-empty {
+  padding: 16px 14px;
+  color: var(--c-mute);
+}
+.events {
+  list-style: none;
+  padding: 4px 0;
+  overflow-y: auto;
+}
+.events li {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  padding: 5px 14px;
+  border-left: 2px solid transparent;
+}
+.events time {
+  color: var(--c-faint);
+  font-size: var(--fs-small);
+  padding-top: 1px;
+}
+.events li[data-level="critical"] {
+  border-left-color: var(--c-bad);
+}
+.events li[data-level="critical"] span {
+  color: var(--c-bad);
+  font-weight: 600;
+}
+
+/* --- stage: map and video, the picture-in-picture, overlays ----------------------------- */
+.stage {
+  position: absolute;
+  inset: 0;
+}
+.surface {
+  position: absolute;
+  overflow: hidden;
+  background: var(--c-media);
+}
+.surface.is-main {
+  inset: 0;
+}
+.surface.is-pip {
+  left: 12px;
+  bottom: 12px;
+  width: 288px;
+  height: 162px;
+  z-index: var(--z-pip);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+}
+.surface > .view-body,
+.surface > .map-wrap {
+  height: 100%;
+}
+.pip-swap {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: #fff;
+  background: rgb(15 16 17 / 0.78);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+.no-camera {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: var(--z-pip);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+  background: var(--c-panel);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+}
+/* Keep the scale bar next to the picture-in-picture, never under it. */
+.stage[data-main="map"] .surface.is-main .maplibregl-ctrl-bottom-left {
+  left: 308px;
+}
+.review-stage {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--c-panel);
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: calc(var(--z-pip) + 50);
+  display: flex;
+  flex-direction: column;
+  background: var(--c-bg);
+}
+.overlay-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 8px 0 14px;
+  background: var(--c-panel);
+  border-bottom: 1px solid var(--c-line);
+}
+.overlay-head h2 {
+  font-size: var(--fs-label);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--c-mute);
+}
+.overlay-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.stage-banner {
+  position: absolute;
+  top: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: calc(var(--z-pip) + 60);
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-bad);
+  border-left-width: 3px;
+  border-radius: var(--r-2);
+  font-weight: 500;
+}
+
+/* --- phone: the bottom sheet ------------------------------------------------------------- */
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  flex-direction: column;
+  background: var(--c-panel);
+  border-top: 1px solid var(--c-line-strong);
+  border-radius: var(--r-3) var(--r-3) 0 0;
+}
+.sheet[data-size="peek"] {
+  height: var(--sheet-peek);
+}
+.sheet[data-size="half"] {
+  height: 52%;
+}
+.sheet[data-size="full"] {
+  height: calc(100% - 6px);
+}
+.sheet-handle {
+  flex: none;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  cursor: grab;
+  touch-action: none;
+}
+.sheet-handle i {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--c-line-strong);
+}
+.shell[data-vp="phone"] .surface.is-pip,
+.shell[data-vp="phone"] .no-camera {
+  left: auto;
+  right: 8px;
+  bottom: calc(var(--sheet-peek) + 8px);
+}
+.shell[data-vp="phone"] .surface.is-pip {
+  width: 132px;
+  height: 76px;
+}
+/* Drawing on a phone needs the whole map; the sheet comes back when the drawing ends. */
+.shell[data-vp="phone"] .centre:has(.map-draw) .sheet {
+  display: none;
+}
+/* On a phone an overlay is a page of its own, above the sheet. */
+.shell[data-vp="phone"] .overlay {
+  z-index: calc(var(--z-sheet) + 10);
+}
+/* The small window rides on top of the sheet, so the sheet never hides it. */
+.shell[data-vp="phone"] .centre:has(.sheet[data-size="half"]) :is(.surface.is-pip, .no-camera) {
+  bottom: calc(52% + 8px);
+}
+.shell[data-vp="phone"] .stage[data-main="map"] .surface.is-main .maplibregl-ctrl-bottom-left {
+  left: 0;
+}
+/* MapLibre's attribution in the small window: one line, never over the whole map. */
+.surface.is-pip .maplibregl-ctrl-bottom-right {
+  left: 0;
+}
+.surface.is-pip .map-box .maplibregl-ctrl-attrib {
+  float: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0 4px;
+  border-radius: 0;
+}
+.surface.is-pip .maplibregl-ctrl-attrib-inner {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.surface.is-pip .map-box .maplibregl-ctrl-attrib .maplibregl-ctrl-attrib-button {
+  display: none;
+}
+/* On a phone the video badge and the heading tape share the top edge. */
+.shell[data-vp="phone"] .hud-tape {
+  top: 34px;
+}
+/* A phone's map tools wrap to two rows; the banner sits below them. */
+.shell[data-vp="phone"] .stage-banner {
+  top: 82px;
+}

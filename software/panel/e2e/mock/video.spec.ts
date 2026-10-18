@@ -7,7 +7,7 @@
 // RTCPeerConnection that sends a canvas, so the view really plays (no network involved).
 import type { Page, Route } from "@playwright/test";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, isMobile } from "../helpers/safety";
+import { expectSafetyVisible, isMobile, showView } from "../helpers/safety";
 
 const WHEP = "/api/v1/video/sim-01/main/whep";
 const HLS = "/api/v1/video/sim-01/main/hls/index.m3u8";
@@ -92,8 +92,8 @@ test.describe("video view (P-22)", () => {
     expect(posts()).toBe(1);
     expect(deletes).toEqual([]);
     await expectSafetyVisible(page, "video playing");
-    await page.getByTestId("layout-menu").click();
-    await page.getByTestId("preset-chat_only").click();
+    // Granska takes the stage: the video unmounts and its session goes.
+    await showView(page, "candidates");
     await expect(page.getByTestId("view-video")).toHaveCount(0);
     await expect.poll(() => deletes.length).toBe(1);
     await page.waitForTimeout(500);
@@ -120,11 +120,17 @@ test.describe("video view (P-22)", () => {
       ground.setConfig({ video: { whep_url: WHEP, hls_url: null } });
       const { deletes, posts } = await acceptWhep(page);
       await ground.open();
+      await showView(page, "video");
       await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 8000 });
       expect(posts()).toBe(1);
+      await page.waitForTimeout(1_500); // the last frame is kept once a second
 
       await page.evaluate(stop);
       await expect(page.getByTestId("video-badge")).toHaveCount(0, { timeout: 6000 });
+      // The last picture stays, grey and dated, never passed off as live.
+      await expect(page.getByTestId("video-frozen")).toBeVisible();
+      await expect(page.getByTestId("video-stale")).toContainText("Gammal bild");
+      await expect(page.getByTestId("hud")).toHaveCount(0);
       await expect(page.getByTestId("video-none")).toContainText("Ingen video");
       await expect(page.getByTestId("video-retry")).toBeVisible();
       await expectSafetyVisible(page, "video lost");
@@ -136,11 +142,15 @@ test.describe("video view (P-22)", () => {
     });
   }
 
-  test("no video configured: 'Ingen video' and a retry button", async ({ page, ground }) => {
+  test("no video configured: a plain 'no camera' note and no video requests", async ({
+    page,
+    ground,
+  }) => {
     ground.setConfig({ video: null });
     await ground.open();
-    await expect(page.getByTestId("video-none")).toContainText("Ingen video");
-    await expect(page.getByTestId("video-retry")).toBeVisible();
+    await expect(page.getByTestId("no-camera")).toContainText("Ingen kamera");
+    await expect(page.getByTestId("view-video")).toHaveCount(0);
+    await expect(page.getByTestId("pip-swap-video")).toHaveCount(0);
     expect(ground.posts(WHEP)).toEqual([]);
   });
 });
@@ -150,7 +160,7 @@ test("phone: STOP and RETURN HOME stay visible while the video plays", async ({ 
   ground.setConfig({ video: { whep_url: WHEP, hls_url: null } });
   await acceptWhep(page);
   await ground.open();
-  await page.getByTestId("tab-video").click();
+  await showView(page, "video");
   await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 8000 });
   await expectSafetyVisible(page, "video playing on a phone");
 });

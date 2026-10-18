@@ -1,4 +1,5 @@
 import { House, OctagonX, X } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useVehicleAction } from "./useVehicleAction";
 import type { ActionText } from "./vehicleAction";
@@ -15,13 +16,25 @@ interface Props {
   disabledReason?: string | null;
 }
 
+const hm = new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" });
+/** States that follow a request that left the panel: shown with the time it was sent. */
+const AFTER_SEND = new Set(["sent", "acked", "unconfirmed"]);
+
 export function SafetyButton({ action, vehicleId, disabledReason = null }: Props) {
   const { t } = useTranslation();
   const a = useVehicleAction(vehicleId, action);
+  const [pressedAt, setPressedAt] = useState<number | null>(null);
   const isStop = action === "stop";
   const Icon = isStop ? OctagonX : House;
-  const status = actionText(t, a.text);
-  const sub = disabledReason ?? status ?? t(isStop ? "safety.stop.sub" : "safety.home.sub");
+  const status =
+    a.state === "acked"
+      ? t(isStop ? "safety.done.stop" : "safety.done.home")
+      : actionText(t, a.text);
+  const feedback =
+    status && pressedAt !== null && AFTER_SEND.has(a.state)
+      ? t("safety.feedback", { time: hm.format(pressedAt), state: status })
+      : status;
+  const sub = disabledReason ?? feedback ?? t(isStop ? "safety.stop.sub" : "safety.home.sub");
   return (
     <div className="safety-slot" data-state={a.state}>
       <button
@@ -30,7 +43,10 @@ export function SafetyButton({ action, vehicleId, disabledReason = null }: Props
         data-testid={isStop ? "safety-stop" : "safety-home"}
         data-state={a.state}
         disabled={disabledReason !== null}
-        onClick={() => a.trigger()}
+        onClick={() => {
+          setPressedAt(Date.now());
+          a.trigger();
+        }}
       >
         <Icon aria-hidden="true" size={26} />
         <span className="safety-text">
@@ -54,7 +70,7 @@ export function SafetyButton({ action, vehicleId, disabledReason = null }: Props
         </button>
       ) : null}
       <span className="sr-only" aria-live="assertive">
-        {status ?? ""}
+        {feedback ?? ""}
       </span>
     </div>
   );

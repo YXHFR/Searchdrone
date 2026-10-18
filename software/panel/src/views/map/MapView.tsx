@@ -1,16 +1,27 @@
-import { Crosshair, House, Layers, MapPin, Maximize2, Pentagon, Square } from "lucide-react";
+import {
+  Crosshair,
+  House,
+  Layers,
+  MapPin,
+  Maximize2,
+  Pencil,
+  Pentagon,
+  Square,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, HttpError } from "../../api/http";
 import { paths } from "../../api/paths";
 import type { Annotation } from "../../api/types";
+import { Menu } from "../../header/Menu";
 import { areaM2, selfIntersects } from "../../lib/geo";
 import { exposeMap } from "../../lib/testHooks";
-import { useLayoutStore } from "../../state/layoutStore";
 import { useLiveStore } from "../../state/liveStore";
 import { activeCharter, useMissionStore } from "../../state/missionStore";
 import { useIsPilot, useSessionStore } from "../../state/sessionStore";
+import { useShellStore } from "../../state/shellStore";
 import { useUiStore } from "../../state/uiStore";
+import { useTheme } from "../../theme/theme";
 import type { ViewProps } from "../registry";
 import {
   areasData,
@@ -27,6 +38,7 @@ import {
   rectangle,
   type SourceId,
   sectorsData,
+  sweptData,
   targetData,
   trackData,
 } from "./mapData";
@@ -65,6 +77,7 @@ const LAYERS_KEY = "sd.panel.map.layers.v1";
 const TOGGLES: SourceId[] = [
   "charter-preview",
   "sectors",
+  "swept",
   "pilot-range",
   "home",
   "target",
@@ -85,16 +98,25 @@ function loadHidden(): SourceId[] {
   }
 }
 
+/** The charter in force, or else the one waiting for approval: its home and area frame the map. */
+function framingCharter() {
+  const m = useMissionStore.getState();
+  const active = activeCharter(m, useLiveStore.getState().mission?.active_charter_id ?? null);
+  if (active) return active;
+  return (
+    Object.values(m.approvals)
+      .filter((a) => a.kind === "charter" && a.status === "pending")
+      .map((a) => m.charters[a.subject_id])
+      .find((c) => c !== undefined) ?? null
+  );
+}
+
 /** Everything the overlay shows, computed from the stores. */
 function overlayData(): Partial<Record<SourceId, FC>> {
-  const live = useLiveStore.getState();
   const m = useMissionStore.getState();
-  const active = activeCharter(m, live.mission?.active_charter_id ?? null);
+  const active = activeCharter(m, useLiveStore.getState().mission?.active_charter_id ?? null);
+  const framing = framingCharter();
   const approvals = Object.values(m.approvals);
-  const pendingCharter = approvals
-    .filter((a) => a.kind === "charter" && a.status === "pending")
-    .map((a) => m.charters[a.subject_id])
-    .find((c) => c !== undefined);
   const pendingCommands = approvals
     .filter((a) => a.kind === "command" && a.status === "pending")
     .map((a) => m.commands[a.subject_id])
@@ -104,8 +126,9 @@ function overlayData(): Partial<Record<SourceId, FC>> {
     "charter-area": charterAreaData(active),
     "charter-preview": charterPreviewData(approvals, m.charters),
     sectors: sectorsData(m.sectors),
-    "pilot-range": pilotRangeData(active ?? pendingCharter ?? null),
-    home: homeData(active ?? pendingCharter ?? null),
+    swept: sweptData(m.sectors),
+    "pilot-range": pilotRangeData(framing),
+    home: homeData(framing),
     target: targetData(
       m.activeCommandId ? (m.commands[m.activeCommandId] ?? null) : null,
       pendingCommands,
@@ -122,7 +145,7 @@ function overlayData(): Partial<Record<SourceId, FC>> {
 export default function MapView({ isCompact }: ViewProps) {
   const { t } = useTranslation();
   const mapCfg = useSessionStore((s) => s.config?.map ?? null);
-  const theme = useUiStore((s) => s.theme);
+  const theme = useTheme();
   const isPilot = useIsPilot();
   const missionId = useLiveStore((s) => s.mission?.id ?? null);
   const box = useRef<HTMLDivElement>(null);
@@ -134,7 +157,6 @@ export default function MapView({ isCompact }: ViewProps) {
   const [mode, setMode] = useState<DrawMode>("none");
   const [points, setPoints] = useState<[number, number][]>([]);
   const [hidden, setHidden] = useState<SourceId[]>(loadHidden);
-  const [layersOpen, setLayersOpen] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
   const modeRef = useRef(mode);
@@ -352,7 +374,7 @@ export default function MapView({ isCompact }: ViewProps) {
         }),
       );
       cancelDraw();
-      if (useLayoutStore.getState().vp === "mobile") useLayoutStore.getState().showOnly("chat");
+      useShellStore.getState().showTab("chat");
     } catch (e) {
       setDrawError(e instanceof HttpError ? e.message : t("draw.failed"));
     }
@@ -368,10 +390,7 @@ export default function MapView({ isCompact }: ViewProps) {
     const h = handle.current;
     if (!h) return;
     const live = useLiveStore.getState();
-    const charter = activeCharter(
-      useMissionStore.getState(),
-      live.mission?.active_charter_id ?? null,
-    );
+    const charter = framingCharter();
     if (to === "drone") {
       follow.current = true;
       if (live.telemetry) h.map.easeTo({ center: [live.telemetry.lon, live.telemetry.lat] });
@@ -380,8 +399,16 @@ export default function MapView({ isCompact }: ViewProps) {
       h.map.easeTo({ center: [charter.body.home.lon, charter.body.home.lat] });
     } else if (to === "charter" && charter) {
       const b = bounds(charter.body.area);
+      const { lon, lat } = charter.body.home;
       follow.current = false;
-      if (b) h.map.fitBounds(b, { padding: 40, duration: 300 });
+      if (b)
+        h.map.fitBounds(
+          [
+            [Math.min(b[0][0], lon), Math.min(b[0][1], lat)],
+            [Math.max(b[1][0], lon), Math.max(b[1][1], lat)],
+          ],
+          { padding: { top: 56, bottom: 48, left: 40, right: 40 }, duration: 300 },
+        );
     }
   }
 
@@ -399,94 +426,97 @@ export default function MapView({ isCompact }: ViewProps) {
       <div ref={box} className="map-box" data-hotkeys="map" data-testid="map" />
       {!mapCfg ? <p className="map-note">{t("views.map.noPack")}</p> : null}
       <div className="map-tools" role="toolbar" aria-label={t("views.map.tools")}>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={t("views.map.centreDrone")}
-          onClick={() => centre("drone")}
-        >
-          <Crosshair aria-hidden="true" size={18} />
+        <button type="button" className="tool" onClick={() => centre("drone")}>
+          <Crosshair aria-hidden="true" size={15} />
+          {t("views.map.centreDrone")}
         </button>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={t("views.map.centreHome")}
-          onClick={() => centre("home")}
-        >
-          <House aria-hidden="true" size={18} />
+        <button type="button" className="tool" onClick={() => centre("home")}>
+          <House aria-hidden="true" size={15} />
+          {t("views.map.centreHome")}
         </button>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={t("views.map.showCharter")}
-          onClick={() => centre("charter")}
-        >
-          <Maximize2 aria-hidden="true" size={18} />
+        <button type="button" className="tool" onClick={() => centre("charter")}>
+          <Maximize2 aria-hidden="true" size={15} />
+          {t("views.map.showCharter")}
         </button>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={t("views.map.layers")}
-          aria-expanded={layersOpen}
-          onClick={() => setLayersOpen(!layersOpen)}
+        <Menu
+          tool
+          label={t("views.map.layers")}
+          icon={<Layers aria-hidden="true" size={15} />}
+          testId="map-layers-menu"
         >
-          <Layers aria-hidden="true" size={18} />
-        </button>
+          {() => (
+            <fieldset className="map-layers" data-testid="map-layers">
+              <legend className="sr-only">{t("views.map.layers")}</legend>
+              {TOGGLES.map((id) => (
+                <label key={id}>
+                  <input
+                    type="checkbox"
+                    checked={!hidden.includes(id)}
+                    onChange={(e) =>
+                      setHidden(e.target.checked ? hidden.filter((x) => x !== id) : [...hidden, id])
+                    }
+                  />
+                  {t(`views.map.layer.${id}`)}
+                </label>
+              ))}
+            </fieldset>
+          )}
+        </Menu>
         {canDraw ? (
-          <>
-            <button
-              type="button"
-              className="icon-btn"
-              data-testid="draw-polygon"
-              aria-pressed={mode === "polygon"}
-              aria-label={t("draw.polygon")}
-              onClick={() => startDraw("polygon")}
-            >
-              <Pentagon aria-hidden="true" size={18} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              data-testid="draw-rectangle"
-              aria-pressed={mode === "rectangle"}
-              aria-label={t("draw.rectangle")}
-              onClick={() => startDraw("rectangle")}
-            >
-              <Square aria-hidden="true" size={18} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              data-testid="draw-pin"
-              aria-pressed={mode === "pin"}
-              aria-label={t("draw.pin")}
-              onClick={() => {
-                modeRef.current = mode === "pin" ? "none" : "pin";
-                setMode(modeRef.current);
-              }}
-            >
-              <MapPin aria-hidden="true" size={18} />
-            </button>
-          </>
+          <Menu
+            tool
+            label={t("draw.menu")}
+            icon={<Pencil aria-hidden="true" size={15} />}
+            testId="draw-menu"
+            active={mode !== "none"}
+          >
+            {(close) => (
+              <>
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="draw-polygon"
+                  aria-pressed={mode === "polygon"}
+                  onClick={() => {
+                    close();
+                    startDraw("polygon");
+                  }}
+                >
+                  <Pentagon aria-hidden="true" size={15} />
+                  {t("draw.polygon")}
+                </button>
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="draw-rectangle"
+                  aria-pressed={mode === "rectangle"}
+                  onClick={() => {
+                    close();
+                    startDraw("rectangle");
+                  }}
+                >
+                  <Square aria-hidden="true" size={15} />
+                  {t("draw.rectangle")}
+                </button>
+                <button
+                  type="button"
+                  className="menu-item"
+                  data-testid="draw-pin"
+                  aria-pressed={mode === "pin"}
+                  onClick={() => {
+                    close();
+                    modeRef.current = mode === "pin" ? "none" : "pin";
+                    setMode(modeRef.current);
+                  }}
+                >
+                  <MapPin aria-hidden="true" size={15} />
+                  {t("draw.pin")}
+                </button>
+              </>
+            )}
+          </Menu>
         ) : null}
       </div>
-      {layersOpen ? (
-        <fieldset className="map-layers" data-testid="map-layers">
-          <legend>{t("views.map.layers")}</legend>
-          {TOGGLES.map((id) => (
-            <label key={id}>
-              <input
-                type="checkbox"
-                checked={!hidden.includes(id)}
-                onChange={(e) =>
-                  setHidden(e.target.checked ? hidden.filter((x) => x !== id) : [...hidden, id])
-                }
-              />
-              {t(`views.map.layer.${id}`)}
-            </label>
-          ))}
-        </fieldset>
-      ) : null}
       {mode !== "none" ? (
         <div className="map-draw" role="status" data-testid="draw-bar">
           <span>
