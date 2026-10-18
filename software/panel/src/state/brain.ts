@@ -29,3 +29,10 @@ export function useBrainEngine(): BrainEngine {
     return s.system?.brain_engine ?? null;
   });
 }
+
+/** The command mode answers the chat (no AI chat): the brain says so, or reports degraded. */
+export function useCommandMode(): boolean {
+  const brain = useBrainState();
+  const engine = useBrainEngine();
+  return brain !== "down" && (brain === "degraded" || engine === "command");
+}

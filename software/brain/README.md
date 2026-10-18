@@ -33,8 +33,9 @@ Run its checks from the repository root: `just test` (all checks: `just check`).
   to stop or fly home?" through the decision interface (`sd_brain.decide`: Jev from
   TypeSafe AI or the OpenAI Decisions API, best available first, only with their keys;
   target under 0.5 s). The words `stopp`, `stop` and `flyg hem` always count. A yes is sent to the
-  ground station, which runs the same emergency path as the buttons. The STOP and FLY HOME
-  buttons never depend on the AI.
+  ground station, which runs the same emergency path as the buttons. Without network or a hosted
+  key only these fixed words act in the chat (not free phrasings such as "stanna där"). The
+  STOP and FLY HOME buttons never depend on the AI.
 
 ## Running
 

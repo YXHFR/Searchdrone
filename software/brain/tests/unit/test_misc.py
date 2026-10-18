@@ -27,27 +27,23 @@ class _Clock:
         return self.t
 
 
-def test_health_probe_and_turn_rules() -> None:
+def test_health_turn_rules() -> None:
     c = _Clock()
-    h = HealthState(c, has_probe=True)
+    h = HealthState(c)
     for _ in range(2):
-        h.probe(False)
+        h.turn(False)
     assert not h.degraded
-    h.probe(False)
-    assert h.degraded and h.cause == "probe" and not h.may_recover()
-    h.probe(True)
-    h.probe(True)
-    assert h.may_recover() and not h.needs_test_call()
-    h.recovered()
+    h.turn(True)  # a good turn resets the count
     for _ in range(3):
         h.turn(False)
-    assert h.degraded and h.cause == "turn"
-    h.probe(True)
-    h.probe(True)
+    assert h.degraded and not h.may_recover()
+    c.t = 59
     assert not h.may_recover()
     c.t = 61
-    assert h.may_recover() and h.needs_test_call()
-    s = HealthState(c, has_probe=False)
+    assert h.may_recover()
+    h.recovered()
+    assert not h.degraded and h.turn_fails == 0
+    s = HealthState(c)
     s.force_degrade()
     assert s.degraded and not s.may_recover()
     c.t = 200

@@ -21,6 +21,9 @@ All notable changes to this project are listed here. The format follows
   (old configs still load). `just perf` measures the cloud model's answer time when a key
   is set and skips with a line otherwise; `just brain-eval-cloud` runs the chat scenarios
   against it.
+- **Breaking (`commander/v1`):** the decision engine `local` is gone. `DecisionLog.engine`
+  and `SystemStatus.brain_engine` now report `command` where they reported `local`, and
+  readers that matched on `local` must match on `command`.
 
 ### Added
 

@@ -4,16 +4,11 @@
 in ``behaviour``: ``"ok"`` (default) answers with ``reply``, ``"500"`` answers HTTP 500,
 ``"slow"`` waits ``slow_s`` before answering. Every request body and its
 ``Authorization`` header are kept in ``requests`` so a test can check the fields sent.
-Run it as a script to serve until stopped (used by the simulator scenarios):
-
-    python fake_openai.py --port 8099 [--slow-model m] [--fail-model m]
 """
 
 from __future__ import annotations
 
-import argparse
 import json
-import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -98,24 +93,3 @@ class FakeOpenAI:
     def __exit__(self, *exc: object) -> None:
         self._server.shutdown()
         self._server.server_close()
-
-
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--port", type=int, default=8099)
-    p.add_argument("--slow-model", default="")
-    p.add_argument("--fail-model", default="")
-    args = p.parse_args()
-    fake = FakeOpenAI(args.port)
-    if args.slow_model:
-        fake.behaviour[args.slow_model] = "slow"
-    if args.fail_model:
-        fake.behaviour[args.fail_model] = "500"
-    with fake:
-        sys.stdout.write(f"fake OpenAI on {fake.base_url}\n")
-        sys.stdout.flush()
-        threading.Event().wait()
-
-
-if __name__ == "__main__":
-    main()

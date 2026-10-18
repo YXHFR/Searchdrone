@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { PRESET_IDS } from "../layout/layoutModel";
-import { useBrainEngine, useBrainState } from "../state/brain";
+import { useBrainEngine, useBrainState, useCommandMode } from "../state/brain";
 import { useLayoutStore } from "../state/layoutStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
@@ -47,6 +47,8 @@ function StatusPills() {
   const mission = useLiveStore((s) => s.mission);
   const brain = useBrainState();
   const engine = useBrainEngine();
+  // The command mode (no AI chat) shows as its own state, whatever the process says.
+  const command = useCommandMode();
   const busy = useLiveStore((s) => s.brainBusy);
   const rtl = useSessionStore(
     (s) => mission?.limits.battery_rtl_pct ?? s.config?.limits_default.battery_rtl_pct ?? 15,
@@ -59,8 +61,6 @@ function StatusPills() {
   const batteryTone: Tone =
     stale || battery === null ? "grey" : battery <= rtl ? "red" : battery < 30 ? "yellow" : "green";
   const old = stale && tel ? ` ${t("pills.stale")}` : "";
-  // The command mode (no AI chat) shows as its own state, whatever the process says.
-  const command = brain !== "down" && (engine === "command" || brain === "degraded");
   const ai =
     brain === "down"
       ? "pills.ai.down"

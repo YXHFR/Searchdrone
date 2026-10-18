@@ -180,7 +180,7 @@ class CommanderLoop:
         self.cfg = cfg
         self.ai_hash = ai_config_hash
         self.clock = clock or LoopClock()
-        self.health = health or HealthState(self.clock.monotonic, has_probe=False)
+        self.health = health or HealthState(self.clock.monotonic)
         self.decide = decide
         self._engine = engine or (lambda: None)
         self.mission_id: str | None = None
@@ -1069,8 +1069,10 @@ class _ReadTools:
         return {"error": f"unknown tool {name}"}
 
 
-def _wire_backend(name: str) -> Literal["llm", "grammar", "scripted", "rule", "cloud"]:
-    return {"cloud": "cloud", "grammar": "grammar", "scripted": "scripted"}.get(name, "llm")  # type: ignore[return-value]
+def _wire_backend(name: str) -> Literal["grammar", "scripted", "cloud"]:
+    if name == "grammar" or name == "scripted":
+        return name
+    return "cloud"
 
 
 def _fmt(value: Any) -> str:

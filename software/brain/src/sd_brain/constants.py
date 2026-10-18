@@ -13,15 +13,12 @@ __all__ = [
     "DEGRADED_MIN_S",
     "EXPOSED_STAGE",
     "FRESH_SNAPSHOT_WAIT_S",
-    "HEALTH_INTERVAL_S",
-    "HEALTH_TIMEOUT_S",
     "LLM_CALL_TIMEOUT_S",
     "LLM_FAILS_TO_DEGRADE",
     "LLM_SLOW_WARN_S",
     "MAX_ACTIONS_PER_MINUTE",
     "MESSAGE_MAX_CHARS",
     "MIN_ACTION_INTERVAL_S",
-    "PROBE_FAILS_TO_DEGRADE",
     "RATIONALE_MAX_CHARS",
     "STOP_CHECK_TARGET_S",
     "SYNC_REJECT_MEMORY_S",
@@ -35,10 +32,7 @@ BRAIN_TURN_DEADLINE_S = 20.0  # around one whole turn, every backend
 LLM_CALL_TIMEOUT_S = 15.0  # one HTTP call to a model, never past the turn deadline
 LLM_SLOW_WARN_S = 8.0
 LLM_FAILS_TO_DEGRADE = 3
-PROBE_FAILS_TO_DEGRADE = 3
 DEGRADED_MIN_S = 60.0
-HEALTH_INTERVAL_S = 2.0
-HEALTH_TIMEOUT_S = 1.0
 TAKEOFF_REQUEST_TTL_S = 120.0
 CLOUD_RETRY_AFTER_S = 60.0  # after a cloud failure, turns go straight to the command mode
 EXPOSED_STAGE = 1

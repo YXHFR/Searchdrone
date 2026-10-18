@@ -11,7 +11,7 @@ import { uuidv7 } from "../../lib/uuidv7";
 import { ClearanceControl } from "../../safety/ClearanceControl";
 import { ResumeButton, ResumeRow } from "../../safety/ResumeButton";
 import { resumeView } from "../../safety/resume";
-import { useBrainEngine, useBrainState } from "../../state/brain";
+import { useBrainState, useCommandMode } from "../../state/brain";
 import { chatOrder, type PanelChatMessage, useChatStore } from "../../state/chatStore";
 import { useLiveStore } from "../../state/liveStore";
 import { useMissionStore } from "../../state/missionStore";
@@ -202,9 +202,8 @@ export function BrainStatusRow() {
   const missionId = useLiveStore((s) => s.mission?.id ?? null);
   const isPilot = useIsPilot();
   const brain = useBrainState();
-  const engine = useBrainEngine();
   const now = useNow(500);
-  const command = brain !== "down" && (brain === "degraded" || engine === "command");
+  const command = useCommandMode();
   let text: string | null = null;
   let warn = false;
   if (brain === "down") {

@@ -107,7 +107,7 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
             sampling,
             context_tokens=cfg.llm.context_tokens,
         )
-    health = HealthState(time.monotonic, has_probe=False)
+    health = HealthState(time.monotonic)
     loop_ref: list[CommanderLoop] = []
 
     async def on_answer(req: Any, outcomes: Any) -> None:

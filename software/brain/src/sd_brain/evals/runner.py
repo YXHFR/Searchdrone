@@ -325,7 +325,7 @@ async def run_scenario(
         commander = ScriptedBackend.from_file(path.parent / sc["script"])
     else:
         commander = LlmCommander(runtime, ctx, reg, cfg.behaviour, smp)
-    health = HealthState(clock.monotonic, has_probe=False)
+    health = HealthState(clock.monotonic)
     loop = CommanderLoop(
         fg,
         commander,

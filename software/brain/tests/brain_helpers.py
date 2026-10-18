@@ -73,7 +73,7 @@ def make_loop(
         REG,
         cfg or BrainConfig(),
         "test-hash",
-        health=HealthState(clock.monotonic, has_probe=False),
+        health=HealthState(clock.monotonic),
         decide=decide if decide is not None else DecisionService([]),
         clock=clock,  # type: ignore[arg-type]
         engine=engine,
