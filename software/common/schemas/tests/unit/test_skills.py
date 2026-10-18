@@ -236,3 +236,12 @@ def test_gate_targets() -> None:
     takeoff = TakeoffParams(alt_m=40).gate_targets(ctx)
     assert takeoff.alts_m == [40]
     assert takeoff.points[0].lat == here.lat
+
+
+def test_registry_production() -> None:
+    """The production registry has exactly the 18 entries; no test-only entry (an
+    approval-in-B skill is tested with an injected registry, never added here)."""
+    assert len(SKILL_REGISTRY.names()) == 18
+    assert SKILL_REGISTRY.names() == NAMES
+    flagged = {k.name for k in SKILL_REGISTRY if k.requires_approval_in_b}
+    assert flagged <= NAMES

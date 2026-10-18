@@ -533,3 +533,21 @@ async def test_unknown_skill_from_backend_is_refused() -> None:
 
 async def test_registry_is_the_foundation_one() -> None:
     assert "goto" in REG and REG.get("goto").status == "implemented"
+
+
+async def test_ready_proposal_builds_on_the_charter_in_force() -> None:
+    """A ready-made proposal (the scripted commander's) has no base version; the loop
+    sets the version of the charter in force, so a change in the air is not stale."""
+    from brain_helpers import situation
+
+    from sd_schemas.charter import CharterProposal
+
+    in_force = situation().charter
+    assert in_force is not None
+    proposal = CharterProposal.model_validate({"area": in_force.area, "reason_sv": "Mindre."})
+    assert proposal.base_version is None
+    backend = Steps(TurnOutput(ready_proposal=proposal, diagnostics=TurnDiagnostics(backend="llm")))
+    loop, fg, _ = make_loop(backend)
+    loop.handle_event(fg.operator_message("Krymp ramen"))
+    await loop.settle()
+    assert fg.proposals and fg.proposals[-1].base_version == in_force.version

@@ -769,6 +769,10 @@ class CommanderLoop:
                 )
         if proposal is None:
             return CharterProposalOutcome(ok=False)
+        if proposal.base_version is None and s.charter is not None:
+            # A change builds on the charter in force (a ready-made proposal, e.g. from
+            # the scripted commander, does not know its version).
+            proposal = proposal.model_copy(update={"base_version": s.charter.version})
         try:
             return await self.ground.propose_charter(mid, proposal)
         except GroundError as exc:

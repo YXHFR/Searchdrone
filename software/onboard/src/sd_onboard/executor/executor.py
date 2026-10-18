@@ -119,6 +119,7 @@ from sd_schemas.link import (
     SkillCommand,
     StateSnapshot,
 )
+from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.skills import (
     SKILL_REGISTRY,
@@ -646,6 +647,9 @@ class Executor:
         except ValidationError:
             self._ack(cmd.command_id, "rejected", ("SCHEMA_INVALID",))
             return
+        if spec.name == "takeoff" and await self._fence_changed():
+            self._refuse_fence(cmd)
+            return
         code = self._onboard_checks(cmd, spec, params)
         if code is not None:
             self._ack(cmd.command_id, "rejected", (code,))
@@ -691,6 +695,41 @@ class Executor:
             self._ack(cmd.command_id, "done")
             return
         self._accept(cmd, spec, handler, plan, target)
+
+    async def _fence_changed(self) -> bool:
+        """PF7 once more right before arming: the fence in the flight controller may have
+        changed since the charter was installed (it is read back, never written)."""
+        charter = self.charter
+        if charter is None or self.state != S.PREFLIGHT:
+            return False  # the other checks refuse this order
+        self.fence_ok = await self._fence_matches(charter)
+        self._run_preflight()
+        return not self.fence_ok
+
+    def _refuse_fence(self, cmd: SkillCommand) -> None:
+        decision = GateDecision(
+            decision="REJECT",
+            reason_codes=["FENCE_NOT_VERIFIED"],
+            rule_ids=["R-FENCE"],
+            message_sv=GATE_REASON_CODES["FENCE_NOT_VERIFIED"],
+            details={"preflight": "PF7"},
+            side="onboard",
+        )
+        self.emit(
+            "gate_disagreement",
+            {
+                "command_id": str(cmd.command_id),
+                "skill": "takeoff",
+                "codes": ["FENCE_NOT_VERIFIED"],
+            },
+        )
+        self._ack(
+            cmd.command_id,
+            "rejected",
+            ("FENCE_NOT_VERIFIED",),
+            detail_sv=decision.message_sv,
+            gate=decision,
+        )
 
     def _accept(
         self,

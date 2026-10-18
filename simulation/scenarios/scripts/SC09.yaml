@@ -1,0 +1,27 @@
+# SC09: take-off needs an approved charter and the pilot's "clear around the drone".
+# "Starta." is answered with a take-off even without the confirmation (to try the gate);
+# the confirmation itself then starts it (the rule start: the pilot asked before).
+scenario: SC09
+timeout_s: 600
+expected_runtime_s: 150
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    once: false
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    once: false
+    say: ["Jag startar när det är fritt runt drönaren."]
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: gate_reject_retry
+    once: false
+    say: ["Starten nekades. Bekräfta att det är fritt runt drönaren."]
+  - on: takeoff_clearance
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

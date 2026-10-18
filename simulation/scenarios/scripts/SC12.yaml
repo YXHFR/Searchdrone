@@ -1,0 +1,24 @@
+# SC12: clicks in mode B. A stub skill is refused at once; a new charter needs the
+# pilot's click (the proposals themselves come from the test on the AI's own path).
+scenario: SC12
+timeout_s: 600
+expected_runtime_s: 200
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '^Landa här\.$'
+    action: {skill: land_at, params: {reason: "Piloten bad om det."}}
+  - on: gate_reject_retry
+    once: false
+    say: ["Det går inte än. Jag stannar här."]
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

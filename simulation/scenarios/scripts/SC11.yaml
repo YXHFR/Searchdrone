@@ -1,0 +1,32 @@
+# SC11: mode A. The AI flies the demo's first steps, each on the pilot's line; every
+# action order waits for the pilot's click. A refused or unanswered card is never sent again; the AI asks instead.
+scenario: SC11
+timeout_s: 900
+expected_runtime_s: 330
+fixture: ../demo_fixture.yaml
+turns:
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '^Flyg till P1\.$'
+    action: {skill: goto, params: {at: "fixture:P1", alt_m: 40}}
+  - on: operator_message
+    match: '^Sök av rutan\.$'
+    action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40, spacing_m: 30, speed_ms: 7}}
+  - on: approval_event
+    when: {kind: command}
+    once: false
+    say: ["Uppfattat, jag gör inte det. Vad vill du att jag gör nu?"]
+  - on: operator_message
+    match: '^Landa hemma nu\.$'
+    once: false
+    action: {skill: return_home, params: {reason: "Piloten bad om det."}}
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from onboard_helpers import Rig, at, charter, rig, square
 
+from sd_mav.mission import FENCE
 from sd_onboard.skills import HANDLERS
 from sd_safety.policy import FORBIDDEN_SKILL_NAMES
 from sd_schemas.approval import command_hash
@@ -136,6 +137,23 @@ async def test_takeoff_without_rc_when_not_required() -> None:
         assert r.ex.preflight["PF12"] is True
         cmd = await r.send(r.order("takeoff", {"alt_m": 40}))
         assert "running" in r.up.stages(cmd.command_id)
+
+
+async def test_takeoff_rereads_the_fence() -> None:
+    """The fence in the flight controller changed after the charter was installed: the
+    onboard gate refuses the takeoff (FENCE_NOT_VERIFIED, with its own decision)."""
+    async with rig() as r:
+        await r.install()
+        r.clearance()
+        await r.run(1.5)
+        assert r.ex.preflight_ok()
+        stored = r.fc.missions[FENCE]
+        r.fc.missions[FENCE] = stored[:-1]  # someone changed the fence afterwards
+        cmd = await r.send(r.order("takeoff", {"alt_m": 40}))
+        assert r.up.codes(cmd.command_id) == ("FENCE_NOT_VERIFIED",)
+        assert "gate_disagreement" in [k.removeprefix("executor.") for k in r.up.kinds()]
+        assert r.ex.preflight["PF7"] is False
+        assert _arms(r) == 0
 
 
 async def test_clearance_remote_rejected() -> None:
