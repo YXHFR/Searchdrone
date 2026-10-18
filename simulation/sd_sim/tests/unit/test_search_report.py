@@ -85,5 +85,7 @@ def test_a_kept_still_gets_its_boxes_drawn(tmp_path: Path) -> None:
     out = search_report.annotate_still(jpeg, report, tmp_path / "out" / "still.jpg")
     with Image.open(out) as img:
         assert img.size == (320, 180)
-        r, g, b = img.convert("RGB").getpixel((97, 70))  # on the box's outline
+        pixel = img.convert("RGB").getpixel((97, 70))  # on the box's outline
+        assert isinstance(pixel, tuple)
+        r, g, b = pixel[:3]
         assert r > 150 and g < 100 and b < 100
