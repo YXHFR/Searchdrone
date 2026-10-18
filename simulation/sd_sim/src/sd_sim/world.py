@@ -20,6 +20,7 @@ import itertools
 import json
 import math
 import random
+import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -191,13 +192,31 @@ def object_pose(obj: objects.WorldObject) -> objects.Pose:
     )
 
 
+def checked_fragment(obj: objects.WorldObject) -> str:
+    """The object's SDF, refused unless it is one ``<model>``/``<actor>`` named like the
+    object and names no remote URI (Gazebo would download it)."""
+    text = obj.sdf(object_pose(obj))
+    try:
+        root = ET.fromstring(text)  # noqa: S314 - SDF built by our own object classes
+    except ET.ParseError as exc:
+        raise objects.ObjectError(f"{obj.name}: SDF går inte att läsa ({exc})") from exc
+    if root.tag not in ("model", "actor") or root.get("name") != obj.name:
+        raise objects.ObjectError(
+            f"{obj.name}: SDF ska vara en <model> eller <actor> med objektets namn"
+        )
+    for uri in root.iter("uri"):
+        if not (uri.text or "").strip().startswith("model://"):
+            raise objects.ObjectError(f"{obj.name}: bara model://-adresser är tillåtna")
+    return text
+
+
 def world_context(
     name: str,
     instance: int,
     fix: fixture.Fixture,
     placed: Sequence[objects.WorldObject] = (),
 ) -> dict[str, Any]:
-    objects.check(placed)
+    objects.check(placed, GROUND_SIZE_M / 2)
     home = fix.home
     return {
         "name": name,
@@ -212,7 +231,7 @@ def world_context(
         "path_width": PATH_WIDTH_M,
         "trees": trees(),
         "trunk_radius": TRUNK_RADIUS_M,
-        "objects": [obj.sdf(object_pose(obj)) for obj in placed],
+        "objects": [checked_fragment(obj) for obj in placed],
     }
 
 
@@ -322,6 +341,16 @@ def render_model(instance: int, repo: Path = paths.REPO) -> Path:
     return out
 
 
+def truth_path(name: str, instance: int, repo: Path = paths.REPO) -> Path:
+    return repo / "build" / "sim" / "worlds" / f"{name}_i{instance}.truth.json"
+
+
+def clear_truth(instance: int, repo: Path = paths.REPO) -> None:
+    """Remove the instance's facit files, for a run that renders no world."""
+    for stale in (repo / "build" / "sim" / "worlds").glob(f"*_i{instance}.truth.json"):
+        stale.unlink()
+
+
 def render_world(
     name: str,
     instance: int,
@@ -338,10 +367,10 @@ def render_world(
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}_i{instance}.sdf"
-    path.write_text(world_sdf(name, instance, fix, placed), encoding="utf-8")
-    (out / f"{name}_i{instance}.truth.json").write_text(
-        json.dumps(world_truth(name, placed, fix), indent=1) + "\n", encoding="utf-8"
-    )
+    sdf = world_sdf(name, instance, fix, placed)
+    truth = json.dumps(world_truth(name, placed, fix), indent=1) + "\n"
+    path.write_text(sdf, encoding="utf-8")
+    truth_path(name, instance, repo).write_text(truth, encoding="utf-8")
     (out / f"{name}.geojson").write_text(
         json.dumps(world_geojson(fix), indent=1) + "\n", encoding="utf-8"
     )

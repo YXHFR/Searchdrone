@@ -2,26 +2,31 @@
 
 This is the hook for scenario code: anything that should appear in the world for the
 camera to find (people, decoys, a red test block) is a ``WorldObject``. The world
-renderer (``sd_sim.world.render_world(..., objects=...)``) puts each one on the ground
+renderer (``sd_sim.world.render_world(..., placed=...)``) puts each one on the ground
 of that world at metres east/north of home, writes its SDF at world level, and writes
 ``build/sim/worlds/<world>_i<N>.truth.json`` with every object's exact position in the
 world frame and in WGS84. Detection tests compare against that file, never against the
 scenario file, so the facit is what Gazebo was actually given.
 
 ``WorldObject`` is a protocol: scenario code can bring its own classes (a person mesh,
-an ``<actor>`` that walks) as long as they have these fields and ``sdf(pose)``. ``Box``
-is the built-in one. ``load(path)`` reads a YAML list of boxes, for ``just sim
-objects=<file>``::
+an ``<actor>`` that walks) as long as they have these fields and ``sdf(pose)``; ``sdf``
+must escape any text it puts into the XML. The renderer parses every fragment and
+refuses one that is not a single ``<model>`` or ``<actor>`` with the object's name or
+that names a remote URI. ``Box`` is the built-in one. ``load(path)`` reads a YAML list
+of boxes, for ``just sim objects=<file>``::
 
     - { name: red_block, kind: box, east_m: 10, north_m: 200, size_m: [1, 1, 0.5],
         color: [0.8, 0.05, 0.05], label: 1, truth: { is_target: true } }
 
 ``label`` is Gazebo's semantic label (the Label system), which segmentation and
-bounding-box cameras report; 0 means none. ``truth`` is free-form and copied as is.
+bounding-box cameras report; 0 means none. ``truth`` is free-form and copied as is (it
+must be JSON). No object may stand within ``HOME_KEEP_OUT_M`` of home (the landing pad
+and the vehicle's spawn point), and every object must lie inside the world.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -34,8 +39,11 @@ import yaml
 # Names the world templates already use at world level.
 RESERVED_NAMES = frozenset({"ground", "landing_pad", "lake", "path", "forest", "vehicle"})
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
-BOX_KEYS = {"name", "kind", "east_m", "north_m", "up_m", "yaw_deg", "size_m", "color"}
+BOX_REQUIRED = {"name", "kind", "east_m", "north_m", "size_m", "color"}
 BOX_OPTIONAL = {"up_m", "yaw_deg", "label", "truth"}
+# Nothing stands this close to home: the landing pad and the vehicle start there.
+HOME_KEEP_OUT_M = 5.0
+SIZE_RANGE_M = (0.01, 100.0)
 
 
 class ObjectError(ValueError):
@@ -75,6 +83,11 @@ class WorldObject(Protocol):
     @property
     def label(self) -> int: ...
     @property
+    def footprint_m(self) -> float:
+        """Horizontal radius around (east, north) that the object covers."""
+        ...
+
+    @property
     def truth(self) -> Mapping[str, Any]: ...
 
     def sdf(self, pose: Pose) -> str:
@@ -105,6 +118,17 @@ class Box:
     label: int = 0
     truth: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        low, high = SIZE_RANGE_M
+        if len(self.size_m) != 3 or not all(low <= v <= high for v in self.size_m):
+            raise ObjectError(f"{self.name}: size_m ska vara tre tal mellan {low:g} och {high:g}")
+        if len(self.color) != 3 or not all(0.0 <= c <= 1.0 for c in self.color):
+            raise ObjectError(f"{self.name}: color ska vara tre tal mellan 0 och 1")
+
+    @property
+    def footprint_m(self) -> float:
+        return math.hypot(self.size_m[0], self.size_m[1]) / 2
+
     def sdf(self, pose: Pose) -> str:
         sx, sy, sz = (_xml_number(v) for v in self.size_m)
         rgb = " ".join(_xml_number(c) for c in self.color)
@@ -132,8 +156,9 @@ class Box:
   </model>"""
 
 
-def check(objects: Sequence[WorldObject]) -> None:
-    """Names must be unique, safe as SDF names and not taken by the world itself."""
+def check(objects: Sequence[WorldObject], world_half_m: float = math.inf) -> None:
+    """Names must be unique, safe as SDF names and not taken by the world itself; every
+    object stands outside the keep-out circle around home and inside the world."""
     seen: set[str] = set()
     for obj in objects:
         if not _NAME.match(obj.name):
@@ -148,6 +173,15 @@ def check(objects: Sequence[WorldObject]) -> None:
             raise ObjectError(f"{obj.name}: position och riktning ska vara ändliga tal")
         if obj.label < 0:
             raise ObjectError(f"{obj.name}: label ska vara 0 eller större")
+        reach = obj.footprint_m
+        if math.hypot(obj.east_m, obj.north_m) - reach < HOME_KEEP_OUT_M:
+            raise ObjectError(f"{obj.name}: står närmare hem än {HOME_KEEP_OUT_M:g} m")
+        if max(abs(obj.east_m), abs(obj.north_m)) + reach > world_half_m:
+            raise ObjectError(f"{obj.name}: ligger utanför världen")
+        try:
+            json.dumps(dict(obj.truth), allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ObjectError(f"{obj.name}: truth går inte att skriva som JSON") from exc
 
 
 def _num(value: Any, where: str) -> float:
@@ -175,10 +209,10 @@ def parse(data: Any) -> list[Box]:
         where = f"objekt[{i}]"
         if not isinstance(raw, dict):
             raise ObjectError(f"{where}: väntade en tabell")
-        unknown = sorted(set(raw) - BOX_KEYS - BOX_OPTIONAL)
+        unknown = sorted(set(raw) - BOX_REQUIRED - BOX_OPTIONAL)
         if unknown:
             raise ObjectError(f"{where}: okända nycklar {', '.join(unknown)}")
-        missing = sorted(BOX_KEYS - BOX_OPTIONAL - set(raw))
+        missing = sorted(BOX_REQUIRED - set(raw))
         if missing:
             raise ObjectError(f"{where}: saknar {', '.join(missing)}")
         if raw["kind"] != "box":
@@ -196,7 +230,9 @@ def parse(data: Any) -> list[Box]:
                 north_m=_num(raw["north_m"], f"{where}.north_m"),
                 up_m=_num(raw.get("up_m", 0.0), f"{where}.up_m"),
                 yaw_deg=_num(raw.get("yaw_deg", 0.0), f"{where}.yaw_deg"),
-                size_m=_triple(raw["size_m"], f"{where}.size_m", low=0.01, high=100.0),
+                size_m=_triple(
+                    raw["size_m"], f"{where}.size_m", low=SIZE_RANGE_M[0], high=SIZE_RANGE_M[1]
+                ),
                 color=_triple(raw["color"], f"{where}.color", low=0.0, high=1.0),
                 label=label,
                 truth=truth,

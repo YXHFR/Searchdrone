@@ -118,6 +118,7 @@ class Stack:
         self.group = procs.ProcessGroup(self.inst_dir / "pids.json", run_dir / "logs")
         self.linksim_token = ""
         self.world: gazebo.World | None = None
+        self.placed: list[objects.Box] = []
 
     # --- helpers -------------------------------------------------------------------
 
@@ -185,17 +186,33 @@ class Stack:
         write_secret(self.secrets_dir, "linksim_token", self.linksim_token)
         check_secret_modes(self.secrets_dir)
 
+    def renders_world(self) -> bool:
+        """Only the Searchdrone world is rendered here, and only with Gazebo physics."""
+        return (
+            self.cfg.physics == "gz"
+            and self.cfg.vehicle == "sd_quad14"
+            and self.cfg.world == world.WORLD_NAME
+        )
+
     def world_objects(self) -> list[objects.Box]:
+        """Load and check ``objects=`` before anything starts; refuse it where it cannot apply."""
         if not self.cfg.objects:
             return []
+        if not self.renders_world():
+            raise InfraError(
+                f"objects= kräver physics=gz, vehicle=sd_quad14 och världen {world.WORLD_NAME}."
+            )
+        path = (self.repo / self.cfg.objects).resolve()
+        if not path.is_relative_to(self.repo.resolve()):
+            raise InfraError(f"objects={self.cfg.objects}: filen ska ligga i repot")
         try:
-            return objects.load(self.repo / self.cfg.objects)
+            return objects.load(path)
         except objects.ObjectError as exc:
             raise InfraError(f"objects={self.cfg.objects}: {exc}") from exc
 
     def start_gazebo(self) -> None:
-        if self.cfg.vehicle == "sd_quad14" and self.cfg.world == world.WORLD_NAME:
-            placed = self.world_objects()
+        if self.renders_world():
+            placed = self.placed
             world.render_world(self.cfg.world, self.cfg.instance, self.repo, placed)
             if placed:
                 say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")
@@ -404,6 +421,9 @@ class Stack:
 
     def up(self) -> None:
         os.umask(0o077)
+        self.placed = self.world_objects()
+        if not self.renders_world():
+            world.clear_truth(self.cfg.instance, self.repo)  # no world, so no facit
         self.check_ports_free()
         self.make_secrets()
         self.inst_dir.mkdir(parents=True, exist_ok=True)
