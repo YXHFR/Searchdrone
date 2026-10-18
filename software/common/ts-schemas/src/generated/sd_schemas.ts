@@ -1408,8 +1408,17 @@ export interface GeoDetectionMsg {
  */
 export interface GotoAiParams {
   alt_m?: number | null;
+  /**
+   * With lon, instead of pin.
+   */
   lat?: number | null;
+  /**
+   * With lat.
+   */
   lon?: number | null;
+  /**
+   * Map pin id. The target: always give pin, or lat and lon (one of the two, never neither).
+   */
   pin?: string | null;
   speed_ms?: number | null;
 }

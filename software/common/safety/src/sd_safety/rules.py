@@ -16,6 +16,7 @@ from typing import Any, Final, Literal
 
 from sd_safety.constants import (
     AIRBORNE_MIN_ALT_M,
+    ALT_OVERSHOOT_M,
     BRAIN_BATTERY_MARGIN_PCT,
     CLEARANCE_VALID_S,
     EXECUTOR_DEFAULT_SPEED_MS,
@@ -511,11 +512,21 @@ def _route_battery(f: Facts) -> list[Finding]:
 
 
 def _planned_alts(f: Facts) -> list[float]:
-    """Heights above home of the onboard handler's path (needs the charter's home)."""
+    """Heights above home of the onboard handler's path (needs the charter's home).
+
+    R-ALT checks where the order goes. A path of more than one point starts at the
+    current position (``SkillPlan.path``), which the ground side never sees: it is left
+    out while the drone is inside the charter band or at most ``ALT_OVERSHOOT_M`` over
+    the ceiling (L-ALT's tolerance), so a drone braking a few dm over the ceiling can
+    take an order to the ceiling or below. Farther out it is checked, so no order
+    replaces L-ALT's own descent. A single point is takeoff's top of the climb."""
     path, charter = f.req.planned_path, f.ctx.charter
-    if path is None or charter is None:
+    if not path or charter is None:
         return []
-    return [p.alt_amsl_m - charter.home.alt_amsl_m for p in path]
+    alts = [p.alt_amsl_m - charter.home.alt_amsl_m for p in path]
+    here = alts[0]
+    in_band = charter.alt_min_agl_m <= here <= charter.alt_max_agl_m + ALT_OVERSHOOT_M
+    return alts[1:] if len(alts) > 1 and in_band else alts
 
 
 def _altitude(f: Facts) -> list[Finding]:

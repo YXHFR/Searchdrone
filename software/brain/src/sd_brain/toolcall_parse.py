@@ -107,7 +107,11 @@ def _validate(
     try:
         model.model_validate(args)
     except ValidationError as exc:
-        return None, f"invalid arguments: {_first_error(exc)}"
+        known = ", ".join(p.id for p in s.pins) or "none"
+        return None, (
+            f"invalid arguments: {_first_error(exc)}. Map pins: {known}. "
+            f"Call {name} again with corrected arguments."
+        )
     bound = _check_bounds(args, lim)
     if bound is not None:
         return None, bound

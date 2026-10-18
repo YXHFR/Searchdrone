@@ -110,7 +110,8 @@ class LlmCommander:
                     for c in reply.tool_calls:
                         messages.append(_tool_message(c.id, err))
                 else:
-                    messages.append({"role": "user", "content": f"{err}. Try again."})
+                    again = err if err.endswith(".") else f"{err}. Try again."
+                    messages.append({"role": "user", "content": again})
                 continue
             if err is not None:
                 diag.error = "parse_error"

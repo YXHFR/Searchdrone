@@ -56,6 +56,9 @@ def test_valid_and_invalid_calls() -> None:
     )
     assert "unknown pin" in (_parse(_reply(("goto", {"pin": "P5"})))[1] or "")
     assert _parse(_reply(("goto", {"sector": "A"})))[1] is not None
+    no_target = _parse(_reply(("goto", {"alt_m": 40, "rationale_sv": "x"})))[1] or ""
+    assert "a target is required" in no_target and "Map pins: P1" in no_target
+    assert "Call goto again with corrected arguments." in no_target
     assert _parse(_reply(("brain_note", {"x": 1})))[1] is not None
     assert _parse(_reply(("get_log", {"n": "x"})))[1] is not None
     assert _parse(_reply(("estimate", {})))[1] is not None

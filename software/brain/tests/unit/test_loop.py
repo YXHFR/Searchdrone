@@ -392,6 +392,57 @@ async def test_idle_tick() -> None:
     assert not loop2.records
 
 
+@pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
+async def test_idle_tick_waits_only_for_its_own_action_card(kind: str, waits: bool) -> None:
+    """After a failed turn in the air the idle tick tries again. The AI's own charter
+    proposal waiting for a click does not stop it (the drone hovered 15 minutes); its own
+    action card does, since that order needs the pilot's yes first."""
+    from brain_helpers import situation
+
+    from sd_schemas.charter import CharterProposal
+
+    if kind == "charter":
+        in_force = situation().charter
+        assert in_force is not None
+        draft = CharterProposal.model_validate({"area": in_force.area, "reason_sv": "Mindre."})
+        first = TurnOutput(ready_proposal=draft, diagnostics=TurnDiagnostics(backend="llm"))
+    else:
+        first = act("goto", pin="P1")
+    backend = Steps(first, say("Jag fortsätter mot P1."))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "PENDING_APPROVAL"}}]
+    loop.idle_tick(force=True)  # the AI's own card: a charter proposal or an order card
+    await loop.settle()
+    rec = loop.records[-1]
+    own = rec.proposal.approval_id if rec.proposal is not None else None
+    if rec.result is not None:
+        own = rec.result.approval_id
+    assert own is not None
+    card = {
+        "id": str(own),
+        "mission_id": fg.sit["mission_id"],
+        "vehicle_id": fg.sit["vehicle_id"],
+        "kind": kind,
+        "subject_id": "01a150c5-0000-7000-8000-000000000002",
+        "subject_version": 2 if kind == "charter" else 1,
+        "status": "pending",
+        "summary_sv": "Uppdragsram v2" if kind == "charter" else "Flyg till P1 på 40 m",
+        "required_confirmations": [],
+        "default_autonomy_mode": None,
+        "gate": None,
+        "requested_by": "brain",
+        "requested_at": "2026-10-18T20:47:07Z",
+        "expires_at": None,
+        "decided_by": None,
+        "decided_at": None,
+        "reason": None,
+    }
+    fg.sit["pending_approvals"] = [card]
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == (1 if waits else 2)
+
+
 class _StopEngine:
     name: DecisionEngine = "jev"
     location: Literal["cloud", "local"] = "cloud"

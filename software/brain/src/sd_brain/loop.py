@@ -201,6 +201,8 @@ class CommanderLoop:
         self._last_turn_ms: int | None = None
         self._alert_seen: dict[str, float] = {}
         self._own_approvals: set[str] = set()
+        # the AI's own action cards: only these make it wait (its own charter proposals do not)
+        self._own_action_approvals: set[str] = set()
         self._backlog_ids: set[str] = set()
         self.last_stop_check: StopCheckResult | None = None
         self.records: list[TurnRecord] = []
@@ -507,7 +509,7 @@ class CommanderLoop:
             s.vehicle.airborne
             and s.active_command is None
             and not any(
-                a.status == "pending" and str(a.id) in self._own_approvals
+                a.status == "pending" and str(a.id) in self._own_action_approvals
                 for a in s.pending_approvals
             )
             and motion_block(s) is None
@@ -719,6 +721,7 @@ class CommanderLoop:
             self._rate_rejects = 0
             if result.approval_id is not None:
                 self._own_approvals.add(str(result.approval_id))
+                self._own_action_approvals.add(str(result.approval_id))
             what = _what(out.action, req)
             text = f"Väntar på ditt klick: {what}."
             record.texts = [text]
