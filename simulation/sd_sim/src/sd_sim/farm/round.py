@@ -48,8 +48,8 @@ GRADE_MODULE = "sd_brain.simeval.farm"
 GRADE_TIMEOUT_S = 600
 DEFAULT_WORLDS = ("sd_lake_forest",)
 # Asked in a child process, so sd_brain is never imported into the farm's own process.
-_HAS_GRADER = (
-    f"import importlib.util, sys; sys.exit(0 if importlib.util.find_spec({GRADE_MODULE!r}) else 1)"
+_HAS_MODULE = (
+    "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
 )
 
 
@@ -231,10 +231,13 @@ def finalize(spec: RoundSpec, raw: RawRound, out: Path) -> tuple[qc.QcResult, in
     return qc.check(tally), kept
 
 
-def _has_grader() -> bool:
+def _has_grader(module: str = GRADE_MODULE) -> bool:
     try:
         probe = subprocess.run(  # noqa: S603 - fixed argv
-            [sys.executable, "-c", _HAS_GRADER], capture_output=True, timeout=60, check=False
+            [sys.executable, "-c", _HAS_MODULE, module],
+            capture_output=True,
+            timeout=60,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -243,13 +246,13 @@ def _has_grader() -> bool:
 
 def grade(
     out: Path,
-    available: Callable[[], bool] = _has_grader,
+    available: Callable[[], bool] | None = None,
     run: Callable[..., Any] = subprocess.run,
 ) -> dict[str, Any] | None:
     """Let the AI commander grade the round, when this checkout's sd-brain can
     (``sd_brain.simeval.farm`` exists): runs ``python -m sd_brain eval grade --round
     <out>``, which writes ``grade.json``. ``None`` while there is no grader."""
-    if not available():
+    if not (available or _has_grader)():
         return None
     cmd = [sys.executable, "-m", "sd_brain", "eval", "grade", "--round", str(out)]
     try:

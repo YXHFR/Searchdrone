@@ -26,6 +26,13 @@ from sd_sim.farm.gazebo import GazeboRunner
 from sd_sim.farm.people import PERSON_LABEL, Person
 
 CAM = Intrinsics(1280, 720, math.radians(66.0))
+HAS_GRADER = farm_round._has_grader
+
+
+@pytest.fixture(autouse=True)
+def _no_grader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rounds in these tests are never graded by this checkout's sd-brain."""
+    monkeypatch.setattr(farm_round, "_has_grader", lambda: False)
 
 
 def above(x: float, y: float, z: float, yaw: float = 0.0) -> CameraPose:
@@ -303,6 +310,11 @@ def test_spec_carries_the_worlds(tmp_path: Path) -> None:
     assert back == s and back.worlds == ("w1", "w2")
     with pytest.raises(ValueError):
         farm_round.RoundSpec.new(3, "script", "abc", worlds=[])
+
+
+def test_grader_probe_asks_a_child_process() -> None:
+    assert HAS_GRADER("json")
+    assert not HAS_GRADER("sd_no_such_module.farm")
 
 
 def test_grade_hook(tmp_path: Path) -> None:

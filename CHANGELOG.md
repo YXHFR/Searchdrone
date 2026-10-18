@@ -38,8 +38,8 @@ All notable changes to this project are listed here. The format follows
   randomized search rounds from the newest `main` and keeps camera pictures with person
   boxes (YOLO and COCO) computed from the simulator's facit and the camera's pose, plus a
   metadata file per picture. Each round passes a quality check; three failed rounds in a
-  row stop the farm, `max_minutes=N` caps its run time, and it pauses while the GPU or CPU is busy (optionally only when the
-  computer is idle). Passed rounds stay in `build/simfarm/` or, with a key in
+  row stop the farm, `max_minutes=N` caps its run time, and it pauses while the GPU or
+  CPU is busy (optionally only when the computer is idle). Passed rounds stay in `build/simfarm/` or, with a key in
   `config/simfarm.toml`, are uploaded once to Cloudflare R2 in the EU. Person models
   (CC0, CC BY 4.0) are fetched pinned from Gazebo Fuel and credited. The Gazebo round
   itself comes later; until then `just sim-farm` exits 2.

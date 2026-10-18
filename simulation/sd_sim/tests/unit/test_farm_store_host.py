@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import http.server
 import json
 import os
+import threading
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
@@ -178,6 +180,32 @@ def test_upload_skips_symlinks_and_signs_encoded_keys(tmp_path: Path) -> None:
         "PUT", "https://h.example/b/a%2520b.png", {}, store.EMPTY_SHA256, "A", "S", NOW
     )
     assert h["authorization"] != h2["authorization"]
+
+
+def test_send_refuses_a_redirect() -> None:
+    hits: list[str] = []
+
+    class Redirect(http.server.BaseHTTPRequestHandler):
+        def do_HEAD(self) -> None:
+            hits.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", "/elsewhere")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/b/k"
+        req = urllib.request.Request(url, method="HEAD", headers={"Authorization": "x"})
+        with pytest.raises(store.UploadError):
+            store._send(req)
+    finally:
+        server.shutdown()
+    assert hits == ["/b/k"]  # the signed request never went on
 
 
 def test_ledger_survives_a_cut_line(tmp_path: Path) -> None:

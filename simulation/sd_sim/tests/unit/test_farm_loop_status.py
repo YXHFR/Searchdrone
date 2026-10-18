@@ -140,7 +140,16 @@ def test_stop_removes_the_half_made_round(tmp_path: Path) -> None:
 
 def test_time_cap_stops_the_round_and_exits_cleanly(tmp_path: Path) -> None:
     f = farm(tmp_path, ["hang", "ok"])
-    f.max_minutes = 1.0 / 60
+    f.max_minutes = 1.0
+
+    jumped: list[bool] = []
+
+    def clock() -> float:  # jumps past the cap once the round has started
+        if not jumped and any(f.rounds_dir.glob(".partial-*/started")):
+            jumped.append(True)
+        return time.monotonic() + (120.0 if jumped else 0.0)
+
+    f.clock = clock
     started = time.monotonic()
     assert f.run() == 0
     assert time.monotonic() - started < loop.STOP_GRACE_S
@@ -227,11 +236,33 @@ def test_worktree_links_local_config_but_not_examples(tmp_path: Path) -> None:
     (repo / "config").mkdir(parents=True)
     (repo / "config" / "simfarm.toml").write_text("[r2]\n")
     (repo / "config" / "simfarm.example.toml").write_text("")
+    (repo / "config" / "site.toml").write_text("")
     (repo / ".env").write_text("X=1\n")
     loop.Worktree(repo, wt).link_local()
-    assert (wt / "config" / "simfarm.toml").resolve() == repo / "config" / "simfarm.toml"
+    assert (wt / "config" / "site.toml").resolve() == repo / "config" / "site.toml"
     assert (wt / ".env").is_symlink()
     assert not (wt / "config" / "simfarm.example.toml").exists()
+    assert not (wt / "config" / "simfarm.toml").exists()  # the R2 key stays with the loop
+
+
+def test_worktree_drops_an_earlier_link_to_the_farm_config(tmp_path: Path) -> None:
+    repo, wt = tmp_path / "repo", tmp_path / "wt"
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / "simfarm.toml").write_text("[r2]\n")
+    (wt / "config").mkdir(parents=True)
+    (wt / "config" / "simfarm.toml").symlink_to(repo / "config" / "simfarm.toml")
+    loop.Worktree(repo, wt).link_local()
+    assert not (wt / "config" / "simfarm.toml").exists()
+    assert (repo / "config" / "simfarm.toml").is_file()
+
+
+def test_leftover_half_made_rounds_are_removed_at_start(tmp_path: Path) -> None:
+    f = farm(tmp_path, ["ok"], rounds=1)
+    stale = f.rounds_dir / ".partial-old"
+    (stale / "work").mkdir(parents=True)
+    assert f.run() == 0
+    assert not stale.exists()
+    assert len(list(f.rounds_dir.iterdir())) == 1
 
 
 def test_round_env_is_an_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -173,7 +173,10 @@ class Worktree:
     def link_local(self) -> None:
         """Point the worktree's local config and secrets at the owner's checkout."""
         names = [f"config/{p.name}" for p in (self.repo / "config").glob("*.toml")]
-        names = [n for n in names if not n.endswith(".example.toml")] + list(LINKED)
+        # Not the farm's own config: its R2 key is for the loop's uploads, never a round's.
+        names = [
+            n for n in names if not n.endswith(".example.toml") and n != farm_config.LOCAL
+        ] + list(LINKED)
         for name in names:
             src, dst = self.repo / name, self.path / name
             if not src.exists():
@@ -184,6 +187,9 @@ class Worktree:
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.symlink_to(src)
+        own = self.path / farm_config.LOCAL  # linked by an earlier farm
+        if own.is_symlink():
+            own.unlink()
 
 
 @dataclass
@@ -380,6 +386,9 @@ class Farm:
         )
         if self.max_minutes > 0:
             self.deadline = self.clock() + self.max_minutes * 60.0
+        # A round cut short by a crash or a kill of the farm itself is never resumed.
+        for stale in self.rounds_dir.glob(".partial-*"):
+            shutil.rmtree(stale, ignore_errors=True)
         done = 0
         seed = self.seed
         while not self.halting() and (self.rounds_wanted == 0 or done < self.rounds_wanted):

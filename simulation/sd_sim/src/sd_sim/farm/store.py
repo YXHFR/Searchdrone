@@ -150,11 +150,23 @@ def sigv4_headers(
 Send = Callable[[urllib.request.Request], tuple[int, Mapping[str, str]]]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """R2 never redirects; following one would send the signed request to another host."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _send(req: urllib.request.Request) -> tuple[int, Mapping[str, str]]:
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:  # noqa: S310 - https endpoint
+        with _OPENER.open(req, timeout=TIMEOUT_S) as resp:
             return resp.status, {k.lower(): v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400:
+            raise UploadError(f"R2 svarade med omdirigering ({exc.code})") from exc
         return exc.code, {k.lower(): v for k, v in exc.headers.items()}
     except (urllib.error.URLError, OSError) as exc:
         raise UploadError(f"R2 svarar inte: {exc}") from exc
