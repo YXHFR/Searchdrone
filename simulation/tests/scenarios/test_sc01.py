@@ -33,6 +33,7 @@ from demo_rig import (  # pyright: ignore[reportMissingImports]
     ALT_M,
     CLOSE_LIMIT_S,
     DEMO_LIMIT_S,
+    DEMO_REQUEST,
     FIXTURE,
     MIN_COVERAGE,
     SPACING_M,
@@ -54,10 +55,7 @@ from sd_sim.services import VEHICLE_ID
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.e2e]
 __all__ = ["demo_stack"]
 
-D3 = (
-    "Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd. "
-    "Landa hemma sen."
-)
+D3 = DEMO_REQUEST
 D7 = "Gå upp till 200 meter."
 
 

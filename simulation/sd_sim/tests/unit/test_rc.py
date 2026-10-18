@@ -8,22 +8,30 @@ import time
 
 import pytest
 
-from sd_sim.rc import CENTRE, THROTTLE_DOWN, RcTransmitter, throttle_for
+from sd_sim.rc import CENTRE, THROTTLE_DOWN, RcTransmitter, has_flown, throttle_for
 
 
 @pytest.mark.parametrize(
-    ("armed", "alt", "mode", "want"),
+    ("armed", "flown", "mode", "want"),
     [
-        (False, 0.0, "GUIDED", THROTTLE_DOWN),  # on the ground: arming needs it low
-        (True, 1.0, "GUIDED", THROTTLE_DOWN),  # taking off or touching down
-        (True, 40.0, "LOITER", CENTRE),  # LOITER holds its height
-        (True, 40.0, "GUIDED", CENTRE),
-        (True, 40.0, "SMART_RTL", THROTTLE_DOWN),  # landing
-        (True, 40.0, "LAND", THROTTLE_DOWN),
+        (False, False, "GUIDED", THROTTLE_DOWN),  # on the ground: arming needs it low
+        (True, False, "GUIDED", THROTTLE_DOWN),  # taking off
+        (True, True, "LOITER", CENTRE),  # LOITER holds its height
+        (True, True, "GUIDED", CENTRE),
+        (True, True, "SMART_RTL", THROTTLE_DOWN),  # landing
+        (True, True, "LAND", THROTTLE_DOWN),
     ],
 )
-def test_throttle_for(armed: bool, alt: float, mode: str, want: int) -> None:
-    assert throttle_for(armed, alt, mode) == want
+def test_throttle_for(armed: bool, flown: bool, mode: str, want: int) -> None:
+    assert throttle_for(armed, flown, mode) == want
+
+
+def test_a_low_hold_after_leaving_the_ground_keeps_the_throttle_centred() -> None:
+    flown = False
+    for alt in (0.0, 1.0, 5.0, 1.5):  # up past 3 m, then a STOP holds it at 1.5 m
+        flown = has_flown(flown, True, alt)
+    assert flown and throttle_for(True, flown, "LOITER") == CENTRE
+    assert not has_flown(flown, False, 0.0)  # disarmed: the next flight starts again
 
 
 def test_sends_eight_channels_to_sitl() -> None:

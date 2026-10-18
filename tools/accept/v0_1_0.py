@@ -72,8 +72,12 @@ MAX_REPORT_AGE = dt.timedelta(days=7)
 EXIT_USAGE = 2
 
 PHASES = ("pre", "post")
+# The jobs in .github/workflows/sitl.yml behind F-01 (the nightly suite and the ten
+# end-to-end rounds) and F-07 (the offline end-to-end run).
+NIGHTLY_JOBS = ("sitl-nightly", "e2e-nightly")
+OFFLINE_JOB = "e2e-offline"
 POST_IDS = frozenset({"V-02", "V-04", "R-04b"})
-# Every ID of the v0.1.0 list (08 section 5). An ID the local list lacks is reported red.
+# Every ID of the v0.1.0 acceptance list. An ID the local list lacks is reported red.
 KNOWN_IDS = (
     *(f"R-{n:02d}" for n in range(1, 12)),
     "R-04b",
@@ -81,7 +85,7 @@ KNOWN_IDS = (
     *(f"S-{n:02d}" for n in range(1, 26)),
     *(f"V-{n:02d}" for n in range(1, 7)),
 )
-# Required checks on main (rev 6 owner decisions) and the ones a push to main reports.
+# Required checks on main (the main-protection ruleset) and the ones a push to main reports.
 REQUIRED_CHECKS = (
     "ci-ok",
     "sitl-ok",
@@ -212,7 +216,12 @@ def ensure_read_only(args: list[str]) -> None:
         raise GhError(f"gh {' '.join(args[:2])} är inte ett läsande anrop")
     for a in args:
         long_form = a.startswith(tuple(f"{f}=" for f in WRITE_FLAGS if f.startswith("--")))
-        short_form = a[:2] in WRITE_FLAGS and not a.startswith("--")
+        # A short flag group ("-iXPOST", "-iX") hides a write flag after another flag.
+        short_form = (
+            a.startswith("-")
+            and not a.startswith("--")
+            and any(f"-{c}" in WRITE_FLAGS for c in a[1:].split("=", 1)[0])
+        )
         if a in WRITE_FLAGS or long_form or short_form:
             raise GhError(f"gh med {a} är inte tillåtet (bara läsande anrop)")
 
@@ -574,9 +583,11 @@ def f01(ctx: Ctx) -> Check:
     for r in nightly:
         view = gh_json(["run", "view", str(r["databaseId"]), "--repo", ctx.repo, "--json", "jobs"])
         jobs = {str(j.get("name")): j.get("conclusion") for j in arr(obj(view).get("jobs"))}
-        if jobs.get("sitl-nightly") == "success":
-            return Check(True, f"sitl-ok grön; sitl-nightly grön i körning {r['databaseId']}")
-    return Check(False, f"ingen grön sitl-nightly-körning med head_sha = {ctx.sha[:12]}")
+        if all(jobs.get(j) == "success" for j in NIGHTLY_JOBS):
+            return Check(
+                True, f"sitl-ok grön; {', '.join(NIGHTLY_JOBS)} gröna i körning {r['databaseId']}"
+            )
+    return Check(False, f"ingen körning med {' och '.join(NIGHTLY_JOBS)} gröna på {ctx.sha[:12]}")
 
 
 def gpu_report(ctx: Ctx, glob: str, what: str) -> Check:
@@ -722,7 +733,7 @@ def v05(ctx: Ctx) -> Check:
 
 SITL = ci_rows(("sitl-ok",), "sitl (", "sitl")
 PANEL = ci_rows(("ci-ok", "panel-e2e"), None, "panel-e2e")
-OFFLINE = ci_rows(("sitl-ok",), "offline", "offline")
+OFFLINE = ci_rows(("sitl-ok", OFFLINE_JOB), None, OFFLINE_JOB)
 
 
 def bound(check: Callable[[Ctx, str], Check], *ids: str) -> dict[str, Callable[[Ctx], Check]]:

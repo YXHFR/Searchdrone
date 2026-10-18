@@ -3,9 +3,9 @@
 A real flight needs a physical transmitter that the flight controller hears, with the
 sticks centred while the drone flies. SITL without RC input keeps the throttle at its
 minimum, so every hold in LOITER (after a skill, a STOP, a take-over) would sink to the
-ground. The launcher's observer therefore plays the pilot: throttle down on the ground
-and while landing (arming needs it low), centred in the air (1500 us holds the height
-in LOITER), the other sticks centred. It never moves a stick on its own.
+ground. The launcher's observer therefore plays the pilot: throttle down before take-off
+and while landing (arming needs it low), centred from leaving the ground on (1500 us
+holds the height in LOITER), the other sticks centred. It never moves a stick on its own.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import socket
 import struct
 import threading
 
-__all__ = ["LANDING_MODES", "RcTransmitter", "throttle_for"]
+__all__ = ["LANDING_MODES", "RcTransmitter", "has_flown", "throttle_for"]
 
 LANDING_MODES = frozenset({"RTL", "SMART_RTL", "LAND"})
 AIRBORNE_M = 3.0
@@ -23,10 +23,15 @@ CENTRE = 1500
 SEND_PERIOD_S = 0.02  # 50 Hz, like a transmitter
 
 
-def throttle_for(armed: bool, rel_alt_m: float, mode: str) -> int:
-    """Centred while flying, down on the ground and while landing."""
-    airborne = armed and rel_alt_m > AIRBORNE_M
-    return CENTRE if airborne and mode not in LANDING_MODES else THROTTLE_DOWN
+def has_flown(flown: bool, armed: bool, rel_alt_m: float) -> bool:
+    """Whether this flight has left the ground: set above 3 m, cleared when disarmed."""
+    return armed and (flown or rel_alt_m > AIRBORNE_M)
+
+
+def throttle_for(armed: bool, flown: bool, mode: str) -> int:
+    """Centred from leaving the ground until a landing mode or disarming (so a hold in
+    LOITER low over the ground holds too), down before take-off and while landing."""
+    return CENTRE if armed and flown and mode not in LANDING_MODES else THROTTLE_DOWN
 
 
 class RcTransmitter:

@@ -153,6 +153,9 @@ class MissionFlow:
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
     _status: dict[str, str] = field(default_factory=dict[str, str])
     _tlog_mission: str | None = None  # whose flight.tlog the MAVLink channel records
+    # Missions not to start recording for again: their files are closing, or opening the
+    # file failed once (logged).
+    _tlog_done: set[str] = field(default_factory=set[str])
 
     # --- small helpers -----------------------------------------------------------------
 
@@ -678,25 +681,37 @@ class MissionFlow:
             await self._follow_arming(vid, mission)
             if mission is None:
                 continue
-            self._follow_tlog(mission)
             await self._follow_landing(vid, mission)
             await coverage_service.tick(self, mission)
+            self._follow_tlog(mission)
 
     def _follow_tlog(self, mission: Mission) -> None:
         """``flight.tlog`` in the mission's folder from its first activation until its
         files close (also after a restart of this process: the file is appended to)."""
         mid = str(mission.id)
-        if self.mav is None or self._tlog_mission == mid or mission.activated_at is None:
+        if self.mav is None or mid == self._tlog_mission or mid in self._tlog_done:
             return
-        if mission.status in (MissionState.DRAFT, MissionState.CLOSED):
+        if mission.activated_at is None or mission.status in (
+            MissionState.DRAFT,
+            MissionState.CLOSED,
+        ):
             return
+        # A log must never stop the flow from following the vehicle: one try per mission.
+        self._tlog_done.add(mid)
         path = self.mission_dir(mid) / TLOG_NAME
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if self.mav.start_tlog(path):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            started = self.mav.start_tlog(path)
+        except OSError as exc:
+            log.error("files.tlog_failed", mission_id=mid, error=type(exc).__name__)
+            return
+        if started:
             self._tlog_mission = mid
+            self._tlog_done.discard(mid)
 
     def stop_tlog(self, mission_id: str) -> bool:
         """Stop recording the mission's ``flight.tlog``; ``True`` when this process wrote it."""
+        self._tlog_done.add(mission_id)  # its files are closing: never start it again
         if self.mav is None or self._tlog_mission != mission_id:
             return False
         self.mav.stop_tlog()

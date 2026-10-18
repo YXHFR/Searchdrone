@@ -18,7 +18,9 @@ from accept import v0_1_0 as acc
 
 SHA = "a" * 40
 OTHER = "b" * 40
-GREEN_RUNS = [*acc.MAIN_CHECKS, "sitl (1)", "sitl (2)", "panel-e2e"]
+ROOT = Path(__file__).resolve().parents[2]
+# The real job names of the workflows (tools/tests/test_workflows.py checks them there).
+GREEN_RUNS = [*acc.MAIN_CHECKS, "sitl (1)", "sitl (2)", "panel-e2e", "e2e", acc.OFFLINE_JOB]
 EXAMPLE = Path(acc.__file__).with_name("accept-manual.example.toml")
 
 # One row of each kind: automatic, manual, automatic + manual, a CI row with tests,
@@ -87,6 +89,8 @@ class FakeGitHub:
         self.calls: list[list[str]] = []
         self.conclusion = "success"
         self.detail = ruleset_detail()
+        self.runs = list(GREEN_RUNS)
+        self.nightly = dict.fromkeys(acc.NIGHTLY_JOBS, "success")
 
     def __call__(self, args: list[str]) -> str:
         acc.ensure_read_only(args)  # the real guard still runs on every call
@@ -103,9 +107,13 @@ class FakeGitHub:
             return {
                 "check_runs": [
                     {"name": n, "status": "completed", "conclusion": self.conclusion}
-                    for n in GREEN_RUNS
+                    for n in self.runs
                 ]
             }
+        if args[:2] == ["run", "list"]:
+            return [{"databaseId": 7, "event": "schedule", "headSha": SHA}]
+        if args[:2] == ["run", "view"]:
+            return {"jobs": [{"name": n, "conclusion": c} for n, c in self.nightly.items()]}
         if path.endswith("/rulesets?includes_parents=false"):
             return [
                 {"id": 1, "name": "main-protection"},
@@ -366,6 +374,13 @@ def test_gh_wrapper_refuses_writes() -> None:
         with pytest.raises(acc.GhError):
             acc.ensure_read_only(args)
     for args in (
+        ["api", "-iXPOST", "repos/o/r/rulesets"],  # a write flag inside a short group
+        ["api", "-iX", "POST", "repos/o/r"],
+    ):
+        with pytest.raises(acc.GhError):
+            acc.ensure_read_only(args)
+    for args in (
+        ["api", "-i", "repos/o/r"],
         ["api", "repos/o/r/rulesets"],
         ["run", "list", "--workflow", "sitl.yml"],
         ["release", "view", "v0.1.0", "--json", "isDraft"],
@@ -455,3 +470,26 @@ def test_example_template_lists_every_manual_row() -> None:
         assert row == {"pass": False, "by": "", "date": "", "note": ""}, rid
         assert acc.manual(row)[0] is False
     assert acc.MANUAL_FILE in EXAMPLE.read_text(encoding="utf-8")
+
+
+def test_f07_needs_the_offline_end_to_end_job(root: Path, github: FakeGitHub) -> None:
+    ctx = ctx_for(root, {"F-07": {"id": "F-07", "tests": []}})
+    assert acc.OFFLINE(ctx, "F-07").ok
+    github.runs.remove(acc.OFFLINE_JOB)
+    ctx = ctx_for(root, {"F-07": {"id": "F-07", "tests": []}})
+    got = acc.OFFLINE(ctx, "F-07")
+    assert not got.ok and acc.OFFLINE_JOB in got.detail
+
+
+def test_f01_needs_both_nightly_jobs_on_the_sha(root: Path, github: FakeGitHub) -> None:
+    assert acc.f01(ctx_for(root)).ok
+    github.nightly["e2e-nightly"] = "failure"  # the ten end-to-end rounds
+    got = acc.f01(ctx_for(root))
+    assert not got.ok and "e2e-nightly" in got.detail
+
+
+def test_the_ci_job_names_exist_in_the_workflow() -> None:
+    import yaml
+
+    jobs = yaml.safe_load((ROOT / ".github/workflows/sitl.yml").read_text(encoding="utf-8"))["jobs"]
+    assert {*acc.NIGHTLY_JOBS, acc.OFFLINE_JOB} <= set(jobs)

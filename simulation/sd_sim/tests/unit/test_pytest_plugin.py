@@ -60,6 +60,14 @@ def test_worker_instance_limit() -> None:
         worker_instance({"PYTEST_XDIST_WORKER": "gw8"})
 
 
+def test_first_instance_moves_the_workers_up() -> None:
+    """``just e2e``: the demo keeps instance 0, the rest start at 1."""
+    assert worker_instance({"PYTEST_XDIST_WORKER": "gw0", "SD_SIM__FIRST_INSTANCE": "1"}) == 1
+    assert worker_instance({"SD_SIM__FIRST_INSTANCE": "1"}) == 1
+    with pytest.raises(pytest.UsageError):
+        worker_instance({"PYTEST_XDIST_WORKER": "gw7", "SD_SIM__FIRST_INSTANCE": "1"})
+
+
 def collected_budgets() -> list[tuple[str, float]]:
     """Collect the CI selection with the plugin and read each test's budget."""
     out = subprocess.run(

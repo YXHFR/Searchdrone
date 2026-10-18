@@ -126,6 +126,7 @@ class MavConnection:
         self._tlog_lock = threading.Lock()
         self.read_errors = 0
         self.dispatch_errors = 0
+        self.tlog_errors = 0  # a failed write drops the tlog, never the read loop
 
     @property
     def source_system(self) -> int:
@@ -177,10 +178,22 @@ class MavConnection:
             self.dispatch_errors += 1
 
     def _log(self, msg: Any) -> None:
+        """Never raises: a full disk or a lost file stops the recording, not the channel."""
         with self._tlog_lock:
-            if self._tlog is not None and self._tlog_clock is not None:
+            if self._tlog is None or self._tlog_clock is None:
+                return
+            try:
                 usec = int(self._tlog_clock.utc_now().timestamp() * 1e6) & ~3
                 self._tlog.write(struct.pack(">Q", usec) + msg.get_msgbuf())
+            except Exception:
+                self.tlog_errors += 1
+                with contextlib.suppress(Exception):
+                    self._tlog.close()
+                self._tlog = None
+
+    @property
+    def tlog_active(self) -> bool:
+        return self._tlog is not None
 
     def start_tlog(self, path: Path, clock: Clock) -> None:
         """Record every received message in a telemetry log (``flight.tlog``).

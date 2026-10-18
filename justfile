@@ -378,7 +378,10 @@ e2e *args:
     compose=(docker compose --env-file .env -f compose.yaml)
     if [ "$offline" = 1 ]; then
         # The stack is cut off from the internet; the runner's own traffic is not.
-        eval "$(sudo -n bash tools/offline/isolate.sh prepare | grep '^SD_OFFLINE_[UG]ID=')"
+        ids="$(sudo -n bash tools/offline/isolate.sh prepare)"
+        SD_OFFLINE_UID="$(sed -n 's/^SD_OFFLINE_UID=\([0-9][0-9]*\)$/\1/p' <<<"$ids")"
+        SD_OFFLINE_GID="$(sed -n 's/^SD_OFFLINE_GID=\([0-9][0-9]*\)$/\1/p' <<<"$ids")"
+        [ -n "$SD_OFFLINE_UID" ] && [ -n "$SD_OFFLINE_GID" ] || { echo "isolate.sh gav inget uid"; exit 1; }
         export SD_OFFLINE_UID SD_OFFLINE_GID
         trap 'sudo -n bash tools/offline/isolate.sh down' EXIT
         compose+=(-f compose.offline.yaml)

@@ -26,9 +26,26 @@ die() { echo "isolate: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "kör med sudo"
 [ -f compose.offline.yaml ] || die "kör från repots rot"
-owner="${SUDO_UID:-0}:${SUDO_GID:-0}"
+[[ "${SUDO_UID:-}" =~ ^[0-9]+$ && "${SUDO_GID:-}" =~ ^[0-9]+$ ]] \
+    || die "kör med sudo från din vanliga användare (filerna lämnas tillbaka till den)"
+owner="$SUDO_UID:$SUDO_GID"
 data="$(sed -n 's/^SD_DATA_DIR=//p' .env 2>/dev/null | tail -n 1)"
 [ -n "$data" ] || die "SD_DATA_DIR saknas i .env (kör just setup-config)"
+# The folder is re-owned recursively: only an absolute folder of its own, never / or a
+# home or system folder.
+home="$(getent passwd "$SUDO_UID" | cut -d: -f6)"
+case "$data" in
+    /*) ;;
+    *) die "SD_DATA_DIR ska vara en absolut sökväg" ;;
+esac
+data="$(realpath -m "$data")"
+case "$data" in
+    /home/*/*) ;;  # a folder inside a home folder
+    / | /root | /home | /home/* | /usr | /usr/* | /etc | /etc/* | /var | /tmp | /opt | /srv | \
+    /bin | /bin/* | /sbin | /sbin/* | /lib* | /boot* | /proc* | /sys* | /dev* | /run*)
+        die "SD_DATA_DIR $data är för brett för att byta ägare på" ;;
+esac
+[ "$data" != "$home" ] || die "SD_DATA_DIR får inte vara hemmappen"
 
 # The folders the stack writes. The test user gets its own 0600 copy of .env (the ground
 # station refuses a .env that others can read); `just ci-sitl` mounts it over .env.

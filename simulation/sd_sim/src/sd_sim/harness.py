@@ -29,7 +29,7 @@ from pymavlink import mavutil
 
 from sd_sim import ports
 from sd_sim.errors import InfraError, VehicleError
-from sd_sim.rc import RcTransmitter, throttle_for
+from sd_sim.rc import RcTransmitter, has_flown, throttle_for
 
 HARNESS_SYSID = 253
 HARNESS_COMPID = 190
@@ -357,6 +357,7 @@ def observe(instance: int, state_file: Path, rc_port: int | None = None) -> int:
     With ``rc_port`` it also holds the simulated pilot's RC transmitter (``sd_sim.rc``)."""
     harness = Harness.for_instance(instance)
     rc = None if rc_port is None else RcTransmitter(rc_port).start()
+    flown = False
     stopping = False
 
     def stop(_sig: int, _frame: object) -> None:
@@ -369,8 +370,9 @@ def observe(instance: int, state_file: Path, rc_port: int | None = None) -> int:
     while not stopping:
         harness.pump(0.2)
         st = harness.state
+        flown = has_flown(flown, st.armed, st.rel_alt_m)
         if rc is not None:
-            rc.throttle = throttle_for(st.armed, st.rel_alt_m, st.mode)
+            rc.throttle = throttle_for(st.armed, flown, st.mode)
         payload = {**asdict(st), "ready": st.ready, "pid": os.getpid()}
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(state_file)

@@ -126,3 +126,32 @@ async def test_close_files_stops_and_records_the_tlog(ground: Ground) -> None:
     assert mav.stopped == 1
     tlog = [r for r in repo.files if r["rel_path"] == TLOG_NAME]
     assert len(tlog) == 1 and tlog[0]["kind"] == "tlog"
+
+
+def test_a_file_that_cannot_open_is_tried_once_and_never_raises(ground: Ground) -> None:
+    @dataclass
+    class Failing(StubMav):
+        calls: int = 0
+
+        def start_tlog(self, path: Path) -> bool:
+            self.calls += 1
+            raise PermissionError(13, "Permission denied")
+
+    mav = Failing()
+    f = flow(ground, mav)
+    m = mission(MissionState.ACTIVE)
+    f._follow_tlog(m)  # pyright: ignore[reportPrivateUsage]
+    f._follow_tlog(m)  # pyright: ignore[reportPrivateUsage]
+    assert mav.calls == 1
+    assert not f.stop_tlog(str(m.id))
+
+
+def test_closing_files_ends_the_recording_for_good(ground: Ground) -> None:
+    """The flow's tick may still see the mission open while its files close."""
+    mav = StubMav()
+    f = flow(ground, mav)
+    m = mission(MissionState.LANDED)
+    f._follow_tlog(m)  # pyright: ignore[reportPrivateUsage]
+    assert f.stop_tlog(str(m.id))
+    f._follow_tlog(m)  # pyright: ignore[reportPrivateUsage]
+    assert len(mav.started) == 1
