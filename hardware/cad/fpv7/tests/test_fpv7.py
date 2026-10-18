@@ -448,11 +448,9 @@ def test_frontal_area_and_drag_by_hand() -> None:
     of the same outline in front of it, the cover counts at cd_faired and the box, in its
     wake, at wake_factor."""
     import aero
-    import checks
 
     block = assembly.Part("block", "electronics", cq.Solid.makeBox(10, 20, 30), 1.0)
     cover = assembly.Part("cover", "cover", cq.Solid.makeBox(2, 20, 30, cq.Vector(10, 0, 0)), 1.0)
-    assert checks.frontal_area_mm2([block]) == pytest.approx(600, rel=1e-6)
     ae = aero.aero(assembly.Drone([block, cover], [], block.solid, "none"), {"aero": AERO})
     assert ae["frontal_area_before_m2"] == pytest.approx(600e-6)
     assert ae["frontal_area_after_m2"] == pytest.approx(600e-6)
@@ -465,7 +463,7 @@ def test_frontal_area_and_drag_by_hand() -> None:
 def test_wake_and_hidden_parts_by_hand() -> None:
     """A box 100 mm behind another counts at wake_factor, 200 mm behind (past
     wake_length) fully; a rod inside a box does not count; a pitched-down drone meets the
-    air on its underside too."""
+    air on its top side too."""
     import aero
 
     def box(name: str, x: float) -> assembly.Part:
@@ -519,14 +517,13 @@ def test_drag_is_in_the_measured_range(report: dict[str, Any]) -> None:
     assert sum(ae["cda_by_class_m2"].values()) == pytest.approx(ae["cda_after_m2"], abs=1e-5)
 
 
-def test_cfd_pressure_drag_by_hand(tmp_path: Path) -> None:
-    """A 0.1 m cube with pressure 50 m^2/s^2 on its front face only: the force is 0.5 N
-    per kg/m^3 of air, Cd A = 50 * 0.01 / (0.5 * 10^2) = 0.01 m^2. The faces wind into the
-    body, as OpenFOAM writes a wall patch."""
+def _cube_vtk(path: Path, front_pressure: float) -> None:
+    """A 0.1 m cube with pressure ``front_pressure`` (m^2/s^2) on its front face only, as
+    foamToVTK writes a wall patch: the faces wind into the body."""
     points = [(x, y, z) for x in (0, 0.1) for y in (0, 0.1) for z in (0, 0.1)]
     # Point index = 4x + 2y + z (each 0 or 1); the front face is x = 0.1.
     faces = [[4, 5, 7, 6], [0, 2, 3, 1], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]
-    pressure = [50, 0, 0, 0, 0, 0]
+    pressure = [front_pressure, 0, 0, 0, 0, 0]
     text = ["# vtk DataFile Version 2.0", "drone", "ASCII", "DATASET POLYDATA"]
     text.append(f"POINTS {len(points)} float")
     text += [" ".join(str(c) for c in pt) for pt in points]
@@ -534,7 +531,111 @@ def test_cfd_pressure_drag_by_hand(tmp_path: Path) -> None:
     text += [" ".join(str(i) for i in [4, *f]) for f in faces]
     text += [f"CELL_DATA {len(faces)}", "FIELD FieldData 1", f"p 1 {len(faces)} float"]
     text.append(" ".join(str(v) for v in pressure))
-    path = tmp_path / "drone_900.vtk"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(text) + "\n", encoding="utf-8")
+
+
+def test_cfd_pressure_drag_by_hand(tmp_path: Path) -> None:
+    """Pressure 50 m^2/s^2 on the front of a 0.1 m cube: the force is 0.5 N per kg/m^3 of
+    air, Cd A = 50 * 0.01 / (0.5 * 10^2) = 0.01 m^2."""
+    path = tmp_path / "drone_900.vtk"
+    _cube_vtk(path, 50)
     assert cfd.pressure_cda(path, 10) == pytest.approx(0.01)
     assert cfd.wetted_area(path) == pytest.approx(0.06)
+
+
+def test_cfd_drag_averages_the_last_third(tmp_path: Path) -> None:
+    """The run writes every 100 iterations; drag averages the last three, ignores the
+    earlier ones and adds flat-plate friction on the wetted area."""
+    assert cfd.sample_times() == [700, 800, 900]
+    for t, front in [(600, 1000), (700, 40), (800, 50), (900, 60)]:
+        _cube_vtk(tmp_path / "VTK" / "drone" / f"drone_{t}.vtk", front)
+    a = {"speed": 10, "kinematic_viscosity": 1.5e-5}
+    out = cfd.drag(tmp_path, a)
+    assert out["cda_pressure_m2"] == pytest.approx(0.01)
+    assert out["cda_pressure_spread_m2"] == pytest.approx(0.004)
+    assert out["wetted_area_m2"] == pytest.approx(0.06)
+    friction = 0.074 * (10 * cfd.BODY_LENGTH / 1.5e-5) ** -0.2 * 0.06
+    assert out["cda_friction_m2"] == pytest.approx(friction)
+    assert out["cda_m2"] == pytest.approx(0.01 + friction)
+
+
+def test_cfd_surface_leaves_out_props_and_named_parts(tmp_path: Path) -> None:
+    """The STL holds the body in metres, without the propeller discs or ``without``."""
+    block = assembly.Part("block", "electronics", cq.Solid.makeBox(10, 20, 30), 1)
+    cover = assembly.Part("canopy", "cover", cq.Solid.makeBox(2, 20, 30, cq.Vector(10, 0, 0)), 1)
+    disc = assembly.Part("prop_1", "prop", cq.Solid.makeCylinder(50, 2, cq.Vector(0, 0, 40)), 1)
+    drone = assembly.Drone([block, cover, disc], [], block.solid, "none")
+    path = tmp_path / "drone.stl"
+    assert cfd.write_stl(drone, path, ["canopy"]) == 12  # two triangles per box face
+    coords = [float(w) for line in path.read_text().splitlines() if "vertex" in line
+              for w in line.split()[1:]]  # fmt: skip
+    assert max(coords) == pytest.approx(0.03)
+    assert min(coords) == pytest.approx(0.0)
+
+
+def test_cfd_case_files() -> None:
+    """The air box is 1.5 x 1 x 1 m in 40 mm cells, and every field has a condition on
+    each of the four patches."""
+    out = cfd.files({"speed": 10, "kinematic_viscosity": 1.5e-5})
+    assert "(38 25 25)" in out["system/blockMeshDict"]
+    for name in ("U", "p", "k", "omega", "nut"):
+        text = out[f"0/{name}"]
+        for patch in ("inlet", "outlet", "sides", "drone"):
+            assert re.search(rf"^    {patch} \{{ type ", text, re.MULTILINE), (name, patch)
+    assert "uniform (-10 0 0)" in out["0/U"]
+
+
+def test_cfd_arguments() -> None:
+    args = cfd.parse_args(["case", "--without", "canopy", "nose_fairing"])
+    assert args.case == Path("case")
+    assert args.without == ["canopy", "nose_fairing"]
+    assert not args.run
+    args = cfd.parse_args(["--run", "case"])
+    assert args.run
+    assert args.without == []
+
+
+def test_pitch_turns_which_plate_shields_which() -> None:
+    """Two plates 20 mm apart: nose down (air from above and ahead) the upper one shields
+    the lower, nose up the other way round."""
+    import aero
+
+    def plate(name: str, z: float) -> assembly.Part:
+        return assembly.Part(name, "frame", cq.Solid.makeBox(200, 100, 2, cq.Vector(0, 0, z)), 1)
+
+    plates = [plate("bottom_plate", 0), plate("top_plate", 20)]
+    down = aero.drag(plates, {**AERO, "pitch_deg": 15})["by_part"]
+    up = aero.drag(plates, {**AERO, "pitch_deg": -15})["by_part"]
+    assert down["top_plate"] > down["bottom_plate"]
+    assert up["bottom_plate"] > up["top_plate"]
+    assert down["top_plate"] == pytest.approx(up["bottom_plate"], rel=0.02)
+
+
+def test_motors_sit_on_the_wheelbase(drone: assembly.Drone, params: dict[str, Any]) -> None:
+    """The motor axes are ``motor_spacing`` apart, which gives the frame's wheelbase."""
+    f = params["frame"]
+    assert math.hypot(*f["motor_spacing"]) == pytest.approx(f["wheelbase"], abs=0.5)
+    centres = {
+        pt.name: pt.solid.Center() for pt in drone.parts if re.fullmatch(r"motor_\d", pt.name)
+    }
+    xs = sorted({round(c.x, 1) for c in centres.values()})
+    ys = sorted({round(c.y, 1) for c in centres.values()})
+    assert xs[-1] - xs[0] == pytest.approx(f["motor_spacing"][0], abs=0.2)
+    assert ys[-1] - ys[0] == pytest.approx(f["motor_spacing"][1], abs=0.2)
+
+
+def test_render_fills_the_box_outline() -> None:
+    """A 10 x 20 x 30 mm box seen from the front is fitted to 92 % of the picture's height,
+    so it covers 0.92 x 0.92 * 20 / 30 of it."""
+    import numpy as np
+    import render
+
+    vertices, triangles = cq.Solid.makeBox(10, 20, 30).tessellate(0.1)
+    v = np.array([(p.x, p.y, p.z) for p in vertices])
+    mesh = render.Mesh("block", v[np.array(triangles)], np.array([0.2, 0.4, 0.8]), False)
+    img = render.rasterise([mesh], (0.0, 0.0), (120, 120))
+    drawn = np.abs(img - render.BACKGROUND).max(axis=-1) > 0.02
+    assert drawn.mean() == pytest.approx(0.92 * 0.92 * 20 / 30, abs=0.02)
+    assert drawn[60, 60]
+    assert not drawn[60, 5]

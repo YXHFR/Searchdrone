@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import raster
 
 if TYPE_CHECKING:
     from assembly import Drone, Part
@@ -34,7 +35,7 @@ PIXEL = 0.5  # mm
 TOUCH = 1e-6  # mm: faces this close count as touching
 ROUND_PARTS = ("motor", "fastener", "cable")
 ROUND_NAMES = ("standoff", "arm_standoff", "gps_mast")
-FLAT_NAMES = ("bottom_plate", "top_plate", "arm", "reinforce", "strap")
+FLAT_NAMES = ("bottom_plate", "top_plate", "arm", "strap")  # and reinforce_*
 
 
 def shape_class(part: Part) -> str:
@@ -103,23 +104,11 @@ def _fill(
         j = min(max(math.ceil(x) - 1, 0), w - 1)
         front[i, j] = max(front[i, j], z)
         back[i, j] = min(back[i, j], z)
-    x0, x1 = max(math.floor(px.min()), 0), min(math.ceil(px.max()), w - 1)
-    y0, y1 = max(math.floor(py.min()), 0), min(math.ceil(py.max()), h - 1)
-    (ax, bx, cx), (ay, by, cy) = px, py
-    area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay)
-    if abs(area) < 1e-12 or x0 > x1 or y0 > y1:
+    cells = raster.triangle(px, py, pz, front.shape)
+    if cells is None:
         return
-    xs = np.arange(x0, x1 + 1) + 0.5
-    ys = np.arange(y0, y1 + 1)[:, None] + 0.5
-    w0 = ((bx - xs) * (cy - ys) - (cx - xs) * (by - ys)) / area
-    w1 = ((cx - xs) * (ay - ys) - (ax - xs) * (cy - ys)) / area
-    w2 = 1 - w0 - w1
-    inside = (w0 >= -1e-9) & (w1 >= -1e-9) & (w2 >= -1e-9)
-    if not inside.any():
-        return
-    z = w0 * pz[0] + w1 * pz[1] + w2 * pz[2]
-    f = front[y0 : y1 + 1, x0 : x1 + 1]
-    b = back[y0 : y1 + 1, x0 : x1 + 1]
+    rows, cols, inside, z = cells
+    f, b = front[rows, cols], back[rows, cols]
     np.maximum(f, np.where(inside, z, -np.inf), out=f)
     np.minimum(b, np.where(inside, z, np.inf), out=b)
 

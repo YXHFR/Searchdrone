@@ -577,12 +577,18 @@ def strap(p: Params, battery: Params) -> cq.Shape:
 
 
 def antenna(p: Params, start: Point3, exit_: Point3, direction: Point3) -> cq.Shape:
-    """A receiver antenna: the thin coax from the receiver to ``exit_``, then the thicker
-    active element (``element``: length, diameter) pointing along ``direction``."""
-    coax = tube([start, exit_], p["diameter"])
-    length, d = p["element"]
+    """A receiver antenna ``length`` long: the thin coax from the receiver to ``exit_`` and
+    on along ``direction``, then the thicker active element (``element``: length,
+    diameter) at its end."""
+    el_length, d = p["element"]
     v = cq.Vector(*direction).normalized()
-    element = cq.Solid.makeCylinder(d / 2, length, cq.Vector(*exit_), v)
+    inside = (cq.Vector(*exit_) - cq.Vector(*start)).Length
+    rest = p["length"] - inside - el_length
+    if rest < 0:
+        raise ValueError(f"antenna.length {p['length']} too short to reach the frame's edge")
+    end = cq.Vector(*exit_) + v * rest
+    coax = tube([start, exit_, (end.x, end.y, end.z)], p["diameter"])
+    element = cq.Solid.makeCylinder(d / 2, el_length, end, v)
     return fuse(coax, element)
 
 

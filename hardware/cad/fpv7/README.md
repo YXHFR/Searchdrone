@@ -165,8 +165,8 @@ shows:
 
 - `aero.py` gives 185 cm^2 with the covers, a third more than CFD; it stays the estimate
   in the report until flight logs calibrate it, since the CFD mesh is coarse for 2.5 mm
-  plates and 2 mm cables and has no boundary layers. Both lie below NASA's range for
-  larger quads.
+  plates and 2 mm cables and has no boundary layers. `aero.py` lands inside NASA's range
+  of 180 to 230 cm^2 for larger quads, CFD below it.
 - The covers lower the pressure drag by 3 %, about what their extra wetted area adds in
   friction; the canopy alone by 1.3 %. A different canopy shape cannot lower the drag by
   more than these few percent of a body where the battery, legs, arms and motors make

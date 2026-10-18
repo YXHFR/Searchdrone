@@ -142,11 +142,6 @@ def fov_hits(drone: Drone) -> list[dict[str, Any]]:
     return hits
 
 
-def frontal_area_mm2(parts: list[Part]) -> float:
-    """Area of the parts' silhouette seen from the front (projected on the y-z plane)."""
-    return unary_union([_silhouette(pt.solid, ("y", "z")) for pt in parts]).area if parts else 0.0
-
-
 def report(drone: Drone, p: dict[str, Any]) -> dict[str, Any]:
     mp = mass_properties(drone)
     ref = p["reference"]

@@ -574,12 +574,13 @@ def cables(
         kind: str,
         offsets: list[float],
         plane: tuple[float, float] = (0.0, 1.0),
+        mass_factor: float = 1.0,
     ) -> None:
         spec = w[kind]
         for j, off in enumerate(offsets, start=1):
             shifted = [(x + off * plane[0], y + off * plane[1], zz) for x, y, zz in pts]
             shape = parts.tube(shifted, spec["diameter"])
-            mass = spec["g_per_m"] * parts.path_length(shifted) / 1000
+            mass = mass_factor * spec["g_per_m"] * parts.path_length(shifted) / 1000
             suffix = f"_{j}" if len(offsets) > 1 else ""
             out.append(Part(f"{name}{suffix}", "cable", shape, mass))
 
@@ -605,8 +606,13 @@ def cables(
     xt_len = 2 * p["xt60"]["length"] - 9
     gap = bw["diameter"] / 2 + 1.35
     batt_rear = lay["battery_x"] - p["battery"]["length"] / 2
+    # The battery's own lead: its mass is in the battery's.
     add(
-        "battery_lead", [(batt_rear, 0, xt_z), (xt_x + xt_len / 2, 0, xt_z)], "battery", [-gap, gap]
+        "battery_lead",
+        [(batt_rear, 0, xt_z), (xt_x + xt_len / 2, 0, xt_z)],
+        "battery",
+        [-gap, gap],
+        mass_factor=0.0,
     )
     rear = xt_x - xt_len / 2
     riser_x = rear - 4
@@ -618,10 +624,6 @@ def cables(
         "battery",
         [-gap, gap],
     )
-    # out[-2:] are the pigtail wires; the battery lead's mass is in the battery's.
-    for k, part in enumerate(out):
-        if part.name.startswith("battery_lead"):
-            out[k] = Part(part.name, part.group, part.solid, 0.0)
 
     # BEC to the Pi: up through the top plate's front hole, back under the tray's nose.
     pw = w["power"]

@@ -163,7 +163,7 @@ wiring:                       # cables as tubes, mass per metre
   power: {diameter: 1.9, count: 2, g_per_m: 7.5}      # 20 AWG, BEC to the Pi
   gps: {diameter: 2.5, count: 1, g_per_m: 8}          # JST-GH 6-pin lead
   ribbon: {width: 16, thickness: 0.3, g_per_m: 6}     # camera FFC
-xt60: {length: 23.8, width: 9.2, height: 16.4, mass: 7.7}   # XT60H, per half; a mated pair
+xt60: {length: 23.8, width: 9.2, height: 16.4, mass: 7.7}   # XT60H: sizes per half, mass of the mated pair
 strap: {width: 20, thickness: 1.5, mass: 7.5, x: [-40, 40]}  # two battery straps
 antenna: {length: 65, diameter: 1.5, element: [30, 3], mass: 0.3, spread_deg: 30, droop_deg: 30}   # two receiver antennas
 

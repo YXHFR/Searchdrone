@@ -18,6 +18,7 @@ than the whole CAD job, and needs OpenFOAM. README.md has the results.
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -323,7 +324,9 @@ def write_case(case: Path, without: Sequence[str] = ()) -> None:
 def run(case: Path, a: dict[str, Any]) -> dict[str, float]:
     """Mesh and solve the case, then integrate the drag (see ``drag``)."""
     env = {**os.environ, "WM_PROJECT_DIR": os.environ.get("WM_PROJECT_DIR", "/usr/share/openfoam")}
-    par = ["mpirun", "--allow-run-as-root", "--oversubscribe", "-np", str(CORES)]
+    par = ["mpirun", "--oversubscribe", "-np", str(CORES)]
+    if os.geteuid() == 0:  # containers: OpenMPI refuses root unless told
+        par.insert(1, "--allow-run-as-root")
     times = ",".join(str(t) for t in sample_times())
     steps = [
         ["blockMesh"],
@@ -419,15 +422,21 @@ def drag(case: Path, a: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="OpenFOAM case of the fpv7 body.")
+    parser.add_argument("case", type=Path, help="directory to write the case to")
+    parser.add_argument(
+        "--without", nargs="*", default=[], metavar="PART", help="parts to leave out"
+    )
+    parser.add_argument("--run", action="store_true", help="mesh, solve and print Cd A")
+    return parser.parse_args(argv)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    run_it = "--run" in args
-    args = [a for a in args if a != "--run"]
-    without = args[args.index("--without") + 1 :] if "--without" in args else []
-    case = Path(args[0])
-    write_case(case, without)
-    if run_it:
-        result = run(case, assembly.load_params()["aero"])
+    args = parse_args(argv)
+    write_case(args.case, args.without)
+    if args.run:
+        result = run(args.case, assembly.load_params()["aero"])
         sys.stdout.write("".join(f"{k} = {v:.5f}\n" for k, v in result.items()))
     return 0
 

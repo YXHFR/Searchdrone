@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import matplotlib as mpl
 import numpy as np
+import raster
 
 mpl.use("Agg")
 
@@ -191,35 +192,21 @@ def _fill(
     color: np.ndarray,
 ) -> None:
     """Fill one projected triangle into the buffers, keeping the nearest surface."""
-    h, w = depth.shape
-    x0, x1 = max(math.floor(px.min()), 0), min(math.ceil(px.max()), w - 1)
-    y0, y1 = max(math.floor(py.min()), 0), min(math.ceil(py.max()), h - 1)
-    if x0 > x1 or y0 > y1:
+    cells = raster.triangle(px, py, pz, depth.shape)
+    if cells is None:
         return
-    (ax, bx, cx), (ay, by, cy) = px, py
-    area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay)
-    if abs(area) < 1e-12:
-        return
-    xs = np.arange(x0, x1 + 1) + 0.5
-    ys = np.arange(y0, y1 + 1)[:, None] + 0.5
-    w0 = ((bx - xs) * (cy - ys) - (cx - xs) * (by - ys)) / area
-    w1 = ((cx - xs) * (ay - ys) - (ax - xs) * (cy - ys)) / area
-    w2 = 1 - w0 - w1
-    inside = (w0 >= -1e-9) & (w1 >= -1e-9) & (w2 >= -1e-9)
-    if not inside.any():
-        return
-    z = w0 * pz[0] + w1 * pz[1] + w2 * pz[2]
+    rows, cols, inside, z = cells
     if translucent:
-        region = glass_depth[y0 : y1 + 1, x0 : x1 + 1]
+        region = glass_depth[rows, cols]
         nearer = inside & (z > region)
         region[nearer] = z[nearer]
-        glass_color[y0 : y1 + 1, x0 : x1 + 1][nearer] = color * (0.75 + 0.25 * shade)
+        glass_color[rows, cols][nearer] = color * (0.75 + 0.25 * shade)
         return
-    region = depth[y0 : y1 + 1, x0 : x1 + 1]
+    region = depth[rows, cols]
     nearer = inside & (z > region)
     region[nearer] = z[nearer]
-    ids[y0 : y1 + 1, x0 : x1 + 1][nearer] = k
-    shading[y0 : y1 + 1, x0 : x1 + 1][nearer] = shade
+    ids[rows, cols][nearer] = k
+    shading[rows, cols][nearer] = shade
 
 
 def _legend(ax: Axes, colors: dict[str, tuple[float, float, float]], groups: set[str]) -> None:
