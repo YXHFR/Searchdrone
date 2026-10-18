@@ -25,7 +25,13 @@ from sd_mav.vehicle import FcTelemetry
 from sd_obs.clock import MonotonicClock
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.perception import loop as loop_module
-from sd_onboard.perception.loop import MAX_POSE_AGE_MS, PerceptionLoop, pose_from
+from sd_onboard.perception.loop import (
+    MAX_POSE_AGE_MS,
+    MAX_TURN_RATE_DPS,
+    AttitudeRate,
+    PerceptionLoop,
+    pose_from,
+)
 from sd_onboard.perception.sources import DirStillSource, read_ppm
 from sd_safety.targets import Plane
 from sd_schemas.geo import plane_offset
@@ -365,3 +371,26 @@ async def test_a_report_too_large_to_send_never_holds_up_events(tmp_path: Path) 
         await asyncio.gather(flush, return_exceptions=True)
     assert link.dropped_perception == 1
     assert session.sent == ["OnboardEvent"]
+
+
+def test_attitude_rate_between_samples() -> None:
+    rate = AttitudeRate()
+    t = FcTelemetry(attitude_mono_ms=1000, roll_deg=0.0, pitch_deg=0.0, yaw_deg=355.0)
+    assert rate.update(t) == 0.0  # one sample: no rate yet
+    assert rate.update(t) == 0.0  # the same sample again changes nothing
+    t2 = replace(t, attitude_mono_ms=1250, pitch_deg=2.0, yaw_deg=5.0)  # 10 deg of yaw
+    assert rate.update(t2) == pytest.approx(40.0)  # yaw across north: 10 deg in 0.25 s
+    t3 = replace(t2, attitude_mono_ms=1500, roll_deg=1.0)
+    assert rate.update(t3) == pytest.approx(4.0)
+    assert rate.update(FcTelemetry()) == pytest.approx(4.0)  # no attitude: keeps the last
+
+
+def test_a_still_taken_while_turning_is_skipped(tmp_path: Path) -> None:
+    write_still(tmp_path, "block0_h30")
+    lp = loop(tmp_path, FakeClock(), {})
+    captured = lp.source.poll()
+    assert captured is not None
+    t = telemetry("block0_h30", 0)
+    assert lp.handle(captured, t, 0, turn_rate_dps=MAX_TURN_RATE_DPS + 1) is None
+    assert lp.stats.skipped_turning == 1
+    assert lp.handle(captured, t, 0, turn_rate_dps=MAX_TURN_RATE_DPS - 1) is not None
