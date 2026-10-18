@@ -196,8 +196,9 @@ def test_step_has_groups_and_colours(drone: assembly.Drone, tmp_path: Path) -> N
     out = tmp_path / "fpv7.step"
     assembly.write_step(drone, out)
     text = out.read_text(encoding="utf-8")
-    for group in ("frame", "fastener", "motor", "prop", "prop_disc", "cover", "cable"):
-        assert f"PRODUCT('{group}'" in text, group
+    groups = ("frame", "fastener", "motor", "prop", "prop_disc", "battery", "camera", "cable")
+    for group in groups:
+        assert f"PRODUCT('{group}_group'" in text, group
     for pt in drone.parts + drone.display:
         assert f"PRODUCT('{pt.name}'" in text, pt.name
     styled = text.count("STYLED_ITEM('color'")

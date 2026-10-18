@@ -771,7 +771,8 @@ def _assembly(
     name: str, items: list[Part], colors: dict[str, tuple[float, float, float]]
 ) -> cq.Assembly:
     """An assembly with one sub-assembly per group (in the order of first appearance),
-    each holding its parts as named, coloured solids."""
+    named ``<group>_group`` (names must be unique, and the battery and the camera are both
+    a group and a part), each holding its parts as named, coloured solids."""
     assy = cq.Assembly(name=name)
     groups: dict[str, cq.Assembly] = {}
     for part in items:
@@ -781,17 +782,17 @@ def _assembly(
             else "prop_disc"
         )
         if group not in groups:
-            groups[group] = cq.Assembly(name=group)
+            groups[group] = cq.Assembly(name=f"{group}_group")
         groups[group].add(part.solid, name=part.name, color=cq.Color(*colors[part.group]))
-    for group, sub in groups.items():
-        assy.add(sub, name=group)
+    for sub in groups.values():
+        assy.add(sub)
     return assy
 
 
 def write_step(drone: Drone, path: Path) -> None:
     """The whole drone: a sub-assembly per group with a coloured solid per part. The
-    propeller blades are in ``prop``; the swept discs that the checks use are in
-    ``prop_disc``."""
+    propeller blades are in ``prop_group``; the swept discs that the checks use are in
+    ``prop_disc_group``."""
     _assembly("fpv7", drone.parts + drone.display, COLORS).export(str(path), "STEP")
     normalise_step(path)
 

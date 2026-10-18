@@ -30,8 +30,9 @@ just cad-test       # overlaps, propeller margins, camera view, drag, repeatable
 
 Output in `build/cad/fpv7/` (the CI artifact `cad-fpv7`):
 - `fpv7.step`: the whole drone in millimetres, z up, with a sub-assembly per group
-  (`frame`, `fastener`, `motor`, `prop`, `prop_disc`, `electronics`, `computer`, `camera`,
-  `battery`, `printed`, `cover`, `cable`) and one named, coloured solid per part;
+  (`frame_group`, `fastener_group`, `motor_group`, `prop_group`, `prop_disc_group`,
+  `electronics_group`, `computer_group`, `camera_group`, `battery_group`, `printed_group`,
+  `cover_group`, `cable_group`) and one named, coloured solid per part;
 - `step/<part>.step`: every part on its own, in place in the drone's coordinates, and
   `step/canopy_form.step`: the canopy's outer form, a closed solid of ten faces to edit;
 - `fpv7.stl` and `stl/<part>.stl`: the printed parts (`canopy.stl`, `nose_fairing.stl`,
@@ -153,9 +154,9 @@ färgad kropp per del.
    modeling orientation: Z up* innan du öppnar filen, annars ligger drönaren på sidan.
 2. **Öppna:** *File > Open > Open from my computer* och välj `fpv7.step` (från
    CI-artefakten `cad-fpv7` eller `build/cad/fpv7/` efter `just cad`). Fusion laddar upp
-   filen och gör om den till en design med komponenterna `frame`, `motor`, `prop` och så
-   vidare. Dölj `prop_disc` (ögat i webbläsaren till vänster): det är skivorna som
-   kontrollerna använder, de ligger runt propellrarna.
+   filen och gör om den till en design med komponenterna `frame_group`, `motor_group`,
+   `prop_group` och så vidare. Dölj `prop_disc_group` (ögat i webbläsaren till vänster):
+   det är skivorna som kontrollerna använder, de ligger runt propellrarna.
 3. **Ändra kåpan:** öppna `step/canopy_form.step`, kåpans yttre form som en sluten kropp
    med tio ytor. Ändra formen (t.ex. *Modify > Press Pull* på taket, eller *Fillet*
    på kanterna), skala sedan ur den med *Modify > Shell*: markera undersidan och ge
