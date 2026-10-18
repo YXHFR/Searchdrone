@@ -233,6 +233,95 @@ async def test_takeover_pauses_the_ai_and_sends_nothing() -> None:
         assert "running" in r.up.stages(resume.command_id)
 
 
+def _takeover(r: Rig, tid: UUID, *, active: bool) -> ManualTakeover:
+    return ManualTakeover(
+        takeover_id=tid, active=active, action_seq=r.next_seq(), operator_id="operator:pilot"
+    )
+
+
+async def _resume_codes(r: Rig) -> tuple[str, ...]:
+    resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
+    return r.up.codes(resume.command_id)
+
+
+async def test_takeover_whose_loiter_comes_before_its_notice_is_not_a_stop() -> None:
+    """The ground switches to LOITER at once and its notice can come a moment later: the
+    change is the pilot's take-over, not a stop, so the AI may resume after the hand-back."""
+    async with rig() as r:
+        await _in_goto(r)
+        tid = new_id()
+        r.fc.set_mode_external(CopterMode.LOITER)  # seen before the notice
+        await r.run(0.3)
+        assert r.ex.state == S.HELD and r.ex.held_by == "external" and r.ex.over.stop_latch
+        r.ex.on_takeover(_takeover(r, tid, active=True), new_id())
+        assert r.ex.held_by == "operator_manual" and not r.ex.over.stop_latch
+        await r.run(3)
+        r.ex.on_takeover(_takeover(r, tid, active=False), new_id())
+        assert r.ex.state == S.HOLD
+        resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
+        assert "running" in r.up.stages(resume.command_id)
+
+
+async def test_an_unrequested_loiter_without_a_notice_stays_a_stop() -> None:
+    async with rig() as r:
+        await _in_goto(r)
+        r.fc.set_mode_external(CopterMode.LOITER)
+        await r.run(3)
+        assert r.ex.over.stop_latch and r.ex.held_by == "external"
+        resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
+        assert "running" not in r.up.stages(resume.command_id)  # held and latched
+
+
+async def test_a_takeover_notice_outside_the_window_does_not_lift_the_stop() -> None:
+    async with rig() as r:
+        await _in_goto(r)
+        tid = new_id()
+        r.fc.set_mode_external(CopterMode.LOITER)
+        await r.run(5)  # the classification window is over
+        r.ex.on_takeover(_takeover(r, tid, active=True), new_id())
+        assert r.ex.over.stop_latch
+        r.ex.on_takeover(_takeover(r, tid, active=False), new_id())
+        assert await _resume_codes(r) == ("ONB_STOP_LATCHED",)
+
+
+async def test_a_stop_before_the_takeover_keeps_its_latch() -> None:
+    """A real STOP stays latched when the pilot then takes over and hands back."""
+    async with rig() as r:
+        await _in_goto(r)
+        r.ex.on_override(r.notice("stop"))
+        r.fc.set_mode_external(CopterMode.BRAKE)
+        await r.run(0.3)
+        assert r.ex.over.stop_latch
+        tid = new_id()
+        r.ex.on_takeover(_takeover(r, tid, active=True), new_id())
+        assert r.ex.over.stop_latch  # only Resume or landing lifts a STOP
+        r.ex.on_takeover(_takeover(r, tid, active=False), new_id())
+        assert await _resume_codes(r) == ("ONB_STOP_LATCHED",)
+
+
+async def test_an_external_brake_is_never_a_takeover() -> None:
+    """The ground takes over with LOITER; a BRAKE nobody asked for stays a stop."""
+    async with rig() as r:
+        await _in_goto(r)
+        r.fc.set_mode_external(CopterMode.BRAKE)
+        await r.run(0.3)
+        r.ex.on_takeover(_takeover(r, new_id(), active=True), new_id())
+        assert r.ex.over.stop_latch
+
+
+async def test_another_mode_change_in_the_window_keeps_the_stop() -> None:
+    """LOITER, then the flight controller moves on before the notice: not one clean
+    take-over, so the latch stays."""
+    async with rig() as r:
+        await _in_goto(r)
+        r.fc.set_mode_external(CopterMode.LOITER)
+        await r.run(0.3)
+        r.fc.set_mode_external(CopterMode.BRAKE)
+        await r.run(0.3)
+        r.ex.on_takeover(_takeover(r, new_id(), active=True), new_id())
+        assert r.ex.over.stop_latch
+
+
 async def test_return_home_refused_is_retried_until_it_flies_home() -> None:
     """SmartRTL and RTL refused: no dead end in RTL; the executor keeps asking."""
     async with rig() as r:
