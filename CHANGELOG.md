@@ -8,6 +8,18 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Fly a drawn path: the pilot draws a path on the map ("Rita väg", `pa-1`, ...: a
+  `path` annotation, a GeoJSON LineString of 2-50 points) and asks for it in the chat. The
+  AI proposes `follow_path` by the path's name only; sd-brain takes the points from the
+  drawn path, so the model never writes coordinates. The order always needs the pilot's
+  click, and the drone flies the points as an AUTO mission and then hovers at the last
+  one. The gate checks the whole line against the charter, the height and speed limits,
+  a 5 km cap (`PATH_TOO_LONG`) and the battery (`ROUTE_BATTERY`: the path, the flight
+  home and the landing must leave the reserve, at an assumed 5 % per minute), with the
+  numbers in the Swedish message. The panel shows drawn paths, the planned path
+  (dashed), the flown part (solid) and the progress in %, and refuses a path outside the
+  search area before saving it. SITL scenarios SC_PATH (every point within 3 m, then
+  hover) and SC_PATH_stop (STOP halfway: still within 2 s).
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password

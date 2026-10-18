@@ -1,0 +1,83 @@
+// Keeps the path layers in step with the stores: drawn paths, the path the drone follows
+// (planned dashed, flown solid) and how far along it is.
+import { useEffect, useState } from "react";
+import type { Command } from "../../api/types";
+import { useLiveStore } from "../../state/liveStore";
+import { useMissionStore } from "../../state/missionStore";
+import { type ActivePath, activePath, pathFlownData, pathPlanData, pathsData } from "./pathData";
+
+type MapLike = import("maplibre-gl").Map;
+type MapMod = typeof import("./createMap");
+
+const MOVES = new Set(["goto", "survey_sector", "follow_path", "resume", "return_home", "orbit"]);
+
+function current(): ActivePath | null {
+  const m = useMissionStore.getState();
+  const live = useLiveStore.getState();
+  const pending = Object.values(m.approvals)
+    .filter((a) => a.kind === "command" && a.status === "pending")
+    .map((a) => m.commands[a.subject_id])
+    .filter((c): c is Command => c !== undefined);
+  const latest =
+    Object.values(m.commands)
+      .filter((c) => MOVES.has(c.skill) && c.status !== "rejected_by_gate")
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null;
+  const tel = live.telemetry;
+  const drone = tel && Number.isFinite(tel.lat) ? { lat: tel.lat, lon: tel.lon } : null;
+  return activePath(
+    m.activeCommandId ? (m.commands[m.activeCommandId] ?? null) : null,
+    pending,
+    latest,
+    drone,
+    live.vehicle?.snapshot,
+  );
+}
+
+/** Pushes the path layers while the map is ready; returns the path being shown. */
+export function usePathOverlay(
+  ready: boolean,
+  handle: { current: { map: MapLike; mod: MapMod } | null },
+  visible: boolean,
+): ActivePath | null {
+  const [shown, setShown] = useState<ActivePath | null>(null);
+  useEffect(() => {
+    const h = handle.current;
+    if (!ready || !h) return;
+    const push = (): void => {
+      const p = current();
+      const tel = useLiveStore.getState().telemetry;
+      const drone = tel ? { lat: tel.lat, lon: tel.lon } : null;
+      h.mod.setPathData(
+        h.map,
+        "paths",
+        pathsData(Object.values(useMissionStore.getState().annotations)),
+      );
+      h.mod.setPathData(h.map, "path-plan", pathPlanData(p));
+      h.mod.setPathData(h.map, "path-flown", pathFlownData(p, drone));
+      setShown(p);
+    };
+    push();
+    const unsubs = [
+      useMissionStore.subscribe((s, prev) => {
+        if (
+          s.annotations !== prev.annotations ||
+          s.commands !== prev.commands ||
+          s.approvals !== prev.approvals ||
+          s.activeCommandId !== prev.activeCommandId
+        )
+          push();
+      }),
+      useLiveStore.subscribe((s, prev) => {
+        if (s.telemetry !== prev.telemetry || s.vehicle !== prev.vehicle) push();
+      }),
+    ];
+    return () => {
+      for (const u of unsubs) u();
+    };
+  }, [ready, handle]);
+  useEffect(() => {
+    const h = handle.current;
+    if (ready && h) h.mod.setPathsVisible(h.map, visible);
+  }, [ready, handle, visible]);
+  return shown;
+}

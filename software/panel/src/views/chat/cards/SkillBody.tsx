@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { PanelApproval } from "../../../api/approvals";
+import { formatLength, lengthM, orderPath } from "../../map/pathData";
 
 const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 5 });
 
@@ -12,10 +13,21 @@ export function SkillBody({ approval }: { approval: PanelApproval }) {
   const lat = typeof p.lat === "number" ? p.lat : null;
   const lon = typeof p.lon === "number" ? p.lon : null;
   const alt = typeof p.alt_m === "number" ? p.alt_m : null;
-  const rest = Object.entries(p).filter(([k]) => !["lat", "lon", "alt_m", "polygon"].includes(k));
+  const path = orderPath(c);
+  const hide = ["lat", "lon", "alt_m", "polygon", ...(path ? ["points", "label"] : [])];
+  const rest = Object.entries(p).filter(([k]) => !hide.includes(k));
   return (
     <div className="skill-body">
-      {lat !== null && lon !== null ? (
+      {path ? (
+        <p data-testid="skill-path">
+          {t("cards.skill.path", {
+            label: typeof p.label === "string" ? p.label : "",
+            n: path.length,
+            length: formatLength(lengthM(path)),
+            alt: alt ?? "–",
+          })}
+        </p>
+      ) : lat !== null && lon !== null ? (
         <p>
           {t("cards.skill.point", {
             lat: nf.format(lat),
