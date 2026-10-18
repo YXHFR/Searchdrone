@@ -31,7 +31,8 @@ export async function expectSafetyVisible(page: Page, label = ""): Promise<void>
   }
 }
 
-export const isMobile = (page: Page): boolean => (page.viewportSize()?.width ?? 1280) < 768;
+/** The phone layout (map and sheet), which the shell uses below 900 px wide. */
+export const isMobile = (page: Page): boolean => (page.viewportSize()?.width ?? 1280) < 900;
 
 /** The shell's layout: "desktop" (three columns), "medium" (two) or "phone" (map and sheet). */
 export async function layoutOf(page: Page): Promise<string> {

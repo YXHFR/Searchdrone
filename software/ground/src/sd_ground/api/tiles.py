@@ -10,10 +10,10 @@ files whose names match a fixed pattern and that lie inside the tiles directory.
 
 from __future__ import annotations
 
-import gzip
 import json
 import re
 import struct
+import zlib
 from pathlib import Path
 from typing import Annotated
 
@@ -112,11 +112,14 @@ def read_attribution(path: Path) -> str | None:
             f.seek(offset)
             raw = f.read(length)
         if head[97] == _COMPRESSION_GZIP:
-            raw = gzip.decompress(raw)
+            inflate = zlib.decompressobj(wbits=31)
+            raw = inflate.decompress(raw, _MAX_METADATA)
+            if inflate.unconsumed_tail or not inflate.eof:
+                return None
         elif head[97] != _COMPRESSION_NONE:
             return None
         meta = json.loads(raw)
-    except (OSError, EOFError, ValueError):
+    except (OSError, EOFError, ValueError, zlib.error):
         return None
     text = meta.get("attribution") if isinstance(meta, dict) else None
     if not isinstance(text, str) or not 0 < len(text.strip()) <= _MAX_ATTRIBUTION:

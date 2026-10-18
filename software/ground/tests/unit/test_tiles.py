@@ -226,6 +226,8 @@ def test_photo_pack_with_attribution(
         (TileType.JPEG, {"attribution": "   "}),
         (TileType.JPEG, {"attribution": "x" * 301}),
         (TileType.JPEG, {"attribution": 7}),
+        # small on disk, but inflates past the metadata limit
+        (TileType.JPEG, {"attribution": "ok", "pad": "a" * 200_000}),
     ],
 )
 def test_photo_pack_without_what_it_needs_is_not_shown(

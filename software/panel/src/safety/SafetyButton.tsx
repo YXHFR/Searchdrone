@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { House, OctagonX, X } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,6 +21,18 @@ const hm = new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit"
 /** States that follow a request that left the panel: shown with the time it was sent. */
 const AFTER_SEND = new Set(["sent", "acked", "unconfirmed"]);
 
+/** The status line, prefixed with the time it was sent once the request has left the panel. */
+export function sentFeedback(
+  t: TFunction,
+  state: string,
+  status: string | null,
+  pressedAt: number | null,
+): string | null {
+  return status && pressedAt !== null && AFTER_SEND.has(state)
+    ? t("safety.feedback", { time: hm.format(pressedAt), state: status })
+    : status;
+}
+
 export function SafetyButton({ action, vehicleId, disabledReason = null }: Props) {
   const { t } = useTranslation();
   const a = useVehicleAction(vehicleId, action);
@@ -30,10 +43,7 @@ export function SafetyButton({ action, vehicleId, disabledReason = null }: Props
     a.state === "acked"
       ? t(isStop ? "safety.done.stop" : "safety.done.home")
       : actionText(t, a.text);
-  const feedback =
-    status && pressedAt !== null && AFTER_SEND.has(a.state)
-      ? t("safety.feedback", { time: hm.format(pressedAt), state: status })
-      : status;
+  const feedback = sentFeedback(t, a.state, status, pressedAt);
   const sub = disabledReason ?? feedback ?? t(isStop ? "safety.stop.sub" : "safety.home.sub");
   return (
     <div className="safety-slot" data-state={a.state}>

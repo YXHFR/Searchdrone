@@ -1,9 +1,15 @@
 import { observerSession, outcome, vehicleLive } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, isMobile, type ShownView, showView } from "../helpers/safety";
+import {
+  expectSafetyVisible,
+  isMobile,
+  type ShownView,
+  showView,
+  withCamera,
+} from "../helpers/safety";
 
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const VIEWS: ShownView[] = ["chat", "events", "map", "candidates", "status", "manual"];
+const VIEWS: ShownView[] = ["chat", "events", "map", "video", "candidates", "status", "manual"];
 const STOP = "/api/v1/vehicles/sim-01/actions/stop";
 const HOME = "/api/v1/vehicles/sim-01/actions/return_home";
 
@@ -12,6 +18,7 @@ test.describe("safety bar is always visible", () => {
     page,
     ground,
   }) => {
+    withCamera(ground);
     await ground.open();
     await expectSafetyVisible(page, "start");
     for (const v of VIEWS) {

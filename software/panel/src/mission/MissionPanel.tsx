@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { STALE_MS } from "../header/pills";
 import { useNow } from "../lib/useNow";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
@@ -23,7 +24,7 @@ export function MissionPanel() {
   const sectors = useMissionStore((s) => s.sectors);
   const rows = sectorRows(sectors);
   const cov = coverage(sectors);
-  const stale = at === null || now - at > 3_000;
+  const stale = at === null || now - at > STALE_MS;
   const started = mission?.activated_at ?? null;
   return (
     <section className="lc-sec" data-testid="mission-panel">

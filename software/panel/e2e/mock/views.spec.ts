@@ -1,5 +1,12 @@
 import { expect, test } from "../helpers/fakeGround";
-import { isMobile, layoutOf, type ShownView, showView, withCamera } from "../helpers/safety";
+import {
+  expectSafetyVisible,
+  isMobile,
+  layoutOf,
+  type ShownView,
+  showView,
+  withCamera,
+} from "../helpers/safety";
 
 const VIEWS: ShownView[] = ["chat", "events", "map", "video", "candidates", "status", "manual"];
 
@@ -72,6 +79,7 @@ test.describe("views and layout", () => {
     await page.getByTestId("side-tab-mission").click();
     await expect(page.getByTestId("mission-panel")).toBeVisible();
     await expect(page.getByTestId("view-map")).toBeVisible();
+    await expectSafetyVisible(page, "medium, mission tab");
   });
 
   test("phone: the map fills the screen, chat and events in a sheet", async ({ page, ground }) => {
