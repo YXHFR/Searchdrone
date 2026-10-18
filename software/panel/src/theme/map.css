@@ -7,8 +7,15 @@
   display: flex;
   flex-direction: column;
 }
-.map-box {
+/* The map and what lies over it; the drawing bar sits below, never under an overlay. */
+.map-stage {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.map-box {
   flex: 1;
   min-height: 0;
 }

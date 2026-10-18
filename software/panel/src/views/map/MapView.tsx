@@ -493,137 +493,151 @@ export default function MapView({ isCompact }: ViewProps) {
   const canDraw = isPilot && missionId !== null;
   return (
     <div className="map-wrap">
-      <div ref={box} className="map-box" data-hotkeys="map" data-testid="map" />
-      {!mapCfg ? (
-        <p className="map-note">{t("views.map.noPack")}</p>
-      ) : !mapCfg.imagery && basemap === "photo" ? (
-        <p className="map-note" data-testid="no-imagery">
-          {t("views.map.noImagery")}
-        </p>
-      ) : null}
-      <div className="map-tools" role="toolbar" aria-label={t("views.map.tools")}>
-        <button type="button" className="tool" onClick={() => centre("drone")}>
-          <Crosshair aria-hidden="true" size={15} />
-          {t("views.map.centreDrone")}
-        </button>
-        <button type="button" className="tool" onClick={() => centre("home")}>
-          <House aria-hidden="true" size={15} />
-          {t("views.map.centreHome")}
-        </button>
-        <button type="button" className="tool" onClick={() => centre("charter")}>
-          <Maximize2 aria-hidden="true" size={15} />
-          {t("views.map.showCharter")}
-        </button>
-        <Menu
-          tool
-          label={t("views.map.layers")}
-          icon={<Layers aria-hidden="true" size={15} />}
-          testId="map-layers-menu"
-        >
-          {() => (
-            <>
-              <fieldset className="map-layers map-basemap" data-testid="map-basemap">
-                <legend>{t("views.map.basemap")}</legend>
-                {(["photo", "map"] as const).map((b) => (
-                  <label key={b}>
-                    <input
-                      type="radio"
-                      name="basemap"
-                      data-testid={`basemap-${b}`}
-                      checked={basemap === b}
-                      onChange={() => setBasemap(b)}
-                    />
-                    {t(`views.map.basemapChoice.${b}`)}
-                  </label>
-                ))}
-              </fieldset>
-              <fieldset className="map-layers" data-testid="map-layers">
-                <legend>{t("views.map.overlays")}</legend>
-                {TOGGLES.map((id) => (
-                  <label key={id}>
-                    <input
-                      type="checkbox"
-                      checked={!hidden.includes(id)}
-                      onChange={(e) =>
-                        setHidden(
-                          e.target.checked ? hidden.filter((x) => x !== id) : [...hidden, id],
-                        )
-                      }
-                    />
-                    {t(`views.map.layer.${id}`)}
-                  </label>
-                ))}
-              </fieldset>
-            </>
-          )}
-        </Menu>
-        {canDraw ? (
+      <div className="map-stage">
+        <div ref={box} className="map-box" data-hotkeys="map" data-testid="map" />
+        {!mapCfg ? (
+          <p className="map-note">{t("views.map.noPack")}</p>
+        ) : !mapCfg.imagery && basemap === "photo" ? (
+          <p className="map-note" data-testid="no-imagery">
+            {t("views.map.noImagery")}
+          </p>
+        ) : null}
+        <div className="map-tools" role="toolbar" aria-label={t("views.map.tools")}>
+          <button type="button" className="tool" onClick={() => centre("drone")}>
+            <Crosshair aria-hidden="true" size={15} />
+            {t("views.map.centreDrone")}
+          </button>
+          <button type="button" className="tool" onClick={() => centre("home")}>
+            <House aria-hidden="true" size={15} />
+            {t("views.map.centreHome")}
+          </button>
+          <button type="button" className="tool" onClick={() => centre("charter")}>
+            <Maximize2 aria-hidden="true" size={15} />
+            {t("views.map.showCharter")}
+          </button>
           <Menu
             tool
-            label={t("draw.menu")}
-            icon={<Pencil aria-hidden="true" size={15} />}
-            testId="draw-menu"
-            active={mode !== "none"}
+            label={t("views.map.layers")}
+            icon={<Layers aria-hidden="true" size={15} />}
+            testId="map-layers-menu"
           >
-            {(close) => (
+            {() => (
               <>
-                <button
-                  type="button"
-                  className="menu-item"
-                  data-testid="draw-polygon"
-                  aria-pressed={mode === "polygon"}
-                  onClick={() => {
-                    close();
-                    startDraw("polygon");
-                  }}
-                >
-                  <Pentagon aria-hidden="true" size={15} />
-                  {t("draw.polygon")}
-                </button>
-                <button
-                  type="button"
-                  className="menu-item"
-                  data-testid="draw-rectangle"
-                  aria-pressed={mode === "rectangle"}
-                  onClick={() => {
-                    close();
-                    startDraw("rectangle");
-                  }}
-                >
-                  <Square aria-hidden="true" size={15} />
-                  {t("draw.rectangle")}
-                </button>
-                <button
-                  type="button"
-                  className="menu-item"
-                  data-testid="draw-path"
-                  aria-pressed={mode === "path"}
-                  onClick={() => {
-                    close();
-                    startDraw("path");
-                  }}
-                >
-                  <Route aria-hidden="true" size={15} />
-                  {t("draw.path")}
-                </button>
-                <button
-                  type="button"
-                  className="menu-item"
-                  data-testid="draw-pin"
-                  aria-pressed={mode === "pin"}
-                  onClick={() => {
-                    close();
-                    modeRef.current = mode === "pin" ? "none" : "pin";
-                    setMode(modeRef.current);
-                  }}
-                >
-                  <MapPin aria-hidden="true" size={15} />
-                  {t("draw.pin")}
-                </button>
+                <fieldset className="map-layers map-basemap" data-testid="map-basemap">
+                  <legend>{t("views.map.basemap")}</legend>
+                  {(["photo", "map"] as const).map((b) => (
+                    <label key={b}>
+                      <input
+                        type="radio"
+                        name="basemap"
+                        data-testid={`basemap-${b}`}
+                        checked={basemap === b}
+                        onChange={() => setBasemap(b)}
+                      />
+                      {t(`views.map.basemapChoice.${b}`)}
+                    </label>
+                  ))}
+                </fieldset>
+                <fieldset className="map-layers" data-testid="map-layers">
+                  <legend>{t("views.map.overlays")}</legend>
+                  {TOGGLES.map((id) => (
+                    <label key={id}>
+                      <input
+                        type="checkbox"
+                        checked={!hidden.includes(id)}
+                        onChange={(e) =>
+                          setHidden(
+                            e.target.checked ? hidden.filter((x) => x !== id) : [...hidden, id],
+                          )
+                        }
+                      />
+                      {t(`views.map.layer.${id}`)}
+                    </label>
+                  ))}
+                </fieldset>
               </>
             )}
           </Menu>
+          {canDraw ? (
+            <Menu
+              tool
+              label={t("draw.menu")}
+              icon={<Pencil aria-hidden="true" size={15} />}
+              testId="draw-menu"
+              active={mode !== "none"}
+            >
+              {(close) => (
+                <>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    data-testid="draw-polygon"
+                    aria-pressed={mode === "polygon"}
+                    onClick={() => {
+                      close();
+                      startDraw("polygon");
+                    }}
+                  >
+                    <Pentagon aria-hidden="true" size={15} />
+                    {t("draw.polygon")}
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    data-testid="draw-rectangle"
+                    aria-pressed={mode === "rectangle"}
+                    onClick={() => {
+                      close();
+                      startDraw("rectangle");
+                    }}
+                  >
+                    <Square aria-hidden="true" size={15} />
+                    {t("draw.rectangle")}
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    data-testid="draw-path"
+                    aria-pressed={mode === "path"}
+                    onClick={() => {
+                      close();
+                      startDraw("path");
+                    }}
+                  >
+                    <Route aria-hidden="true" size={15} />
+                    {t("draw.path")}
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    data-testid="draw-pin"
+                    aria-pressed={mode === "pin"}
+                    onClick={() => {
+                      close();
+                      modeRef.current = mode === "pin" ? "none" : "pin";
+                      setMode(modeRef.current);
+                    }}
+                  >
+                    <MapPin aria-hidden="true" size={15} />
+                    {t("draw.pin")}
+                  </button>
+                </>
+              )}
+            </Menu>
+          ) : null}
+        </div>
+        {shownPath ? (
+          <p className="map-path-progress" role="status" data-testid="path-progress">
+            {t(
+              shownPath.running || shownPath.pct >= 100 ? "draw.pathProgress" : "draw.pathPlanned",
+              {
+                label: String((shownPath.command.params as { label?: unknown }).label ?? ""),
+                pct: Math.round(shownPath.pct),
+              },
+            )}
+          </p>
         ) : null}
+        {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
       </div>
       {mode !== "none" ? (
         <div className="map-draw" role="status" data-testid="draw-bar">
@@ -656,15 +670,6 @@ export default function MapView({ isCompact }: ViewProps) {
           {drawError ? <span className="error">{drawError}</span> : null}
         </div>
       ) : null}
-      {shownPath ? (
-        <p className="map-path-progress" role="status" data-testid="path-progress">
-          {t(shownPath.running || shownPath.pct >= 100 ? "draw.pathProgress" : "draw.pathPlanned", {
-            label: String((shownPath.command.params as { label?: unknown }).label ?? ""),
-            pct: Math.round(shownPath.pct),
-          })}
-        </p>
-      ) : null}
-      {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
     </div>
   );
 }
