@@ -12,8 +12,8 @@ Ubuntu: ``apt install openfoam``) and prints Cd A in m^2: the pressure on the dr
 surface integrated to a drag force over the dynamic pressure, averaged over the last third
 of the iterations, plus the skin friction of a flat plate with the same wetted area.
 
-Not part of `just cad` or CI: a run takes about a quarter of an hour on four cores and
-needs more memory than a CI runner should spend on it. README.md has the results.
+Not part of `just cad` or CI: a run takes about ten minutes on four free cores, longer
+than the whole CAD job, and needs OpenFOAM. README.md has the results.
 """
 
 from __future__ import annotations

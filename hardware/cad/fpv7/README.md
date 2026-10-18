@@ -143,7 +143,43 @@ measured in a wind tunnel for whole quadcopter bodies without rotors (0.018-0.02
 larger drones; `aero.reference_cda_m2`). All coefficients are **(osäkert)**: textbook
 values for single bodies, to be calibrated against flight logs.
 
-CFD_SECTION
+### Check with CFD
+
+`cfd.py` writes an OpenFOAM case of the body (no propellers) in a box of air: blockMesh
+and snappyHexMesh to about 400 000 cells (2.5 mm at the surface, 5 mm round the body,
+10 mm in the wake), simpleFoam with k-omega SST at 10 m/s, 900 iterations. Cd A is the
+pressure on the drone's surface integrated to a drag force, averaged over the last 300
+iterations, plus the skin friction of a turbulent flat plate with the same wetted area
+(the wall shear stress is not integrated: every function object, `forces` included,
+stops with an IOstream error in the Debian/Ubuntu OpenFOAM v1912 build). Run on four
+cores with OpenFOAM v1912, 2026-10-18:
+
+| Body | Pressure Cd A | Friction Cd A | Cd A | Drag at 10 m/s |
+|---|---|---|---|---|
+| With both covers | 125.5 cm^2 | 13.8 cm^2 | 139 cm^2 | 0.85 N |
+| Without the canopy | 127.2 cm^2 | 11.7 cm^2 | 139 cm^2 | 0.85 N |
+| Without either cover | 129.1 cm^2 | 10.5 cm^2 | 140 cm^2 | 0.86 N |
+
+The pressure Cd A changed by at most 0.8 cm^2 over the averaged iterations. What it
+shows:
+
+- `aero.py` gives 185 cm^2 with the covers, a third more than CFD; it stays the estimate
+  in the report until flight logs calibrate it, since the CFD mesh is coarse for 2.5 mm
+  plates and 2 mm cables and has no boundary layers. Both lie below NASA's range for
+  larger quads.
+- The covers lower the pressure drag by 3 %, about what their extra wetted area adds in
+  friction; the canopy alone by 1.3 %. A different canopy shape cannot lower the drag by
+  more than these few percent of a body where the battery, legs, arms and motors make
+  most of it, which is within what this mesh resolves. The canopy therefore stays as it
+  is: its job is to keep the propellers, rain and dust off the computer.
+- Not in CI: a run takes about ten minutes on four free cores (25 minutes while other
+  work shares them) and needs OpenFOAM installed. Run it by hand after changing the
+  body's shape:
+
+```bash
+uv run --group cad python hardware/cad/fpv7/cfd.py /tmp/fpv7-cfd --run
+uv run --group cad python hardware/cad/fpv7/cfd.py /tmp/fpv7-cfd-bare --without canopy nose_fairing --run
+```
 
 ## Öppna och ändra i Fusion
 
