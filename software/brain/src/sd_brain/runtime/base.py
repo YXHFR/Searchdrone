@@ -61,6 +61,7 @@ class ModelReply(BaseModel):
     latency_ms: int = 0
     engine: Engine | None = None
     model_id: str | None = None
+    cost_usd: float | None = None  # the provider's own price for the call (OpenRouter usage)
 
 
 class ModelRuntime(Protocol):
@@ -98,6 +99,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             for i, c in enumerate(msg.get("tool_calls") or [])
         ]
         usage = data.get("usage") or {}
+        cost = usage.get("cost")
         return ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
@@ -106,6 +108,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             completion_tokens=int(usage.get("completion_tokens") or 0),
             latency_ms=latency_ms,
             model_id=data.get("model"),
+            cost_usd=float(cost) if isinstance(cost, int | float) else None,
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")

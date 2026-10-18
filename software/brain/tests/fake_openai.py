@@ -1,7 +1,8 @@
 """A fake OpenAI-compatible chat server on 127.0.0.1 for tests (never the internet).
 
 ``FakeOpenAI`` answers ``POST /v1/chat/completions``. What it does is set per model name
-in ``behaviour``: ``"ok"`` (default) answers with ``reply``, ``"500"`` answers HTTP 500,
+in ``behaviour``: ``"ok"`` (default) answers with ``reply`` (and ``usage.cost`` when
+``reply_cost`` is set), ``"500"`` answers HTTP 500,
 ``"slow"`` waits ``slow_s`` before answering. Every request body and its
 ``Authorization`` header are kept in ``requests`` so a test can check the fields sent.
 """
@@ -17,7 +18,12 @@ from typing import Any
 __all__ = ["FakeOpenAI"]
 
 
-def _answer(model: str, content: str | None, calls: list[dict[str, Any]]) -> dict[str, Any]:
+def _answer(
+    model: str, content: str | None, calls: list[dict[str, Any]], cost: float | None = None
+) -> dict[str, Any]:
+    usage: dict[str, Any] = {"prompt_tokens": 100, "completion_tokens": 10}
+    if cost is not None:
+        usage["cost"] = cost
     return {
         "id": "chatcmpl-fake",
         "object": "chat.completion",
@@ -29,7 +35,7 @@ def _answer(model: str, content: str | None, calls: list[dict[str, Any]]) -> dic
                 "message": {"role": "assistant", "content": content, "tool_calls": calls},
             }
         ],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+        "usage": usage,
     }
 
 
@@ -39,6 +45,7 @@ class FakeOpenAI:
         self.slow_s = 30.0
         self.reply_content: str | None = "Batteriet är 80 procent."
         self.reply_calls: list[dict[str, Any]] = []
+        self.reply_cost: float | None = None  # usage.cost in US dollars, as OpenRouter states it
         self.requests: list[dict[str, Any]] = []
         self.auth: list[str] = []
         fake = self
@@ -62,7 +69,8 @@ class FakeOpenAI:
                     return
                 if how == "slow":
                     time.sleep(fake.slow_s)
-                self._send(200, _answer(model, fake.reply_content, fake.reply_calls))
+                answer = _answer(model, fake.reply_content, fake.reply_calls, fake.reply_cost)
+                self._send(200, answer)
 
             def _send(self, status: int, data: dict[str, Any]) -> None:
                 raw = json.dumps(data).encode()

@@ -220,3 +220,18 @@ def test_video_job_runs_the_video_tests_without_skipping() -> None:
     assert len(runs) == 1
     assert runs[0]["env"]["SD_SIM__REQUIRE_VIDEO"] == "1"
     assert any("just video-up" in str(s.get("run", "")) for s in job["steps"])
+
+
+def test_brain_nightly_runs_only_from_main_with_the_secret() -> None:
+    doc = load(ROOT / ".github" / "workflows" / "brain-nightly.yml")
+    assert set(triggers(doc)) == {"schedule", "workflow_dispatch"}  # never pull requests
+    job = doc["jobs"]["exam"]
+    assert "github.ref == 'refs/heads/main'" in job["if"]
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"]["HAS_KEY"] == "${{ secrets.OPENROUTER_API_KEY != '' }}"
+    for step in job["steps"][1:]:
+        assert "env.HAS_KEY == 'true'" in step["if"]
+    upload = next(s for s in job["steps"] if "upload-artifact" in str(s.get("uses")))
+    assert all(p.endswith(".json") for p in upload["with"]["path"].split())  # no images
+    exam = next(s for s in job["steps"] if s.get("name") == "Short cloud exam")
+    assert "--max-cost-sek" in exam["run"]
