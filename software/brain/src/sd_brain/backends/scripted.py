@@ -15,7 +15,8 @@ Script format (``simulation/scenarios/scripts/SCxx.yaml``)::
 
 ``ai: true`` on an action sends the parameters in the model's form through the adapter
 (``{path: pa-1}`` becomes the drawn path's points). ``fixture:<pin>`` under ``at``
-becomes ``lat``/``lon``; ``fixture:<area>`` under ``polygon`` becomes a GeoJSON polygon;
+becomes ``lat``/``lon`` (``at: here`` is the drone's position in the turn's situation);
+``fixture:<area>`` under ``polygon`` becomes a GeoJSON polygon;
 ``charter_proposal: {from_fixture: <name>}`` sends that charter from the fixture.
 ``delay_s`` delays the turn and ``fail: timeout | crash`` simulates a broken backend.
 Unknown keys refuse to load.
@@ -219,9 +220,15 @@ class _Fixture:
         return CharterProposal.model_validate(body)
 
 
-def _resolve(params: dict[str, Any], fx: _Fixture) -> dict[str, Any]:
+def _resolve(params: dict[str, Any], fx: _Fixture, turn: TurnInput) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in params.items():
+        if key == "at" and value == "here":
+            v = turn.situation.vehicle
+            if v.lat is None or v.lon is None:
+                raise ScriptError("at: here, men drönarens position är okänd")
+            out["lat"], out["lon"] = v.lat, v.lon
+            continue
         if isinstance(value, str) and value.startswith("fixture:"):
             name = value.removeprefix("fixture:")
             if key == "at":
@@ -306,7 +313,7 @@ class ScriptedBackend:
         elif t.action is not None:
             out.action = AiAction(
                 skill=t.action.skill,
-                params=_resolve(t.action.params, self.fixture),
+                params=_resolve(t.action.params, self.fixture, turn),
                 rationale_sv="Steg i manuset.",
                 adapted=not t.action.ai,
             )

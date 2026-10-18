@@ -146,6 +146,23 @@ def test_compose_file_outside_the_root_fails(
     assert "database/compose.yaml: location:" in capsys.readouterr().out
 
 
+def test_offline_overlay_is_allowed_and_checked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "compose.offline.yaml").write_text(
+        "services:\n  db:\n    networks: [sd-offline]\n", encoding="utf-8"
+    )
+    assert ccp.main(["--root", str(tmp_path)]) == 0
+    (tmp_path / "compose.offline.yaml").write_text(
+        "services:\n  db:\n    ports: ['5433:5432']\n", encoding="utf-8"
+    )
+    assert ccp.main(["--root", str(tmp_path)]) == 1
+    assert "compose.offline.yaml:" in capsys.readouterr().out
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "compose.offline.yaml").write_text(DB_OK, encoding="utf-8")
+    assert ccp.main(["--root", str(tmp_path)]) == 1
+
+
 def test_mediamtx_moq_missing_fails() -> None:
     """MediaMTX turns Media over QUIC on when the key is left out."""
     text = MTX_OK.replace("moq: no\n", "")

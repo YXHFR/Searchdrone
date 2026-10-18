@@ -7,7 +7,8 @@ with settings are variadic and pass everything here unchanged:
 
 Unknown recipes or keys exit with code 2 and a Swedish explanation. ``dry=1`` prints
 the parsed arguments as JSON (used by the tests). A recipe whose ticket is not built
-yet prints ``inte byggt än (<ticket>)`` and exits with code 2.
+yet prints ``inte byggt än (<ticket>)`` and exits with code 2; a built one exits 0 and
+the justfile goes on with the real work.
 
 The simulation entry points have the same rules in ``sd_sim._args``; keep the
 messages of the two in step.
@@ -20,11 +21,12 @@ import sys
 
 NOT_BUILT_EXIT = 2
 
-# recipe -> (ticket that builds it, allowed keys)
-RECIPES: dict[str, tuple[str, frozenset[str]]] = {
+# recipe -> (ticket that builds it, or None when it is built, allowed keys). A built
+# recipe only has its keys checked here (exit 0) and does its work in the justfile.
+RECIPES: dict[str, tuple[str | None, frozenset[str]]] = {
     "dev": ("B1-16", frozenset({"physics", "gui", "brain", "instance"})),
-    "e2e": ("B1-16", frozenset({"runs", "offline"})),
-    "accept": ("B1-16", frozenset({"phase", "sha"})),
+    "e2e": (None, frozenset({"runs", "offline"})),
+    "accept": (None, frozenset({"phase", "sha"})),
     "perf": ("B1-17", frozenset({"runs"})),
     "showcase": ("B1-18", frozenset({"stage", "brain"})),
 }
@@ -52,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         values[key] = value
     if values.get("dry") == "1":
         print(json.dumps({"recipe": recipe, "args": rest}))
+        return 0
+    if ticket is None:
         return 0
     print(f"inte byggt än ({ticket})")
     return NOT_BUILT_EXIT

@@ -20,7 +20,8 @@ def test_pr_selection_matches_ci() -> None:
     )
     assert argv[1:5] == ["-m", "pytest", "-p", "sd_sim.pytest_plugin"]
     assert (
-        argv[argv.index("-m", 2) + 1] == "sitl and not gz and not llm and not nightly and not panel"
+        argv[argv.index("-m", 2) + 1]
+        == "sitl and not gz and not llm and not nightly and not e2e and not panel"
     )
     assert argv[argv.index("-n") + 1] == "4" and "--dist" in argv
     assert argv[argv.index("--shard-id") + 1] == "2"
@@ -36,7 +37,10 @@ def test_pr_selection_matches_ci() -> None:
 
 def test_nightly_and_gz_selection() -> None:
     assert testrun.selection("nightly", "builtin") == "sitl and nightly and not panel"
-    assert testrun.selection("pr", "gz") == "sitl and not llm and not nightly and not panel"
+    assert (
+        testrun.selection("pr", "gz")
+        == "sitl and not llm and not nightly and not e2e and not panel"
+    )
     assert testrun.selection("pr", "builtin").endswith("and not panel")
     assert testrun.selection("panel", "builtin") == "sitl and panel"
 
@@ -101,10 +105,13 @@ def test_exit_codes(
 @pytest.mark.parametrize(
     ("brain", "marks"),
     [
-        ("scripted", "sitl and not gz and not llm and not nightly and not panel"),
-        ("grammar", "sitl and not gz and not llm and not nightly and not panel"),
-        ("llm_local", "sitl and not gz and not nightly and not panel"),
-        ("none", "sitl and not gz and not llm and not nightly and not brain and not panel"),
+        ("scripted", "sitl and not gz and not llm and not nightly and not e2e and not panel"),
+        ("grammar", "sitl and not gz and not llm and not nightly and not e2e and not panel"),
+        ("llm_local", "sitl and not gz and not nightly and not e2e and not panel"),
+        (
+            "none",
+            "sitl and not gz and not llm and not nightly and not e2e and not brain and not panel",
+        ),
     ],
 )
 def test_brain_reaches_pytest(brain: str, marks: str) -> None:
@@ -142,3 +149,31 @@ def test_summary_lists_new_results(tmp_path: Path) -> None:
     assert "SC00 | - | nej | - | 12.5 | new" in text
     assert "OLD" not in text
     assert "| ? | - | nej" in text
+
+
+def test_e2e_selection_and_split() -> None:
+    assert testrun.selection("e2e", "builtin") == (
+        "sitl and e2e and not gz and not llm and not nightly and not panel"
+    )
+    (demo, demo_env), (rest, rest_env) = testrun.commands({"mode": "e2e", "workers": "4"})
+    assert demo[demo.index("-k") + 1] == "test_demo_flight" and "-n" not in demo
+    assert demo_env == {}
+    assert rest[rest.index("-k") + 1] == "not test_demo_flight"
+    assert rest[rest.index("-n") + 1] == "3"
+    assert rest_env == {"SD_SIM__FIRST_INSTANCE": "1"}
+    assert len(testrun.commands({"mode": "e2e", "workers": "1"})) == 1
+    assert len(testrun.commands({"mode": "pr", "workers": "4"})) == 1
+
+
+@pytest.mark.parametrize(("codes", "want"), [([0, 0, 0], 0), ([0, 1, 0], 1)])
+def test_runs_repeats_every_round(
+    codes: list[int],
+    want: int,
+    runs: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rounds = iter(codes)
+    monkeypatch.setattr(testrun, "run_round", lambda _values: next(rounds))
+    assert testrun.main(["mode=pr", f"runs={len(codes)}"]) == want
+    assert f"{codes.count(0)} av {len(codes)} omgångar gröna." in capsys.readouterr().out

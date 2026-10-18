@@ -1,0 +1,24 @@
+# The offline end-to-end run (`just e2e offline=1`): an overlay on compose.yaml.
+#
+#   docker compose -f compose.yaml -f compose.offline.yaml --env-file .env up -d --wait db mediamtx
+#
+# The database moves onto its own bridge network with a fixed subnet, so the firewall
+# rule in tools/offline/isolate.sh can refuse everything it sends outside that subnet.
+# MediaMTX stays in the host network (the simulator publishes to it on 127.0.0.1) but
+# runs as the test user `sdtest`, whose traffic the same script refuses beyond loopback.
+# The published port and everything else are unchanged from compose.yaml.
+
+services:
+  db:
+    networks: [sd-offline]
+
+  mediamtx:
+    user: "${SD_OFFLINE_UID:?sätts av tools/offline/isolate.sh}:${SD_OFFLINE_GID:?sätts av tools/offline/isolate.sh}"
+
+networks:
+  sd-offline:
+    name: sd-offline
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24

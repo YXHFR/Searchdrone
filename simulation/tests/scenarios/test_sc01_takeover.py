@@ -1,8 +1,5 @@
-"""SC01 (main scenario, search part) and the pilot's manual takeover, on SITL.
+"""The demo's manual step (SC01_takeover), on SITL; the demo itself is ``test_sc01``.
 
-* SC01: the AI proposes the charter, takes off on "Starta.", flies to P1 and searches the
-  100 x 100 m box there in a lawnmower pattern; at least 95 % of the box is covered, then
-  it flies home and lands within 3 m.
 * SC01_takeover: mid-search the pilot takes over, moves the drone 20 m with the sticks,
   lets go (the ground station stops sending after 1 s: the drone stands in LOITER) and
   hands back; the AI continues the search from where it stopped.
@@ -30,35 +27,13 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 
 from sd_safety.targets import distance_m
 
-pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain]
+pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.e2e]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 
 ALT_M = 40.0
 SPACING_M = 30.0
 MIN_COVERAGE = 0.95
 SURVEY_LIMIT_S = 240.0
-
-
-@pytest.mark.budget_s(600)
-async def test_sc01_survey_on_sitl(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
-    async with scenario(sim, migrated_db, tmp_path) as sc:
-        await sc.airborne_with_ai("SC01")
-        assert abs(sc.tel.alt_rel_home_m - ALT_M) <= 2.0
-        await sc.wait_command("goto", "done", 90, issuer_kind="brain")
-        survey = await sc.wait_command("survey_sector", "running", 30, issuer_kind="brain")
-        t0 = time.monotonic()
-        await sc.wait_command("survey_sector", "done", SURVEY_LIMIT_S, issuer_kind="brain")
-        took = time.monotonic() - t0
-        assert took <= SURVEY_LIMIT_S
-        got = sc.coverage(t0, ALT_M, SPACING_M)
-        assert got >= MIN_COVERAGE, f"coverage {got:.3f}"
-        gates = await sc.gate(survey["id"])
-        assert [g["decision"] for g in gates if g["side"] == "ground"] == ["ALLOW"]
-
-        await sc.wait_command("return_home", "done", 240, issuer_kind="brain")
-        await sc.until(lambda: not sc.tel.armed, 60, "disarmed after landing")
-        assert sc.from_home_m() <= 3.0
-        await sc.check_invariants()
 
 
 @pytest.mark.budget_s(660)

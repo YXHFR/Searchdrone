@@ -449,8 +449,24 @@ class Scenario:
             await self.until(reached, limit_s, f"{skill} {status}")
         except AssertionError as exc:
             seen = [(c["skill"], c["status"], c["status_reason"]) for c in await self.commands()]
-            raise AssertionError(f"{exc}; orders {seen}; modes {self.modes()}") from None
+            raise AssertionError(
+                f"{exc}; orders {seen}; modes {self.modes()}; AI turns {self.brain_turns()}"
+            ) from None
         return found
+
+    def brain_turns(self) -> list[tuple[str, str, str | None, str | None]]:
+        """The AI's turns so far (trigger, backend, action, error), for failure messages."""
+        if self.brain is None:
+            return []
+        return [
+            (
+                r.trigger,
+                r.backend,
+                None if r.ai_action is None else r.ai_action.skill,
+                r.error or (None if r.result is None else str(r.result.status)),
+            )
+            for r in self.brain.loop.records
+        ]
 
     def actions(self, action: str) -> list[dict[str, Any]]:
         """STOP / FLY HOME / Resume outcomes the ground station published, by action."""

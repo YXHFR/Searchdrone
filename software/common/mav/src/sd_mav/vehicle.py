@@ -18,6 +18,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import IntEnum, StrEnum
+from pathlib import Path
 from typing import Any, Final
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
@@ -359,6 +360,20 @@ class Vehicle:
 
     async def __aexit__(self, *_exc: object) -> None:
         await self.close()
+
+    def start_tlog(self, path: Path) -> bool:
+        """Record what this channel receives in ``path`` (``flight.tlog``); ``False`` when
+        the transport cannot (a fake)."""
+        start = getattr(self._transport, "start_tlog", None)
+        if start is None:
+            return False
+        start(path, self._clock)
+        return True
+
+    def stop_tlog(self) -> None:
+        stop = getattr(self._transport, "stop_tlog", None)
+        if stop is not None:
+            stop()
 
     # --- state -------------------------------------------------------------------------
 

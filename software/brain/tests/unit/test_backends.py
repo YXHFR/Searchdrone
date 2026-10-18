@@ -302,3 +302,30 @@ async def test_llm_runtime_error() -> None:
     cmd = LlmCommander(_Failing(), ctx, REG, BehaviourConfig(), Sampling())
     out = await cmd.decide(_turn("x"), _NoTools())
     assert out.diagnostics.error == "timeout"
+
+
+HERE_SCRIPT = SCRIPT.replace(
+    "  - on: operator_message\n    match: '.*'",
+    "  - on: operator_message\n    match: '^Upp\\.$'\n"
+    "    action: {skill: goto, params: {at: here, alt_m: 200}}\n"
+    "  - on: operator_message\n    match: '.*'",
+)
+
+
+async def test_scripted_at_here_is_the_drones_position(tmp_path: Path) -> None:
+    b = ScriptedBackend.from_file(_script(tmp_path, HERE_SCRIPT))
+    turn = _turn("Upp.")
+    v = turn.situation.vehicle
+    out = await b.decide(turn, _NoTools())
+    assert out.action is not None
+    assert out.action.params == {"lat": v.lat, "lon": v.lon, "alt_m": 200}
+
+
+async def test_scripted_at_here_without_a_position_refuses(tmp_path: Path) -> None:
+    b = ScriptedBackend.from_file(_script(tmp_path, HERE_SCRIPT))
+    turn = _turn("Upp.")
+    s = turn.situation
+    vehicle = s.vehicle.model_copy(update={"lat": None})
+    turn = turn.model_copy(update={"situation": s.model_copy(update={"vehicle": vehicle})})
+    with pytest.raises(ScriptError):
+        await b.decide(turn, _NoTools())
