@@ -9,6 +9,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from sd_sim.farm import loop, status
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.config import FarmConfig
@@ -154,6 +156,29 @@ def test_worktree_links_local_config_but_not_examples(tmp_path: Path) -> None:
     assert (wt / "config" / "simfarm.toml").resolve() == repo / "config" / "simfarm.toml"
     assert (wt / ".env").is_symlink()
     assert not (wt / "config" / "simfarm.example.toml").exists()
+
+
+def test_round_env_is_an_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SD_GROUND__SECRET", "x")
+    monkeypatch.setenv("UV_CACHE_DIR", "/c")
+    monkeypatch.setenv("HTTPS_PROXY", "http://p")
+    env = loop.round_env(Path("/w"))
+    assert "SD_GROUND__SECRET" not in env
+    assert env["UV_CACHE_DIR"] == "/c" and env["HTTPS_PROXY"] == "http://p"
+    assert "GZ_SIM_RESOURCE_PATH" in env and "PATH" in env
+
+
+def test_worktree_refuses_a_folder_that_is_not_its_own(tmp_path: Path) -> None:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    inside = repo / "build" / "simfarm" / "main"
+    (inside / ".git").mkdir(parents=True)  # broken: git would find the owner's checkout
+    wt = loop.Worktree(repo, inside, run=lambda *a, **k: None)
+    with pytest.raises(OSError, match="egen worktree"):
+        wt.update()
 
 
 def test_status_summary(tmp_path: Path) -> None:

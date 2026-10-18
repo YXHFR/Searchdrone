@@ -125,7 +125,7 @@ def sigv4_headers(
     canonical = "\n".join(
         [
             method,
-            urllib.parse.quote(parts.path or "/", safe="/-_.~"),
+            parts.path or "/",  # the URL's path is already encoded (``R2Store._url``)
             canonical_query,
             canonical_headers,
             ";".join(signed),
@@ -164,7 +164,11 @@ def files_of(round_dir: Path) -> Iterator[Path]:
     """The round's files to upload (not the manifest, the raw work folder or temp files)."""
     for path in sorted(round_dir.rglob("*")):
         rel = path.relative_to(round_dir)
-        if not path.is_file() or rel.parts[0] in SKIP_DIRS or rel.name == MANIFEST:
+        # Never through a symlink: the worktree links local secrets, which must not upload.
+        linked = any(
+            round_dir.joinpath(*rel.parts[: i + 1]).is_symlink() for i in range(len(rel.parts))
+        )
+        if linked or not path.is_file() or rel.parts[0] in SKIP_DIRS or rel.name == MANIFEST:
             continue
         if any(part.startswith(".") for part in rel.parts):
             continue

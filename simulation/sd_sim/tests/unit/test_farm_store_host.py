@@ -21,7 +21,7 @@ NOW = dt.datetime(2026, 10, 18, 12, 0, 0, tzinfo=dt.UTC)
 
 
 def test_sigv4_matches_the_aws_test_suite() -> None:
-    # AWS Signature Version 4 test suite, "get-vanilla".
+    # AWS Signature Version 4 test suite, "get-vanilla" (its published example key).
     headers = store.sigv4_headers(
         "GET",
         "https://example.amazonaws.com/",
@@ -160,6 +160,24 @@ def test_upload_resumes_after_an_interruption(tmp_path: Path) -> None:
     s2 = store.R2Store(cfg(), store.Ledger(ledger), bucket.send, lambda: NOW)
     s2.ledger.rounds.discard("r1")
     assert s2.upload_round(d) and s2.puts == 2  # coco.json and the new manifest
+
+
+def test_upload_skips_symlinks_and_signs_encoded_keys(tmp_path: Path) -> None:
+    d = make_round(tmp_path / "rounds")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("key")
+    (d / "images" / "leak.png").symlink_to(secret)
+    (d / "linked").symlink_to(tmp_path, target_is_directory=True)
+    assert all(not p.is_symlink() for p in store.files_of(d))
+    assert "leak.png" not in {p.name for p in store.files_of(d)}
+    assert not any("linked" in p.parts for p in store.files_of(d))
+    # A key that needs escaping is signed as sent, not escaped twice.
+    url = "https://h.example/b/a%20b.png"
+    h = store.sigv4_headers("PUT", url, {}, store.EMPTY_SHA256, "A", "S", NOW)
+    h2 = store.sigv4_headers(
+        "PUT", "https://h.example/b/a%2520b.png", {}, store.EMPTY_SHA256, "A", "S", NOW
+    )
+    assert h["authorization"] != h2["authorization"]
 
 
 def test_ledger_survives_a_cut_line(tmp_path: Path) -> None:

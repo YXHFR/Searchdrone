@@ -40,7 +40,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
-from sd_sim import _args, paths
+from sd_sim import _args, paths, procs
 from sd_sim.farm import config as farm_config
 from sd_sim.farm import people, status
 from sd_sim.farm import round as farm_round
@@ -73,6 +73,17 @@ ROUND_TIMEOUT_S = 3 * 3600
 STOP_GRACE_S = 30
 # Local, gitignored files the round needs from the owner's checkout (keys, local site).
 LINKED = (".env", "secrets")
+# What the round process may see of the farm's environment (as ``procs.clean_env``): uv,
+# the network proxy and certificates, and the display for a Gazebo window. Keys are read
+# from the linked ``.env`` by whoever needs them, never passed on here.
+ROUND_ENV_KEYS = (
+    *procs.GRAPHICS_ENV_KEYS,
+    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+)  # fmt: skip
+ROUND_ENV_PREFIXES = ("UV_",)
+# Git variables that would point the worktree's commands at another repository.
+GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
 
 
 def say(msg: str) -> None:
@@ -100,8 +111,10 @@ def _signal_group(proc: subprocess.Popen[bytes], sig: int) -> None:
 
 
 def _git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_S) -> str:
+    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
     out = subprocess.run(  # noqa: S603 - fixed argv
         ["git", "-C", str(repo), *args],  # noqa: S607
+        env=env,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -129,6 +142,11 @@ class Worktree:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             _git(self.repo, "worktree", "prune")
             _git(self.repo, "worktree", "add", "--detach", "--force", str(self.path), "origin/main")
+        # checkout --force and clean -x below must never reach the owner's own checkout
+        # (git looks for a repository in the parent folders when this one is broken).
+        top = Path(_git(self.path, "rev-parse", "--show-toplevel")).resolve()
+        if top != self.path.resolve():
+            raise OSError(f"{self.path} är inte farmens egen worktree (git hittar {top})")
         _git(self.path, "checkout", "--quiet", "--detach", "--force", "origin/main")
         _git(
             self.path,
@@ -271,7 +289,7 @@ class Farm:
         partial.mkdir(parents=True)
         spec.write(partial / "spec.json")
         argv = self.round_argv(partial / "spec.json")
-        env = {**os.environ, "GZ_SIM_RESOURCE_PATH": _resource_path(where)}
+        env = round_env(where)
         proc = subprocess.Popen(argv, cwd=where, env=env, start_new_session=True)  # noqa: S603
         self.stop.proc = proc
         try:
@@ -418,6 +436,12 @@ class Farm:
             end = min(end, self.deadline)
         while not self.stop.requested and time.monotonic() < end:
             self.sleep(min(1.0, end - time.monotonic()))
+
+
+def round_env(where: Path) -> dict[str, str]:
+    """The round's environment: an allowlist, never the farm's whole environment."""
+    passthrough = (*ROUND_ENV_KEYS, *(k for k in os.environ if k.startswith(ROUND_ENV_PREFIXES)))
+    return procs.clean_env({"GZ_SIM_RESOURCE_PATH": _resource_path(where)}, passthrough)
 
 
 def _resource_path(where: Path) -> str:
