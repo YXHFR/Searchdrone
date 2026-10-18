@@ -63,6 +63,11 @@ class StackPaths:
         return self.secrets_dir / "brain_token"
 
     @property
+    def search_token(self) -> Path:
+        # Never the repository's secrets/: a stack only uses its own instance's files.
+        return self.secrets_dir / "search_token"
+
+    @property
     def link_token(self) -> Path:
         # sd-onboard refuses a token file or state folder inside the repository.
         return self.onboard_dir / "link_token"
@@ -92,6 +97,7 @@ def ground_env(
         "SD_GROUND__DB__URL": f"postgresql+asyncpg://sd_app@{db}",
         "SD_GROUND__DB__OWNER_URL": f"postgresql+asyncpg://sd_owner@{db}",
         "SD_GROUND__AUTH__BRAIN_TOKEN_FILE": str(paths.brain_token),
+        "SD_GROUND__AUTH__SEARCH_TOKEN_FILE": str(paths.search_token),
         "SD_GROUND__AUTH__CLI_MAY_CONFIRM": "true" if test_rig else "false",
         "SD_GROUND__HTTP__PANEL_BIND": f"127.0.0.1:{ports['ground_panel']}",
         "SD_GROUND__HTTP__COMMANDER_BIND": f"127.0.0.1:{ports['ground_commander']}",
