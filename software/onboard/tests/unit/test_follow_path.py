@@ -15,10 +15,11 @@ from sd_onboard.skills.follow_path import path_progress_pct
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.executor import ExecutorState as S
+from sd_schemas.executor import SurveyResumePoint
 from sd_schemas.link import ApprovalRef
 from sd_schemas.skills import FollowPathParams
 
-CORNERS = [(0, 60), (60, 90), (120, 60), (120, 0), (60, -40)]
+CORNERS = [(0.0, 60.0), (60.0, 90.0), (120.0, 60.0), (120.0, 0.0), (60.0, -40.0)]
 
 
 def params(corners: list[tuple[float, float]] = CORNERS, **extra: Any) -> dict[str, Any]:
@@ -100,7 +101,7 @@ async def test_hold_on_the_way_then_resume_flies_the_rest() -> None:
         await r.send(r.order("hold", {}))
         assert r.ex.state == S.HOLD and r.up.stages(cmd.command_id)[-1] == "superseded"
         rp = r.ex.resume_point
-        assert rp is not None and 0 < rp.next_index < len(CORNERS)
+        assert isinstance(rp, SurveyResumePoint) and 0 < rp.next_index < len(CORNERS)
         resume = await r.send(r.order("resume", {}), 1)
         await r.until(lambda: r.ex.state == S.HOLD, 300, step=0.05)
         assert r.up.stages(resume.command_id)[-1] == "done"
@@ -111,6 +112,6 @@ async def test_hold_on_the_way_then_resume_flies_the_rest() -> None:
 async def test_outside_the_charter_is_refused_onboard() -> None:
     async with rig() as r:
         await r.takeoff(40)
-        cmd = await r.send(r.order("follow_path", params([(0, 60), (0, 400)])))
+        cmd = await r.send(r.order("follow_path", params([(0.0, 60.0), (0.0, 400.0)])))
         assert "OUTSIDE_CHARTER" in r.up.codes(cmd.command_id)
         assert r.ex.state == S.HOLD

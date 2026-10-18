@@ -62,7 +62,9 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "BATTERY_RESERVE": "Batteriet är nere på reserven.",
         "BATTERY_UNKNOWN": "Batterinivån är okänd.",
         "PATH_TOO_LONG": "Vägen är för lång.",
-        "ROUTE_BATTERY": "Batteriet räcker inte för hela vägen och flygningen hem med reserv.",
+        "ROUTE_BATTERY": (
+            "Batteriet räcker inte för hela vägen och flygningen hem med reserven kvar."
+        ),
         "ALT_ABOVE_LIMIT": "Höjden är över uppdragets gräns.",
         "ALT_ABOVE_CHARTER": "Höjden är över uppdragsramens tak.",
         "ALT_BELOW_CHARTER": "Höjden är under uppdragsramens golv.",

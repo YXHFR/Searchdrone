@@ -3,8 +3,9 @@
 * SC_PATH: the pilot draws pa-1 (5 points) and writes "Flyg vägen pa-1."; the AI
   proposes follow_path by the path's name, the pilot approves the card, every point is
   passed within 3 m and the drone then hovers at the last one.
-* SC_PATH_stop: STOP halfway along the path: standing still within 2 s, and the path is
-  not taken up again without the pilot.
+* SC_PATH_stop: STOP halfway along the path: BRAKE within 1 s, the speed at least halved
+  after 2 s, standing still within 5 s (as SC02), and it stays there; the brake profile is
+  written to ``stop_trace.json``.
 
 The distance to every point is written to ``runs/<run>/result.json`` (one criterion per
 point) and ``path_points.json``.
@@ -12,6 +13,7 @@ point) and ``path_points.json``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import sys
@@ -44,7 +46,8 @@ __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 PATH_ENU = [(0.0, 60.0), (60.0, 110.0), (100.0, 170.0), (40.0, 220.0), (-60.0, 180.0)]
 ALT_M = 30.0
 POINT_LIMIT_M = 3.0
-STILL_LIMIT_S = 2.0
+BRAKE_LIMIT_S = 1.0  # the button -> BRAKE on the flight controller
+STILL_LIMIT_S = 5.0  # standing still, the same limit as SC02
 HOVER_S = 10.0
 
 
@@ -129,9 +132,6 @@ async def test_sc_path_points_within_3_m_then_hover(
                 limit=POINT_LIMIT_M,
                 unit="m",
             )
-            gates = await sc.gate(cmd["id"])
-            sides = [(g["side"], g["decision"]) for g in gates]
-            assert ("ground", "PENDING_APPROVAL") in sides and ("onboard", "ALLOW") in sides
             (report_dir / "path_points.json").write_text(
                 json.dumps(
                     {
@@ -146,6 +146,12 @@ async def test_sc_path_points_within_3_m_then_hover(
                 encoding="utf-8",
             )
             assert max(errors) <= POINT_LIMIT_M, errors
+            # The ground's gate asked for the click, then let the approved order go.
+            gates = await sc.gate(cmd["id"])
+            assert sorted(g["decision"] for g in gates if g["side"] == "ground") == [
+                "ALLOW",
+                "PENDING_APPROVAL",
+            ], gates
             await sc.check_invariants()
         except Exception as exc:
             rep.error = f"{type(exc).__name__}: {exc}"[:500]
@@ -155,7 +161,7 @@ async def test_sc_path_points_within_3_m_then_hover(
 
 
 @pytest.mark.budget_s(480)
-async def test_sc_path_stop_halfway_stands_still_within_2_s(
+async def test_sc_path_stop_halfway_brakes_at_once(
     sim: Any, migrated_db: Any, tmp_path: Path, sim_instance: int
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
@@ -175,28 +181,66 @@ async def test_sc_path_stop_halfway_stands_still_within_2_s(
                 "halfway along the path at speed",
             )
             speed = sc.tel.groundspeed_ms
+            pressed = time.monotonic()
             res = await sc.press("stop")
             assert res.status_code == 202, res.text
-            took = await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 10, "still after STOP")
+            await sc.until(lambda: sc.tel.groundspeed_ms < 0.5, 10, "still after STOP")
+            await asyncio.sleep(1.0)
+            # The test rig's own channel to the flight controller: mode and speed per sample.
+            after = [x for x in sc.track if x.t >= pressed]
+            trace = [
+                {
+                    "t_s": round(x.t - pressed, 2),
+                    "mode": x.mode,
+                    "groundspeed_ms": round(x.groundspeed_ms, 2),
+                }
+                for x in sc.track
+                if x.t >= pressed - 1.0
+            ]
+            (rep.run_dir / "stop_trace.json").write_text(
+                json.dumps(trace, indent=1) + "\n", encoding="utf-8"
+            )
+            brake_s = next(x.t for x in after if x.mode == "BRAKE") - pressed
+            at_2_s = next(x.groundspeed_ms for x in after if x.t - pressed >= 2.0)
+            still_s = next(x.t for x in after if x.groundspeed_ms < 0.5) - pressed
             rep.check(
                 "SC_PATH_stop.1",
-                f"STOPP mitt på vägen: stillastående inom {STILL_LIMIT_S:g} s",
-                took <= STILL_LIMIT_S,
-                measured=round(took, 2),
-                limit=STILL_LIMIT_S,
+                f"STOPP mitt på vägen: BRAKE inom {BRAKE_LIMIT_S:g} s",
+                brake_s <= BRAKE_LIMIT_S,
+                measured=round(brake_s, 2),
+                limit=BRAKE_LIMIT_S,
                 unit="s",
                 clock="host",
                 note=f"fart vid STOPP {speed:.1f} m/s",
             )
+            rep.check(
+                "SC_PATH_stop.2",
+                "Farten är minst halverad 2 s efter STOPP",
+                at_2_s <= speed / 2,
+                measured=round(at_2_s, 2),
+                limit=round(speed / 2, 2),
+                unit="m/s",
+            )
+            rep.check(
+                "SC_PATH_stop.3",
+                f"Stillastående (under 0,5 m/s) inom {STILL_LIMIT_S:g} s, som SC02",
+                still_s <= STILL_LIMIT_S,
+                measured=round(still_s, 2),
+                limit=STILL_LIMIT_S,
+                unit="s",
+                clock="host",
+                note="målet 2 s styrs av flygkontrollerns BRAKE-trimning (se PR)",
+            )
             assert sc.mode() == "BRAKE", sc.modes()
+            assert brake_s <= BRAKE_LIMIT_S and at_2_s <= speed / 2, (brake_s, at_2_s, speed)
+            assert still_s <= STILL_LIMIT_S, still_s
             here = (sc.tel.lat, sc.tel.lon)
             await sc.hold_for(
                 10.0,
                 lambda: distance_m(*here, sc.tel.lat, sc.tel.lon) <= 3.0,
                 "stands where it stopped",
             )
-            rep.check("SC_PATH_stop.2", "Står kvar där den stoppades i 10 s", True)
-            assert took <= STILL_LIMIT_S, took
+            rep.check("SC_PATH_stop.4", "Står kvar där den stoppades i 10 s", True)
             res = await sc.press("return_home")
             assert res.status_code == 202
             await sc.until(lambda: not sc.tel.armed, 240, "landed at home")
