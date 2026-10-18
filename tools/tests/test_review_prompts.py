@@ -60,14 +60,17 @@ def test_retro_verdicts_can_never_count_for_the_gate() -> None:
 
 def test_architecture_scope_rule() -> None:
     text = read("architecture.md")
-    assert "## stage_scope: v0.1.0" in text
+    assert "## stage_scope: v0.2.0" in text
+    assert "## stage_scope: v0.1.0" not in text
     assert "docs/" not in text
     assert "`hardware/**` is never rejected for scope" in text
     assert "Face recognition and object search" in text
     assert "never, in any stage" in text
-    scope = text.split("## stage_scope: v0.1.0", 1)[1].split("## Permanent scope rule")[0]
-    for item in ("RF-DETR", "`follow_track`", "`find_me`", "`cloudflared`", "MAVLink 2"):
+    scope = text.split("## stage_scope: v0.2.0", 1)[1].split("## Permanent scope rule")[0]
+    for item in ("`find_me`", "Thermal cameras", "language model", "AGPL", "wfb-ng"):
         assert item in scope, item
+    assert "gimbal" not in scope.lower()
+    assert "steerable camera (tilt, pan, zoom)" in scope.replace("\n", " ")
 
 
 @pytest.mark.parametrize("name", [*ROLE_FILES.values(), "common.md", "retro.md"])

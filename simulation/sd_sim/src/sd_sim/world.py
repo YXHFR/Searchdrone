@@ -4,8 +4,9 @@ The templates live in ``simulation/gazebo/``. ``render_model(instance)`` writes
 ``build/sim/models/sd_quad14_i<N>/model.sdf`` and ``model.config``; ``render_world(name,
 instance)`` writes ``build/sim/worlds/<name>_i<N>.sdf`` (which includes
 ``model://sd_quad14_i<N>``) and ``build/sim/worlds/<name>.geojson`` with the lake, the path
-and the forest band in WGS84. Everything is deterministic (fixed seed) and offline: no
-template may name a remote URI.
+and the forest band in WGS84. Scenario objects (``sd_sim.objects``) are placed on the
+ground and their facit is written to ``build/sim/worlds/<name>_i<N>.truth.json``.
+Everything is deterministic (fixed seed) and offline: no template may name a remote URI.
 
 The airframe's mass and propeller size come from ``hardware/drone.yaml`` (read and
 validated by ``sd_hwcalc``). In Gazebo each rotor is a joint that the ArduPilot plugin
@@ -19,6 +20,9 @@ import itertools
 import json
 import math
 import random
+import re
+import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,7 +32,7 @@ import jinja2
 from sd_hwcalc.calc import compute
 from sd_hwcalc.model import Drone, load_drone
 from sd_safety.targets import Plane
-from sd_sim import fixture, paths, ports
+from sd_sim import fixture, objects, paths, ports
 
 GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
@@ -174,22 +178,60 @@ def trees(seed: int = SEED) -> list[Tree]:
     ]
 
 
+def ground_z(east_m: float, north_m: float) -> float:
+    """Height of the ground above home at a point; ``sd_lake_forest`` is flat."""
+    del east_m, north_m
+    return 0.0
+
+
+def object_pose(obj: objects.WorldObject) -> objects.Pose:
+    return objects.Pose(
+        obj.east_m,
+        obj.north_m,
+        ground_z(obj.east_m, obj.north_m) + obj.up_m,
+        objects.yaw_enu(obj.yaw_deg),
+    )
+
+
+LABEL_PLUGIN = "gz-sim-label-system"
+REMOTE = re.compile(r"(?i)https?://|fuel\.")
+
+
+def checked_fragment(obj: objects.WorldObject) -> str:
+    """The object's SDF, refused unless it is one ``<model>``/``<actor>`` named like the
+    object and names no remote URI (Gazebo would download it)."""
+    text = obj.sdf(object_pose(obj))
+    try:
+        root = ET.fromstring(text)  # noqa: S314 - SDF built by our own object classes
+    except ET.ParseError as exc:
+        raise objects.ObjectError(f"{obj.name}: SDF går inte att läsa ({exc})") from exc
+    if root.tag not in ("model", "actor") or root.get("name") != obj.name:
+        raise objects.ObjectError(
+            f"{obj.name}: SDF ska vara en <model> eller <actor> med objektets namn"
+        )
+    for uri in root.iter("uri"):
+        if not (uri.text or "").strip().startswith("model://"):
+            raise objects.ObjectError(f"{obj.name}: bara model://-adresser är tillåtna")
+    for el in root.iter():
+        if el.tag == "plugin" and el.get("filename") != LABEL_PLUGIN:
+            raise objects.ObjectError(f"{obj.name}: bara Label-pluginen är tillåten")
+        names = [el.get("filename") or ""] + ([el.text or ""] if el.tag == "filename" else [])
+        if any(REMOTE.search(n) for n in names):
+            raise objects.ObjectError(f"{obj.name}: filer ska ligga lokalt, inte på nätet")
+    return text
+
+
 def world_context(
     name: str,
     instance: int,
     fix: fixture.Fixture,
-    *,
-    vehicle: str = MODEL_NAME,
-    includes: tuple[str, ...] = (),
+    placed: Sequence[objects.WorldObject] = (),
 ) -> dict[str, Any]:
-    """``vehicle`` is the model placed on the landing pad (normally sd_quad14);
-    ``includes`` are further rendered models by name (``model://<name>``), such as a
-    scenario's targets (``sd_sim.targets``)."""
+    objects.check(placed, GROUND_SIZE_M / 2)
     home = fix.home
     return {
         "name": name,
-        "model_uri": f"model://{vehicle}_i{instance}",
-        "includes": [f"model://{inc}" for inc in includes],
+        "model_uri": f"model://{MODEL_NAME}_i{instance}",
         "home": home,
         # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
         "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
@@ -200,6 +242,7 @@ def world_context(
         "path_width": PATH_WIDTH_M,
         "trees": trees(),
         "trunk_radius": TRUNK_RADIUS_M,
+        "objects": [checked_fragment(obj) for obj in placed],
     }
 
 
@@ -229,13 +272,43 @@ def world_sdf(
     name: str,
     instance: int,
     fix: fixture.Fixture | None = None,
-    *,
-    vehicle: str = MODEL_NAME,
-    includes: tuple[str, ...] = (),
+    placed: Sequence[objects.WorldObject] = (),
 ) -> str:
     fix = fixture.load() if fix is None else fix
     template = _env().get_template(f"worlds/{name}.sdf.jinja")
-    return template.render(**world_context(name, instance, fix, vehicle=vehicle, includes=includes))
+    return template.render(**world_context(name, instance, fix, placed))
+
+
+def world_truth(
+    name: str, placed: Sequence[objects.WorldObject], fix: fixture.Fixture | None = None
+) -> dict[str, Any]:
+    """The facit: where every object really is, in the world frame and in WGS84."""
+    fix = fixture.load() if fix is None else fix
+    plane = Plane(fix.home.lat, fix.home.lon)
+    rows = []
+    for obj in placed:
+        pose = object_pose(obj)
+        lat, lon = plane.latlon(pose.x, pose.y)
+        rows.append(
+            {
+                "name": obj.name,
+                "east_m": round(pose.x, 3),
+                "north_m": round(pose.y, 3),
+                "ground_m": round(ground_z(obj.east_m, obj.north_m), 3),
+                "up_m": round(obj.up_m, 3),
+                "lat": round(lat, 8),
+                "lon": round(lon, 8),
+                "alt_amsl_m": round(fix.home.alt_amsl_m + pose.z, 3),
+                "yaw_deg": round(obj.yaw_deg, 3),
+                "label": obj.label,
+                "truth": dict(obj.truth),
+            }
+        )
+    return {
+        "world": name,
+        "home": {"lat": fix.home.lat, "lon": fix.home.lon, "alt_amsl_m": fix.home.alt_amsl_m},
+        "objects": rows,
+    }
 
 
 def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
@@ -279,17 +352,36 @@ def render_model(instance: int, repo: Path = paths.REPO) -> Path:
     return out
 
 
-def render_world(name: str, instance: int, repo: Path = paths.REPO) -> Path:
-    """Write the instance's world and model, plus the world's GeoJSON layer.
+def truth_path(name: str, instance: int, repo: Path = paths.REPO) -> Path:
+    return repo / "build" / "sim" / "worlds" / f"{name}_i{instance}.truth.json"
+
+
+def clear_truth(instance: int, repo: Path = paths.REPO) -> None:
+    """Remove the instance's facit files, for a run that renders no world."""
+    for stale in (repo / "build" / "sim" / "worlds").glob(f"*_i{instance}.truth.json"):
+        stale.unlink()
+
+
+def render_world(
+    name: str,
+    instance: int,
+    repo: Path = paths.REPO,
+    placed: Sequence[objects.WorldObject] = (),
+) -> Path:
+    """Write the instance's world and model, the objects' facit and the GeoJSON layer.
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
-    the layer only depends on the fixture's home and the fixed scenery."""
+    the layer only depends on the fixture's home and the fixed scenery. The facit
+    (``<name>_i<N>.truth.json``) is per instance, since each may run other objects."""
     render_model(instance, repo)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}_i{instance}.sdf"
-    path.write_text(world_sdf(name, instance, fix), encoding="utf-8")
+    sdf = world_sdf(name, instance, fix, placed)
+    truth = json.dumps(world_truth(name, placed, fix), indent=1) + "\n"
+    path.write_text(sdf, encoding="utf-8")
+    truth_path(name, instance, repo).write_text(truth, encoding="utf-8")
     (out / f"{name}.geojson").write_text(
         json.dumps(world_geojson(fix), indent=1) + "\n", encoding="utf-8"
     )

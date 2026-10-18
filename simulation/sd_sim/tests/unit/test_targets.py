@@ -57,43 +57,39 @@ def test_unknown_scenario() -> None:
         targets.layout("SK-BLUE", 1)
 
 
-def test_rendered_models_carry_their_class_label(tmp_path: Path) -> None:
-    names, truth_path = targets.render_targets(0, "SK-RED", 11, tmp_path)
+def test_objects_are_world_objects_with_their_class_label(tmp_path: Path) -> None:
+    """The layout goes into the world through the world-object hook: one static model per
+    object at world level (the bounding-box camera boxes each one), its class's label,
+    and the facit file with every object's place and class."""
+    objs = targets.layout("SK-RED", 11)
+    world.render_world(world.WORLD_NAME, 0, tmp_path, placed=objs)
     labels = {spec.id: spec.params["gz_label"] for spec in default_registry()}
-    objs = {f"sd_targets_i0_{t.name}": t for t in targets.layout("SK-RED", 11)}
-    assert set(names) == set(objs)
-    for name in names:
-        model_dir = tmp_path / "build" / "sim" / "models" / name
-        root = ET.parse(model_dir / "model.sdf").getroot()  # noqa: S314 - our own file
-        model = root.find("model")
-        assert model is not None and model.get("name") == name
+    root = ET.parse(tmp_path / "build" / "sim" / "worlds" / f"{world.WORLD_NAME}_i0.sdf")  # noqa: S314 - our own file
+    models = {m.get("name"): m for m in root.getroot().iter("model")}
+    for t in objs:
+        model = models[t.name]
         assert model.findtext("static") == "true"
         label = model.find("plugin[@name='gz::sim::systems::Label']")
-        assert label is not None
-        assert int(label.findtext("label") or 0) == labels[objs[name].cls]
-        assert f"<name>{name}</name>" in (model_dir / "model.config").read_text(encoding="utf-8")
-    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+        assert label is not None and int(label.findtext("label") or 0) == labels[t.cls]
+        # The box stands on the ground: its centre is half its height above the origin.
+        body = model.find("link/visual[@name='body']")
+        assert body is not None
+        assert float((body.findtext("pose") or "").split()[2]) == pytest.approx(t.size_m[2] / 2)
+    truth = json.loads(world.truth_path(world.WORLD_NAME, 0, tmp_path).read_text(encoding="utf-8"))
+    rows = {o["name"]: o for o in truth["objects"]}
     home = fixture.load().home
     plane = Plane(home.lat, home.lon)
-    assert truth["scenario"] == "SK-RED" and truth["seed"] == 11
-    for o in truth["objects"]:
-        e, n = plane.xy(o["lat"], o["lon"])
-        assert (e, n) == pytest.approx((o["east_m"], o["north_m"]), abs=0.01)
-    # A new seed replaces the old objects instead of piling up.
-    targets.render_targets(0, "SK-RED", 1, tmp_path)
-    left = sorted(p.name for p in (tmp_path / "build" / "sim" / "models").glob("sd_targets_i0_*"))
-    assert left == sorted(f"sd_targets_i0_{t.name}" for t in targets.layout("SK-RED", 1))
-
-
-def test_world_includes_the_objects() -> None:
-    names = ("sd_targets_i0_red_block_0", "sd_targets_i0_road_0")
-    root = ET.fromstring(world.world_sdf(world.WORLD_NAME, 0, includes=names))  # noqa: S314
-    uris = [u.text for u in root.iter("uri")]
-    assert uris == ["model://sd_quad14_i0", *(f"model://{n}" for n in names)]
+    for t in objs:
+        row = rows[t.name]
+        assert row["label"] == labels[t.cls] and row["truth"]["cls"] == t.cls
+        assert row["truth"]["role"] == t.role
+        e, n = plane.xy(row["lat"], row["lon"])
+        assert (e, n) == pytest.approx((t.east_m, t.north_m), abs=0.01)
 
 
 def test_still_rig_and_shot_poses() -> None:
-    sdf = ET.fromstring(render_stills._rig_sdf(3))  # noqa: S314 - our own template
+    rig = render_stills.StillRig(3)
+    sdf = ET.fromstring(world.checked_fragment(rig))  # noqa: S314 - our own template
     sensors = {s.get("name"): s for s in sdf.iter("sensor")}
     assert set(sensors) == {"stills", "boxes"}
     assert sensors["boxes"].get("type") == "boundingbox_camera"

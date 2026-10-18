@@ -3,11 +3,11 @@
 ``layout(scenario, seed)`` places the objects of a search scenario on seeded positions
 inside the demo's search box: red blocks (the targets), a red car and a red house as
 decoys, and context objects (a car, a building, a road) for the classes the simulator's
-labels report. ``render_targets`` writes every object as a static Gazebo model of its own
-(``build/sim/models/sd_targets_i<N>_<object>``, included by the world: the bounding-box
-camera gives one box per top-level model) and the ground truth next to the world
-(``build/sim/worlds/ground_truth_i<N>.json``): every object's class, place in metres
-east/north of home and in WGS84, size and label number.
+labels report. Every ``Target`` is a ``sd_sim.objects.WorldObject``: pass the layout to
+``world.render_world(..., placed=layout(...))``, which puts each object at world level
+as a model of its own (the bounding-box camera gives one box per top-level model) and
+writes the facit (``build/sim/worlds/<world>_i<N>.truth.json``) with each object's place
+and its ``truth``: class, role, size and colour.
 
 Every object carries the simulator's label system with its class's ``gz_label`` from the
 class register, so the bounding-box camera can name it. Only the evaluator and the
@@ -17,28 +17,18 @@ sees the rendered pixels and nothing else.
 
 from __future__ import annotations
 
-import json
 import math
 import random
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from sd_detect.classes import ClassRegistry, default_registry
-from sd_safety.targets import Plane
-from sd_sim import fixture, paths, world
+from sd_sim import fixture, objects, world
 
-__all__ = [
-    "SCENARIOS",
-    "TARGETS_MODEL",
-    "Target",
-    "ground_truth",
-    "layout",
-    "render_targets",
-    "targets_sdf",
-]
+__all__ = ["SCENARIOS", "TEMPLATE", "Target", "layout", "search_box"]
 
-TARGETS_MODEL = "sd_targets"
+TEMPLATE = "objects/sd_target.sdf.jinja"
 
 RED = (0.80, 0.05, 0.05)
 FALU_RED = (0.50, 0.11, 0.08)  # the Swedish red house paint: a second red decoy
@@ -59,6 +49,8 @@ SCENARIOS = ("SK-RED",)
 
 @dataclass(frozen=True)
 class Target:
+    """One object of a scenario; a ``WorldObject`` standing on the ground."""
+
     name: str
     cls: str  # a class id from the register
     role: str  # "target" | "decoy" | "context"
@@ -68,9 +60,33 @@ class Target:
     size_m: tuple[float, float, float]  # length, width, height
     rgb: tuple[float, float, float]
     gz_label: int
+    up_m: float = 0.0
+
+    @property
+    def label(self) -> int:
+        return self.gz_label
+
+    @property
+    def footprint_m(self) -> float:
+        return math.hypot(self.size_m[0], self.size_m[1]) / 2
+
+    @property
+    def truth(self) -> Mapping[str, Any]:
+        return {
+            "cls": self.cls,
+            "role": self.role,
+            "size_m": list(self.size_m),
+            "rgb": list(self.rgb),
+        }
+
+    def sdf(self, pose: objects.Pose) -> str:
+        """The object as one static model with its label, its base on the ground."""
+        template = world._env().get_template(TEMPLATE)
+        return template.render(t=self, pose=pose.sdf(), roof=ROOF_GREY).strip()
 
 
-def _box(f: fixture.Fixture) -> tuple[float, float, float, float]:
+def search_box(f: fixture.Fixture) -> tuple[float, float, float, float]:
+    """The fixture's search box in metres east/north of home: x0, y0, x1, y1."""
     (x0, y0), _, (x1, y1), _ = f.survey_box.corners()
     return x0, y0, x1, y1
 
@@ -87,7 +103,7 @@ def layout(
     fix = fixture.load() if fix is None else fix
     labels = {spec.id: spec.params.get("gz_label", 0) for spec in (registry or default_registry())}
     rng = random.Random(f"{scenario}:{seed}")  # noqa: S311 - scenery, not security
-    x0, y0, x1, y1 = _box(fix)
+    x0, y0, x1, y1 = search_box(fix)
     road_north = round(rng.uniform(y0 + 15.0, y1 - 15.0), 2)
     placed: list[Target] = [
         Target(
@@ -131,68 +147,3 @@ def layout(
     add("car_1", "car", "context", CAR_SIZE_M, CAR_BLUE, ROAD_WIDTH_M)
     add("building_0", "building", "decoy", BUILDING_SIZE_M, FALU_RED, ROAD_CLEAR_M + 3.0)
     return placed
-
-
-def targets_sdf(target: Target, name: str) -> str:
-    """One object as a static model with its label."""
-    row = {
-        **asdict(target),
-        # Gazebo's yaw is counter-clockwise from east; the box's length lies along x.
-        "yaw_rad": round(math.radians(90.0 - target.yaw_deg), 6),
-        "z": round(target.size_m[2] / 2, 4),
-    }
-    template = world._env().get_template(f"models/{TARGETS_MODEL}/model.sdf.jinja")
-    return template.render(name=name, t=row, roof=ROOF_GREY)
-
-
-def ground_truth(
-    targets: list[Target], scenario: str, seed: int, fix: fixture.Fixture
-) -> dict[str, Any]:
-    plane = Plane(fix.home.lat, fix.home.lon)
-    objects = []
-    for t in targets:
-        lat, lon = plane.latlon(t.east_m, t.north_m)
-        objects.append({**asdict(t), "lat": round(lat, 8), "lon": round(lon, 8)})
-    return {
-        "scenario": scenario,
-        "seed": seed,
-        "home": {"lat": fix.home.lat, "lon": fix.home.lon, "alt_amsl_m": fix.home.alt_amsl_m},
-        "search_box_enu": list(_box(fix)),
-        "objects": objects,
-    }
-
-
-def render_targets(
-    instance: int, scenario: str = "SK-RED", seed: int = 1, repo: Path = paths.REPO
-) -> tuple[tuple[str, ...], Path]:
-    """Write one model per object and the ground truth; returns the model names (for the
-    world's ``includes``) and the ground truth's path."""
-    fix = fixture.load()
-    targets = layout(scenario, seed, fix)
-    models = repo / "build" / "sim" / "models"
-    config = (world.GAZEBO_DIR / "models" / TARGETS_MODEL / "model.config").read_text(
-        encoding="utf-8"
-    )
-    prefix = f"{TARGETS_MODEL}_i{instance}_"
-    for old in models.glob(f"{prefix}*"):  # a previous seed's objects
-        for f in old.iterdir():
-            f.unlink()
-        old.rmdir()
-    names: list[str] = []
-    for t in targets:
-        name = f"{prefix}{t.name}"
-        model_dir = models / name
-        model_dir.mkdir(parents=True, exist_ok=True)
-        (model_dir / "model.sdf").write_text(targets_sdf(t, name), encoding="utf-8")
-        (model_dir / "model.config").write_text(
-            config.replace(f"<name>{TARGETS_MODEL}</name>", f"<name>{name}</name>"),
-            encoding="utf-8",
-        )
-        names.append(name)
-    worlds = repo / "build" / "sim" / "worlds"
-    worlds.mkdir(parents=True, exist_ok=True)
-    truth = worlds / f"ground_truth_i{instance}.json"
-    truth.write_text(
-        json.dumps(ground_truth(targets, scenario, seed, fix), indent=1) + "\n", encoding="utf-8"
-    )
-    return tuple(names), truth

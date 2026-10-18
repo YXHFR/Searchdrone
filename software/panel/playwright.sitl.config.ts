@@ -19,6 +19,9 @@ export default defineConfig({
   use: {
     storageState: "e2e/sitl/.auth/pilot.json",
     trace: "retain-on-failure",
+    // SD_PW_VIDEO=1: record every test (the status page's demo film).
+    video:
+      process.env.SD_PW_VIDEO === "1" ? { mode: "on", size: { width: 1280, height: 720 } } : "off",
   },
   projects: [
     {

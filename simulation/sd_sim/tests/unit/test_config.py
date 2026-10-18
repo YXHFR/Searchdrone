@@ -80,3 +80,11 @@ def test_bad_values(tmp_path: Path, args: dict[str, str]) -> None:
 def test_bad_home(tmp_path: Path) -> None:
     with pytest.raises(config.ConfigError):
         config.load({}, repo=fake_repo(tmp_path), environ={"SD_SIM__HOME_OVERRIDE": "my house"})
+
+
+def test_objects_key(tmp_path: Path) -> None:
+    repo = fake_repo(tmp_path)
+    assert config.load({}, repo=repo, environ={}).objects == ""
+    env = {"SD_SIM__OBJECTS": "a.yaml"}
+    assert config.load({}, repo=repo, environ=env).objects == "a.yaml"
+    assert config.load({"objects": " b.yaml "}, repo=repo, environ=env).objects == "b.yaml"
