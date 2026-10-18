@@ -12,6 +12,13 @@ All notable changes to this project are listed here. The format follows
   10000` in `searchdrone-safety.parm` with the reserves kept at 15 % and 7 %
   (`BATT_LOW_MAH 1500`, `BATT_CRT_MAH 700`), `capacity_mah` in `hardware/drone.yaml` and
   `battCapacityAh` in the SITL frame `sd_quad14.json`.
+- Real flights only use zero-data-retention cloud endpoints: `[cloud.provider] zdr` now
+  defaults to `true` when `profile` is `bench` or `field` and to `false` in `sim`, so
+  OpenRouter gets `provider.zdr = true` for both the main and the fallback model. An
+  explicit `zdr` still wins. `config/brain.toml` files copied from the old example carry
+  `zdr = false`, which keeps zero retention off; remove that line (or set `zdr = true`)
+  before flying. `sd-brain config-check` and the brain's start warn when a bench or
+  field profile has `zdr = false`.
 - The cloud model is the AI commander and the local language model is gone: no
   llama-server in `compose.yaml`, no `just models-fetch`, `just llm-up`, `just check-model`
   or `just brain-eval-model`, and no local decision engine. Without network or key, or
