@@ -34,6 +34,29 @@ def test_limits_yaml_changed_passes(hw_repo: GitRepo, capsys: pytest.CaptureFixt
 @pytest.mark.parametrize(
     "rel",
     [
+        "hardware/cad/fpv7/parts.py",
+        "hardware/cad/fpv7/params.yaml",
+        "hardware/cad/fpv7/vendor.yaml",
+        "hardware/cad/fpv7/README.md",
+        "hardware/cad/fpv7/tests/test_fpv7.py",
+    ],
+)
+def test_cad_model_sources_pass(
+    hw_repo: GitRepo, capsys: pytest.CaptureFixture[str], rel: str
+) -> None:
+    hw_repo.write(rel, "x = 1\n")
+    hw_repo.commit()
+    code, out = run(hw_repo, capsys)
+    assert code == 0, out
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "hardware/cad/fpv7/fpv7.step",
+        "hardware/cad/fpv7/fpv7.stl",
+        "hardware/cad/fpv7/sub/parts.py",
+        "hardware/cad/other/parts.py",
         "hardware/mechanical/frame.step",
         "hardware/mechanical/test.step",
         "hardware/mechanical/test.FCStd",

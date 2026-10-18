@@ -421,6 +421,19 @@ maps-fetch *args:
 hw-check:
     uv run --package sd-hwcalc python -m sd_hwcalc check hardware/drone.yaml --limits hardware/limits.yaml
 
+# Build the 7-inch CAD model: STEP, STL, mass report and picture in build/cad/fpv7/
+cad:
+    uv run --locked --group cad python hardware/cad/fpv7/assembly.py build/cad/fpv7
+
+# Download the manufacturer 3D models (checksum checked) and write fpv7_detailed.step too
+cad-detailed:
+    uv run --locked --group cad python hardware/cad/fpv7/vendor.py
+    uv run --locked --group cad python hardware/cad/fpv7/assembly.py build/cad/fpv7 detailed
+
+# Test the CAD model: no overlaps, propeller margins, camera view, repeatable exports
+cad-test:
+    uv run --locked --group cad pytest hardware/cad/fpv7/tests
+
 # Acceptance checks for a release (keys: phase, sha)
 accept *args:
     #!/usr/bin/env bash

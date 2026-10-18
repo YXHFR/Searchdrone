@@ -12,6 +12,11 @@ All notable changes to this project are listed here. The format follows
   (`just sim objects=<file>`) or any `WorldObject` from code are placed on the ground at
   metres east/north of home, can carry a Gazebo semantic label, and their facit (world and
   WGS84 position) is written to `build/sim/worlds/<world>_i<N>.truth.json`.
+- Status page on GitHub Pages (`.github/workflows/status-page.yml`, `tools/status_page/`):
+  one row per capability (flight, safety, AI, link, video) with its expected and measured
+  value, scenario, time and commit, the last 20 runs per capability and a demo film from
+  the panel's SITL browser test. Rebuilt after every push to `main` and nightly. Every
+  SITL and video test now writes `runs/<run>/result.json` with the values it measured.
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password
