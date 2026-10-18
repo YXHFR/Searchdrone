@@ -321,6 +321,18 @@ export interface ApprovalRef {
   command_hash: string;
 }
 /**
+ * MAVLink ATTITUDE in degrees. Roll is positive right wing down, pitch positive nose
+ * up, yaw 0-360 clockwise from north.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Attitude".
+ */
+export interface Attitude {
+  pitch_deg: number;
+  roll_deg: number;
+  yaw_deg: number;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "AutonomyRequest".
  */
@@ -2047,6 +2059,7 @@ export interface Telemetry {
   alt_amsl_m: number;
   alt_rel_home_m: number;
   armed: boolean;
+  attitude?: Attitude | null;
   battery_pct: number | null;
   battery_v: number | null;
   climb_ms: number;

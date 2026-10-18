@@ -628,6 +628,37 @@
         "title": "ApprovalDecisionRequest",
         "type": "object"
       },
+      "Attitude": {
+        "additionalProperties": false,
+        "description": "MAVLink ATTITUDE in degrees. Roll is positive right wing down, pitch positive nose\nup, yaw 0-360 clockwise from north.",
+        "properties": {
+          "pitch_deg": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Pitch Deg",
+            "type": "number"
+          },
+          "roll_deg": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Roll Deg",
+            "type": "number"
+          },
+          "yaw_deg": {
+            "exclusiveMaximum": 360.0,
+            "minimum": 0.0,
+            "title": "Yaw Deg",
+            "type": "number"
+          }
+        },
+        "required": [
+          "roll_deg",
+          "pitch_deg",
+          "yaw_deg"
+        ],
+        "title": "Attitude",
+        "type": "object"
+      },
       "AutonomyMode": {
         "description": "Set only by the operator on the charter card; the AI can never change it.",
         "enum": [
@@ -3187,6 +3218,16 @@
           "armed": {
             "title": "Armed",
             "type": "boolean"
+          },
+          "attitude": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Attitude"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "battery_pct": {
             "anyOf": [
