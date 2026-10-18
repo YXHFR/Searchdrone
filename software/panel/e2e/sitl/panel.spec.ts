@@ -168,9 +168,16 @@ async function startFlight(page: Page): Promise<void> {
   await expect(cc.getByRole("checkbox")).toBeVisible({ timeout: 90_000 });
   // A pilot looks at the drone before confirming; the onboard preflight needs a moment
   // after the charter is installed, and the take-off is refused until it has passed.
-  await expect
-    .poll(() => live<boolean>(page, "vehicle.snapshot.preflight_ok"), { timeout: 90_000 })
-    .toBe(true);
+  // A new charter makes the preflight run again (it can still read true from before for a
+  // moment), so it must hold for a few seconds.
+  let okSince: number | null = null;
+  const until = Date.now() + 90_000;
+  while (okSince === null || Date.now() - okSince < 3_000) {
+    if (Date.now() > until) throw new Error("the onboard preflight did not pass");
+    const ok = await live<boolean>(page, "vehicle.snapshot.preflight_ok");
+    okSince = ok ? (okSince ?? Date.now()) : null;
+    await page.waitForTimeout(250);
+  }
   await cc.getByRole("checkbox").check();
   await cc.getByTestId("clearance-button").click();
   // The search request was the operator's ask to start: the AI takes off on the
