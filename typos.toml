@@ -12,6 +12,7 @@ brin = "brin"  # Postgres BRIN index (B0-04)
 ned = "ned"  # north-east-down, a Gazebo plugin tag (sd_quad14 model)
 trak = "trak"  # MP4 box names (the recordings' video track and its runs, B1-16)
 trun = "trun"
+ot = "ot"  # gdalwarp's -ot (output type), tools/terrain/fetch_site.py
 # Swedish
 varning = "varning"
 databas = "databas"

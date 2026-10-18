@@ -328,10 +328,16 @@ def check_coordinates(path: str, lines: list[str], places: list[Place]) -> list[
         return []
     out: list[Finding] = []
     seen: set[int] = set()
-    for no, lat, lon in find_coordinates(lines):
-        if no in seen:
-            continue
-        if any(haversine_m(lat, lon, p.lat, p.lon) <= p.radius_m for p in places):
+    found = find_coordinates(lines)
+
+    def allowed(lat: float, lon: float) -> bool:
+        return any(haversine_m(lat, lon, p.lat, p.lon) <= p.radius_m for p in places)
+
+    # A free pair is tried in both orders; at a site where the swapped pair is also a valid
+    # position (Sweden: 59 N 18 E against 18 N 59 E), the order that is allowed decides.
+    allowed_here = {(no, lat, lon) for no, lat, lon in found if allowed(lat, lon)}
+    for no, lat, lon in found:
+        if no in seen or (no, lat, lon) in allowed_here or (no, lon, lat) in allowed_here:
             continue
         seen.add(no)
         out.append(Finding(path, no, "coordinate", "coordinate outside the public test sites"))

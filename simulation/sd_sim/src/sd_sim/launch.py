@@ -44,6 +44,7 @@ ALLOWED_KEYS = (
     "private_db",
     "dry",
     "objects",
+    "world",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
@@ -208,7 +209,7 @@ class Stack:
         return (
             self.cfg.physics == "gz"
             and self.cfg.vehicle == "sd_quad14"
-            and self.cfg.world == world.WORLD_NAME
+            and self.cfg.world in world.known_worlds(self.repo)
         )
 
     def world_objects(self) -> list[objects.WorldObject]:
@@ -217,7 +218,7 @@ class Stack:
             return []
         if not self.renders_world():
             raise InfraError(
-                f"objects= kräver physics=gz, vehicle=sd_quad14 och världen {world.WORLD_NAME}."
+                "objects= kräver physics=gz, vehicle=sd_quad14 och en av Searchdrones världar."
             )
         path = (self.repo / self.cfg.objects).resolve()
         if not path.is_relative_to(self.repo.resolve()):
@@ -796,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
     dry = values.pop("dry", "") == "1" or os.environ.get("SD_SIM__DRY_RUN") == "1"
     values.pop("record", None)
     try:
-        cfg = config.load(values, demo=demo)
+        cfg = config.load(values, demo=demo, default_world=config.LAUNCH_WORLD)
     except config.DemoHomeError as exc:
         print(str(exc), file=sys.stderr)
         return 3

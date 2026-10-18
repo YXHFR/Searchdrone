@@ -14,12 +14,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sd_sim import paths
+from sd_sim import paths, site
 from sd_sim.sitl import CMAC_HOME
 
 DEMO_HOME_REFUSED = (
-    "Demo kräver den offentliga startplatsen CMAC. Ta bort home_override eller kör just sim."
+    "Demo kräver en offentlig startplats (CMAC eller en offentlig världs hem). "
+    "Ta bort home_override eller kör just sim."
 )
+# `just sim` and `just demo` use the public terrain world unless a world is set; the
+# test suites keep the flat world at CMAC.
+LAUNCH_WORLD = "sd_hellasgarden"
+TEST_WORLD = "sd_lake_forest"
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
 _TRUE = ("1", "true", "yes", "on")
@@ -89,7 +94,10 @@ def load(
     demo: bool = False,
     repo: Path = paths.REPO,
     environ: dict[str, str] | None = None,
+    default_world: str = TEST_WORLD,
 ) -> SimConfig:
+    """Merge the layers; a world built from a site brings its own home (``Site.home_arg``)
+    unless a personal home is set outside the demo."""
     env = dict(os.environ if environ is None else environ)
     example = _read_toml(repo / "config" / "sim.example.toml")
     local = _read_toml(repo / "config" / "sim.toml")
@@ -130,7 +138,7 @@ def load(
     cfg.video = _choice("video", merged.get("video", "camera"), ("camera", "test", "off"))
     if cfg.video == "camera" and cfg.physics != "gz":
         cfg.video = "test"
-    cfg.world = str(merged.get("world", cfg.world))
+    cfg.world = str(merged.get("world", default_world)).strip() or default_world
     cfg.objects = str(merged.get("objects", "")).strip()
     cfg.vehicle = _choice("vehicle", merged.get("vehicle", cfg.vehicle), ("sd_quad14", "stock"))
     cfg.qgc = _bool("qgc", merged.get("qgc", False))
@@ -150,4 +158,10 @@ def load(
             raise ConfigError("home_override ska vara lat,lon,alt,heading")
         cfg.home = home
         cfg.personal_home = True
+    sites = site.world_sites(repo)
+    if cfg.world in sites and not cfg.personal_home:
+        try:
+            cfg.home = site.load(sites[cfg.world], repo).home_arg
+        except site.SiteError as exc:
+            raise ConfigError(str(exc)) from exc
     return cfg

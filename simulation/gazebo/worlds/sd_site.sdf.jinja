@@ -1,0 +1,114 @@
+<?xml version="1.0"?>
+<!--
+  A world built from a real site (sd_sim.site, sd_sim.terrain): the site's model with
+  terrain, forest, buildings, cars and lakes, a landing pad at home, scenario objects
+  and the vehicle. Rendered per simulator instance by sd_sim.site_world; do not edit
+  the rendered copy under build/. x is east, y is north and z is up from the pad.
+-->
+<sdf version="1.9">
+  <world name="{{ name }}">
+    <physics name="1ms" type="ignore">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu">
+    </plugin>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat">
+    </plugin>
+
+    <scene>
+      <ambient>0.55 0.57 0.60 1</ambient>
+      <background>0.62 0.72 0.86 1</background>
+      <sky></sky>
+      <shadows>false</shadows>
+    </scene>
+
+    <!-- An afternoon sun from the south-west, about 45 degrees up. -->
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 100 0 0 0</pose>
+      <diffuse>0.95 0.92 0.86 1</diffuse>
+      <specular>0.25 0.25 0.25 1</specular>
+      <direction>0.5 0.5 -0.7</direction>
+    </light>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>{{ lat }}</latitude_deg>
+      <longitude_deg>{{ lon }}</longitude_deg>
+      <elevation>{{ alt }}</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
+    <include>
+      <uri>{{ site_uri }}</uri>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
+    <model name="landing_pad">
+      <static>true</static>
+      <link name="link">
+        <collision name="pad">
+          <pose>0 0 -0.25 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>{{ pad_size }} {{ pad_size }} 0.5</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="pad">
+          <pose>0 0 0.005 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>{{ pad_size }} {{ pad_size }} 0.01</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+{% for bar in [(-0.6, 0, 0.25, 1.8), (0.6, 0, 0.25, 1.8), (0, 0, 1.2, 0.25)] %}
+        <visual name="h_{{ loop.index0 }}">
+          <pose>{{ bar[0] }} {{ bar[1] }} 0.011 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>{{ bar[2] }} {{ bar[3] }} 0.002</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 1 1 1</ambient>
+            <diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+{% endfor %}
+      </link>
+    </model>
+{% if objects %}
+
+    <!-- Scenario objects (sd_sim.objects), already placed on the ground. -->
+{% for element in objects %}
+  {{ element | safe }}
+{% endfor %}
+{% endif %}
+{% for camera in cameras %}
+
+  {{ camera | safe }}
+{% endfor %}
+
+    <include>
+      <uri>{{ model_uri }}</uri>
+      <pose>0 0 0 0 0 {{ vehicle_yaw }}</pose>
+    </include>
+  </world>
+</sdf>

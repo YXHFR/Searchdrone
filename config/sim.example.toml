@@ -1,13 +1,14 @@
 # Simulator. Copied to config/sim.toml by `just setup-config`.
 # Override any key with an environment variable SD_SIM__<KEY>.
-# Home position is the public ArduPilot SITL site (CMAC) from the demo fixture.
+# Home position: the chosen world's public home (CMAC for the flat test world).
 
 [sim]
 instance = 0
 physics = "gz"            # "gz" | "builtin"
 gui = true                # Gazebo window, only with physics = "gz"
 video = "camera"          # "camera" (gz only) | "test" | "off"
-world = "sd_lake_forest"
+# world = "sd_hellasgarden"  # just sim / just demo: the public terrain world (default);
+#                             # the test suites use the flat "sd_lake_forest" at CMAC
 objects = ""              # objects with facit (gz only), a YAML file in the repo, e.g. simulation/scenarios/objects/red_block.yaml
 vehicle = "sd_quad14"     # "sd_quad14" | "stock" (ArduPilot's own quad / iris)
 fixture = "simulation/scenarios/demo_fixture.yaml"
