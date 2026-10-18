@@ -73,6 +73,7 @@ function compactAttribution(): boolean {
 
 type MapLike = import("maplibre-gl").Map;
 type MapMod = typeof import("./createMap");
+type Basemap = import("./mapStyle").Basemap;
 type DrawMode = "none" | "polygon" | "rectangle" | "path" | "pin";
 type ToggleId = SourceId | "paths";
 async function noPin(_p: [number, number]): Promise<void> {}
@@ -91,6 +92,15 @@ const TOGGLES: ToggleId[] = [
   "paths",
 ];
 const TRACK_EVERY_MS = 500;
+const BASEMAP_KEY = "sd.panel.map.basemap.v1";
+
+function loadBasemap(): Basemap {
+  try {
+    return localStorage.getItem(BASEMAP_KEY) === "map" ? "map" : "photo";
+  } catch {
+    return "photo";
+  }
+}
 
 function loadHidden(): ToggleId[] {
   try {
@@ -162,6 +172,9 @@ export default function MapView({ isCompact }: ViewProps) {
   const [mode, setMode] = useState<DrawMode>("none");
   const [points, setPoints] = useState<[number, number][]>([]);
   const [hidden, setHidden] = useState<ToggleId[]>(loadHidden);
+  const [basemap, setBasemap] = useState<Basemap>(loadBasemap);
+  const basemapRef = useRef(basemap);
+  basemapRef.current = basemap;
   const [cursor, setCursor] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
   const modeRef = useRef(mode);
@@ -181,11 +194,19 @@ export default function MapView({ isCompact }: ViewProps) {
     import("./createMap")
       .then((mod) => {
         if (disposed || !box.current) return;
-        map = mod.createMap(box.current, mapCfg, theme, compactAttribution(), start, (m) => {
-          if (disposed) return;
-          handle.current = { map: m, mod };
-          setReady(true);
-        });
+        map = mod.createMap(
+          box.current,
+          mapCfg,
+          theme,
+          basemapRef.current,
+          compactAttribution(),
+          start,
+          (m) => {
+            if (disposed) return;
+            handle.current = { map: m, mod };
+            setReady(true);
+          },
+        );
         map.on("dragstart", (e) => {
           if ((e as { originalEvent?: unknown }).originalEvent) follow.current = false;
         });
@@ -269,6 +290,17 @@ export default function MapView({ isCompact }: ViewProps) {
       // not remembered
     }
   }, [hidden, ready]);
+
+  useEffect(() => {
+    const h = handle.current;
+    if (!ready || !h) return;
+    h.mod.setBasemap(h.map, basemap, theme);
+    try {
+      localStorage.setItem(BASEMAP_KEY, basemap);
+    } catch {
+      // not remembered
+    }
+  }, [basemap, ready, theme]);
 
   const shownPath = usePathOverlay(ready, handle, !hidden.includes("paths"));
 
@@ -462,7 +494,13 @@ export default function MapView({ isCompact }: ViewProps) {
   return (
     <div className="map-wrap">
       <div ref={box} className="map-box" data-hotkeys="map" data-testid="map" />
-      {!mapCfg ? <p className="map-note">{t("views.map.noPack")}</p> : null}
+      {!mapCfg ? (
+        <p className="map-note">{t("views.map.noPack")}</p>
+      ) : !mapCfg.imagery && basemap === "photo" ? (
+        <p className="map-note" data-testid="no-imagery">
+          {t("views.map.noImagery")}
+        </p>
+      ) : null}
       <div className="map-tools" role="toolbar" aria-label={t("views.map.tools")}>
         <button type="button" className="tool" onClick={() => centre("drone")}>
           <Crosshair aria-hidden="true" size={15} />
@@ -483,21 +521,40 @@ export default function MapView({ isCompact }: ViewProps) {
           testId="map-layers-menu"
         >
           {() => (
-            <fieldset className="map-layers" data-testid="map-layers">
-              <legend className="sr-only">{t("views.map.layers")}</legend>
-              {TOGGLES.map((id) => (
-                <label key={id}>
-                  <input
-                    type="checkbox"
-                    checked={!hidden.includes(id)}
-                    onChange={(e) =>
-                      setHidden(e.target.checked ? hidden.filter((x) => x !== id) : [...hidden, id])
-                    }
-                  />
-                  {t(`views.map.layer.${id}`)}
-                </label>
-              ))}
-            </fieldset>
+            <>
+              <fieldset className="map-layers map-basemap" data-testid="map-basemap">
+                <legend>{t("views.map.basemap")}</legend>
+                {(["photo", "map"] as const).map((b) => (
+                  <label key={b}>
+                    <input
+                      type="radio"
+                      name="basemap"
+                      data-testid={`basemap-${b}`}
+                      checked={basemap === b}
+                      onChange={() => setBasemap(b)}
+                    />
+                    {t(`views.map.basemapChoice.${b}`)}
+                  </label>
+                ))}
+              </fieldset>
+              <fieldset className="map-layers" data-testid="map-layers">
+                <legend>{t("views.map.overlays")}</legend>
+                {TOGGLES.map((id) => (
+                  <label key={id}>
+                    <input
+                      type="checkbox"
+                      checked={!hidden.includes(id)}
+                      onChange={(e) =>
+                        setHidden(
+                          e.target.checked ? hidden.filter((x) => x !== id) : [...hidden, id],
+                        )
+                      }
+                    />
+                    {t(`views.map.layer.${id}`)}
+                  </label>
+                ))}
+              </fieldset>
+            </>
           )}
         </Menu>
         {canDraw ? (

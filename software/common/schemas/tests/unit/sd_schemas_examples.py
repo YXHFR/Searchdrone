@@ -477,6 +477,9 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         ),
         s.LoginRequest(login_code="abc123"),
         s.MapConfig(pack_url="/tiles/demo.pmtiles", center=_ll(), zoom=15),
+        s.MapImagery(
+            pack_url="/tiles/imagery.pmtiles", maxzoom=14, attribution="Synthetic test imagery"
+        ),
         s.VideoConfig(whep_url="/api/v1/video/sim-01/main/whep", hls_url=None),
         s.Features(),
         s.PanelConfig(

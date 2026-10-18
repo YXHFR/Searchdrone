@@ -115,6 +115,8 @@ class VideoConfig(_Section):
 class MapConfig(_Section):
     # The offline map pack <data_dir>/tiles/<pack>.pmtiles, made by `just maps-fetch`.
     pack: str = Field(default="demo", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")  # tiles.PACK_NAME
+    # The aerial photo pack <data_dir>/tiles/<imagery>.pmtiles (raster), shown under the map.
+    imagery: str = Field(default="imagery", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     zoom: float = Field(default=15.0, ge=0, le=22)
 
 

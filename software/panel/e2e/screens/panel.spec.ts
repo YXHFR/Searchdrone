@@ -16,12 +16,17 @@ import {
   telemetry,
   vehicleLive,
 } from "../fixtures";
+import { IMAGERY, syntheticImagery } from "../fixtures/syntheticImagery";
 import { expect, type FakeGround, test } from "../helpers/fakeGround";
 import { layoutOf, showView } from "../helpers/safety";
 
 const OUT = fileURLToPath(new URL("../../screens/", import.meta.url));
 const FRAME = readFileSync(new URL("../testdata/aerial-frame.jpg", import.meta.url));
 const WHEP = "/api/v1/video/sim-01/main/whep";
+// Built before any page opens: the build blocks this worker for about a second.
+test.beforeAll(() => {
+  syntheticImagery();
+});
 const MAP: MapConfig = {
   pack_url: "/tiles/fixture.pmtiles",
   center: HOME,
@@ -29,6 +34,7 @@ const MAP: MapConfig = {
   maxzoom: 15,
   attribution: "© OpenStreetMap contributors, Protomaps",
   assets_url: "/tiles/assets",
+  imagery: IMAGERY,
 };
 
 // The search area north of home, in four sectors of 150 × 150 m.
@@ -250,7 +256,7 @@ async function searching(page: Page, ground: FakeGround): Promise<void> {
     message_sv: "Sektor A klar",
     data: {},
   });
-  await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 15_000 });
+  await expect(page.getByTestId("video-badge")).toContainText("WebRTC", { timeout: 25_000 }); // one retry (NO_VIDEO_MS) and a handshake
   await mapReady(page);
   await showWholeArea(page);
 }

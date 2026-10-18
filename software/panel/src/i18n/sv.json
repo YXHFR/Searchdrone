@@ -111,6 +111,13 @@
     "map": {
       "title": "Karta",
       "noPack": "Ingen offlinekarta laddad",
+      "noImagery": "Inget flygfoto för området",
+      "basemap": "Bakgrund",
+      "basemapChoice": {
+        "photo": "Flygfoto",
+        "map": "Karta"
+      },
+      "overlays": "Visa på kartan",
       "noWebgl": "Kartan kräver WebGL2, som den här webbläsaren saknar. Positionen står nedan och i Status.",
       "failed": "Kartan kunde inte starta. Positionen står nedan och i Status.",
       "noPosition": "Ingen position från drönaren ännu",

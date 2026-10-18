@@ -4,6 +4,7 @@
 import type { Page } from "@playwright/test";
 import type { MapConfig } from "@searchdrone/schemas";
 import { charter, command, HOME, square, telemetry } from "../fixtures";
+import { IMAGERY } from "../fixtures/syntheticImagery";
 import { expect, test } from "../helpers/fakeGround";
 import { expectSafetyVisible, isMobile, showView } from "../helpers/safety";
 
@@ -99,6 +100,72 @@ test("without a map pack the map view says so, requests no tiles and still draws
   }
   expect(ground.tiles).toEqual([]);
 });
+
+test("the aerial photo lies under the map, Karta is one click away, and the choice is kept", async ({
+  page,
+  ground,
+}) => {
+  ground.setConfig({ map: { ...MAP, zoom: 15, imagery: IMAGERY } });
+  await ground.open();
+  const webgl2 = await page.evaluate(
+    () => document.createElement("canvas").getContext("webgl2") !== null,
+  );
+  test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
+  const shown = (id: string) =>
+    page.evaluate((layer) => {
+      const map = (window as unknown as { __sd?: { map?: StyleMap } }).__sd?.map;
+      return map?.getLayer(layer)
+        ? (map.getLayoutProperty(layer, "visibility") ?? "visible")
+        : null;
+    }, id);
+  await page.waitForFunction(
+    () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
+  );
+  await expect.poll(() => shown("imagery")).toBe("visible");
+  expect(await shown("earth")).toBe("none");
+  expect(await shown("water")).toBe("visible");
+  // The panel's own drawing stays on top of the photo.
+  for (const id of ["swept-fill", "sectors-fill", "areas-fill"])
+    expect(await shown(id)).toBe("visible");
+  await expect
+    .poll(() => ground.tiles.filter((t) => t.path === "/tiles/imagery.pmtiles").length)
+    .toBeGreaterThan(1);
+  await expect(page.locator(".maplibregl-ctrl-attrib")).toContainText(IMAGERY.attribution);
+  await expect(page.getByTestId("no-imagery")).toHaveCount(0);
+
+  await page.getByTestId("map-layers-menu").click();
+  await expect(page.getByTestId("basemap-photo")).toBeChecked();
+  await page.getByTestId("basemap-map").check();
+  await expect.poll(() => shown("imagery")).toBe("none");
+  expect(await shown("earth")).toBe("visible");
+  await page.reload();
+  await page.waitForFunction(
+    () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
+  );
+  expect(await shown("imagery")).toBe("none");
+  await page.getByTestId("map-layers-menu").click();
+  await page.getByTestId("basemap-photo").check();
+  await expect.poll(() => shown("imagery")).toBe("visible");
+  expect(ground.tiles.every((t) => t.status < 400)).toBe(true);
+});
+
+test("without a photo pack the map shows and says there is no aerial photo", async ({
+  page,
+  ground,
+}) => {
+  ground.setConfig({ map: MAP });
+  await ground.open();
+  await expect(page.getByTestId("no-imagery")).toHaveText("Inget flygfoto för området");
+  await page.getByTestId("map-layers-menu").click();
+  await page.getByTestId("basemap-map").check();
+  await expect(page.getByTestId("no-imagery")).toHaveCount(0);
+  expect(ground.tiles.some((t) => t.path === "/tiles/imagery.pmtiles")).toBe(false);
+});
+
+interface StyleMap {
+  getLayer(id: string): unknown;
+  getLayoutProperty(id: string, name: string): string | undefined;
+}
 
 test("STOPP and FLYG HEM stay visible and work over the real map", async ({ page, ground }) => {
   ground.setConfig({ map: MAP });

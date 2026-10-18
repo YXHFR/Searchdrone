@@ -36,6 +36,25 @@ const PALETTE: Record<MapFlavor, Palette> = {
   },
 };
 
+const SWEPT_OPACITY = 0.22;
+// On the aerial photo (the same picture in both themes) the swept area is a light wash.
+const SWEPT_ON_PHOTO = { color: "#ffffff", opacity: 0.42 };
+
+/** The swept area's look for what lies under it: the photo or the drawn map. */
+export function setSweptLook(map: maplibregl.Map, flavor: MapFlavor, photo: boolean): void {
+  if (!map.getLayer("swept-fill")) return;
+  map.setPaintProperty(
+    "swept-fill",
+    "fill-color",
+    photo ? SWEPT_ON_PHOTO.color : PALETTE[flavor].swept,
+  );
+  map.setPaintProperty(
+    "swept-fill",
+    "fill-opacity",
+    photo ? SWEPT_ON_PHOTO.opacity : SWEPT_OPACITY,
+  );
+}
+
 /** Layers that the "Lager" menu can switch off (the drone and the charter always stay). */
 export const TOGGLEABLE: SourceId[] = [
   "charter-preview",
@@ -117,7 +136,7 @@ export function addOverlay(map: maplibregl.Map, labels: boolean, flavor: MapFlav
     id: "swept-fill",
     type: "fill",
     source: "swept",
-    paint: { "fill-color": C.swept, "fill-opacity": 0.22 },
+    paint: { "fill-color": C.swept, "fill-opacity": SWEPT_OPACITY },
   });
   add({
     id: "sectors-line",

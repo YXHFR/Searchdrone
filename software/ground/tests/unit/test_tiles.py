@@ -8,8 +8,10 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pmtiles.tile import Compression, TileType, zxy_to_tileid
+from pmtiles.writer import Writer
 
-from sd_ground.api.tiles import read_center
+from sd_ground.api.tiles import read_attribution, read_center
 from sd_ground.context import Ground
 
 REPO = Path(__file__).resolve().parents[4]
@@ -165,3 +167,80 @@ def test_read_center(tmp_path: Path) -> None:
     assert read_center(tmp_path / "missing.pmtiles") is None
     (tmp_path / "short.pmtiles").write_bytes(b"PMTiles\x03")
     assert read_center(tmp_path / "short.pmtiles") is None
+
+
+def _photo_pack(
+    path: Path,
+    *,
+    tile_type: TileType = TileType.JPEG,
+    metadata: dict[str, object] | None = None,
+    compression: Compression = Compression.GZIP,
+) -> None:
+    """A tiny raster pack: one tile of stand-in bytes at zoom 16 and the given metadata."""
+    with path.open("wb") as f:
+        writer = Writer(f)
+        writer.write_tile(zxy_to_tileid(16, 60_000, 39_000), b"tile")
+        e7 = 10_000_000
+        writer.finalize(
+            {
+                "tile_type": tile_type,
+                "tile_compression": Compression.NONE,
+                "internal_compression": compression,
+                "min_zoom": 12,
+                "max_zoom": 16,
+                "min_lon_e7": round((CMAC_LON - 0.01) * e7),
+                "min_lat_e7": round((CMAC_LAT - 0.01) * e7),
+                "max_lon_e7": round((CMAC_LON + 0.01) * e7),
+                "max_lat_e7": round((CMAC_LAT + 0.01) * e7),
+                "center_zoom": 14,
+                "center_lon_e7": round(CMAC_LON * e7),
+                "center_lat_e7": round(CMAC_LAT * e7),
+            },
+            {"attribution": "Synthetic test imagery"} if metadata is None else metadata,
+        )
+
+
+def test_no_photo_pack_means_no_imagery(logged_in: TestClient, tiles: Path) -> None:
+    assert logged_in.get("/api/v1/panel/config").json()["map"]["imagery"] is None
+
+
+@pytest.mark.parametrize("compression", [Compression.GZIP, Compression.NONE])
+def test_photo_pack_with_attribution(
+    logged_in: TestClient, tiles: Path, compression: Compression
+) -> None:
+    _photo_pack(tiles / "imagery.pmtiles", compression=compression)
+    body = logged_in.get("/api/v1/panel/config").json()["map"]["imagery"]
+    assert body == {
+        "pack_url": "/tiles/imagery.pmtiles",
+        "maxzoom": 16,
+        "attribution": "Synthetic test imagery",
+    }
+    assert logged_in.get("/tiles/imagery.pmtiles").status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("tile_type", "metadata"),
+    [
+        (TileType.MVT, None),  # a vector pack is not a photo
+        (TileType.JPEG, {}),  # the licence needs an attribution
+        (TileType.JPEG, {"attribution": "   "}),
+        (TileType.JPEG, {"attribution": "x" * 301}),
+        (TileType.JPEG, {"attribution": 7}),
+    ],
+)
+def test_photo_pack_without_what_it_needs_is_not_shown(
+    logged_in: TestClient, tiles: Path, tile_type: TileType, metadata: dict[str, object] | None
+) -> None:
+    _photo_pack(tiles / "imagery.pmtiles", tile_type=tile_type, metadata=metadata)
+    assert logged_in.get("/api/v1/panel/config").json()["map"]["imagery"] is None
+
+
+def test_read_attribution_of_a_broken_pack(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.pmtiles"
+    bad.write_bytes(b"not a pack")
+    assert read_attribution(bad) is None
+    _photo_pack(bad)
+    data = bytearray(bad.read_bytes())
+    data[97] = 9  # unknown directory compression
+    bad.write_bytes(bytes(data))
+    assert read_attribution(bad) is None

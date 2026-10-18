@@ -1,7 +1,7 @@
 // The video HUD as plain data: the heading tape's ticks and what the horizon may show. The
 // horizon needs a fresh attitude from the drone; without one it is left out, never guessed.
 import type { Telemetry } from "../../api/types";
-import { compass, isStale } from "../../header/instruments";
+import { isStale } from "../../header/instruments";
 
 export interface Tick {
   deg: number;

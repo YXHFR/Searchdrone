@@ -12,7 +12,7 @@ export default defineConfig({
   outputDir: "test-results/screens-run",
   fullyParallel: true,
   retries: 1,
-  workers: 2,
+  workers: 1,
   forbidOnly: !!process.env.CI,
   timeout: 90_000,
   reporter: "list",

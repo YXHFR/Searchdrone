@@ -156,3 +156,19 @@
 .map-box .maplibregl-ctrl-attrib {
   font-size: var(--fs-label);
 }
+.map-layers legend {
+  padding: 6px 0 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-faint);
+}
+.map-basemap {
+  border-bottom: 1px solid var(--c-line);
+  padding-bottom: 4px;
+}
+/* The scale sits above the attribution line, which can run the map's full width. */
+.map-box .maplibregl-ctrl-bottom-left {
+  bottom: 20px;
+}
