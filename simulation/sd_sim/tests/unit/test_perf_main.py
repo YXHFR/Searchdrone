@@ -468,3 +468,8 @@ def test_a_stop_request_during_the_flight_ends_the_run_without_a_report(
     assert perf.main(["runs=3"]) == 1
     assert flights == [1, 1]  # main started no second run
     assert reports == []
+
+
+def test_preflight_fails_without_the_render_node(tmp_path: Path) -> None:
+    facts = _facts(tmp_path, render_node="FEL")
+    assert any("renderD128" in e for e in perf.preflight_errors(facts))
