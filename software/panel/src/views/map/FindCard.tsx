@@ -1,7 +1,5 @@
 // The card of one found object on the map: class, how sure the source is, where, the
 // thumbnail and what kind of source it was. A find is a hint, never confirmed here.
-// The thumbnail is a background, not an <img>: WebKit styles an image's built-in overlay
-// with an inline <style> that the panel's CSP blocks and reports.
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { paths } from "../../api/paths";
@@ -34,14 +32,12 @@ export function FindCard({
         </button>
       </header>
       {find.thumb_detection_id ? (
-        <div
+        <img
           data-testid="find-thumb"
-          className="map-find-thumb"
-          role="img"
-          aria-label={find.name_sv}
-          style={{
-            backgroundImage: `url("${paths.detectionCrop(missionId, find.thumb_detection_id)}")`,
-          }}
+          src={paths.detectionCrop(missionId, find.thumb_detection_id)}
+          alt={find.name_sv}
+          width={128}
+          height={128}
         />
       ) : (
         <p className="muted">{t("views.map.find.noThumb")}</p>
