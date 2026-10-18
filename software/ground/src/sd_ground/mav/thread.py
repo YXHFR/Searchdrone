@@ -40,7 +40,7 @@ from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, ru
 from sd_ground.services.latches import HOME_LATCHES, Latches
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
-from sd_mav.failsafe_signals import PATTERNS
+from sd_mav.failsafe_signals import text_signal
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import (
     MODE_FRESH_S,
@@ -144,12 +144,6 @@ _VEHICLE_EVENTS: Final = {
 EVENTS_PER_KIND_S: Final = 1.0  # at most one event per kind and second from the link
 
 
-def signal_from_text(details: dict[str, Any]) -> bool:
-    """A failsafe text (fence, battery, ground station, EKF, crash, SmartRTL)."""
-    text = str(details.get("text", ""))
-    return any(p.search(text) for p in PATTERNS.values())
-
-
 def vehicle_events(
     sink: EventSink, now: Callable[[], float] | None = None
 ) -> Callable[[str, dict[str, Any]], None]:
@@ -174,7 +168,8 @@ def vehicle_events(
         if kind == "mav.statustext":
             # Warnings and worse, and every failsafe text (ArduCopter sends a fence breach
             # as a notice).
-            if int(details.get("severity", 7)) <= 4 or signal_from_text(details):
+            failsafe = text_signal(str(details.get("text", ""))) is not None
+            if int(details.get("severity", 7)) <= 4 or failsafe:
                 emit("fc.statustext", "warning", details)
             return
         mapped = _VEHICLE_EVENTS.get(kind)

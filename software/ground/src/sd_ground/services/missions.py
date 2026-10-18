@@ -633,6 +633,7 @@ class MissionFlow:
                     mission_id=mid,
                     details={"battery_pct": snap.battery_pct, "source": "onboard"},
                 )
+                await commands_service.cancel_open(self, vehicle_id, "BATTERY_RTL")
         watch.battery_rtl = snap.battery_rtl_active
         await commands_service.on_snapshot(self, mission, snap)
 

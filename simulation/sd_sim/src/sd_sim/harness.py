@@ -264,6 +264,45 @@ class Harness:
         except VehicleError as exc:
             raise InfraError(f"batteriet gick inte att ställa till {pct:g} %: {exc}") from exc
 
+    def upload_fence(self, corners: list[tuple[float, float]], timeout: float = 10.0) -> None:
+        """Upload one inclusion polygon as the FC's fence (``MISSION_COUNT`` and items of
+        type FENCE, the way a ground station does it): for tests where the fence in the
+        flight controller is changed behind the system's back."""
+        fence = mavlink.MAV_MISSION_TYPE_FENCE
+        self._conn.mav.mission_count_send(FC_SYSID, FC_COMPID, len(corners), fence)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            msg = self._conn.recv_match(
+                type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"],
+                blocking=True,
+                timeout=0.5,
+            )
+            if msg is None or msg.get_srcSystem() != FC_SYSID or int(msg.mission_type) != fence:
+                continue
+            if msg.get_type() == "MISSION_ACK":
+                if int(msg.type) != mavlink.MAV_MISSION_ACCEPTED:
+                    raise VehicleError(f"staketet nekades (MISSION_ACK {int(msg.type)})")
+                return
+            lat, lon = corners[int(msg.seq)]
+            self._conn.mav.mission_item_int_send(
+                FC_SYSID,
+                FC_COMPID,
+                int(msg.seq),
+                mavlink.MAV_FRAME_GLOBAL,
+                mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
+                0,
+                0,
+                len(corners),
+                0,
+                0,
+                0,
+                round(lat * 1e7),
+                round(lon * 1e7),
+                0,
+                fence,
+            )
+        raise VehicleError("staketet kvitterades inte")
+
     def guided_velocity(
         self, vx: float, vy: float, vz: float, duration_s: float, stop: Callable[[], bool]
     ) -> None:

@@ -193,44 +193,8 @@ async def test_sc09_takeoff_needs_charter_and_clearance(
 def _tamper_fence(sc: Scenario, half_m: float = 120.0) -> None:
     """The test rig (serial0, 253/190) uploads a square fence around home that is not the
     charter's, while the vehicle stands disarmed: someone changed the FC's fence."""
-    from pymavlink.dialects.v20 import ardupilotmega as mav
-
-    fence = mav.MAV_MISSION_TYPE_FENCE
     corners = [sc.at(x * half_m, y * half_m) for x, y in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
-    h = sc.sim.harness
-    conn = h._conn  # pyright: ignore[reportPrivateUsage]
-    conn.mav.mission_count_send(1, 1, len(corners), fence)
-    end = time.monotonic() + 10.0
-    while time.monotonic() < end:
-        msg = conn.recv_match(
-            type=["MISSION_REQUEST_INT", "MISSION_REQUEST", "MISSION_ACK"],
-            blocking=True,
-            timeout=0.5,
-        )
-        if msg is None or msg.get_srcSystem() != 1 or int(msg.mission_type) != fence:
-            continue
-        if msg.get_type() == "MISSION_ACK":
-            assert int(msg.type) == mav.MAV_MISSION_ACCEPTED, msg
-            return
-        lat, lon = corners[int(msg.seq)]
-        conn.mav.mission_item_int_send(
-            1,
-            1,
-            int(msg.seq),
-            mav.MAV_FRAME_GLOBAL,
-            mav.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
-            0,
-            0,
-            len(corners),
-            0,
-            0,
-            0,
-            round(lat * 1e7),
-            round(lon * 1e7),
-            0,
-            fence,
-        )
-    raise AssertionError("the tampered fence was not acknowledged")
+    sc.sim.harness.upload_fence(corners)
 
 
 @pytest.mark.budget_s(200)

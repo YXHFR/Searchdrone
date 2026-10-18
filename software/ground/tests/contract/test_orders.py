@@ -497,6 +497,21 @@ async def test_ai_cannot_cancel_the_pilots_order(r: Rig) -> None:
     assert await status_is(r, mid, cid, "running")
 
 
+async def test_onboard_battery_rule_cancels_the_running_order(r: Rig) -> None:
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    r.onboard.order_outcome = "running"
+    no_rate_limit(r)
+    lat, lon = r.at(50.0, 0.0)
+    out = await order(r, d, "goto", {"lat": lat, "lon": lon, "alt_m": 40})
+    await wait_order_status(r, mid, out["command_id"], "running")
+    r.onboard.battery_rtl_active = True
+    await wait_order_status(r, mid, out["command_id"], "cancelled")
+    cmd = (await commands(r, mid))[out["command_id"]]
+    assert cmd["status_reason"] == "BATTERY_RTL"
+
+
 async def test_stop_cancels_the_running_order(r: Rig) -> None:
     mid = await r.ready_mission()
     d = driver(r, mid)
