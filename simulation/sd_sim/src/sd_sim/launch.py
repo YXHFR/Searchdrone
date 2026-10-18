@@ -24,7 +24,7 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, paths, ports, procs, services, world
+from sd_sim import _args, config, gazebo, paths, ports, procs, services, targets, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -112,8 +112,14 @@ class Stack:
         param_layers: tuple[Path, ...] = (),
         services: bool = False,
         test_rig: bool = False,
+        scene: targets.Scene | None = None,
     ) -> None:
         self.cfg = cfg
+        # scene: a search scenario's objects in the Gazebo world, the vehicle's stills
+        # camera instead of its video camera, and the stills captured into stills_dir.
+        self.scene = scene
+        self.stills_dir = run_dir / "stills"
+        self.ground_truth: Path | None = None
         # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
         # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
         self.services = services
@@ -203,7 +209,23 @@ class Stack:
 
     def start_gazebo(self) -> None:
         if self.cfg.vehicle == "sd_quad14" and self.cfg.world == world.WORLD_NAME:
-            world.render_world(self.cfg.world, self.cfg.instance, self.repo)
+            names: tuple[str, ...] = ()
+            if self.scene is not None:
+                names, truth = targets.render_targets(
+                    self.cfg.instance, self.scene.scenario, self.scene.seed, self.repo
+                )
+                self.ground_truth = self.run_dir / "ground_truth.json"
+                shutil.copyfile(truth, self.ground_truth)
+            world.render_world(
+                self.cfg.world,
+                self.cfg.instance,
+                self.repo,
+                includes=names,
+                stills=self.scene is not None,
+                video=self.scene is None,
+            )
+        elif self.scene is not None:
+            raise InfraError("Ett sökscenario kräver världen sd_lake_forest med sd_quad14.")
         self.world = gazebo.resolve_world(self.cfg, self.repo)
         if self.world.note:
             say(self.world.note)
@@ -217,6 +239,29 @@ class Stack:
             60,
             lambda: gazebo.world_running(running, self.cfg.instance),
             "Gazebo svarar inte. Se reservvägarna i installationsguiden (gui=false).",
+        )
+        if self.scene is not None:
+            self.start_stills_capture(env)
+
+    def start_stills_capture(self, env: dict[str, str]) -> None:
+        """The stills camera's pictures and labelled boxes into ``stills_dir``."""
+        prefix = world.stills_topic_prefix(self.cfg.instance)
+        self.stills_dir.mkdir(parents=True, exist_ok=True)
+        script = Path(__file__).with_name("gz_stills.py")
+        self.group.start(
+            "stills",
+            [
+                gazebo.GZ_PYTHON,
+                str(script),
+                "capture",
+                "--image-topic",
+                f"{prefix}/stills",
+                "--boxes-topic",
+                f"{prefix}/boxes",
+                "--out",
+                str(self.stills_dir),
+            ],
+            env=env,
         )
 
     def start_link_processes(self) -> None:

@@ -51,6 +51,8 @@ BLADE_CP_M = 0.084
 CLA = 4.25
 BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
+# The stills camera a search scenario adds (the real camera's 66 degrees; 1280 x 720 in CI).
+STILLS = {"width": 1280, "height": 720, "hfov_deg": 66.0, "rate_hz": 1}
 
 # The world, in metres east/north of the landing pad.
 GROUND_SIZE_M = 1200.0
@@ -87,7 +89,16 @@ def blade_area_m2(total_mass_kg: float) -> float:
     return thrust_per_surface / (0.5 * AIR_DENSITY * CLA * BLADE_A0_RAD * v * v)
 
 
-def model_context(instance: int, drone: Drone | None = None) -> dict[str, Any]:
+def stills_topic_prefix(instance: int) -> str:
+    """Where the instance's stills and labelled boxes are published (Gazebo Transport)."""
+    return f"/sd_i{instance}"
+
+
+def model_context(
+    instance: int, drone: Drone | None = None, *, stills: bool = False, video: bool = True
+) -> dict[str, Any]:
+    """``stills`` adds the stills camera and its bounding-box camera; ``video = False``
+    leaves out the video camera (it costs rendering time and a search does not need it)."""
     drone = load_drone(DRONE_YAML) if drone is None else drone
     if drone.motors.count != 4:
         raise ValueError("sd_quad14 är en quad: fyra motorer och fyra propellrar")
@@ -132,6 +143,16 @@ def model_context(instance: int, drone: Drone | None = None) -> dict[str, Any]:
         "cla": CLA,
         "air_density": AIR_DENSITY,
         "camera": {**CAMERA, "hfov_rad": round(math.radians(CAMERA["hfov_deg"]), 6)},
+        "video": video,
+        "stills": (
+            {
+                **STILLS,
+                "hfov_rad": round(math.radians(STILLS["hfov_deg"]), 6),
+                "topic_prefix": stills_topic_prefix(instance),
+            }
+            if stills
+            else None
+        ),
     }
 
 
@@ -215,9 +236,11 @@ def _env() -> jinja2.Environment:
     )
 
 
-def model_sdf(instance: int, drone: Drone | None = None) -> str:
+def model_sdf(
+    instance: int, drone: Drone | None = None, *, stills: bool = False, video: bool = True
+) -> str:
     template = _env().get_template(f"models/{MODEL_NAME}/model.sdf.jinja")
-    return template.render(**model_context(instance, drone))
+    return template.render(**model_context(instance, drone, stills=stills, video=video))
 
 
 def model_config(instance: int) -> str:
@@ -270,26 +293,40 @@ def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
     }
 
 
-def render_model(instance: int, repo: Path = paths.REPO) -> Path:
+def render_model(
+    instance: int, repo: Path = paths.REPO, *, stills: bool = False, video: bool = True
+) -> Path:
     """Write the instance's model; returns its folder (``model://sd_quad14_i<N>``)."""
     out = repo / "build" / "sim" / "models" / f"{MODEL_NAME}_i{instance}"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "model.sdf").write_text(model_sdf(instance), encoding="utf-8")
+    (out / "model.sdf").write_text(
+        model_sdf(instance, stills=stills, video=video), encoding="utf-8"
+    )
     (out / "model.config").write_text(model_config(instance), encoding="utf-8")
     return out
 
 
-def render_world(name: str, instance: int, repo: Path = paths.REPO) -> Path:
-    """Write the instance's world and model, plus the world's GeoJSON layer.
+def render_world(
+    name: str,
+    instance: int,
+    repo: Path = paths.REPO,
+    *,
+    includes: tuple[str, ...] = (),
+    stills: bool = False,
+    video: bool = True,
+) -> Path:
+    """Write the instance's world and model, plus the world's GeoJSON layer. ``includes``
+    are rendered scenario objects (``sd_sim.targets``); ``stills`` and ``video`` choose
+    the vehicle's cameras.
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
     the layer only depends on the fixture's home and the fixed scenery."""
-    render_model(instance, repo)
+    render_model(instance, repo, stills=stills, video=video)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}_i{instance}.sdf"
-    path.write_text(world_sdf(name, instance, fix), encoding="utf-8")
+    path.write_text(world_sdf(name, instance, fix, includes=includes), encoding="utf-8")
     (out / f"{name}.geojson").write_text(
         json.dumps(world_geojson(fix), indent=1) + "\n", encoding="utf-8"
     )

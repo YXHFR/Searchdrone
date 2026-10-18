@@ -31,6 +31,7 @@ from sd_sim import fixture, paths, world
 __all__ = [
     "SCENARIOS",
     "TARGETS_MODEL",
+    "Scene",
     "Target",
     "ground_truth",
     "layout",
@@ -55,6 +56,14 @@ MIN_GAP_M = 12.0  # between any two objects' centres
 ROAD_CLEAR_M = 7.0  # targets stay this far from the road's centre line
 
 SCENARIOS = ("SK-RED",)
+
+
+@dataclass(frozen=True)
+class Scene:
+    """A search scenario's objects in the world: which scenario and which seed."""
+
+    scenario: str = "SK-RED"
+    seed: int = 1
 
 
 @dataclass(frozen=True)

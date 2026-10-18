@@ -3,8 +3,14 @@
 Gazebo's Python bindings (``python3-gz-transport13``, ``python3-gz-msgs10``) are
 installed for the system's Python 3.12 only, so this file is a standalone script with
 nothing but the standard library and those bindings, imported only where Gazebo is
-needed (so the rest can be tested anywhere); ``sd_sim.render_stills`` starts it as a
-separate process (``/usr/bin/python3.12 gz_stills.py shots ...``) and reads the folder.
+needed (so the rest can be tested anywhere); ``sd_sim`` starts it as a separate process
+(``/usr/bin/python3.12 gz_stills.py ...``) and reads the folder.
+
+    capture --image-topic T --boxes-topic B --out DIR [--keep N]
+        Every picture on T becomes ``DIR/<n>.ppm`` plus ``DIR/<n>.json`` (simulator time,
+        size and the labelled boxes of the same moment); only the newest N are kept (the
+        reader deletes what it takes). Runs until it is stopped. Used by the simulator
+        stack for a search scenario: the onboard perception reads the folder.
 
     shots --world W --model M --poses FILE --image-topic T --boxes-topic B --out DIR
         Moves the static camera model M to every pose in FILE (a JSON list of
@@ -127,6 +133,47 @@ def write_still(
     tmp.replace(out / f"{name}.json")
 
 
+def prune(out: Path, keep: int) -> int:
+    """Delete all but the newest ``keep`` stills in ``out``; returns how many went."""
+    metas = sorted(out.glob("[!.]*.json"))
+    gone = 0
+    for meta in metas[: max(0, len(metas) - keep)]:
+        meta.with_suffix(".ppm").unlink(missing_ok=True)
+        meta.unlink(missing_ok=True)
+        gone += 1
+    return gone
+
+
+def capture(args: argparse.Namespace) -> int:
+    from gz.msgs10.annotated_axis_aligned_2d_box_v_pb2 import AnnotatedAxisAligned2DBox_V
+    from gz.msgs10.image_pb2 import Image
+    from gz.transport13 import Node
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    rec = Recorder()
+    node = Node()
+    if not node.subscribe(Image, args.image_topic, rec.on_image) or not node.subscribe(
+        AnnotatedAxisAligned2DBox_V, args.boxes_topic, rec.on_boxes
+    ):
+        sys.stderr.write("kan inte prenumerera på kamerans ämnen\n")
+        return 1
+    last, count = -1, 0
+    while True:
+        stamp = rec.wait_image_after(last, 3600.0)
+        if stamp is None:
+            continue
+        last = stamp
+        boxes = rec.boxes_at(stamp, BOX_WAIT_S)
+        with rec.lock:
+            image = rec.images.get(stamp)
+        if image is None:
+            continue
+        write_still(out, f"{count:08d}", stamp, image, boxes)
+        count += 1
+        prune(out, args.keep)
+
+
 def quat(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
     cr, sr = math.cos(roll / 2), math.sin(roll / 2)
     cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
@@ -204,11 +251,15 @@ def main(argv: list[str]) -> int:
         return 2
     parser = argparse.ArgumentParser(prog="gz_stills")
     sub = parser.add_subparsers(dest="mode", required=True)
+    cap = sub.add_parser("capture")
+    for key in ("--image-topic", "--boxes-topic", "--out"):
+        cap.add_argument(key, required=True)
+    cap.add_argument("--keep", type=int, default=20)
     sh = sub.add_parser("shots")
     for key in ("--world", "--model", "--poses", "--image-topic", "--boxes-topic", "--out"):
         sh.add_argument(key, required=True)
     args = parser.parse_args(argv)
-    return shots(args)
+    return capture(args) if args.mode == "capture" else shots(args)
 
 
 if __name__ == "__main__":

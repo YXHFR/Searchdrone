@@ -643,12 +643,17 @@ async def scenario(
     tmp_path: Path,
     *,
     proxied_link: bool = False,
+    onboard_factory: Callable[[Sim, str, str], Any] | None = None,
     **onboard_options: Any,
 ) -> AsyncIterator[Scenario]:
+    """``onboard_factory(sim, url, token)`` replaces the onboard side (e.g. one that also
+    runs perception); otherwise ``SitlOnboard`` with ``onboard_options``."""
     ground = _vehicle(f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}", Role.GROUND)
     port = free_port()
 
     def onboard(_clock: WallClock, url: str, token: str) -> Any:
+        if onboard_factory is not None:
+            return onboard_factory(sim, url, token)
         if proxied_link:
             return ProxiedOnboard(sim, url, token, **onboard_options)
         return SitlOnboard(sim, url, token, **onboard_options)

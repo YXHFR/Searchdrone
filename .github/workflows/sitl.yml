@@ -371,13 +371,16 @@ jobs:
 
   sitl-nightly-gz:
     # Gazebo as a server with headless rendering (no window, no GPU). Not required.
+    # The smoke flight, then SK-RED: the stills camera in Gazebo, the colour detector and
+    # the whole chain to the ground and the AI must find every red block.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 140
     steps:
       - *checkout
       - *check-ref
       - *setup
+      - *db
       - name: Install ArduPilot SITL and Gazebo Harmonic (same script as on the owner's computer)
         timeout-minutes: 60
         run: bash tools/setup/wsl-setup.sh sim
@@ -387,9 +390,28 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just sim-smoke physics=gz gui=false
+      - name: SK-RED, search for red blocks with the camera (Gazebo)
+        timeout-minutes: 45
+        env:
+          SD_SIM__HEADLESS: "1"
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just test-sitl sc=SK-RED physics=gz
       - *summary
       - *scan
       - *results
+      - name: Upload the search record (map, stills with the detector's boxes, numbers)
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sk-red-search
+          path: |
+            runs/**/search/**
+            runs/**/ground_truth.json
+            !runs/**/secrets/**
+          if-no-files-found: warn
+          retention-days: 14
       - *logs
 
   sitl-e2e:
