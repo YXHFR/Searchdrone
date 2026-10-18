@@ -2,19 +2,17 @@
 
 Gazebo's Python bindings (``python3-gz-transport13``, ``python3-gz-msgs10``) are
 installed for the system's Python 3.12 only, so this file is a standalone script with
-nothing but the standard library and those bindings; ``sd_sim`` starts it as a separate
-process (``/usr/bin/python3.12 gz_stills.py ...``) and reads the folder.
-
-    capture  --image-topic T [--boxes-topic B] --out DIR
-        Every picture on T becomes ``DIR/<n>.ppm`` plus ``DIR/<n>.json`` (simulator time,
-        size and, when B is given, the bounding-box camera's labelled boxes of the same
-        moment). The JSON file is written last, by rename, so a reader that sees it also
-        finds the whole picture. Runs until it is stopped.
+nothing but the standard library and those bindings, imported only where Gazebo is
+needed (so the rest can be tested anywhere); ``sd_sim.render_stills`` starts it as a
+separate process (``/usr/bin/python3.12 gz_stills.py shots ...``) and reads the folder.
 
     shots --world W --model M --poses FILE --image-topic T --boxes-topic B --out DIR
         Moves the static camera model M to every pose in FILE (a JSON list of
         ``{"name", "x", "y", "z", "roll", "pitch", "yaw"}``, metres and radians in the
-        world frame) and saves one picture per pose as above, named after the pose.
+        world frame) and saves one picture per pose, named after the pose: ``DIR/<name>.ppm``
+        plus ``DIR/<name>.json`` (simulator time, size, the pose and the bounding-box
+        camera's labelled boxes of the same moment). The JSON file is written last, by
+        rename, so a reader that sees it also finds the whole picture.
 
 Gazebo Transport stays on loopback: the caller sets ``GZ_IP=127.0.0.1`` and the
 instance's ``GZ_PARTITION``.
@@ -33,17 +31,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from gz.msgs10.annotated_axis_aligned_2d_box_v_pb2 import AnnotatedAxisAligned2DBox_V
-from gz.msgs10.boolean_pb2 import Boolean
-from gz.msgs10.image_pb2 import Image
-from gz.msgs10.pose_pb2 import Pose
-from gz.transport13 import Node
-
 RGB_INT8 = 3  # gz.msgs.PixelFormatType
 BOX_WAIT_S = 3.0
 SHOT_WAIT_S = 30.0
 SET_POSE_TRIES = 5
 SETTLE_FRAMES = 4
+MAX_SETTLE_TRIES = 20  # pictures per pose to wait for boxes that hold still
 
 
 def _stamp_ns(msg: Any) -> int:
@@ -134,36 +127,7 @@ def write_still(
     tmp.replace(out / f"{name}.json")
 
 
-def capture(args: argparse.Namespace) -> int:
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    rec = Recorder()
-    node = Node()
-    if not node.subscribe(Image, args.image_topic, rec.on_image):
-        sys.stderr.write(f"kan inte prenumerera på {args.image_topic}\n")
-        return 1
-    if args.boxes_topic and not node.subscribe(
-        AnnotatedAxisAligned2DBox_V, args.boxes_topic, rec.on_boxes
-    ):
-        sys.stderr.write(f"kan inte prenumerera på {args.boxes_topic}\n")
-        return 1
-    last, count = -1, 0
-    while args.max <= 0 or count < args.max:
-        stamp = rec.wait_image_after(last, 3600.0)
-        if stamp is None:
-            continue
-        last = stamp
-        boxes = rec.boxes_at(stamp, BOX_WAIT_S) if args.boxes_topic else None
-        with rec.lock:
-            image = rec.images.get(stamp)
-        if image is None:
-            continue
-        write_still(out, f"{count:06d}", stamp, image, boxes)
-        count += 1
-    return 0
-
-
-def _quat(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+def quat(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
     cr, sr = math.cos(roll / 2), math.sin(roll / 2)
     cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
     cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
@@ -176,6 +140,12 @@ def _quat(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, f
 
 
 def shots(args: argparse.Namespace) -> int:
+    from gz.msgs10.annotated_axis_aligned_2d_box_v_pb2 import AnnotatedAxisAligned2DBox_V
+    from gz.msgs10.boolean_pb2 import Boolean
+    from gz.msgs10.image_pb2 import Image
+    from gz.msgs10.pose_pb2 import Pose
+    from gz.transport13 import Node
+
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     poses = json.loads(Path(args.poses).read_text(encoding="utf-8"))
@@ -190,7 +160,7 @@ def shots(args: argparse.Namespace) -> int:
         req = Pose()
         req.name = args.model
         req.position.x, req.position.y, req.position.z = pose["x"], pose["y"], pose["z"]
-        w, x, y, z = _quat(pose["roll"], pose["pitch"], pose["yaw"])
+        w, x, y, z = quat(pose["roll"], pose["pitch"], pose["yaw"])
         req.orientation.w, req.orientation.x = w, x
         req.orientation.y, req.orientation.z = y, z
         for _ in range(SET_POSE_TRIES):
@@ -210,14 +180,18 @@ def shots(args: argparse.Namespace) -> int:
                 sys.stderr.write(f"ingen ny bild efter flytten till {pose['name']}\n")
                 return 1
             stamp = newer
-        while True:
+        for _ in range(MAX_SETTLE_TRIES):
             boxes = rec.boxes_at(stamp, BOX_WAIT_S)
             nxt = rec.wait_image_after(stamp, SHOT_WAIT_S)
             if nxt is None:
+                sys.stderr.write(f"inga fler bilder vid {pose['name']}\n")
                 return 1
             if boxes is not None and rec.boxes_at(nxt, BOX_WAIT_S) == boxes:
                 break
             stamp = nxt
+        else:
+            sys.stderr.write(f"facitrutorna blev aldrig stilla vid {pose['name']}\n")
+            return 1
         with rec.lock:
             image = rec.images[stamp]
         write_still(out, pose["name"], stamp, image, boxes, {"pose": pose})
@@ -230,16 +204,11 @@ def main(argv: list[str]) -> int:
         return 2
     parser = argparse.ArgumentParser(prog="gz_stills")
     sub = parser.add_subparsers(dest="mode", required=True)
-    cap = sub.add_parser("capture")
-    cap.add_argument("--image-topic", required=True)
-    cap.add_argument("--boxes-topic", default="")
-    cap.add_argument("--out", required=True)
-    cap.add_argument("--max", type=int, default=0)
     sh = sub.add_parser("shots")
     for key in ("--world", "--model", "--poses", "--image-topic", "--boxes-topic", "--out"):
         sh.add_argument(key, required=True)
     args = parser.parse_args(argv)
-    return capture(args) if args.mode == "capture" else shots(args)
+    return shots(args)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ from typing import Any
 from sd_detect.classes import default_registry
 from sd_sim import _args, fixture, paths, targets, world
 
-__all__ = ["CAMERA", "RIG_MODEL", "render", "shot_poses"]
+__all__ = ["CAMERA", "RIG_MODEL", "boxes_by_class", "render", "shot_poses"]
 
 RIG_MODEL = "sd_still_rig"
 RIG_WORLD = "sd_lake_forest"
@@ -102,6 +102,22 @@ def shot_poses(objects: list[targets.Target]) -> list[dict[str, Any]]:
     return out
 
 
+def boxes_by_class(raw: list[dict[str, Any]], labels: dict[int, str]) -> list[dict[str, Any]]:
+    """The bounding-box camera's corner boxes as class id and x, y, w, h; labels that are
+    not in the register are left out."""
+    return [
+        {
+            "cls": labels[b["label"]],
+            "x": b["x0"],
+            "y": b["y0"],
+            "w": b["x1"] - b["x0"],
+            "h": b["y1"] - b["y0"],
+        }
+        for b in raw
+        if b["label"] in labels
+    ]
+
+
 def _rig_sdf(instance: int) -> str:
     template = world._env().get_template(f"models/{RIG_MODEL}/model.sdf.jinja")
     return template.render(
@@ -118,9 +134,7 @@ def _write_models(instance: int, seed: int, repo: Path) -> tuple[Path, Path]:
     rig = repo / "build" / "sim" / "models" / f"{RIG_MODEL}_i{instance}"
     rig.mkdir(parents=True, exist_ok=True)
     (rig / "model.sdf").write_text(_rig_sdf(instance), encoding="utf-8")
-    config = (targets.GAZEBO_DIR / "models" / RIG_MODEL / "model.config").read_text(
-        encoding="utf-8"
-    )
+    config = (world.GAZEBO_DIR / "models" / RIG_MODEL / "model.config").read_text(encoding="utf-8")
     (rig / "model.config").write_text(
         config.replace(f"<name>{RIG_MODEL}</name>", f"<name>{RIG_MODEL}_i{instance}</name>"),
         encoding="utf-8",
@@ -209,17 +223,7 @@ def render(
             name = pose["name"]
             meta = json.loads((tmp / "shots" / f"{name}.json").read_text(encoding="utf-8"))
             _to_png(tmp / "shots" / f"{name}.ppm", out / f"{name}.png")
-            boxes = [
-                {
-                    "cls": labels[b["label"]],
-                    "x": b["x0"],
-                    "y": b["y0"],
-                    "w": b["x1"] - b["x0"],
-                    "h": b["y1"] - b["y0"],
-                }
-                for b in meta["boxes"] or []
-                if b["label"] in labels
-            ]
+            boxes = boxes_by_class(meta["boxes"] or [], labels)
             shots.append(
                 {k: v for k, v in pose.items() if k != "gz"}
                 | {"file": f"{name}.png", "boxes": boxes}

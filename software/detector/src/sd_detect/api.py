@@ -65,9 +65,12 @@ class BBox(SdModel):
 class Detection(SdModel):
     """Something of one class in one image. Never a decision: a person confirms.
 
-    ``label`` is a class id (``sd_detect.classes``); the pipeline drops labels that are not
-    in the register. ``embedding`` is a generic appearance vector for matching against a
-    description. It is never a face or other biometric identity vector.
+    ``label`` is a class id (``sd_detect.classes``). The register is the guard: the
+    pipeline (``sd_detect.sources.detect_all``) keeps only labels the register gives to
+    the source that reported them, so register membership is checked where detections
+    leave a source. The words refused here are only a backstop. ``embedding`` is a
+    generic appearance vector for matching against a description. It is never a face or
+    other biometric identity vector.
     """
 
     label: str = Field(pattern=CLASS_ID_PATTERN)

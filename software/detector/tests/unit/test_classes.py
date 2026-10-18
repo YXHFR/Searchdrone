@@ -12,11 +12,13 @@ from sd_detect import (
     SOURCES,
     BBox,
     ClassRegistry,
+    ColorDetector,
     Detection,
     Frame,
     RegistryError,
     Still,
     build_sources,
+    color,
     default_registry,
     detect_all,
     keep_plausible,
@@ -161,3 +163,40 @@ def test_a_new_class_with_a_new_source() -> None:
 def test_register_file_ships_with_the_package() -> None:
     assert DEFAULT_REGISTER.is_file()
     assert DEFAULT_REGISTER.parent == Path(sd_detect.classes.__file__).parent
+
+
+@pytest.mark.parametrize(
+    ("params", "match"),
+    [
+        ("{ min_saturation = 0.5, min_value = 0.3, min_area_px = 6 }", "bad colour settings"),
+        (
+            "{ hue_deg = [[350, 370]], min_saturation = 0.5, min_value = 0.3, min_area_px = 6 }",
+            "0-360",
+        ),
+        ("{ hue_deg = [], min_saturation = 0.5, min_value = 0.3, min_area_px = 6 }", "0-360"),
+        (
+            "{ hue_deg = [[0, 10]], min_saturation = 0.5, min_value = 0.3, min_area_px = 0 }",
+            "min_area_px",
+        ),
+    ],
+)
+def test_bad_colour_settings(params: str, match: str) -> None:
+    reg = ClassRegistry.from_toml(ROW_AA.replace('"oracle"', '"color"') + f"params = {params}\n")
+    with pytest.raises(RegistryError, match=match):
+        ColorDetector.from_registry(reg)
+
+
+def test_patch_cap_and_size_check_input() -> None:
+    w, h = 64, 64
+    px = bytearray(b"\x40\x80\x30" * (w * h))
+    for i in range(100):  # 100 separate red dots of 3 x 3 pixels
+        x0, y0 = 2 + (i % 10) * 6, 2 + (i // 10) * 6
+        for y in range(y0, y0 + 3):
+            for x in range(x0, x0 + 3):
+                px[(y * w + x) * 3 : (y * w + x) * 3 + 3] = b"\xd0\x20\x20"
+    found = ColorDetector.from_registry(default_registry()).detect(
+        Frame(width=w, height=h, rgb=bytes(px), ts_mono_ms=0)
+    )
+    assert len(found) == color.MAX_PATCHES
+    with pytest.raises(ValueError, match="px_per_m"):
+        keep_plausible(found, 0.0, default_registry())

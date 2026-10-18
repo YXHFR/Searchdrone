@@ -24,11 +24,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import jinja2
-
 from sd_detect.classes import ClassRegistry, default_registry
 from sd_safety.targets import Plane
-from sd_sim import fixture, paths
+from sd_sim import fixture, paths, world
 
 __all__ = [
     "SCENARIOS",
@@ -41,7 +39,6 @@ __all__ = [
 ]
 
 TARGETS_MODEL = "sd_targets"
-GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 
 RED = (0.80, 0.05, 0.05)
 FALU_RED = (0.50, 0.11, 0.08)  # the Swedish red house paint: a second red decoy
@@ -136,17 +133,6 @@ def layout(
     return placed
 
 
-def _env() -> jinja2.Environment:
-    return jinja2.Environment(
-        loader=jinja2.FileSystemLoader(str(GAZEBO_DIR)),
-        undefined=jinja2.StrictUndefined,
-        keep_trailing_newline=True,
-        trim_blocks=True,
-        lstrip_blocks=True,
-        autoescape=True,
-    )
-
-
 def targets_sdf(target: Target, name: str) -> str:
     """One object as a static model with its label."""
     row = {
@@ -155,7 +141,7 @@ def targets_sdf(target: Target, name: str) -> str:
         "yaw_rad": round(math.radians(90.0 - target.yaw_deg), 6),
         "z": round(target.size_m[2] / 2, 4),
     }
-    template = _env().get_template(f"models/{TARGETS_MODEL}/model.sdf.jinja")
+    template = world._env().get_template(f"models/{TARGETS_MODEL}/model.sdf.jinja")
     return template.render(name=name, t=row, roof=ROOF_GREY)
 
 
@@ -184,7 +170,9 @@ def render_targets(
     fix = fixture.load()
     targets = layout(scenario, seed, fix)
     models = repo / "build" / "sim" / "models"
-    config = (GAZEBO_DIR / "models" / TARGETS_MODEL / "model.config").read_text(encoding="utf-8")
+    config = (world.GAZEBO_DIR / "models" / TARGETS_MODEL / "model.config").read_text(
+        encoding="utf-8"
+    )
     prefix = f"{TARGETS_MODEL}_i{instance}_"
     for old in models.glob(f"{prefix}*"):  # a previous seed's objects
         for f in old.iterdir():
