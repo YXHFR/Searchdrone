@@ -61,4 +61,12 @@ def test_state_sets() -> None:
 
 def test_no_handler_adds_rows_yet() -> None:
     assert extra_transitions() == {}
-    assert set(HANDLERS) == {"takeoff", "goto", "survey_sector", "hold", "resume", "return_home"}
+    assert set(HANDLERS) == {
+        "takeoff",
+        "goto",
+        "survey_sector",
+        "follow_path",
+        "hold",
+        "resume",
+        "return_home",
+    }

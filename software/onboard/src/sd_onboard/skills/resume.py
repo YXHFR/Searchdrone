@@ -1,7 +1,8 @@
 """``resume``: continue the step that ``hold`` (or STOP, a limit, a mode change) broke off.
 
-A goto flies on to its saved target. A search uploads a new mission: home, speed, the
-point where it was interrupted, the search points still left, loiter and return.
+A goto flies on to its saved target. A search or a drawn path uploads a new mission: home,
+speed, the point where it was interrupted, the points still left, loiter and return (a
+path flies on in TRANSIT, a search in SURVEY).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from sd_onboard.skills.base import (
 )
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.survey_sector import SurveyRun
-from sd_schemas.executor import GotoResumePoint, ResumePoint
+from sd_schemas.executor import ExecutorState, GotoResumePoint, ResumePoint
 from sd_schemas.skills import SkillParams
 from sd_schemas.vehicle import VehicleState
 
@@ -54,6 +55,7 @@ class ResumeHandler:
             rp.speed_ms,
             base_index=rp.next_index,
             interrupted_at=rp.interrupted_at,
+            target_state=ExecutorState.TRANSIT if rp.path else ExecutorState.SURVEY,
         )
         self._home = ctx.charter.home
         return self._run.plan(ctx)

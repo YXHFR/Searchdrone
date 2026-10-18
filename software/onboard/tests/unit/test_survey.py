@@ -46,7 +46,7 @@ async def test_survey_mission_shape_and_hold_resume_coverage() -> None:
         hold = await r.send(r.order("hold", {}))
         assert r.ex.state == S.HOLD and r.up.stages(cmd.command_id)[-1] == "superseded"
         rp = r.ex.resume_point
-        assert rp is not None and rp.kind == "survey" and rp.next_index > 0
+        assert rp is not None and rp.kind == "survey" and not rp.path and rp.next_index > 0
         assert r.up.stages(hold.command_id)[-1] in ("running", "done")
         await r.run(30)
         assert r.fc.mode == CopterMode.LOITER

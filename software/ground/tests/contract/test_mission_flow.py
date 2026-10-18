@@ -657,7 +657,7 @@ async def test_chat_intent_rules(r: Rig) -> None:
             "intent": intent,
             "probability": 0.97,
             "engine": engine,
-            "location": "local",
+            "location": "local" if engine == "rule" else "cloud",
             "latency_ms": 120,
         }
 
@@ -676,7 +676,7 @@ async def test_chat_intent_rules(r: Rig) -> None:
     r.clock.skew_s = 0
     # A model's reading of "flyg hem" only stops the vehicle where it is (owner decision).
     line = await _say(r, mid, "nu får det räcka, åk tillbaka")
-    res = await r.commander.post(url, json=report(line["id"], "return_home", "local"))
+    res = await r.commander.post(url, json=report(line["id"], "return_home", "jev"))
     assert res.status_code == 202, res.text
     await r.until(lambda: r.actions.latches.get(VID) is not None, 2, "latch")
     assert r.actions.latches.get(VID).action == "stop"  # type: ignore[union-attr]

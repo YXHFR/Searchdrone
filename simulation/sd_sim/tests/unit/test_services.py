@@ -69,20 +69,13 @@ def test_scripted_brain_needs_a_script(tmp_path: Path) -> None:
     p = ports.for_instance(0)
     with pytest.raises(InfraError):
         services.brain_env(p, _paths(tmp_path), "scripted", None)
-    env = services.brain_env(p, _paths(tmp_path), "llm_local", None)
+    env = services.brain_env(p, _paths(tmp_path), "cloud", None)
     assert "SD_BRAIN__BACKEND__SCRIPTED_FILE" not in env
+    assert env["SD_BRAIN__BACKEND__KIND"] == "cloud"
+    assert not any("LLM" in k for k in env)
     assert env["SD_BRAIN__GROUND__COMMANDER_URL"] == (
         f"http://127.0.0.1:{p['ground_commander']}/commander/v1"
     )
-
-
-def test_cloud_off_empties_the_cloud_model(tmp_path: Path) -> None:
-    p = ports.for_instance(0)
-    default = services.brain_env(p, _paths(tmp_path), "llm_local", None)
-    assert "SD_BRAIN__CLOUD__MODEL" not in default
-    off = services.brain_env(p, _paths(tmp_path), "llm_local", None, cloud=False)
-    assert off["SD_BRAIN__CLOUD__MODEL"] == ""
-    assert {k: v for k, v in off.items() if k != "SD_BRAIN__CLOUD__MODEL"} == default
 
 
 def test_health_reads_parts() -> None:
@@ -98,28 +91,18 @@ def test_stack_starts_no_services_unless_asked(tmp_path: Path) -> None:
     assert Stack(cfg, tmp_path, services=True).services is True
 
 
-class _StartedError(Exception):
-    pass
-
-
-def test_stack_without_cloud_gives_brain_no_cloud_model(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from sd_sim import config
-
-    cfg = config.load({"physics": "builtin", "gui": "false", "video": "off", "instance": "3"})
-    cfg.brain = "grammar"  # no llama-server start
-    assert Stack(cfg, tmp_path).cloud is True
-    stack = Stack(cfg, tmp_path, services=True, cloud=False)
-    seen: dict[str, str] = {}
-
-    def fake_start(name: str, argv: list[str], env: dict[str, str]) -> None:
-        seen.update(env)
-        raise _StartedError
-
-    monkeypatch.setattr(stack, "stack_paths", lambda: _paths(tmp_path))
-    monkeypatch.setattr(stack, "_start_service", fake_start)
-    with pytest.raises(_StartedError):
-        stack.start_brain()
-    assert seen["SD_BRAIN__CLOUD__MODEL"] == ""
-    assert seen["SD_BRAIN__BACKEND__KIND"] == "grammar"
+def test_every_launcher_starts_sd_ground_without_login_codes() -> None:
+    """Launchers write sd-ground's output to logs that CI uploads: no login code or PIN there.
+    So they all start it through ``ground_serve_argv`` (the unit tests only check argv)."""
+    assert services.ground_serve_argv()[1:] == ["-m", "sd_ground", "serve", "--no-login-link"]
+    simulation = Path(__file__).resolve().parents[3]
+    unit_tests = Path(__file__).resolve().parent
+    own = Path(services.__file__).resolve()
+    starts = [
+        p.relative_to(simulation)
+        for p in simulation.rglob("*.py")
+        if p.resolve() != own
+        and unit_tests not in p.resolve().parents
+        and '"sd_ground", "serve"' in p.read_text(encoding="utf-8")
+    ]
+    assert starts == []

@@ -120,7 +120,7 @@ def check_ports_free(instance: int = 0) -> Row:
     for name, port in ports.for_instance(instance).items():
         # Shared services may already run; QGroundControl on Windows may hold its port
         # (SITL only sends to it); Gazebo's discovery ports are shared by design.
-        if name.startswith(("postgres", "mediamtx", "llm", "gz_discovery", "qgc")):
+        if name.startswith(("postgres", "mediamtx", "gz_discovery", "qgc")):
             continue
         if port_taken(name, port):
             busy.append(port)

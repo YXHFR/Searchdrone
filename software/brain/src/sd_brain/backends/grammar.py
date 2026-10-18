@@ -1,4 +1,7 @@
-"""``GrammarBackend``: the fixed Swedish command mode used while the model is down."""
+"""``GrammarBackend``: the fixed Swedish command mode used while the cloud model does not answer.
+
+Pure code, no AI. It also answers when there is no network or no cloud key.
+"""
 
 from __future__ import annotations
 

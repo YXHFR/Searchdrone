@@ -407,7 +407,7 @@ class Pilot:
         self._post(f"/api/v1/missions/{self.mid}/annotations", body, 201, f"nålen {name}")
 
     def brain_asked(self) -> bool:
-        """The newest chat line is the AI's question (the small local model sometimes
+        """The newest chat line is the AI's question (the model sometimes
         asks "Vill du godkänna detta?" instead of proposing the charter as a card)."""
         page = self._get(f"/api/v1/missions/{self.mid}/chat", limit="200")
         items = sorted(page.get("items", []), key=lambda m: int(m.get("seq", 0)))

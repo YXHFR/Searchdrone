@@ -251,6 +251,10 @@ MOVING_EXAMPLES: dict[str, dict[str, Any]] = {
     "survey_sector": {"sector_id": "A"},
     "orbit": {"lat": -35.3615, "lon": 149.1652, "radius_m": 30, "alt_m": 40},
     "land_at": {"lat": -35.3615, "lon": 149.1652},
+    "follow_path": {
+        "points": [{"lat": -35.3620, "lon": 149.1652}, {"lat": -35.3615, "lon": 149.1655}],
+        "alt_m": 40,
+    },
 }
 
 

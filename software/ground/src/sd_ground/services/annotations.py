@@ -1,9 +1,11 @@
-"""Map annotations: the pilot's pins and drawn areas, and the AI's marks.
+"""Map annotations: the pilot's pins, drawn areas and paths, and the AI's marks.
 
-The pilot adds pins (``P1``, ...) and areas; a drawn area can become a charter's search
-area (``CharterProposal.area_annotation_id``). The AI's ``mark_location`` only ever adds
-a pin with the next free label ``M<n>`` (inside the charter, checked by the gate); its
-own label travels as a note. Nothing here moves the vehicle.
+The pilot adds pins (``P1``, ...), areas and paths (``pa-1``, ...). A drawn area can
+become a charter's search area (``CharterProposal.area_annotation_id``); a drawn path
+gives the points of a ``follow_path`` order (resolved by sd-brain, checked by the gate).
+The AI's ``mark_location`` only ever adds a pin with the next free label ``M<n>``
+(inside the charter, checked by the gate); its own label travels as a note. Nothing
+here moves the vehicle.
 """
 
 from __future__ import annotations
@@ -11,12 +13,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from sd_ground.services.missions import FlowError
+from sd_safety.targets import line_length_m
 from sd_schemas.api import Annotation, AnnotationCreate, Mission
+from sd_schemas.skills import PATH_MAX_LENGTH_M
 
 if TYPE_CHECKING:
     from sd_ground.services.missions import MissionFlow
 
-__all__ = ["add", "delete", "mark"]
+__all__ = ["add", "delete", "mark", "path_length_m"]
 
 
 def _model(row: dict[str, Any]) -> Annotation:
@@ -41,8 +45,16 @@ def _publish(
     )
 
 
+def path_length_m(geometry: dict[str, Any]) -> float:
+    coords = geometry["coordinates"]
+    return line_length_m((lat, lon) for lon, lat in coords)
+
+
 async def add(flow: MissionFlow, mission_id: str, body: AnnotationCreate, by: str) -> Annotation:
     mission = await flow.open_mission_of(mission_id)
+    if body.kind == "path" and path_length_m(body.geometry) > PATH_MAX_LENGTH_M:
+        km = f"{PATH_MAX_LENGTH_M / 1000:.0f}"
+        raise FlowError(422, "PATH_TOO_LONG", f"Vägen är för lång. Den får vara högst {km} km.")
     new = await flow.repo.add_annotation(
         mission_id=mission_id,
         vehicle_id=mission.vehicle_id,

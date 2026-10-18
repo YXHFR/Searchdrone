@@ -54,7 +54,7 @@ STATE_ALLOWS: dict[str, frozenset[str]] = {
 
 
 class AdaptError(ValueError):
-    """The AI parameters do not resolve (unknown pin or sector); sent back to the model."""
+    """The AI parameters do not resolve (unknown pin, sector or path); sent back to the model."""
 
 
 # --- JSON Schema helpers ----------------------------------------------------------------
@@ -250,6 +250,15 @@ def _pin(s: Situation, pin_id: str) -> tuple[float, float]:
     return pin.lat, pin.lon
 
 
+def _path(s: Situation, name: str) -> list[dict[str, float]]:
+    """The points of a path the pilot drew, by its name: the model never writes them."""
+    path = next((a for a in s.paths if a.label == name), None)
+    if path is None:
+        known = ", ".join(a.label for a in s.paths) or "none"
+        raise AdaptError(f"unknown path {name}; known: {known}")
+    return [{"lat": float(lat), "lon": float(lon)} for lon, lat in path.geometry["coordinates"]]
+
+
 def adapt(skill: str, ai: dict[str, Any], s: Situation) -> dict[str, Any]:
     """Turn the model's parameters into the registry's ``params_model`` form."""
     lim = current_limits(s)
@@ -281,6 +290,16 @@ def adapt(skill: str, ai: dict[str, Any], s: Situation) -> dict[str, Any]:
         for key in ("spacing_m", "speed_ms"):
             if ai.get(key) is not None:
                 out[key] = ai[key]
+        return out
+    if skill == "follow_path":
+        name = str(ai["path"])
+        out = {
+            "points": _path(s, name),
+            "alt_m": ai.get("alt_m") if ai.get("alt_m") is not None else lim.default_alt_agl_m,
+            "label": name,
+        }
+        if ai.get("speed_ms") is not None:
+            out["speed_ms"] = ai["speed_ms"]
         return out
     if skill == "mark_location":
         if ai.get("pin") is not None:

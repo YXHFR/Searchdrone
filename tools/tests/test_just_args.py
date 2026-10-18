@@ -21,7 +21,7 @@ def test_bad_input_exits_2(argv: list[str]) -> None:
 
 
 def test_not_built(capsys: pytest.CaptureFixture[str]) -> None:
-    assert just_args.main(["showcase", "stage=b1"]) == 2
+    assert just_args.main(["showcase", "stage=1"]) == 2
     assert "inte byggt än (B1-18)" in capsys.readouterr().out
 
 

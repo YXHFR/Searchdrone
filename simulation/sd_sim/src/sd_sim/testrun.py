@@ -13,7 +13,8 @@ in a job of its own; ``mode=nightly`` selects ``sitl and nightly``; ``mode=panel
 selects the panel's browser test (``sitl and panel``, started by
 ``just test-panel-sitl``). ``brain=`` picks the AI commander the scenarios fly
 with: ``scripted`` (default, the script per scenario), ``grammar`` (the fixed command
-mode), ``llm_local`` (the local model on the owner's computer; adds the ``llm`` tests) or
+mode), ``cloud`` (the cloud model with the owner's key, the command mode without it; adds the
+``llm`` tests) or
 ``none`` (no commander: only the tests that need none). ``sc=`` and ``variant=`` narrow
 the run by test name. Only test-rig failures (``InfraError``) are retried, once.
 Afterwards ``runs/summary.md`` lists every result written during the run.
@@ -57,7 +58,7 @@ PYTEST_NO_TESTS = 5
 # Settings that later parts of the stack read; accepted now so CI and local calls can
 # pass them already.
 FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
-BRAINS = ("scripted", "grammar", "llm_local", "none")
+BRAINS = ("scripted", "grammar", "cloud", "none")
 
 
 DEMO_TEST = "test_demo_flight"
@@ -76,7 +77,7 @@ def selection(mode: str, physics: str, brain: str = "scripted") -> str:
         base = f"sitl and e2e{gz} and not llm and not nightly"
     else:
         base = f"sitl{gz} and not llm and not nightly and not e2e"
-    if brain == "llm_local":
+    if brain == "cloud":
         base = base.replace(" and not llm", "")
     elif brain == "none":
         base += " and not brain"

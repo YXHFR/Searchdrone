@@ -20,7 +20,7 @@ from sd_sim.perf import samplers
 
 
 def test_defaults() -> None:
-    assert perf.parse_args([]) == perf.PerfArgs(runs=1, gui=True, eval=True)
+    assert perf.parse_args([]) == perf.PerfArgs(runs=1, gui=False, eval=True)
 
 
 def test_values() -> None:
@@ -42,27 +42,26 @@ def test_bad_arguments_exit_2(argv: list[str], capsys: pytest.CaptureFixture[str
 def test_settings_and_fallback() -> None:
     cfg = config.SimConfig(gui=False)
     args = perf.PerfArgs(runs=2, gui=False, eval=True)
-    settings = perf.settings_for(args, cfg, cloud=False, test_rig=True)
+    settings = perf.settings_for(args, cfg, test_rig=True)
     assert settings == {
         "physics": "gz",
         "gui": False,
-        "brain": "llm_local",
-        "cloud": False,
+        "brain": "cloud",
         "test_rig": True,
         "link_profile": "perfect",
         "eval": True,
         "runs": 2,
     }
     assert perf.fallback_for(args) == "gui=false"
-    assert perf.fallback_for(perf.PerfArgs()) is None
+    assert perf.fallback_for(perf.PerfArgs(gui=True)) is None
 
 
-def test_perf_config_is_the_demo_with_gazebo_and_the_local_model(
+def test_perf_config_is_the_demo_with_gazebo_and_the_cloud_ai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("SD_SIM__HEADLESS", raising=False)
     cfg = perf.perf_config(perf.PerfArgs(gui=False))
-    assert (cfg.physics, cfg.gui, cfg.video, cfg.brain) == ("gz", False, "camera", "llm_local")
+    assert (cfg.physics, cfg.gui, cfg.video, cfg.brain) == ("gz", False, "camera", "cloud")
     assert cfg.instance == 0
     assert cfg.open_browser is False
     assert cfg.personal_home is False
@@ -71,15 +70,11 @@ def test_perf_config_is_the_demo_with_gazebo_and_the_local_model(
 # --- preflight -----------------------------------------------------------------------------
 
 
-def _facts(tmp_path: Path, **kw: object) -> perf.PreflightFacts:
-    model = tmp_path / "model.gguf"
-    model.write_bytes(b"x")
+def _facts(**kw: object) -> perf.PreflightFacts:
     base: dict[str, object] = {
         "chrome": "/usr/bin/google-chrome",
         "docker": "/usr/bin/docker",
-        "docker_runtimes": '{"nvidia":{},"runc":{}}',
-        "llm_up": False,
-        "model_file": model,
+        "cloud_key": True,
         "nvidia_smi": "/usr/bin/nvidia-smi",
         "busy": [],
     }
@@ -87,8 +82,8 @@ def _facts(tmp_path: Path, **kw: object) -> perf.PreflightFacts:
     return perf.PreflightFacts(**base)  # type: ignore[arg-type]
 
 
-def test_preflight_passes(tmp_path: Path) -> None:
-    assert perf.preflight_errors(_facts(tmp_path)) == []
+def test_preflight_passes() -> None:
+    assert perf.preflight_errors(_facts()) == []
 
 
 @pytest.mark.parametrize(
@@ -96,35 +91,30 @@ def test_preflight_passes(tmp_path: Path) -> None:
     [
         ({"chrome": None}, "Google Chrome"),
         ({"docker": None}, "docker saknas"),
-        ({"docker_runtimes": '{"runc":{}}'}, "nvidia-runtime"),
-        ({"docker_runtimes": ""}, "nvidia-runtime"),
+        ({"cloud_key": False}, "SD_CLOUD_API_KEY= i filen .env"),
         ({"nvidia_smi": None}, "nvidia-smi"),
-        ({"model_file": Path("/nonexistent/m.gguf")}, "just models-fetch"),
         ({"busy": [14550, 8080]}, "Port 14550, 8080"),
     ],
 )
-def test_preflight_names_each_missing_part(
-    tmp_path: Path, kw: dict[str, object], needle: str
-) -> None:
-    errors = perf.preflight_errors(_facts(tmp_path, **kw))
+def test_preflight_names_each_missing_part(kw: dict[str, object], needle: str) -> None:
+    errors = perf.preflight_errors(_facts(**kw))
     assert len(errors) == 1
     assert needle in errors[0]
 
 
-def test_a_running_model_server_proves_the_gpu_runtime(tmp_path: Path) -> None:
-    assert perf.preflight_errors(_facts(tmp_path, docker_runtimes="", llm_up=True)) == []
-
-
-def test_preflight_accepts_the_gpu_as_a_cdi_device(tmp_path: Path) -> None:
-    cdi = '{"runc":{}} [{"Source":"cdi","ID":"nvidia.com/gpu=all"}]'
-    assert perf.preflight_errors(_facts(tmp_path, docker_runtimes=cdi)) == []
-
-
-def test_model_file_comes_from_the_lock(tmp_path: Path) -> None:
-    lock = tmp_path / "software/brain/runtime.lock.toml"
-    lock.parent.mkdir(parents=True)
-    lock.write_text('[model]\nfile = "m.gguf"\n', encoding="utf-8")
-    assert perf.model_file(tmp_path) == tmp_path / "models" / "m.gguf"
+def test_the_cloud_key_is_found_in_env_without_being_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SD_CLOUD_API_KEY", raising=False)
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.setattr(perf, "busy_ports", lambda *_a: [])
+    assert perf.gather_preflight(tmp_path, {}).cloud_key is False
+    (tmp_path / ".env").write_text("SD_CLOUD_API_KEY=\n", encoding="utf-8")
+    assert perf.gather_preflight(tmp_path, {}).cloud_key is False
+    (tmp_path / ".env").write_text("SD_CLOUD_API_KEY=sk-test\n", encoding="utf-8")
+    facts = perf.gather_preflight(tmp_path, {})
+    assert facts.cloud_key is True
+    assert "sk-test" not in repr(facts)
 
 
 # --- time marks ------------------------------------------------------------------------------
@@ -334,7 +324,7 @@ def test_model_result_reads_the_latencies(tmp_path: Path) -> None:
     path = tmp_path / "data/reports/eval.json"
     path.parent.mkdir(parents=True)
     path.write_text(
-        json.dumps({"latency_p50_ms": 2100, "latency_p95_ms": 7300.5, "passed": True}),
+        json.dumps({"latency_p50_ms": 2100, "latency_p95_ms": 7300.5, "ok": True}),
         encoding="utf-8",
     )
     res = perf.model_result(path, tmp_path)
@@ -350,10 +340,10 @@ def test_model_result_without_a_report(tmp_path: Path) -> None:
 
 
 def test_model_result_with_no_answers_has_no_values(tmp_path: Path) -> None:
-    # sd-brain writes 0 ms when no turn got a model answer (llama-server down, all errors).
+    # 0 ms or none when no call got a model answer (the cloud down, all errors).
     path = tmp_path / "eval.json"
     path.write_text(
-        json.dumps({"latency_p50_ms": 0, "latency_p95_ms": 0, "passed": False}), encoding="utf-8"
+        json.dumps({"latency_p50_ms": 0, "latency_p95_ms": 0, "ok": False}), encoding="utf-8"
     )
     res = perf.model_result(path, tmp_path)
     assert (res.p50_ms, res.p95_ms, res.eval_passed) == (None, None, False)

@@ -1,18 +1,18 @@
-"""Performance run: ``python -m sd_sim.perf [runs=1] [gui=true] [eval=1]`` (``just perf``).
+"""Performance run: ``python -m sd_sim.perf [runs=1] [gui=false] [eval=1]`` (``just perf``).
 
 Each run starts the demo as ``just demo`` does (Gazebo, SITL, database, ground station,
-onboard computer, the local model, camera video), flies the SC01 demo with a test rig
-pilot and measures P0-P8 from the spec while it flies: cold start, Gazebo's real time
+onboard computer, the cloud AI commander, camera video), flies the SC01 demo with a test
+rig pilot and measures P0-P8 from the spec while it flies: cold start, Gazebo's real time
 factor, video frames in Google Chrome, memory in WSL, Windows and the graphics card,
-STOP latency, telemetry latency and the chat's answer time. Then, with ``eval=1``, the
-AI's model evaluation runs against the same llama-server while Gazebo keeps the graphics
-card busy. The report goes to ``data/reports/perf-<time>.json`` (and ``.md``).
+STOP latency, telemetry latency and the chat's answer time. Then, with ``eval=1``,
+``sd-brain perf-cloud`` times the cloud model's answers. The report goes to
+``data/reports/perf-<time>.json`` (and ``.md``).
 
 Exit codes: 0 every limit held, 1 a limit failed or the run broke, 2 wrong arguments or
 a missing prerequisite (nothing was started).
 
-The cloud model is off for the whole run: only the local model is measured. The login
-code for the browser is passed in the environment only and never printed.
+The cloud key and the browser's login code are passed in the environment only and never
+printed.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import signal
 import subprocess
 import sys
 import time
-import tomllib
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -34,7 +33,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol
 
-from sd_sim import _args, config, paths, ports, procs, services
+from sd_sim import _args, config, paths, ports, procs
 from sd_sim import report as sim_report
 from sd_sim.errors import InfraError, StopRequestedError, VehicleError
 from sd_sim.launch import Stack, read_env_value
@@ -53,7 +52,8 @@ MODE_TIMEOUT_S = 30.0
 AIRBORNE_TIMEOUT_S = 600.0
 FLIGHT_TIMEOUT_S = 900.0
 BROWSER_TIMEOUT_S = 600.0
-EVAL_TIMEOUT_S = 5400.0
+EVAL_TIMEOUT_S = 600.0
+CLOUD_RUNS = 10
 PANEL_BUILD_TIMEOUT_S = 600.0
 COMPOSE_TIMEOUT_S = 300.0
 VIDEO_S = 30
@@ -85,7 +85,7 @@ EVAL_REPORT_PREFIX = "Rapport: "
 @dataclass(frozen=True)
 class PerfArgs:
     runs: int = 1
-    gui: bool = True
+    gui: bool = False
     eval: bool = True
 
 
@@ -109,19 +109,16 @@ def parse_args(argv: Sequence[str]) -> PerfArgs:
         _args.fail(f"sd_sim.perf: runs= ska vara 1-99, inte '{raw_runs}'.")
     return PerfArgs(
         runs=int(raw_runs),
-        gui=_flag("gui", values.get("gui", "true")),
+        gui=_flag("gui", values.get("gui", "false")),
         eval=_flag("eval", values.get("eval", "1")),
     )
 
 
-def settings_for(
-    args: PerfArgs, cfg: config.SimConfig, *, cloud: bool, test_rig: bool
-) -> dict[str, object]:
+def settings_for(args: PerfArgs, cfg: config.SimConfig, *, test_rig: bool) -> dict[str, object]:
     return {
         "physics": cfg.physics,
         "gui": cfg.gui,
         "brain": cfg.brain,
-        "cloud": cloud,
         "test_rig": test_rig,
         "link_profile": cfg.link_profile,
         "eval": args.eval,
@@ -135,12 +132,12 @@ def fallback_for(args: PerfArgs) -> str | None:
 
 
 def perf_config(args: PerfArgs) -> config.SimConfig:
-    """The demo's settings (the public home, as ``just demo``), Gazebo and the local model."""
+    """The demo's settings (the public home, as ``just demo``), Gazebo and the cloud AI."""
     values = {
         "physics": "gz",
         "gui": "true" if args.gui else "false",
         "video": "camera",
-        "brain": "llm_local",
+        "brain": "cloud",
         "instance": str(INSTANCE),
     }
     cfg = config.load(values, demo=True)
@@ -155,11 +152,7 @@ def perf_config(args: PerfArgs) -> config.SimConfig:
 class PreflightFacts:
     chrome: str | None  # google-chrome on PATH
     docker: str | None
-    # `docker info` runtimes plus CDI devices (Docker 28+ finds the toolkit's
-    # nvidia.com/gpu without the nvidia runtime), "" when it failed
-    docker_runtimes: str
-    llm_up: bool  # llama-server already answers (then the graphics card works)
-    model_file: Path
+    cloud_key: bool  # SD_CLOUD_API_KEY in .env or the environment (the value is never read out)
     nvidia_smi: str | None
     busy: list[int]
 
@@ -174,28 +167,20 @@ def preflight_errors(facts: PreflightFacts) -> list[str]:
         )
     if facts.docker is None:
         errors.append("docker saknas. Kör bash tools/bootstrap.sh.")
-    elif not facts.llm_up and "nvidia" not in facts.docker_runtimes:
+    if not facts.cloud_key:
         errors.append(
-            "Docker har ingen nvidia-runtime, så den lokala modellen får inget grafikkort. "
-            "Installera NVIDIA Container Toolkit (bash tools/setup/wsl-setup.sh) och starta "
-            "om Docker."
+            "SD_CLOUD_API_KEY saknas, så AI-befälhavaren i molnet kan inte flyga demot. "
+            "Klistra själv in nyckeln efter SD_CLOUD_API_KEY= i filen .env och kör igen."
         )
     if facts.nvidia_smi is None:
         errors.append(
             "nvidia-smi saknas i WSL. Installera NVIDIA:s Windows-drivrutin med WSL-stöd "
             "och starta om WSL (wsl --shutdown)."
         )
-    if not facts.model_file.is_file():
-        errors.append(f"Modellfilen models/{facts.model_file.name} saknas. Kör just models-fetch.")
     if facts.busy:
         ports_text = ", ".join(str(p) for p in facts.busy)
         errors.append(f"Port {ports_text} är upptagen. Kör just stop och försök igen.")
     return errors
-
-
-def model_file(repo: Path) -> Path:
-    lock = tomllib.loads((repo / "software/brain/runtime.lock.toml").read_text(encoding="utf-8"))
-    return repo / "models" / str(lock["model"]["file"])
 
 
 def _run_text(argv: list[str], timeout: float = 20.0) -> str:
@@ -209,20 +194,11 @@ def _run_text(argv: list[str], timeout: float = 20.0) -> str:
 
 
 def gather_preflight(repo: Path, stack_ports: dict[str, int]) -> PreflightFacts:
-    docker = shutil.which("docker")
-    runtimes = ""
-    if docker:
-        # Separate calls: an older Docker without DiscoveredDevices fails that template.
-        runtimes = " ".join(
-            _run_text([docker, "info", "--format", f"{{{{json .{field}}}}}"])
-            for field in ("Runtimes", "DiscoveredDevices")
-        )
+    key = os.environ.get("SD_CLOUD_API_KEY") or read_env_value(repo / ".env", "SD_CLOUD_API_KEY")
     return PreflightFacts(
         chrome=shutil.which("google-chrome"),
-        docker=docker,
-        docker_runtimes=runtimes,
-        llm_up=services.tcp_open(stack_ports["llm_http"]),
-        model_file=model_file(repo),
+        docker=shutil.which("docker"),
+        cloud_key=bool(key and key.strip()),
         nvidia_smi=shutil.which("nvidia-smi"),
         busy=busy_ports(stack_ports, list(STACK_PORTS)),
     )
@@ -382,7 +358,7 @@ def browser_result(data: dict[str, Any] | None) -> BrowserResult:
 
 
 def eval_report_path(output: str, repo: Path) -> Path | None:
-    """The report file ``sd-brain eval`` names on its ``Rapport: <path>`` line."""
+    """The report file ``sd-brain perf-cloud`` names on its ``Rapport: <path>`` line."""
     for line in reversed(output.splitlines()):
         if line.startswith(EVAL_REPORT_PREFIX):
             path = Path(line.removeprefix(EVAL_REPORT_PREFIX).strip())
@@ -391,7 +367,7 @@ def eval_report_path(output: str, repo: Path) -> Path | None:
 
 
 def model_result(path: Path | None, repo: Path) -> perf_report.ModelResult:
-    """The model evaluation's latencies; a missing or broken report has no values."""
+    """The cloud model's latencies; a missing or broken report has no values."""
     if path is None or not path.is_file():
         return perf_report.ModelResult(None, None, "", False)
     try:
@@ -410,7 +386,7 @@ def model_result(path: Path | None, repo: Path) -> perf_report.ModelResult:
 
     name = str(path.relative_to(repo)) if path.is_relative_to(repo) else path.name
     return perf_report.ModelResult(
-        ms("latency_p50_ms"), ms("latency_p95_ms"), name, bool(data.get("passed"))
+        ms("latency_p50_ms"), ms("latency_p95_ms"), name, bool(data.get("ok"))
     )
 
 
@@ -547,22 +523,13 @@ class BrowserRun:
             procs.stop_pid(self.popen.pid, self.popen)
 
 
-def stop_brain(stack: Stack) -> None:
-    """sd-brain stops so it does not share llama-server with the evaluation."""
-    for proc in stack.group.procs:
-        if proc.name == "sd-brain" and proc.alive():
-            procs.stop_pid(proc.pid, proc.popen)
-
-
-def run_eval(repo: Path, logs: Path, gpu: str) -> perf_report.ModelResult:
-    say("==> modellens utvärdering (sd-brain eval, 3 varv; Gazebo kör vidare)")
+def run_cloud_perf(repo: Path, logs: Path) -> perf_report.ModelResult:
+    say(f"==> molnmodellens svarstid (sd-brain perf-cloud, {CLOUD_RUNS} anrop)")
     uv = shutil.which("uv") or "uv"
-    argv = [uv, "run", "--package", "sd-brain", "sd-brain", "eval", "--backend", "llm_local"]
-    argv += ["--repeat", "3", "--gpu-name", gpu, "--report-dir", "data/reports"]
-    env = dict(os.environ)
-    env["SD_BRAIN__CLOUD__MODEL"] = ""
-    log = logs / "brain-eval.log"
-    _logged(argv, log, cwd=repo, timeout=EVAL_TIMEOUT_S, env=env)
+    argv = [uv, "run", "--package", "sd-brain", "sd-brain", "perf-cloud"]
+    argv += ["--runs", str(CLOUD_RUNS), "--report-dir", "data/reports"]
+    log = logs / "brain-perf-cloud.log"
+    _logged(argv, log, cwd=repo, timeout=EVAL_TIMEOUT_S)
     output = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
     return model_result(eval_report_path(output, repo), repo)
 
@@ -611,7 +578,7 @@ class LiveRun:
 
 
 def fly_and_measure(
-    args: PerfArgs, stack: Stack, live: LiveRun, cleanup: list[Callable[[], None]], gpu: str
+    args: PerfArgs, stack: Stack, live: LiveRun, cleanup: list[Callable[[], None]]
 ) -> None:
     repo, run_dir = stack.repo, stack.run_dir
     logs = run_dir / "logs"
@@ -646,8 +613,7 @@ def fly_and_measure(
     live.browser = browser.wait(BROWSER_TIMEOUT_S)
     live.chat = pilot.chat_latencies_s(stack)
     if args.eval:
-        stop_brain(stack)
-        live.model = run_eval(repo, logs, gpu)
+        live.model = run_cloud_perf(repo, logs)
 
 
 def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
@@ -663,7 +629,7 @@ def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
             print(err, file=sys.stderr)
         return 2
     run_dir = new_run_dir(INSTANCE, "perf", repo)
-    stack = Stack(cfg, run_dir, services=True, test_rig=True, cloud=False, repo=repo)
+    stack = Stack(cfg, run_dir, services=True, test_rig=True, repo=repo)
 
     gpu = samplers.gpu_name()
     ram_gb = samplers.ram_total_gb()
@@ -688,7 +654,7 @@ def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
         for sampler in (ram, vram, win):
             sampler.start()
         try:
-            fly_and_measure(args, stack, live, cleanup, gpu)
+            fly_and_measure(args, stack, live, cleanup)
         except StopRequestedError:
             raise  # Ctrl-C or `just stop`: tear down, no report, no further runs
         except InfraError as exc:
@@ -703,7 +669,7 @@ def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
     if args.eval and live.model is None:
         live.model = perf_report.ModelResult(None, None, "", False)  # never ran: no data
     if not args.eval:
-        live.notes.append("eval=0: modellens svarstid mättes inte.")
+        live.notes.append("eval=0: molnmodellens svarstid mättes inte.")
     window = live.timeline.flight_window()
     rtf = live.gz.between(*window) if live.gz is not None and window is not None else []
     browser_res = browser_result(live.browser)
@@ -755,7 +721,7 @@ def finish(
         gpu_name=gpu,
         ram_total_gb=ram_gb,
         windows_ram_total_gb=win_ram_gb,
-        settings=settings_for(args, cfg, cloud=False, test_rig=True),
+        settings=settings_for(args, cfg, test_rig=True),
         warnings=warnings + measurements.notes,
         fallback=fallback_for(args),
         started_utc=_iso(started),

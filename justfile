@@ -203,36 +203,13 @@ brain-token:
 brain:
     uv run --package sd-brain sd-brain run --config config/brain.toml
 
-# Start the local model server (llama-server, GPU) on 127.0.0.1:8091
-llm-up: _env-file
-    docker compose --env-file .env --profile ai up -d --wait llm
-
-# Stop the local model server
-llm-down: _env-file
-    docker compose --env-file .env --profile ai stop llm
-
-# Golden evaluation of the AI commander (no GPU; same as CI)
+# Golden evaluation of the AI commander (no network; same as CI)
 brain-eval:
     uv run --package sd-brain sd-brain eval --backend replay
 
-# Model evaluation against the real local model, 3 runs (owner's computer, GPU)
-brain-eval-model:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    gpu="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
-    uv run --package sd-brain sd-brain eval --backend llm_local --repeat 3 --gpu-name "$gpu"
-
-# Check the local model for 5 minutes: valid tool calls and graphics memory <= 7000 MB
-check-model:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p data/reports
-    log="$(mktemp)"
-    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 500 > "$log" &
-    smi=$!
-    trap 'kill "$smi" 2>/dev/null || true; rm -f "$log"' EXIT
-    image="$(python3 -c 'import tomllib;print(tomllib.load(open("software/brain/runtime.lock.toml","rb"))["llama_cpp"]["image"])')"
-    uv run --package sd-brain sd-brain check-model --duration-s 300 --interval-s 10 --vram-log "$log" --image "$image"
+# Evaluation against the cloud model, 3 runs (the owner's key in .env; costs a few cents)
+brain-eval-cloud:
+    uv run --package sd-brain sd-brain eval --backend cloud --repeat 3
 
 # --- panel ---------------------------------------------------------------------------
 
@@ -401,8 +378,8 @@ e2e *args:
     # networks and user (compose recreates a service whose settings differ).
     SD_SIM__REQUIRE_VIDEO=1 {{_just}} ci-sitl mode=e2e "runs=$runs" workers=4
 
-# Performance measurement on the owner's computer: the demo with Gazebo and the local
-# model, P0-P8 and the model's response time, report in data/reports/ (keys: runs, gui, eval)
+# Performance measurement on the owner's computer: the demo with Gazebo and the cloud AI,
+# P0-P8 and the cloud model's answer time, report in data/reports/ (keys: runs, gui, eval)
 perf *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -411,10 +388,6 @@ perf *args:
     uv run --all-packages python -m sd_sim.perf "$@"
 
 alias bench := perf
-
-# Download the local AI model to models/ and check its sha256 (keys: fallback)
-models-fetch *args:
-    uv run --no-sync python tools/models_fetch.py "$@"
 
 # Download the offline map pack to <data_dir>/tiles/ (keys: bbox, maxzoom, name, dry)
 maps-fetch *args:

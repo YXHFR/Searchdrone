@@ -20,7 +20,6 @@ DUMMY_ENV = {
     "SD_GROUND__DB_PASSWORD": "x",
     "SD_GROUND__VIDEO_PUBLISH_PASSWORD": "x",
     "SD_GROUND__VIDEO_API_PASSWORD": "x",
-    "SD_LLM_API_KEY": "x",
     "SD_UID": "1000",
     "SD_GID": "1000",
     "SD_DATA_DIR": "/srv/sd-data",  # only rendered, never created

@@ -56,7 +56,6 @@ HEALTH_DB_S = 60.0
 HEALTH_GROUND_S = 30.0
 HEALTH_ONBOARD_S = 30.0
 HEALTH_BRAIN_S = 30.0
-HEALTH_LLM_S = 120.0
 DEMO_SCRIPT = "simulation/scenarios/scripts/SC01.yaml"
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
@@ -113,12 +112,8 @@ class Stack:
         param_layers: tuple[Path, ...] = (),
         services: bool = False,
         test_rig: bool = False,
-        cloud: bool = True,
     ) -> None:
         self.cfg = cfg
-        # cloud: sd-brain may use the cloud model when .env has a key; off, only the
-        # local model answers (`just perf` measures the local model).
-        self.cloud = cloud
         # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
         # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
         self.services = services
@@ -609,7 +604,7 @@ class Stack:
 
     def start_ground(self) -> procs.Proc:
         env = self.ground_process_env()
-        proc = self._start_service("sd-ground", [sys.executable, "-m", "sd_ground", "serve"], env)
+        proc = self._start_service("sd-ground", services.ground_serve_argv(), env)
         self._wait(
             "sd-ground",
             proc,
@@ -651,17 +646,8 @@ class Stack:
         if kind == "none":
             say("hoppar över sd-brain (brain=none)")
             return
-        timeout = HEALTH_BRAIN_S
-        if kind == "llm_local":
-            timeout = HEALTH_LLM_S
-            if not services.tcp_open(self.ports["llm_http"]):
-                say("llama-server kör inte; försöker starta den (docker compose --profile ai)")
-                if not self._compose("--profile", "ai", "up", "-d", "--wait", "llm"):
-                    say("llama-server startade inte; AI:n får använda molnet eller kommandoläget")
         env = procs.clean_env(
-            services.brain_env(
-                self.ports, self.stack_paths(), kind, self.brain_script(), cloud=self.cloud
-            )
+            services.brain_env(self.ports, self.stack_paths(), kind, self.brain_script())
         )
         config_file = self.repo / "config" / "brain.toml"
         if not config_file.is_file():
@@ -672,7 +658,7 @@ class Stack:
         self._wait(
             "sd-brain",
             proc,
-            timeout,
+            HEALTH_BRAIN_S,
             lambda: self._health_ok("brain"),
             "AI-befälhavaren kopplade inte upp mot markstationen.",
         )

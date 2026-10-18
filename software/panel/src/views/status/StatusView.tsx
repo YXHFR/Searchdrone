@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { vehiclePill } from "../../header/pills";
 import { ResumeRow } from "../../safety/ResumeButton";
-import { useBrainState } from "../../state/brain";
+import { useBrainEngine, useBrainState } from "../../state/brain";
 import { useLiveStore } from "../../state/liveStore";
 import { activeCharter, useMissionStore } from "../../state/missionStore";
 import { useSessionStore } from "../../state/sessionStore";
@@ -65,6 +65,7 @@ function LinksCard() {
   const ws = useLiveStore((s) => s.ws);
   const link = useLiveStore((s) => s.vehicle?.link ?? null);
   const brain = useBrainState();
+  const engine = useBrainEngine();
   return (
     <section className="card" aria-labelledby="st-links">
       <h3 id="st-links">{t("status.links.title")}</h3>
@@ -73,6 +74,16 @@ function LinksCard() {
         <Row label={t("status.links.mavlink")} value={link?.mavlink ?? "–"} />
         <Row label={t("status.links.sdlink")} value={link?.sdlink ?? "–"} />
         <Row label={t("status.links.ai")} value={brain ?? "–"} />
+        <Row
+          label={t("status.links.engine")}
+          value={
+            engine === "cloud"
+              ? t("status.links.engineCloud")
+              : engine === "command"
+                ? t("status.links.engineCommand")
+                : "–"
+          }
+        />
       </dl>
     </section>
   );
