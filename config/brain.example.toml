@@ -22,9 +22,9 @@ scripted_file = ""                    # only for kind = scripted
 [llm]                                 # how a turn uses the language model
 temperature = 0.2
 top_p = 0.8
-max_tokens = 512
+max_tokens = 4096                     # the model's reasoning counts too; answers are 100-300
 seed = 42                             # only used in evaluations (not sent to the cloud)
-context_tokens = 8192
+context_tokens = 16384
 prompt_budget_tokens = 6000
 
 [cloud]                               # any OpenAI-compatible API, default OpenRouter

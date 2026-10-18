@@ -77,9 +77,11 @@ class LlmConfig(_Section):
 
     temperature: float = Field(default=0.2, ge=0, le=2)
     top_p: float = Field(default=0.8, gt=0, le=1)
-    max_tokens: int = Field(default=512, ge=1, le=4096)
+    # The cloud model reasons before it answers and the reasoning counts here: at 512 a
+    # turn after STOP and Resume ran out before its tool call. Answers are 100-300.
+    max_tokens: int = Field(default=4096, ge=1, le=4096)
     seed: int | None = 42
-    context_tokens: int = Field(default=8192, ge=1024)
+    context_tokens: int = Field(default=16384, ge=1024)  # prompt budget + max_tokens fit
     prompt_budget_tokens: int = Field(default=6000, ge=512)
 
 
