@@ -42,6 +42,7 @@ __all__ = [
     "ApiErrorItem",
     "Approval",
     "ApprovalDecisionRequest",
+    "Attitude",
     "AutonomyRequest",
     "Backend",
     "Charter",

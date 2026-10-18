@@ -428,6 +428,7 @@ def test_non_finite_attitude_is_ignored() -> None:
         vehicle.fc.attitude_rad = (0.2, -0.1, 1.5)
         await clock.run_for(0.5)
         before = vehicle.telemetry
+        assert before.attitude_mono_ms is not None
         vehicle.fc.attitude_rad = (math.nan, 0.0, math.inf)
         await clock.run_for(0.5)
         t = vehicle.telemetry

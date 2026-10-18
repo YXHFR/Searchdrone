@@ -78,6 +78,7 @@ STICK_RESEND_S: Final = 0.1  # 10 Hz while the panel's values are fresh
 TAKEOVER_POLL_S: Final = 0.01  # how often a waiting take-over looks for its notice's ack
 BATTERY_CONFIRM_S: Final = 0.5  # two BATTERY_STATUS at 2 Hz
 ATTITUDE_FRESH_S: Final = 1.0  # ATTITUDE is streamed at 4 Hz
+ATTITUDE_EDGE_DEG: Final = 0.01  # float rounding of +-pi and +-pi/2 radians
 _IN_AIR: Final = frozenset({"in_air", "takeoff", "landing"})
 _FLYING_HOME: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL, CopterMode.LAND})
 log = get_logger("sd_ground.mav")
@@ -718,10 +719,15 @@ def to_telemetry(snap: MavSnapshot, now: dt.datetime) -> Telemetry:
 
 
 def _attitude(t: FcTelemetry, now_mono_ms: int) -> Attitude | None:
-    """The latest ATTITUDE, or None when it is older than ``ATTITUDE_FRESH_S``."""
+    """The latest ATTITUDE, or None when it is older than ``ATTITUDE_FRESH_S`` or not a
+    possible attitude. Only rounding at the range edges is clamped; anything further out is
+    dropped rather than shown as a horizon the drone never had."""
     if t.attitude_mono_ms is None or now_mono_ms - t.attitude_mono_ms > ATTITUDE_FRESH_S * 1000:
         return None
+    # sd_mav already drops non-finite samples; the schema rejects them, so check here too.
     if not all(map(math.isfinite, (t.roll_deg, t.pitch_deg, t.yaw_deg))):
+        return None
+    if abs(t.roll_deg) > 180.0 + ATTITUDE_EDGE_DEG or abs(t.pitch_deg) > 90.0 + ATTITUDE_EDGE_DEG:
         return None
     yaw = t.yaw_deg % 360.0
     return Attitude(

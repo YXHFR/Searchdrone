@@ -56,3 +56,11 @@ def test_rounding_at_the_edges_stays_inside_the_schema() -> None:
 def test_non_finite_attitude_is_dropped_not_clamped(axis: str, bad: float) -> None:
     t = FcTelemetry(attitude_mono_ms=0, **{axis: bad})
     assert to_telemetry(_snap(t, 0), NOW).attitude is None
+
+
+@pytest.mark.parametrize(
+    ("roll", "pitch"), [(200.0, 0.0), (-181.0, 0.0), (0.0, 95.0), (0.0, -120.0)]
+)
+def test_impossible_attitude_is_dropped_not_clamped(roll: float, pitch: float) -> None:
+    t = FcTelemetry(attitude_mono_ms=0, roll_deg=roll, pitch_deg=pitch)
+    assert to_telemetry(_snap(t, 0), NOW).attitude is None
