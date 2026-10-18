@@ -1,0 +1,71 @@
+# Manual acceptance rows for v0.1.0, read by tools/accept/v0_1_0.py (just accept).
+#
+# Copy this file to data/reports/accept-manual-v0.1.0.toml (gitignored) and fill it in.
+# Only the owner sets pass = true, after checking the row personally; an agent never
+# does. A row that is missing from the copy counts as not checked (pass = null) and
+# makes just accept fail. pass = true also needs by (who checked) and date (YYYY-MM-DD).
+
+# The full demo on the owner's computer (just demo), three runs in a row driven only
+# through the chat plus the two clicks; the simulator camera shows in the panel;
+# response times noted.
+[F-02]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# The demo from a phone on the home network (just demo lan=1): PIN login, everything
+# visible, STOP and HOME can be pressed.
+[F-04]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# The owner has looked at the main-protection and release-tags rulesets on GitHub
+# (the automatic half reads them through the API).
+[R-06]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# The flight-safety reviewer approved the final versions of B1-03, B1-07, B1-08,
+# B1-12 and B1-15.
+[S-24]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# The README walk-through on the release commit: the owner has read its report
+# (the automatic half checks data/reports/readme-check-*.json).
+[V-01]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# After the release: the owner has watched the showcase GIF and it shows the demo
+# (the automatic half checks the download link). Phase post.
+[V-02]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# The owner has seen the demo (live or as video) and said OK to the v0.1.0 tag.
+[V-03]
+pass = false
+by = ""
+date = ""
+note = ""
+
+# Before the tag: the owner confirmed or changed the flight-safety defaults (link
+# loss timings, guard tolerances, battery rules, operator-absent action, limits that
+# can only be lowered).
+[V-06]
+pass = false
+by = ""
+date = ""
+note = ""
