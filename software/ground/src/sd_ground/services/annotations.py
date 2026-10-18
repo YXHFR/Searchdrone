@@ -10,11 +10,10 @@ here moves the vehicle.
 
 from __future__ import annotations
 
-from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from sd_ground.services.missions import FlowError
-from sd_safety.targets import distance_m
+from sd_safety.targets import line_length_m
 from sd_schemas.api import Annotation, AnnotationCreate, Mission
 from sd_schemas.skills import PATH_MAX_LENGTH_M
 
@@ -48,7 +47,7 @@ def _publish(
 
 def path_length_m(geometry: dict[str, Any]) -> float:
     coords = geometry["coordinates"]
-    return sum(distance_m(a[1], a[0], b[1], b[0]) for a, b in pairwise(coords))
+    return line_length_m((lat, lon) for lon, lat in coords)
 
 
 async def add(flow: MissionFlow, mission_id: str, body: AnnotationCreate, by: str) -> Annotation:

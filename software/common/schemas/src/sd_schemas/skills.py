@@ -257,8 +257,9 @@ class SurveySectorParams(SkillParams):
 class FollowPathParams(SkillParams):
     """Fly a drawn line point by point at one height, then hover at its last point.
 
-    ``points`` come from the pilot's drawn path (the ground resolves ``pa-<n>``); the
-    AI never writes them. ``label`` is that path's name, for the card and the map.
+    ``points`` come from the pilot's drawn path (sd-brain resolves ``pa-<n>``, and the
+    ground checks that they are that path's points); the model never writes them.
+    ``label`` is that path's name, for the card and the map.
     """
 
     points: list[LatLon] = Field(min_length=2, max_length=MAX_LINE_POINTS)
@@ -304,6 +305,7 @@ class ResumeParams(SkillParams):
             path=[here, rp.interrupted_at, *remaining],
             alts_m=[rp.alt_m],
             speed_ms=rp.speed_ms,
+            route_energy=rp.path,  # the rest of a drawn path: the battery is checked again
         )
 
 

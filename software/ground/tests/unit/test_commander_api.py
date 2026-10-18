@@ -264,7 +264,10 @@ def test_a_drawn_path_reaches_the_ai_by_its_name_only() -> None:
         "kind": "path",
         "label": "pa-1",
         "length_m": 420.0,
-        "geometry": {"type": "LineString", "coordinates": [[149.1, -35.3], [149.2, -35.3]]},
+        "geometry": {
+            "type": "LineString",
+            "coordinates": [[149.16523, -35.36326], [149.16583, -35.36226]],
+        },
     }
     out = to_commander(BusEvent(6, ts, "mission", "annotation.created", "sim-01", "M2", data))
     assert out is not None and out["type"] == "event.path_drawn"

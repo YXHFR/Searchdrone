@@ -88,8 +88,19 @@ def test_unknown_battery_rejects_a_path() -> None:
 def test_a_path_over_five_km_is_too_long() -> None:
     laps = [(-250 if i % 2 else 250, -250 + 25 * i) for i in range(12)]  # 11 x ~500 m
     d = evaluate(req("follow_path", path(*laps)), ctx(vehicle=vehicle(battery_pct=100)))
-    assert "PATH_TOO_LONG" in d.reason_codes
+    assert d.reason_codes[0] == "PATH_TOO_LONG"
     assert d.details["route_m"] > 5_000
+    assert d.message_sv.startswith("Vägen är för lång: 5,")
+    assert "km, högst 5,0 km." in d.message_sv
+
+
+def test_the_length_cap_counts_the_drawn_line_not_the_way_there() -> None:
+    """The cap is on the drawn line (as the panel and the ground measure it); the way to
+    its start counts only for the battery."""
+    # 10 legs of about 490 m: 4,9 km drawn, about 5,1 km with the way to its start.
+    laps = [(-245 if i % 2 else 245, -250 + 10 * i) for i in range(11)]
+    d = evaluate(req("follow_path", path(*laps)), ctx(vehicle=vehicle(battery_pct=100)))
+    assert "PATH_TOO_LONG" not in d.reason_codes
 
 
 def test_the_path_is_checked_against_height_and_speed_too() -> None:

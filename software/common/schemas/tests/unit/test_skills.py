@@ -295,3 +295,28 @@ def test_follow_path_ai_names_a_drawn_path_never_coordinates() -> None:
     for bad in ({"path": "P1"}, {"path": "pa-1", "points": PATH}, {}):
         with pytest.raises(ValidationError):
             FollowPathAiParams.model_validate(bad)
+
+
+def test_resuming_a_drawn_path_checks_the_battery_again() -> None:
+    from sd_schemas.base import LatLon, new_id
+    from sd_schemas.executor import SurveyResumePoint
+    from sd_schemas.skills import ResumeParams
+
+    here = LatLonAlt(lat=-35.3632, lon=149.1652, alt_amsl_m=584)
+    pts = [LatLon(lat=p["lat"], lon=p["lon"]) for p in PATH]
+    rp = SurveyResumePoint(
+        command_id=new_id(),
+        waypoints=pts,
+        alt_m=30,
+        speed_ms=5,
+        base_index=0,
+        seq_offset=0,
+        next_index=1,
+        interrupted_at=pts[0],
+        path=True,
+    )
+    ctx = TargetContext(charter=None, position=here, home=here, resume_point=rp)
+    assert ResumeParams().gate_targets(ctx).route_energy
+    search = rp.model_copy(update={"path": False})
+    ctx = TargetContext(charter=None, position=here, home=here, resume_point=search)
+    assert not ResumeParams().gate_targets(ctx).route_energy

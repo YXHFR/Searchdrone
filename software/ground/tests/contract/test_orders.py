@@ -1177,3 +1177,35 @@ async def test_a_path_the_battery_cannot_fly_is_refused_with_the_numbers(r: Rig)
     assert "ROUTE_BATTERY" in out["reason_codes"], out
     assert out["message_sv"].startswith("Batteriet räcker inte för hela vägen och flygningen hem")
     assert not await pending_cards(r, mid)
+
+
+async def test_the_ais_path_must_be_the_drawn_one(r: Rig) -> None:
+    """The model names a path; the ground refuses points that are not that drawn path."""
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    corners = [(0.0, 60.0), (60.0, 90.0), (120.0, 60.0)]
+    line = [[r.at(e, n)[1], r.at(e, n)[0]] for e, n in corners]
+    drawn = await r.panel.post(
+        f"/api/v1/missions/{mid}/annotations",
+        json={
+            "kind": "path",
+            "label": "pa-1",
+            "geometry": {"type": "LineString", "coordinates": line},
+        },
+        headers=H,
+    )
+    assert drawn.status_code == 201, drawn.text
+    other = [{"lat": r.at(e, n + 20)[0], "lon": r.at(e, n + 20)[1]} for e, n in corners]
+    moved = await order(
+        r, d, "follow_path", {"points": other, "alt_m": 30, "label": "pa-1"}, "REJECT"
+    )
+    assert moved["reason_codes"] == ["SCHEMA_INVALID"], moved
+    assert "inte den ritade vägen" in moved["message_sv"]
+    same = [{"lat": lat, "lon": lon} for lon, lat in line]
+    unknown = await order(
+        r, d, "follow_path", {"points": same, "alt_m": 30, "label": "pa-2"}, "REJECT"
+    )
+    assert unknown["reason_codes"] == ["SCHEMA_INVALID"], unknown
+    assert not await pending_cards(r, mid)
+    assert not [o for o in r.onboard.orders if o.skill == "follow_path"]

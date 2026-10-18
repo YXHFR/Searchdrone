@@ -1,11 +1,12 @@
 """``follow_path``: fly a line the pilot drew, point by point, then hover at its end.
 
-The points come from the drawn path (the ground resolves ``pa-<n>``; the AI never writes
-coordinates). They are flown as an AUTO mission like a search (``SurveyRun``): home,
-speed, the points, a 30 s loiter at the last one and return-to-launch, so the flight ends
-safely even if the onboard computer dies. At the last point the executor switches to
-LOITER (HOLD). STOP, FLY HOME and the pilot's takeover act on it like on any other step,
-and ``resume`` flies the points still left.
+The points come from the drawn path (sd-brain resolves ``pa-<n>`` and the ground checks
+it; the model never writes coordinates). They are flown as an AUTO mission like a search
+(``SurveyRun``): home, speed, the points, a 30 s loiter at the last one and
+return-to-launch, so the flight ends safely even if the onboard computer dies. At the
+last point the executor switches to LOITER (HOLD). STOP, FLY HOME and the pilot's
+takeover act on it like on any other step, and ``resume`` flies the points still left
+(in TRANSIT, with the battery checked again).
 """
 
 from __future__ import annotations

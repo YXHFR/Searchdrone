@@ -102,7 +102,9 @@ async def test_hold_on_the_way_then_resume_flies_the_rest() -> None:
         assert r.ex.state == S.HOLD and r.up.stages(cmd.command_id)[-1] == "superseded"
         rp = r.ex.resume_point
         assert isinstance(rp, SurveyResumePoint) and 0 < rp.next_index < len(CORNERS)
+        assert rp.path  # a drawn path, not a search
         resume = await r.send(r.order("resume", {}), 1)
+        assert r.ex.state == S.TRANSIT  # flies on as a path, not as a search
         await r.until(lambda: r.ex.state == S.HOLD, 300, step=0.05)
         assert r.up.stages(resume.command_id)[-1] == "done"
         x, y = PLANE.xy(r.fc.lat, r.fc.lon)

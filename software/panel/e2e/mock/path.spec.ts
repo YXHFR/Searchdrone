@@ -3,7 +3,16 @@
 // Screenshots of each step go to test-results/path-flow/ (uploaded by CI).
 import type { Page } from "@playwright/test";
 import type { Command, MapConfig } from "@searchdrone/schemas";
-import { approval, charter, command, HOME, square, telemetry } from "../fixtures";
+import {
+  approval,
+  charter,
+  command,
+  HOME,
+  snapshot,
+  square,
+  telemetry,
+  vehicleLive,
+} from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
 import { expectSafetyVisible, isMobile } from "../helpers/safety";
 
@@ -210,6 +219,10 @@ test("draw a path, ask in the chat, approve: planned dashed, flown solid, progre
 
   // 4. At the end: done, the whole line flown, 100 %. The drone hovers there.
   ground.pushLive("commands", "command.updated", pathOrder("done"));
+  ground.pushLive("vehicle", "vehicle.state", {
+    ...vehicleLive,
+    snapshot: snapshot({ executor_state: "HOLD", hold_reason: "skill_done" }),
+  });
   ground.pushLive(
     "telemetry",
     "telemetry",

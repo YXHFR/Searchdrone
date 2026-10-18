@@ -9,8 +9,6 @@ import { type ActivePath, activePath, pathFlownData, pathPlanData, pathsData } f
 type MapLike = import("maplibre-gl").Map;
 type MapMod = typeof import("./createMap");
 
-const MOVES = new Set(["goto", "survey_sector", "follow_path", "resume", "return_home", "orbit"]);
-
 function current(): ActivePath | null {
   const m = useMissionStore.getState();
   const live = useLiveStore.getState();
@@ -18,10 +16,15 @@ function current(): ActivePath | null {
     .filter((a) => a.kind === "command" && a.status === "pending")
     .map((a) => m.commands[a.subject_id])
     .filter((c): c is Command => c !== undefined);
-  const latest =
-    Object.values(m.commands)
-      .filter((c) => MOVES.has(c.skill) && c.status !== "rejected_by_gate")
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null;
+  // A finished path stays on the map while the drone hovers at its end (HOLD after the
+  // step), until the vehicle does something else.
+  const snap = live.vehicle?.snapshot;
+  const hovering = snap?.executor_state === "HOLD" && snap.hold_reason === "skill_done";
+  const latest = hovering
+    ? (Object.values(m.commands)
+        .filter((c) => c.skill === "follow_path" && c.status === "done")
+        .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] ?? null)
+    : null;
   const tel = live.telemetry;
   const drone = tel && Number.isFinite(tel.lat) ? { lat: tel.lat, lon: tel.lon } : null;
   return activePath(

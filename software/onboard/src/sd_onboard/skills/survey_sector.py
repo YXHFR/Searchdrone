@@ -161,6 +161,7 @@ class SurveyRun:
             seq_offset=self.seq_offset,
             next_index=self.next_index,
             interrupted_at=LatLon(lat=vehicle.lat, lon=vehicle.lon),
+            path=self.target_state is ExecutorState.TRANSIT,
         )
 
 

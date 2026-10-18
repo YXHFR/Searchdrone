@@ -367,6 +367,15 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         s.GotoAiParams(pin="P1", alt_m=40),
         s.SurveySectorParams(sector_id="A", alt_m=40),
         s.SurveySectorAiParams(sector="A"),
+        s.FollowPathParams(
+            points=[
+                s.LatLon(lat=-35.36246, lon=149.16523),
+                s.LatLon(lat=-35.36146, lon=149.16583),
+            ],
+            alt_m=30,
+            label="pa-1",
+        ),
+        s.FollowPathAiParams(path="pa-1", alt_m=30),
         s.HoldParams(reason="Väntar på operatören."),
         s.ResumeParams(),
         s.ReturnHomeParams(),
