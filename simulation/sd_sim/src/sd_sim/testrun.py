@@ -6,15 +6,21 @@ Runs the simulator tests with pytest and the ``sd_sim.pytest_plugin`` plugin:
         --shard-id <shard> --num-shards <shards> --reruns 1 --only-rerun InfraError
         --physics <physics> --brain <brain> simulation/tests/ simulation/sd_sim/tests/sitl/
 
-``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly`` (with
-``physics=gz`` the Gazebo tests are included); ``mode=nightly`` selects
-``sitl and nightly``; ``mode=panel`` selects the panel's browser test (``sitl and panel``,
-started by ``just test-panel-sitl``). ``brain=`` picks the AI commander the scenarios fly
+``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly and not e2e``
+(with ``physics=gz`` the Gazebo tests are included); ``mode=e2e`` selects the end-to-end
+set of ``just e2e`` (``sitl and e2e``: the demo and the emergency buttons), which CI runs
+in a job of its own; ``mode=nightly`` selects ``sitl and nightly``; ``mode=panel``
+selects the panel's browser test (``sitl and panel``, started by
+``just test-panel-sitl``). ``brain=`` picks the AI commander the scenarios fly
 with: ``scripted`` (default, the script per scenario), ``grammar`` (the fixed command
 mode), ``llm_local`` (the local model on the owner's computer; adds the ``llm`` tests) or
 ``none`` (no commander: only the tests that need none). ``sc=`` and ``variant=`` narrow
 the run by test name. Only test-rig failures (``InfraError``) are retried, once.
 Afterwards ``runs/summary.md`` lists every result written during the run.
+
+In ``mode=e2e`` the demo (``test_demo_flight``) gets simulator instance 0, the only one
+with video, in a pytest run of its own; the other tests run beside it on instances 1 and
+up. ``runs=N`` repeats the whole set N times and passes only if every round passes.
 """
 
 from __future__ import annotations
@@ -43,6 +49,7 @@ ALLOWED_KEYS = (
     "shard",
     "shards",
     "workers",
+    "runs",
     "dry",
 )
 TEST_PATHS = ("simulation/tests", "simulation/sd_sim/tests/sitl")
@@ -53,17 +60,22 @@ FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
 BRAINS = ("scripted", "grammar", "llm_local", "none")
 
 
+DEMO_TEST = "test_demo_flight"
+FIRST_INSTANCE_ENV = "SD_SIM__FIRST_INSTANCE"
+
+
 def selection(mode: str, physics: str, brain: str = "scripted") -> str:
     # The panel's browser test needs Playwright beside the stack (`just test-panel-sitl`),
     # so it is never part of the pull-request or the nightly SITL suite.
     if mode == "panel":
         return "sitl and panel"
+    gz = "" if physics == "gz" else " and not gz"
     if mode == "nightly":
         base = "sitl and nightly"
-    elif physics == "gz":
-        base = "sitl and not llm and not nightly"
+    elif mode == "e2e":
+        base = f"sitl and e2e{gz} and not llm and not nightly"
     else:
-        base = "sitl and not gz and not llm and not nightly"
+        base = f"sitl{gz} and not llm and not nightly and not e2e"
     if brain == "llm_local":
         base = base.replace(" and not llm", "")
     elif brain == "none":
@@ -82,10 +94,10 @@ def _int(values: dict[str, str], key: str, default: int, low: int, high: int) ->
     return number
 
 
-def pytest_argv(values: dict[str, str]) -> list[str]:
+def pytest_argv(values: dict[str, str], name_filter: str = "") -> list[str]:
     mode = values.get("mode", "pr")
-    if mode not in ("pr", "nightly", "panel"):
-        _args.fail("sd_sim.testrun: mode= ska vara pr, nightly eller panel")
+    if mode not in ("pr", "e2e", "nightly", "panel"):
+        _args.fail("sd_sim.testrun: mode= ska vara pr, e2e, nightly eller panel")
     physics = values.get("physics", "builtin")
     if physics not in ("builtin", "gz"):
         _args.fail("sd_sim.testrun: physics= ska vara builtin eller gz")
@@ -98,6 +110,8 @@ def pytest_argv(values: dict[str, str]) -> list[str]:
     argv = [sys.executable, "-m", "pytest", "-p", "sd_sim.pytest_plugin"]
     argv += ["-m", selection(mode, physics, brain)]
     names = [values[k] for k in ("sc", "variant") if values.get(k)]
+    if name_filter:
+        names.append(name_filter)
     if names:
         argv += ["-k", " and ".join(names)]
     if workers > 1:
@@ -156,22 +170,64 @@ def main(argv: list[str] | None = None) -> int:
     for key in FUTURE_KEYS:
         if key in values:
             print(f"Obs: {key}= används inte av de nuvarande testerna.")
-    cmd = pytest_argv(values)
-    print("+ " + " ".join(cmd[1:]), flush=True)
+    rounds = _int(values, "runs", 1, 1, 99)
     start = time.time()
-    code = subprocess.run(cmd, cwd=paths.REPO, env=os.environ.copy(), check=False).returncode  # noqa: S603
-    if code == PYTEST_NO_TESTS:
-        if values.get("mode") == "nightly":
-            print("Inga nattester finns än; inget att köra.")
-            code = 0
-        else:
-            print("Inga SITL-tester valdes. Kontrollera sc=, variant= och markeringarna.")
-            code = 1
+    passed = 0
+    code = 0
+    for i in range(rounds):
+        if rounds > 1:
+            print(f"=== omgång {i + 1} av {rounds}", flush=True)
+        got = run_round(values)
+        passed += got == 0
+        code = code or got
+    if rounds > 1:
+        print(f"{passed} av {rounds} omgångar gröna.", flush=True)
     runs = paths.runs_dir()
     runs.mkdir(parents=True, exist_ok=True)
     (runs / "summary.md").write_text(
         summary_markdown(results_since(start, runs), code), encoding="utf-8"
     )
+    return code
+
+
+def commands(values: dict[str, str]) -> list[tuple[list[str], dict[str, str]]]:
+    """The pytest runs of one round, each with its extra environment. ``mode=e2e`` with
+    more than one worker: the demo alone on instance 0, the rest on instances 1 and up."""
+    if values.get("mode") != "e2e":
+        return [(pytest_argv(values), {})]
+    workers = _int(values, "workers", 1, 1, 8)
+    if workers == 1:
+        return [(pytest_argv(values), {})]
+    demo = pytest_argv({**values, "workers": "1"}, DEMO_TEST)
+    rest_workers = str(min(workers - 1, 7))
+    rest = pytest_argv({**values, "workers": rest_workers}, f"not {DEMO_TEST}")
+    return [(demo, {}), (rest, {FIRST_INSTANCE_ENV: "1"})]
+
+
+def run_round(values: dict[str, str]) -> int:
+    cmds = commands(values)
+    for cmd, _extra in cmds:
+        print("+ " + " ".join(cmd[1:]), flush=True)
+    if len(cmds) == 1:
+        cmd, extra = cmds[0]
+        env = {**os.environ, **extra}
+        codes = [subprocess.run(cmd, cwd=paths.REPO, env=env, check=False).returncode]  # noqa: S603
+    else:
+        procs = [
+            subprocess.Popen(cmd, cwd=paths.REPO, env={**os.environ, **extra})  # noqa: S603
+            for cmd, extra in cmds
+        ]
+        codes = [p.wait() for p in procs]
+    code = 0
+    for got in codes:
+        if got == PYTEST_NO_TESTS:
+            if values.get("mode") == "nightly":
+                print("Inga nattester finns än; inget att köra.")
+                got = 0
+            else:
+                print("Inga SITL-tester valdes. Kontrollera sc=, variant= och markeringarna.")
+                got = 1
+        code = code or got
     return code
 
 

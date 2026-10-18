@@ -247,9 +247,66 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  e2e:
+    # The demo (SC01) end to end as processes, as `just demo` starts them, plus the demo's
+    # manual step and the emergency buttons (`just e2e runs=1`). Beside the shards, so the
+    # shards' budget is unchanged; the e2e tests are not in the shards' selection.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *image
+      - *versions
+      - name: End-to-end run (database and MediaMTX from compose.yaml, SITL image)
+        timeout-minutes: 30
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+        run: just e2e runs=1
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
+  e2e-offline:
+    # The same run with the stack cut off from the internet (F-07): the test user's
+    # traffic beyond loopback and the database network's traffic beyond its subnet are
+    # refused (tools/offline/isolate.sh); the runner's own traffic is not.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *image
+      - *versions
+      - name: Offline end-to-end run
+        timeout-minutes: 30
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+        run: just e2e offline=1 runs=1
+      - name: The runner itself still reaches GitHub
+        if: always()
+        run: curl -fsS -m 10 -o /dev/null https://api.github.com
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
   sitl-ok:
     if: always()
-    needs: [changes, sitl, video]
+    needs: [changes, sitl, video, e2e, e2e-offline]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -288,6 +345,30 @@ jobs:
       - *results
       - *logs
 
+  e2e-nightly:
+    # Ten rounds of the end-to-end set on the same commit (F-01: 10 of 10 for a release).
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *image
+      - *versions
+      - name: End-to-end run, 10 rounds
+        timeout-minutes: 180
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+        run: just e2e runs=10
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
   sitl-nightly-gz:
     # Gazebo as a server with headless rendering (no window, no GPU). Not required.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
@@ -312,21 +393,28 @@ jobs:
       - *logs
 
   sitl-e2e:
-    # Panel against the simulator, logged in like a person. Not required in v0.1.0.
+    # The panel in a browser against the simulator and the scripted commander, logged in
+    # like a person (`just test-panel-sitl`). Not required in v0.1.0.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
     steps:
       - *checkout
       - *check-ref
       - *setup
-      - name: End-to-end run
-        run: |
-          set +e
-          out="$(just e2e 2>&1)"; code=$?
-          echo "$out"
-          if [ "$code" -eq 2 ] && grep -q "inte byggt än" <<<"$out"; then
-            echo "::notice::Helhetstestet är inte byggt än; inget att köra."
-            exit 0
-          fi
-          exit "$code"
+      - *db
+      - *image
+      - *versions
+      - name: Browsers for Playwright
+        run: pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+      - name: Panel against SITL
+        timeout-minutes: 30
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+        run: just test-panel-sitl
+      - *summary
+      - *scan
+      - *logs

@@ -29,6 +29,7 @@ from pymavlink import mavutil
 
 from sd_sim import ports
 from sd_sim.errors import InfraError, VehicleError
+from sd_sim.rc import RcTransmitter, has_flown, throttle_for
 
 HARNESS_SYSID = 253
 HARNESS_COMPID = 190
@@ -390,9 +391,12 @@ class Harness:
         raise InfraError(f"parameterlistan blev inte komplett inom {timeout:.0f} s ({got})")
 
 
-def observe(instance: int, state_file: Path) -> int:
-    """Observer for the launcher (no flight commands); writes the state file until SIGTERM."""
+def observe(instance: int, state_file: Path, rc_port: int | None = None) -> int:
+    """Observer for the launcher (no flight commands); writes the state file until SIGTERM.
+    With ``rc_port`` it also holds the simulated pilot's RC transmitter (``sd_sim.rc``)."""
     harness = Harness.for_instance(instance)
+    rc = None if rc_port is None else RcTransmitter(rc_port).start()
+    flown = False
     stopping = False
 
     def stop(_sig: int, _frame: object) -> None:
@@ -403,10 +407,16 @@ def observe(instance: int, state_file: Path) -> int:
     signal.signal(signal.SIGINT, stop)
     tmp = state_file.with_suffix(".tmp")
     while not stopping:
-        harness.pump(0.5)
-        payload = {**asdict(harness.state), "ready": harness.state.ready, "pid": os.getpid()}
+        harness.pump(0.2)
+        st = harness.state
+        flown = has_flown(flown, st.armed, st.rel_alt_m)
+        if rc is not None:
+            rc.throttle = throttle_for(st.armed, flown, st.mode)
+        payload = {**asdict(st), "ready": st.ready, "pid": os.getpid()}
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(state_file)
+    if rc is not None:
+        rc.stop()
     harness.close()
     return 0
 
@@ -417,8 +427,9 @@ def main(argv: list[str] | None = None) -> int:
     obs = sub.add_parser("observe")
     obs.add_argument("--instance", type=int, default=0)
     obs.add_argument("--state-file", type=Path, required=True)
+    obs.add_argument("--rc-port", type=int, default=None, help="SITL's RC input (UDP)")
     args = parser.parse_args(argv)
-    return observe(args.instance, args.state_file)
+    return observe(args.instance, args.state_file, args.rc_port)
 
 
 if __name__ == "__main__":

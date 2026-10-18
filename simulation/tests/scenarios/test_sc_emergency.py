@@ -65,6 +65,7 @@ async def stopped_and_holding(sc: Scenario, t0: float) -> None:
 
 
 @pytest.mark.brain
+@pytest.mark.e2e  # just e2e: the emergency buttons
 @pytest.mark.budget_s(480)
 async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
@@ -112,6 +113,7 @@ async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) 
 
 
 @pytest.mark.brain
+@pytest.mark.e2e  # just e2e: the emergency buttons
 @pytest.mark.budget_s(480)
 async def test_sc03_fly_home_mid_search(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:

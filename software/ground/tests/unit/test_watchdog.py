@@ -203,13 +203,34 @@ async def test_operator_absent_holds_once() -> None:
         assert s.g.types().count("vehicle.operator_absent") == 1
 
 
+async def test_a_pilot_back_within_30_s_of_a_restart_keeps_the_flight() -> None:
+    async with stack() as s:
+        s.fly()
+        await s.run(1.0)
+        presence = OperatorPresence(s.actions, mission_active=lambda _v: True)
+        presence.tick(s.g)  # the restarted ground station has seen no pilot yet
+        await s.run(5.0)
+        s.g.operator_seen_mono = s.clock.monotonic()  # the panel reconnects
+        await s.run(29.0)
+        presence.tick(s.g)
+        assert s.latches.get(VID) is None
+        assert "vehicle.operator_absent" not in s.g.types()
+
+
 async def test_operator_absent_is_always_a_hold() -> None:
     """Owner decision: 30 s without a pilot always gives the alarm and a hold."""
     async with stack() as s:
         s.fly()
         await s.run(1.0)
         presence = OperatorPresence(s.actions, mission_active=lambda _v: True)
-        presence.tick(s.g)  # nobody has been seen at all
+        # Nobody seen by this process at all (it restarted mid-flight): 30 s from its
+        # first tick, then the hold, as for a pilot who went away.
+        presence.tick(s.g)
+        await s.run(29.9)
+        presence.tick(s.g)
+        assert s.latches.get(VID) is None
+        await s.run(0.2)
+        presence.tick(s.g)
         await s.run(1.5)
         assert s.fc.mode == CopterMode.BRAKE
         assert s.latches.get(VID).action == "watchdog_stop"  # type: ignore[union-attr]

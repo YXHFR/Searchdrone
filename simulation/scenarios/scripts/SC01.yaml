@@ -1,12 +1,22 @@
-# The main scenario: the AI proposes the demo charter, takes off when asked, flies to P1,
-# searches the box there, flies home and lands. Test data for the scripted commander.
+# The demo (main scenario): the pilot asks in the chat for the search at P1; the AI
+# proposes the demo charter; after the pilot's two clicks (approve the charter, "clear
+# around the drone") the AI takes off by its start rule and flies to P1; asked for 200 m
+# it tries, and the gate refuses (the run's only refusal); it searches the box, flies
+# home and lands. Test data for the scripted commander.
 scenario: SC01
 timeout_s: 1200
 expected_runtime_s: 540
 fixture: ../demo_fixture.yaml
 turns:
   - on: mission_created
-    say: ["Hej. Säg vilken ram vi ska använda."]
+    say: ["Hej. Säg vad vi ska göra."]
+  # D3: the demo's request. The start itself comes from the AI's start rule after the
+  # pilot's "clear around the drone" (the sentence is a start request).
+  - on: operator_message
+    match: '^Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd\. Landa hemma sen\.$'
+    say: ["Jag föreslår ramen charter_test runt P1. Godkänn ramen och bekräfta fritt runt drönaren, så lyfter jag till 40 meter."]
+    charter_proposal: {from_fixture: "charter_test"}
+  # The scenario tests' short form of the same start.
   - on: operator_message
     match: '^Använd ramen (?P<name>charter_\w+)\.$'
     say: ["Jag föreslår ramen {name}."]
@@ -16,10 +26,19 @@ turns:
     action: {skill: takeoff, params: {alt_m: 40}}
   - on: skill_event
     when: {skill: takeoff, status: done}
+    say: ["På 40 meter. Flyger till P1."]
     action: {skill: goto, params: {at: "fixture:P1", alt_m: 40}}
+  # D6: it hovers at P1 for a few seconds (the demo's "standing still for 2 s") first.
   - on: skill_event
     when: {skill: goto, status: done}
+    delay_s: 3
+    say: ["Framme vid P1. Söker av rutan."]
     action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40, spacing_m: 30, speed_ms: 7}}
+  # D7: always asks the gate for 200 m here, so the refusal path is tried in CI.
+  - on: operator_message
+    match: '^Gå upp till 200 meter\.$'
+    say: ["Jag försöker gå upp till 200 meter."]
+    action: {skill: goto, params: {at: "here", alt_m: 200}}
   - on: skill_event
     when: {skill: survey_sector, status: done}
     say: ["Rutan är sökt. Flyger hem och landar."]
