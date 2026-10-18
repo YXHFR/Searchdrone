@@ -39,10 +39,7 @@ export function SafetyButton({ action, vehicleId, disabledReason = null }: Props
   const [pressedAt, setPressedAt] = useState<number | null>(null);
   const isStop = action === "stop";
   const Icon = isStop ? OctagonX : House;
-  const status =
-    a.state === "acked"
-      ? t(isStop ? "safety.done.stop" : "safety.done.home")
-      : actionText(t, a.text);
+  const status = actionText(t, a.text);
   const feedback = sentFeedback(t, a.state, status, pressedAt);
   const sub = disabledReason ?? feedback ?? t(isStop ? "safety.stop.sub" : "safety.home.sub");
   return (

@@ -46,11 +46,7 @@
     "notLoggedIn": "Inte inloggad – STOPP och FLYG HEM fungerar inte förrän du loggat in. Använd RC.",
     "noVehicleContact": "Ingen kontakt med drönaren",
     "caption": "Säkerhetsknappar · går direkt till drönaren, förbi AI:n",
-    "feedback": "Skickat {{time}} · {{state}}",
-    "done": {
-      "stop": "Kvitterat, svävar",
-      "home": "Kvitterat, flyger hem"
-    }
+    "feedback": "Skickat {{time}} · {{state}}"
   },
   "resume": {
     "button": "Fortsätt",
