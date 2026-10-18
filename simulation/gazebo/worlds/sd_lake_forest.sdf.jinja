@@ -212,18 +212,17 @@
 {% endfor %}
     </model>
 
+{% if objects %}
+    <!-- Scenario objects (sd_sim.objects), already placed on the ground. -->
+{% for element in objects %}
+  {{ element | safe }}
+{% endfor %}
+{% endif %}
     <include>
       <uri>{{ model_uri }}</uri>
       <!-- This pose replaces the model's own: the body stands at spawn_z, legs on the
            ground (at z = 0 they were buried and the vehicle could not take off). -->
       <pose>0 0 {{ spawn_z }} 0 0 {{ vehicle_yaw }}</pose>
     </include>
-{% for uri in includes %}
-
-    <!-- Scenario objects (search targets, decoys, labelled context), placed by sd_sim. -->
-    <include>
-      <uri>{{ uri }}</uri>
-    </include>
-{% endfor %}
   </world>
 </sdf>

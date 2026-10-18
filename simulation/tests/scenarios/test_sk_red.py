@@ -51,8 +51,8 @@ from test_onboard_sitl import Sim, sim_stack  # pyright: ignore[reportMissingImp
 from sd_geo import PinholeCamera
 from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
-from sd_sim import search_report, world
-from sd_sim.targets import Scene
+from sd_sim import fixture, search_report, world
+from sd_sim.targets import Scene, search_box
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.gz]
 __all__ = ["fresh_db", "migrated_db", "passwords"]
@@ -147,7 +147,15 @@ async def test_sk_red(gz_sim: Sim, migrated_db: Any, tmp_path: Path, scenario_id
 
     # The record for people: map, annotated stills, numbers.
     track = [(s.lat, s.lon) for s in sc.track if s.armed]
-    search_report.draw_map(truth, finds, result, track, run_dir / "search" / "map.png")
+    search_report.draw_map(
+        truth,
+        finds,
+        result,
+        track,
+        run_dir / "search" / "map.png",
+        search_box(fixture.load()),
+        f"{scenario_id} seed {SEED}",
+    )
     kept = sorted(keep_dir.glob("*.json")) if keep_dir.is_dir() else []
     shown = 0
     for meta in kept:
@@ -160,7 +168,7 @@ async def test_sk_red(gz_sim: Sim, migrated_db: Any, tmp_path: Path, scenario_id
     summary = {
         "scenario": scenario_id,
         "seed": SEED,
-        "blocks": [o["name"] for o in truth["objects"] if o["cls"] == "red_block"],
+        "blocks": [o["name"] for o in truth["objects"] if o["truth"].get("cls") == "red_block"],
         "result": result.as_dict(),
         "time_to_first_find_s": {
             "from_takeoff": first_s,

@@ -1,6 +1,8 @@
 """The evaluation and record of a search scenario run (SK-RED): finds against the ground
 truth, pictures for people to look at, and the numbers.
 
+The ground truth is the world's facit (``sd_sim.world.world_truth``: every object's place,
+label and ``truth``, which for scenario objects holds ``cls`` and ``role``).
 ``match_finds`` pairs each target in the ground truth with the nearest find of its class
 (within ``max_m``) and reports the position error, the missed targets and the finds that
 match no target (false finds). ``draw_map`` draws the search box, the ground truth, the
@@ -67,7 +69,7 @@ def match_finds(
 ) -> Result:
     """Greedy nearest pairing of targets of ``label`` and finds of ``label``."""
     plane = Plane(truth["home"]["lat"], truth["home"]["lon"])
-    targets = [o for o in truth["objects"] if o["cls"] == label]
+    targets = [o for o in truth["objects"] if _cls(o) == label]
     cands = [f for f in finds if f["label"] == label]
     pairs = sorted(
         (
@@ -104,6 +106,10 @@ def match_finds(
     return out
 
 
+def _cls(obj: dict[str, Any]) -> str | None:
+    return obj.get("truth", {}).get("cls")
+
+
 _COLORS = {
     "red_block": (220, 30, 30),
     "car": (40, 90, 200),
@@ -119,14 +125,17 @@ def draw_map(
     result: Result,
     track: Iterable[tuple[float, float]],
     path: Path,
+    box: tuple[float, float, float, float],
+    title: str,
     size_px: int = 900,
 ) -> Path:
-    """The search box from above: ground truth (squares), finds (circles), a line and the
-    error from each target to its find, and the flown track (grey)."""
+    """The search box (``box``: x0, y0, x1, y1 in metres east/north of home) from above:
+    ground truth (squares), finds (circles), a line and the error from each target to its
+    find, and the flown track (grey)."""
     from PIL import Image, ImageDraw  # test tooling only (dev dependency)
 
     plane = Plane(truth["home"]["lat"], truth["home"]["lon"])
-    x0, y0, x1, y1 = truth["search_box_enu"]
+    x0, y0, x1, y1 = box
     pad = 25.0
     span = max(x1 - x0, y1 - y0) + 2 * pad
     scale = size_px / span
@@ -141,14 +150,13 @@ def draw_map(
     if len(pts) > 1:
         d.line(pts, fill=(120, 120, 120), width=1)
     for o in truth["objects"]:
-        if o["cls"] == "road":
+        cls = _cls(o)
+        if cls is None or cls == "road":
             continue
         cx, cy = px(o["east_m"], o["north_m"])
-        r = 7 if o["cls"] == "red_block" else 10
-        d.rectangle(
-            [cx - r, cy - r, cx + r, cy + r], outline=_COLORS.get(o["cls"], (0, 0, 0)), width=3
-        )
-        d.text((cx + r + 3, cy - r), f"{o['name']} ({o['role']})", fill=(0, 0, 0))
+        r = 7 if cls == "red_block" else 10
+        d.rectangle([cx - r, cy - r, cx + r, cy + r], outline=_COLORS.get(cls, (0, 0, 0)), width=3)
+        d.text((cx + r + 3, cy - r), f"{o['name']} ({o['truth'].get('role', '')})", fill=(0, 0, 0))
     for f in finds:
         e, n = plane.xy(f["lat"], f["lon"])
         cx, cy = px(e, n)
@@ -159,7 +167,7 @@ def draw_map(
         d.text((b[0] + 8, b[1] + 4), f"{m.error_m:.2f} m", fill=(0, 0, 0))
     d.text(
         (10, 10),
-        f"SK-RED seed {truth['seed']}: {len(result.matches)} of "
+        f"{title}: {len(result.matches)} of "
         f"{len(result.matches) + len(result.missed)} blocks within {result.max_m:g} m, "
         f"{len(result.false_finds)} false",
         fill=(0, 0, 0),

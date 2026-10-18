@@ -41,6 +41,7 @@ class SimConfig:
     gui: bool = True
     video: str = "camera"
     world: str = "sd_lake_forest"
+    objects: str = ""  # YAML list of sd_sim.objects boxes, relative to the repository
     vehicle: str = "sd_quad14"
     speedup: int = 1
     qgc: bool = False
@@ -130,6 +131,7 @@ def load(
     if cfg.video == "camera" and cfg.physics != "gz":
         cfg.video = "test"
     cfg.world = str(merged.get("world", cfg.world))
+    cfg.objects = str(merged.get("objects", "")).strip()
     cfg.vehicle = _choice("vehicle", merged.get("vehicle", cfg.vehicle), ("sd_quad14", "stock"))
     cfg.qgc = _bool("qgc", merged.get("qgc", False))
     cfg.link_profile = _choice(

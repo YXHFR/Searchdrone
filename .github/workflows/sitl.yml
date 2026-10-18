@@ -234,6 +234,7 @@ jobs:
           SD_SIM__REQUIRE_VIDEO: "1"
         run: just test-video
       - *scan
+      - *results
       - name: Upload video logs (only when a test failed)
         if: failure() && steps.scan.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -417,7 +418,7 @@ jobs:
           name: sk-red-search
           path: |
             runs/**/search/**
-            runs/**/ground_truth.json
+            runs/**/truth.json
             !runs/**/secrets/**
           if-no-files-found: warn
           retention-days: 14
