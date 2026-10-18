@@ -37,6 +37,7 @@ class FlightResult:
     log: FlightLog
     records: list[TurnRecord]
     switch_reason: str | None
+    replies: list[dict[str, Any]]  # the cloud model's answers in order (for replay fixtures)
 
 
 async def fly(
@@ -45,10 +46,15 @@ async def fly(
     *,
     model: str,
     ai_config_hash: str,
-    cost_before_sek: float = 0.0,
+    cost_before_sek: float | None = None,
     meter: Any = None,
     max_turns: int = 40,
 ) -> FlightResult:
+    if cost_before_sek is None:
+        cost_before_sek = meter.cost_sek if meter is not None else 0.0
+    calls0 = meter.calls if meter is not None else 0
+    unmeasured0 = meter.unmeasured_calls if meter is not None else 0
+    replies0 = len(meter.replies) if meter is not None else 0
     clock = EvalClock()
     world = SimWorld(scenario)
     ground = SimGround(world, now=clock.utc_now)
@@ -94,6 +100,8 @@ async def fly(
     questions = sum(1 for m in ground.posted if m.kind == "question")
     target = scenario.target_latlon
     cost = (meter.cost_sek - cost_before_sek) if meter is not None else 0.0
+    calls = (meter.calls - calls0) if meter is not None else 0
+    unmeasured = (meter.unmeasured_calls - unmeasured0) if meter is not None else 0
     log = FlightLog(
         flight_id=str(uuid.uuid4()),
         seed=scenario.seed,
@@ -122,12 +130,16 @@ async def fly(
         pilot_questions=questions,
         landed_home=world.landed and abs(world.east) < 5 and abs(world.north) < 5,
         cost_sek=cost,
-        cost_measured=meter is None or meter.unmeasured_calls == 0,
+        # Measured only when the provider reported the price of every call in this flight;
+        # a flight without a priced call (no key, a refused key) has no measured cost.
+        cost_measured=calls > 0 and unmeasured == 0,
         cloud_calls=sum(
             r.output.diagnostics.rounds
             for r in loop.records
             if r.output is not None and r.output.diagnostics.backend in ("cloud", "llm")
         ),
         turns=len(loop.records),
+        fallback_reason=decider.switch_reason,
     )
-    return FlightResult(score_flight(log), log, list(loop.records), decider.switch_reason)
+    replies = list(meter.replies[replies0:]) if meter is not None else []
+    return FlightResult(score_flight(log), log, list(loop.records), decider.switch_reason, replies)

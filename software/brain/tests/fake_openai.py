@@ -2,7 +2,7 @@
 
 ``FakeOpenAI`` answers ``POST /v1/chat/completions``. What it does is set per model name
 in ``behaviour``: ``"ok"`` (default) answers with ``reply`` (and ``usage.cost`` when
-``reply_cost`` is set), ``"500"`` answers HTTP 500,
+``reply_cost`` is set), ``"500"`` answers HTTP 500, ``"401"`` refuses the key,
 ``"slow"`` waits ``slow_s`` before answering. Every request body and its
 ``Authorization`` header are kept in ``requests`` so a test can check the fields sent.
 """
@@ -66,6 +66,9 @@ class FakeOpenAI:
                 how = fake.behaviour.get(model, "ok")
                 if how == "500":
                     self._send(500, {"error": {"message": "provider down"}})
+                    return
+                if how == "401":
+                    self._send(401, {"error": {"message": "User not found."}})
                     return
                 if how == "slow":
                     time.sleep(fake.slow_s)

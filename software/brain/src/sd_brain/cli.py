@@ -1,4 +1,4 @@
-"""``sd-brain run | eval | scores | perf-cloud | print-prompt | config-check``."""
+"""``sd-brain run | eval | scores | bank | perf-cloud | print-prompt | config-check``."""
 
 from __future__ import annotations
 
@@ -153,6 +153,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
     from sd_brain.runtime.base import Sampling
     from sd_schemas.skills import SKILL_REGISTRY
 
+    if args.action == "grade":
+        return cmd_eval_grade(args)
     if args.backend == "sim":
         return cmd_eval_sim(args)
 
@@ -161,6 +163,11 @@ def cmd_eval(args: argparse.Namespace) -> int:
         paths = [p for p in paths if any(o in p.name for o in args.only.split(","))]
     cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
     report = asyncio.run(_eval(args, paths, cfg))
+    if args.backend == "replay" and args.golden:
+        from sd_brain.simeval.golden import load_fixture
+
+        sims = [load_fixture(p) for p in sorted((Path(args.golden) / "sim").glob("SIM-*.json"))]
+        report.update(asyncio.run(_replay_sim(sims, report["failures"])))
     if args.backend == "cloud":
         h = ai_config_hash(SKILL_REGISTRY, Sampling(), cloud=cfg.cloud)
         report.update(
@@ -184,12 +191,42 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0 if report["passed"] else 1
 
 
+async def _replay_sim(
+    fixtures: list[dict[str, Any]], failures: dict[str, list[str]]
+) -> dict[str, Any]:
+    """Fly the simulator replay fixtures again (``tests/golden/sim``)."""
+    from sd_brain.simeval.golden import replay_golden
+
+    for fx in fixtures:
+        bad = await replay_golden(fx)
+        _out(f"{fx['id']}: {'ok' if not bad else 'FEL'} {'; '.join(bad)[:300]}")
+        if bad:
+            failures[str(fx["id"])] = bad
+    return {"sim_replays": len(fixtures)}
+
+
+def cmd_eval_grade(args: argparse.Namespace) -> int:
+    """Grade one simulator-farm round; writes ``grade.json`` in the round folder."""
+    from sd_brain.simeval.farm import RoundError, grade_round
+
+    if not args.round:
+        _err("ange rundans katalog: sd-brain eval grade --round <katalog>")
+        return 2
+    try:
+        grade = grade_round(Path(args.round))
+    except RoundError as exc:
+        _err(str(exc))
+        return 1
+    _out(json.dumps({k: v for k, v in grade.items() if k != "runs"}, ensure_ascii=False))
+    return 0
+
+
 async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
     import httpx
 
     from sd_brain.runtime.base import Sampling
     from sd_brain.runtime.cloud import CloudModelRuntime
-    from sd_brain.simeval.bank import bank_from_env, example_record, worth_keeping
+    from sd_brain.simeval.bank import bank_from_env, bank_name, example_record, worth_keeping
     from sd_brain.simeval.budget import CostLedger, MeteredRuntime
     from sd_brain.simeval.decider import make_decision_maker
     from sd_brain.simeval.runner import fly
@@ -230,19 +267,22 @@ async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
             path.write_text(sc.model_dump_json(indent=2) + "\n", encoding="utf-8")
             kept = ""
             if bank is not None and worth_keeping(sc):
-                kept = " sparad: " + bank.put(
-                    sc.flight_id, example_record(sc, res.records, {"seed": scenario.seed})
-                )
+                record = example_record(sc, res.records, {"seed": scenario.seed}, res.replies)
+                kept = " sparad: " + bank.put(bank_name(sc), record)
             _out(
                 f"flygning {i + 1}/{args.flights} seed {scenario.seed}: {sc.decider}"
                 f"{'' if sc.exam else ' (inget prov: ' + str(res.switch_reason) + ')'} "
                 f"betyg {sc.total:.0f} {'godkänd' if sc.passed else 'underkänd'}"
                 f"{'' if sc.safety.ok else ' SÄKERHETSFEL'} "
                 f"hittad {'ja' if sc.found else 'nej'} täckning {sc.coverage:.0%} "
-                f"frågor {sc.pilot_questions} kostnad {sc.cost_sek:.2f} kr{kept}"
+                f"frågor {sc.pilot_questions} kostnad {_cost_text(sc)}{kept}"
             )
             results.append(sc)
     return results
+
+
+def _cost_text(sc: Any) -> str:
+    return f"{sc.cost_sek:.2f} kr" if sc.cost_measured else "ej uppmätt"
 
 
 def cmd_eval_sim(args: argparse.Namespace) -> int:
@@ -256,7 +296,8 @@ def cmd_eval_sim(args: argparse.Namespace) -> int:
     exams = [s for s in scores if s.exam]
     n = len(scores) or 1
     ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
-    cost = sum(s.cost_sek for s in scores)
+    measured = all(s.cost_measured for s in scores) and bool(scores)
+    cost = round(sum(s.cost_sek for s in scores), 4) if measured else None
     report = {
         "backend": "sim",
         "model": cfg.cloud.model,
@@ -266,11 +307,13 @@ def cmd_eval_sim(args: argparse.Namespace) -> int:
         "pass_rate": round(sum(s.passed for s in scores) / n, 2),
         "found_rate": round(sum(s.found for s in scores) / n, 2),
         "safety_fails": sum(not s.safety.ok for s in scores),
-        "cost_sek": round(cost, 4),
+        # Only what the provider priced; null ("ej uppmätt") when any call went unpriced.
+        "cost_sek": cost,
         "cost_per_exam_sek": round(sum(s.cost_sek for s in exams) / len(exams), 4)
-        if exams
+        if exams and measured
         else None,
-        "cost_measured": all(s.cost_measured for s in scores),
+        "cost_measured": measured,
+        "fallback_reasons": sorted({str(s.fallback_reason) for s in scores if s.fallback_reason}),
         "spent_today_sek": round(ledger.spent_sek(), 4),
         "cap_sek": args.cap_sek,
         "git_sha": _git_sha(Path.cwd()),
@@ -290,6 +333,34 @@ def cmd_scores(args: argparse.Namespace) -> int:
 
     rows = trend_rows(load_scores(Path(args.scores_dir)))
     _out(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else trend_text(rows))
+    return 0
+
+
+def cmd_bank(args: argparse.Namespace) -> int:
+    """``bank export-golden``: a good exam to a replay fixture; ``bank failures``: the list."""
+    import gzip
+
+    from sd_brain.simeval.golden import GoldenError, export_golden
+    from sd_brain.simeval.trend import failure_rows, failure_text, load_scores
+
+    if args.bank_cmd == "failures":
+        rows = failure_rows(load_scores(Path(args.scores_dir)))
+        _out(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else failure_text(rows))
+        return 0
+    src = Path(args.flight)
+    try:
+        raw = gzip.decompress(src.read_bytes()) if src.suffix == ".gz" else src.read_bytes()
+        fixture = export_golden(json.loads(raw), args.name, os.environ)
+    except (OSError, ValueError, KeyError) as exc:
+        _err(str(exc) if isinstance(exc, GoldenError) else f"kan inte läsa {src}: {exc!r}")
+        return 1
+    out = Path(args.out) / f"{args.name}.json"
+    if out.exists() and not args.replace:
+        _err(f"{out} finns redan (--replace skriver över)")
+        return 1
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _out(f"Replay-fixtur: {out} (seed {fixture['seed']}, {len(fixture['replies'])} svar)")
     return 0
 
 
@@ -376,6 +447,8 @@ def parser() -> argparse.ArgumentParser:
         if name == "print-prompt":
             sp.add_argument("--mission", required=True)
     ev = sub.add_parser("eval")
+    ev.add_argument("action", nargs="?", choices=["grade"], help="grade: a farm round")
+    ev.add_argument("--round", default="", help="the round folder (eval grade)")
     ev.add_argument("--backend", choices=["replay", "cloud", "sim"], default="replay")
     ev.add_argument("--scenarios", default="software/brain/src/sd_brain/evals/scenarios")
     ev.add_argument("--golden", default="software/brain/tests/golden")
@@ -396,6 +469,16 @@ def parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("scores")
     sc.add_argument("--scores-dir", default="data/brain-scores")
     sc.add_argument("--json", action="store_true")
+    bk = sub.add_parser("bank")
+    bsub = bk.add_subparsers(dest="bank_cmd", required=True)
+    ex = bsub.add_parser("export-golden")
+    ex.add_argument("flight", help="a good-<id>.json.gz from the local example bank")
+    ex.add_argument("--name", required=True, help="SIM-NN")
+    ex.add_argument("--out", default="software/brain/tests/golden/sim")
+    ex.add_argument("--replace", action="store_true")
+    fl = bsub.add_parser("failures")
+    fl.add_argument("--scores-dir", default="data/brain-scores")
+    fl.add_argument("--json", action="store_true")
     pc = sub.add_parser("perf-cloud")
     pc.add_argument("--runs", type=int, default=10)
     pc.add_argument("--report-dir", default="data/reports")
@@ -411,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
         "eval": cmd_eval,
         "perf-cloud": cmd_perf_cloud,
         "scores": cmd_scores,
+        "bank": cmd_bank,
         "print-prompt": cmd_print_prompt,
     }
     try:

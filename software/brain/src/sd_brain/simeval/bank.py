@@ -1,15 +1,21 @@
-"""The example bank: highly graded exam flights kept for fine-tuning the local model later.
+"""The example bank: graded exam flights, kept to improve the commander's instructions.
 
-Each kept flight is one gzipped JSON file: the grade, the scenario seed and, per turn, the
-messages the model saw, the tool calls it made, what it said and did, and what the gate
-answered. Kept only for exams (the cloud model decided the whole flight) that passed with
-at least ``BANK_MIN_TOTAL`` points.
+Each kept flight is one gzipped JSON file: the grade, the scenario seed, the cloud model's
+answers in order and, per turn, the messages the model saw, the tool calls it made, what it
+said and did, and what the gate answered. Only exams are kept (the cloud model decided the
+whole flight):
+
+- a flight that passed with at least ``BANK_MIN_TOTAL`` points (``good-<id>``) can become a
+  replay fixture that ``just brain-eval`` flies again in CI without a network
+  (``sd-brain bank export-golden``, see ``simeval.golden``);
+- a flight that failed (``fail-<id>``) shows where the instructions went wrong; the list
+  of them is ``sd-brain bank failures``.
 
 Where it goes: a Cloudflare R2 bucket in the EU jurisdiction when ``SD_BANK_R2_ENDPOINT``,
 ``SD_BANK_R2_BUCKET``, ``SD_BANK_R2_ACCESS_KEY_ID`` and ``SD_BANK_R2_SECRET_ACCESS_KEY`` are
 set (the endpoint must be ``https://<account>.eu.r2.cloudflarestorage.com``), otherwise a
-local folder that git ignores. It never goes into the repository: a folder inside the work
-tree that git does not ignore is refused.
+local folder. It never goes into the repository: inside a git work tree only a folder under
+its gitignored ``data/`` is accepted.
 """
 
 from __future__ import annotations
@@ -20,8 +26,6 @@ import hashlib
 import hmac
 import json
 import re
-import shutil
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -39,6 +43,7 @@ __all__ = [
     "LocalBank",
     "R2Bank",
     "bank_from_env",
+    "bank_name",
     "example_record",
     "worth_keeping",
 ]
@@ -58,13 +63,21 @@ class BankError(RuntimeError):
 
 
 def worth_keeping(score: FlightScore) -> bool:
-    return score.exam and score.passed and score.total >= BANK_MIN_TOTAL
+    """A good exam (a replay fixture candidate) or a failed one (for the failure list)."""
+    return score.exam and (not score.passed or score.total >= BANK_MIN_TOTAL)
+
+
+def bank_name(score: FlightScore) -> str:
+    return f"{'good' if score.passed else 'fail'}-{score.flight_id}"
 
 
 def example_record(
-    score: FlightScore, records: list[TurnRecord], scenario: Mapping[str, Any]
+    score: FlightScore,
+    records: list[TurnRecord],
+    scenario: Mapping[str, Any],
+    replies: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """One flight as a training example (decisions, context and outcome)."""
+    """One flight: the decisions, what the model saw, the model's answers and the outcome."""
     turns = []
     for r in records:
         out = r.output
@@ -85,6 +98,7 @@ def example_record(
         "schema": "sd-brain-example/1",
         "score": score.model_dump(mode="json"),
         "scenario": dict(scenario),
+        "replies": list(replies or []),
         "turns": turns,
     }
 
@@ -114,27 +128,18 @@ class LocalBank:
 
 
 def _refuse_tracked(folder: Path) -> None:
-    """Refuse a folder inside a git work tree that git does not ignore."""
-    probe = folder
-    while not probe.exists() and probe != probe.parent:
-        probe = probe.parent
-    git = shutil.which("git")
-    if git is None:
-        return
-    top = subprocess.run(  # noqa: S603
-        [git, "-C", str(probe), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if top.returncode != 0:
-        return  # not in a repository
-    ignored = subprocess.run(  # noqa: S603
-        [git, "-C", top.stdout.strip(), "check-ignore", "-q", str(folder / "x.json.gz")],
-        check=False,
-    )
-    if ignored.returncode != 0:
-        raise BankError(f"exempelbanken får inte ligga i repot: {folder} ignoreras inte av git")
+    """Refuse a folder inside a git work tree unless it lies under its ``data/``.
+
+    The repository's ``.gitignore`` ignores ``/data/`` (a test proves it), so a bank there
+    never reaches git. Anything else inside a work tree is refused without asking git.
+    """
+    for top in (folder, *folder.parents):
+        if (top / ".git").exists():
+            if not folder.is_relative_to(top / "data"):
+                raise BankError(
+                    f"exempelbanken får inte ligga i repot: {folder} (använd {top / 'data'})"
+                )
+            return
 
 
 class R2Bank:

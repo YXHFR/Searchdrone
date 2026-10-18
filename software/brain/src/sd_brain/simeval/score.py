@@ -78,9 +78,10 @@ class FlightLog(BaseModel):
     pilot_questions: int = 0
     landed_home: bool = False
     cost_sek: float = 0.0
-    cost_measured: bool = True
+    cost_measured: bool = False  # true only when the provider priced every call
     cloud_calls: int = 0
     turns: int = 0
+    fallback_reason: str | None = None  # why the script flew: key_invalid, budget, cloud_error
 
 
 class SafetyScore(BaseModel):
@@ -112,6 +113,7 @@ class FlightScore(BaseModel):
     cost_measured: bool
     cloud_calls: int
     turns: int
+    fallback_reason: str | None = None
     duration_s: float
     raw_total: float
     total: float
@@ -165,6 +167,7 @@ def score_flight(log: FlightLog) -> FlightScore:
         cost_measured=log.cost_measured,
         cloud_calls=log.cloud_calls,
         turns=log.turns,
+        fallback_reason=log.fallback_reason,
         duration_s=log.duration_s,
         raw_total=raw,
         total=total,
