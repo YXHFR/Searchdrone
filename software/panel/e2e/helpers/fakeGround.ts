@@ -13,7 +13,16 @@ import {
   type Route,
   type WebSocketRoute,
 } from "@playwright/test";
-import type { PanelConfig, Session } from "@searchdrone/schemas";
+import type {
+  Annotation,
+  Approval,
+  Charter,
+  Clearance,
+  Command,
+  Mission,
+  PanelConfig,
+  Session,
+} from "@searchdrone/schemas";
 import {
   dispatched,
   MISSION,
@@ -57,7 +66,7 @@ function emptyGlyphs(fontstack: string, range: string): Buffer {
 }
 
 const SNAPSHOT = fileURLToPath(
-  new URL("../../../ground/tests/contract/snapshots/openapi.json", import.meta.url),
+  new URL("../../../ground/tests/contract/snapshots/panel.openapi.json", import.meta.url),
 );
 
 /** Contract guard: once the ground server's OpenAPI snapshot exists, unknown paths fail. */
@@ -89,6 +98,17 @@ export class FakeGround {
   private stateAnswered = 0;
   private actionCounter = 0;
   private readonly contract = contractPaths();
+  /** Mission data the fake keeps, so the panel's resync and the live events agree. */
+  mission: Mission = structuredClone(mission);
+  charters: Charter[] = [];
+  approvals: Approval[] = [];
+  commands: Command[] = [];
+  annotations: Annotation[] = [];
+  clearance: Clearance | null = null;
+  sectors: unknown = { type: "FeatureCollection", features: [] };
+  track: number[][] = [];
+  /** Messages the panel sent on its live sockets (subscribe, ping, manual). */
+  readonly wsSent: Record<string, unknown>[] = [];
 
   constructor(
     readonly page: Page,
@@ -169,13 +189,24 @@ export class FakeGround {
     await this.page.waitForTimeout(100); // the panel reads the answer asynchronously
   }
 
+  /** The panel has finished its resync (the track is the last thing it loads). */
+  async resynced(): Promise<void> {
+    await expect
+      .poll(() => this.calls(/^GET \/api\/v1\/missions\/[^/]+\/track/).length)
+      .toBeGreaterThan(0);
+    await this.page.waitForTimeout(100);
+  }
+
   pushLive(topic: string, type: string, data: unknown): void {
     // Like the real ground: the REST state is the newest pushed one, so the panel's
     // resync on connect cannot bring back an older state.
     if (topic === "vehicle" && type === "vehicle.state") this.vehicleState = data;
-    this.seq += 1;
+    this.remember(type, data);
+    // Periodic events (telemetry, vehicle.state) carry no seq, as on the real bus.
+    const periodic = topic === "telemetry" || type === "vehicle.state";
+    if (!periodic) this.seq += 1;
     const msg = JSON.stringify({
-      seq: topic === "telemetry" ? null : this.seq,
+      seq: periodic ? null : this.seq,
       ts: new Date().toISOString(),
       topic,
       type,
@@ -184,6 +215,22 @@ export class FakeGround {
       data,
     });
     for (const ws of this.sockets) ws.send(msg);
+  }
+
+  /** Keep the REST answers in step with what was pushed live. */
+  private remember(type: string, data: unknown): void {
+    const upsert = <T extends { id: string }>(list: T[], x: T): T[] => [
+      ...list.filter((y) => y.id !== x.id),
+      x,
+    ];
+    if (type === "charter.updated") this.charters = upsert(this.charters, data as Charter);
+    if (type === "approval.requested" || type === "approval.updated")
+      this.approvals = upsert(this.approvals, data as Approval);
+    if (type === "command.created" || type === "command.updated")
+      this.commands = upsert(this.commands, data as Command);
+    if (type === "annotation.created")
+      this.annotations = upsert(this.annotations, data as Annotation);
+    if (type === "mission.updated") this.mission = data as Mission;
   }
 
   async dropSocket(): Promise<void> {
@@ -274,7 +321,13 @@ export class FakeGround {
       return;
     }
     this.sockets.push(ws);
-    ws.onMessage(() => undefined);
+    ws.onMessage((m) => {
+      try {
+        this.wsSent.push(JSON.parse(String(m)) as Record<string, unknown>);
+      } catch {
+        // not JSON: ignored like the real server
+      }
+    });
     ws.onClose(() => {
       this.sockets = this.sockets.filter((s) => s !== ws);
     });
@@ -352,9 +405,149 @@ export class FakeGround {
     if (k === `GET ${API}/panel/config`) return { status: 200, body: this.config };
     if (k === `GET ${API}/system/status`) return { status: 200, body: systemStatus };
     if (k === `GET ${v}/state`) return { status: 200, body: this.vehicleState };
-    if (k === `POST ${v}/missions/open`) return { status: 200, body: mission };
-    if (k === `GET ${API}/missions/active`) return { status: 200, body: mission };
-    const action = /^POST \/api\/v1\/vehicles\/sim-01\/actions\/(stop|return_home|resume)$/.exec(k);
+    if (k === `POST ${v}/missions/open`) return { status: 200, body: this.mission };
+    if (k === `GET ${API}/missions/active`) return { status: 200, body: this.mission };
+    const ms = `${API}/missions/${MISSION}`;
+    if (k === `GET ${ms}`) {
+      return {
+        status: 200,
+        body: {
+          mission: this.mission,
+          charter: this.charters.find((c) => c.id === this.mission.active_charter_id) ?? null,
+          clearance: this.clearance,
+          latch: null,
+          active_command: null,
+          pending_approvals: this.approvals.filter((a) => a.status === "pending"),
+          sectors: this.sectors,
+        },
+      };
+    }
+    if (k === `PATCH ${ms}`) {
+      this.mission = { ...this.mission, ...(req.body as object) };
+      return { status: 200, body: this.mission };
+    }
+    if (k === `GET ${ms}/charters`) return { status: 200, body: this.charters };
+    if (k === `GET ${ms}/approvals`) {
+      const pending = req.path.includes("status=pending");
+      return {
+        status: 200,
+        body: this.approvals.filter((a) => !pending || a.status === "pending"),
+      };
+    }
+    if (k === `GET ${ms}/commands`) return { status: 200, body: this.commands };
+    if (k === `GET ${ms}/sectors`) return { status: 200, body: this.sectors };
+    if (k === `GET ${ms}/annotations`) return { status: 200, body: this.annotations };
+    if (k === `GET ${ms}/chat`) return { status: 200, body: { items: [], next_before: null } };
+    if (k === `GET ${ms}/track`) {
+      return {
+        status: 200,
+        body: {
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: this.track },
+          properties: {},
+        },
+      };
+    }
+    if (k === `POST ${ms}/annotations`) {
+      const b = req.body as {
+        kind: "pin" | "area";
+        label: string;
+        geometry: Record<string, unknown>;
+      };
+      const a: Annotation = {
+        id: `an-${this.annotations.length + 1}`,
+        mission_id: MISSION,
+        kind: b.kind,
+        label: b.label,
+        geometry: b.geometry,
+        area_m2: b.kind === "area" ? 10_000 : null,
+        created_at: new Date().toISOString(),
+        created_by: "operator:demo",
+      };
+      this.annotations = [...this.annotations, a];
+      return { status: 201, body: a };
+    }
+    if (k === `POST ${ms}/clearance`) {
+      const c: Clearance = {
+        id: "CL1",
+        mission_id: MISSION,
+        vehicle_id: VEHICLE,
+        charter_id: "C1",
+        charter_version: 1,
+        status: "active",
+        confirmed_at: new Date().toISOString(),
+        confirmed_by: "operator:demo",
+        valid_until: new Date(Date.now() + 120_000).toISOString(),
+      };
+      this.clearance = c;
+      return { status: 200, body: c };
+    }
+    if (k === `PUT ${ms}/limits`) {
+      this.mission = { ...this.mission, limits: req.body as Mission["limits"] };
+      return { status: 200, body: this.mission };
+    }
+    if (k === `PUT ${ms}/autonomy`) {
+      this.mission = {
+        ...this.mission,
+        autonomy_mode: (req.body as { mode: Mission["autonomy_mode"] }).mode,
+      };
+      return { status: 200, body: this.mission };
+    }
+    if (k === `POST ${ms}/end`) {
+      this.mission = { ...this.mission, status: "CLOSED" };
+      return { status: 200, body: this.mission };
+    }
+    if (k === `POST ${ms}/commands`) {
+      const b = req.body as {
+        client_command_id: string;
+        skill: string;
+        params: Record<string, unknown>;
+      };
+      return {
+        status: 201,
+        body: {
+          command: {
+            ...this.commands[0],
+            id: b.client_command_id,
+            skill: b.skill,
+            params: b.params,
+            status: "dispatched",
+            issuer_kind: "operator",
+          },
+          gate: {
+            decision: "ALLOW",
+            reason_codes: [],
+            rule_ids: [],
+            message_sv: "",
+            details: {},
+            side: "ground",
+          },
+        },
+      };
+    }
+    const decision = /^POST \/api\/v1\/approvals\/([^/]+)\/decision$/.exec(k);
+    if (decision?.[1]) {
+      const a = this.approvals.find((x) => x.id === decision[1]);
+      if (!a) return { status: 404, body: { code: "NOT_FOUND", detail_sv: "okänt" } };
+      const b = req.body as { decision: "approve" | "reject" };
+      const updated: Approval = {
+        ...a,
+        status: b.decision === "approve" ? "approved" : "rejected",
+        decided_by: "operator:demo",
+        decided_at: new Date().toISOString(),
+      };
+      this.approvals = this.approvals.map((x) => (x.id === a.id ? updated : x));
+      return { status: 200, body: updated };
+    }
+    const annDel = /^DELETE \/api\/v1\/annotations\/([^/]+)$/.exec(k);
+    if (annDel?.[1]) {
+      this.annotations = this.annotations.filter((x) => x.id !== annDel[1]);
+      return { status: 204 };
+    }
+    const action =
+      /^POST \/api\/v1\/vehicles\/sim-01\/actions\/(stop|return_home|resume|takeover|handback)$/.exec(
+        k,
+      );
     if (action) {
       this.actionCounter += 1;
       return { status: 202, body: dispatched(`a${this.actionCounter}`) };

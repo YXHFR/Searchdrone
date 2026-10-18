@@ -318,8 +318,15 @@ class GroundServer:
             server.stop()
 
 
-def playwright(base_url: str, code: str, result: Path, *, ignore_https: bool = False) -> int:
-    """The browser half (``software/panel/e2e/video``): exit code of Playwright."""
+def playwright(
+    base_url: str,
+    code: str,
+    result: Path,
+    *,
+    ignore_https: bool = False,
+    spec: str = "e2e/video/live.spec.ts",
+) -> int:
+    """One browser test in ``software/panel/e2e/video``: exit code of Playwright."""
     env = {
         **os.environ,
         "SD_VIDEO_BASE_URL": base_url,
@@ -336,5 +343,6 @@ def playwright(base_url: str, code: str, result: Path, *, ignore_https: bool = F
         "test",
         "-c",
         "playwright.video.config.ts",
+        spec,
     ]
     return subprocess.run(cmd, cwd=REPO, env=env, check=False, timeout=180).returncode

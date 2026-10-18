@@ -277,6 +277,21 @@ def test_browser_plays_through_the_proxy(chain: VideoChain) -> None:
     assert summary["median"] < MAX_MEDIAN_MS, summary
 
 
+@pytest.mark.slow
+def test_panel_shows_live_video(chain: VideoChain) -> None:
+    """PS-1 in the panel's test build: LIVE · WebRTC within 10 s, the picture moves, >= 12
+    frames a second (counted by the panel itself)."""
+    with GroundServer.running(
+        chain.run_dir, SD_GROUND__HTTP__STATIC_DIR="software/panel/dist-test"
+    ) as ground:
+        wait_for(lambda: ground.health()["parts"]["mediamtx"] == "ok", 10, "mediamtx ok i /health")
+        code = ground.login_code()
+        result = chain.run_dir / "panel_video.json"
+        assert (
+            playwright("http://localhost:8080", code, result, spec="e2e/video/panel.spec.ts") == 0
+        )
+
+
 @pytest.mark.gz
 @pytest.mark.slow
 def test_gazebo_camera_reaches_mediamtx(mtx: dict[str, Any]) -> None:

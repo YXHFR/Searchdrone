@@ -38,8 +38,8 @@ export const TOPICS = [
 export interface LiveSocketHandlers {
   onState(state: "connecting" | "up" | "down"): void;
   onEnvelope(e: LiveEnvelope): void;
-  /** New server epoch (first hello or after a restart): caller resyncs from REST. */
-  onNewEpoch(epoch: string): void;
+  /** New server epoch (first hello, a restart) or `resync_required`: caller resyncs from REST. */
+  onNewEpoch(epoch: string, reason: "hello" | "resync_required"): void;
 }
 
 export interface LiveSocketOptions {
@@ -132,7 +132,7 @@ export class LiveSocket {
       const same = epoch !== null && epoch === this.epoch;
       if (!same) {
         this.lastSeq = null;
-        if (epoch) this.h.onNewEpoch(epoch);
+        if (epoch) this.h.onNewEpoch(epoch, "hello");
       }
       this.epoch = epoch;
       this.subscribe(same ? this.lastSeq : null);
@@ -143,7 +143,7 @@ export class LiveSocket {
     }
     if (e.type === "resync_required") {
       this.lastSeq = null;
-      if (this.epoch) this.h.onNewEpoch(this.epoch);
+      if (this.epoch) this.h.onNewEpoch(this.epoch, "resync_required");
       this.subscribe(null);
       return;
     }
@@ -152,6 +152,18 @@ export class LiveSocket {
       this.lastSeq = e.seq;
     }
     this.h.onEnvelope(e);
+  }
+
+  /** The current mission changed: subscribe again without losing the events in between. */
+  resubscribe(): void {
+    if (this.epoch !== null) this.subscribe(this.lastSeq ?? 0);
+  }
+
+  /** Fire-and-forget message on the open socket (stick values). False when not open. */
+  sendOp(msg: { op: string; [k: string]: unknown }): boolean {
+    if (!this.ws || this.ws.readyState !== OPEN) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
   }
 
   private subscribe(sinceSeq: number | null): void {

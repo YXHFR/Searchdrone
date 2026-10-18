@@ -72,7 +72,7 @@ def collected_budgets() -> list[tuple[str, float]]:
             "--collect-only",
             "-q",
             "-m",
-            "sitl and not gz and not llm and not nightly",
+            "sitl and not gz and not llm and not nightly and not panel",
             "-p",
             "no:cacheprovider",
             "simulation/tests",

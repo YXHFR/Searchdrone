@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import { approval, charter, command } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
 import { isMobile } from "../helpers/safety";
 
@@ -67,3 +68,27 @@ test("axe: emergency page", async ({ page, ground }) => {
   await expect(page.getByTestId("emergency")).toBeVisible({ timeout: 3_500 });
   await scan(page, "emergency");
 });
+
+for (const theme of ["dark", "light"] as const) {
+  test(`axe: approval cards and the limits form (${theme})`, async ({ page, ground }) => {
+    test.skip(page.viewportSize()?.width !== 1280, "desktop");
+    await page.addInitScript((t) => localStorage.setItem("sd.panel.theme", t), theme);
+    await ground.open();
+    await ground.liveConnected();
+    await ground.resynced();
+    ground.pushLive("mission", "charter.updated", charter());
+    ground.pushLive("approvals", "approval.requested", approval());
+    ground.pushLive("commands", "command.created", command());
+    ground.pushLive(
+      "approvals",
+      "approval.requested",
+      approval({ id: "AP2", kind: "command", subject_id: "K1" }),
+    );
+    await expect(page.getByTestId("approval-AP1")).toBeVisible();
+    await expect(page.getByTestId("approval-AP2")).toContainText("Order: Starta");
+    await scan(page, `${theme}/cards`);
+    await page.getByTestId("approval-AP1").getByTestId("limits-open").click();
+    await expect(page.getByTestId("limits-form")).toBeVisible();
+    await scan(page, `${theme}/limits-form`);
+  });
+}

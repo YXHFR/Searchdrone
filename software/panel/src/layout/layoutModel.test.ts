@@ -6,6 +6,7 @@ import {
   fromPreset,
   type LayoutNode,
   type LayoutState,
+  largestLeafPath,
   leaves,
   MAX_VIEWS,
   maximize,
@@ -15,6 +16,7 @@ import {
   replaceView,
   restore,
   setSizes,
+  showView,
   splitView,
   VIEW_IDS,
   type Viewport,
@@ -82,6 +84,51 @@ describe("layoutModel", () => {
     expect(visibleViews(restore(s))).toEqual(["chat", "map", "video"]);
     // A view that is not in the layout cannot be maximized.
     expect(maximize(fromPreset("standard"), "status").maximized).toBeNull();
+  });
+
+  it("largestLeafPath finds the pane with the largest share", () => {
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      sizes: [30, 70],
+      children: [
+        { kind: "view", view: "chat" },
+        {
+          kind: "split",
+          dir: "col",
+          sizes: [60, 40],
+          children: [
+            { kind: "view", view: "map" },
+            { kind: "view", view: "video" },
+          ],
+        },
+      ],
+    };
+    expect(largestLeafPath(root)).toEqual({ path: [1, 0], share: 42 });
+    expect(largestLeafPath({ kind: "view", view: "map" })).toEqual({ path: [], share: 100 });
+  });
+
+  it("showView: a full-screen view stays, a visible one only leaves full screen", () => {
+    const max = maximize(fromPreset("standard"), "video");
+    expect(showView(max, "video")).toBe(max);
+    const shown = showView(max, "chat");
+    expect(shown.maximized).toBeNull();
+    expect(visibleViews(shown)).toEqual(["chat", "map", "video"]);
+  });
+
+  it("showView puts a hidden view in the largest pane", () => {
+    const s = fromPreset("standard");
+    const big = largestLeafPath(s.root).path;
+    const shown = showView(s, "status");
+    const views = visibleViews(shown);
+    expect(views).toContain("status");
+    expect(views.length).toBe(visibleViews(s).length);
+    const at = big.reduce<LayoutNode>(
+      (n, i) => (n.kind === "split" ? (n.children[i] as LayoutNode) : n),
+      shown.root,
+    );
+    expect(at).toEqual({ kind: "view", view: "status" });
+    checkRules(shown, "desktop");
   });
 
   it("replaceView swaps when the view is already shown", () => {

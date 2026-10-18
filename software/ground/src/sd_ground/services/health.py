@@ -7,8 +7,9 @@ from typing import Literal
 from sd_ground.context import Ground
 from sd_ground.sources import PartState
 from sd_schemas.api import Health, PartStatus, SystemStatus, VehicleLive
+from sd_schemas.mission import OperatorLatch
 
-__all__ = ["READY_PARTS", "health", "parts", "system_status", "vehicle_live"]
+__all__ = ["READY_PARTS", "health", "parts", "system_status", "vehicle_live", "vehicle_state"]
 
 READY_PARTS = ("db", "mavlink", "sdlink")  # ready = these three are ok
 
@@ -52,12 +53,9 @@ def system_status(g: Ground) -> SystemStatus:
     )
 
 
-async def vehicle_live(g: Ground, vehicle_id: str) -> VehicleLive:
+def vehicle_state(g: Ground, vehicle_id: str, latch: OperatorLatch | None) -> VehicleLive:
+    """The vehicle as the panel sees it (REST ``/state`` and the live ``vehicle.state``)."""
     telemetry = g.vehicle_link.telemetry(vehicle_id)
-    latch = None
-    if g.repo is not None and g.db_ok:
-        latch = await g.repo.latch(vehicle_id)
-    in_flight = g.vehicle_link.in_flight(vehicle_id)
     return VehicleLive(
         vehicle_id=vehicle_id,
         telemetry=telemetry,
@@ -65,5 +63,17 @@ async def vehicle_live(g: Ground, vehicle_id: str) -> VehicleLive:
         link=g.sdlink.link_status(vehicle_id),
         latch=latch,
         airborne=telemetry is not None and telemetry.landed_state == "in_air",
-        in_flight=in_flight,
+        in_flight=g.vehicle_link.in_flight(vehicle_id),
+        manual=None if g.vehicle_actions is None else g.vehicle_actions.manual_state(vehicle_id),
     )
+
+
+async def vehicle_live(g: Ground, vehicle_id: str) -> VehicleLive:
+    """REST ``/state``. The latch comes from the emergency path's own latches, as in the
+    live ``vehicle.state``; the database copy (written a pump step later) only without."""
+    if g.vehicle_actions is not None:
+        return vehicle_state(g, vehicle_id, g.vehicle_actions.latches.get(vehicle_id))
+    latch = None
+    if g.repo is not None and g.db_ok:
+        latch = await g.repo.latch(vehicle_id)
+    return vehicle_state(g, vehicle_id, latch)

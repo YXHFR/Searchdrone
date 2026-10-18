@@ -14,3 +14,10 @@ From the repository root:
 - `just test` runs the unit tests (Vitest); `just test-panel-e2e` builds the panel, checks
   that the build has no external URLs and fits the size budget, and runs the Playwright
   tests against a fake ground station.
+- `just test-panel-sitl` runs the panel in a browser against the whole stack on ArduPilot SITL
+  (ground station, onboard computer, the AI with a scripted backend). The stack runs in the
+  SITL container; Playwright runs beside it and logs in with a one-time code, like a person.
+  It needs the database (`just db-up`) and Playwright's Chromium on the host.
+- `just test-video` (after `just video-up`) includes the live video in the panel's test build
+  in Google Chrome: the badge says LIVE · WebRTC, the picture moves and the panel counts at
+  least 12 frames a second.

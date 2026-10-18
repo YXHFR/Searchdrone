@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+import structlog.testing
 from fastapi.testclient import TestClient
 
 from sd_ground.bus import RING_SIZE, EventBus
@@ -136,3 +138,183 @@ async def test_telemetry_rates(ground: Ground, clock: FakeClock, vehicle_link: o
         got.append(event)
     assert 49 <= len(got) <= 52
     assert all(e.seq is None for e in got)
+
+
+class _Sticks:
+    def __init__(self) -> None:
+        self.got: list[tuple[str, float, str]] = []
+
+    def manual_input(self, vehicle_id: str, value: object, by: object) -> bool:
+        self.got.append((vehicle_id, value.pitch, by.role))  # type: ignore[attr-defined]
+        return True
+
+
+def test_manual_op_reaches_the_stick_path(logged_in: TestClient, ground: Ground) -> None:
+    """``op: manual`` from the panel goes to the vehicle actions; junk is dropped quietly."""
+    sticks = _Sticks()
+    ground.vehicle_actions = sticks  # type: ignore[assignment]
+    value = {
+        "takeover_id": "0192f000-0000-7000-8000-000000000001",
+        "input_seq": 1,
+        "pitch": 0.5,
+        "roll": 0.0,
+        "throttle": 0.5,
+        "yaw": 0.0,
+        "source": "touch",
+    }
+    with logged_in.websocket_connect(URL) as ws:
+        ws.receive_json()
+        _sub(ws, ground, ["system"], None)
+        ws.receive_json()
+        ws.send_json({"op": "manual", **value, "pitch": 7})  # out of range: dropped
+        ws.send_json({"op": "manual", "pitch": 0.1})  # incomplete: dropped
+        ws.send_json({"op": "manual", **value})
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"  # the socket stayed open
+    assert sticks.got == [("sim-01", 0.5, "pilot")]
+
+
+_STICKS = {
+    "takeover_id": "0192f000-0000-7000-8000-000000000001",
+    "pitch": 0.5,
+    "roll": 0.0,
+    "throttle": 0.5,
+    "yaw": 0.0,
+    "source": "touch",
+}
+
+
+def test_manual_op_from_an_observer_never_reaches_the_stick_path(
+    panel: TestClient, ground: Ground, clock: FakeClock
+) -> None:
+    """An observer's socket may send ``op: manual``; it is dropped before validation."""
+    import datetime as dt
+
+    from sd_ground.auth import SessionRecord, hash_token, new_token
+
+    sticks = _Sticks()
+    ground.vehicle_actions = sticks  # type: ignore[assignment]
+    token = new_token()
+    now = clock.utc_now()
+    ground.sessions.load(
+        [
+            SessionRecord(
+                id="o1",
+                kind="token",
+                role="observer",
+                issuer_ref="operator:guest",
+                auth_mode="cli",
+                token_sha256=hash_token(token),
+                created_at=now,
+                last_used_at=now,
+                expires_at=now + dt.timedelta(hours=1),
+                name="guest",
+            )
+        ]
+    )
+    with panel.websocket_connect(URL, headers={"Authorization": f"Bearer {token}"}) as ws:
+        ws.receive_json()
+        _sub(ws, ground, ["system"], None)
+        ws.receive_json()
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 1})
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"
+    assert sticks.got == []
+
+
+def test_every_manual_op_goes_to_the_vehicle_actions(logged_in: TestClient, ground: Ground) -> None:
+    """The socket passes each value on; the vehicle actions keep the rate per vehicle."""
+    sticks = _Sticks()
+    ground.vehicle_actions = sticks  # type: ignore[assignment]
+    with logged_in.websocket_connect(URL) as ws:
+        ws.receive_json()
+        _sub(ws, ground, ["system"], None)
+        ws.receive_json()
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 1})
+        ws.send_json({"op": "manual", **_STICKS, "input_seq": 2, "pitch": 0.25})
+        ws.send_json({"op": "ping"})
+        assert ws.receive_json()["type"] == "pong"
+    assert sticks.got == [("sim-01", 0.5, "pilot"), ("sim-01", 0.25, "pilot")]
+
+
+async def test_vehicle_state_goes_live_at_2_hz(
+    ground: Ground, clock: FakeClock, vehicle_link: object
+) -> None:
+    """``vehicle.state`` (executor state, link, latch) every 0.5 s, without a seq."""
+    sub = ground.bus.subscribe(["vehicle"])
+    service = TelemetryService(ground)
+    task = asyncio.create_task(service.run())
+    await clock.run_for(10.0)
+    task.cancel()
+    got = []
+    while not sub.queue.empty():
+        event = sub.queue.get_nowait()
+        assert event is not None
+        got.append(event)
+    states = [e for e in got if e.type == "vehicle.state"]
+    assert 19 <= len(states) <= 21
+    assert all(e.seq is None for e in states)
+    assert states[-1].data["vehicle_id"] == "sim-01"
+    assert set(states[-1].data) >= {"snapshot", "link", "latch", "airborne", "telemetry"}
+    assert ground.bus.replay(ground.bus.server_epoch, 0) == []
+
+
+async def test_a_failing_vehicle_state_never_stops_the_telemetry(
+    ground: Ground, clock: FakeClock, vehicle_link: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One lost ``vehicle.state`` sample is logged; 5 Hz telemetry goes on."""
+    from sd_schemas.api import Telemetry
+
+    vehicle_link.values["sim-01"] = Telemetry(  # type: ignore[attr-defined]
+        t=clock.utc_now(),
+        time_boot_ms=1,
+        lat=-35.363261,
+        lon=149.16523,
+        alt_amsl_m=584,
+        alt_rel_home_m=0,
+        heading_deg=0,
+        groundspeed_ms=0,
+        climb_ms=0,
+        battery_pct=90,
+        battery_v=16,
+        flight_mode="LOITER",
+        armed=False,
+        landed_state="on_ground",
+        gps_fix=3,
+        gps_sats=12,
+        home=None,
+        dist_to_pilot_m=0,
+    )
+
+    def broken(vehicle_id: str) -> object:
+        raise RuntimeError("the link went away")
+
+    monkeypatch.setattr(ground.sdlink, "link_status", broken)
+    sub = ground.bus.subscribe(["telemetry", "vehicle"])
+    task = asyncio.create_task(TelemetryService(ground).run())
+    with structlog.testing.capture_logs() as logs:
+        await clock.run_for(2.0)
+    task.cancel()
+    types = []
+    while not sub.queue.empty():
+        event = sub.queue.get_nowait()
+        assert event is not None
+        types.append(event.type)
+    assert "vehicle.state" not in types
+    assert types.count("telemetry") >= 9
+    assert "telemetry.state_failed" in {e["event"] for e in logs}
+
+
+async def test_the_rest_state_has_the_same_latch_as_the_live_one(ground: Ground) -> None:
+    """``/state`` reads the emergency path's own latches, as ``vehicle.state`` does."""
+    from sd_ground.services import health
+    from sd_ground.services.latches import Latches
+    from sd_ground.services.vehicle_actions import NoNoticeSink, VehicleActions
+
+    latches = Latches(ground.clock)
+    ground.vehicle_actions = VehicleActions(
+        ground.clock, latches, vehicle_ids=["sim-01"], notices=NoNoticeSink()
+    )
+    latches.start("sim-01", "stop", "operator:demo")
+    live = await health.vehicle_live(ground, "sim-01")
+    assert live.latch is not None and live.latch.action == "stop"

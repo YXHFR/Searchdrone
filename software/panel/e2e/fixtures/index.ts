@@ -3,9 +3,15 @@
 import type {
   ActionDispatched,
   ActionOutcome,
+  Approval,
+  Charter,
+  ChatMessage,
+  Command,
   Mission,
+  MissionCharter,
   PanelConfig,
   Session,
+  StateSnapshot,
   SystemStatus,
   Telemetry,
   VehicleLive,
@@ -103,7 +109,7 @@ export function telemetry(p: Partial<Telemetry> = {}): Telemetry {
     groundspeed_ms: 5,
     heading_deg: 10,
     home: HOME,
-    landed_state: "IN_AIR",
+    landed_state: "in_air",
     ...p,
   };
 }
@@ -152,4 +158,150 @@ export function outcome(actionId: string, p: Partial<ActionOutcome> = {}): Actio
     via: "button",
     ...p,
   };
+}
+
+// --- charter, approvals, orders --------------------------------------------------------
+
+/** A square of `half` metres around a point east/north of home (metres). */
+export function square(
+  half: number,
+  east = 0,
+  north = 0,
+): { type: "Polygon"; coordinates: number[][][] } {
+  const dLat = 1 / 111_320;
+  const dLon = 1 / (111_320 * Math.cos((HOME.lat * Math.PI) / 180));
+  const cx = HOME.lon + east * dLon;
+  const cy = HOME.lat + north * dLat;
+  const ring = [
+    [cx - half * dLon, cy - half * dLat],
+    [cx + half * dLon, cy - half * dLat],
+    [cx + half * dLon, cy + half * dLat],
+    [cx - half * dLon, cy + half * dLat],
+    [cx - half * dLon, cy - half * dLat],
+  ];
+  return { type: "Polygon", coordinates: [ring] };
+}
+
+export function charterBody(p: Partial<MissionCharter> = {}): MissionCharter {
+  return {
+    charter_id: "C1",
+    mission_id: MISSION,
+    vehicle_id: VEHICLE,
+    version: 1,
+    autonomy_mode: "WITHIN_CHARTER",
+    approved_at: null,
+    approved_by: null,
+    fence_hash: null,
+    area: square(50, 0, 180),
+    sectors: [{ sector_id: "S1", name: "S1", order_idx: 0, area: square(50, 0, 180) }],
+    home: { lat: HOME.lat, lon: HOME.lon, alt_amsl_m: 584 },
+    pilot_position: { lat: HOME.lat, lon: HOME.lon },
+    alt_min_agl_m: 15,
+    alt_max_agl_m: 60,
+    default_alt_agl_m: 40,
+    max_speed_ms: 8,
+    max_range_from_pilot_m: 500,
+    battery_rtl_pct: 15,
+    geofence_buffer_m: 20,
+    on_ai_silent: "continue_plan",
+    ai_silent_timeout_s: 20,
+    allowed_skills: ["takeoff", "goto", "survey_sector", "hold", "return_home"],
+    notes: "Sök av rutan norr om hem.",
+    ...p,
+  };
+}
+
+export function charter(p: Partial<Charter> = {}, body: Partial<MissionCharter> = {}): Charter {
+  return {
+    id: "C1",
+    mission_id: MISSION,
+    version: 1,
+    status: "proposed",
+    install_status: "none",
+    proposed_by: "brain:commander",
+    created_at: new Date().toISOString(),
+    approval_id: "AP1",
+    approved_at: null,
+    approved_by: null,
+    fence_hash: null,
+    fence_verified_at: null,
+    body: charterBody({ version: p.version ?? 1, ...body }),
+    ...p,
+  };
+}
+
+export function approval(p: Partial<Approval> = {}): Approval {
+  return {
+    id: "AP1",
+    kind: "charter",
+    mission_id: MISSION,
+    vehicle_id: VEHICLE,
+    subject_id: "C1",
+    subject_version: 1,
+    status: "pending",
+    summary_sv: "Sök av en ruta 100 × 100 m norr om hem.",
+    requested_at: new Date().toISOString(),
+    requested_by: "brain:commander",
+    required_confirmations: [],
+    default_autonomy_mode: "WITHIN_CHARTER",
+    decided_at: null,
+    decided_by: null,
+    expires_at: null,
+    gate: null,
+    reason: null,
+    ...p,
+  };
+}
+
+export function command(p: Partial<Command> = {}): Command {
+  return {
+    id: "K1",
+    mission_id: MISSION,
+    vehicle_id: VEHICLE,
+    skill: "takeoff",
+    params: { alt_m: 40 },
+    status: "pending_approval",
+    status_reason: null,
+    rationale_sv: "Vi lyfter till sökhöjd.",
+    issuer_kind: "brain",
+    issuer_ref: "brain:commander",
+    approval_id: "AP2",
+    backend: "scripted",
+    based_on: null,
+    charter_version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    expires_at: null,
+    in_reply_to: null,
+    ...p,
+  };
+}
+
+export function chatMessage(p: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: "m1",
+    mission_id: MISSION,
+    seq: 1,
+    role: "brain",
+    kind: "text",
+    text: "Hej",
+    author_ref: "brain:commander",
+    author_role: null,
+    created_at: new Date().toISOString(),
+    delivery: "n/a",
+    handled_by: null,
+    in_reply_to: null,
+    parsed_intent: null,
+    refs: {},
+    ...p,
+  };
+}
+
+export function snapshot(p: Partial<StateSnapshot> = {}): StateSnapshot {
+  return {
+    executor_state: "PREFLIGHT",
+    held_by: null,
+    resume_available: false,
+    ...p,
+  } as StateSnapshot;
 }

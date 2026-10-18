@@ -186,6 +186,7 @@ test-video *args:
         esac
     done
     pnpm --filter @searchdrone/panel build
+    pnpm --filter @searchdrone/panel build:test  # PS-1 reads the test build's window.__sd
     uv run pytest -p sd_sim.pytest_plugin -m "$selection" simulation/tests/video
 
 # Start the ground station (prints the login link)
@@ -245,6 +246,29 @@ test-panel-e2e:
     pnpm --filter @searchdrone/panel check
     pnpm --filter @searchdrone/panel build:test
     pnpm --filter @searchdrone/panel e2e
+
+# The stack runs in the SITL container and Playwright beside it on this machine.
+# Panel in a browser against SITL and the scripted commander (keys as ci-sitl)
+test-panel-sitl *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm --filter @searchdrone/panel build:test
+    ex=build/panel-sitl
+    mkdir -p "$ex"
+    rm -f "$ex/stack.json" "$ex/stop-brain" "$ex/done.json"
+    export SD_SITL_NAME="sd-panel-sitl-$$"  # so an interrupted run can stop its container
+    {{_just}} ci-sitl mode=panel physics=builtin brain=scripted "$@" &
+    stack=$!
+    trap 'kill "$stack" 2>/dev/null || true; docker stop "$SD_SITL_NAME" >/dev/null 2>&1 || true' EXIT
+    set +e
+    pnpm --filter @searchdrone/panel e2e:sitl
+    code=$?
+    echo "{\"code\": $code}" > "$ex/done.json"
+    wait "$stack"
+    stack_code=$?
+    set -e
+    trap - EXIT
+    [ "$code" -eq 0 ] && [ "$stack_code" -eq 0 ]
 
 [private]
 panel-build:
@@ -308,6 +332,7 @@ ci-sitl *args:
     docker run --rm --network host --user "$(id -u):$(id -g)" "${sock[@]}" \
         -v "$PWD:/w" -w /w -e SD_SIM__HEADLESS=1 -e HOME=/tmp/home \
         -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL \
+        ${SD_SITL_NAME:+--name "$SD_SITL_NAME"} \
         "$image" bash -lc 'uv sync --all-packages --frozen && uv run --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
 
 # Full demo locked to the public CMAC home (keys: lan, record, ...)

@@ -649,15 +649,24 @@ async def test_takeover_refused_while_flying_home() -> None:
 
 
 async def test_stop_ends_steering_by_hand() -> None:
+    """STOP ends the take-over, and the state the panel reads (``vehicle.manual``) says so."""
     async with stack() as s:
         s.fly()
         await s.run(0.5)
-        s.actions.takeover(VID, client_action_id="t3", by=PILOT)
+        reply = s.actions.takeover(VID, client_action_id="t3", by=PILOT)
         await s.run(1.0)
+        held = s.actions.manual_state(VID)
+        assert held is not None and held.active
+        assert str(held.takeover_id) == str(reply.action_id)
+        assert held.by == PILOT.issuer_ref and held.since is not None
+        assert held.input_age_ms is None  # no stick value yet
         s.stop()
         await s.run(1.0)
         assert s.fc.mode in STOP_MODES
         assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        ended = s.actions.manual_state(VID)
+        assert ended is not None and not ended.active and ended.takeover_id is None
+        assert s.actions.manual_state("other-vehicle") is None
 
 
 # --- the chat's stop path -------------------------------------------------------------------

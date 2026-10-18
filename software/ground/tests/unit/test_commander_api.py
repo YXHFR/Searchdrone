@@ -230,3 +230,23 @@ def test_commander_resume_stream(commander: TestClient, ground: Ground) -> None:
 def test_cli_pilot_token_cannot_use_commander_port(commander: TestClient, pilot_token: str) -> None:
     res = commander.get("/commander/v1/skills", headers={"Authorization": f"Bearer {pilot_token}"})
     assert res.status_code == 401
+
+
+def test_a_new_mission_reaches_the_ai_as_created() -> None:
+    """sd-brain switches to a mission the panel opened after it started only on created."""
+    import datetime as dt
+
+    from sd_ground.api.commander import to_commander
+    from sd_ground.bus import BusEvent
+
+    def event(data: dict[str, object]) -> BusEvent:
+        ts = dt.datetime(2026, 10, 16, tzinfo=dt.UTC)
+        return BusEvent(5, ts, "mission", "mission.state_changed", "sim-01", "M2", data)
+
+    new = to_commander(event({"from": None, "to": "DRAFT", "created": True, "state_seq": 1}))
+    assert new is not None
+    assert new["type"] == "event.mission"
+    assert new["mission_id"] == "M2"
+    assert new["body"]["created"] is True
+    later = to_commander(event({"from": "DRAFT", "to": "READY", "state_seq": 2}))
+    assert later is not None and later["body"]["created"] is False

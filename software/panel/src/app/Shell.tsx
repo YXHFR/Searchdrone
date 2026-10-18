@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { startLive } from "../api/live";
 import { ReauthSheet } from "../auth/ReauthSheet";
+import { AiDownBanner } from "../header/AiDownBanner";
+import { Toasts } from "../header/Toasts";
 import { ConnectionBanner, TopBar } from "../header/TopBar";
 import { LayoutRoot } from "../layout/LayoutRoot";
 import { viewportFor } from "../layout/layoutModel";
@@ -27,11 +29,13 @@ export function Shell({ vehicleId }: { vehicleId: string }) {
     <div className={`shell shell-${vp}`}>
       <TopBar />
       <ConnectionBanner />
+      <AiDownBanner />
       {vp === "mobile" ? (
         <MobileLayout vehicleId={vehicleId} />
       ) : (
         <LayoutRoot vehicleId={vehicleId} />
       )}
+      <Toasts />
       {needsReauth ? <ReauthSheet /> : null}
     </div>
   );
