@@ -1,12 +1,6 @@
 import { observerSession, outcome, vehicleLive } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import {
-  expectSafetyVisible,
-  isMobile,
-  type ShownView,
-  showView,
-  withCamera,
-} from "../helpers/safety";
+import { expectSafetyVisible, type ShownView, showView, withCamera } from "../helpers/safety";
 
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const VIEWS: ShownView[] = ["chat", "events", "map", "video", "candidates", "status", "manual"];
@@ -112,8 +106,12 @@ test.describe("safety bar is always visible", () => {
     expect(ms).toBeLessThanOrEqual(1_500);
   });
 
-  test("tab order: skip link, then STOP, then RETURN HOME", async ({ page, ground }) => {
-    test.skip(isMobile(page), "keyboard on desktop");
+  test("tab order: skip link, then STOP, then RETURN HOME", async ({
+    page,
+    ground,
+    isMobile: phone,
+  }) => {
+    test.skip(phone, "keyboard, not a phone");
     await ground.open();
     await expect(page.getByTestId("topbar")).toBeVisible();
     await page.keyboard.press("Tab");
@@ -275,8 +273,8 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
     expect(ground.calls(/^GET \/api\/v1\/missions\/active/).length).toBeGreaterThanOrEqual(1);
   });
 
-  test("no keyboard shortcut triggers STOP", async ({ page, ground }) => {
-    test.skip(isMobile(page), "keyboard on desktop");
+  test("no keyboard shortcut triggers STOP", async ({ page, ground, isMobile: phone }) => {
+    test.skip(phone, "keyboard, not a phone");
     await ground.open();
     await expect(page.getByTestId("topbar")).toBeVisible();
     await page.locator("body").press("Space");

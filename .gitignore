@@ -85,6 +85,7 @@ software/panel/dist/
 software/panel/dist-test/
 software/panel/e2e/sitl/.auth/
 software/panel/screens/
+*.tsbuildinfo
 playwright-report/
 test-results/
 

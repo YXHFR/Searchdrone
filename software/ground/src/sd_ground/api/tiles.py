@@ -119,7 +119,7 @@ def read_attribution(path: Path) -> str | None:
         elif head[97] != _COMPRESSION_NONE:
             return None
         meta = json.loads(raw)
-    except (OSError, EOFError, ValueError, zlib.error):
+    except (OSError, EOFError, ValueError, RecursionError, zlib.error):
         return None
     text = meta.get("attribution") if isinstance(meta, dict) else None
     if not isinstance(text, str) or not 0 < len(text.strip()) <= _MAX_ATTRIBUTION:

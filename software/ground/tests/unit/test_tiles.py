@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import shutil
 import struct
 from pathlib import Path
@@ -246,3 +247,15 @@ def test_read_attribution_of_a_broken_pack(tmp_path: Path) -> None:
     data[97] = 9  # unknown directory compression
     bad.write_bytes(bytes(data))
     assert read_attribution(bad) is None
+
+
+def test_read_attribution_of_deeply_nested_metadata(tmp_path: Path) -> None:
+    pack = tmp_path / "deep.pmtiles"
+    _photo_pack(pack, metadata={"attribution": "ok"})
+    data = bytearray(pack.read_bytes())
+    offset, length = struct.unpack_from("<2Q", data, 24)
+    deep = gzip.compress(b"[" * 20_000 + b"]" * 20_000)
+    data[offset : offset + length] = deep
+    struct.pack_into("<Q", data, 32, len(deep))
+    pack.write_bytes(bytes(data))
+    assert read_attribution(pack) is None
