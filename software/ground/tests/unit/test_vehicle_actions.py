@@ -20,6 +20,7 @@ from sd_ground.services.vehicle_actions import (
     OUTCOMES_MAX,
     ActionRefusedError,
     NoNoticeSink,
+    NoticeResult,
     OperatorPresence,
     VehicleActions,
 )
@@ -45,7 +46,7 @@ class StubMav:
         self.submitted.append(action)
         return True
 
-    def takeover(self, takeover_id: str) -> bool:
+    def takeover(self, takeover_id: str, action_seq: int | None = None) -> bool:
         self.calls.append("takeover")
         return True
 
@@ -82,9 +83,15 @@ class PerVehicleSink:
     async def send(self, vehicle_id: str, message: SdModel) -> bool:
         return vehicle_id in self.up_for
 
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
+        return "acked" if vehicle_id in self.up_for else "down"
+
 
 class BrokenSink(RecordingSink):
     async def send(self, vehicle_id: str, message: SdModel) -> bool:
+        raise ConnectionResetError("link went away mid-send")
+
+    async def send_acked(self, vehicle_id: str, message: SdModel, timeout_s: float) -> NoticeResult:
         raise ConnectionResetError("link went away mid-send")
 
 

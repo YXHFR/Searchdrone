@@ -233,6 +233,23 @@ async def test_takeover_pauses_the_ai_and_sends_nothing() -> None:
         assert "running" in r.up.stages(resume.command_id)
 
 
+async def test_a_loiter_without_its_takeover_notice_waits_for_resume() -> None:
+    """The ground's LOITER when the take-over notice was not acknowledged in time: the
+    onboard side cannot tell it from a stop, so it latches and the AI waits for the
+    pilot's Resume (the safe way round; the ground normally sends the notice first)."""
+    async with rig() as r:
+        await _in_goto(r)
+        r.fc.set_mode_external(CopterMode.LOITER)
+        await r.run(3)
+        assert r.ex.held_by == "external" and r.ex.over.stop_latch
+        resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
+        assert "running" not in r.up.stages(resume.command_id)
+        _release(r)
+        assert not r.ex.over.stop_latch
+        resume = await r.send(r.order("resume", {}, issuer="brain:ground"))
+        assert "running" in r.up.stages(resume.command_id)
+
+
 async def test_return_home_refused_is_retried_until_it_flies_home() -> None:
     """SmartRTL and RTL refused: no dead end in RTL; the executor keeps asking."""
     async with rig() as r:

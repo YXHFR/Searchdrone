@@ -16,6 +16,8 @@ path's ``NoticeSink`` (STOP / FLY HOME notices, releases, takeovers).
 
 The emergency path never waits here: ``VehicleActions`` sends its notices from the main
 loop's pump, and STOP / FLY HOME reach the flight controller over MAVLink regardless.
+Only a take-over notice waits for its ``Ack`` (``send_acked``), in a task of its own, so
+that its LOITER reaches the flight controller after the onboard side knows about it.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 from sd_ground.logging import get_logger
 from sd_ground.services.latches import ADOPTED_BY, Latches
@@ -40,6 +42,7 @@ from sd_schemas.api import LinkStatus
 from sd_schemas.base import SdModel, new_id
 from sd_schemas.link import (
     SCHEMA_MAJOR,
+    Ack,
     CommanderStatus,
     Hello,
     HelloAck,
@@ -51,6 +54,7 @@ from sd_schemas.mission import OperatorLatch
 __all__ = ["COMMANDER_STATUS_S", "GroundLink", "InboundHandler"]
 
 COMMANDER_STATUS_S: Final = 1.0
+ACK_MEMORY_MS: Final = 10_000  # an Ack that came before anyone waited for it is kept this long
 log = get_logger("sd_ground.link")
 
 
@@ -92,6 +96,8 @@ class GroundLink:
         self._on_event = on_event
         self._snapshots: dict[str, SnapshotSeen] = {}
         self._hellos: dict[str, Hello] = {}
+        self._ack_waiters: dict[uuid.UUID, asyncio.Future[None]] = {}
+        self._acked: dict[uuid.UUID, int] = {}  # ref_id -> when the Ack came (monotonic ms)
         self.server = LinkServer(
             tokens=tokens,
             is_known_vehicle=lambda v: v in self.vehicle_ids,
@@ -173,6 +179,35 @@ class GroundLink:
     async def send(self, vehicle_id: str, message: SdModel) -> bool:
         return await self.send_message(vehicle_id, message) is not None
 
+    async def send_acked(
+        self, vehicle_id: str, message: SdModel, timeout_s: float
+    ) -> Literal["acked", "timeout", "down"]:
+        """Send one message and wait at most ``timeout_s`` for the onboard ``Ack`` that
+        names it (a take-over notice before its LOITER)."""
+        msg_id = await self.send_message(vehicle_id, message)
+        if msg_id is None:
+            return "down"
+        if msg_id in self._acked:  # answered while the send was still being queued
+            return "acked"
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._ack_waiters[msg_id] = waiter
+        try:
+            await asyncio.wait_for(waiter, timeout_s)
+        except TimeoutError:
+            return "timeout"
+        finally:
+            self._ack_waiters.pop(msg_id, None)
+        return "acked"
+
+    def _on_ack(self, ack: Ack) -> None:
+        now = self.clock.monotonic_ms()
+        ref = uuid.UUID(str(ack.ref_id))
+        self._acked = {k: t for k, t in self._acked.items() if now - t <= ACK_MEMORY_MS}
+        self._acked[ref] = now
+        waiter = self._ack_waiters.get(ref)
+        if waiter is not None and not waiter.done():
+            waiter.set_result(None)
+
     async def send_message(
         self,
         vehicle_id: str,
@@ -240,6 +275,8 @@ class GroundLink:
                 if isinstance(event, Inbound):
                     if isinstance(event.body, StateSnapshot):
                         self._snapshots[vid] = SnapshotSeen(event.body, self.clock.monotonic_ms())
+                    elif isinstance(event.body, Ack):
+                        self._on_ack(event.body)
                     if self.handler is not None:
                         await _quietly(self.handler.on_inbound(vid, event))
                 elif isinstance(event, Expired) and self.handler is not None:

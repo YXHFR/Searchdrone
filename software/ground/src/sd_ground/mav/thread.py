@@ -379,9 +379,14 @@ class GroundMav:
 
     # --- steering by hand -------------------------------------------------------------
 
-    def takeover(self, takeover_id: str) -> None:
-        self._manual = _Manual(takeover_id)
+    def takeover(self, takeover_id: str, action_seq: int | None = None) -> None:
+        """Steer by hand from here: LOITER, then the panel's sticks. ``action_seq`` is the
+        take-over's own number; when a newer action (STOP, FLY HOME, a hand-back) came
+        while its notice went to the onboard side, the take-over is dropped."""
         seq = self.latches.latest_seq(self.vehicle_id)
+        if action_seq is not None and action_seq != seq:
+            return
+        self._manual = _Manual(takeover_id)
 
         async def loiter() -> None:
             result = await set_mode_with_fallback(
@@ -539,8 +544,8 @@ class ThreadSafeMav:
     def submit(self, action: ModeAction) -> bool:
         return self._call(self.core.submit, action)
 
-    def takeover(self, takeover_id: str) -> bool:
-        return self._call(self.core.takeover, takeover_id)
+    def takeover(self, takeover_id: str, action_seq: int | None = None) -> bool:
+        return self._call(self.core.takeover, takeover_id, action_seq)
 
     def handback(self) -> bool:
         return self._call(self.core.handback)
