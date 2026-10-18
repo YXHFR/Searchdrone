@@ -102,4 +102,5 @@ markers = [
   "panel: drives the real panel in a browser (just test-panel-sitl only)",
   "brain: flies with an AI commander (skipped with brain=none)",
   "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
+  "e2e: the end-to-end set of just e2e (the demo and the emergency buttons)",
 ]

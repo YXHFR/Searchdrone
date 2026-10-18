@@ -94,6 +94,8 @@ def test_yaw_is_a_compass_heading() -> None:
         ([_box(east_m=5.2, north_m=0.0, size_m=(2.0, 2.0, 1.0))], "närmare hem"),
         ([_box(east_m=599.8)], "utanför världen"),
         ([_box(truth={"when": {1, 2}})], "JSON"),
+        ([_box(name="sun")], "används redan"),
+        ([_box(up_m=12.0)], "up_m"),
     ],
 )
 def test_bad_objects_are_refused(placed: list[objects.Box], message: str) -> None:
@@ -103,7 +105,11 @@ def test_bad_objects_are_refused(placed: list[objects.Box], message: str) -> Non
 
 @pytest.mark.parametrize(
     ("kw", "message"),
-    [({"size_m": (0.0, 1.0, 1.0)}, "size_m"), ({"color": (1.0, math.nan, 0.0)}, "color")],
+    [
+        ({"size_m": (0.0, 1.0, 1.0)}, "size_m"),
+        ({"color": (1.0, math.nan, 0.0)}, "color"),
+        ({"size_m": (1.0, 1.0, 25.0), "up_m": 6.0}, "topp"),
+    ],
 )
 def test_box_checks_its_own_values(kw: dict[str, object], message: str) -> None:
     with pytest.raises(objects.ObjectError, match=message):
@@ -220,6 +226,7 @@ def test_launcher_loads_the_file(tmp_path: Path) -> None:
         ({"objects": "missing.yaml"}, "missing.yaml"),
         ({"objects": "bad.yaml"}, "lista"),
         ({"objects": "../outside.yaml"}, "i repot"),
+        ({"objects": "far.yaml"}, "utanför världen"),
         ({"objects": "bad.yaml", "physics": "builtin"}, "physics=gz"),
         ({"objects": "bad.yaml", "vehicle": "stock"}, "physics=gz"),
         ({"objects": "bad.yaml", "world": "other"}, "physics=gz"),
@@ -227,6 +234,8 @@ def test_launcher_loads_the_file(tmp_path: Path) -> None:
 )
 def test_launcher_refuses_objects(tmp_path: Path, cfg: dict[str, str], message: str) -> None:
     (tmp_path / "bad.yaml").write_text("{name: a}\n", encoding="utf-8")
+    far = "- {name: far, kind: box, east_m: 900, north_m: 0, size_m: [1, 1, 1], color: [1, 0, 0]}\n"
+    (tmp_path / "far.yaml").write_text(far, encoding="utf-8")
     with pytest.raises(InfraError, match=message):
         _stack(tmp_path, **cfg).world_objects()
 

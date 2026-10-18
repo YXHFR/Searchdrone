@@ -37,13 +37,17 @@ from typing import Any, Protocol
 import yaml
 
 # Names the world templates already use at world level.
-RESERVED_NAMES = frozenset({"ground", "landing_pad", "lake", "path", "forest", "vehicle"})
+RESERVED_NAMES = frozenset({"ground", "landing_pad", "lake", "path", "forest", "vehicle", "sun"})
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 BOX_REQUIRED = {"name", "kind", "east_m", "north_m", "size_m", "color"}
 BOX_OPTIONAL = {"up_m", "yaw_deg", "label", "truth"}
 # Nothing stands this close to home: the landing pad and the vehicle start there.
 HOME_KEEP_OUT_M = 5.0
 SIZE_RANGE_M = (0.01, 100.0)
+# Scenery stays near the ground, well below survey heights: the origin at most this far
+# above or below the ground, and a box's top at most MAX_TOP_M above it.
+UP_RANGE_M = (-2.0, 10.0)
+MAX_TOP_M = 30.0
 
 
 class ObjectError(ValueError):
@@ -124,6 +128,10 @@ class Box:
             raise ObjectError(f"{self.name}: size_m ska vara tre tal mellan {low:g} och {high:g}")
         if len(self.color) != 3 or not all(0.0 <= c <= 1.0 for c in self.color):
             raise ObjectError(f"{self.name}: color ska vara tre tal mellan 0 och 1")
+        if self.up_m + self.size_m[2] > MAX_TOP_M:
+            raise ObjectError(
+                f"{self.name}: lådans topp ska vara högst {MAX_TOP_M:g} m över marken"
+            )
 
     @property
     def footprint_m(self) -> float:
@@ -171,6 +179,9 @@ def check(objects: Sequence[WorldObject], world_half_m: float = math.inf) -> Non
         values = (obj.east_m, obj.north_m, obj.up_m, obj.yaw_deg)
         if not all(math.isfinite(v) for v in values):
             raise ObjectError(f"{obj.name}: position och riktning ska vara ändliga tal")
+        if not UP_RANGE_M[0] <= obj.up_m <= UP_RANGE_M[1]:
+            low, high = UP_RANGE_M
+            raise ObjectError(f"{obj.name}: up_m ska ligga mellan {low:g} och {high:g}")
         if obj.label < 0:
             raise ObjectError(f"{obj.name}: label ska vara 0 eller större")
         reach = obj.footprint_m

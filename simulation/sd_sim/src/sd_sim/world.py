@@ -20,6 +20,7 @@ import itertools
 import json
 import math
 import random
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -192,6 +193,10 @@ def object_pose(obj: objects.WorldObject) -> objects.Pose:
     )
 
 
+LABEL_PLUGIN = "gz-sim-label-system"
+REMOTE = re.compile(r"(?i)https?://|fuel\.")
+
+
 def checked_fragment(obj: objects.WorldObject) -> str:
     """The object's SDF, refused unless it is one ``<model>``/``<actor>`` named like the
     object and names no remote URI (Gazebo would download it)."""
@@ -207,6 +212,12 @@ def checked_fragment(obj: objects.WorldObject) -> str:
     for uri in root.iter("uri"):
         if not (uri.text or "").strip().startswith("model://"):
             raise objects.ObjectError(f"{obj.name}: bara model://-adresser är tillåtna")
+    for el in root.iter():
+        if el.tag == "plugin" and el.get("filename") != LABEL_PLUGIN:
+            raise objects.ObjectError(f"{obj.name}: bara Label-pluginen är tillåten")
+        names = [el.get("filename") or ""] + ([el.text or ""] if el.tag == "filename" else [])
+        if any(REMOTE.search(n) for n in names):
+            raise objects.ObjectError(f"{obj.name}: filer ska ligga lokalt, inte på nätet")
     return text
 
 

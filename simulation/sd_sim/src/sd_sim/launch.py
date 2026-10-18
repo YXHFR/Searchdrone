@@ -9,11 +9,13 @@ skipped with a message.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import secrets
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import urllib.error
@@ -22,7 +24,7 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, objects, paths, ports, procs, world
+from sd_sim import _args, config, gazebo, objects, paths, ports, procs, services, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -45,14 +47,17 @@ ALLOWED_KEYS = (
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
-# Parts of the stack that later work adds; until then `up` says it skips them.
 # The database and the ground station start BEFORE SITL, so that they stop after it
 # (processes stop in reverse start order and the ground station's heartbeat must end
-# last); the rest start after SITL.
-NOT_BUILT_BEFORE_SITL = ("postgres", "sd-ground")
-NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain")
+# last); the onboard computer and the AI start after SITL.
 
 HEALTH_LINK_S = 10.0
+HEALTH_DB_S = 60.0
+HEALTH_GROUND_S = 30.0
+HEALTH_ONBOARD_S = 30.0
+HEALTH_BRAIN_S = 30.0
+HEALTH_LLM_S = 120.0
+DEMO_SCRIPT = "simulation/scenarios/scripts/SC01.yaml"
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
 HEALTH_VIDEO_S = 15.0
@@ -106,8 +111,16 @@ class Stack:
         observer: bool = True,
         repo: Path = paths.REPO,
         param_layers: tuple[Path, ...] = (),
+        services: bool = False,
+        test_rig: bool = False,
     ) -> None:
         self.cfg = cfg
+        # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
+        # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
+        self.services = services
+        # test_rig: the ground station lets CLI tokens confirm (the end-to-end test's
+        # pilot) and the launcher writes a pilot and an observer token.
+        self.test_rig = test_rig
         self.param_layers = param_layers  # a test's own layers, loaded last
         self.run_dir = run_dir
         self.repo = repo
@@ -118,7 +131,11 @@ class Stack:
         self.group = procs.ProcessGroup(self.inst_dir / "pids.json", run_dir / "logs")
         self.linksim_token = ""
         self.world: gazebo.World | None = None
-        self.placed: list[objects.Box] = []
+        self.placed: list[objects.WorldObject] = []
+        self.login_url = ""
+        self._ground_env: dict[str, str] = {}
+        # How each service was started (argv, environment), for a test's restart.
+        self._specs: dict[str, tuple[list[str], dict[str, str]]] = {}
 
     # --- helpers -------------------------------------------------------------------
 
@@ -194,7 +211,7 @@ class Stack:
             and self.cfg.world == world.WORLD_NAME
         )
 
-    def world_objects(self) -> list[objects.Box]:
+    def world_objects(self) -> list[objects.WorldObject]:
         """Load and check ``objects=`` before anything starts; refuse it where it cannot apply."""
         if not self.cfg.objects:
             return []
@@ -206,9 +223,14 @@ class Stack:
         if not path.is_relative_to(self.repo.resolve()):
             raise InfraError(f"objects={self.cfg.objects}: filen ska ligga i repot")
         try:
-            return objects.load(path)
+            placed: list[objects.WorldObject] = list(objects.load(path))
+            # The same checks the renderer makes, so a bad file stops here, not in Gazebo.
+            objects.check(placed, world.GROUND_SIZE_M / 2)
+            for obj in placed:
+                world.checked_fragment(obj)
         except objects.ObjectError as exc:
             raise InfraError(f"objects={self.cfg.objects}: {exc}") from exc
+        return placed
 
     def start_gazebo(self) -> None:
         if self.renders_world():
@@ -247,6 +269,7 @@ class Stack:
                     inst,
                     "--state-file",
                     str(self.inst_dir / "harness_state.json"),
+                    *(["--rc-port", str(self.ports["sitl_rc_in"])] if self.services else []),
                 ],
                 env=env,
             )
@@ -419,6 +442,254 @@ class Stack:
             "MediaMTX fick ingen video. Kontrollera kameran/testbilden och lösenordet i .env.",
         )
 
+    # --- Searchdrone services -------------------------------------------------------
+
+    @property
+    def video_on(self) -> bool:
+        """Video for this instance: instance 0 only (one MediaMTX path per vehicle)."""
+        return self.cfg.instance == 0 and self.cfg.video != "off"
+
+    def stack_paths(self) -> services.StackPaths:
+        # With video the ground station must use .env's data folder, where MediaMTX
+        # records; otherwise each run keeps its own (and its own control socket).
+        configured = read_env_value(self.repo / ".env", "SD_DATA_DIR")
+        if not configured:
+            raise InfraError("SD_DATA_DIR saknas i .env. Kör just setup-config.")
+        base = Path(configured).expanduser()
+        data = base if self.video_on else self.run_dir / "data"
+        onboard = base / "sim" / f"i{self.cfg.instance}" / "onboard"
+        return services.StackPaths(self.repo, self.run_dir, self.secrets_dir, data, onboard)
+
+    def _env_secret(self, key: str) -> str:
+        value = read_env_value(self.repo / ".env", key)
+        if value.strip().lower() in PLACEHOLDERS:
+            raise InfraError(f"{key} saknas i .env. Kör just setup-config.")
+        return value
+
+    def _compose(self, *args: str) -> bool:
+        """``docker compose --env-file .env ...`` in the repository; False without Docker."""
+        docker = shutil.which("docker")
+        if docker is None:
+            return False
+        try:
+            res = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [docker, "compose", "--env-file", ".env", *args],
+                cwd=self.repo,
+                capture_output=True,
+                check=False,
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        return res.returncode == 0
+
+    def start_database(self) -> None:
+        """Postgres (compose service ``db``) and a fresh database for this instance."""
+        if not services.tcp_open(services.DB_PORT):
+            say("startar databasen (docker compose up db)")
+            if not self._compose("up", "-d", "--wait", "db"):
+                raise InfraError(
+                    f"Databasen svarar inte på 127.0.0.1:{services.DB_PORT}. Kör just db-up."
+                )
+        end = time.monotonic() + HEALTH_DB_S
+        while not services.tcp_open(services.DB_PORT):
+            if time.monotonic() > end:
+                raise InfraError("Databasen blev inte redo inom 60 s. Se docker compose logs db.")
+            time.sleep(0.5)
+        name = services.database_name(self.cfg.instance)
+        services.recreate_database(self._env_secret("SD_GROUND__DB_PASSWORD"), name)
+
+    def provision(self) -> None:
+        """Schema, the vehicle, the commander and link tokens (and the test rig's tokens)."""
+        sp = self.stack_paths()
+        for folder in (sp.data_dir, sp.onboard_dir):
+            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+            folder.chmod(0o700)
+        write_secret(self.secrets_dir, "brain_token", secrets.token_urlsafe(32))
+        env = self.ground_process_env()
+        cli = services.ground_cli
+        cli(self.repo, env, "db", "setup")
+        cli(
+            self.repo,
+            env,
+            "vehicle",
+            "add",
+            services.VEHICLE_ID,
+            "--kind",
+            "sim",
+            "--sysid",
+            "1",
+            "--name",
+            "Sim 1",
+            "--if-missing",
+        )
+        cli(
+            self.repo,
+            env,
+            "link-token",
+            "create",
+            "--vehicle",
+            services.VEHICLE_ID,
+            "--write-onboard",
+            str(sp.link_token),
+        )
+        if self.test_rig:
+            cli(
+                self.repo,
+                env,
+                "token",
+                "create",
+                "--name",
+                "harness",
+                "--role",
+                "pilot",
+                "--expires",
+                "24h",
+                stdout_file=self.secrets_dir / "pilot_token",
+            )
+            cli(
+                self.repo,
+                env,
+                "token",
+                "create",
+                "--name",
+                "observer",
+                "--role",
+                "observer",
+                "--expires",
+                "24h",
+                stdout_file=self.secrets_dir / "observer_token",
+            )
+        if self.cfg.lan:
+            tls = self.repo / "config" / "local" / "tls"
+            if not (tls / "server.crt").is_file():
+                cli(self.repo, env, "init", "--lan")
+        check_secret_modes(self.secrets_dir)
+
+    def ground_process_env(self) -> dict[str, str]:
+        if not self._ground_env:
+            self._ground_env = procs.clean_env(
+                services.ground_env(
+                    self.ports,
+                    self.stack_paths(),
+                    self.cfg.instance,
+                    video=self.video_on and self._mediamtx_running(),
+                    lan=self.cfg.lan,
+                    test_rig=self.test_rig,
+                )
+            )
+        return self._ground_env
+
+    def _mediamtx_running(self) -> bool:
+        return self.mediamtx_get("/v3/config/global/get") is not None
+
+    def health(self) -> services.Health | None:
+        return services.read_health(self.ports["ground_panel"])
+
+    def _health_ok(self, *parts: str) -> bool:
+        h = self.health()
+        return h is not None and h.ok(*parts)
+
+    def _start_service(self, name: str, argv: list[str], env: dict[str, str]) -> procs.Proc:
+        self._specs[name] = (argv, env)
+        return self.group.start(name, argv, env=env, cwd=self.repo)
+
+    def kill_service(self, name: str) -> None:
+        """A test's fault: the service dies at once (SIGKILL), without a goodbye."""
+        self.group.kill(name)
+
+    def restart_service(self, name: str) -> procs.Proc:
+        """A test's restart of a service with the same settings, in its old stop order."""
+        argv, env = self._specs[name]
+        return self.group.restart(name, argv, env=env, cwd=self.repo)
+
+    def start_ground(self) -> procs.Proc:
+        env = self.ground_process_env()
+        proc = self._start_service("sd-ground", [sys.executable, "-m", "sd_ground", "serve"], env)
+        self._wait(
+            "sd-ground",
+            proc,
+            HEALTH_GROUND_S,
+            lambda: self._health_ok("db"),
+            "Markstationen svarar inte på /api/v1/health. Se loggen.",
+        )
+        return proc
+
+    def wait_ground_sees_vehicle(self, ground: procs.Proc) -> None:
+        self._wait(
+            "sd-ground",
+            ground,
+            HEALTH_HEARTBEAT_S,
+            lambda: self._health_ok("mavlink"),
+            "Markstationen ser ingen HEARTBEAT från flygkontrollern (linksim).",
+        )
+
+    def start_onboard(self) -> None:
+        env = procs.clean_env(services.onboard_env(self.ports, self.stack_paths()))
+        proc = self._start_service("sd-onboard", [sys.executable, "-m", "sd_onboard"], env)
+        self._wait(
+            "sd-onboard",
+            proc,
+            HEALTH_ONBOARD_S,
+            lambda: self._health_ok("sdlink", "onboard"),
+            "Ombordsdatorn kopplade inte upp SD-link eller syns inte på MAVLink.",
+        )
+
+    def brain_script(self) -> Path | None:
+        if self.cfg.brain != "scripted":
+            return None
+        script = self.cfg.script or DEMO_SCRIPT
+        path = Path(script)
+        return path if path.is_absolute() else self.repo / path
+
+    def start_brain(self) -> None:
+        kind = self.cfg.brain
+        if kind == "none":
+            say("hoppar över sd-brain (brain=none)")
+            return
+        timeout = HEALTH_BRAIN_S
+        if kind == "llm_local":
+            timeout = HEALTH_LLM_S
+            if not services.tcp_open(self.ports["llm_http"]):
+                say("llama-server kör inte; försöker starta den (docker compose --profile ai)")
+                if not self._compose("--profile", "ai", "up", "-d", "--wait", "llm"):
+                    say("llama-server startade inte; AI:n får använda molnet eller kommandoläget")
+        env = procs.clean_env(
+            services.brain_env(self.ports, self.stack_paths(), kind, self.brain_script())
+        )
+        config_file = self.repo / "config" / "brain.toml"
+        if not config_file.is_file():
+            config_file = self.repo / "config" / "brain.example.toml"
+        proc = self._start_service(
+            "sd-brain", [sys.executable, "-m", "sd_brain", "run", "--config", str(config_file)], env
+        )
+        self._wait(
+            "sd-brain",
+            proc,
+            timeout,
+            lambda: self._health_ok("brain"),
+            "AI-befälhavaren kopplade inte upp mot markstationen.",
+        )
+
+    def wait_ready(self) -> None:
+        """``GET /api/v1/health``: ``ready = true``, and every started part ``ok``."""
+        wanted = ["db", "mavlink", "sdlink", "onboard"]
+        if self.cfg.brain != "none":
+            wanted.append("brain")
+
+        def ready() -> bool:
+            h = self.health()
+            return h is not None and h.ready and h.ok(*wanted)
+
+        self._wait("hälsa", None, HEALTH_READY_S, ready, "Markstationen blev inte redo.")
+
+    def make_login_link(self) -> str:
+        res = services.ground_cli(self.repo, self.ground_process_env(), "login-link")
+        for line in reversed(res.stdout.splitlines()):
+            if "#login=" in line:
+                return line.split()[-1]
+        raise InfraError("sd-ground login-link gav ingen länk.")
+
     def up(self) -> None:
         os.umask(0o077)
         self.placed = self.world_objects()
@@ -433,33 +704,61 @@ class Stack:
             self.start_gazebo()
         say("==> testrigg, mavtap och linksim")
         self.start_link_processes()
-        for part in NOT_BUILT_BEFORE_SITL:
-            say(f"hoppar över {part} (inte byggt än)")
+        ground: procs.Proc | None = None
+        if self.services:
+            say("==> databasen")
+            self.start_database()
+            self.provision()
+            say("==> sd-ground")
+            ground = self.start_ground()
         say("==> arducopter (SITL)")
         sitl = self.start_sitl()
         if self.observer:
             self.wait_vehicle_observed(sitl)
-        for part in NOT_BUILT_AFTER_SITL:
-            say(f"hoppar över {part} (inte byggt än)")
+        if ground is not None:
+            self.wait_ground_sees_vehicle(ground)
+            say("==> sd-onboard")
+            self.start_onboard()
+            say("==> sd-brain")
+            self.start_brain()
         self.start_video_source()
         self.start_video_relay()
+        if ground is not None:
+            self.wait_ready()
+            self.login_url = self.make_login_link()
 
     def down(self) -> None:
         self.group.stop_all()
 
 
+_stopping = False
+
+
 def _raise_stop(_sig: int, _frame: FrameType | None) -> None:
+    # Only the first stop raises: a second signal (timeout and uv both pass one on) must
+    # not land in the clean-up and leave the processes running.
+    global _stopping
+    if _stopping:
+        return
     if not procs.defer_stop():
+        _stopping = True
         raise StopRequestedError
 
 
 def _run_foreground(stack: Stack) -> int:
+    global _stopping
     # The handlers raise, so a stop also interrupts a health wait during start-up.
     signal.signal(signal.SIGTERM, _raise_stop)
     signal.signal(signal.SIGINT, _raise_stop)
     try:
+        started = time.monotonic()
         stack.up()
         say(f"Klart. Simulatorn kör (instans {stack.cfg.instance}). Loggar: {stack.run_dir}")
+        if stack.login_url:
+            took = time.monotonic() - started
+            say(f"Allt är redo efter {took:.0f} s. Öppna panelen: {stack.login_url}")
+            if stack.cfg.open_browser and stack.cfg.gui:
+                open_browser(stack.login_url)
         say("Stoppa med Ctrl-C eller just stop.")
         while True:
             for proc in stack.group.procs:
@@ -475,6 +774,7 @@ def _run_foreground(stack: Stack) -> int:
         return 1
     finally:
         # A second Ctrl-C must not interrupt the clean-up itself.
+        _stopping = True
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         stack.down()
@@ -515,8 +815,21 @@ def main(argv: list[str] | None = None) -> int:
         say(f"\033[33m{config.PERSONAL_HOME_WARNING}\033[0m")
     if shutil.which("ss") is None:
         say("Varning: ss saknas, portkontrollen hoppas över (installera iproute2).")
-    stack = Stack(cfg, new_run_dir(cfg.instance))
+    stack = Stack(cfg, new_run_dir(cfg.instance, "demo" if demo else "sim"), services=True)
     return _run_foreground(stack)
+
+
+def open_browser(url: str) -> None:
+    """Open the login link in the owner's browser (WSL: Windows' browser); best effort."""
+    for opener in ("wslview", "xdg-open"):
+        exe = shutil.which(opener)
+        if exe is None:
+            continue
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.Popen(  # noqa: S603 - a fixed opener and our own loopback URL
+                [exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            return
 
 
 def _status(instance: int) -> int:
