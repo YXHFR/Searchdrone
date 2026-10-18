@@ -8,6 +8,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Scenario objects in the simulator world (`sd_sim.objects`): boxes from a YAML file
+  (`just sim objects=<file>`) or any `WorldObject` from code are placed on the ground at
+  metres east/north of home, can carry a Gazebo semantic label, and their facit (world and
+  WGS84 position) is written to `build/sim/worlds/<world>_i<N>.truth.json`.
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password
