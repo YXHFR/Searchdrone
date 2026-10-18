@@ -80,18 +80,11 @@ test("a find shows on the map with its class, score and thumbnail", async ({ pag
   await expect(card).toContainText("Sett 3 gånger");
   await expect(card).toContainText("Färgdetektor");
   await expect(card).toContainText("Inte bekräftat");
-  const thumb = page.getByRole("img", { name: "rött block" });
-  await expect(thumb).toHaveCSS("background-image", /\/detections\/[^/]+\/crop"?\)$/);
-  await expect.poll(() => ground.calls(/\/detections\/[^/]+\/crop$/).length).toBeGreaterThan(0);
-  // The crop decodes as an image, as the background shows it.
-  const size = await thumb.evaluate(async (el) => {
-    const url = getComputedStyle(el).backgroundImage.slice(4, -1).replace(/"/g, "");
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    return img.naturalWidth;
-  });
-  expect(size).toBeGreaterThan(0);
+  const thumb = page.getByTestId("find-thumb");
+  await expect
+    .poll(() => thumb.evaluate((img) => (img as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  expect(ground.calls(/\/detections\/[^/]+\/crop$/).length).toBeGreaterThan(0);
 
   const labels = await page.evaluate(
     async ({ center }) => {
@@ -108,7 +101,12 @@ test("a find shows on the map with its class, score and thumbnail", async ({ pag
   );
   expect(labels).toEqual(["bil (facit)", "rött block 71 % ×3"]);
   await expectSafetyVisible(page);
-  await page.screenshot({ path: test.info().outputPath("find-on-map.png") });
+  // WebKit's screenshot injects a stylesheet, which the panel's CSP rightly refuses (and the
+  // fake ground counts as a violation): the picture comes from the Chromium projects.
+  if (page.context().browser()?.browserType().name() !== "webkit") {
+    // caret "initial": hiding the caret injects a stylesheet too.
+    await page.screenshot({ path: test.info().outputPath("find-on-map.png"), caret: "initial" });
+  }
 
   await card.getByRole("button", { name: "Stäng" }).click();
   await expect(card).toBeHidden();
