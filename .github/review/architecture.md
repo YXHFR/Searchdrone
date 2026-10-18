@@ -38,37 +38,44 @@ Role name: `architecture`. Read `common.md` first; its rules apply here too.
   the same reference values; a checked hardware file without a matching job in
   `hardware.yml`.
 
-## stage_scope: v0.1.0
+## stage_scope: v0.2.0
 
-This release builds the foundation only. **Reject (`major`) a software change that
-builds any of the following**, except as a stub that returns "not implemented":
+This release builds the search chain on top of the foundation. In scope, and not to be
+rejected for scope: a person detector, image tiling, a tracker, a candidate queue where
+a human confirms finds, the search profile, the probability map, cloud matching of
+candidates against the profile, the skills `inspect_detection`, `orbit` and
+`capture_stills`, and following a confirmed find (`follow_track`, `stop_follow`). The
+detector on a companion computer with an AI accelerator, the bench and flight tests of
+the 7-inch quad, the link over IP on a 4G modem, and importing an onboard recording
+after landing are in scope as well. A steerable camera (tilt, pan, zoom) is allowed
+in the simulator and as a tilt servo on the drone.
 
-- Person detection: a detector model (RF-DETR, YOLOX or similar), image tiling, a
-  tracker, a candidate queue where a human confirms finds.
-- Follow functions: `follow_track`, `stop_follow`, `follow_me`, `find_me`, including
-  phone GPS or phone camera input and a fake operator phone in the simulator.
-- Search from a free-text description of the missing person, a probability map, a
-  mission debrief.
-- Remote access over the internet: a tunnel service (for example `cloudflared`), a
-  `remote` compose profile, or any listener that is reachable from outside the local
-  network.
-- MAVLink 2 message signing and message authentication codes on the vehicle link.
-- Voice control.
-- An Ultralytics plugin or any other AGPL component.
-- Real hardware in operation: companion computer and AI accelerator drivers, radio
-  link, bench flight-controller tests, hardware-in-the-loop, field profiles.
-- Camera gimbals and thermal cameras.
-- More than one drone, docking stations, swarms (only a `vehicle_id` field exists).
-- Photorealistic simulation, test campaigns over many random seeds.
-- A native mobile app, browser geolocation in the panel, a mission history view.
+**Reject (`major`) a software change that builds any of the following**, except as a
+stub that returns "not implemented":
+
+- A small local language model or vision-language model in the chain: for chat, for
+  the profile proposal or for matching without a network. Without a network, matching
+  is the colour score in code plus the operator's eyes. The person detector is not
+  affected by this rule.
+- A vision-language model on board, a Jetson, more than one drone or swarms.
+- Thermal cameras. Interfaces may carry `sensor = "thermal"` as a value, nothing more.
+- `follow_me`, `find_me` and the phone's position.
+- Reinforcement learning for where the drone searches.
+- An agent simulation of how the missing person moves.
+- A national elevation model for georeferencing. Flat ground at home altitude plus the
+  simulator's world elevation is used.
+- The 14-inch drone. The 7-inch quad is the vehicle that flies in this stage.
+- A wfb-ng video link or a separate ground radio. The link is IP over 4G.
+- Uploading a photo of the missing person, or any API that takes a photo for comparison.
+- Ultralytics, BoxMOT, `rfdetr[plus]` or any other AGPL component.
 
 **Exception: `hardware/**` is never rejected for scope.** Hardware work (CAD, FEA,
 circuit boards, the bill of materials) runs in parallel to the software. Pull requests
 under `hardware/**` are governed by the hardware gate and the owner's approval, not by
 this list.
 
-This section is temporary. It is removed or replaced by `stage_scope: v0.2.0` in its own
-pull request right after the `v0.1.0` tag. The rule below stays permanently.
+This section is temporary. It is replaced in its own pull request when the search chain
+stage is released. The rule below stays permanently.
 
 ## Permanent scope rule
 

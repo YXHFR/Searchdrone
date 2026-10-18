@@ -19,20 +19,13 @@ from sd_brain.backends.base import CommanderBackend
 from sd_brain.config import BrainConfig
 from sd_brain.constants import BRAIN_HEARTBEAT_S, CLOUD_RETRY_AFTER_S
 from sd_brain.context import ContextBuilder
-from sd_brain.decide import (
-    DecisionService,
-    JevEngine,
-    LocalDecisionEngine,
-    OpenAiDecisionsEngine,
-    QuestionEngine,
-)
+from sd_brain.decide import DecisionService, JevEngine, OpenAiDecisionsEngine, QuestionEngine
 from sd_brain.ground_client import GroundClient, GroundError
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop
-from sd_brain.runtime.base import ModelError, Sampling
+from sd_brain.runtime.base import Sampling
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.runtime.fallback import BestAvailableRuntime
-from sd_brain.runtime.local import LocalModelRuntime
 from sd_brain.secrets import Secrets
 from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry, SkillSpecPublic
 
@@ -50,7 +43,6 @@ class Brain:
     cfg: BrainConfig
     ground: GroundClient
     loop: CommanderLoop
-    local: LocalModelRuntime
     runtime: BestAvailableRuntime
     health: HealthState
     http: httpx.AsyncClient
@@ -67,15 +59,11 @@ def sampling_of(cfg: BrainConfig) -> Sampling:
 
 
 def _engines(
-    cfg: BrainConfig, secrets: Secrets, http: httpx.AsyncClient, cloud: httpx.AsyncClient | None
+    cfg: BrainConfig, secrets: Secrets, cloud: httpx.AsyncClient | None
 ) -> list[QuestionEngine]:
     out: list[QuestionEngine] = []
     for name in cfg.decide.engines:
-        if name == "local":
-            out.append(
-                LocalDecisionEngine(cfg.llm.base_url, cfg.llm.model, secrets.llm_api_key, http)
-            )
-        elif name == "jev":
+        if name == "jev":
             c = cfg.decide.jev
             out.append(JevEngine(c.base_url, c.model, secrets.jev_api_key, cloud))
         else:
@@ -92,15 +80,12 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
         else None
     )
     ground = GroundClient(cfg.ground.commander_url, secrets.brain_token, http)
-    local = LocalModelRuntime(cfg.llm, secrets.llm_api_key, http)
     cloud = CloudModelRuntime(cfg.cloud, secrets.cloud_api_key, cloud_http)
     runtime = BestAvailableRuntime(
-        cloud, local, retry_after_s=cfg.cloud.retry_after_s or CLOUD_RETRY_AFTER_S
+        cloud, retry_after_s=cfg.cloud.retry_after_s or CLOUD_RETRY_AFTER_S
     )
     sampling = sampling_of(cfg)
-    ai_hash = ai_config_hash(
-        reg, sampling, cloud_model=cfg.cloud.model if cloud.configured else None
-    )
+    ai_hash = ai_config_hash(reg, sampling, cloud=cfg.cloud if cloud.configured else None)
     context = ContextBuilder(
         reg,
         takeoff_policy=cfg.behaviour.takeoff_policy,
@@ -122,17 +107,16 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
             sampling,
             context_tokens=cfg.llm.context_tokens,
         )
-    health = HealthState(time.monotonic, has_probe=cfg.backend.kind == "llm_local")
+    health = HealthState(time.monotonic)
     loop_ref: list[CommanderLoop] = []
 
     async def on_answer(req: Any, outcomes: Any) -> None:
         if loop_ref:
             await loop_ref[0].log_decide(req, outcomes)
 
-    # Late answers are only logged; keep them short so the local model's single slot
-    # is free for the turn.
+    # Late answers are only logged; keep the wait for them short.
     decide = DecisionService(
-        _engines(cfg, secrets, http, cloud_http), on_answer=on_answer, late_answer_s=1.0
+        _engines(cfg, secrets, cloud_http), on_answer=on_answer, late_answer_s=1.0
     )
     loop = CommanderLoop(
         ground,
@@ -143,10 +127,12 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
         ai_hash,
         health=health,
         decide=decide,
-        engine=runtime.engine if cfg.backend.kind == "llm_local" else None,
+        engine=runtime.engine if cfg.backend.kind == "cloud" else None,
     )
     loop_ref.append(loop)
-    return Brain(cfg, ground, loop, local, runtime, health, http, cloud_http)
+    if cfg.backend.kind == "cloud" and not cloud.configured:
+        log.warning("ingen molnnyckel (SD_CLOUD_API_KEY) eller modell: kommandoläget svarar")
+    return Brain(cfg, ground, loop, runtime, health, http, cloud_http)
 
 
 def registry_mismatch(local: SkillRegistry, remote: list[SkillSpecPublic]) -> list[str]:
@@ -168,40 +154,12 @@ async def _startup(b: Brain, reg: SkillRegistry) -> None:
         raise StartError(f"sd-ground svarar inte: {exc}") from None
     if registry_mismatch(reg, remote):
         raise StartError("registret i sd-ground och sd-brain skiljer sig")
-    if b.cfg.backend.kind == "llm_local":
-        try:
-            await b.local.check_key()
-        except ModelError as exc:
-            if "nyckel" in str(exc):
-                raise StartError(str(exc)) from None
-            log.warning("den lokala modellen svarar inte än (%s); kommandoläget gäller", exc)
-            for _ in range(3):
-                b.health.probe(False)
     mission = await b.ground.active_mission(b.cfg.ground.vehicle_id)
     await b.loop.set_mission(mission)
 
 
-async def _health_probe(b: Brain) -> None:
-    while True:
-        await asyncio.sleep(b.cfg.llm.health_interval_s)
-        b.health.probe(await b.local.health())
-        if b.health.may_recover():
-            ok = True
-            if b.health.needs_test_call():
-                try:
-                    await b.local.chat(
-                        [{"role": "user", "content": "ok"}],
-                        [],
-                        b.cfg.llm.call_timeout_s,
-                        Sampling(max_tokens=1),
-                    )
-                except ModelError:
-                    ok = False
-            if ok:
-                await b.loop.health_recovered()
-
-
-async def _scripted_recovery(b: Brain) -> None:
+async def _recovery(b: Brain) -> None:
+    """Leave the degraded state after the minimum time (no model to probe)."""
     while True:
         await asyncio.sleep(1)
         if b.health.may_recover():
@@ -251,9 +209,7 @@ async def run(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REG
         asyncio.create_task(_stream(b)),
         asyncio.create_task(b.loop.run_forever()),
         asyncio.create_task(_idle_ticker(b)),
-        asyncio.create_task(
-            _health_probe(b) if cfg.backend.kind == "llm_local" else _scripted_recovery(b)
-        ),
+        asyncio.create_task(_recovery(b)),
     ]
     stop = asyncio.Event()
     with contextlib.suppress(NotImplementedError):

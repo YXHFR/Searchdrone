@@ -110,6 +110,7 @@ class Situation(SdModel):
     sectors: list[dict[str, Any]]  # {sector_id, name, area_m2, status, progress}
     pins: list[MapPin]
     areas: list[Annotation]
+    paths: list[Annotation] = Field(default_factory=list[Annotation])  # drawn paths pa-<n>
     home: LatLon | None
     pilot: LatLon | None
     alerts: list[dict[str, Any]]
@@ -185,7 +186,7 @@ class DecisionLog(SdModel):
     turn_id: Id
     trigger: str = Field(pattern=r"^[a-z][a-z0-9_.]{0,63}$")
     backend: Backend
-    engine: Literal["cloud", "local"] | None = None  # which model answered
+    engine: Literal["cloud", "command"] | None = None  # the cloud model or the command mode
     model_id: str | None = Field(default=None, max_length=128)
     ai_config_hash: str = Field(pattern=_HASH)
     prompt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

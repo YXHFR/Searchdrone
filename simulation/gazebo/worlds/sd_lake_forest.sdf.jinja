@@ -220,9 +220,7 @@
 {% endif %}
     <include>
       <uri>{{ model_uri }}</uri>
-      <!-- This pose replaces the model's own: the body stands at spawn_z, legs on the
-           ground (at z = 0 they were buried and the vehicle could not take off). -->
-      <pose>0 0 {{ spawn_z }} 0 0 {{ vehicle_yaw }}</pose>
+      <pose>0 0 {{ vehicle_z }} 0 0 {{ vehicle_yaw }}</pose>
     </include>
   </world>
 </sdf>

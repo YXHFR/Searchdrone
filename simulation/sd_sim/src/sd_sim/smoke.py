@@ -1,6 +1,9 @@
-"""Smoke flight: ``python -m sd_sim.smoke [physics=gz|builtin] [gui=true|false] [instance=N]``.
+"""Smoke flight: ``python -m sd_sim.smoke [physics=gz|builtin] [gui=true|false] [instance=N]
+[world=<site world>]``.
 
-Starts SITL (with Gazebo for ``physics=gz``) with a standard vehicle, then flies
+Starts SITL (with Gazebo for ``physics=gz``) with a standard vehicle at CMAC, or with
+``world=`` the Searchdrone vehicle in a world built from a public site (at the site's
+home, on its terrain), then flies
 GUIDED, arm, take off to 20 m and land through the test rig's own MAVLink channel.
 Writes ``runs/<run>/result.json`` and exits 0 only if every check passed within 3
 minutes. While flying it checks that the simulator listens on loopback only, and with
@@ -12,36 +15,53 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from sd_sim import _args, config, gazebo, netcheck
+from sd_sim import _args, config, gazebo, netcheck, site
 from sd_sim.errors import InfraError, VehicleError
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.sitl import CMAC_HOME
 from sd_sim.util import new_run_dir, say
 
-ALLOWED_KEYS = ("physics", "gui", "instance", "dry")
+ALLOWED_KEYS = ("physics", "gui", "instance", "dry", "world")
 TAKEOFF_ALT_M = 20.0
 ALT_TOLERANCE_M = 1.5
 MAX_DURATION_S = 180.0
 FRAME_WINDOW_S = 10.0
+# Listeners, camera frames and real-time factor while hovering: 10 s of frames plus a few
+# gz calls; anything longer means a call hangs.
+MEASURE_LIMIT_S = 60.0
+# Gazebo must keep at least half of real time while hovering with the camera on.
+MIN_REAL_TIME_FACTOR = 0.5
 FRAME_SHARE = 0.9  # at least 90 % of the camera's nominal frames must arrive
 
 
-def min_frames(vehicle: str) -> int:
-    return int(FRAME_SHARE * gazebo.CAMERA_FPS[vehicle] * FRAME_WINDOW_S)
+def min_frames(vehicle: str, sim_seconds: float = FRAME_WINDOW_S) -> int:
+    """Frames the camera must deliver over ``sim_seconds`` of simulated time: the camera's
+    rate is in simulated time, so a Gazebo running slower than real time sends fewer per
+    wall-clock second without anything being wrong."""
+    return int(FRAME_SHARE * gazebo.CAMERA_FPS[vehicle] * sim_seconds)
 
 
 def harden(cfg: config.SimConfig) -> config.SimConfig:
     """Settings the smoke flight always uses, whatever local config or environment say:
-    no QGroundControl path (it bypasses the gate), the public CMAC home, the standard
-    vehicle, and the camera only in Gazebo server mode."""
+    no QGroundControl path (it bypasses the gate), a public home (CMAC with the standard
+    vehicle, or a public site's home with sd_quad14 in that site's world), and the camera
+    only in Gazebo server mode."""
     cfg.qgc = False
-    cfg.home, cfg.personal_home = CMAC_HOME, False
-    cfg.vehicle = "stock"
+    cfg.objects = ""
+    name = site.world_sites().get(cfg.world)
+    if name is not None and site.folder_for(name)[1]:  # public sites only
+        cfg.home, cfg.personal_home = site.load(name).home_arg, False
+        cfg.vehicle = "sd_quad14"
+    else:
+        cfg.home, cfg.personal_home = CMAC_HOME, False
+        cfg.vehicle = "stock"
     cfg.video = "camera" if cfg.physics == "gz" and not cfg.gui else "off"
     return cfg
 
@@ -58,18 +78,59 @@ def check_listeners(stack: Stack) -> list[str]:
     return [str(item) for item in bad]
 
 
-def count_frames(stack: Stack) -> int:
+def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
+    """Camera frames through the radio in FRAME_WINDOW_S, and Gazebo's real-time factor
+    over the same window (camera rendering is the costly part on a computer without GPU)."""
+
     def frames() -> int:
         flows: Any = stack.linksim_get("/state")["flows"]
         return int(flows["video"]["from_vehicle"]["rtp_frames"])
 
+    if stack.world is None:
+        raise InfraError("ingen Gazebo-värld kör")
     gazebo.enable_camera(stack.cfg.instance)
-    start = frames()
+    start, t_start = frames(), gazebo.world_times(stack.world, stack.cfg.instance)
     time.sleep(FRAME_WINDOW_S)
+    t_end = gazebo.world_times(stack.world, stack.cfg.instance)
+    if result is not None:
+        result["real_time_factor"] = gazebo.real_time_factor(t_start, t_end)
+        if t_start is not None and t_end is not None and t_end[0] > t_start[0]:
+            result["sim_seconds"] = round(t_end[0] - t_start[0], 2)
     return frames() - start
 
 
-def fly(harness: Harness, result: dict[str, Any], t0: float) -> None:
+Measure = Callable[[dict[str, Any], dict[str, bool]], None]
+
+
+def hover_until(
+    harness: Harness,
+    measure: Measure,
+    limit_s: float,
+    result: dict[str, Any],
+    checks: dict[str, bool],
+) -> None:
+    """Run ``measure`` in a thread while the harness keeps pumping (and so sending its
+    heartbeat). The thread writes into its own dictionaries, which are taken over only
+    when it finishes within ``limit_s``; after that a late write can change nothing, and
+    the camera check is failed."""
+    own_result: dict[str, Any] = {}
+    own_checks: dict[str, bool] = {}
+    worker = threading.Thread(target=measure, args=(own_result, own_checks), daemon=True)
+    worker.start()
+    end = time.monotonic() + limit_s
+    while worker.is_alive() and time.monotonic() < end:
+        harness.pump(0.5)
+    if worker.is_alive():
+        result["measure_error"] = f"mätningen tog längre än {limit_s:g} s"
+        checks["camera"] = False
+        return
+    result.update(own_result)
+    checks.update(own_checks)
+
+
+def fly(
+    harness: Harness, result: dict[str, Any], t0: float, hover: Callable[[], None] = lambda: None
+) -> None:
     harness.wait(lambda s: s.heartbeat, 60, "HEARTBEAT från flygkontrollen")
     harness.wait(lambda s: s.ready, 90, "position från EKF och GPS")
     result["ready_s"] = round(time.monotonic() - t0, 1)
@@ -78,6 +139,8 @@ def fly(harness: Harness, result: dict[str, Any], t0: float) -> None:
     harness.takeoff(TAKEOFF_ALT_M)
     harness.wait(lambda s: s.rel_alt_m >= TAKEOFF_ALT_M - 0.5, 60, f"höjden {TAKEOFF_ALT_M} m")
     harness.pump(5.0)  # hover: the overshoot shows up in the maximum
+    hover()
+    harness.pump(1.0)
     harness.set_mode("LAND")
     harness.wait(lambda s: not s.armed, 90, "landning och desarmering")
 
@@ -93,6 +156,8 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         "physics": cfg.physics,
         "gui": cfg.gui,
         "instance": cfg.instance,
+        "world": cfg.world if cfg.vehicle == "sd_quad14" else gazebo.STOCK_WORLD,
+        "home": cfg.home,
         "target_alt_m": TAKEOFF_ALT_M,
     }
     checks: dict[str, bool] = {}
@@ -101,18 +166,36 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         harness = Harness(stack.ports["harness_mavlink"])
         stack.up()
         fly_start = time.monotonic()
-        fly(harness, result, t0)
+
+        def measure(out: dict[str, Any], out_checks: dict[str, bool]) -> None:
+            try:
+                out["non_loopback_listeners"] = check_listeners(stack)
+                if cfg.physics == "gz" and not cfg.gui and stack.world is not None:
+                    frames = count_frames(stack, out)
+                    out["camera_frames_10s"] = frames
+                    out["camera_frames_min"] = min_frames(
+                        stack.world.vehicle, out.get("sim_seconds", FRAME_WINDOW_S)
+                    )
+                    out_checks["camera"] = frames >= out["camera_frames_min"]
+                    rtf = out.get("real_time_factor")
+                    out_checks["real_time_factor"] = rtf is not None and rtf >= MIN_REAL_TIME_FACTOR
+            except Exception as exc:  # reported in result.json, never lost in the thread
+                out["measure_error"] = stack.mask(f"{type(exc).__name__}: {exc}")
+                out_checks["camera"] = False
+
+        def in_hover() -> None:
+            # Listeners, camera and real-time factor are measured while the vehicle hovers
+            # at 20 m; the harness keeps sending its heartbeat meanwhile (GCS failsafe).
+            if harness is None:
+                return
+            hover_until(harness, measure, MEASURE_LIMIT_S, result, checks)
+
+        fly(harness, result, t0, in_hover)
         result["flight_s"] = round(time.monotonic() - fly_start, 1)
         result["max_alt_m"] = round(harness.state.max_rel_alt_m, 2)
         checks["altitude"] = abs(result["max_alt_m"] - TAKEOFF_ALT_M) <= ALT_TOLERANCE_M
-        bad = check_listeners(stack)
-        result["non_loopback_listeners"] = bad
-        checks["loopback_only"] = not bad
-        if cfg.physics == "gz" and not cfg.gui and stack.world is not None:
-            frames = count_frames(stack)
-            result["camera_frames_10s"] = frames
-            result["camera_frames_min"] = min_frames(stack.world.vehicle)
-            checks["camera"] = frames >= result["camera_frames_min"]
+        # Not measured (the measurement timed out) counts as a failed check.
+        checks["loopback_only"] = result.get("non_loopback_listeners") == []
     except (InfraError, VehicleError) as exc:
         result["error"] = stack.mask(str(exc))
         checks["completed"] = False
@@ -121,6 +204,9 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         checks["completed"] = False
     finally:
         if harness is not None:
+            if not all(checks.values()) or "error" in result:
+                # The flight controller's own words (pre-arm reasons and the like).
+                result["fc_texts"] = [stack.mask(t) for _, t in harness.state.texts[-12:]]
             harness.close()
         stack.down()
     result["duration_s"] = round(time.monotonic() - t0, 1)

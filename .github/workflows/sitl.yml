@@ -375,7 +375,7 @@ jobs:
     # smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 110
+    timeout-minutes: 170  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + 20 parity + margin
     steps:
       - *checkout
       - *check-ref
@@ -389,6 +389,32 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just sim-smoke physics=gz gui=false
+      - name: The terrain world built twice from scratch gives the same files
+        timeout-minutes: 20
+        run: uv run --package sd-sim python -m sd_sim.terrain site=hellasgarden twice=1
+      - name: Smoke flight in the terrain world (real-time factor in result.json)
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=gz gui=false world=sd_hellasgarden
+      - name: Pictures and measurements of the terrain world
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just world-snapshot
+      - name: Terrain world in the job summary
+        if: always()
+        run: |
+          for f in runs/*-smoke-i0/result.json; do
+            [ -f "$f" ] || continue
+            jq -r '"- smoke \(.world // "-"): passed \(.passed), real-time factor \(.real_time_factor // "-"), camera \(.camera_frames_10s // "-") frames in 10 s"' "$f" \
+              >> "$GITHUB_STEP_SUMMARY"
+          done
+          for f in runs/*-snapshot-i0/snapshots/summary.md; do
+            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
       - name: Our own vehicle in Gazebo (sd_quad14 takes off, hovers and lands like in SITL)
         # Runs even when the smoke flight's checks fail: the two flights test different
         # vehicles, and a red smoke flight must not hide this one.
@@ -403,6 +429,16 @@ jobs:
       - *summary
       - *scan
       - *results
+      - name: Upload the terrain world's pictures
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: world-snapshots
+          path: |
+            runs/**/snapshots/**
+            runs/*-smoke-i0/result.json
+          if-no-files-found: warn
+          retention-days: 30
       - *logs
 
   sitl-e2e:

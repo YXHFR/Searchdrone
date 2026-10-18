@@ -34,6 +34,7 @@ from sd_ground.services import charters as charter_rules
 from sd_ground.services.missions import FlowError
 from sd_safety import evaluate
 from sd_safety.constants import APPROVAL_TIMEOUT_S
+from sd_safety.targets import distance_m, line_length_m
 from sd_schemas.api import Approval, ApprovalDecisionRequest, Command, Mission
 from sd_schemas.approval import command_hash
 from sd_schemas.base import new_id
@@ -194,6 +195,20 @@ def _gate_request(
     )
 
 
+def _path_summary(params: dict[str, Any]) -> str:
+    """ "Flyg längs vägen pa-1 (5 punkter, 0,6 km)"; the numbers only when the points are
+    valid (the gate rejects the order otherwise)."""
+    name = params.get("label")
+    text = f"Flyg längs vägen {name}" if isinstance(name, str) else "Flyg längs vägen"
+    points = params.get("points")
+    try:
+        line = [(float(p["lat"]), float(p["lon"])) for p in points]  # type: ignore[union-attr]
+    except (TypeError, KeyError, ValueError):
+        return text
+    km = line_length_m(line) / 1000
+    return f"{text} ({len(line)} punkter, {km:.1f} km)".replace(".", ",")
+
+
 def _summary(skill: str, params: dict[str, Any]) -> str:
     alt = params.get("alt_m")
     speed = params.get("speed_ms")
@@ -208,6 +223,7 @@ def _summary(skill: str, params: dict[str, Any]) -> str:
         "return_home": "Flyg hem",
         "report": "Rapportera",
         "mark_location": "Markera på kartan",
+        "follow_path": _path_summary(params),
     }
     text = parts.get(skill, skill)
     if alt is not None:
@@ -271,6 +287,8 @@ async def submit(
             phase="submit",
         )
         gate = evaluate(req, ctx)
+        if issuer_kind == "brain" and skill == "follow_path" and gate.decision != "REJECT":
+            gate = await _drawn_path_check(flow, mission_id, params) or gate
         now = flow.now()
         status = {"REJECT": "rejected_by_gate", "PENDING_APPROVAL": "pending_approval"}.get(
             gate.decision, "done" if skill in _GROUND_SKILLS else "dispatched"
@@ -359,6 +377,39 @@ async def submit(
             await _dispatch(flow, mission, stored, approval=None)
         stored = await flow.repo.command(command_id) or stored
     return Submitted(stored, gate, created=True)
+
+
+PATH_MATCH_M: Final = 0.05  # the database keeps nine decimals; well under a metre
+
+
+async def _drawn_path_check(
+    flow: MissionFlow, mission_id: str, params: dict[str, Any]
+) -> GateDecision | None:
+    """The AI's follow_path must fly exactly the pilot's drawn path it names (``label``):
+    the model never writes coordinates, and the ground does not trust that the AI process
+    did not. A rejection (SCHEMA_INVALID) when the path is unknown or the points differ."""
+    label = params.get("label")
+    anns = [] if flow.g.repo is None else await flow.g.repo.annotations(mission_id)
+    drawn = next((a for a in anns if a.kind == "path" and a.label == label), None)
+    try:
+        asked = [(float(p["lat"]), float(p["lon"])) for p in params["points"]]
+    except (KeyError, TypeError, ValueError):
+        return None  # the gate already refused malformed points
+    if drawn is not None:
+        line = [(float(lat), float(lon)) for lon, lat in drawn.geometry["coordinates"]]
+        if len(line) == len(asked) and all(
+            distance_m(*a, *b) <= PATH_MATCH_M for a, b in zip(asked, line, strict=True)
+        ):
+            return None
+    text = f"Vägen {label} finns inte på kartan, eller punkterna är inte den ritade vägen."
+    return GateDecision(
+        decision="REJECT",
+        reason_codes=["SCHEMA_INVALID"],
+        rule_ids=["R-PATH-DRAWN"],
+        message_sv=text,
+        details={"path": label if isinstance(label, str) else None},
+        side="ground",
+    )
 
 
 def _rate() -> Any:

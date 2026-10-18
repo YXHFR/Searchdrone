@@ -90,7 +90,7 @@ def resume_target(g: GuardInput) -> Outcome:
     rp = g.resume_point
     if rp is None:
         return Refusal("ONB_NOTHING_TO_RESUME")
-    return S.TRANSIT if rp.kind == "goto" else S.SURVEY
+    return S.TRANSIT if rp.kind == "goto" or rp.path else S.SURVEY
 
 
 def within_classification_window(g: GuardInput) -> Outcome:

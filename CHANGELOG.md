@@ -6,8 +6,51 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The cloud model is the AI commander and the local language model is gone: no
+  llama-server in `compose.yaml`, no `just models-fetch`, `just llm-up`, `just check-model`
+  or `just brain-eval-model`, and no local decision engine. Without network or key, or
+  when the cloud does not answer in time, the fixed command mode answers the same turn;
+  the brain's heartbeat, `chat.brain_status` and `/system/status` say which engine
+  answers (`cloud` or `command`), and the panel shows "AI:n svarar inte" with fixed
+  command buttons. `[cloud]` gains `fallback_model` (asked when the main model errors),
+  `reasoning_effort` (default `low`) and `[cloud.provider]` (OpenRouter provider routing,
+  `data_collection = "deny"` by default). Defaults: `z-ai/glm-5.3-flash` with
+  `anthropic/claude-haiku-5.5` as fallback. The backend kind `llm_local` is now `cloud`
+  (old `brain.toml` and `sim.toml` files still load). `just perf` measures the cloud model's answer time when a key
+  is set and skips with a line otherwise; `just brain-eval-cloud` runs the chat scenarios
+  against it.
+- **Breaking (`commander/v1`):** the decision engine `local` is gone. `DecisionLog.engine`
+  and `SystemStatus.brain_engine` now report `command` where they reported `local`, and
+  readers that matched on `local` must match on `command`.
+
 ### Added
 
+- A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
+  Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
+  OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain
+  with roads and road markings, about 25 000 spruce, pine and birch trees, buildings from
+  the map's footprints, parked cars and lakes. It is the default for `just sim`;
+  `just demo`, `brain=scripted` and the test suites keep the flat world at CMAC. Gazebo,
+  SITL's home and the panel's map pack (`just maps-fetch site=hellasgarden`) share one origin.
+  `just world-fetch` refreshes a site, or fetches your own area from Lantmäteriet into
+  `build/` only. `just world-snapshot` takes pictures at 40 m and 100 m and from the side,
+  and measures a road's width and the map overlap in them. `just sim-smoke world=...`
+  flies in a terrain world and reports Gazebo's real-time factor.
+- Fly a drawn path: the pilot draws a path on the map ("Rita väg", `pa-1`, ...: a
+  `path` annotation, a GeoJSON LineString of 2-50 points) and asks for it in the chat. The
+  AI proposes `follow_path` by the path's name only; sd-brain takes the points from the
+  drawn path, so the model never writes coordinates. The order always needs the pilot's
+  click, and the drone flies the points as an AUTO mission and then hovers at the last
+  one. The gate checks the whole line against the charter, the height and speed limits,
+  a 5 km cap (`PATH_TOO_LONG`) and the battery (`ROUTE_BATTERY`: the path, the flight
+  home and the landing must leave the reserve, at an assumed 5 % per minute), with the
+  numbers in the Swedish message. The panel shows drawn paths, the planned path
+  (dashed), the flown part (solid) and the progress in %, and refuses a path outside the
+  search area before saving it. SITL scenarios SC_PATH (every point within 3 m, then
+  hover) and SC_PATH_stop (STOP halfway: BRAKE at once, standing still within 5 s as
+  SC02).
 - Scenario objects in the simulator world (`sd_sim.objects`): boxes from a YAML file
   (`just sim objects=<file>`) or any `WorldObject` from code are placed on the ground at
   metres east/north of home, can carry a Gazebo semantic label, and their facit (world and
@@ -116,6 +159,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The panel keeps a drawn path on the map (planned, flown part and progress) while the
+  pilot's Resume flies the rest of it after STOP, and shows it as flown when the drone
+  hovers at its end.
 - The onboard computer reads the flight controller's fence back right before every
   takeoff and refuses with `FENCE_NOT_VERIFIED` when it differs from the charter's.
 - When the onboard battery rule flies home by itself, the mission returns (cause
@@ -124,6 +170,10 @@ All notable changes to this project are listed here. The format follows
 - The ground keeps the flight controller's failsafe texts (a fence breach comes as a
   notice) at any severity.
 - A ready-made charter proposal builds on the charter in force.
+- The safety parameters pin `AVOID_ENABLE 3` (ArduPilot's default, braking before the
+  fence), so the onboard computer reads it back before every takeoff. SC16b runs on its own
+  SITL with `AVOID_ENABLE 2` (`simulation/sitl/params/tests/fence_no_brake.parm`): the
+  climb no longer stops just below `FENCE_ALT_MAX`, so the height fence is breached every run.
 
 - One clock abstraction: SD-link takes its time from `sd_obs.clock.Clock`; the two fake
   clocks are merged into `sd_testing.FakeClock`, which production packages may not import.
@@ -134,9 +184,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
-- `sd_quad14` takes off in Gazebo. Two faults in the model and world templates kept it on
-  the ground at full throttle: the blade-surface (LiftDrag) plugins took the inner loop's
-  index as the rotor number, so all eight surfaces sat on rotors 0 and 1 (rotors 2 and 3
-  gave no lift, about 20 N for a 22.6 N vehicle); and the world's include pose (z = 0)
-  replaced the model's own height, so the legs started buried in the ground. Unit tests
-  check both, and `sitl-nightly-gz` now also flies `sd_quad14` (the parity flight).
+- The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
+  (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
+  vehicle now starts with its legs on the ground in every world; in a site world they were
+  inside the landing pad's box and stuck to it.
+- `sitl-nightly-gz` also flies `sd_quad14` (the parity flight), even when the smoke
+  flight's checks fail.

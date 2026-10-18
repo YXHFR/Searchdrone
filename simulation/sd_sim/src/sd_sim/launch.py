@@ -24,7 +24,7 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, objects, paths, ports, procs, services, world
+from sd_sim import _args, config, gazebo, objects, paths, ports, procs, services, site, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -44,6 +44,7 @@ ALLOWED_KEYS = (
     "private_db",
     "dry",
     "objects",
+    "world",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
@@ -56,7 +57,6 @@ HEALTH_DB_S = 60.0
 HEALTH_GROUND_S = 30.0
 HEALTH_ONBOARD_S = 30.0
 HEALTH_BRAIN_S = 30.0
-HEALTH_LLM_S = 120.0
 DEMO_SCRIPT = "simulation/scenarios/scripts/SC01.yaml"
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
@@ -208,8 +208,13 @@ class Stack:
         return (
             self.cfg.physics == "gz"
             and self.cfg.vehicle == "sd_quad14"
-            and self.cfg.world == world.WORLD_NAME
+            and self.cfg.world in world.known_worlds(self.repo)
         )
+
+    def world_half_m(self) -> float:
+        """How far the world reaches from home: a site's own size, else the flat world's."""
+        name = site.world_sites(self.repo).get(self.cfg.world)
+        return site.load(name, self.repo).half_size_m if name else world.GROUND_SIZE_M / 2
 
     def world_objects(self) -> list[objects.WorldObject]:
         """Load and check ``objects=`` before anything starts; refuse it where it cannot apply."""
@@ -217,7 +222,7 @@ class Stack:
             return []
         if not self.renders_world():
             raise InfraError(
-                f"objects= kräver physics=gz, vehicle=sd_quad14 och världen {world.WORLD_NAME}."
+                "objects= kräver physics=gz, vehicle=sd_quad14 och en av Searchdrones världar."
             )
         path = (self.repo / self.cfg.objects).resolve()
         if not path.is_relative_to(self.repo.resolve()):
@@ -225,7 +230,7 @@ class Stack:
         try:
             placed: list[objects.WorldObject] = list(objects.load(path))
             # The same checks the renderer makes, so a bad file stops here, not in Gazebo.
-            objects.check(placed, world.GROUND_SIZE_M / 2)
+            objects.check(placed, self.world_half_m())
             for obj in placed:
                 world.checked_fragment(obj)
         except objects.ObjectError as exc:
@@ -605,7 +610,7 @@ class Stack:
 
     def start_ground(self) -> procs.Proc:
         env = self.ground_process_env()
-        proc = self._start_service("sd-ground", [sys.executable, "-m", "sd_ground", "serve"], env)
+        proc = self._start_service("sd-ground", services.ground_serve_argv(), env)
         self._wait(
             "sd-ground",
             proc,
@@ -647,13 +652,6 @@ class Stack:
         if kind == "none":
             say("hoppar över sd-brain (brain=none)")
             return
-        timeout = HEALTH_BRAIN_S
-        if kind == "llm_local":
-            timeout = HEALTH_LLM_S
-            if not services.tcp_open(self.ports["llm_http"]):
-                say("llama-server kör inte; försöker starta den (docker compose --profile ai)")
-                if not self._compose("--profile", "ai", "up", "-d", "--wait", "llm"):
-                    say("llama-server startade inte; AI:n får använda molnet eller kommandoläget")
         env = procs.clean_env(
             services.brain_env(self.ports, self.stack_paths(), kind, self.brain_script())
         )
@@ -666,7 +664,7 @@ class Stack:
         self._wait(
             "sd-brain",
             proc,
-            timeout,
+            HEALTH_BRAIN_S,
             lambda: self._health_ok("brain"),
             "AI-befälhavaren kopplade inte upp mot markstationen.",
         )
@@ -780,6 +778,11 @@ def _run_foreground(stack: Stack) -> int:
         stack.down()
 
 
+def default_world_for(*, demo: bool) -> str:
+    """`just sim` gets the terrain world; the demo keeps the flat world its script is for."""
+    return config.TEST_WORLD if demo else config.LAUNCH_WORLD
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] not in COMMANDS:
@@ -796,7 +799,7 @@ def main(argv: list[str] | None = None) -> int:
     dry = values.pop("dry", "") == "1" or os.environ.get("SD_SIM__DRY_RUN") == "1"
     values.pop("record", None)
     try:
-        cfg = config.load(values, demo=demo)
+        cfg = config.load(values, demo=demo, default_world=default_world_for(demo=demo))
     except config.DemoHomeError as exc:
         print(str(exc), file=sys.stderr)
         return 3
@@ -813,6 +816,12 @@ def main(argv: list[str] | None = None) -> int:
         return _status(cfg.instance)
     if cfg.personal_home:
         say(f"\033[33m{config.PERSONAL_HOME_WARNING}\033[0m")
+    site_name = site.world_sites().get(cfg.world)
+    if site_name is not None:
+        say(
+            f"Världen {cfg.world}: panelens karta behöver ett kartpaket för platsen "
+            f"(just maps-fetch site={site_name})."
+        )
     if shutil.which("ss") is None:
         say("Varning: ss saknas, portkontrollen hoppas över (installera iproute2).")
     stack = Stack(cfg, new_run_dir(cfg.instance, "demo" if demo else "sim"), services=True)

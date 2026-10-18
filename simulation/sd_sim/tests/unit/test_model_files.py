@@ -87,6 +87,28 @@ def test_model_rotors_x_frame_and_speed() -> None:
     assert multipliers[0] > 0 and multipliers[2] < 0  # CCW pair, then CW pair
 
 
+def test_every_rotor_lifts_with_both_blade_halves() -> None:
+    # Two lift surfaces per rotor, each blade's forward along its own spin: lift surfaces
+    # on the wrong rotor cancel that rotor's lift, and the vehicle cannot take off.
+    model = model_root().find("model")
+    assert model is not None
+    plugin = model.find("plugin[@name='ArduPilotPlugin']")
+    assert plugin is not None
+    spin = [float(c.findtext("multiplier") or "0") for c in plugin.iter("control")]
+    surfaces: dict[str, list[tuple[float, float]]] = {}
+    for lift in model.iter("plugin"):
+        if lift.get("name") == "gz::sim::systems::LiftDrag":
+            cp_x = float((lift.findtext("cp") or "").split()[0])
+            forward_y = float((lift.findtext("forward") or "").split()[1])
+            surfaces.setdefault(lift.findtext("link_name") or "", []).append((cp_x, forward_y))
+    assert sorted(surfaces) == [f"rotor_{i}" for i in range(4)]
+    for i, rate in enumerate(spin):
+        halves = surfaces[f"rotor_{i}"]
+        assert len(halves) == 2
+        # The blade moves along +y at +x when the joint spins positive (about +z).
+        assert all(cp_x * forward_y * rate > 0 for cp_x, forward_y in halves)
+
+
 @pytest.mark.parametrize("instance", [0, 3])
 def test_model_ports_per_instance(instance: int) -> None:
     model = model_root(instance).find("model")
@@ -102,52 +124,6 @@ def test_model_ports_per_instance(instance: int) -> None:
     assert int(gst.findtext("udp_port") or 0) == ports.for_instance(instance)["video_raw_udp"]
     assert gst.findtext("use_basic_pipeline") == "true"
     assert gst.findtext("use_cuda") == "false"
-
-
-def test_every_rotor_has_two_blade_halves_that_lift() -> None:
-    """Each rotor link carries two LiftDrag surfaces, one each side of the hub, whose
-    forward direction is the way that blade half moves at the rotor's commanded spin. A
-    surface on the wrong link or facing backwards gives no lift (Gazebo skips it)."""
-    model = model_root().find("model")
-    assert model is not None
-    spin = {
-        c.findtext("jointName"): float(c.findtext("multiplier") or 0) for c in model.iter("control")
-    }
-    lifts: dict[str, list[tuple[float, float]]] = {}
-    for p in model.iter("plugin"):
-        if p.get("filename") == "gz-sim-lift-drag-system":
-            cp_x = float((p.findtext("cp") or "").split()[0])
-            fwd_y = float((p.findtext("forward") or "").split()[1])
-            lifts.setdefault(p.findtext("link_name") or "", []).append((cp_x, fwd_y))
-    assert sorted(lifts) == [f"rotor_{i}" for i in range(4)]
-    for link, surfaces in lifts.items():
-        sign = math.copysign(1.0, spin[f"{link}_joint"])
-        assert sorted(cp for cp, _ in surfaces) == [-world.BLADE_CP_M, world.BLADE_CP_M]
-        # A positive spin about +z moves the blade at +x towards +y (and at -x towards -y).
-        for cp_x, fwd_y in surfaces:
-            assert math.copysign(1.0, cp_x) * fwd_y == sign, (link, cp_x, fwd_y)
-
-
-def test_vehicle_stands_on_its_legs_in_the_world() -> None:
-    """The world's include pose replaces the model's own: it must lift the body to the
-    model's height, or the legs start buried in the ground and the vehicle cannot take
-    off however hard the rotors push."""
-    model = model_root().find("model")
-    assert model is not None
-    body_z = pose(model)[2]
-    legs = [
-        pose(c)[2] - float(c.findtext("geometry/cylinder/length") or 0) / 2
-        for c in model.iter("collision")
-        if (c.get("name") or "").startswith("leg_")
-    ]
-    assert len(legs) == 4 and all(abs(body_z + low) < 1e-9 for low in legs)  # feet at z = 0
-    world_root = ET.fromstring(world.world_sdf(world.WORLD_NAME, 0))  # noqa: S314 - our own rendered file
-    include = next(
-        i
-        for i in world_root.iter("include")
-        if (i.findtext("uri") or "").endswith(f"{world.MODEL_NAME}_i0")
-    )
-    assert pose(include)[2] == body_z == world.SPAWN_Z_M
 
 
 def test_camera_fixed_straight_down() -> None:
@@ -292,6 +268,8 @@ def test_world_generates(tmp_path: Path) -> None:
     resource_dirs = [GAZEBO / "models", tmp_path / "build" / "sim" / "models"]
     uris = [u.text or "" for u in world_el.iter("uri")]
     assert uris == ["model://sd_quad14_i0"]
+    # The include's pose replaces the model's own: the legs stand on the ground.
+    assert pose(world_el.find("include"))[2] == world.STAND_M
     for uri in uris:
         name = uri.removeprefix("model://").split("/")[0]
         assert any((d / name / "model.config").is_file() for d in resource_dirs), uri

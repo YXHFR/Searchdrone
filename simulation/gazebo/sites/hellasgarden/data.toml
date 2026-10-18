@@ -1,0 +1,6 @@
+# Written by tools/terrain/fetch_site.py (just world-fetch). Where the data came from.
+retrieved = "2026-10-18"
+dem_source = "copernicus-glo30"
+dem_tiles = ["Copernicus_DSM_COG_10_N59_00_E018_00_DEM.tif"]
+dem_at_home_m = 26.78
+osm_features = 181

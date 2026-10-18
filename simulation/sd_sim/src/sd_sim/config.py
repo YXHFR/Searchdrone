@@ -14,11 +14,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sd_sim import paths
+from sd_sim import paths, site
 from sd_sim.sitl import CMAC_HOME
 
 DEMO_HOME_REFUSED = (
-    "Demo kräver den offentliga startplatsen CMAC. Ta bort home_override eller kör just sim."
+    "Demo kräver en offentlig startplats (CMAC eller en offentlig världs hem). "
+    "Ta bort home_override eller kör just sim."
+)
+# `just sim` uses the public terrain world unless a world is set. `just demo` and the
+# test suites keep the flat world at CMAC: the scripted commander's scenarios (SC01) have
+# pins, charters and heights for that world only.
+LAUNCH_WORLD = "sd_hellasgarden"
+TEST_WORLD = "sd_lake_forest"
+DEMO_LOCAL_SITE_REFUSED = "Demo kräver en offentlig värld. En lokal plats är ditt eget område."
+SCRIPTED_SITE_REFUSED = (
+    "brain=scripted fungerar bara i den platta testvärlden sd_lake_forest: manusen har "
+    "nålar, ramar och höjder för den."
 )
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
@@ -46,7 +57,7 @@ class SimConfig:
     speedup: int = 1
     qgc: bool = False
     link_profile: str = "perfect"
-    brain: str = "llm_local"
+    brain: str = "cloud"
     script: str = ""
     lan: bool = False
     private_db: bool = False
@@ -89,7 +100,10 @@ def load(
     demo: bool = False,
     repo: Path = paths.REPO,
     environ: dict[str, str] | None = None,
+    default_world: str = TEST_WORLD,
 ) -> SimConfig:
+    """Merge the layers; a world built from a site brings its own home (``Site.home_arg``)
+    unless a personal home is set outside the demo."""
     env = dict(os.environ if environ is None else environ)
     example = _read_toml(repo / "config" / "sim.example.toml")
     local = _read_toml(repo / "config" / "sim.toml")
@@ -130,16 +144,17 @@ def load(
     cfg.video = _choice("video", merged.get("video", "camera"), ("camera", "test", "off"))
     if cfg.video == "camera" and cfg.physics != "gz":
         cfg.video = "test"
-    cfg.world = str(merged.get("world", cfg.world))
+    cfg.world = str(merged.get("world", default_world)).strip() or default_world
     cfg.objects = str(merged.get("objects", "")).strip()
     cfg.vehicle = _choice("vehicle", merged.get("vehicle", cfg.vehicle), ("sd_quad14", "stock"))
     cfg.qgc = _bool("qgc", merged.get("qgc", False))
     cfg.link_profile = _choice(
         "link_profile", merged.get("link_profile", "perfect"), ("perfect", "field_typical", "dead")
     )
-    cfg.brain = _choice(
-        "brain", merged.get("brain", "llm_local"), ("llm_local", "scripted", "grammar", "none")
-    )
+    brain = merged.get("brain", "cloud")
+    if brain == "llm_local":  # old sim.toml from before the local model was removed
+        brain = "cloud"
+    cfg.brain = _choice("brain", brain, ("cloud", "scripted", "grammar", "none"))
     cfg.script = str(merged.get("script", ""))
     cfg.lan = _bool("lan", merged.get("lan", False))
     cfg.private_db = _bool("private_db", merged.get("private_db", False))
@@ -150,4 +165,18 @@ def load(
             raise ConfigError("home_override ska vara lat,lon,alt,heading")
         cfg.home = home
         cfg.personal_home = True
+    sites = site.world_sites(repo)
+    if cfg.world in sites:
+        if cfg.brain == "scripted":
+            raise ConfigError(SCRIPTED_SITE_REFUSED)
+        try:
+            _, public = site.folder_for(sites[cfg.world], repo)
+            if demo and not public:
+                raise DemoHomeError(DEMO_LOCAL_SITE_REFUSED)
+            if not cfg.personal_home:
+                cfg.home = site.load(sites[cfg.world], repo).home_arg
+                # A local site is the owner's own area: the same care as a personal home.
+                cfg.personal_home = not public
+        except site.SiteError as exc:
+            raise ConfigError(str(exc)) from exc
     return cfg

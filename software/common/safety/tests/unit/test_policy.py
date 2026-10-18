@@ -9,7 +9,8 @@ from sd_schemas.gate import CLEARANCE_VALID_MS
 from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry
 
-# The owner's priority list, plus the two codes added since (manual control, FC fence).
+# The owner's priority list, plus the codes added since (manual control, FC fence, the
+# drawn path's length and battery).
 SPEC_PRIORITY = [
     "SKILL_UNKNOWN",
     "SCHEMA_INVALID",
@@ -39,6 +40,8 @@ SPEC_PRIORITY = [
     "TAKEOFF_PRECONDITION",
     "BATTERY_RESERVE",
     "BATTERY_UNKNOWN",
+    "PATH_TOO_LONG",
+    "ROUTE_BATTERY",
     "ALT_ABOVE_LIMIT",
     "ALT_ABOVE_CHARTER",
     "ALT_BELOW_CHARTER",
@@ -77,7 +80,7 @@ def test_forbidden_skill_names_are_equal() -> None:
 
 def test_policy_matches_registry() -> None:
     names = SKILL_REGISTRY.names()
-    assert len(SKILL_REGISTRY) == 18
+    assert len(SKILL_REGISTRY) == 19
     assert not names & policy.FORBIDDEN_SKILL_NAMES
     for name in policy.ALWAYS_REQUIRE_APPROVAL:
         assert SKILL_REGISTRY.get(name).requires_approval_in_b, name

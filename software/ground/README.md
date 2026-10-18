@@ -81,11 +81,13 @@ routes; until they are built those answer `501 NOT_BUILT`, and `/api/v1/health` 
 
 ## Command line
 
-`sd-ground init [--lan]`, `config check`, `db setup`, `serve`, `login-link [--print-code]`,
-`pair`, `vehicle add`, `token create --name --role pilot|observer [--expires 24h]`,
+`sd-ground init [--lan]`, `config check`, `db setup`, `serve [--no-login-link]`,
+`login-link [--print-code]`, `pair`, `vehicle add`,
+`token create --name --role pilot|observer [--expires 24h]`,
 `token revoke --name`, `link-token create --vehicle [--write-onboard PATH] [--if-missing]`,
 `action stop|home --vehicle` (through the running server). Exit code 2 means the running
-server is needed but not there.
+server is needed but not there. `serve --no-login-link` leaves the login code and PIN out
+of the start-up lines, for a launcher that writes them to a log file (the simulator does).
 
 ## Database
 

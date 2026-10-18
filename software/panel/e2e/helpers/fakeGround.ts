@@ -450,7 +450,7 @@ export class FakeGround {
     }
     if (k === `POST ${ms}/annotations`) {
       const b = req.body as {
-        kind: "pin" | "area";
+        kind: "pin" | "area" | "path";
         label: string;
         geometry: Record<string, unknown>;
       };

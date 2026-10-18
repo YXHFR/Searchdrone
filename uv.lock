@@ -1757,19 +1757,23 @@ version = "0.0.0"
 source = { editable = "simulation/sd_sim" }
 dependencies = [
     { name = "jinja2" },
+    { name = "numpy" },
     { name = "pymavlink" },
     { name = "pyyaml" },
     { name = "sd-hwcalc" },
     { name = "sd-safety" },
+    { name = "shapely" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
+    { name = "numpy", specifier = ">=2.4" },
     { name = "pymavlink", specifier = ">=2.4.47" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sd-hwcalc", editable = "software/hwcalc" },
     { name = "sd-safety", editable = "software/common/safety" },
+    { name = "shapely", specifier = ">=2.1" },
 ]
 
 [[package]]

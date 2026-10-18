@@ -33,9 +33,8 @@ def test_known_bases() -> None:
     assert p["ground_panel"] == 8080
     assert p["ground_commander"] == 7700
     assert p["postgres_local"] == 5433
-    assert p["llm_http"] == 8091
     assert p["ground_remote"] == 8081
-    assert p["ground_remote"] != p["llm_http"]
+    assert "llm_http" not in p  # no local model server any more
     assert ports.for_instance(1)["harness_mavlink"] == 14574
     assert "qgc_mavlink" not in ports.for_instance(1)
 

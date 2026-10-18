@@ -1,11 +1,12 @@
 """Secrets of ``sd-brain`` and masking them in logs.
 
 * the commander token: read from ``token_file`` (``secrets/brain_token``), never ``.env``;
-* ``SD_LLM_API_KEY``: the key to the local model server (llama-server);
 * ``SD_CLOUD_API_KEY``: optional key to the cloud model (OpenAI-compatible);
 * ``SD_JEV_API_KEY`` and ``SD_OPENAI_API_KEY``: optional keys to the decision engines.
 
-The required ones are refused when empty, a placeholder or shorter than 32 characters.
+The commander token is refused when empty, a placeholder or shorter than 32 characters.
+The cloud and decision keys are optional: without them the command mode and the fixed
+stop words answer.
 The keys are read from the environment, or else from the repository's ``.env``; only
 the names above are read from that file, so the process never gets the ground
 station's database or video secrets.
@@ -31,11 +32,11 @@ __all__ = [
     "install_log_masking",
     "load_secrets",
     "mask",
+    "optional_secret",
 ]
 
 MIN_SECRET_LEN = 32
 BRAIN_KEYS = (
-    "SD_LLM_API_KEY",
     "SD_CLOUD_API_KEY",
     "SD_JEV_API_KEY",
     "SD_OPENAI_API_KEY",
@@ -75,7 +76,8 @@ def check_secret(name: str, value: str | None) -> str:
     return v
 
 
-def _optional(name: str, value: str | None) -> str | None:
+def optional_secret(name: str, value: str | None) -> str | None:
+    """``value`` stripped, ``None`` when empty; a placeholder is refused."""
     v = (value or "").strip()
     if not v:
         return None
@@ -87,7 +89,6 @@ def _optional(name: str, value: str | None) -> str | None:
 @dataclass(frozen=True)
 class Secrets:
     brain_token: str = field(repr=False)
-    llm_api_key: str = field(repr=False)
     cloud_api_key: str | None = field(default=None, repr=False)
     jev_api_key: str | None = field(default=None, repr=False)
     openai_api_key: str | None = field(default=None, repr=False)
@@ -97,7 +98,6 @@ class Secrets:
             v
             for v in (
                 self.brain_token,
-                self.llm_api_key,
                 self.cloud_api_key,
                 self.jev_api_key,
                 self.openai_api_key,
@@ -124,10 +124,9 @@ def load_secrets(
     token = check_secret("befälhavartokenet", _read_token_file(Path(token_file)))
     return Secrets(
         brain_token=token,
-        llm_api_key=check_secret("SD_LLM_API_KEY", environ.get("SD_LLM_API_KEY")),
-        cloud_api_key=_optional("SD_CLOUD_API_KEY", environ.get("SD_CLOUD_API_KEY")),
-        jev_api_key=_optional("SD_JEV_API_KEY", environ.get("SD_JEV_API_KEY")),
-        openai_api_key=_optional("SD_OPENAI_API_KEY", environ.get("SD_OPENAI_API_KEY")),
+        cloud_api_key=optional_secret("SD_CLOUD_API_KEY", environ.get("SD_CLOUD_API_KEY")),
+        jev_api_key=optional_secret("SD_JEV_API_KEY", environ.get("SD_JEV_API_KEY")),
+        openai_api_key=optional_secret("SD_OPENAI_API_KEY", environ.get("SD_OPENAI_API_KEY")),
     )
 
 

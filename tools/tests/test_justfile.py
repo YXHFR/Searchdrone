@@ -45,8 +45,9 @@ RECIPES = [
     "sim-headless",
     "e2e",
     "sim-setup",
-    "models-fetch",
     "maps-fetch",
+    "world-fetch",
+    "world-snapshot",
     "accept",
     "showcase",
     "release-prep",
@@ -56,6 +57,8 @@ RECIPES = [
     "cad-detailed",
     "check-traceability",
     "brain-token",
+    "brain-eval",
+    "brain-eval-cloud",
 ]
 ALIASES = ["gen-schemas", "sim-up", "sim-down", "bench"]
 

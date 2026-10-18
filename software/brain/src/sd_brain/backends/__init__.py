@@ -16,7 +16,7 @@ __all__ = [
 ]
 
 BACKENDS: dict[str, type] = {
-    "llm_local": LlmCommander,
+    "cloud": LlmCommander,
     "scripted": ScriptedBackend,
     "grammar": GrammarBackend,
 }

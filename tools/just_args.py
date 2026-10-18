@@ -27,7 +27,7 @@ RECIPES: dict[str, tuple[str | None, frozenset[str]]] = {
     "dev": ("B1-16", frozenset({"physics", "gui", "brain", "instance"})),
     "e2e": (None, frozenset({"runs", "offline"})),
     "accept": (None, frozenset({"phase", "sha"})),
-    "perf": ("B1-17", frozenset({"runs"})),
+    "perf": (None, frozenset({"runs"})),  # the cloud step; P0-P8 come with B1-17
     "showcase": ("B1-18", frozenset({"stage", "brain"})),
 }
 

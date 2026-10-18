@@ -7,11 +7,13 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from sd_schemas.base import GeoJsonPoint, GeoJsonPolygon, VehicleId
+from sd_schemas.api import AnnotationCreate
+from sd_schemas.base import GeoJsonLineString, GeoJsonPoint, GeoJsonPolygon, VehicleId
 from sd_schemas.safety import LimitCaps, SafetyLimits
 
 POLY = TypeAdapter(GeoJsonPolygon)
 POINT = TypeAdapter(GeoJsonPoint)
+LINE = TypeAdapter(GeoJsonLineString)
 VID = TypeAdapter(VehicleId)
 
 SQUARE = [[149.164, -35.364], [149.166, -35.364], [149.166, -35.362], [149.164, -35.364]]
@@ -122,3 +124,40 @@ def test_vehicle_id_ok(good: str) -> None:
 def test_vehicle_id_rejected(bad: str) -> None:
     with pytest.raises(ValidationError):
         VID.validate_python(bad)
+
+
+LINE_OK = {"type": "LineString", "coordinates": [[149.164, -35.364], [149.165, -35.363]]}
+
+
+def test_line_string_accepts_a_drawn_path() -> None:
+    assert LINE.validate_python(LINE_OK) == LINE_OK
+    fifty = [[149.164 + i * 1e-4, -35.364] for i in range(50)]
+    LINE.validate_python({"type": "LineString", "coordinates": fifty})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"type": "LineString", "coordinates": [[149.164, -35.364]]},  # one point
+        {"type": "LineString", "coordinates": [[149.164 + i * 1e-4, -35.364] for i in range(51)]},
+        {"type": "LineString", "coordinates": [[149.164, -35.364], [149.164, -35.364]]},
+        {"type": "LineString", "coordinates": [[-35.364, 149.164], [-35.363, 149.165]]},
+        {"type": "Polygon", "coordinates": [SQUARE]},
+        {"type": "LineString", "coordinates": [[149.164, -35.364], [149.165, -35.363]], "x": 1},
+    ],
+)
+def test_line_string_rejects(bad: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        LINE.validate_python(bad)
+
+
+def test_path_annotation_needs_a_line_and_a_pa_label() -> None:
+    assert AnnotationCreate(kind="path", label="pa-1", geometry=LINE_OK).kind == "path"
+    with pytest.raises(ValidationError):
+        AnnotationCreate(kind="path", label="P1", geometry=LINE_OK)
+    with pytest.raises(ValidationError):
+        AnnotationCreate(kind="area", label="ar-1", geometry=LINE_OK)
+    with pytest.raises(ValidationError):
+        AnnotationCreate(
+            kind="path", label="pa-1", geometry={"type": "Point", "coordinates": [149.1, -35.3]}
+        )
