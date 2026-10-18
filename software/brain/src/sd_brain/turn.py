@@ -86,7 +86,7 @@ class OutMessage(BrainModel):
 
 class TurnDiagnostics(BrainModel):
     backend: BackendName
-    engine: Literal["cloud", "local"] | None = None
+    engine: Literal["cloud", "command"] | None = None
     model_id: str | None = None
     latency_ms: int = 0
     prompt_tokens: int = 0

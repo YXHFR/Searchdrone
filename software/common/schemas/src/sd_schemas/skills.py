@@ -13,7 +13,15 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from sd_schemas.base import SKILL_NAME_PATTERN, GeoJsonPolygon, Id, LatLon, LatLonAlt, SdModel
+from sd_schemas.base import (
+    MAX_LINE_POINTS,
+    SKILL_NAME_PATTERN,
+    GeoJsonPolygon,
+    Id,
+    LatLon,
+    LatLonAlt,
+    SdModel,
+)
 from sd_schemas.charter import CharterProposal, MissionCharter
 from sd_schemas.executor import ExecutorState, GotoResumePoint, ResumePoint
 from sd_schemas.geo import plane_offset
@@ -22,11 +30,14 @@ from sd_schemas.safety import MIN_ALT_AGL_M
 __all__ = [
     "AI_SCHEMA_MIN_ALT_M",
     "FORBIDDEN_SKILL_NAMES",
+    "PATH_MAX_LENGTH_M",
     "SKILL_REGISTRY",
     "UNRESOLVED",
     "CaptureStillsParams",
     "FindMeParams",
     "FollowMeParams",
+    "FollowPathAiParams",
+    "FollowPathParams",
     "FollowTrackParams",
     "GateTargets",
     "GotoAiParams",
@@ -81,6 +92,11 @@ FORBIDDEN_SKILL_NAMES: frozenset[str] = frozenset(
 )
 
 _PIN = r"^P[0-9]{1,3}$"
+_PATH = r"^pa-[0-9]{1,3}$"  # a drawn path (the annotation's label)
+
+# The longest path follow_path flies (the gate's PATH_TOO_LONG). The battery rule usually
+# says no first; this cap keeps one order's mission and its gate check small.
+PATH_MAX_LENGTH_M = 5_000.0
 _SECTOR = r"^[A-Z]{1,2}$"
 
 
@@ -111,6 +127,9 @@ class GateTargets(SdModel):
     path: list[LatLon] = Field(default_factory=list[LatLon])
     alts_m: list[float] = Field(default_factory=list[float])
     speed_ms: float | None = None
+    # The gate also checks that the battery lasts for ``path`` plus the flight home from
+    # its end, with the reserve left (follow_path).
+    route_energy: bool = False
 
 
 UNRESOLVED = GateTargets(resolved=False)
@@ -235,6 +254,32 @@ class SurveySectorParams(SkillParams):
         )
 
 
+class FollowPathParams(SkillParams):
+    """Fly a drawn line point by point at one height, then hover at its last point.
+
+    ``points`` come from the pilot's drawn path (sd-brain resolves ``pa-<n>``, and the
+    ground checks that they are that path's points); the model never writes them.
+    ``label`` is that path's name, for the card and the map.
+    """
+
+    points: list[LatLon] = Field(min_length=2, max_length=MAX_LINE_POINTS)
+    alt_m: float = _Alt
+    speed_ms: float | None = _Speed
+    label: str | None = Field(default=None, pattern=_PATH)
+
+    def gate_targets(self, ctx: TargetContext) -> GateTargets:
+        here = _here(ctx)
+        if here is None:
+            return UNRESOLVED
+        return GateTargets(
+            points=list(self.points),
+            path=[here, *self.points],
+            alts_m=[self.alt_m],
+            speed_ms=self.speed_ms,
+            route_energy=True,
+        )
+
+
 class HoldParams(_NoTargets):
     reason: str = Field(default="", max_length=200)
 
@@ -260,6 +305,7 @@ class ResumeParams(SkillParams):
             path=[here, rp.interrupted_at, *remaining],
             alts_m=[rp.alt_m],
             speed_ms=rp.speed_ms,
+            route_energy=rp.path,  # the rest of a drawn path: the battery is checked again
         )
 
 
@@ -417,6 +463,12 @@ class SurveySectorAiParams(SdModel):
     sector: str = Field(pattern=_SECTOR)
     alt_m: float | None = _AiAlt
     spacing_m: float | None = Field(default=None, ge=10, le=100)
+    speed_ms: float | None = _AiSpeed
+
+
+class FollowPathAiParams(SdModel):
+    path: str = Field(pattern=_PATH)  # a path the pilot drew, e.g. "pa-1"
+    alt_m: float | None = _AiAlt
     speed_ms: float | None = _AiSpeed
 
 
@@ -583,6 +635,22 @@ _SPECS: tuple[SkillSpec, ...] = (
         description_en="Search a sector of the charter in a lawnmower pattern.",
         synonyms_sv=["sök av", "genomsök", "sök området"],
         title_sv="Sök av sektor",
+    ),
+    SkillSpec(
+        name="follow_path",
+        stage=1,
+        status="implemented",
+        allowed_from=_MOVING_FROM,
+        runs_on="onboard",
+        params_model=FollowPathParams,
+        ai_params_model=FollowPathAiParams,
+        requires_approval_in_b=True,
+        moves_vehicle=True,
+        allowed_when="airborne",
+        rate_class="action",
+        description_en="Fly along a path the pilot drew on the map (pa-1 ...), then hover.",
+        synonyms_sv=["flyg vägen", "följ vägen", "följ linjen", "flyg längs"],
+        title_sv="Flyg längs väg",
     ),
     SkillSpec(
         name="hold",
@@ -804,5 +872,5 @@ _SPECS: tuple[SkillSpec, ...] = (
 )
 
 SKILL_REGISTRY = SkillRegistry(_SPECS)
-"""All 18 skills. A skill stays a stub until its executor and tests exist; the six
+"""All 19 skills. A skill stays a stub until its executor and tests exist; the seven
 onboard skills of the foundation are implemented by ``sd_onboard``."""

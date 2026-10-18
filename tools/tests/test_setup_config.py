@@ -43,12 +43,14 @@ def test_fills_generated_secrets(tmp_path: Path) -> None:
 
 def test_existing_values_and_configs_kept(tmp_path: Path) -> None:
     root = _project(tmp_path)
-    (root / ".env").write_text("SD_GROUND__DB_PASSWORD=keepme\nSD_LLM_API_KEY=CHANGE_ME\n")
+    (root / ".env").write_text(
+        "SD_GROUND__DB_PASSWORD=keepme\nSD_GROUND__VIDEO_API_PASSWORD=CHANGE_ME\n"
+    )
     (root / "config" / "ground.toml").write_text("# mine\n")
     setup_config.main([str(root)])
     env = _env(root)
     assert env["SD_GROUND__DB_PASSWORD"] == "keepme"
-    assert len(env["SD_LLM_API_KEY"]) == 32
+    assert len(env["SD_GROUND__VIDEO_API_PASSWORD"]) == 32
     assert (root / "config" / "ground.toml").read_text() == "# mine\n"
     assert (root / "config" / "brain.toml").is_file()
 
@@ -64,7 +66,7 @@ def test_idempotent(tmp_path: Path) -> None:
 def test_existing_world_readable_env_becomes_private(tmp_path: Path) -> None:
     root = _project(tmp_path)
     env = root / ".env"
-    env.write_text("SD_LLM_API_KEY=\n")
+    env.write_text("SD_GROUND__VIDEO_API_PASSWORD=\n")
     env.chmod(0o644)
     setup_config.main([str(root)])
     assert stat.S_IMODE(env.stat().st_mode) == 0o600

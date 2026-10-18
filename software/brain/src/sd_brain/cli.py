@@ -1,4 +1,4 @@
-"""``sd-brain run | eval | check-model | print-prompt | config-check``."""
+"""``sd-brain run | eval | perf-cloud | print-prompt | config-check``."""
 
 from __future__ import annotations
 
@@ -13,9 +13,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from sd_brain.ai_config import ai_config_hash, model_sha256
+from sd_brain.ai_config import ai_config_hash
 from sd_brain.config import BrainConfig, ConfigError, load_config
-from sd_brain.secrets import SecretError, brain_env, install_log_masking, load_secrets
+from sd_brain.secrets import (
+    SecretError,
+    Secrets,
+    brain_env,
+    install_log_masking,
+    load_secrets,
+    optional_secret,
+)
 
 __all__ = ["main"]
 
@@ -93,18 +100,20 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
 
     from sd_brain.evals.runner import run_scenario, summarize
     from sd_brain.runtime.base import Sampling
-    from sd_brain.runtime.local import LocalModelRuntime
+    from sd_brain.runtime.cloud import CloudModelRuntime
 
     runs: list[list[Any]] = []
     client: httpx.AsyncClient | None = None
     factory: Callable[[dict[str, Any]], Any] | None = None
-    if args.backend == "llm_local":
-        secrets_key = brain_env().get("SD_LLM_API_KEY", "")
-        client = httpx.AsyncClient(trust_env=False)
-        local = LocalModelRuntime(cfg.llm, secrets_key, client)
+    if args.backend == "cloud":
+        key = _cloud_key()
+        logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
+        install_log_masking(Secrets(brain_token="", cloud_api_key=key))
+        client = httpx.AsyncClient()
+        cloud = CloudModelRuntime(cfg.cloud, key, client)
 
         def make(_: dict[str, Any]) -> Any:
-            return local
+            return cloud
 
         factory = make
 
@@ -129,6 +138,13 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
     return summarize(runs)
 
 
+def _cloud_key() -> str:
+    key = optional_secret("SD_CLOUD_API_KEY", brain_env().get("SD_CLOUD_API_KEY"))
+    if key is None:
+        raise SecretError("SD_CLOUD_API_KEY saknas i .env; molnmodellen kan inte mätas")
+    return key
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     from sd_brain.runtime.base import Sampling
     from sd_schemas.skills import SKILL_REGISTRY
@@ -138,13 +154,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
         paths = [p for p in paths if any(o in p.name for o in args.only.split(","))]
     cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
     report = asyncio.run(_eval(args, paths, cfg))
-    if args.backend == "llm_local":
-        h = ai_config_hash(SKILL_REGISTRY, Sampling())
+    if args.backend == "cloud":
+        h = ai_config_hash(SKILL_REGISTRY, Sampling(), cloud=cfg.cloud)
         report.update(
-            backend="llm_local",
+            backend="cloud",
             ai_config_hash=h,
-            model_sha256=model_sha256(),
-            gpu_name=args.gpu_name or None,
+            model=cfg.cloud.model,
+            fallback_model=cfg.cloud.fallback_model,
+            reasoning_effort=cfg.cloud.reasoning_effort,
             ram_total_gb=_ram_total_gb(),
             git_sha=_git_sha(Path.cwd()),
         )
@@ -160,40 +177,34 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0 if report["passed"] else 1
 
 
-def cmd_check_model(args: argparse.Namespace) -> int:
+def cmd_perf_cloud(args: argparse.Namespace) -> int:
+    """Time ``runs`` small chat calls to the cloud model; skip with exit 0 without a key."""
     import httpx
 
-    from sd_brain.checkmodel import check_model, write_report
-    from sd_brain.runtime.base import ModelError
-    from sd_brain.runtime.local import LocalModelRuntime
-    from sd_brain.secrets import check_secret
+    from sd_brain.perf import measure_cloud, skip_line
 
-    try:
-        key = check_secret("SD_LLM_API_KEY", brain_env().get("SD_LLM_API_KEY"))
-    except SecretError as exc:
-        _err(str(exc))
-        return 2
     cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+    key = optional_secret("SD_CLOUD_API_KEY", brain_env().get("SD_CLOUD_API_KEY"))
+    if key is None or not cfg.cloud.model:
+        _out(skip_line())
+        return 0
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
+    install_log_masking(Secrets(brain_token="", cloud_api_key=key))
 
-    async def go() -> int:
-        async with httpx.AsyncClient(trust_env=False) as client:
-            rt = LocalModelRuntime(cfg.llm, key, client)
-            code, report = await check_model(
-                rt,
-                duration_s=args.duration_s,
-                interval_s=args.interval_s,
-                vram_log=Path(args.vram_log) if args.vram_log else None,
-                image=args.image,
-            )
-            write_report(Path(args.report_dir), report)
-            _out(json.dumps(report))
-            return code
+    async def go() -> dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            return await measure_cloud(cfg.cloud, key, client, runs=args.runs)
 
-    try:
-        return asyncio.run(go())
-    except ModelError as exc:
-        _err(str(exc))
-        return 1
+    report = asyncio.run(go())
+    out_dir = Path(args.report_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = out_dir / f"perf-cloud-{stamp}.json"
+    report["git_sha"] = _git_sha(Path.cwd())
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _out(json.dumps(report, ensure_ascii=False))
+    _out(f"Rapport: {path}")
+    return 0 if report["ok"] else 1
 
 
 def cmd_print_prompt(args: argparse.Namespace) -> int:
@@ -249,21 +260,17 @@ def parser() -> argparse.ArgumentParser:
         if name == "print-prompt":
             sp.add_argument("--mission", required=True)
     ev = sub.add_parser("eval")
-    ev.add_argument("--backend", choices=["replay", "llm_local"], default="replay")
+    ev.add_argument("--backend", choices=["replay", "cloud"], default="replay")
     ev.add_argument("--scenarios", default="software/brain/src/sd_brain/evals/scenarios")
     ev.add_argument("--golden", default="software/brain/tests/golden")
     ev.add_argument("--repeat", type=int, default=1)
     ev.add_argument("--report-dir", default="data/reports")
     ev.add_argument("--config", default="config/brain.toml")
-    ev.add_argument("--gpu-name", default="")
     ev.add_argument("--only", default="")
-    cm = sub.add_parser("check-model")
-    cm.add_argument("--duration-s", type=float, default=300)
-    cm.add_argument("--interval-s", type=float, default=10)
-    cm.add_argument("--report-dir", default="data/reports")
-    cm.add_argument("--vram-log", default="")
-    cm.add_argument("--image", default="")
-    cm.add_argument("--config", default="config/brain.toml")
+    pc = sub.add_parser("perf-cloud")
+    pc.add_argument("--runs", type=int, default=10)
+    pc.add_argument("--report-dir", default="data/reports")
+    pc.add_argument("--config", default="config/brain.toml")
     return p
 
 
@@ -273,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": cmd_run,
         "config-check": cmd_config_check,
         "eval": cmd_eval,
-        "check-model": cmd_check_model,
+        "perf-cloud": cmd_perf_cloud,
         "print-prompt": cmd_print_prompt,
     }
     try:

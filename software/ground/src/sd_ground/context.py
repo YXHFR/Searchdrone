@@ -7,7 +7,7 @@ import socket
 from collections import deque
 from dataclasses import dataclass, field
 from importlib.metadata import version
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from sd_ground.auth import BrainToken, PendingLogins, SessionRecord, SessionStore
 from sd_ground.bus import EventBus
@@ -66,6 +66,7 @@ class Ground:
     version: str = field(default_factory=lambda: version("sd-ground"))
     db_ok: bool = False
     brain_state: str = "down"
+    brain_engine: Literal["cloud", "command"] | None = None  # from the brain's heartbeat
     video_state: PartState = "down"  # set by services.video.VideoMonitor
     operator_seen_mono: float | None = None
     pilot_ws: int = 0

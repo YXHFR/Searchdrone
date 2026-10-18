@@ -42,6 +42,24 @@ variant = "test_demo_flight"
 measure = "lyft till landning"
 
 [[capability]]
+group = "Flygning"
+name = "Ritad väg, sämsta punkten"
+variant = "test_sc_path_points_within_3_m_then_hover"
+measure = "sämsta vägpunkten"
+
+[[capability]]
+group = "Flygning"
+name = "Svävar vid vägens slut"
+variant = "test_sc_path_points_within_3_m_then_hover"
+measure = "svävar vid vägens sista punkt"
+
+[[capability]]
+group = "Säkerhet"
+name = "STOPP på en ritad väg"
+variant = "test_sc_path_stop_halfway_brakes_at_once"
+measure = "STOPP på vägen: stillastående"
+
+[[capability]]
 group = "Säkerhet"
 name = "STOPP"
 variant = "test_sc02_stop_and_resume"

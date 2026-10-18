@@ -258,8 +258,12 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       const c = e.data as Command & { reason_codes?: string[]; message_sv?: string };
       if (!forMission) break;
       m.upsertCommand(c);
-      if (c.status === "rejected_by_gate" && c.message_sv)
+      if (c.status === "rejected_by_gate" && c.message_sv) {
         useUiStore.getState().log("info", `Grinden stoppade ${c.skill}: ${c.message_sv}`);
+        // A drawn path the gate will not fly (outside the area, the battery): tell the pilot.
+        if (c.skill === "follow_path")
+          useUiStore.getState().toast(`Vägen nekades: ${c.message_sv}`);
+      }
       break;
     }
     case "clearance.updated":
@@ -299,12 +303,13 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       break;
     }
     case "chat.brain_status": {
-      const state = (e.data as { state?: string }).state;
+      const { state, engine } = e.data as { state?: string; engine?: string | null };
       const busy = state === "busy";
       const known = state === "ready" || busy || state === "degraded" || state === "down";
       live.patch({
         brainBusy: busy,
         brainState: known ? state : live.brainState,
+        brainEngine: engine === "cloud" || engine === "command" ? engine : null,
         brainBusySince: busy ? (live.brainBusySince ?? Date.now()) : null,
         aiDisconnected: state === "ready" || busy ? false : live.aiDisconnected,
       });

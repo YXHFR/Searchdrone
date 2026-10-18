@@ -31,6 +31,7 @@ def extra_transitions() -> dict[Any, Any]:
 
 # Importing the modules registers the handlers.
 from sd_onboard.skills import (  # noqa: E402
+    follow_path,
     goto,
     hold,
     resume,
@@ -39,4 +40,4 @@ from sd_onboard.skills import (  # noqa: E402
     takeoff,
 )
 
-__all__ += ["goto", "hold", "resume", "return_home", "survey_sector", "takeoff"]
+__all__ += ["follow_path", "goto", "hold", "resume", "return_home", "survey_sector", "takeoff"]
