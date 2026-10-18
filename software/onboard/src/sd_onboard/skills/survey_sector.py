@@ -57,7 +57,7 @@ def progress_pct(next_idx: int, n_waypoints: int) -> float:
 
 class SurveyRun:
     """One AUTO mission over ``waypoints[base_index:]`` (after ``interrupted_at`` when
-    resumed). Shared by ``survey_sector`` and ``resume``."""
+    resumed). Shared by ``survey_sector``, ``follow_path`` and ``resume``."""
 
     def __init__(
         self,
@@ -68,6 +68,7 @@ class SurveyRun:
         *,
         base_index: int = 0,
         interrupted_at: LatLon | None = None,
+        target_state: ExecutorState = ExecutorState.SURVEY,
     ) -> None:
         self.command_id = command_id
         self.waypoints = waypoints
@@ -78,6 +79,7 @@ class SurveyRun:
         self.seq_offset = 0 if interrupted_at is None else 1
         self.next_index = base_index
         self.mission_hash: str | None = None
+        self.target_state = target_state
 
     @property
     def flown_points(self) -> list[LatLon]:
@@ -100,7 +102,7 @@ class SurveyRun:
         )
         return SkillPlan(
             path=path,
-            target_state=ExecutorState.SURVEY,
+            target_state=self.target_state,
             speed_ms=self.speed_ms,
             expected_duration_s=length / self.speed_ms
             + abs(ctx.vehicle.alt_rel_home_m - self.alt_m) / 2,

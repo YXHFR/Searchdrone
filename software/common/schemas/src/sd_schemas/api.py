@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
@@ -11,6 +12,7 @@ from sd_schemas.base import (
     PARAMS_MAX_BYTES,
     PARAMS_MAX_KEYS,
     SKILL_NAME_PATTERN,
+    GeoJsonLineString,
     GeoJsonPoint,
     GeoJsonPolygon,
     Id,
@@ -28,6 +30,7 @@ from sd_schemas.sv_commands import OverrideIntent
 
 __all__ = [
     "CHAT_MAX_CHARS",
+    "PATH_LABEL_PATTERN",
     "AbsoluteLimits",
     "ActionDispatched",
     "ActionDispatchedAll",
@@ -38,6 +41,7 @@ __all__ = [
     "AlertCode",
     "Annotation",
     "AnnotationCreate",
+    "AnnotationKind",
     "ApiError",
     "ApiErrorItem",
     "Approval",
@@ -484,27 +488,35 @@ class ChatPost(SdModel):
     in_reply_to: Id | None = None
 
 
+AnnotationKind = Literal["pin", "area", "path"]
+PATH_LABEL_PATTERN = r"^pa-[0-9]{1,3}$"  # what the AI refers to, like P1 for pins
+_GEOMETRY_OF: dict[str, str] = {"pin": "Point", "area": "Polygon", "path": "LineString"}
+
+
 class Annotation(SdModel):
     id: Id
     mission_id: Id
-    kind: Literal["pin", "area"]
+    kind: AnnotationKind
     label: str
-    geometry: dict[str, Any]  # GeoJSON Point | Polygon
+    geometry: dict[str, Any]  # GeoJSON Point | Polygon | LineString
     created_by: str
     created_at: AwareDatetime
     area_m2: float | None
+    length_m: float | None = None  # paths only
 
 
 class AnnotationCreate(SdModel):
-    kind: Literal["pin", "area"]
+    kind: AnnotationKind
     label: str = Field(min_length=1, max_length=40)
-    geometry: GeoJsonPoint | GeoJsonPolygon
+    geometry: GeoJsonPoint | GeoJsonPolygon | GeoJsonLineString
 
     @model_validator(mode="after")
     def _matches_kind(self) -> AnnotationCreate:
-        expected = "Point" if self.kind == "pin" else "Polygon"
+        expected = _GEOMETRY_OF[self.kind]
         if self.geometry.get("type") != expected:
             raise ValueError(f"a {self.kind} needs a GeoJSON {expected}")
+        if self.kind == "path" and re.fullmatch(PATH_LABEL_PATTERN, self.label) is None:
+            raise ValueError("a path is called pa-<n>")
         return self
 
 

@@ -1,4 +1,4 @@
-"""The skill registry: the 18 entries, their rules, and how a new skill is added."""
+"""The skill registry: the 19 entries, their rules, and how a new skill is added."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from sd_schemas.base import LatLonAlt
 from sd_schemas.skills import (
     FORBIDDEN_SKILL_NAMES,
     SKILL_REGISTRY,
+    FollowPathAiParams,
+    FollowPathParams,
     GotoAiParams,
     GotoParams,
     MarkLocationAiParams,
@@ -43,6 +45,7 @@ NAMES = {
     "stop_follow",
     "follow_me",
     "find_me",
+    "follow_path",
 }
 
 # name: stage, runs_on, requires_approval_in_b, starts/ends, moves_vehicle, allowed_when,
@@ -58,6 +61,7 @@ TABLE: dict[str, tuple[Any, ...]] = {
     "mark_location": (1, "ground", False, "-", False, "any", True, True, "report"),
     "propose_charter_change": (1, "ground", True, "-", False, "any", False, True, "report"),
     "orbit": (1, "onboard", False, "-", True, "airborne", False, False, "action"),
+    "follow_path": (1, "onboard", True, "-", True, "airborne", False, False, "action"),
     "set_camera_tilt": (1, "onboard", False, "-", False, "any", False, True, "action"),
     "capture_stills": (1, "onboard", False, "-", False, "any", False, True, "action"),
     "land_at": (1, "onboard", True, "ends", True, "airborne", False, True, "action"),
@@ -69,13 +73,21 @@ TABLE: dict[str, tuple[Any, ...]] = {
 }
 
 
-def test_exactly_the_18_skills() -> None:
-    assert len(SKILL_REGISTRY) == 18
+def test_exactly_the_19_skills() -> None:
+    assert len(SKILL_REGISTRY) == 19
     assert SKILL_REGISTRY.names() == NAMES
     assert set(TABLE) == NAMES
 
 
-ONBOARD_IMPLEMENTED = {"takeoff", "goto", "survey_sector", "hold", "resume", "return_home"}
+ONBOARD_IMPLEMENTED = {
+    "takeoff",
+    "goto",
+    "survey_sector",
+    "follow_path",
+    "hold",
+    "resume",
+    "return_home",
+}
 GROUND_IMPLEMENTED = {"report", "mark_location", "propose_charter_change"}
 
 
@@ -112,6 +124,7 @@ def test_requires_approval_set() -> None:
         "follow_track",
         "follow_me",
         "find_me",
+        "follow_path",
     }
 
 
@@ -176,7 +189,7 @@ def test_new_skill_needs_only_a_new_entry() -> None:
     extended = SkillRegistry([*SKILL_REGISTRY, _spec("scan_river")])
     assert "scan_river" in extended
     assert extended.get("scan_river").status == "stub"
-    assert len(extended) == 19
+    assert len(extended) == 20
     assert "scan_river" not in SKILL_REGISTRY  # the production registry is untouched
     assert "scan_river" in extended.as_mapping()
 
@@ -236,3 +249,49 @@ def test_gate_targets() -> None:
     takeoff = TakeoffParams(alt_m=40).gate_targets(ctx)
     assert takeoff.alts_m == [40]
     assert takeoff.points[0].lat == here.lat
+
+
+PATH = [{"lat": -35.3620, "lon": 149.1652}, {"lat": -35.3615, "lon": 149.1655}]
+
+
+def test_follow_path_targets_the_whole_line() -> None:
+    here = LatLonAlt(lat=-35.3632, lon=149.1652, alt_amsl_m=584)
+    ctx = TargetContext(charter=None, position=here, home=here)
+    t = FollowPathParams.model_validate({"points": PATH, "alt_m": 30}).gate_targets(ctx)
+    assert t.resolved and t.route_energy
+    assert [(p.lat, p.lon) for p in t.path] == [(here.lat, here.lon)] + [
+        (p["lat"], p["lon"]) for p in PATH
+    ]
+    assert t.points == t.path[1:]
+    assert t.alts_m == [30]
+    assert t.speed_ms is None
+    no_position = TargetContext(charter=None, position=None, home=here)
+    assert (
+        not FollowPathParams.model_validate({"points": PATH, "alt_m": 30})
+        .gate_targets(no_position)
+        .resolved
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"points": PATH[:1], "alt_m": 30},  # one point is not a path
+        {"points": PATH * 26, "alt_m": 30},  # more than 50 points
+        {"points": PATH, "alt_m": 0},
+        {"points": PATH, "alt_m": 30, "speed_ms": 0},
+        {"points": PATH, "alt_m": 30, "label": "P1"},
+    ],
+)
+def test_follow_path_params_bounds(data: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        FollowPathParams.model_validate(data)
+
+
+def test_follow_path_ai_names_a_drawn_path_never_coordinates() -> None:
+    assert FollowPathAiParams(path="pa-1").path == "pa-1"
+    schema = FollowPathAiParams.model_json_schema()
+    assert set(schema["properties"]) == {"path", "alt_m", "speed_ms"}
+    for bad in ({"path": "P1"}, {"path": "pa-1", "points": PATH}, {}):
+        with pytest.raises(ValidationError):
+            FollowPathAiParams.model_validate(bad)

@@ -24,6 +24,8 @@ from sd_safety.constants import (
     RATE_ACTIONS_PER_WINDOW,
     RATE_REPORTS_PER_WINDOW,
     RATE_WINDOW_MS,
+    ROUTE_BATTERY_PCT_PER_MIN,
+    ROUTE_DESCENT_MS,
     STATE_MAX_AGE_MS,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
@@ -43,7 +45,7 @@ from sd_schemas.charter import AutonomyMode
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateContext, GateRequest
 from sd_schemas.mission import MissionState
-from sd_schemas.skills import GateTargets, SkillParams, SkillSpec
+from sd_schemas.skills import PATH_MAX_LENGTH_M, GateTargets, SkillParams, SkillSpec
 
 __all__ = ["CLEAR_AROUND_DRONE", "RULES", "Facts", "Finding", "Rule", "clearance_problem"]
 
@@ -467,6 +469,37 @@ def _brain_battery(f: Facts) -> list[Finding]:
     return _one(pct <= margin, "BATTERY_RESERVE", battery_pct=pct, rtl_pct=f.rtl_pct)
 
 
+def _route_battery(f: Facts) -> list[Finding]:
+    """A drawn path: not longer than the cap, and the battery lasts for the path, the
+    flight home from its end and the landing, with the reserve still left."""
+    t, charter = f.targets, f.ctx.charter
+    if t is None or not t.route_energy or len(t.path) < 2 or charter is None:
+        return []
+    route_m = sum(distance_m(a.lat, a.lon, b.lat, b.lon) for a, b in pairwise(t.path))
+    details = {"route_m": _finite(round(route_m)), "path_max_m": PATH_MAX_LENGTH_M}
+    out = _one(route_m > PATH_MAX_LENGTH_M, "PATH_TOO_LONG", **details)
+    pct = f.battery_pct
+    if pct is None:
+        return [*out, Finding("BATTERY_UNKNOWN")]
+    end, home = t.path[-1], charter.home
+    back_m = distance_m(end.lat, end.lon, home.lat, home.lon)
+    speed = t.speed_ms or EXECUTOR_DEFAULT_SPEED_MS
+    seconds = (
+        route_m / speed
+        + back_m / EXECUTOR_DEFAULT_SPEED_MS
+        + max(t.alts_m, default=0.0) / ROUTE_DESCENT_MS
+    )
+    need = f.rtl_pct + seconds / 60.0 * ROUTE_BATTERY_PCT_PER_MIN
+    return out + _one(
+        not math.isfinite(need) or pct < need,
+        "ROUTE_BATTERY",
+        **details,
+        needed_pct=_finite(math.ceil(need)) if math.isfinite(need) else None,
+        battery_pct=round(pct),
+        rtl_pct=f.rtl_pct,
+    )
+
+
 # --- where the order goes -------------------------------------------------------------------
 
 
@@ -671,6 +704,7 @@ RULES: Final[tuple[Rule, ...]] = (
     Rule("R-TAKEOFF", _ALL, False, _takeoff),
     Rule("R-BATT", _ALL, False, _battery_floor),
     Rule("R-BATT", _BRAIN, False, _brain_battery),
+    Rule("R-BATT-ROUTE", _ALL, False, _route_battery),
     Rule("R-ALT", _ALL, False, _altitude),
     Rule("R-AREA", _ALL, False, _outside_charter),
     Rule("R-PILOT", _ALL, False, _pilot_distance),

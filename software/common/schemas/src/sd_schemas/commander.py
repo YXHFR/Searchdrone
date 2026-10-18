@@ -110,6 +110,7 @@ class Situation(SdModel):
     sectors: list[dict[str, Any]]  # {sector_id, name, area_m2, status, progress}
     pins: list[MapPin]
     areas: list[Annotation]
+    paths: list[Annotation] = Field(default_factory=list[Annotation])  # drawn paths pa-<n>
     home: LatLon | None
     pilot: LatLon | None
     alerts: list[dict[str, Any]]

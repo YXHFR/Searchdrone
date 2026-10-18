@@ -231,8 +231,9 @@ export interface Annotation {
     [k: string]: unknown;
   };
   id: string;
-  kind: "pin" | "area";
+  kind: "pin" | "area" | "path";
   label: string;
+  length_m?: number | null;
   mission_id: string;
 }
 /**
@@ -243,7 +244,7 @@ export interface AnnotationCreate {
   geometry: {
     [k: string]: unknown;
   };
-  kind: "pin" | "area";
+  kind: "pin" | "area" | "path";
   label: string;
 }
 /**
@@ -1125,6 +1126,7 @@ export interface GateTargets {
   path?: LatLon[];
   points?: LatLon[];
   resolved?: boolean;
+  route_energy?: boolean;
   speed_ms?: number | null;
 }
 /**
@@ -1720,6 +1722,7 @@ export interface Situation {
   mission_id: string;
   mission_status: MissionState;
   override: OperatorLatch | null;
+  paths?: Annotation[];
   paused_by: ("operator" | "brain" | "system") | null;
   pending_approvals: Approval[];
   pending_proposal: Charter | null;

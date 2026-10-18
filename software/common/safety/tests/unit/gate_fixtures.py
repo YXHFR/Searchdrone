@@ -30,6 +30,7 @@ IMPLEMENTED = (
     "takeoff",
     "goto",
     "survey_sector",
+    "follow_path",
     "hold",
     "resume",
     "return_home",

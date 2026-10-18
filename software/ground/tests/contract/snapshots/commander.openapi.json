@@ -77,7 +77,8 @@
           "kind": {
             "enum": [
               "pin",
-              "area"
+              "area",
+              "path"
             ],
             "title": "Kind",
             "type": "string"
@@ -85,6 +86,17 @@
           "label": {
             "title": "Label",
             "type": "string"
+          },
+          "length_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length M"
           },
           "mission_id": {
             "format": "uuid",
@@ -2206,6 +2218,13 @@
                 "type": "null"
               }
             ]
+          },
+          "paths": {
+            "items": {
+              "$ref": "#/components/schemas/Annotation"
+            },
+            "title": "Paths",
+            "type": "array"
           },
           "paused_by": {
             "anyOf": [
