@@ -1056,6 +1056,7 @@ def _what(action: AiAction, req: SkillRequest) -> str:
         "return_home": "flyg hem",
         "report": "rapport",
         "mark_location": "markering",
+        "follow_path": f"flyg längs vägen {req.params.get('label') or ''}".strip(),
     }
     text = names.get(action.skill, action.skill)
     if action.skill == "takeoff" and req.params.get("alt_m") is not None:

@@ -77,3 +77,43 @@ async def test_a_drawn_area_becomes_the_charters_search_area(r: Rig) -> None:
     )
     assert by_area.status_code == 201, by_area.text
     assert by_area.json()["body"]["area"] == area.json()["geometry"]
+
+
+def _line(r: Rig, *corners: tuple[float, float]) -> dict[str, Any]:
+    coords = [[r.at(e, n)[1], r.at(e, n)[0]] for e, n in corners]
+    return {"type": "LineString", "coordinates": coords}
+
+
+async def test_a_drawn_path_is_saved_with_its_length_and_reaches_the_ai(r: Rig) -> None:
+    mid = await r.open_mission()
+    line = _line(r, (0, 0), (0, 100), (100, 100))
+    path = await _add(r, mid, "path", "pa-1", line)
+    assert path.status_code == 201, path.text
+    assert path.json()["kind"] == "path"
+    assert path.json()["length_m"] == pytest.approx(200.0, rel=0.01)
+    assert path.json()["area_m2"] is None
+    listed = (await r.panel.get(f"/api/v1/missions/{mid}/annotations")).json()
+    assert [(a["label"], a["geometry"]["type"]) for a in listed] == [("pa-1", "LineString")]
+    situation = (await r.commander.get(f"/commander/v1/missions/{mid}/situation")).json()
+    assert [p["label"] for p in situation["paths"]] == ["pa-1"]
+    assert situation["areas"] == [] and situation["pins"] == []
+
+
+async def test_path_names_shapes_and_length_are_checked(r: Rig) -> None:
+    mid = await r.open_mission()
+    line = _line(r, (0, 0), (0, 100))
+    named = await _add(r, mid, "path", "Bäcken", line)
+    assert named.status_code == 422, named.text
+    point = await _add(
+        r, mid, "path", "pa-1", {"type": "Point", "coordinates": line["coordinates"][0]}
+    )
+    assert point.status_code == 422, point.text
+    # 6 x 900 m back and forth: 5,4 km, over the 5 km cap.
+    far = _line(r, *[(0 if i % 2 else 900, i * 10.0) for i in range(7)])
+    long = await _add(r, mid, "path", "pa-1", far)
+    assert long.status_code == 422 and long.json()["code"] == "PATH_TOO_LONG", long.text
+    assert "högst 5 km" in long.json()["detail_sv"]
+    ok = await _add(r, mid, "path", "pa-1", line)
+    assert ok.status_code == 201, ok.text
+    again = await _add(r, mid, "path", "pa-1", line)
+    assert again.status_code == 409, again.text

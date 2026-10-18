@@ -1129,3 +1129,51 @@ async def test_approved_card_for_a_ground_skill_runs_on_the_ground(
     assert lines[0]["refs"]["command_id"] == out["command_id"]
     await asyncio.sleep(0.3)
     assert r.onboard.orders == []
+
+
+# --- a drawn path ------------------------------------------------------------------------
+
+
+async def test_a_drawn_path_goes_to_the_drone_only_after_the_pilots_click(r: Rig) -> None:
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    corners = [(0.0, 60.0), (60.0, 90.0), (120.0, 60.0), (120.0, 0.0), (60.0, -40.0)]
+    line = [[r.at(e, n)[1], r.at(e, n)[0]] for e, n in corners]
+    drawn = await r.panel.post(
+        f"/api/v1/missions/{mid}/annotations",
+        json={
+            "kind": "path",
+            "label": "pa-1",
+            "geometry": {"type": "LineString", "coordinates": line},
+        },
+        headers=H,
+    )
+    assert drawn.status_code == 201, drawn.text
+    points = [{"lat": lat, "lon": lon} for lon, lat in line]
+    params = {"points": points, "alt_m": 30, "label": "pa-1"}
+    out = await order(r, d, "follow_path", params, "PENDING_APPROVAL")
+    (card,) = await pending_cards(r, mid)
+    assert card["summary_sv"] == "Flyg längs vägen pa-1 (5 punkter, 0,3 km) på 30 m"
+    assert not [o for o in r.onboard.orders if o.skill == "follow_path"]
+    ok = await r.approve(out["approval_id"])
+    assert ok.status_code == 200 and ok.json()["status"] == "approved", ok.text
+    await r.until(lambda: [o for o in r.onboard.orders if o.skill == "follow_path"], 5, "sent")
+    sent = next(o for o in r.onboard.orders if o.skill == "follow_path")
+    assert sent.approval is not None and str(sent.approval.approval_id) == out["approval_id"]
+    assert [(p["lat"], p["lon"]) for p in sent.params["points"]] == [
+        (p["lat"], p["lon"]) for p in points
+    ]
+
+
+async def test_a_path_the_battery_cannot_fly_is_refused_with_the_numbers(r: Rig) -> None:
+    mid = await r.ready_mission()
+    d = driver(r, mid)
+    await take_off(r, mid, d)
+    # Ten 280 m legs across the 300 m box at 2 m/s: about 25 minutes of flight.
+    corners = [(-140.0 if i % 2 else 140.0, -140.0 + 28.0 * i) for i in range(11)]
+    points = [{"lat": r.at(e, n)[0], "lon": r.at(e, n)[1]} for e, n in corners]
+    out = await order(r, d, "follow_path", {"points": points, "alt_m": 30, "speed_ms": 2}, "REJECT")
+    assert "ROUTE_BATTERY" in out["reason_codes"], out
+    assert out["message_sv"].startswith("Batteriet räcker inte för hela vägen och flygningen hem")
+    assert not await pending_cards(r, mid)

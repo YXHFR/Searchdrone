@@ -25,6 +25,7 @@ STOP, FLY HOME and the battery guard cancel every open order after the mode chan
 from __future__ import annotations
 
 import datetime as dt
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Final, Literal
 from uuid import UUID
 
@@ -34,6 +35,7 @@ from sd_ground.services import charters as charter_rules
 from sd_ground.services.missions import FlowError
 from sd_safety import evaluate
 from sd_safety.constants import APPROVAL_TIMEOUT_S
+from sd_safety.targets import distance_m
 from sd_schemas.api import Approval, ApprovalDecisionRequest, Command, Mission
 from sd_schemas.approval import command_hash
 from sd_schemas.base import new_id
@@ -194,6 +196,20 @@ def _gate_request(
     )
 
 
+def _path_summary(params: dict[str, Any]) -> str:
+    """ "Flyg längs vägen pa-1 (5 punkter, 0,6 km)"; the numbers only when the points are
+    valid (the gate rejects the order otherwise)."""
+    name = params.get("label")
+    text = f"Flyg längs vägen {name}" if isinstance(name, str) else "Flyg längs vägen"
+    points = params.get("points")
+    try:
+        line = [(float(p["lat"]), float(p["lon"])) for p in points]  # type: ignore[union-attr]
+    except (TypeError, KeyError, ValueError):
+        return text
+    km = sum(distance_m(*a, *b) for a, b in pairwise(line)) / 1000
+    return f"{text} ({len(line)} punkter, {km:.1f} km)".replace(".", ",")
+
+
 def _summary(skill: str, params: dict[str, Any]) -> str:
     alt = params.get("alt_m")
     speed = params.get("speed_ms")
@@ -208,6 +224,7 @@ def _summary(skill: str, params: dict[str, Any]) -> str:
         "return_home": "Flyg hem",
         "report": "Rapportera",
         "mark_location": "Markera på kartan",
+        "follow_path": _path_summary(params),
     }
     text = parts.get(skill, skill)
     if alt is not None:

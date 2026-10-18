@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
+from itertools import pairwise
 from typing import Annotated, Any, cast
 
 import uuid_utils
@@ -158,7 +159,7 @@ def _check_line(value: dict[str, Any]) -> dict[str, Any]:
     if not 2 <= len(positions) <= MAX_LINE_POINTS:
         raise ValueError(f"a line has 2-{MAX_LINE_POINTS} positions")
     points = [_position(p) for p in positions]
-    if any(a == b for a, b in zip(points, points[1:], strict=False)):
+    if any(a == b for a, b in pairwise(points)):
         raise ValueError("two neighbouring positions are the same")
     return value
 

@@ -118,7 +118,7 @@ def test_skills_lists_registry(commander: TestClient) -> None:
     res = commander.get("/commander/v1/skills", headers=AUTH)
     assert res.status_code == 200
     names = {s["name"] for s in res.json()}
-    assert len(names) == 18
+    assert len(names) == 19
     assert "takeoff" in names
 
 
@@ -250,3 +250,22 @@ def test_a_new_mission_reaches_the_ai_as_created() -> None:
     assert new["body"]["created"] is True
     later = to_commander(event({"from": "DRAFT", "to": "READY", "state_seq": 2}))
     assert later is not None and later["body"]["created"] is False
+
+
+def test_a_drawn_path_reaches_the_ai_by_its_name_only() -> None:
+    import datetime as dt
+
+    from sd_ground.api.commander import to_commander
+    from sd_ground.bus import BusEvent
+
+    ts = dt.datetime(2026, 10, 18, tzinfo=dt.UTC)
+    data = {
+        "id": "a1",
+        "kind": "path",
+        "label": "pa-1",
+        "length_m": 420.0,
+        "geometry": {"type": "LineString", "coordinates": [[149.1, -35.3], [149.2, -35.3]]},
+    }
+    out = to_commander(BusEvent(6, ts, "mission", "annotation.created", "sim-01", "M2", data))
+    assert out is not None and out["type"] == "event.path_drawn"
+    assert out["body"] == {"path_id": "pa-1", "length_m": 420.0}
