@@ -24,6 +24,8 @@ from sd_safety.constants import (
     RATE_ACTIONS_PER_WINDOW,
     RATE_REPORTS_PER_WINDOW,
     RATE_WINDOW_MS,
+    ROUTE_BATTERY_PCT_PER_MIN,
+    ROUTE_DESCENT_MS,
     STATE_MAX_AGE_MS,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
@@ -37,13 +39,13 @@ from sd_safety.policy import (
     OPERATOR_ALLOWED_UNDER_LATCH,
     UNDER_OVERRIDE_ALLOWED,
 )
-from sd_safety.targets import Plane, distance_m, polygon_from_geojson
+from sd_safety.targets import Plane, distance_m, line_length_m, polygon_from_geojson
 from sd_schemas.base import LatLon
 from sd_schemas.charter import AutonomyMode
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateContext, GateRequest
 from sd_schemas.mission import MissionState
-from sd_schemas.skills import GateTargets, SkillParams, SkillSpec
+from sd_schemas.skills import PATH_MAX_LENGTH_M, GateTargets, SkillParams, SkillSpec
 
 __all__ = ["CLEAR_AROUND_DRONE", "RULES", "Facts", "Finding", "Rule", "clearance_problem"]
 
@@ -467,6 +469,44 @@ def _brain_battery(f: Facts) -> list[Finding]:
     return _one(pct <= margin, "BATTERY_RESERVE", battery_pct=pct, rtl_pct=f.rtl_pct)
 
 
+def _route_battery(f: Facts) -> list[Finding]:
+    """A drawn path: the drawn line (``path[1:]``, as saved) not longer than the cap, and
+    the battery lasts for the way there, the line, the flight home from its end and the
+    landing, with the reserve still left."""
+    t, charter = f.targets, f.ctx.charter
+    if t is None or not t.route_energy or len(t.path) < 2 or charter is None:
+        return []
+    corners = [(p.lat, p.lon) for p in t.path]
+    drawn_m = line_length_m(corners[1:])
+    route_m = line_length_m(corners)
+    out = _one(
+        drawn_m > PATH_MAX_LENGTH_M,
+        "PATH_TOO_LONG",
+        path_m=_finite(round(drawn_m)),
+        path_max_m=PATH_MAX_LENGTH_M,
+    )
+    pct = f.battery_pct
+    if pct is None:
+        return [*out, Finding("BATTERY_UNKNOWN")]
+    end, home = t.path[-1], charter.home
+    back_m = distance_m(end.lat, end.lon, home.lat, home.lon)
+    speed = t.speed_ms or EXECUTOR_DEFAULT_SPEED_MS
+    seconds = (
+        route_m / speed
+        + back_m / EXECUTOR_DEFAULT_SPEED_MS
+        + max(t.alts_m, default=0.0) / ROUTE_DESCENT_MS
+    )
+    need = f.rtl_pct + seconds / 60.0 * ROUTE_BATTERY_PCT_PER_MIN
+    return out + _one(
+        not math.isfinite(need) or pct < need,
+        "ROUTE_BATTERY",
+        route_m=_finite(round(route_m)),
+        needed_pct=_finite(math.ceil(need)) if math.isfinite(need) else None,
+        battery_pct=round(pct),
+        rtl_pct=f.rtl_pct,
+    )
+
+
 # --- where the order goes -------------------------------------------------------------------
 
 
@@ -671,6 +711,7 @@ RULES: Final[tuple[Rule, ...]] = (
     Rule("R-TAKEOFF", _ALL, False, _takeoff),
     Rule("R-BATT", _ALL, False, _battery_floor),
     Rule("R-BATT", _BRAIN, False, _brain_battery),
+    Rule("R-BATT-ROUTE", _ALL, False, _route_battery),
     Rule("R-ALT", _ALL, False, _altitude),
     Rule("R-AREA", _ALL, False, _outside_charter),
     Rule("R-PILOT", _ALL, False, _pilot_distance),

@@ -255,8 +255,12 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       const c = e.data as Command & { reason_codes?: string[]; message_sv?: string };
       if (!forMission) break;
       m.upsertCommand(c);
-      if (c.status === "rejected_by_gate" && c.message_sv)
+      if (c.status === "rejected_by_gate" && c.message_sv) {
         useUiStore.getState().log("info", `Grinden stoppade ${c.skill}: ${c.message_sv}`);
+        // A drawn path the gate will not fly (outside the area, the battery): tell the pilot.
+        if (c.skill === "follow_path")
+          useUiStore.getState().toast(`Vägen nekades: ${c.message_sv}`);
+      }
       break;
     }
     case "clearance.updated":

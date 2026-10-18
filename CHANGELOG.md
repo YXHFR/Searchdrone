@@ -8,6 +8,19 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Fly a drawn path: the pilot draws a path on the map ("Rita väg", `pa-1`, ...: a
+  `path` annotation, a GeoJSON LineString of 2-50 points) and asks for it in the chat. The
+  AI proposes `follow_path` by the path's name only; sd-brain takes the points from the
+  drawn path, so the model never writes coordinates. The order always needs the pilot's
+  click, and the drone flies the points as an AUTO mission and then hovers at the last
+  one. The gate checks the whole line against the charter, the height and speed limits,
+  a 5 km cap (`PATH_TOO_LONG`) and the battery (`ROUTE_BATTERY`: the path, the flight
+  home and the landing must leave the reserve, at an assumed 5 % per minute), with the
+  numbers in the Swedish message. The panel shows drawn paths, the planned path
+  (dashed), the flown part (solid) and the progress in %, and refuses a path outside the
+  search area before saving it. SITL scenarios SC_PATH (every point within 3 m, then
+  hover) and SC_PATH_stop (STOP halfway: BRAKE at once, standing still within 5 s as
+  SC02).
 - Scenario objects in the simulator world (`sd_sim.objects`): boxes from a YAML file
   (`just sim objects=<file>`) or any `WorldObject` from code are placed on the ground at
   metres east/north of home, can carry a Gazebo semantic label, and their facit (world and

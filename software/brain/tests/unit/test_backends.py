@@ -193,6 +193,19 @@ async def test_scripted_backend(tmp_path: Path) -> None:
     assert (await b.decide(_turn("igen"), _NoTools())).messages[0].text == "Uppfattat."
 
 
+async def test_scripted_ai_form_goes_through_the_adapter(tmp_path: Path) -> None:
+    """``ai: true``: the script names the drawn path like a model would; the loop's
+    adapter resolves it against the situation, never the script."""
+    text = (
+        "scenario: SC99\nturns:\n  - on: operator_message\n    match: '^Flyg vägen\\.$'\n"
+        "    action: {skill: follow_path, ai: true, params: {path: pa-1, alt_m: 30}}\n"
+    )
+    b = ScriptedBackend.from_file(_script(tmp_path, text))
+    out = await b.decide(_turn("Flyg vägen."), _NoTools())
+    assert out.action is not None and not out.action.adapted
+    assert out.action.params == {"path": "pa-1", "alt_m": 30}
+
+
 @pytest.mark.parametrize(
     "bad",
     [
