@@ -107,6 +107,7 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
     factory: Callable[[dict[str, Any]], Any] | None = None
     if args.backend == "cloud":
         key = _cloud_key()
+        logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
         install_log_masking(Secrets(brain_token="", cloud_api_key=key))
         client = httpx.AsyncClient()
         cloud = CloudModelRuntime(cfg.cloud, key, client)
