@@ -1,4 +1,4 @@
-"""Migration 0001_initial: round trip, grants and the append-only guards."""
+"""Migrations 0001-0003: round trip, grants and the append-only guards."""
 
 from __future__ import annotations
 
@@ -34,6 +34,16 @@ TABLES = {
     "auth_sessions",
     "brain_memory",
     "brain_decisions",
+    # 0003_search
+    "search_profiles",
+    "perception_stills",
+    "detections",
+    "candidates",
+    "candidate_observations",
+    "candidate_assessments",
+    "candidate_decisions",
+    "probability_maps",
+    "cloud_usage",
 }
 APPEND_ONLY = ("events", "gate_decisions", "chat_messages", "brain_decisions")
 
@@ -62,10 +72,9 @@ def test_roundtrip(fresh_db: Db) -> None:
     db.upgrade()
 
     assert _tables(db) == TABLES
-    assert not {"detections", "candidates"} & _tables(db)
     assert "3.6" in db.run("SELECT postgis_full_version() AS v")[0]["v"]
     head = db.run("SELECT version_num FROM alembic_version", role="sd_app")
-    assert [r["version_num"] for r in head] == ["0002_mission_flow"]
+    assert [r["version_num"] for r in head] == ["0003_search"]
 
 
 def test_app_role_has_no_delete_anywhere(migrated_db: Db) -> None:

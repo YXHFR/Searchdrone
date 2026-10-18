@@ -55,6 +55,7 @@ class Ground:
     loaded: Loaded
     clock: Clock
     brain_token: BrainToken
+    search_token: BrainToken = field(default_factory=lambda: BrainToken(None))
     repo: Repo | None = None
     vehicle_link: VehicleLink = field(default_factory=NoVehicleLink)
     sdlink: SdLink = field(default_factory=NoSdLink)

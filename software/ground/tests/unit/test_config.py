@@ -146,7 +146,12 @@ def test_no_setting_turns_off_login() -> None:
     from sd_ground.config import AuthConfig
 
     names = set(AuthConfig.model_fields)
-    assert names == {"cli_may_confirm", "brain_token_file", "login_code_ttl_s"}
+    assert names == {
+        "cli_may_confirm",
+        "brain_token_file",
+        "search_token_file",
+        "login_code_ttl_s",
+    }
     assert not any(re.search(r"auto_?(approve|confirm|clear)|skip_|localhost", n) for n in names)
 
 

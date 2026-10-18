@@ -139,6 +139,8 @@ def require_commander(request: Request) -> None:
     g = ground(request)
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not g.brain_token.matches(token.strip()):
+        if scheme.lower() == "bearer" and g.search_token.matches(token.strip()):
+            raise ApiStatusError(403, "SEARCH_FORBIDDEN", "Söktjänstens nyckel gäller inte här.")
         raise ApiStatusError(401, "UNAUTHENTICATED", "Befälhavarens nyckel saknas eller är fel.")
 
 
@@ -594,6 +596,9 @@ class CommanderHub:
         g = self.g
         scheme, _, token = ws.headers.get("authorization", "").partition(" ")
         await ws.accept()
+        if scheme.lower() == "bearer" and g.search_token.matches(token.strip()):
+            await ws.close(4403)
+            return
         if scheme.lower() != "bearer" or not g.brain_token.matches(token.strip()):
             await ws.close(4401)
             return

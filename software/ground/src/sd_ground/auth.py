@@ -1,4 +1,4 @@
-"""Who is calling: login codes, PIN pairing, sessions, CLI tokens and the commander token.
+"""Who is calling: login codes, PIN pairing, sessions, CLI tokens and the service tokens.
 
 Everything here is thread-safe: the ingress thread (its own event loop) checks sessions for
 STOP / RETURN HOME while the main loop handles everything else. Sessions are checked against
@@ -39,7 +39,9 @@ __all__ = [
     "new_token",
 ]
 
-Role = Literal["pilot", "observer", "commander", "system"]
+# "commander" (sd-brain) and "search" (sd-search) are services with a token file each;
+# neither is a person, so neither can approve, steer or decide on a candidate.
+Role = Literal["pilot", "observer", "commander", "search", "system"]
 AuthMode = Literal["local", "pin", "cli", "cloudflare_access"]
 Via = Literal["local", "lan", "remote"]
 
@@ -373,7 +375,8 @@ class SessionStore:
 
 
 class BrainToken:
-    """The commander token: only its hash is kept; compared in constant time."""
+    """A service token (commander or search): only its hash is kept; compared in
+    constant time."""
 
     def __init__(self, token: str | None) -> None:
         self._hash = hash_token(token) if token else None
