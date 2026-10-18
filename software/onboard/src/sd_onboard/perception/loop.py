@@ -7,6 +7,12 @@ lowest-priority queue (``OnboardLink.perception``). Reading the still and the de
 work run in a worker thread so a slow picture never blocks the event loop the executor
 ticks on. A failing still is logged and skipped; the loop keeps going. Kept stills (for
 a run's record) are capped at ``KEEP_MAX``, the oldest removed first.
+
+The pose is the telemetry read when a still arrives, a moment after the picture was
+taken. In steady flight that moment does not matter; while the attitude changes quickly
+(a turn, braking, yawing towards a find) it does: 10 degrees of attitude at 40 m move a
+detection about 7 m. The loop follows the attitude rate between telemetry samples and
+skips stills taken while it is above ``MAX_TURN_RATE_DPS``.
 """
 
 from __future__ import annotations
@@ -26,11 +32,20 @@ from sd_onboard.perception.sources import CapturedStill, StillSource
 from sd_schemas.base import new_id
 from sd_schemas.link import PerceptionReport
 
-__all__ = ["KEEP_MAX", "MAX_POSE_AGE_MS", "PerceptionLoop", "PerceptionStats", "pose_from"]
+__all__ = [
+    "KEEP_MAX",
+    "MAX_POSE_AGE_MS",
+    "MAX_TURN_RATE_DPS",
+    "AttitudeRate",
+    "PerceptionLoop",
+    "PerceptionStats",
+    "pose_from",
+]
 
 log = logging.getLogger("sd_onboard.perception")
 MAX_POSE_AGE_MS = 1000  # older position or attitude: the still is skipped
 KEEP_MAX = 200  # kept stills (JPEG + JSON pairs) in ``keep_dir``
+MAX_TURN_RATE_DPS = 10.0  # faster attitude change: the still is skipped
 
 
 @dataclass
@@ -40,6 +55,7 @@ class PerceptionStats:
     detections: int = 0
     skipped_no_pose: int = 0
     skipped_on_ground: int = 0
+    skipped_turning: int = 0
     failed: int = 0
     by_label: dict[str, int] = field(default_factory=dict[str, int])
 
@@ -63,6 +79,31 @@ def pose_from(t: FcTelemetry, now_ms: int) -> Pose | None:
         yaw_deg=t.yaw_deg,
         speed_ms=t.groundspeed_ms,
     )
+
+
+def _angle_diff(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+class AttitudeRate:
+    """The largest of roll, pitch and yaw rate (degrees per second) between the two most
+    recent attitude samples; 0 until two samples are known."""
+
+    def __init__(self) -> None:
+        self._last: tuple[int, float, float, float] | None = None
+        self.dps = 0.0
+
+    def update(self, t: FcTelemetry) -> float:
+        if t.attitude_mono_ms is None:
+            return self.dps
+        now = (t.attitude_mono_ms, t.roll_deg, t.pitch_deg, t.yaw_deg)
+        last = self._last
+        if last is not None and now[0] > last[0]:
+            dt = (now[0] - last[0]) / 1000.0
+            self.dps = max(_angle_diff(a, b) for a, b in zip(now[1:], last[1:], strict=True)) / dt
+        if last is None or now[0] > last[0]:
+            self._last = now
+        return self.dps
 
 
 class PerceptionLoop:
@@ -89,12 +130,13 @@ class PerceptionLoop:
         self.keep_dir = keep_dir
         self.built = build_sources(self.registry, env=env)
         self.stats = PerceptionStats()
+        self.rate = AttitudeRate()
 
     def handle(
-        self, captured: CapturedStill, t: FcTelemetry, now_ms: int
+        self, captured: CapturedStill, t: FcTelemetry, now_ms: int, turn_rate_dps: float = 0.0
     ) -> PerceptionReport | None:
-        """One still and the telemetry read when it arrived: a report, or ``None`` when
-        it cannot be placed on the ground."""
+        """One still and the telemetry read when it arrived (with the attitude rate then):
+        a report, or ``None`` when it cannot be placed on the ground well enough."""
         self.stats.stills += 1
         pose = pose_from(t, now_ms)
         if pose is None:
@@ -102,6 +144,9 @@ class PerceptionLoop:
             return None
         if pose.agl_m < MIN_AGL_M:
             self.stats.skipped_on_ground += 1
+            return None
+        if turn_rate_dps > MAX_TURN_RATE_DPS:
+            self.stats.skipped_turning += 1
             return None
         start = self.clock.monotonic_ms()
         found = detect_all(captured.still, self.built.sources, self.registry)
@@ -150,10 +195,12 @@ class PerceptionLoop:
         )
         while not stop.is_set():
             try:  # one bad still must not end perception
+                rate = self.rate.update(self.telemetry())
                 captured = await asyncio.to_thread(self.source.poll)
                 if captured is not None:
                     t, now_ms = self.telemetry(), self.clock.monotonic_ms()
-                    report = await asyncio.to_thread(self.handle, captured, t, now_ms)
+                    rate = max(rate, self.rate.update(t))
+                    report = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
                     if report is not None:
                         self.send(report)
             except Exception:
