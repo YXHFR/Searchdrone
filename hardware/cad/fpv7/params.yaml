@@ -165,7 +165,7 @@ wiring:                       # cables as tubes, mass per metre
   ribbon: {width: 16, thickness: 0.3, g_per_m: 6}     # camera FFC
 xt60: {length: 23.8, width: 9.2, height: 16.4, mass: 7.7}   # XT60H: sizes per half, mass of the mated pair
 strap: {width: 20, thickness: 1.5, mass: 7.5, x: [-40, 40]}  # two battery straps
-antenna: {length: 65, diameter: 1.5, element: [30, 3], mass: 0.3, spread_deg: 30, droop_deg: 30}   # two receiver antennas
+antenna: {length: 65, diameter: 1.5, element: [30, 3], mass: 0.3, spread_deg: 20, droop_deg: 30}   # two receiver antennas
 
 layout:                       # design defaults: where the parts sit (x, or [x, y])
   stack_x: 0

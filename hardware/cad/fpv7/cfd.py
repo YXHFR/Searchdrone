@@ -327,6 +327,7 @@ def run(case: Path, a: dict[str, Any]) -> dict[str, float]:
     par = ["mpirun", "--oversubscribe", "-np", str(CORES)]
     if os.geteuid() == 0:  # containers: OpenMPI refuses root unless told
         par.insert(1, "--allow-run-as-root")
+        sys.stderr.write("Running as root: mpirun gets --allow-run-as-root.\n")
     times = ",".join(str(t) for t in sample_times())
     steps = [
         ["blockMesh"],

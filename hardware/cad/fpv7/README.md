@@ -72,7 +72,9 @@ and rear-right propellers turn clockwise seen from above.
   along each arm, the 12 AWG ESC pigtail from the XT60 round the rear of the frame, the
   BEC's lead to the Pi through the top plate's front hole, the camera's ribbon up in front
   of the frame, the GPS lead down the mast, and the receiver's two antennas out of the
-  rear in a V, pointing down.
+  rear in a V, pointing down, their tips outside the rear discs seen from above. The
+  antennas are flexible: on the drone they sit in stiff tubes or are tied to the rear
+  standoffs, so that a bent antenna cannot reach a propeller.
 - **Covers:** a printed top canopy over the companion computer and a printed nose under
   the frame ahead of the battery (see *Printed covers*).
 
@@ -177,8 +179,8 @@ shows:
   body's shape:
 
 ```bash
-uv run --group cad python hardware/cad/fpv7/cfd.py /tmp/fpv7-cfd --run
-uv run --group cad python hardware/cad/fpv7/cfd.py /tmp/fpv7-cfd-bare --without canopy nose_fairing --run
+uv run --group cad python hardware/cad/fpv7/cfd.py build/cad/fpv7-cfd --run
+uv run --group cad python hardware/cad/fpv7/cfd.py build/cad/fpv7-cfd-bare --without canopy nose_fairing --run
 ```
 
 ## Öppna och ändra i Fusion
@@ -452,7 +454,7 @@ lists of points (`frame.*.outline`, `frame.*.windows`, `frame.standoff.positions
 | `antenna.diameter` | 1.5 mm | (osäkert) coax | Estimate, no drawing published | - |
 | `antenna.element` | 30, 3 mm | (osäkert) active element: length, diameter of its sleeve | Estimate, no drawing published | - |
 | `antenna.mass` | 0.3 g | (osäkert) each | Estimate, no drawing published | - |
-| `antenna.spread_deg` | 30 deg | V out of the rear, each side | Design default | - |
+| `antenna.spread_deg` | 20 deg | V out of the rear, each side; keeps the tips outside the rear discs seen from above | Design default | - |
 | `antenna.droop_deg` | 30 deg | pointing down, away from the carbon | Design default | - |
 | `layout.stack_x` | 0 mm |  | Design default | - |
 | `layout.bec` | 64, 0 mm | [x, y], between the plates | Design default | - |

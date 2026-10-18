@@ -639,3 +639,17 @@ def test_render_fills_the_box_outline() -> None:
     assert drawn.mean() == pytest.approx(0.92 * 0.92 * 20 / 30, abs=0.02)
     assert drawn[60, 60]
     assert not drawn[60, 5]
+
+
+def test_antenna_is_as_long_as_its_cable() -> None:
+    """Coax inside the frame, coax outside and the element add up to ``antenna.length``;
+    a length that does not reach past the frame's edge is an error."""
+    import parts
+
+    an = {"length": 65, "diameter": 1.5, "element": [30, 3]}
+    start, exit_ = (0.0, 0.0, 0.0), (-20.0, 0.0, 0.0)
+    shape = parts.antenna(an, start, exit_, (-1.0, 0.0, 0.0))
+    bb = shape.BoundingBox()
+    assert bb.xmax - bb.xmin == pytest.approx(65, abs=0.05)
+    with pytest.raises(ValueError, match="too short"):
+        parts.antenna({**an, "length": 50}, start, exit_, (-1.0, 0.0, 0.0))

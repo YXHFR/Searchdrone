@@ -688,7 +688,7 @@ def cables(
     rx, ry = lay["receiver"]
     rz = z["bottom_top"] + p["receiver"]["height"] / 2
     rear_rx = rx - p["receiver"]["length"] / 2
-    ext = p["frame"]["bottom_plate"]["outline"][-1][0] - 6
+    ext = min(x for x, _ in p["frame"]["bottom_plate"]["outline"]) - 6
     spread_ = math.radians(an["spread_deg"])
     droop = math.radians(an["droop_deg"])
     for i, side in enumerate((1, -1), start=1):

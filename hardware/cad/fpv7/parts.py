@@ -322,7 +322,7 @@ def prop_disc(p: Params) -> cq.Shape:
 
 
 def prop_blades(p: Params, clockwise: bool) -> cq.Shape:
-    """A three-blade propeller seen from above, turning clockwise or counter-clockwise,
+    """A propeller of ``blades`` blades seen from above, turning clockwise or counter-clockwise,
     with its hub on z = 0. Each blade is a loft of thin ellipses set at the pitch angle
     atan(pitch / (2 pi r)); the chord follows a typical 7-inch planform (widest at about
     40 % of the radius) but is kept small enough that the blade stays inside the swept
@@ -351,7 +351,8 @@ def prop_blades(p: Params, clockwise: bool) -> cq.Shape:
             )
         )
     blade = cq.Solid.makeLoft(wires, False)
-    blades = [blade.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), 120 * k) for k in range(3)]
+    n = p["blades"]
+    blades = [blade.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), 360 * k / n) for k in range(n)]
     hub = cut(cylinder(hub_d, hub_h), cylinder(5.0, hub_h + 2).translate(cq.Vector(0, 0, -1)))
     prop = fuse(hub, *blades)
     # A counter-clockwise propeller is the mirror image of a clockwise one.
@@ -584,7 +585,7 @@ def antenna(p: Params, start: Point3, exit_: Point3, direction: Point3) -> cq.Sh
     v = cq.Vector(*direction).normalized()
     inside = (cq.Vector(*exit_) - cq.Vector(*start)).Length
     rest = p["length"] - inside - el_length
-    if rest < 0:
+    if rest <= 0:
         raise ValueError(f"antenna.length {p['length']} too short to reach the frame's edge")
     end = cq.Vector(*exit_) + v * rest
     coax = tube([start, exit_, (end.x, end.y, end.z)], p["diameter"])
