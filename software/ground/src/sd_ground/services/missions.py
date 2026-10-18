@@ -61,6 +61,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CLOSE_AFTER_DISARM_S",
+    "FLIGHT_TLOG",
     "TICK_S",
     "FlowError",
     "MavCaller",
@@ -68,6 +69,7 @@ __all__ = [
 ]
 
 CLOSE_AFTER_DISARM_S: Final = 10.0
+FLIGHT_TLOG: Final = "flight.tlog"
 TICK_S: Final = 0.2
 _HOME_MODES: Final = frozenset({CopterMode.RTL, CopterMode.SMART_RTL})
 _LATCH_TRIGGER: Final = {
@@ -147,6 +149,7 @@ class MissionFlow:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
     _status: dict[str, str] = field(default_factory=dict[str, str])
+    _tlogs: set[str] = field(default_factory=set[str])  # missions whose flight.tlog is open
 
     # --- small helpers -----------------------------------------------------------------
 
@@ -363,6 +366,8 @@ class MissionFlow:
 
     async def _after_transition(self, mission: Mission, state: MissionState) -> None:
         vid = mission.vehicle_id
+        if state is MissionState.ACTIVE:
+            self._start_tlog(mission)
         if state is MissionState.LANDED:
             await self.end_clearance(vid, "invalidated", "LANDED", str(mission.id))
             watch = self._watch.setdefault(vid, _VehicleWatch())
@@ -423,12 +428,34 @@ class MissionFlow:
         )
         return await self.close(mission, Trigger.CLOSE_MANUAL, "manual")
 
+    def _start_tlog(self, mission: Mission) -> None:
+        """The ground's MAVLink channel into ``<mission>/flight.tlog`` from the first
+        ``ACTIVE`` until the mission closes (once per mission: a resume must not start
+        the file again)."""
+        mid = str(mission.id)
+        start = getattr(self.mav, "start_tlog", None)
+        if start is None or mid in self._tlogs:
+            return
+        try:
+            if start(self.mission_dir(mid) / FLIGHT_TLOG):
+                self._tlogs.add(mid)
+        except OSError as exc:
+            log.error("tlog.start_failed", mission_id=mid, error=type(exc).__name__)
+
+    def _stop_tlog(self, mission: Mission) -> None:
+        mid = str(mission.id)
+        stop = getattr(self.mav, "stop_tlog", None)
+        if stop is not None and mid in self._tlogs:
+            stop()
+        self._tlogs.discard(mid)
+
     async def close(self, mission: Mission, trigger: Trigger, reason: str) -> Mission:
         from sd_ground.services import files as files_service
 
         await self.end_clearance(
             mission.vehicle_id, "invalidated", "MISSION_CLOSED", str(mission.id)
         )
+        self._stop_tlog(mission)
         await files_service.close_files(self, mission)
         after = await self.transition(str(mission.id), trigger, closed_reason=reason)
         self.coverage.forget(str(mission.id))

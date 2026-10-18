@@ -29,6 +29,7 @@ from pymavlink import mavutil
 
 from sd_sim import ports
 from sd_sim.errors import InfraError, VehicleError
+from sd_sim.rc import RcSticks, pilot_throttle
 
 HARNESS_SYSID = 253
 HARNESS_COMPID = 190
@@ -390,9 +391,15 @@ class Harness:
         raise InfraError(f"parameterlistan blev inte komplett inom {timeout:.0f} s ({got})")
 
 
-def observe(instance: int, state_file: Path) -> int:
-    """Observer for the launcher (no flight commands); writes the state file until SIGTERM."""
+def observe(instance: int, state_file: Path, *, rc_pilot: bool = False) -> int:
+    """Observer for the launcher (no flight commands); writes the state file until SIGTERM.
+
+    With ``rc_pilot`` it also holds the pilot's RC transmitter (``sd_sim.rc``): SITL's
+    throttle centred in the air, down on the ground. It never steers."""
     harness = Harness.for_instance(instance)
+    sticks = RcSticks(ports.for_instance(instance)["sitl_rc_in"]) if rc_pilot else None
+    if sticks is not None:
+        sticks.__enter__()
     stopping = False
 
     def stop(_sig: int, _frame: object) -> None:
@@ -404,9 +411,14 @@ def observe(instance: int, state_file: Path) -> int:
     tmp = state_file.with_suffix(".tmp")
     while not stopping:
         harness.pump(0.5)
+        if sticks is not None:
+            st = harness.state
+            sticks.throttle = pilot_throttle(armed=st.armed, alt_m=st.rel_alt_m, mode=st.mode)
         payload = {**asdict(harness.state), "ready": harness.state.ready, "pid": os.getpid()}
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(state_file)
+    if sticks is not None:
+        sticks.__exit__()
     harness.close()
     return 0
 
@@ -417,8 +429,9 @@ def main(argv: list[str] | None = None) -> int:
     obs = sub.add_parser("observe")
     obs.add_argument("--instance", type=int, default=0)
     obs.add_argument("--state-file", type=Path, required=True)
+    obs.add_argument("--rc-pilot", action="store_true")
     args = parser.parse_args(argv)
-    return observe(args.instance, args.state_file)
+    return observe(args.instance, args.state_file, rc_pilot=args.rc_pilot)
 
 
 if __name__ == "__main__":

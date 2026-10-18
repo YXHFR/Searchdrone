@@ -38,6 +38,7 @@ MARKERS = (
     "panel: drives the real panel in a browser (just test-panel-sitl only)",
     "brain: flies with an AI commander (skipped with brain=none)",
     "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
+    "e2e: the end-to-end suite (the demo and the emergency buttons); run with just e2e",
 )
 MAX_INSTANCE = 7
 # A shard's estimated work per worker must fit in this many seconds, and no single

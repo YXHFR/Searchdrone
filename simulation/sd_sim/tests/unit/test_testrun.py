@@ -20,7 +20,8 @@ def test_pr_selection_matches_ci() -> None:
     )
     assert argv[1:5] == ["-m", "pytest", "-p", "sd_sim.pytest_plugin"]
     assert (
-        argv[argv.index("-m", 2) + 1] == "sitl and not gz and not llm and not nightly and not panel"
+        argv[argv.index("-m", 2) + 1]
+        == "sitl and not gz and not llm and not nightly and not panel and not e2e"
     )
     assert argv[argv.index("-n") + 1] == "4" and "--dist" in argv
     assert argv[argv.index("--shard-id") + 1] == "2"
@@ -35,9 +36,12 @@ def test_pr_selection_matches_ci() -> None:
 
 
 def test_nightly_and_gz_selection() -> None:
-    assert testrun.selection("nightly", "builtin") == "sitl and nightly and not panel"
-    assert testrun.selection("pr", "gz") == "sitl and not llm and not nightly and not panel"
-    assert testrun.selection("pr", "builtin").endswith("and not panel")
+    assert testrun.selection("nightly", "builtin") == "sitl and nightly and not panel and not e2e"
+    assert (
+        testrun.selection("pr", "gz")
+        == "sitl and not llm and not nightly and not panel and not e2e"
+    )
+    assert testrun.selection("pr", "builtin").endswith("and not panel and not e2e")
     assert testrun.selection("panel", "builtin") == "sitl and panel"
 
 
@@ -101,10 +105,13 @@ def test_exit_codes(
 @pytest.mark.parametrize(
     ("brain", "marks"),
     [
-        ("scripted", "sitl and not gz and not llm and not nightly and not panel"),
-        ("grammar", "sitl and not gz and not llm and not nightly and not panel"),
-        ("llm_local", "sitl and not gz and not nightly and not panel"),
-        ("none", "sitl and not gz and not llm and not nightly and not brain and not panel"),
+        ("scripted", "sitl and not gz and not llm and not nightly and not panel and not e2e"),
+        ("grammar", "sitl and not gz and not llm and not nightly and not panel and not e2e"),
+        ("llm_local", "sitl and not gz and not nightly and not panel and not e2e"),
+        (
+            "none",
+            "sitl and not gz and not llm and not nightly and not brain and not panel and not e2e",
+        ),
     ],
 )
 def test_brain_reaches_pytest(brain: str, marks: str) -> None:

@@ -8,6 +8,18 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- The demo with one command and its end-to-end test. `just demo` starts the whole stack
+  (Postgres, MediaMTX, the ground station, SITL with Gazebo, the simulated radio, the
+  onboard computer, the AI commander, the video and the panel), waits until every part
+  reports ready and prints the panel's one-time login link and the start time. `just e2e`
+  flies the demo on that stack as separate programs through the panel API (charter card,
+  two clicks, take-off, P1, the search with >= 95 % coverage in PostGIS, the gate's refusal
+  of 200 m, landing within 3 m, the mission closing by itself, the database and the
+  mission folder) and the emergency buttons; in CI it runs offline, with the stack's
+  traffic to the internet blocked (`compose.offline.yaml`, `tools/offline/isolate.sh`).
+  `just accept phase=pre|post` checks the release list and writes a report; the owner's
+  own checks go in `data/reports/accept-manual-v0.1.0.toml`. The ground station now
+  records `flight.tlog` for every mission.
 - Live video and recordings: MediaMTX 1.21.1 in `compose.yaml` (`just video-up`) with
   `config/mediamtx.yml`, every listener on 127.0.0.1 (only the WebRTC media port moves
   to the LAN in LAN mode, Media over QUIC off) and publishing only with the password

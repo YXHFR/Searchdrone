@@ -57,6 +57,7 @@ software/brain/src/sd_brain/prompts/**
 
 # Build, CI and the gates themselves
 compose.yaml
+compose.offline.yaml
 config/*.example.toml
 config/mediamtx.yml
 .importlinter

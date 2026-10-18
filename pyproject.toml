@@ -62,6 +62,7 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PTH", "TID
 "tools/**" = ["T20"]
 "simulation/sd_sim/src/sd_sim/launch.py" = ["T20"]
 "simulation/sd_sim/src/sd_sim/testrun.py" = ["T20"]
+"simulation/sd_sim/src/sd_sim/e2e.py" = ["T20"]
 "simulation/sd_sim/src/sd_sim/_args.py" = ["T20"]
 # Hand-written SQL migrations keep one column per line (B0-04)
 "software/ground/migrations/versions/**" = ["E501"]
@@ -102,4 +103,5 @@ markers = [
   "panel: drives the real panel in a browser (just test-panel-sitl only)",
   "brain: flies with an AI commander (skipped with brain=none)",
   "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
+  "e2e: the end-to-end suite (the demo and the emergency buttons); run with just e2e",
 ]

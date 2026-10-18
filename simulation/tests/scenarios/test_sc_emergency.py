@@ -64,6 +64,7 @@ async def stopped_and_holding(sc: Scenario, t0: float) -> None:
     )
 
 
+@pytest.mark.e2e
 @pytest.mark.brain
 @pytest.mark.budget_s(480)
 async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
@@ -111,6 +112,7 @@ async def test_sc02_stop_and_resume(sim: Any, migrated_db: Any, tmp_path: Path) 
         await sc.check_invariants()
 
 
+@pytest.mark.e2e
 @pytest.mark.brain
 @pytest.mark.budget_s(480)
 async def test_sc03_fly_home_mid_search(sim: Any, migrated_db: Any, tmp_path: Path) -> None:

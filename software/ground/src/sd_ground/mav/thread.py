@@ -31,6 +31,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final, Literal
 
 from sd_ground.liveness import LoopLiveness
@@ -642,6 +643,17 @@ class ThreadSafeMav:
 
     def snapshot(self) -> MavSnapshot | None:
         return self.core.snapshot()
+
+    def start_tlog(self, path: Path) -> bool:
+        """The ground's MAVLink channel into the mission's ``flight.tlog`` (the reader
+        thread writes it under the connection's lock). False when it cannot record."""
+        start = getattr(self.core.vehicle, "start_tlog", None)
+        return bool(start(path)) if start is not None else False
+
+    def stop_tlog(self) -> None:
+        stop = getattr(self.core.vehicle, "stop_tlog", None)
+        if stop is not None:
+            stop()
 
     async def call[T](self, work: Callable[[Vehicle], Awaitable[T]], timeout_s: float = 30.0) -> T:
         """Run ``work(vehicle)`` in the MAVLink thread's loop and wait for it from another

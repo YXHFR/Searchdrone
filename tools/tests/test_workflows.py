@@ -149,9 +149,10 @@ def test_sitl_jobs_and_aggregate() -> None:
         "sitl-nightly-gz",
         "sitl-e2e",
         "video",
+        "e2e",
     }
     assert jobs["sitl-ok"]["if"] == "always()"
-    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl", "video"}
+    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl", "video", "e2e"}
     assert "ci_aggregate.jq" in jobs["sitl-ok"]["steps"][-1]["run"]
     assert jobs["sitl"]["if"] == "needs.changes.outputs.run == 'true'"
     for name in ("sitl-nightly", "sitl-nightly-gz"):
@@ -161,6 +162,24 @@ def test_sitl_jobs_and_aggregate() -> None:
     assert tests[0]["timeout-minutes"] <= 35
     run = tests[0]["run"]
     assert "physics=builtin" in run and "brain=scripted" in run
+
+
+def test_e2e_job_runs_offline_behind_the_block() -> None:
+    """F-07: the pull-request end-to-end job blocks the stack's traffic before the test,
+    always lifts it, and the nightly runs ten end-to-end runs (F-01)."""
+    jobs = load(ROOT / ".github" / "workflows" / "sitl.yml")["jobs"]
+    job = jobs["e2e"]
+    assert job["if"] == "needs.changes.outputs.run == 'true'"
+    runs = [str(s.get("run", "")) for s in job["steps"]]
+    block = next(i for i, r in enumerate(runs) if "isolate.sh block" in r)
+    test = next(i for i, r in enumerate(runs) if "just e2e offline=1 runs=1" in r)
+    unblock = next(i for i, r in enumerate(runs) if "isolate.sh unblock" in r)
+    assert block < test < unblock
+    assert job["steps"][unblock]["if"] == "always()"
+    assert "compose.offline.yaml" in "\n".join(runs)
+    nightly = jobs["sitl-e2e"]
+    assert len(nightly["strategy"]["matrix"]["run"]) == 10
+    assert "schedule" in nightly["if"]
 
 
 def test_sitl_change_filter_fails_closed() -> None:

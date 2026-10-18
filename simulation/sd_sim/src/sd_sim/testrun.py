@@ -6,8 +6,9 @@ Runs the simulator tests with pytest and the ``sd_sim.pytest_plugin`` plugin:
         --shard-id <shard> --num-shards <shards> --reruns 1 --only-rerun InfraError
         --physics <physics> --brain <brain> simulation/tests/ simulation/sd_sim/tests/sitl/
 
-``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly`` (with
-``physics=gz`` the Gazebo tests are included); ``mode=nightly`` selects
+``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly and not e2e``
+(with ``physics=gz`` the Gazebo tests are included; the end-to-end tests run in their
+own job with ``just e2e``); ``mode=nightly`` selects
 ``sitl and nightly``; ``mode=panel`` selects the panel's browser test (``sitl and panel``,
 started by ``just test-panel-sitl``). ``brain=`` picks the AI commander the scenarios fly
 with: ``scripted`` (default, the script per scenario), ``grammar`` (the fixed command
@@ -68,7 +69,7 @@ def selection(mode: str, physics: str, brain: str = "scripted") -> str:
         base = base.replace(" and not llm", "")
     elif brain == "none":
         base += " and not brain"
-    return base + " and not panel"
+    return base + " and not panel and not e2e"
 
 
 def _int(values: dict[str, str], key: str, default: int, low: int, high: int) -> int:

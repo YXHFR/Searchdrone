@@ -1,5 +1,7 @@
-# The main scenario: the AI proposes the demo charter, takes off when asked, flies to P1,
-# searches the box there, flies home and lands. Test data for the scripted commander.
+# The main scenario and the demo: the AI proposes the demo charter, takes off when the
+# pilot has asked and confirmed "clear around the drone", flies to P1, searches the box
+# there, flies home and lands. Asked to climb to 200 m mid-flight it always sends the
+# order, so the gate's refusal is tested. Test data for the scripted commander.
 scenario: SC01
 timeout_s: 1200
 expected_runtime_s: 540
@@ -11,14 +13,30 @@ turns:
     match: '^Använd ramen (?P<name>charter_\w+)\.$'
     say: ["Jag föreslår ramen {name}."]
     charter_proposal: {from_fixture: "{name}"}
+  # The demo's first line (D3): the charter for P1 and the box, then the take-off
+  # once the pilot has approved it and confirmed "clear around the drone".
+  - on: operator_message
+    match: '^Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd\. Landa hemma sen\.$'
+    say: ["Jag föreslår en ram runt hemmet, P1 och rutan. Godkänn den och bekräfta att det är fritt runt drönaren, så lyfter jag."]
+    charter_proposal: {from_fixture: "charter_test"}
   - on: operator_message
     match: '^Starta\.$'
     action: {skill: takeoff, params: {alt_m: 40}}
+  # D7: always the order itself (at P1, the drone's place by then), never a refusal of
+  # its own; the gate refuses it with ALT_ABOVE_CHARTER and the drone stays at 40 m.
+  - on: operator_message
+    match: '^Gå upp till 200 meter\.$'
+    action: {skill: goto, params: {at: "fixture:P1", alt_m: 200}}
+  - on: gate_reject_retry
+    say: ["Grinden sa nej: 200 meter är över ramens tak. Jag fortsätter på 40 meter."]
   - on: skill_event
     when: {skill: takeoff, status: done}
     action: {skill: goto, params: {at: "fixture:P1", alt_m: 40}}
+  # D6: at P1 it reports and hovers a moment before the search starts.
   - on: skill_event
     when: {skill: goto, status: done}
+    say: ["Framme vid P1. Börjar söka av rutan."]
+    delay_s: 3
     action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40, spacing_m: 30, speed_ms: 7}}
   - on: skill_event
     when: {skill: survey_sector, status: done}

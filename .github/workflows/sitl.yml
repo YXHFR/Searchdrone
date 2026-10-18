@@ -247,9 +247,60 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  e2e:
+    # The demo (SC01) on the whole stack as separate programs and the emergency buttons
+    # N1-N7, offline: everything the stack runs runs as the user sdtest, its database on
+    # the network sd-offline, and their traffic to the internet is blocked before the
+    # test (tools/offline/isolate.sh; F-07). The runner's own traffic is not touched.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *checkout
+      - *setup
+      - name: Data folder outside the checkout, the test user, the panel
+        run: |
+          data="$RUNNER_TEMP/sd-data"
+          sed -i "s|^SD_DATA_DIR=.*|SD_DATA_DIR=$data|" .env
+          echo "SD_DATA_DIR=$data" >> "$GITHUB_ENV"
+          bash tools/offline/isolate.sh user >> "$GITHUB_ENV"
+          pnpm --filter @searchdrone/panel build
+      - name: Postgres on the network sd-offline, MediaMTX as the test user
+        run: |
+          docker compose -f compose.yaml -f compose.offline.yaml --env-file .env up -d --wait db
+          SD_UID="${SD_E2E_USER%%:*}" SD_GID="${SD_E2E_USER##*:}" just video-up
+      - *image
+      - *versions
+      - name: Virtualenv for the simulator container (before the block)
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SD_E2E_PREPARE: "1"
+        run: just e2e
+      - name: Block the stack's traffic to the internet and show that it holds
+        run: |
+          bash tools/offline/isolate.sh own
+          bash tools/offline/isolate.sh block
+      - name: End-to-end tests offline (just e2e offline=1 runs=1)
+        timeout-minutes: 45
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SD_SIM__REQUIRE_VIDEO: "1"
+          SD_E2E_SYNC: "0"
+        run: just e2e offline=1 runs=1
+      - name: Lift the block
+        if: always()
+        run: bash tools/offline/isolate.sh unblock
+      - *scan
+      - *results
+      - *logs
+
   sitl-ok:
     if: always()
-    needs: [changes, sitl, video]
+    needs: [changes, sitl, video, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -312,21 +363,35 @@ jobs:
       - *logs
 
   sitl-e2e:
-    # Panel against the simulator, logged in like a person. Not required in v0.1.0.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # The end-to-end suite ten times on the same commit, in parallel (the release needs
+    # 10 of 10 on its commit, F-01). Not required on pull requests.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - *checkout
       - *check-ref
       - *setup
-      - name: End-to-end run
+      - *db
+      - name: MediaMTX and the panel
         run: |
-          set +e
-          out="$(just e2e 2>&1)"; code=$?
-          echo "$out"
-          if [ "$code" -eq 2 ] && grep -q "inte byggt än" <<<"$out"; then
-            echo "::notice::Helhetstestet är inte byggt än; inget att köra."
-            exit 0
-          fi
-          exit "$code"
+          just video-up
+          pnpm --filter @searchdrone/panel build
+      - *image
+      - *versions
+      - name: End-to-end tests
+        timeout-minutes: 45
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SD_SIM__REQUIRE_VIDEO: "1"
+        run: just e2e runs=1
+      - *scan
+      - *results
+      - *logs

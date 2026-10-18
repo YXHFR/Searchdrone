@@ -696,3 +696,28 @@ def test_rc_mode_channel_parsing_and_switch_rule() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_flight_tlog_goes_to_a_transport_that_records(tmp_path: Path) -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        # The fake radio link cannot record: nothing is started, nothing breaks.
+        assert vehicle.start_tlog(tmp_path / "a" / "flight.tlog") is False
+        vehicle.stop_tlog()
+        calls: list[tuple[str, Any]] = []
+
+        class Recording:
+            def start_tlog(self, path: Path, clk: Any) -> None:
+                calls.append(("start", (path, clk)))
+
+            def stop_tlog(self) -> None:
+                calls.append(("stop", None))
+
+        vehicle._transport = Recording()  # pyright: ignore[reportAttributeAccessIssue,reportPrivateUsage]
+        target = tmp_path / "m" / "flight.tlog"
+        assert vehicle.start_tlog(target) is True
+        assert target.parent.is_dir()
+        vehicle.stop_tlog()
+        assert calls == [("start", (target, clock)), ("stop", None)]
+
+    asyncio.run(run())

@@ -49,6 +49,7 @@ async def still_for(sc: Scenario, seconds: float, what: str) -> None:
     )
 
 
+@pytest.mark.e2e
 @pytest.mark.budget_s(660)
 async def test_sc08a_ai_dies_mid_search(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:

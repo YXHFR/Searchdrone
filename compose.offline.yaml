@@ -1,0 +1,17 @@
+# The offline test (F-07, `just e2e offline=1` in CI): the stack's containers on their own
+# network with a fixed subnet, so tools/offline/isolate.sh can block exactly their
+# traffic to anything outside it (DOCKER-USER). Used on top of compose.yaml:
+#   docker compose -f compose.yaml -f compose.offline.yaml --env-file .env up -d --wait db
+# MediaMTX keeps the host network; it runs as the test user, whose own traffic is blocked.
+name: searchdrone
+
+networks:
+  sd-offline:
+    name: sd-offline
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+
+services:
+  db:
+    networks: [sd-offline]

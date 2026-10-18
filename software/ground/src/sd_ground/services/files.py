@@ -2,6 +2,8 @@
 
 At ``LANDED -> CLOSED`` and at ``/end`` this writes into ``<data_dir>/missions/<id>/``:
 
+* ``flight.tlog``: every MAVLink message the ground received from the first ``ACTIVE``
+  (written while flying by ``MissionFlow``; only recorded here);
 * ``mission.json``: the mission, its limits, every charter version, the orders and the
   approvals;
 * ``events.jsonl``: every event of the mission;
@@ -99,6 +101,8 @@ async def close_files(flow: MissionFlow, mission: Mission) -> None:
         await asyncio.to_thread(_write, folder / "exports" / "track.geojson", geo)
         written.append(("export", "exports/track.geojson"))
         written += await asyncio.to_thread(_copy_dataflash, flow, folder)
+        if (folder / "flight.tlog").is_file():
+            written.append(("tlog", "flight.tlog"))
     except OSError as exc:
         log.error("files.write_failed", mission_id=mid, error=type(exc).__name__)
         flow.g.add_event(

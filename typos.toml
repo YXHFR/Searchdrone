@@ -10,6 +10,8 @@ extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**",
 sitl = "sitl"
 brin = "brin"  # Postgres BRIN index (B0-04)
 ned = "ned"  # north-east-down, a Gazebo plugin tag (sd_quad14 model)
+trak = "trak"  # MP4 box names (sd_sim.mp4)
+trun = "trun"
 # Swedish
 varning = "varning"
 databas = "databas"

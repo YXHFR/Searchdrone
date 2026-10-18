@@ -2,8 +2,14 @@
 
 ``up`` starts the simulator stack for one instance in the foreground, waits for each
 step to be healthy before the next and stops everything again on Ctrl-C. ``down``
-stops what an earlier ``up`` started. Parts of the stack that are not built yet are
-skipped with a message.
+stops what an earlier ``up`` started.
+
+The whole stack (``sd_sim.services``): the database, MediaMTX and the ground station
+start BEFORE SITL, so that they stop after it (processes stop in reverse start order
+and the ground station's heartbeat must end last); the onboard computer, the AI
+commander and the video start after it. When every service reports ready the launcher
+prints the panel's one-time login link and how long the start took (``just demo``
+must be ready within 180 s).
 """
 
 from __future__ import annotations
@@ -22,7 +28,7 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, paths, ports, procs, world
+from sd_sim import _args, config, gazebo, paths, ports, procs, services, world
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -44,13 +50,7 @@ ALLOWED_KEYS = (
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
-# Parts of the stack that later work adds; until then `up` says it skips them.
-# The database and the ground station start BEFORE SITL, so that they stop after it
-# (processes stop in reverse start order and the ground station's heartbeat must end
-# last); the rest start after SITL.
-NOT_BUILT_BEFORE_SITL = ("postgres", "sd-ground")
-NOT_BUILT_AFTER_SITL = ("sd-onboard", "sd-brain")
-
+DEMO_READY_S = 180.0  # every service ready within this, on the owner's computer
 HEALTH_LINK_S = 10.0
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
@@ -105,8 +105,17 @@ class Stack:
         observer: bool = True,
         repo: Path = paths.REPO,
         param_layers: tuple[Path, ...] = (),
+        with_services: bool = False,
+        fresh_db: bool = False,
     ) -> None:
         self.cfg = cfg
+        # False: only the simulator (the flight tests run the services in their process).
+        self.with_services = with_services
+        self.fresh_db = fresh_db  # drop this instance's database first (end-to-end test)
+        self.layout: services.ServiceLayout | None = None
+        self.login_url = ""
+        self.ready_after_s: float | None = None
+        self.video_on = False  # MediaMTX ran when the services started
         self.param_layers = param_layers  # a test's own layers, loaded last
         self.run_dir = run_dir
         self.repo = repo
@@ -130,7 +139,20 @@ class Stack:
     def mask(self, text: str) -> str:
         if self.linksim_token:
             text = text.replace(self.linksim_token, "***")
+        if self.secrets_dir.is_dir():
+            for path in self.secrets_dir.iterdir():
+                try:
+                    value = path.read_text(encoding="utf-8").strip()
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if len(value) >= 8:
+                    text = text.replace(value, "***")
         return text
+
+    def wait_for(
+        self, step: str, proc: procs.Proc | None, timeout: float, check, hint: str
+    ) -> None:
+        self._wait(step, proc, timeout, check, hint)
 
     def _wait(self, step: str, proc: procs.Proc | None, timeout: float, check, hint: str) -> None:
         end = time.monotonic() + timeout
@@ -207,6 +229,8 @@ class Stack:
         inst = str(self.cfg.instance)
         env = procs.clean_env()
         if self.observer:
+            # With the services it also holds the RC transmitter (SITL has none).
+            rc = ["--rc-pilot"] if self.with_services else []
             self.group.start(
                 "harness",
                 [
@@ -218,6 +242,7 @@ class Stack:
                     inst,
                     "--state-file",
                     str(self.inst_dir / "harness_state.json"),
+                    *rc,
                 ],
                 env=env,
             )
@@ -391,26 +416,72 @@ class Stack:
         )
 
     def up(self) -> None:
+        start = time.monotonic()
         os.umask(0o077)
         self.check_ports_free()
         self.make_secrets()
         self.inst_dir.mkdir(parents=True, exist_ok=True)
         (self.inst_dir / "ports.json").write_text(json.dumps(self.ports, indent=2), "utf-8")
+        video = False
+        onboard: procs.Proc | None = None
+        brain: procs.Proc | None = None
+        if self.with_services:
+            self.check_service_ports_free()
+            lay = services.layout_for(self)
+            self.layout = lay
+            lay.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            say("==> databas (Postgres + PostGIS)")
+            services.start_database(self, lay)
+            services.panel_ready(self, lay)
+            video = services.mediamtx_up(self)
+            self.video_on = video
         if self.cfg.physics == "gz":
             say("==> Gazebo")
             self.start_gazebo()
         say("==> testrigg, mavtap och linksim")
         self.start_link_processes()
-        for part in NOT_BUILT_BEFORE_SITL:
-            say(f"hoppar över {part} (inte byggt än)")
+        if self.layout is not None:
+            say("==> sd-ground (markstationen)")
+            services.make_service_secrets(self, self.layout)
+            services.start_ground(self, self.layout, video=video)
         say("==> arducopter (SITL)")
         sitl = self.start_sitl()
         if self.observer:
             self.wait_vehicle_observed(sitl)
-        for part in NOT_BUILT_AFTER_SITL:
-            say(f"hoppar över {part} (inte byggt än)")
+        if self.layout is not None:
+            say("==> sd-onboard (ombordsdatorn)")
+            onboard = services.start_onboard(self, self.layout)
+            say(f"==> sd-brain (AI-befälhavaren, brain={self.cfg.brain})")
+            brain = services.start_brain(self, self.layout)
         self.start_video_source()
         self.start_video_relay()
+        if self.layout is not None:
+            ground = next(p for p in self.group.procs if p.name == "sd-ground")
+            for proc in (onboard, brain):
+                if proc is not None and not proc.alive():
+                    raise self._fail(proc.name, proc, "Processen avslutades.")
+            try:
+                self._wait(
+                    "tjänsterna",
+                    ground,
+                    services.HEALTH_SERVICES_S,
+                    lambda: services.all_ready(self, video),
+                    "Alla delar blev inte redo.",
+                )
+            except InfraError as exc:
+                raise InfraError(f"{exc}\nInte redo: {services.not_ready_parts(self)}") from None
+            self.ready_after_s = time.monotonic() - start
+            self.login_url = services.login_link(self, self.layout)
+
+    def check_service_ports_free(self) -> None:
+        names = ["ground_panel", "ground_commander", "ground_sdlink", "ground_mavlink"]
+        if self.cfg.lan:
+            names.append("ground_lan")
+        busy = busy_ports(self.ports, names)
+        if busy:
+            ports_text = ", ".join(str(p) for p in busy)
+            hint = " (8080 används kanske av ett annat program)" if 8080 in busy else ""
+            raise InfraError(f"Port {ports_text} är upptagen{hint}. Kör just stop och försök igen.")
 
     def down(self) -> None:
         self.group.stop_all()
@@ -428,6 +499,16 @@ def _run_foreground(stack: Stack) -> int:
     try:
         stack.up()
         say(f"Klart. Simulatorn kör (instans {stack.cfg.instance}). Loggar: {stack.run_dir}")
+        if stack.ready_after_s is not None:
+            took = stack.ready_after_s
+            note = "" if took <= DEMO_READY_S else f" (över målet {DEMO_READY_S:.0f} s)"
+            say(f"Alla tjänster redo efter {took:.0f} s{note}.")
+            say(f"AI-befälhavaren: {services.brain_mode(stack)}.")
+        if stack.login_url:
+            say(f"Öppna panelen: {stack.login_url}")
+            say("Länken fungerar en gång. Ny länk: uv run --package sd-ground sd-ground login-link")
+            if stack.cfg.open_browser:
+                services.open_browser(stack.login_url)
         say("Stoppa med Ctrl-C eller just stop.")
         while True:
             for proc in stack.group.procs:
@@ -483,7 +564,7 @@ def main(argv: list[str] | None = None) -> int:
         say(f"\033[33m{config.PERSONAL_HOME_WARNING}\033[0m")
     if shutil.which("ss") is None:
         say("Varning: ss saknas, portkontrollen hoppas över (installera iproute2).")
-    stack = Stack(cfg, new_run_dir(cfg.instance))
+    stack = Stack(cfg, new_run_dir(cfg.instance), with_services=True)
     return _run_foreground(stack)
 
 

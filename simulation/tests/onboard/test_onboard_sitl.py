@@ -24,9 +24,6 @@ import asyncio
 import contextlib
 import datetime as dt
 import math
-import socket
-import struct
-import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
@@ -77,6 +74,7 @@ from sd_sim import config, paths
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.pytest_plugin import worker_instance
+from sd_sim.rc import RcSticks
 from sd_sim.sitl import CMAC_HOME
 from sd_sim.util import new_run_dir
 
@@ -123,37 +121,6 @@ class Sim:
     @property
     def ports(self) -> dict[str, int]:
         return self.stack.ports
-
-
-class RcSticks:
-    """A pilot holding an RC transmitter: throttle down on the ground (arming needs it),
-    centred in the air (1500 us holds the height in LOITER), the other sticks centred.
-    Sends SITL's RC input over UDP at 50 Hz; without it the simulator's throttle stays at
-    its minimum and LOITER sinks to the ground."""
-
-    def __init__(self, port: int) -> None:
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._addr = ("127.0.0.1", port)
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="rc-sticks", daemon=True)
-        self.throttle = 1000
-        self.mode_pwm = 1500  # channel 5, ArduCopter's flight-mode switch
-
-    def __enter__(self) -> RcSticks:
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self._stop.set()
-        self._thread.join(2)
-        self._sock.close()
-
-    def _run(self) -> None:
-        while not self._stop.wait(0.02):
-            packet = struct.pack(
-                "<8H", 1500, 1500, self.throttle, 1500, self.mode_pwm, 1500, 1500, 1500
-            )
-            self._sock.sendto(packet, self._addr)
 
 
 @contextlib.contextmanager

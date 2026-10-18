@@ -21,5 +21,5 @@ def test_bad_input_exits_2(argv: list[str]) -> None:
 
 
 def test_not_built(capsys: pytest.CaptureFixture[str]) -> None:
-    assert just_args.main(["e2e", "runs=3"]) == 2
-    assert "inte byggt än (B1-16)" in capsys.readouterr().out
+    assert just_args.main(["perf", "runs=3"]) == 2
+    assert "inte byggt än (B1-17)" in capsys.readouterr().out

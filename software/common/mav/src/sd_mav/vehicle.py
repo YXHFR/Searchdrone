@@ -18,6 +18,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import IntEnum, StrEnum
+from pathlib import Path
 from typing import Any, Final
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
@@ -331,6 +332,23 @@ class Vehicle:
         self.blocked_count = 0
         self.event_errors = 0
         self.sent_count = 0
+
+    # --- the flight's telemetry log ------------------------------------------------------
+
+    def start_tlog(self, path: Path) -> bool:
+        """Record every message this channel receives into ``path`` (``flight.tlog``).
+        False when the transport cannot record (a test double)."""
+        start = getattr(self._transport, "start_tlog", None)
+        if start is None:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        start(path, self._clock)
+        return True
+
+    def stop_tlog(self) -> None:
+        stop = getattr(self._transport, "stop_tlog", None)
+        if stop is not None:
+            stop()
 
     # --- lifecycle ---------------------------------------------------------------------
 

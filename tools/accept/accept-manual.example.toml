@@ -1,0 +1,64 @@
+# What the owner has seen with their own eyes, for `just accept` (release v0.1.0).
+# Copy to data/reports/accept-manual-v0.1.0.toml (gitignored) and fill in each table
+# yourself after you have checked it: pass = true, by = your GitHub name, date = the day.
+# Only the owner fills this in. An agent never writes pass = true here.
+# A table that is missing counts as "not checked yet" and stops the release.
+
+[F-02]
+# `just demo` on your computer: the demo D1-D10 three times in a row, steered only
+# through the chat plus the two clicks (charter, "clear around the drone"). The camera
+# picture shows in the panel. Write the answer times you saw in the note.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[F-04]
+# The demo from your phone on the home network with `just demo lan=1`: log in with the
+# PIN, see everything, STOP and FLY HOME can be pressed.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[R-06]
+# You have looked at the repository's rulesets (main-protection, release-tags) on GitHub.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[S-24]
+# The flight-safety reviewer approved the final versions of the safety tickets.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[V-01]
+# The README was followed from the start on the release commit and ended with code 0.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[V-02]
+# The GIF on the release shows the demo.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[V-03]
+# You have seen the demo (live or as a video) and said OK to the tag in the chat.
+pass = false
+by = ""
+date = ""
+note = ""
+
+[V-06]
+# You have confirmed (or changed) the flight-safety defaults before the tag.
+pass = false
+by = ""
+date = ""
+note = ""

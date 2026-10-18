@@ -339,9 +339,38 @@ ci-sitl *args:
 demo *args:
     uv run --package sd-sim python -m sd_sim.launch up --demo "$@"
 
-# Headless end-to-end run with the scripted commander (keys: runs, offline)
+# The demo and the emergency buttons end to end, headless, scripted commander (keys: runs, offline)
 e2e *args:
-    uv run --no-sync python tools/just_args.py e2e "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ " $* " == *" dry=1 "* ]]; then exec uv run --no-sync python -m sd_sim.e2e "$@"; fi
+    uv run --no-sync python -m sd_sim.e2e "$@" dry=1 >/dev/null  # the keys, before anything starts
+    bin="${SD_ARDUCOPTER_BIN:-${ARDUPILOT_HOME:-$HOME/ardupilot}/build/sitl/bin/arducopter}"
+    if [ -x "$bin" ]; then
+        exec uv run --package sd-sim python -m sd_sim.e2e "$@"
+    fi
+    # No SITL on this machine: the same container as `just ci-sitl`. The data folder is
+    # mounted at the same path, so MediaMTX's recordings and the mission folders meet.
+    # SD_E2E_USER (uid:gid) runs it as another user (the offline job's sdtest);
+    # SD_E2E_SYNC=0 uses the virtualenv in build/e2e-venv as it is (no network needed).
+    image="${SD_SITL_IMAGE:-$(bash tools/sitl_image_tag.sh --image)}"
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        docker pull "$image" || docker build -f simulation/docker/sitl.Dockerfile -t "$image" .
+    fi
+    data="${SD_DATA_DIR:-$(sed -n 's/^SD_DATA_DIR=//p' .env | tail -n 1)}"
+    [ -n "$data" ] || { echo "SD_DATA_DIR saknas i .env. Kör: just setup-config"; exit 1; }
+    mkdir -p "$data"
+    # SD_E2E_PREPARE=1 only builds that virtualenv (before the network is blocked).
+    sync='uv sync --all-packages --frozen'
+    [ "${SD_E2E_SYNC:-1}" = 0 ] && sync=true
+    run=' && uv run --no-sync python -m sd_sim.e2e "$@"'
+    [ "${SD_E2E_PREPARE:-0}" = 1 ] && run=''
+    docker run --rm --network host --user "${SD_E2E_USER:-$(id -u):$(id -g)}" \
+        -v "$PWD:/w" -w /w -v "$data:$data" -e "SD_DATA_DIR=$data" -e HOME=/tmp/home \
+        -e UV_PROJECT_ENVIRONMENT=/w/build/e2e-venv -e UV_CACHE_DIR=/w/build/e2e-uv-cache \
+        -e GITHUB_SHA -e SD_SIM__SPEEDUP -e SD_SIM__REQUIRE_SITL -e SD_SIM__REQUIRE_VIDEO \
+        ${SD_SITL_NAME:+--name "$SD_SITL_NAME"} \
+        "$image" bash -lc "$sync$run" e2e "$@"
 
 # Performance measurement on the owner's computer (keys: runs)
 perf *args:
@@ -363,9 +392,19 @@ maps-fetch *args:
 hw-check:
     uv run --package sd-hwcalc python -m sd_hwcalc check hardware/drone.yaml --limits hardware/limits.yaml
 
-# Acceptance checks for a release (keys: phase, sha)
+# Acceptance checks for a release, on the owner's computer with gh (keys: phase, sha)
 accept *args:
-    uv run --no-sync python tools/just_args.py accept "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    flags=()
+    for arg in "$@"; do
+        case "$arg" in
+            phase=pre|phase=post) flags+=(--phase "${arg#phase=}") ;;
+            sha=*) flags+=(--sha "${arg#sha=}") ;;
+            *) echo "just accept: okänd inställning '$arg' (phase=pre|post, sha=<sha>)" >&2; exit 2 ;;
+        esac
+    done
+    uv run --no-sync python tools/accept/v0_1_0.py "${flags[@]}"
 
 # Traceability from the local acceptance list to the tests (local only; set SD_ACCEPT_IDS)
 check-traceability:

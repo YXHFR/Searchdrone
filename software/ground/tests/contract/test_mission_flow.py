@@ -132,6 +132,52 @@ async def test_t19_whole_mission(r: Rig) -> None:
     assert got.status_code == 200 and b'"charters"' in got.content
 
 
+async def test_flight_tlog_from_active_until_closed(r: Rig) -> None:
+    """``flight.tlog`` is opened once at the first ACTIVE (not again after a resume),
+    closed before the mission folder is written, and recorded with its SHA-256."""
+    calls: list[str] = []
+
+    def start(path: Path) -> bool:
+        calls.append("start")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x00" * 8)
+        return True
+
+    def stop() -> None:
+        calls.append("stop")
+
+    r.flow.mav.start_tlog = start  # pyright: ignore[reportAttributeAccessIssue,reportOptionalMemberAccess]
+    r.flow.mav.stop_tlog = stop  # pyright: ignore[reportAttributeAccessIssue,reportOptionalMemberAccess]
+    mid = await r.open_mission()
+    d = driver(r, mid)
+    res = await d.charter("box")
+    assert res.status_code == 201, res.text
+    res = await r.approve(res.json()["approval_id"], 1)
+    assert res.status_code == 200, res.text
+    await r.wait_status(mid, "READY", 30)
+    await r.wait_snapshot(ExecutorState.PREFLIGHT)
+    assert calls == []
+    await take_off(r, mid, d)
+    await r.wait_status(mid, "ACTIVE")
+    assert calls == ["start"]
+    for action in ("stop", "resume"):
+        res = await r.panel.post(
+            f"/api/v1/vehicles/{VID}/actions/{action}",
+            json={"client_action_id": str(new_id())},
+            headers=H,
+        )
+        assert res.status_code == 202, res.text
+        await r.wait_status(mid, "PAUSED" if action == "stop" else "ACTIVE")
+    assert calls == ["start"]  # a resume does not start the file again
+    r.land()
+    await r.wait_status(mid, "LANDED", 30)
+    await r.wait_status(mid, "CLOSED", 20)
+    assert calls == ["start", "stop"]
+    files = (await r.panel.get(f"/api/v1/missions/{mid}/files")).json()
+    tlog = next(f for f in files if f["rel_path"] == "flight.tlog")
+    assert tlog["kind"] == "tlog" and tlog["bytes"] == 8
+
+
 async def test_forbidden_transitions_are_409(r: Rig) -> None:
     mid = await r.ready_mission()
     d = driver(r, mid)
