@@ -243,7 +243,6 @@ def test_config_with_a_key(tmp_path: Path) -> None:
     c = farm_config.load({"commander": "script"}, tmp_path)
     assert c.commander == "script" and c.limits.idle_only and c.limits.max_duty == 0.5
     assert c.r2 is not None and c.r2.bucket == "sd-simfarm"
-    assert c.warnings == ()
     with pytest.raises(farm_config.FarmConfigError):
         farm_config.load({"commander": "pilot"}, tmp_path)
     with pytest.raises(farm_config.FarmConfigError):

@@ -306,6 +306,18 @@ def test_an_unexpected_error_is_exit_3(tmp_path: Path) -> None:
     assert farm_round.execute(tmp_path / "bad.json", Broken([], [])) == farm_round.EXIT_ERROR
 
 
+def test_a_runner_that_is_not_built_stops_with_exit_2(tmp_path: Path) -> None:
+    class NotYet(FakeRunner):
+        def run(self, spec: farm_round.RoundSpec, work: Path) -> farm_round.RawRound:
+            raise farm_round.NotBuiltError("världen finns inte än")
+
+    path = spec(tmp_path)
+    assert farm_round.execute(path, NotYet([], [])) == farm_round.EXIT_NOT_BUILT == 2
+    result = farm_round.read_result(path.parent)
+    assert result is not None and result["status"] == "not_built"
+    assert "världen finns inte än" in result["error"]
+
+
 def test_spec_round_trip_and_bad_commander(tmp_path: Path) -> None:
     path = spec(tmp_path, seed=42)
     got = farm_round.RoundSpec.read(path)

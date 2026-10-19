@@ -44,8 +44,8 @@ def flight_argv(spec: RoundSpec, flight: Path = FLIGHT) -> list[str]:
     argv = [sys.executable, "-m", "pytest", "-p", "sd_sim.pytest_plugin", "-p", "no:cacheprovider"]
     argv += ["-q", "-x", "--physics", "gz", "--brain", "scripted"]
     if spec.commander == "sd-brain":
-        # The cloud model is the only thing that leaves the machine; everything else stays
-        # on loopback as in every simulator test.
+        # The cloud model has to leave the machine, so the loopback-only socket guard of the
+        # simulator tests is off for the whole round in this mode.
         argv.append("--force-enable-socket")
     return [*argv, str(flight)]
 
@@ -122,11 +122,7 @@ class GazeboRunner:
         """What the flight left in ``work``, as a raw round."""
         info = _read(work / "flight.json", "flight.json")
         runs = work / "runs"
-        extra: dict[str, Any] = {
-            "flight": {k: info[k] for k in sorted(info) if k != "note"},
-        }
-        if info.get("note"):
-            extra["commander_note"] = info["note"]
+        extra: dict[str, Any] = {"flight": {k: info[k] for k in sorted(info)}}
         return RawRound(
             stills_dir=work / "stills",
             truth=_read(work / "truth.json", "truth.json"),

@@ -62,7 +62,9 @@ class RoundError(RuntimeError):
 
 
 class NotBuiltError(RoundError):
-    """The round runner needs a part of the simulator that is not built yet."""
+    """The round runner needs a part of the simulator that is not built yet. The round
+    contract's exit 2: the loop stops instead of counting a failure. No runner raises it
+    today; it is kept for a world or vehicle a runner cannot fly yet."""
 
 
 @dataclass(frozen=True)

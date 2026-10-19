@@ -34,7 +34,6 @@ class FarmConfig:
     limits: Limits
     r2: R2Config | None
     max_failures: int = 3
-    warnings: tuple[str, ...] = ()
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -111,7 +110,6 @@ def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> Fa
         r2 = R2Config.from_table(merged["r2"])
     except ValueError as exc:
         raise FarmConfigError(str(exc)) from exc
-    warnings: list[str] = []
     local = repo / LOCAL
     if r2 is not None and local.is_file() and local.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise FarmConfigError(
@@ -123,5 +121,4 @@ def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> Fa
         limits=_limits(farm),
         r2=r2,
         max_failures=_max_failures(farm.get("max_failures", 3)),
-        warnings=tuple(warnings),
     )

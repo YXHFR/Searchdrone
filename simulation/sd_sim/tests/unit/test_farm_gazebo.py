@@ -13,6 +13,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+from sd_detect.api import Frame
+from sd_detect.classes import default_registry
+from sd_detect.color import ColorRule, hsv
 from sd_sim import gazebo, launch, meadow, paths, world
 from sd_sim.config import SimConfig
 from sd_sim.farm import flight, people
@@ -61,7 +64,7 @@ class FakeFlight:
         (work / "stills").mkdir(parents=True, exist_ok=True)
         (work / "truth.json").write_text(json.dumps({"objects": []}))
         (work / "scenario.json").write_text(json.dumps({"world": "sd_lake_forest"}))
-        info = {"max_height_m": 41.5, "took_off": True, "note": "skriptet flög"}
+        info = {"max_height_m": 41.5, "took_off": True}
         (work / "flight.json").write_text(json.dumps(info))
         run = work / "runs" / "flight"
         run.mkdir(parents=True)
@@ -83,7 +86,7 @@ def test_runner_flies_and_hands_over_the_round(tmp_path: Path) -> None:
     assert result is not None
     # No still: the round fails its check (never an error), and it says so.
     assert code == farm_round.EXIT_QC and result["status"] == "failed"
-    assert result["flight"]["max_height_m"] == 41.5 and result["commander_note"] == "skriptet flög"
+    assert result["flight"] == {"max_height_m": 41.5, "took_off": True}
     # The grade's records are in the round, only the known files, never through a link.
     assert sorted(p.name for p in (out / "runs" / "flight").iterdir()) == ["flight.json"]
     call = fake.calls[0]
@@ -256,16 +259,29 @@ def test_stack_archives_stills_with_the_camera_pose(tmp_path: Path) -> None:
     assert "--archive" not in plain.stills_capture_argv()
 
 
-def test_the_ground_is_a_seamless_meadow_never_red() -> None:
+def test_the_ground_is_a_seamless_meadow() -> None:
     tex = meadow.texture(256)
     grey = tex.astype(float).mean(axis=2)
     assert grey.std() > 6  # not one flat colour
-    r, g = tex[..., 0].astype(int), tex[..., 1].astype(int)
-    assert ((r - g) > 15).mean() < 0.001  # the red-block detector sees nothing
     # The noise wraps: the step across the seam is like a step inside the picture.
     seam = np.abs(grey[:, 0] - grey[:, -1]).mean()
     inside = np.abs(np.diff(grey, axis=1)).mean()
     assert seam < 2 * inside
+
+
+def test_no_colour_class_sees_a_pixel_of_the_ground() -> None:
+    # The shipped texture against the detector's own rules (SK-RED's red block among them).
+    tex = meadow.texture()
+    frame = Frame(width=tex.shape[1], height=tex.shape[0], rgb=tex.tobytes(), ts_mono_ms=0)
+    hue, sat, val = hsv(frame)
+    rules = [ColorRule.from_spec(s) for s in default_registry().by_source("color")]
+    assert rules
+    for rule in rules:
+        in_hue = np.zeros(hue.shape, dtype=np.bool_)
+        for lo, hi in rule.hue_deg:
+            in_hue |= (hue >= lo) & (hue <= hi)
+        mask = in_hue & (sat >= rule.min_saturation) & (val >= rule.min_value)
+        assert not mask.any(), rule.label
 
 
 def test_the_world_lays_the_meadow_on_its_ground(tmp_path: Path) -> None:

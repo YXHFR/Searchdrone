@@ -18,7 +18,7 @@ The decision maker (``commander`` in the spec):
   is told about and flies home.
 * ``sd-brain``: sd-brain's decision maker for simulator exams
   (``sd_brain.simeval.decider``): the cloud model while the key and the day's cost cap
-  allow, the fixed search script after. A checkout without it flies the farm's script.
+  allow, the fixed search script after.
 
 The pilot's part is the same in both: the charter, "clear around the drone", the start;
 FLYG HEM if the round runs out of time. What is written into ``SD_FARM_WORK``::
@@ -33,8 +33,6 @@ FLYG HEM if the round runs out of time. What is written into ``SD_FARM_WORK``::
 from __future__ import annotations
 
 import asyncio
-import importlib
-import importlib.util
 import json
 import os
 import shutil
@@ -61,6 +59,9 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim, sim_stack  # pyright: ignore[reportMissingImports]
 
+from sd_brain.simeval import budget
+from sd_brain.simeval import farm as brain_farm
+from sd_brain.simeval.decider import make_decision_maker
 from sd_geo import PinholeCamera
 from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
@@ -76,7 +77,6 @@ __all__ = ["fresh_db", "migrated_db", "passwords"]
 
 SPEC_ENV, WORK_ENV = "SD_FARM_SPEC", "SD_FARM_WORK"
 SCRIPT = "SIMFARM"
-DECIDER_MODULE = "sd_brain.simeval.decider"
 # The day's cost cap is shared with ``sd-brain eval``: the farm's loop names the owner's
 # ledger (its rounds run in a worktree of their own).
 LEDGER_ENV = "SD_FARM_COST_LEDGER"
@@ -127,16 +127,6 @@ class FarmOnboard(SitlOnboard):
         self._tasks.append(asyncio.ensure_future(self.perception.run(self._stop)))
 
 
-def decider_module() -> Any | None:
-    """sd-brain's exam decision maker, where this checkout has it."""
-    try:
-        if importlib.util.find_spec(DECIDER_MODULE) is None:
-            return None
-    except ModuleNotFoundError:
-        return None
-    return importlib.import_module(DECIDER_MODULE)
-
-
 @pytest.fixture
 def farm_sim() -> Iterator[tuple[Sim, RoundSpec, Path, farm_scenario.FarmScenario]]:
     spec, work = _spec()
@@ -160,7 +150,7 @@ class Exam:
     client: Any  # the cloud model's HTTP client, closed after the flight
 
 
-async def _start_with_decider(sc: Scenario, mod: Any, height_m: float) -> Exam:
+async def _start_with_decider(sc: Scenario, height_m: float) -> Exam:
     """The pilot readies the mission; sd-brain flies with the exam decision maker."""
     import httpx
 
@@ -168,7 +158,6 @@ async def _start_with_decider(sc: Scenario, mod: Any, height_m: float) -> Exam:
     from sd_brain.runtime.cloud import CloudModelRuntime
     from sd_brain.secrets import brain_env, optional_secret
 
-    budget = importlib.import_module("sd_brain.simeval.budget")
     await sc.ready("charter_test")
     brain = await sc.start_brain(SCRIPT)
     local = ROOT / "config" / "brain.toml"
@@ -180,7 +169,7 @@ async def _start_with_decider(sc: Scenario, mod: Any, height_m: float) -> Exam:
         ledger = Path(os.environ.get(LEDGER_ENV) or ROOT / LEDGER)
         cloud = CloudModelRuntime(cfg.cloud, key, client)
         meter = budget.MeteredRuntime(cloud, budget.CostLedger(ledger))
-    decider = mod.make_decision_maker(meter, cfg.behaviour)
+    decider = make_decision_maker(meter, cfg.behaviour)
     brain.loop.backend = decider
     await sc.clearance()
     res = await sc.order("takeoff", {"alt_m": height_m})
@@ -192,8 +181,7 @@ async def _start_with_decider(sc: Scenario, mod: Any, height_m: float) -> Exam:
 
 
 def brain_record(decider: Any, meter: Any, model: str) -> dict[str, Any]:
-    farm = importlib.import_module("sd_brain.simeval.farm")
-    return farm.brain_record(decider, meter, model=model, ai_config_hash="simfarm")
+    return brain_farm.brain_record(decider, meter, model=model, ai_config_hash="simfarm")
 
 
 @pytest.mark.budget_s(2400)
@@ -216,10 +204,6 @@ async def test_farm_round(
         onboard.append(FarmOnboard(s, url, token, tmp_path / "kept"))
         return onboard[-1]
 
-    mod = decider_module() if spec.commander == "sd-brain" else None
-    note = None
-    if spec.commander == "sd-brain" and mod is None:
-        note = "sd-brain saknar provläget i den här versionen; farmens skript flög"
     exam: Exam | None = None
     async with scenario(sim, migrated_db, tmp_path, onboard_factory=factory) as sc:
 
@@ -230,8 +214,8 @@ async def test_farm_round(
         await sc.until(ekf_on_gps, 180, "EKF using GPS")
         await asyncio.sleep(5.0)
         started = time.monotonic()
-        if mod is not None:
-            exam = await _start_with_decider(sc, mod, height)
+        if spec.commander == "sd-brain":
+            exam = await _start_with_decider(sc, height)
         else:
             script = work / "script.yaml"
             script.write_text(flight.script_at(SCRIPTS / f"{SCRIPT}.yaml", height), "utf-8")
@@ -294,7 +278,6 @@ async def test_farm_round(
         "finds": len(finds),
         "track_points": len(track),
         "perception": {"stills": stats.stills, "detections": stats.detections},
-        "note": note,
     }
     (work / "flight.json").write_text(json.dumps(info, indent=1) + "\n", encoding="utf-8")
     assert home_m <= 10.0, f"landade {home_m:.1f} m från hem"

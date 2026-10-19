@@ -13,6 +13,8 @@ nothing on the ground.
 from __future__ import annotations
 
 import functools
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -139,18 +141,30 @@ map_Kd {texture}
 """
 
 
+def _replace(path: Path, data: bytes) -> None:
+    """Write ``path`` whole or not at all: parallel simulator instances render the same
+    world, and none may load a half-written file."""
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def write(out: Path, size_m: float) -> Path:
     """The ground mesh, its material and texture under ``out``; returns the mesh's path.
     Unchanged files are not written again."""
     out.mkdir(parents=True, exist_ok=True)
     tex = out / f"meadow_v{VERSION}.png"
     if not tex.is_file():
-        tmp = tex.with_suffix(".tmp")
-        tmp.write_bytes(_texture_png())
-        tmp.replace(tex)
+        _replace(tex, _texture_png())
     mtl = out / "ground.mtl"
     obj = out / f"ground_{size_m:g}.obj"
     for path, text in ((mtl, MTL.format(texture=tex.name)), (obj, ground_obj(size_m, mtl.name))):
         if not path.is_file() or path.read_text(encoding="utf-8") != text:
-            path.write_text(text, encoding="utf-8")
+            _replace(path, text.encode())
     return obj

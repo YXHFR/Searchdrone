@@ -399,8 +399,6 @@ class Farm:
         status.append_round(self.base / "rounds.jsonl", row)
 
     def run(self) -> int:
-        for warning in self.cfg.warnings:
-            say(f"varning: {warning}")
         say(
             f"startar: beslutsfattare {self.cfg.commander}, "
             + ("R2 i EU" if self.cfg.r2 else "bara lokalt (build/simfarm/)")

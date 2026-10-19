@@ -93,8 +93,7 @@ All notable changes to this project are listed here. The format follows
   (clouds and haze change only the sky colour for now). Each still carries the camera's
   pose from Gazebo, matched to the picture within 20 ms. `commander=script` flies the
   scripted search (`SIMFARM.yaml`) at the round's height; `commander=sd-brain` hands the
-  flight to the cloud model when the brain's evaluation hook is installed and otherwise
-  flies the script with a note in `round.json`. The flight's record for grading is kept
+  flight to sd-brain's exam decision maker on the cloud model. The flight's record for grading is kept
   under `runs/<run>/` in the round. People are seen through the simulator's labels until
   a person detector exists. A round needs `just db-up`. The lake-forest world's ground
   is now a generated meadow (grass, dry streaks and bare soil, drawn from noise and
