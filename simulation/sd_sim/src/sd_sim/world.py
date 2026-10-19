@@ -32,7 +32,7 @@ import jinja2
 from sd_hwcalc.calc import compute
 from sd_hwcalc.model import Drone, load_drone
 from sd_safety.targets import Plane
-from sd_sim import fixture, objects, paths, ports, site
+from sd_sim import fixture, meadow, objects, paths, ports, site
 
 GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
@@ -289,6 +289,7 @@ def world_context(
     fix: fixture.Fixture,
     placed: Sequence[objects.WorldObject] = (),
     light: Mapping[str, Any] | None = None,
+    ground_mesh: Path | None = None,
 ) -> dict[str, Any]:
     objects.check(placed, GROUND_SIZE_M / 2)
     home = fix.home
@@ -308,6 +309,7 @@ def world_context(
         "trunk_radius": TRUNK_RADIUS_M,
         "objects": [checked_fragment(obj) for obj in placed],
         "light": light_context(light),
+        "ground_mesh": "" if ground_mesh is None else str(ground_mesh),
     }
 
 
@@ -341,10 +343,11 @@ def world_sdf(
     fix: fixture.Fixture | None = None,
     placed: Sequence[objects.WorldObject] = (),
     light: Mapping[str, Any] | None = None,
+    ground_mesh: Path | None = None,
 ) -> str:
     fix = fixture.load() if fix is None else fix
     template = _env().get_template(f"worlds/{name}.sdf.jinja")
-    return template.render(**world_context(name, instance, fix, placed, light))
+    return template.render(**world_context(name, instance, fix, placed, light, ground_mesh))
 
 
 def world_truth(
@@ -472,7 +475,7 @@ def render_world(
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}_i{instance}.sdf"
-    sdf = world_sdf(name, instance, fix, placed, light)
+    sdf = world_sdf(name, instance, fix, placed, light, meadow.write(out / "meadow", GROUND_SIZE_M))
     truth = json.dumps(world_truth(name, placed, fix), indent=1) + "\n"
     path.write_text(sdf, encoding="utf-8")
     truth_path(name, instance, repo).write_text(truth, encoding="utf-8")

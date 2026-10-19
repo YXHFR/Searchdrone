@@ -10,9 +10,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
-from sd_sim import gazebo, launch, paths, world
+from sd_sim import gazebo, launch, meadow, paths, world
 from sd_sim.config import SimConfig
 from sd_sim.farm import flight, people
 from sd_sim.farm import gazebo as farm_gazebo
@@ -253,3 +254,25 @@ def test_stack_archives_stills_with_the_camera_pose(tmp_path: Path) -> None:
     plain = launch.Stack(SimConfig(instance=2), tmp_path / "run2")
     plain.world = stack.world
     assert "--archive" not in plain.stills_capture_argv()
+
+
+def test_the_ground_is_a_seamless_meadow_never_red() -> None:
+    tex = meadow.texture(256)
+    grey = tex.astype(float).mean(axis=2)
+    assert grey.std() > 6  # not one flat colour
+    r, g = tex[..., 0].astype(int), tex[..., 1].astype(int)
+    assert ((r - g) > 15).mean() < 0.001  # the red-block detector sees nothing
+    # The noise wraps: the step across the seam is like a step inside the picture.
+    seam = np.abs(grey[:, 0] - grey[:, -1]).mean()
+    inside = np.abs(np.diff(grey, axis=1)).mean()
+    assert seam < 2 * inside
+
+
+def test_the_world_lays_the_meadow_on_its_ground(tmp_path: Path) -> None:
+    path = world.render_world(world.WORLD_NAME, 0, tmp_path)
+    root = ET.fromstring(path.read_text(encoding="utf-8"))  # noqa: S314
+    uri = root.findtext("world/model[@name='ground']/link/visual/geometry/mesh/uri")
+    assert uri is not None and Path(uri).is_file()
+    assert root.find("world/model[@name='ground']/link/collision/geometry/plane") is not None
+    assert "map_Kd meadow_v" in (Path(uri).parent / "ground.mtl").read_text()
+    assert world.world_sdf(world.WORLD_NAME, 0).count("<plane>") == 2  # unrendered: flat

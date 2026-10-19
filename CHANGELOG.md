@@ -96,7 +96,10 @@ All notable changes to this project are listed here. The format follows
   flight to the cloud model when the brain's evaluation hook is installed and otherwise
   flies the script with a note in `round.json`. The flight's record for grading is kept
   under `runs/<run>/` in the round. People are seen through the simulator's labels until
-  a person detector exists. A round needs `just db-up`. A readable `config/simfarm.toml`
+  a person detector exists. A round needs `just db-up`. The lake-forest world's ground
+  is now a generated meadow (grass, dry streaks and bare soil, drawn from noise and
+  repeated every 60 m) instead of one flat green, so pictures from the air show ground
+  texture; the colour stays away from red, and SK-RED still passes on it. A readable `config/simfarm.toml`
   that holds an R2 key now stops the farm (`chmod 600`) instead of warning, and uploads
   never follow a link.
 - "Too windy" warning on the ground station (`sd_ground.services.wind`), a warning only:
