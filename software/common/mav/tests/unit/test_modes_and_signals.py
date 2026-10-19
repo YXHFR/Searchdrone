@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
-from sd_mav.failsafe_signals import PATTERNS, signal_from, text_signal
+from sd_mav.failsafe_signals import PATTERNS, notice_text, signal_from, text_signal
 from sd_mav.modes import (
     HOME_MODES,
     HOME_STEPS,
@@ -68,6 +68,11 @@ def _text(text: str) -> Any:
         ("EKF variance", "ekf"),
         ("Crash: Disarming", "crash"),
         ("SmartRTL Unavailable, Trying RTL Mode", "srtl_unavailable"),
+        # Copter-4.7.1 events.cpp failsafe_deadreckon_check()
+        ("Dead Reckoning started", "dead_reckoning"),
+        ("Dead Reckoning timeout", "dead_reckoning"),
+        # sd_gcs_loiter_cap.lua
+        ("SD failsafe: no GCS 150 s in LOITER, SmartRTL", "failsafe"),
     ],
 )
 def test_failsafe_texts(text: str, name: str) -> None:
@@ -106,3 +111,19 @@ def test_battery_and_heartbeat_signals() -> None:
     hb_ok = mavlink.MAVLink_heartbeat_message(2, 3, 0, 5, mavlink.MAV_STATE_ACTIVE, 3)
     assert signal_from(hb_ok) is None
     assert signal_from(mavlink.MAVLink_vfr_hud_message(0, 0, 0, 0, 0, 0)) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        # Copter-4.7.1 events.cpp failsafe_gcs_on_event() with FS_OPTIONS bit 4 in LOITER
+        ("GCS Failsafe - Continuing Pilot Control", "gcs_continue"),
+        # Copter-4.7.1 events.cpp gpsglitch_check()
+        ("GPS Glitch or Compass error", "gps_glitch"),
+    ],
+)
+def test_failsafe_text_patterns_notices(text: str, name: str) -> None:
+    """The flight controller keeps its mode: a notice, never a failsafe signal."""
+    assert notice_text(text) == name
+    assert text_signal(text) is None
+    assert signal_from(_text(text)) is None

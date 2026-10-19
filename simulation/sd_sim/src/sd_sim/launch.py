@@ -448,6 +448,7 @@ class Stack:
         work.mkdir(parents=True, exist_ok=True)
         if self.cfg.physics == "builtin" and self.cfg.vehicle != "stock":
             self.sitl_layout().stage_frame(work, self.cfg.vehicle)
+        self.sitl_layout().stage_scripts(work)
         return self.group.start("arducopter", argv, env=procs.clean_env(), cwd=work)
 
     def wait_vehicle_observed(self, sitl: procs.Proc) -> None:

@@ -70,7 +70,8 @@
       "rtl": "Flyger hem",
       "land": "Landar",
       "failsafe": "Failsafe",
-      "raw": "Okänt läge"
+      "raw": "Okänt läge",
+      "findHold": "Svävar vid fyndet (länken borta)"
     },
     "mode": {
       "a": "Läge A: du godkänner varje steg",
@@ -286,7 +287,8 @@
     "reload": "Ladda om panelen"
   },
   "toast": {
-    "close": "Stäng meddelandet"
+    "close": "Stäng meddelandet",
+    "ack": "Jag har sett det"
   },
   "aiDown": {
     "lead": "AI:n svarar inte.",
@@ -294,6 +296,39 @@
     "hold": "Drönaren stannar och svävar inom {{s}} s.",
     "return_home": "Drönaren flyger hem efter {{s}} s.",
     "safety": "STOPP och FLYG HEM fungerar."
+  },
+  "linkDown": {
+    "SDLINK_LOST": "Datalänken till drönaren är borta sedan {{s}} s. Drönaren gör klart steget, svävar från {{hold}} och flyger hem {{home}}. STOPP och FLYG HEM fungerar via flygkontrollen.",
+    "LINK_LOST_ALL": "Ingen kontakt med drönaren sedan {{s}} s. Väntat: den flyger hem senast {{home}}. Ta över med RC om det behövs.",
+    "FIND_HOLD": "Datalänken är borta vid fynd {{k}}. Drönaren svävar vid fyndet till {{until}} och flyger sedan hem. Positionen är sparad. STOPP och FLYG HEM fungerar.",
+    "FIND_HOLD_ALL": "Ingen kontakt med drönaren sedan {{s}} s. Väntat: den svävar vid fynd {{k}} till ca {{until}} och flyger sedan hem. Positionen är sparad. Ta över med RC om det behövs.",
+    "LINK_BACK_HOLD": "Länken är tillbaka. Drönaren svävar och väntar på order.",
+    "LINK_BACK_HOME": "Länken är tillbaka. Drönaren flyger hem. Tryck STOPP om den ska stanna.",
+    "next": {
+      "hold": "Svävar om {{left}}",
+      "home": "Flyger hem om {{left}}"
+    },
+    "findHoldEnded": "Utan länk: svävade vid {{k}} i {{dur}} och flög hem {{time}} ({{reason}}).",
+    "findHoldEndedBack": "Utan länk: svävade vid {{k}} i {{dur}}, sedan kom länken tillbaka {{time}}.",
+    "reason": {
+      "timeout": "tiden var slut",
+      "battery": "batteriet",
+      "limit": "en gräns",
+      "gnss": "GPS",
+      "human": "du eller RC tog över",
+      "fc_failsafe": "du eller RC tog över",
+      "link_restored": "länken kom tillbaka"
+    }
+  },
+  "gnss": {
+    "GPS_WEAK": "GPS är svag ({{sats}} satelliter). Drönaren flyger vidare men kan bli osäker på var den är.",
+    "GPS_LOST": "GPS är borta. Drönaren gissar sin position och flyger mot hem i högst {{dr}} s, sedan landar den. Ta över med RC om du kan.",
+    "DEAD_RECKONING": "Drönaren flyger utan GPS sedan {{s}} s (dödräkning: den gissar sin position utifrån fart och vind). Den landar senast om {{left}} s.",
+    "GPS_GLITCH": "GPS hoppade. Flygkontrollen litar inte på GPS just nu.",
+    "GPS_SPOOF_JUMP": "GPS verkar förfalskad (positionen hoppade {{m}} m). Drönaren slutar lita på GPS, flyger mot hem en kort stund och landar sedan. Ta över med RC.",
+    "GPS_SPOOF_ALTITUDE": "GPS verkar förfalskad (höjden skiljer {{m}} m). Drönaren slutar lita på GPS, flyger mot hem en kort stund och landar sedan. Ta över med RC.",
+    "GPS_OK": "GPS fungerar igen.",
+    "GPS_OK_AFTER_SPOOF": "GPS fungerar igen, men drönaren använder den inte förrän du byter tillbaka med RC-brytaren."
   },
   "clearance": {
     "check": "Jag har kontrollerat att det är fritt runt drönaren: människor, djur, hinder.",

@@ -37,6 +37,8 @@ class Trigger(StrEnum):
     LIMIT_HOLD = "limit_hold"  # a limit monitor -> hold
     LIMIT_RTL = "limit_rtl"  # a limit monitor -> return_home
     LIMIT_ALT = "limit_alt"  # too high -> internal goto down
+    LIMIT_FIND = "limit_find"  # SD-link lost at a confirmed find -> internal goto beside it
+    SPOOF_DETECTED = "spoof_detected"  # L-SPOOF switched the EKF off GPS: hands off
     UNEXPECTED_MODE = "unexpected_mode"  # a mode change we did not ask for
     FAILSAFE_DETECTED = "failsafe_detected"
     OPERATOR_OVERRIDE = "operator_override"  # OperatorOverrideNotice (all kinds), takeover
@@ -122,6 +124,9 @@ def _rows() -> dict[tuple[ExecutorState, TriggerKey], Transition]:
         AIRBORNE_CONTROLLED | _TAKEN_OVER, tc.LANDED_DISARMED, {S.LANDED}, "landed_on_ground"
     )  # T24
     add({S.LANDED}, tc.LANDED_TIMEOUT_5S, {S.PREFLIGHT}, "always")  # T25
+    add(_STEERING, tc.LIMIT_FIND, {S.TRANSIT, S.HOLD}, "find_target")  # T26
+    # T27: SKILL_DONE of the internal find goto is T12 with hold_reason "find_hold".
+    add(_LIMITED | {S.RTL, S.FAILSAFE}, tc.SPOOF_DETECTED, {S.FAILSAFE}, "always")  # T28
     return rows
 
 

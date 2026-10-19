@@ -56,6 +56,7 @@ from sd_schemas.skills import SKILL_REGISTRY, SkillSpec
 if TYPE_CHECKING:
     from sd_ground.context import Ground
     from sd_ground.link import GroundLink
+    from sd_ground.services.link_loss import LinkWatch
     from sd_ground.services.vehicle_actions import VehicleActions
     from sd_link.session import Expired, Inbound
 
@@ -94,6 +95,8 @@ _LATCH_REASON: Final = {
     "watchdog_stop": "WATCHDOG_STOP",
     "watchdog_rtl": "WATCHDOG_RTL",
 }
+# Onboard events the panel shows as they arrive (most only go to the event log).
+_PANEL_EVENTS: Final = frozenset({"executor.find_hold_ended"})
 log = get_logger("sd_ground.missions")
 
 
@@ -151,6 +154,7 @@ class MissionFlow:
     rates: dict[str, BrainRate] = field(default_factory=dict[str, BrainRate])
     finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
     reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
+    link_watch: dict[str, LinkWatch] = field(default_factory=dict[str, "LinkWatch"])
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
@@ -562,6 +566,9 @@ class MissionFlow:
     # --- SD-link: what the onboard computer says ----------------------------------------
 
     async def on_connected(self, vehicle_id: str, hello: Hello) -> None:
+        from sd_ground.services import link_loss as link_loss_service
+
+        await link_loss_service.on_connected(self, vehicle_id)
         mission = await self.repo.open_mission(vehicle_id)
         if mission is None:
             return
@@ -599,6 +606,14 @@ class MissionFlow:
                 vehicle_id=vehicle_id,
                 payload={"source": "onboard", **body.data},
             )
+            if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
+                self.publish(
+                    "vehicle",
+                    body.type,
+                    dict(body.data),
+                    vehicle_id=vehicle_id,
+                    mission_id=None if mission is None else str(mission.id),
+                )
         elif isinstance(body, StateSnapshot):
             await self._on_snapshot(vehicle_id, body)
         elif isinstance(body, PerceptionReport):
@@ -695,6 +710,7 @@ class MissionFlow:
         if not self.g.db_ok:
             return  # the mission lives in the database; STOP / FLY HOME do not need it
         from sd_ground.services import coverage as coverage_service
+        from sd_ground.services import link_loss as link_loss_service
 
         await approvals_service.expire(self)
         await self._expire_clearances()
@@ -706,6 +722,7 @@ class MissionFlow:
                 continue
             await self._follow_landing(vid, mission)
             await coverage_service.tick(self, mission)
+            await link_loss_service.tick(self, mission)
             self._follow_tlog(mission)
 
     def _follow_tlog(self, mission: Mission) -> None:

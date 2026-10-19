@@ -1,7 +1,16 @@
 // Pure functions: store state → the GeoJSON each map layer shows. No MapLibre here, so this
 // is unit-tested without WebGL and stays out of the map chunk's way.
-import type { Annotation, Approval, Charter, Command, Find, Telemetry } from "../../api/types";
+import type {
+  Annotation,
+  Approval,
+  Charter,
+  Command,
+  Find,
+  LinkLossPlan,
+  Telemetry,
+} from "../../api/types";
 import { areaM2, circleRing } from "../../lib/geo";
+import { findLabel } from "../../safety/linkDown";
 import type { SectorFeature, Track } from "../../state/missionStore";
 
 export interface Feature {
@@ -26,6 +35,7 @@ export const SOURCE_IDS = [
   "areas",
   "pins",
   "finds",
+  "find-hover",
   "draw",
   "drone",
 ] as const;
@@ -191,6 +201,21 @@ export function findsData(finds: Find[]): FC {
       }),
     ),
   );
+}
+
+/** Where the drone hovers beside a find while the link is down (find mode of the plan). */
+export function findHoverData(plan: LinkLossPlan | null | undefined): FC {
+  if (
+    plan?.mode !== "find" ||
+    typeof plan.hover_lat !== "number" ||
+    typeof plan.hover_lon !== "number"
+  )
+    return EMPTY;
+  return fc([
+    point(plan.hover_lon, plan.hover_lat, {
+      label: findLabel(plan.candidate_seq, plan.keepout_id),
+    }),
+  ]);
 }
 
 /** The drawing in progress: the vertices so far and the line or polygon through them. */

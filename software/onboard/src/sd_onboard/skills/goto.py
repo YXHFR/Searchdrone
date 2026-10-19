@@ -79,6 +79,7 @@ class GotoHandler:
         self.command_id: Id | None = None
         self.target: tuple[float, float, float] | None = None
         self.speed_ms = DEFAULT_SPEED_MS
+        self.yaw_deg: float | None = None  # None: the flight controller chooses the heading
         self._plane: Plane | None = None
         self._start_dist = 0.0
         self._progress = 0.0
@@ -91,11 +92,19 @@ class GotoHandler:
         return goto_plan(ctx, params.lat, params.lon, params.alt_m, speed)
 
     def prepare(
-        self, ctx: PlanContext, lat: float, lon: float, alt_m: float, speed_ms: float
+        self,
+        ctx: PlanContext,
+        lat: float,
+        lon: float,
+        alt_m: float,
+        speed_ms: float,
+        *,
+        yaw_deg: float | None = None,
     ) -> None:
         self.command_id = ctx.command_id
         self.target = (lat, lon, alt_m)
         self.speed_ms = speed_ms
+        self.yaw_deg = yaw_deg
         self._plane = ctx.plane
         self._start_dist = horizontal_m(ctx.plane, ctx.vehicle, lat, lon)
 
@@ -116,7 +125,7 @@ class GotoHandler:
             last = -math.inf
             while abs(io.vehicle.alt_rel_home_m - alt) > GOTO_ALT_STEP_TOL_M:
                 if io.clock.monotonic() - last >= RESEND_S:
-                    await io.set_position_target(spot[0], spot[1], alt)
+                    await io.set_position_target(spot[0], spot[1], alt, self.yaw_deg)
                     last = io.clock.monotonic()
                 self._timeout(io, deadline)
                 await io.sleep(TICK_S)
@@ -125,7 +134,7 @@ class GotoHandler:
         while True:
             now = io.clock.monotonic()
             if now - last >= RESEND_S:
-                await io.set_position_target(lat, lon, alt)
+                await io.set_position_target(lat, lon, alt, self.yaw_deg)
                 last = now
             v = io.vehicle
             dist = horizontal_m(self._plane, v, lat, lon)

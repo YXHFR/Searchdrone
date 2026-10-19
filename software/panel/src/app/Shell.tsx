@@ -5,8 +5,9 @@ import { startLive } from "../api/live";
 import { ReauthSheet } from "../auth/ReauthSheet";
 import { Toasts } from "../header/Toasts";
 import { PhoneInstruments, TopBar } from "../header/TopBar";
-import { useNow } from "../lib/useNow";
+import { mmss, useNow } from "../lib/useNow";
 import { FindsPanel, MissionPanel } from "../mission/MissionPanel";
+import { linkDownBanner } from "../safety/linkDown";
 import { SideBody, SideTabs } from "../side/SidePanel";
 import { useLiveStore } from "../state/liveStore";
 import { useSessionStore } from "../state/sessionStore";
@@ -25,15 +26,38 @@ function useViewport(): void {
   }, []);
 }
 
-/** One banner over the stage, never pushing the layout down. */
+/** One banner over the stage, never pushing the layout down. No ground station goes first;
+ * else the drone's link loss with what it is expected to do, counting down. */
 function StageBanner() {
   const { t } = useTranslation();
   const since = useLiveStore((s) => s.wsDownSince);
+  const ws = useLiveStore((s) => s.ws);
+  const vehicle = useLiveStore((s) => s.vehicle);
   const now = useNow(250);
-  if (since === null || now - since < BANNER_AFTER_MS) return null;
+  if (since !== null) {
+    if (now - since < BANNER_AFTER_MS) return null;
+    return (
+      <div className="stage-banner" role="status" data-testid="connection-banner">
+        {t("banner.noGround")}
+      </div>
+    );
+  }
+  const down = ws === "up" ? linkDownBanner(vehicle, now) : null;
+  if (!down) return null;
   return (
-    <div className="stage-banner" role="status" data-testid="connection-banner">
-      {t("banner.noGround")}
+    <div
+      className="stage-banner"
+      role="status"
+      data-tone={down.tone}
+      data-code={down.code}
+      data-testid="link-down-banner"
+    >
+      {t(down.key, down.vars)}
+      {down.next ? (
+        <span className="stage-banner-next num">
+          {t(down.next.key, { left: mmss(down.next.leftS * 1000) })}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,9 @@
 // Wires LiveSocket to the stores: the resync over REST on every new server epoch, then the
 // live events. Events that arrive while a resync runs are held back and applied after it
 // in seq order, so a snapshot can never overwrite something newer.
+import i18next from "i18next";
 import { noteLive } from "../lib/testHooks";
+import { alertView, findHoldEndedView, isSticky, LINK_DOWN_CODES } from "../safety/gnss";
 import { actionBus } from "../state/actionBus";
 import { lastChatSeq, useChatStore } from "../state/chatStore";
 import { useLiveStore } from "../state/liveStore";
@@ -185,6 +187,35 @@ function clearanceFrom(d: unknown): ClearanceView {
   return { status: "none", valid_until: null };
 }
 
+/** The latest find-mode plan's candidate, so the log line after reconnect can say "K<n>". */
+let lastFind: { keepout_id: string | null; seq: number | null } | null = null;
+
+/** An alert in the panel's own words (with its details) when sv.json has it, else the
+ * ground's message_sv. Red ones stay until acknowledged; the link-down ones only go in the
+ * log, since the banner already shows them. */
+function showAlert(a: { code?: string; severity?: string; message_sv?: string }): void {
+  const ui = useUiStore.getState();
+  const view = a.code ? alertView(a.code, a as Record<string, unknown>, Date.now()) : null;
+  if (!view) {
+    ui.log(a.severity === "critical" ? "critical" : "info", a.message_sv ?? a.code ?? "");
+    return;
+  }
+  const text = i18next.t(view.key, view.vars);
+  if (isSticky(view)) ui.alarm(text);
+  else {
+    ui.log("info", text);
+    if (!LINK_DOWN_CODES.has(a.code ?? "")) ui.toast(text);
+  }
+}
+
+function logFindHoldEnded(d: Record<string, unknown>, ts: string | null | undefined): void {
+  const at = (ts ? Date.parse(ts) : Number.NaN) || Date.now();
+  const seq = lastFind && lastFind.keepout_id === d.keepout_id ? lastFind.seq : null;
+  const v = findHoldEndedView(d, at, seq);
+  const reason = v.reasonKey ? i18next.t(v.reasonKey) : String(d.reason ?? "");
+  useUiStore.getState().log("info", i18next.t(v.key, { ...v.vars, reason }));
+}
+
 function isPending(a: Approval): boolean {
   return a.status === "pending" && a.kind !== "resume";
 }
@@ -205,8 +236,22 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
         m.appendTrack(t.lon, t.lat);
       break;
     }
-    case "vehicle.state":
-      live.patch({ vehicle: e.data as VehicleLive });
+    case "vehicle.state": {
+      const v = e.data as VehicleLive;
+      const plan = v.link_loss_plan;
+      if (plan?.mode === "find")
+        lastFind = { keepout_id: plan.keepout_id ?? null, seq: plan.candidate_seq ?? null };
+      live.patch({ vehicle: v });
+      break;
+    }
+    case "alarm.SDLINK_LOST": {
+      // On the vehicle topic, often before the plan: the plan's times fill in what is missing.
+      const a = { ...live.vehicle?.link_loss_plan, ...(e.data as object), code: "SDLINK_LOST" };
+      if ("lost_at_utc" in a) showAlert(a);
+      break;
+    }
+    case "executor.find_hold_ended":
+      logFindHoldEnded(e.data as Record<string, unknown>, e.ts);
       break;
     case "vehicle.action":
       actionBus.publish(e.data as ActionOutcome);
@@ -323,9 +368,7 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
     case "alert": {
       const a = e.data as { severity?: string; message_sv?: string; code?: string };
       if (a.code === "BRAIN_DISCONNECTED") live.patch({ aiDisconnected: true });
-      useUiStore
-        .getState()
-        .log(a.severity === "critical" ? "critical" : "info", a.message_sv ?? a.code ?? "");
+      showAlert(a);
       break;
     }
     default:

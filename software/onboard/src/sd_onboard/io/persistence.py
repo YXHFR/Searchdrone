@@ -18,11 +18,13 @@ from pydantic import Field, TypeAdapter, ValidationError
 from sd_obs.clock import Clock
 from sd_schemas.base import Id, SdModel
 from sd_schemas.executor import ExecutorState, ResumePoint
+from sd_schemas.link import KeepoutInstall
 
-__all__ = ["SCHEMA", "SavedState", "StateStore"]
+__all__ = ["FIND_HOLDS", "SCHEMA", "SavedState", "StateStore"]
 
 SCHEMA: Final = 2
 _FILE: Final = "executor_state.json"
+FIND_HOLDS: Final = "find_holds.jsonl"  # one line per find hover start and end (L-FIND)
 _RESUME: TypeAdapter[ResumePoint | None] = TypeAdapter(ResumePoint | None)
 
 
@@ -41,6 +43,14 @@ class SavedState(SdModel):
     resume_point: dict[str, Any] | None
     saved_mono_ms: int
     saved_utc: str
+    link_loss: dict[str, Any] | None = None  # the link-loss rule, for the log only
+    keepouts: dict[str, Any] | None = None  # the last KeepoutInstall taken
+
+    def keepout_install(self) -> KeepoutInstall | None:
+        try:
+            return None if self.keepouts is None else KeepoutInstall.model_validate(self.keepouts)
+        except ValidationError:
+            return None
 
     def resume(self) -> ResumePoint | None:
         try:
@@ -52,6 +62,7 @@ class SavedState(SdModel):
 class StateStore:
     def __init__(self, directory: Path, clock: Clock) -> None:
         self.path = directory / _FILE
+        self.find_holds_path = directory / FIND_HOLDS
         self._clock = clock
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
 
@@ -86,3 +97,13 @@ class StateStore:
                 os.fsync(dfd)
             finally:
                 os.close(dfd)
+
+    def append_find_hold(self, record: dict[str, Any]) -> None:
+        """One line appended and synced before it returns (the find's position is saved)."""
+        line = json.dumps(record, separators=(",", ":"), default=str).encode("utf-8") + b"\n"
+        fd = os.open(self.find_holds_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, line)
+            os.fsync(fd)
+        finally:
+            os.close(fd)

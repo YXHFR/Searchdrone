@@ -4,6 +4,7 @@ import { useChatStore } from "../state/chatStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
+import { useUiStore } from "../state/uiStore";
 import { startLive } from "./live";
 
 const sockets: {
@@ -209,6 +210,28 @@ describe("startLive", () => {
     await settle();
     const subs = (sockets.at(-1)?.sent ?? []).slice(before).map((m) => JSON.parse(m));
     expect(subs.some((m) => m.op === "subscribe" && m.mission_id === "M1")).toBe(true);
+    stop();
+  });
+
+  it("words alerts from sv.json; red ones stay until acknowledged; else message_sv", async () => {
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    const stop = startLive("sim-01");
+    await settle();
+    const alert = (data: unknown) => send({ seq: null, topic: "alerts", type: "alert", data });
+    alert({ code: "GPS_LOST", severity: "critical", message_sv: "x", dr_timeout_s: 30 });
+    alert({ code: "GPS_OK", severity: "info", message_sv: "x", after_spoof: false });
+    alert({ code: "BATTERY_RTL", severity: "critical", message_sv: "Batteriet är lågt" });
+    const ui = useUiStore.getState();
+    expect(ui.toasts.map((x) => [x.sticky ?? false, x.text.slice(0, 13)])).toEqual([
+      [true, "GPS är borta."],
+      [false, "GPS fungerar "],
+    ]);
+    expect(ui.eventLog.map((x) => x.message.slice(0, 13))).toEqual([
+      "Batteriet är ",
+      "GPS fungerar ",
+      "GPS är borta.",
+    ]);
+    expect(ui.eventLog[2]?.level).toBe("critical");
     stop();
   });
 });

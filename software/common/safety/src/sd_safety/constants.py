@@ -73,6 +73,37 @@ OVERRIDE_RESEND_MS: Final = 200
 OVERRIDE_MAX_S: Final = 10.0
 GCS_SEEN_FOR_RELEASE_S: Final = 3.0
 
+# --- link loss at a confirmed find (sd_safety.link_loss, sd_onboard.executor.link_loss) ----
+# Times count from the last inbound SD-link message. The rule engages when the loss is
+# detected (LINK_LOSS_DETECT_S) and a confirmed find is this close, horizontally.
+FIND_ENGAGE_RADIUS_M: Final = 100.0
+FIND_HOVER_EDGE_MARGIN_M: Final = 5.0  # hover this far outside the find's keep-out cylinder
+FIND_MOVE_SPEED_MS: Final = 8.0  # to the hover point; <= RTL_SPEED_MS
+# In LOITER by detect + this, well before the flight controller's GCS failsafe (20 s), which
+# only spares LOITER (FS_OPTIONS bit 4).
+FIND_MOVE_DEADLINE_S: Final = 12.0
+FIND_HOVER_S: Final = 120.0  # hover from detection, then home (123 s after the loss)
+# sd_gcs_loiter_cap.lua: the flight controller flies home by itself after this long in
+# LOITER without a ground station (the onboard computer died during the hover).
+FC_LOITER_CAP_S: Final = 150.0
+
+# --- GNSS spoofing and weak GPS (sd_safety.gnss) -------------------------------------------
+SPOOF_JUMP_M: Final = 30.0  # raw GPS this far from the EKF's position ... (> EK3_GLITCH_RAD)
+SPOOF_JUMP_FOR_S: Final = 2.0  # ... for this long
+SPOOF_ALT_M: Final = 25.0  # GPS height minus barometric height moved this far from takeoff ...
+SPOOF_ALT_FOR_S: Final = 3.0  # ... for this long
+SPOOF_ALT_BASELINE_S: Final = 10.0  # the takeoff difference: median over this long after arming
+GPS_WEAK_SATS: Final = 6  # = AHRS_GPS_MINSATS
+GPS_WEAK_HDOP: Final = 2.5
+GPS_WEAK_FOR_S: Final = 3.0
+GPS_LOST_FOR_S: Final = 2.0
+GPS_OK_FOR_S: Final = 5.0
+EKF_SOURCE_SET_NO_GPS: Final = 2  # MAV_CMD_SET_EKF_SOURCE_SET param1 after spoofing
+EKF_SOURCE_SET_TRIES: Final = 3
+FS_DR_TIMEOUT_S: Final = 30  # = FS_DR_TIMEOUT: dead reckoning this long, then the EKF failsafe
+# A confirmed find's keep-out cylinder: radius = this + the candidate's sigma95_m.
+PERSON_KEEPOUT_M: Final = 30.0
+
 # --- the flight controller's fence --------------------------------------------------------
 
 FENCE_POLYGON_MARGIN_M: Final = 10.0  # FC polygon = area + geofence_buffer_m + this

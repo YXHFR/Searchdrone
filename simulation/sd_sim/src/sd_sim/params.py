@@ -20,8 +20,11 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("MAV_GCS_SYSID", "==", 250.0),
     ("FS_GCS_ENABLE", "==", 3.0),
     ("FS_GCS_TIMEOUT", "==", 20.0),
-    ("FS_OPTIONS", "==", 8.0),
+    ("FS_OPTIONS", "==", 24.0),  # bit 3 + bit 4 (LOITER survives the lost ground station)
     ("FS_EKF_ACTION", "==", 1.0),
+    ("FS_EKF_THRESH", "==", 0.8),
+    ("FS_DR_ENABLE", "==", 2.0),  # dead reckoning -> RTL
+    ("FS_DR_TIMEOUT", "==", 30.0),
     ("FS_THR_ENABLE", "==", 0.0),  # simulator profile: no RC link in SITL
     ("FENCE_ENABLE", "==", 1.0),
     ("FENCE_TYPE", "==", 7.0),
@@ -47,7 +50,11 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("RTL_SPEED_MS", "==", 8.0),
     ("RTL_LOIT_TIME", "==", 0.0),
     ("SRTL_POINTS", "==", 300.0),
-    ("SCR_ENABLE", "==", 0.0),
+    ("SCR_ENABLE", "==", 1.0),  # sd_gcs_loiter_cap.lua
+    ("EK3_GLITCH_RAD", "==", 25.0),  # below sd_safety.constants.SPOOF_JUMP_M
+    ("EK3_SRC2_POSXY", "==", 0.0),  # the spoofing guard's set has no GPS
+    ("EK3_SRC2_VELXY", "==", 0.0),
+    ("EK3_SRC_OPTIONS", "==", 0.0),
 )
 # Prefixes whose every line in the safety file must have a rule above.
 RULED_PREFIXES = (

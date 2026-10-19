@@ -1934,6 +1934,134 @@
         "title": "LatLonAlt",
         "type": "object"
       },
+      "LinkLossPhase": {
+        "description": "Where the onboard link-loss rule is (sd_onboard.executor.link_loss).\n\nTimes count from the last inbound SD-link message.",
+        "enum": [
+          "none",
+          "grace",
+          "hold",
+          "find_move",
+          "find_hover",
+          "home",
+          "yielded"
+        ],
+        "title": "LinkLossPhase",
+        "type": "string"
+      },
+      "LinkLossPlan": {
+        "additionalProperties": false,
+        "description": "What the ground expects the onboard link-loss rule to do while SD-link is down: the\nsame ``sd_safety.link_loss.choose_mode`` on the last snapshot and keep-out list. The\npanel counts down to these times; the flight controller's real mode (over MAVLink,\nwhen it is up) wins where they differ.",
+        "properties": {
+          "candidate_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Id"
+          },
+          "candidate_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Seq"
+          },
+          "hold_at_utc": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold At Utc"
+          },
+          "home_at_utc": {
+            "format": "date-time",
+            "title": "Home At Utc",
+            "type": "string"
+          },
+          "hover_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hover Lat"
+          },
+          "hover_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hover Lon"
+          },
+          "hover_until_utc": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hover Until Utc"
+          },
+          "keepout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keepout Id"
+          },
+          "lost_at_utc": {
+            "format": "date-time",
+            "title": "Lost At Utc",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "normal",
+              "find"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "lost_at_utc",
+          "home_at_utc"
+        ],
+        "title": "LinkLossPlan",
+        "type": "object"
+      },
       "LinkStatus": {
         "additionalProperties": false,
         "properties": {
@@ -3227,6 +3355,19 @@
             ],
             "title": "Expected Mode"
           },
+          "find_hold_keepout_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Find Hold Keepout Id"
+          },
           "flight_mode": {
             "title": "Flight Mode",
             "type": "string"
@@ -3269,6 +3410,7 @@
                   "operator_released",
                   "limit",
                   "link_loss",
+                  "find_hold",
                   "ai_silent",
                   "startup",
                   "manual_input_lost"
@@ -3291,6 +3433,10 @@
             },
             "title": "Limits Active",
             "type": "array"
+          },
+          "link_loss_phase": {
+            "$ref": "#/components/schemas/LinkLossPhase",
+            "default": "none"
           },
           "manual_control": {
             "default": false,
@@ -3693,6 +3839,16 @@
           },
           "link": {
             "$ref": "#/components/schemas/LinkStatus"
+          },
+          "link_loss_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LinkLossPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "manual": {
             "anyOf": [

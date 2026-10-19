@@ -5,7 +5,8 @@ import { useMissionStore } from "../state/missionStore";
 import { useShellStore } from "../state/shellStore";
 import { useUiStore } from "../state/uiStore";
 
-/** Short notices above the safety bar. A new approval card gets "Visa", which brings the chat up. */
+/** Short notices above the safety bar. A new approval card gets "Visa", which brings the chat up;
+ * an alarm stays until "Jag har sett det". */
 export function Toasts() {
   const { t } = useTranslation();
   const toasts = useUiStore((s) => s.toasts);
@@ -31,35 +32,49 @@ export function Toasts() {
         {announce ? t("cards.announce", { title: titleOf(announce) }) : ""}
       </div>
       <div className="toasts" data-testid="toasts">
-        {toasts.map((x) => (
-          <div key={x.id} className="toast" role="status">
-            <span>
-              {x.approvalId ? t("cards.toast", { title: titleOf(x.approvalId) }) : x.text}
-            </span>
-            {x.approvalId ? (
+        {toasts.map((x) =>
+          x.sticky ? (
+            <div key={x.id} className="toast" role="alert" data-tone="red" data-testid="alarm">
+              <span>{x.text}</span>
               <button
                 type="button"
-                className="btn btn-small btn-primary"
-                data-testid="toast-show"
-                onClick={() => {
-                  useShellStore.getState().showTab("chat");
-                  useUiStore.getState().showApproval(x.approvalId ?? null);
-                  useUiStore.getState().dismissToast(x.id);
-                }}
+                className="btn btn-small"
+                data-testid="alarm-ack"
+                onClick={() => useUiStore.getState().dismissToast(x.id)}
               >
-                {t("cards.show")}
+                {t("toast.ack")}
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label={t("toast.close")}
-              onClick={() => useUiStore.getState().dismissToast(x.id)}
-            >
-              <X aria-hidden="true" size={16} />
-            </button>
-          </div>
-        ))}
+            </div>
+          ) : (
+            <div key={x.id} className="toast" role="status">
+              <span>
+                {x.approvalId ? t("cards.toast", { title: titleOf(x.approvalId) }) : x.text}
+              </span>
+              {x.approvalId ? (
+                <button
+                  type="button"
+                  className="btn btn-small btn-primary"
+                  data-testid="toast-show"
+                  onClick={() => {
+                    useShellStore.getState().showTab("chat");
+                    useUiStore.getState().showApproval(x.approvalId ?? null);
+                    useUiStore.getState().dismissToast(x.id);
+                  }}
+                >
+                  {t("cards.show")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label={t("toast.close")}
+                onClick={() => useUiStore.getState().dismissToast(x.id)}
+              >
+                <X aria-hidden="true" size={16} />
+              </button>
+            </div>
+          ),
+        )}
       </div>
     </>
   );

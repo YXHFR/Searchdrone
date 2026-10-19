@@ -352,7 +352,18 @@
         "LATCH_ADOPTED",
         "LOOP_STALL",
         "PIN_INVALIDATED",
-        "MANUAL_CONTROL_LOST"
+        "MANUAL_CONTROL_LOST",
+        "LINK_LOST_ALL",
+        "FIND_HOLD",
+        "FIND_HOLD_ALL",
+        "LINK_BACK_HOLD",
+        "LINK_BACK_HOME",
+        "GPS_WEAK",
+        "GPS_LOST",
+        "DEAD_RECKONING",
+        "GPS_GLITCH",
+        "GPS_SPOOF",
+        "GPS_OK"
       ],
       "title": "AlertCode",
       "type": "string"
@@ -5127,6 +5138,131 @@
       "title": "LimitCaps",
       "type": "object"
     },
+    "LinkLossPhase": {
+      "description": "Where the onboard link-loss rule is (sd_onboard.executor.link_loss).\n\nTimes count from the last inbound SD-link message.",
+      "enum": [
+        "none",
+        "grace",
+        "hold",
+        "find_move",
+        "find_hover",
+        "home",
+        "yielded"
+      ],
+      "title": "LinkLossPhase",
+      "type": "string"
+    },
+    "LinkLossPlan": {
+      "additionalProperties": false,
+      "description": "What the ground expects the onboard link-loss rule to do while SD-link is down: the\nsame ``sd_safety.link_loss.choose_mode`` on the last snapshot and keep-out list. The\npanel counts down to these times; the flight controller's real mode (over MAVLink,\nwhen it is up) wins where they differ.",
+      "properties": {
+        "candidate_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidate_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hold_at_utc": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "home_at_utc": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "hover_lat": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hover_lon": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hover_until_utc": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "keepout_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lost_at_utc": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "normal",
+            "find"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "lost_at_utc",
+        "home_at_utc"
+      ],
+      "title": "LinkLossPlan",
+      "type": "object"
+    },
     "LinkStatus": {
       "additionalProperties": false,
       "properties": {
@@ -8065,6 +8201,19 @@
             }
           ]
         },
+        "find_hold_keepout_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "flight_mode": {
           "type": "string"
         },
@@ -8103,6 +8252,7 @@
                 "operator_released",
                 "limit",
                 "link_loss",
+                "find_hold",
                 "ai_silent",
                 "startup",
                 "manual_input_lost"
@@ -8122,6 +8272,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "link_loss_phase": {
+          "$ref": "#/$defs/LinkLossPhase",
+          "default": "none"
         },
         "manual_control": {
           "default": false,
@@ -8823,6 +8977,17 @@
         },
         "link": {
           "$ref": "#/$defs/LinkStatus"
+        },
+        "link_loss_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkLossPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "manual": {
           "anyOf": [

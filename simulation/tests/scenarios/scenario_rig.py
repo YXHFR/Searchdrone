@@ -32,6 +32,7 @@ from uuid import UUID
 
 import httpx
 import yaml
+from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "onboard"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ground"))
@@ -51,6 +52,7 @@ from sd_brain.secrets import Secrets
 from sd_geo.coverage import coverage_fraction
 from sd_ground.auth import Principal, SessionRecord, new_token
 from sd_ground.auth import hash_token as hash_session_token
+from sd_ground.mav.thread import vehicle_events
 from sd_link_testing import LossyProxy
 from sd_mav import Role
 from sd_obs.clock import MonotonicClock
@@ -93,6 +95,9 @@ FIXTURE: dict[str, Any] = yaml.safe_load(
 )
 PILOT = Principal(role="pilot", issuer_ref="operator:ci-harness", auth_mode="cli")
 LANDING_MODES = frozenset({"RTL", "SMART_RTL", "LAND"})
+# Channel 5 PWM in the middle of each mode-switch band (ArduCopter: <= 1230 FLTMODE1,
+# <= 1360 FLTMODE2, <= 1490 FLTMODE3, <= 1620 FLTMODE4, <= 1749 FLTMODE5, else FLTMODE6).
+RC_PWM: dict[str, int] = {"LAND": 1295, "RTL": 1425, "LOITER": 1685}
 TERMINAL = frozenset(
     {
         "rejected_by_gate",
@@ -546,6 +551,44 @@ class Scenario:
                 await self.brain.http.aclose()
         self.brain = None
 
+    # --- a confirmed find and the RC transmitter -----------------------------------------
+
+    async def confirm_find(self, lat: float, lon: float, sigma95_m: float = 5.0) -> str:
+        """A candidate that a person confirmed, written as the search service writes it
+        (the panel has no confirm route yet), and wait until the onboard executor holds its
+        keep-out cylinder (``KeepoutInstall``). Returns the candidate id."""
+        async with self.r.flow.repo.engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, "
+                        "geom, sigma95_m, n_seen, n_in_view, best_detector_score, priority, "
+                        "first_seen_utc, last_seen_utc) SELECT uuidv7(), 1, CAST(:m AS uuid), "
+                        "COALESCE(max(seq), 0) + 1, 'confirmed', "
+                        "ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :sigma, 3, 3, 0.8, 0.9, "
+                        "now(), now() FROM candidates WHERE mission_id = CAST(:m AS uuid) "
+                        "RETURNING candidate_id::text"
+                    ),
+                    {"m": self.mid, "lat": lat, "lon": lon, "sigma": sigma95_m},
+                )
+            ).one()
+        cid = str(row[0])
+        ex = self.r.onboard.ex
+        await self.until(
+            lambda: any(str(k.source_id) == cid for k in ex.keepouts), 15, "keep-out onboard"
+        )
+        return cid
+
+    async def rc_switch(self, mode: str) -> None:
+        """The pilot moves the flight-mode switch (channel 5, FLTMODE1-6 in
+        searchdrone-safety.parm). ArduCopter acts on a change of position only, so the
+        LOITER position is reached through RTL's (as a pilot flicks the switch)."""
+        pwm = RC_PWM[mode]
+        if mode == "LOITER":
+            self.sim.rc.mode_pwm = RC_PWM["RTL"]
+            await asyncio.sleep(0.5)  # longer than the flight controller's switch debounce
+        self.sim.rc.mode_pwm = pwm
+
     # --- faults ---------------------------------------------------------------------------
 
     async def kill_onboard(self) -> None:
@@ -658,7 +701,14 @@ async def scenario(
 ) -> AsyncIterator[Scenario]:
     """``onboard_factory(sim, url, token)`` replaces the onboard side (e.g. one that also
     runs perception); otherwise ``SitlOnboard`` with ``onboard_options``."""
-    ground = _vehicle(f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}", Role.GROUND)
+    # The ground's vehicle events (status texts, the GPS texts' alarms) as sd_ground.app
+    # wires them; the sink is the rig's VehicleActions, which exists once the stack is up.
+    sink: list[Callable[[str, dict[str, Any]], None]] = []
+    ground = _vehicle(
+        f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}",
+        Role.GROUND,
+        on_event=lambda k, d: sink[0](k, d) if sink else None,
+    )
     port = free_port()
 
     def onboard(_clock: WallClock, url: str, token: str) -> Any:
@@ -681,6 +731,7 @@ async def scenario(
         serve_commander(r, port),
     ):
         r.commander.base_url = httpx.URL(f"http://127.0.0.1:{port}")  # the bound port
+        sink.append(vehicle_events(r.actions.on_event))
         sc = Scenario(r, sim, port)
         publish = r.g.bus.publish
 

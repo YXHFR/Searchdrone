@@ -27,3 +27,6 @@
 - {id: T23, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL], trigger: [fc_silent], to: [HELD], guard: always}
 - {id: T24, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL, HELD, FAILSAFE], trigger: [landed_disarmed], to: [LANDED], guard: landed_on_ground}
 - {id: T25, from: [LANDED], trigger: [landed_timeout_5s], to: [PREFLIGHT], guard: always}
+- {id: T26, from: [TRANSIT, SURVEY, HOLD], trigger: [limit_find], to: [TRANSIT, HOLD], guard: find_target}
+# T27 is T12 (TRANSIT, skill_done -> HOLD) for internal_find_goto, with hold_reason find_hold.
+- {id: T28, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL, FAILSAFE], trigger: [spoof_detected], to: [FAILSAFE], guard: always}

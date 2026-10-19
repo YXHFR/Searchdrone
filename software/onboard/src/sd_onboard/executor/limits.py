@@ -7,8 +7,9 @@ resets after the condition has been false for ``LIMIT_CLEAR_S``. While active it
 new action or event; the order refusals it implies last as long as it is active.
 
 Order when several fire in the same tick: L-BATT, L-RANGE2, L-AREA, L-GPS, L-BATT0, L-ALT,
-L-RANGE, L-SPEED, L-LINK, L-AI. The first return-home wins; a later hold is then ignored.
-(L-FC, the silent flight controller, is handled by the executor in every steered state.)
+L-RANGE, L-SPEED, L-AI. The first return-home wins; a later hold is then ignored.
+(L-FC, the silent flight controller, and L-SPOOF, the spoofed GPS, are handled by the
+executor before these; the link-loss rule, L-LINK/L-FIND/L-GCS in ``link_loss``, after.)
 """
 
 from __future__ import annotations
@@ -23,15 +24,13 @@ from sd_safety.constants import (
     BATTERY_UNKNOWN_RTL_S,
     BATTERY_UNKNOWN_S,
     LIMIT_CLEAR_S,
-    LINK_LOSS_DETECT_S,
     PILOT_POS_MAX_JUMP_MS,
     PILOT_POS_STALE_S,
     RANGE_HARD_MARGIN_M,
-    SDLINK_GRACE_S,
-    SDLINK_HOLD_S,
     SPEED_OVERSHOOT_MS,
 )
-from sd_safety.targets import Plane, distance_m, polygon_from_geojson
+from sd_safety.link_loss import inside_charter
+from sd_safety.targets import distance_m
 from sd_schemas.base import LatLon
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState
@@ -58,14 +57,16 @@ _AI_STATES: Final = frozenset({S.TRANSIT, S.SURVEY, S.HOLD})
 _AI_HOLD_FROM: Final = frozenset({S.TRANSIT, S.SURVEY})
 
 # "after_step": nothing now; the running step finishes, then the vehicle holds.
-Kind = Literal["hold", "rtl", "alt", "after_step"]
+# "find" (the link-loss rule only): fly to the hover point beside a confirmed find.
+# "event": only the event, nothing to steer.
+Kind = Literal["hold", "rtl", "alt", "after_step", "find", "event"]
 
 
 @dataclass(frozen=True, slots=True)
 class LimitAction:
     limit: str  # "L-BATT", ...
     kind: Kind
-    hold_reason: str  # for a hold: "limit", "link_loss" or "ai_silent"
+    hold_reason: str  # for a hold: "limit", "link_loss", "find_hold" or "ai_silent"
     event: str  # OnboardEvent type without the "executor." prefix
     data: dict[str, float | str | None] = field(default_factory=dict)
 
@@ -83,14 +84,6 @@ class LimitInput:
     link_up: bool
     commander_connected: bool | None  # the last CommanderStatus; None = none yet
     commander_status_ms: int | None  # when the last CommanderStatus arrived
-
-
-def inside_charter(lat: float, lon: float, charter: MissionCharter) -> bool:
-    """The point lies in the charter's area grown by its fence buffer (the gate's geometry)."""
-    plane = Plane(charter.home.lat, charter.home.lon)
-    area = polygon_from_geojson(charter.area, plane)
-    xy = plane.xy(lat, lon)
-    return area.contains(xy) or area.boundary_distance(xy) <= charter.geofence_buffer_m
 
 
 class _Edge:
@@ -170,14 +163,11 @@ class LimitMonitor:
         self.alt = _Edge(_ALT_FOR_S)
         self.range = _Edge()
         self.speed = _Edge(_SPEED_FOR_S)
-        self.link_hold = _Edge()
-        self.link_rtl = _Edge()
         self.ai = _Edge()
         self._gps_good_since: int | None = None
         self._range_track: deque[tuple[int, float]] = deque()
         self._range_rehold = False
         self._ai_timer_from_ms: int | None = None
-        self._link_was_down = False
 
     # --- what the executor asks -------------------------------------------------------
 
@@ -206,7 +196,6 @@ class LimitMonitor:
             "L-ALT": self.alt,
             "L-RANGE": self.range,
             "L-SPEED": self.speed,
-            "L-LINK": self.link_hold,
             "L-AI": self.ai,
         }
         return [name for name, edge in names.items() if edge.active]
@@ -263,7 +252,6 @@ class LimitMonitor:
                     "L-SPEED", "hold", "limit", "limit_speed", {"speed_ms": _r(v.groundspeed_ms)}
                 )
             )
-        out += self._link(x, now)
         out += self._ai(x, now)
         return _first_rtl_wins(out)
 
@@ -294,26 +282,6 @@ class LimitMonitor:
                 LimitAction("L-RANGE", "hold", "limit", "limit_range", {"distance_m": _r(dist)})
             ]
         return []
-
-    def _link(self, x: LimitInput, now: int) -> list[LimitAction]:
-        if x.link_up:
-            if self._link_was_down:
-                self.link_hold.reset()
-                self.link_rtl.reset()
-            self._link_was_down = False
-            return []
-        self._link_was_down = True
-        last = x.link_last_inbound_ms
-        down_ms = math.inf if last is None else now - last
-        out: list[LimitAction] = []
-        grace = (LINK_LOSS_DETECT_S + SDLINK_GRACE_S) * 1000
-        if not self.link_hold.active and down_ms >= grace:
-            self.link_hold.active = True
-            out.append(LimitAction("L-LINK", "hold", "link_loss", "link_lost", {}))
-        if not self.link_rtl.active and down_ms >= grace + SDLINK_HOLD_S * 1000:
-            self.link_rtl.active = True
-            out.append(LimitAction("L-LINK", "rtl", "link_loss", "link_loss_rtl", {}))
-        return out
 
     def _ai(self, x: LimitInput, now: int) -> list[LimitAction]:
         """L-AI, only while SD-link is up; the timer starts again when the link returns."""

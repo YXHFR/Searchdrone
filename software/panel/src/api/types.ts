@@ -15,6 +15,7 @@ export type {
   DetectionRow,
   Find,
   GateDecision,
+  LinkLossPlan,
   ManualControlInput,
   ManualControlState,
   Mission,

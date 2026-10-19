@@ -9,7 +9,7 @@ from typing import Any
 
 from onboard_helpers import charter
 
-from sd_link.session import Inbound
+from sd_link.session import Closed, Expired, Inbound, LinkEvent, LinkState
 from sd_obs.clock import MonotonicClock
 from sd_onboard.link_client import OnboardLink
 from sd_schemas.base import SdModel, new_id
@@ -17,7 +17,9 @@ from sd_schemas.link import (
     CharterInstall,
     ClearanceConfirmation,
     Envelope,
+    HelloAck,
     ManualTakeover,
+    OnboardEvent,
     OperatorOverrideNotice,
     SkillCommand,
 )
@@ -52,8 +54,8 @@ class _Executor:
         self.calls.append(f"order:{cmd.skill}")
 
 
-def _inbound(body: SdModel) -> Inbound:
-    env = Envelope.model_construct(
+def _envelope(body: SdModel) -> Envelope:
+    return Envelope.model_construct(
         msg_id=new_id(),
         kind=type(body).__name__,
         sender="ground:main",
@@ -64,9 +66,12 @@ def _inbound(body: SdModel) -> Inbound:
         ttl_ms=None,
         reliable=True,
         corr_id=None,
-        body={},
+        body=body.model_dump(mode="json"),
     )
-    return Inbound(envelope=env, body=body, received_at=0.0, deadline=None)
+
+
+def _inbound(body: SdModel) -> Inbound:
+    return Inbound(envelope=_envelope(body), body=body, received_at=0.0, deadline=None)
 
 
 def _link() -> tuple[OnboardLink, _Executor]:
@@ -157,3 +162,52 @@ async def test_take_over_is_at_once_and_a_hand_back_waits_its_turn() -> None:
     finally:
         worker.cancel()
         await asyncio.gather(worker, return_exceptions=True)
+
+
+class _Session:
+    """Sends into nowhere; the test hands it the link events."""
+
+    state = LinkState.UP
+    last_inbound = 0.0
+
+    def __init__(self) -> None:
+        self.sent: list[SdModel] = []
+        self.events: asyncio.Queue[LinkEvent] = asyncio.Queue()
+
+    async def send(self, body: SdModel, **_: Any) -> None:
+        self.sent.append(body)
+
+    async def next_event(self) -> LinkEvent:
+        return await self.events.get()
+
+
+class _LinkExecutor(_Executor):
+    def on_connected(self, ack: Any) -> None:
+        pass
+
+    def on_link(self, up: bool, last_inbound_ms: int | None) -> None:
+        pass
+
+    def snapshot(self) -> SdModel:
+        return OnboardEvent(type="executor.snapshot", severity="debug")
+
+
+async def test_events_lost_with_the_link_are_sent_again_first() -> None:
+    """An event sent into a link that was already gone (no Ack) is not lost: it goes
+    again on the next session, in its order and ahead of newer events."""
+    link, _ = _link()
+    link.executor = _LinkExecutor()  # type: ignore[assignment]
+    link.event("executor.find_hold_started", "warning", {"n": 1})
+    link.event("executor.link_lost", "warning", {"n": 2})
+    session = _Session()
+    task = asyncio.ensure_future(
+        link._on_session(session, HelloAck.model_construct())  # type: ignore[arg-type]
+    )
+    await _settle()
+    first, second = (b for b in session.sent if isinstance(b, OnboardEvent) and b.data)
+    assert not link._events
+    session.events.put_nowait(Expired(_envelope(first), "LINK_NO_ACK"))
+    session.events.put_nowait(Closed(None, "no ack", (_envelope(second),)))
+    await asyncio.wait_for(task, 5)
+    link.event("executor.find_hold_ended", "warning", {"n": 3})
+    assert [e.data["n"] for e in link._events] == [1, 2, 3]

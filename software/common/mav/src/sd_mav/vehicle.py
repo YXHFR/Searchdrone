@@ -26,6 +26,7 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from sd_mav.allowlist import (
     FC_COMPID,
     POSITION_TYPE_MASK,
+    POSITION_YAW_TYPE_MASK,
     Profile,
     SendContext,
     SendEnvelope,
@@ -146,6 +147,7 @@ class SendOrigin(StrEnum):
     OVERRIDE_FALLBACK = "override_fallback"  # only executor/override.py
     MANUAL = "manual"  # the pilot's sticks (Ta över): MANUAL_CONTROL from the ground, LOITER only
     GROUND = "ground"  # everything the ground station sends
+    GNSS = "gnss"  # the spoofing guard: only MAV_CMD_SET_EKF_SOURCE_SET 2 (no GPS)
 
 
 class MavResult(IntEnum):
@@ -227,6 +229,13 @@ class FcTelemetry:
     wind_speed_ms: float = 0.0
     gps_fix_type: int = 0
     gps_satellites: int = 0
+    # GPS_RAW_INT: the receiver's own position, before the EKF (the spoofing guard compares
+    # it with GLOBAL_POSITION_INT). None until the first one with a position.
+    gps_mono_ms: int | None = None
+    gps_lat: float | None = None
+    gps_lon: float | None = None
+    gps_alt_msl_m: float | None = None
+    gps_hdop: float | None = None  # eph / 100; None when the receiver does not know
     ekf_ok: bool = False
     home: LatLonAlt | None = None
     mission_seq_current: int | None = None
@@ -616,18 +625,34 @@ class Vehicle:
             self._command(mavlink.MAV_CMD_REQUEST_MESSAGE, msg_id), origin
         )
 
+    async def set_ekf_source_set(self, source_set: int, *, origin: SendOrigin) -> MavResult:
+        """Switch the EKF's position sources (the allowlist only lets set 2 through)."""
+        msg = self._command(mavlink.MAV_CMD_SET_EKF_SOURCE_SET, source_set)
+        return await self._send_command(msg, origin)
+
     async def _send_command(self, msg: Any, origin: SendOrigin) -> MavResult:
         result = await self.send(msg, origin=origin)
         return MavResult.TIMEOUT if result is None else result
 
-    async def goto(self, lat: float, lon: float, alt_m: float, *, origin: SendOrigin) -> None:
-        """A GUIDED position target, height above home."""
+    async def goto(
+        self,
+        lat: float,
+        lon: float,
+        alt_m: float,
+        *,
+        origin: SendOrigin,
+        yaw_deg: float | None = None,
+    ) -> None:
+        """A GUIDED position target, height above home. With ``yaw_deg`` (0 = north,
+        clockwise) the nose points that way; without it the flight controller chooses."""
+        mask = POSITION_TYPE_MASK if yaw_deg is None else POSITION_YAW_TYPE_MASK
+        yaw = 0.0 if yaw_deg is None else math.radians(yaw_deg % 360.0)
         msg = mavlink.MAVLink_set_position_target_global_int_message(
             0,
             self.fc_sysid,
             FC_COMPID,
             mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-            POSITION_TYPE_MASK,
+            mask,
             round(lat * 1e7),
             round(lon * 1e7),
             alt_m,
@@ -637,7 +662,7 @@ class Vehicle:
             0,
             0,
             0,
-            0,
+            yaw,
             0,
         )
         await self.send(msg, origin=origin)
@@ -905,8 +930,16 @@ class Vehicle:
                     t = replace(t, battery_voltage_v=int(msg.voltage_battery) / 1000.0)
             case "GPS_RAW_INT":
                 sats = int(msg.satellites_visible)
+                eph = int(msg.eph)
                 t = replace(
-                    t, gps_fix_type=int(msg.fix_type), gps_satellites=0 if sats == 255 else sats
+                    t,
+                    gps_fix_type=int(msg.fix_type),
+                    gps_satellites=0 if sats == 255 else sats,
+                    gps_mono_ms=now,
+                    gps_lat=int(msg.lat) / 1e7,
+                    gps_lon=int(msg.lon) / 1e7,
+                    gps_alt_msl_m=int(msg.alt) / 1000.0,
+                    gps_hdop=None if eph == 65535 else eph / 100.0,
                 )
             case "EKF_STATUS_REPORT":
                 flags = int(msg.flags)

@@ -20,7 +20,15 @@ from typing import Any, Final, Literal
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
-__all__ = ["BATTERY_FAILSAFE_STATES", "PATTERNS", "FailsafeSignal", "signal_from", "text_signal"]
+__all__ = [
+    "BATTERY_FAILSAFE_STATES",
+    "NOTICE_PATTERNS",
+    "PATTERNS",
+    "FailsafeSignal",
+    "notice_text",
+    "signal_from",
+    "text_signal",
+]
 
 PATTERNS: Final = MappingProxyType(
     {
@@ -33,9 +41,35 @@ PATTERNS: Final = MappingProxyType(
             "ekf": r"ekf.*(failsafe|variance)",
             "crash": r"crash",
             "srtl_unavailable": r"smartrtl.*(unavailable|deactivated|full)",
+            # The dead-reckoning failsafe changes to RTL without announcing a failsafe
+            # ("Dead Reckoning started", "Dead Reckoning timeout").
+            "dead_reckoning": r"dead reckoning (started|timeout)",
         }.items()
     }
 )
+# Texts that are *not* failsafe signals although some contain the word: the flight
+# controller reports something but keeps its mode. Checked before PATTERNS.
+#   gcs_continue: "GCS Failsafe - Continuing Pilot Control" (FS_OPTIONS bit 4 in LOITER);
+#                 the onboard link-loss rule (L-GCS) decides instead.
+#   gps_glitch:   "GPS Glitch or Compass error"; an alarm on the panel only.
+NOTICE_PATTERNS: Final = MappingProxyType(
+    {
+        name: re.compile(pattern, re.IGNORECASE)
+        for name, pattern in {
+            "gcs_continue": r"gcs failsafe.*continuing pilot control",
+            "gps_glitch": r"gps glitch",
+        }.items()
+    }
+)
+
+
+def notice_text(text: str) -> str | None:
+    """The name of the first notice pattern ``text`` matches, or ``None``."""
+    for name, pattern in NOTICE_PATTERNS.items():
+        if pattern.search(text):
+            return name
+    return None
+
 
 BATTERY_FAILSAFE_STATES: Final = frozenset(
     {
@@ -56,7 +90,9 @@ class FailsafeSignal:
 
 
 def text_signal(text: str) -> str | None:
-    """The name of the first pattern ``text`` matches, or ``None``."""
+    """The name of the first pattern ``text`` matches, or ``None`` (also for a notice)."""
+    if notice_text(text) is not None:
+        return None
     for name, pattern in PATTERNS.items():
         if pattern.search(text):
             return name

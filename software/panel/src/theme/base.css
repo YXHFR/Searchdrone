@@ -350,6 +350,10 @@ dd {
 .toast span {
   flex: 1;
 }
+.toast[data-tone="red"] {
+  border-color: var(--c-bad);
+  border-left-width: 4px;
+}
 .dialog-backdrop {
   position: fixed;
   inset: 0 0 var(--safety-h);

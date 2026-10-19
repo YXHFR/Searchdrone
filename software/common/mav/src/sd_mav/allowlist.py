@@ -18,8 +18,9 @@ What                                   Allowed
                                        RTL; BRAKE and LAND only from the fallback path
 ``COMPONENT_ARM_DISARM`` (400)         arm only (``param1 = 1``, ``param2 = 0``), skills
 ``NAV_TAKEOFF`` (22)                   ``0 < param7 <= max height``, skills
-``SET_POSITION_TARGET_GLOBAL_INT``     frame 6, type mask 0x0DF8, ``0 <= alt <= max``,
-                                       within the fence radius from home
+``SET_POSITION_TARGET_GLOBAL_INT``     frame 6, type mask 0x0DF8 (or 0x09F8 with a yaw
+                                       ``0 <= yaw < 2 pi``), ``0 <= alt <= max``, within
+                                       the fence radius from home
 ``DO_CHANGE_SPEED`` (178)              ``param1 = 1``, ``0 < param2 <= max``, ``param3 = -1``
 ``MISSION_COUNT``, ``MISSION_ITEM_INT``  mission type 0, commands 16, 178, 19, 20 with the
                                        same number checks
@@ -30,6 +31,8 @@ What                                   Allowed
 ``SET_MESSAGE_INTERVAL`` (511)         the telemetry streams, 1-100 Hz
 ``REQUEST_MESSAGE`` (512)              ``HOME_POSITION``, ``AUTOPILOT_VERSION``
 ``PARAM_REQUEST_READ``                 read one parameter by name
+``SET_EKF_SOURCE_SET`` (42007)         ``param1 = 2`` only (no GPS), origin ``gnss`` only:
+                                       the spoofing guard. Back to GPS is the pilot's
 =====================================  ==================================================
 
 Ground station (sysid 250, compid 190): ``HEARTBEAT`` as a GCS, ``DO_SET_MODE`` to the
@@ -45,7 +48,8 @@ system id, so they never come from the onboard computer.
 
 Origins (``sd_mav.vehicle.SendOrigin``): ``startup`` may only read and ask for streams;
 ``skill`` and ``limit`` may fly; ``override_fallback`` may only change to the STOP and
-FLY HOME modes; ``ground`` is the ground station's origin for everything except the
+FLY HOME modes; ``gnss`` may only switch the EKF to its source set without GPS;
+``ground`` is the ground station's origin for everything except the
 sticks, which only the ground station's ``manual`` origin sends.
 """
 
@@ -66,6 +70,7 @@ from sd_mav.modes import (
     CopterMode,
 )
 from sd_safety.constants import (
+    EKF_SOURCE_SET_NO_GPS,
     FC_FENCE_ALT_MAX_RANGE_M,
     FC_FENCE_RADIUS_RANGE_M,
     FC_LOIT_SPEED_RANGE_MS,
@@ -82,6 +87,7 @@ __all__ = [
     "GROUND_STREAMS",
     "ONBOARD_STREAMS",
     "POSITION_TYPE_MASK",
+    "POSITION_YAW_TYPE_MASK",
     "Profile",
     "SendContext",
     "SendEnvelope",
@@ -90,6 +96,7 @@ __all__ = [
 
 FC_COMPID: Final = mavlink.MAV_COMP_ID_AUTOPILOT1  # 1
 POSITION_TYPE_MASK: Final = 0x0DF8  # position only: ignore velocity, acceleration and yaw
+POSITION_YAW_TYPE_MASK: Final = 0x09F8  # position and yaw: ignore velocity, acc. and yaw rate
 FENCE_MAX_VERTICES: Final = 70
 # The refusal while the vehicle is not known to stand disarmed on the ground (also when
 # its telemetry is late): the ground may wait for fresh telemetry and try again.
@@ -158,8 +165,9 @@ _STARTUP: Final = "startup"
 _FALLBACK: Final = "override_fallback"
 _MANUAL: Final = "manual"
 _GROUND: Final = "ground"
+_GNSS: Final = "gnss"
 _FLYING_ORIGINS: Final = frozenset({_SKILL, _LIMIT})
-_ONBOARD_ORIGINS: Final = frozenset({_SKILL, _LIMIT, _STARTUP, _FALLBACK})
+_ONBOARD_ORIGINS: Final = frozenset({_SKILL, _LIMIT, _STARTUP, _FALLBACK})  # not _GNSS
 _GROUND_ORIGINS: Final = frozenset({_GROUND, _MANUAL})
 
 
@@ -363,6 +371,16 @@ def _request_message(p: list[float], ctx: SendContext) -> str | None:
     return _origin_for("read", ctx)
 
 
+def _ekf_source_set(p: list[float], ctx: SendContext) -> str | None:
+    """The spoofing guard's one command: the EKF stops using GPS (source set 2). Sets 1
+    (GPS) and 3 are the pilot's, with the RC switch, never the onboard computer's."""
+    if ctx.profile is Profile.GROUND:
+        return "the ground station never changes the position source"
+    if p[0] != EKF_SOURCE_SET_NO_GPS or any(v != 0 for v in p[1:]):
+        return f"SET_EKF_SOURCE_SET needs param1 = {EKF_SOURCE_SET_NO_GPS} and param2..7 = 0"
+    return None if ctx.origin == _GNSS else "the position source only from the spoofing guard"
+
+
 _COMMANDS: Final = {
     mavlink.MAV_CMD_DO_SET_MODE: _set_mode,
     mavlink.MAV_CMD_COMPONENT_ARM_DISARM: _arm_disarm,
@@ -371,6 +389,7 @@ _COMMANDS: Final = {
     mavlink.MAV_CMD_DO_SET_MISSION_CURRENT: _mission_current,
     mavlink.MAV_CMD_SET_MESSAGE_INTERVAL: _message_interval,
     mavlink.MAV_CMD_REQUEST_MESSAGE: _request_message,
+    mavlink.MAV_CMD_SET_EKF_SOURCE_SET: _ekf_source_set,
 }
 
 
@@ -415,8 +434,13 @@ def _position_target(msg: Any, ctx: SendContext) -> str | None:
         return bad
     if int(msg.coordinate_frame) != _GUIDED_FRAME:
         return f"frame {int(msg.coordinate_frame)} not allowed"
-    if int(msg.type_mask) != POSITION_TYPE_MASK:
-        return f"type mask {int(msg.type_mask):#06x} not allowed"
+    mask = int(msg.type_mask)
+    if mask not in (POSITION_TYPE_MASK, POSITION_YAW_TYPE_MASK):
+        return f"type mask {mask:#06x} not allowed"
+    if mask == POSITION_YAW_TYPE_MASK:
+        yaw = float(msg.yaw)
+        if not (math.isfinite(yaw) and 0.0 <= yaw < 2 * math.pi):
+            return "yaw out of range"
     return (
         _alt_ok(float(msg.alt), ctx)
         or _within_fence(int(msg.lat_int), int(msg.lon_int), ctx)

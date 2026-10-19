@@ -35,7 +35,7 @@ from sd_schemas.base import (
     json_bytes_at_most,
 )
 from sd_schemas.charter import MissionCharter
-from sd_schemas.executor import ExecutorState, HeldBy, HoldReason
+from sd_schemas.executor import ExecutorState, HeldBy, HoldReason, LinkLossPhase
 from sd_schemas.gate import CLEARANCE_VALID_MS, GateDecision, StateRef
 from sd_schemas.mission import LatchAction
 
@@ -233,6 +233,8 @@ class StateSnapshot(SdModel):
     manual_control: bool = False  # the pilot is steering with sticks (Ta över)
     tick_ms_p95: float
     sector_progress: dict[str, float]
+    link_loss_phase: LinkLossPhase = LinkLossPhase.NONE  # the onboard link-loss rule
+    find_hold_keepout_id: Id | None = None  # the find it hovers beside without a link
 
 
 class OnboardEvent(SdModel):

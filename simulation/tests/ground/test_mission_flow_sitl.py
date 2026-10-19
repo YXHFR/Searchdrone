@@ -47,6 +47,7 @@ from sd_mav.mission import FENCE, download, fence_hash
 from sd_obs.clock import MonotonicClock
 from sd_onboard.executor.executor import Executor, ExecutorOptions
 from sd_onboard.io.params import effective_params
+from sd_onboard.io.persistence import StateStore
 from sd_onboard.link_client import OnboardLink
 from sd_safety.limits import fc_fence_params
 from sd_safety.targets import distance_m
@@ -89,8 +90,10 @@ class SitlOnboard:
         token: str,
         *,
         param_layers: tuple[Path, ...] = (),
+        state_dir: Path | None = None,
         **options: Any,
     ) -> None:
+        """``state_dir``: the onboard computer's saved state and find hovers, as on 1/191."""
         self.clock = MonotonicClock()
         holder: list[Executor] = []
         self.vehicle = _vehicle(
@@ -110,6 +113,7 @@ class SitlOnboard:
                 expected_params=effective_params([PARM, *param_layers]),
                 **{"require_rc": False, **options},  # no RC transmitter in SITL and CI
             ),
+            None if state_dir is None else StateStore(state_dir, self.clock),
         )
         holder.append(self.ex)
         self.link.executor = self.ex

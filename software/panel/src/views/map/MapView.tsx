@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, HttpError } from "../../api/http";
 import { paths } from "../../api/paths";
-import type { Annotation } from "../../api/types";
+import type { Annotation, VehicleLive } from "../../api/types";
 import { Menu } from "../../header/Menu";
 import { areaM2, selfIntersects } from "../../lib/geo";
 import { exposeMap } from "../../lib/testHooks";
@@ -33,6 +33,7 @@ import {
   drawData,
   droneData,
   type FC,
+  findHoverData,
   findsData,
   homeData,
   nextLabel,
@@ -129,6 +130,11 @@ function framingCharter() {
   );
 }
 
+const hoverKey = (v: VehicleLive | null): string => {
+  const plan = v?.link_loss_plan;
+  return plan?.mode === "find" ? `${plan.hover_lat},${plan.hover_lon},${plan.candidate_seq}` : "";
+};
+
 /** Everything the overlay shows, computed from the stores. */
 function overlayData(): Partial<Record<SourceId, FC>> {
   const m = useMissionStore.getState();
@@ -154,6 +160,7 @@ function overlayData(): Partial<Record<SourceId, FC>> {
     areas: areasData(anns),
     pins: pinsData(anns),
     finds: findsData(Object.values(m.finds)),
+    "find-hover": findHoverData(useLiveStore.getState().vehicle?.link_loss_plan),
   };
 }
 
@@ -276,7 +283,8 @@ export default function MapView({ isCompact }: ViewProps) {
       }),
       useLiveStore.subscribe((s, p) => {
         if (s.telemetry !== p.telemetry) drone();
-        if (s.mission !== p.mission) push();
+        // vehicle.state comes twice a second: only a moved hover point redraws the overlay.
+        if (s.mission !== p.mission || hoverKey(s.vehicle) !== hoverKey(p.vehicle)) push();
       }),
     ];
     const tick = setInterval(drone, 1_000); // the stale mark appears without new telemetry

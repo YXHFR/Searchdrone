@@ -7,3 +7,6 @@
 # --- RC transmitter required ------------------------------------------------------------
 ARMING_SKIPCHK 0         # every arming check on, the RC check (bit 6) included
 FS_THR_ENABLE 4          # RC link lost in the air -> SmartRTL, else RTL
+
+# --- position source switch --------------------------------------------------------------
+RC8_OPTION 90            # the pilot's 3-position switch: GPS / no GPS / no GPS

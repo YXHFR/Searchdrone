@@ -72,10 +72,16 @@ def offset(lat: float, lon: float, north_m: float, east_m: float = 0.0) -> tuple
 
 
 def position_target(
-    lat: float, lon: float, alt: float, *, frame: int = 6, mask: int = 0x0DF8
+    lat: float,
+    lon: float,
+    alt: float,
+    *,
+    frame: int = 6,
+    mask: int = 0x0DF8,
+    yaw: float = 0.0,
 ) -> Any:
     return mavlink.MAVLink_set_position_target_global_int_message(
-        0, FC, 1, frame, mask, round(lat * 1e7), round(lon * 1e7), alt, 0, 0, 0, 0, 0, 0, 0, 0
+        0, FC, 1, frame, mask, round(lat * 1e7), round(lon * 1e7), alt, 0, 0, 0, 0, 0, 0, yaw, 0
     )
 
 

@@ -54,6 +54,7 @@ from sd_schemas.link import (
     ClearanceConfirmation,
     Hello,
     HelloAck,
+    KeepoutInstall,
     OperatorOverrideNotice,
     OperatorRelease,
     SkillCommand,
@@ -103,6 +104,9 @@ class FakeOnboard:
     orders: list[SkillCommand] = field(default_factory=list[SkillCommand])
     clearances: list[ClearanceConfirmation] = field(default_factory=list[ClearanceConfirmation])
     notices: list[Any] = field(default_factory=list[Any])
+    keepouts: list[KeepoutInstall] = field(default_factory=list[KeepoutInstall])
+    position: tuple[float, float] | None = None  # None: at home
+    alt_rel_home_m: float = 0.0
     active_command_id: Any = None
     progress_pct: float | None = None
     session: LinkSession | None = None
@@ -115,6 +119,11 @@ class FakeOnboard:
         self.executor_state = state
         for k, v in kw.items():
             setattr(self, k, v)
+
+    def restart(self) -> None:
+        """After ``close``: the next ``start`` connects again (a new SD-link session)."""
+        self._stop = asyncio.Event()
+        self._tasks = []
 
     def hello(self) -> Hello:
         return Hello(
@@ -131,6 +140,7 @@ class FakeOnboard:
     def snapshot(self, home: tuple[float, float]) -> StateSnapshot:
         self.state_seq += 1
         charter = self.charters[-1].charter if self.charters else None
+        lat, lon = self.position or home
         return StateSnapshot.model_validate(
             {
                 "state_seq": self.state_seq,
@@ -143,8 +153,8 @@ class FakeOnboard:
                 "expected_mode": None,
                 "flight_mode": "LOITER",
                 "armed": False,
-                "position": LatLonAlt(lat=home[0], lon=home[1], alt_amsl_m=584.0),
-                "alt_rel_home_m": 0.0,
+                "position": LatLonAlt(lat=lat, lon=lon, alt_amsl_m=584.0 + self.alt_rel_home_m),
+                "alt_rel_home_m": self.alt_rel_home_m,
                 "groundspeed_ms": 0.0,
                 "heading_deg": 0.0,
                 "battery_pct": 95.0,
@@ -221,6 +231,9 @@ class FakeOnboard:
                     reason_codes=[] if self.accept_charters else ["ONB_CHARTER_IN_FLIGHT"],
                 )
             )
+        elif isinstance(body, KeepoutInstall):
+            self.keepouts.append(body)
+            await session.ack(inbound.envelope.msg_id, "done")
         elif isinstance(body, ClearanceConfirmation):
             self.clearances.append(body)
             await session.ack(inbound.envelope.msg_id, "done")

@@ -46,7 +46,9 @@ from sd_schemas.link import (
     CommandCancel,
     CommanderStatus,
     CropData,
+    Envelope,
     HelloAck,
+    KeepoutInstall,
     ManualControl,
     ManualTakeover,
     OnboardEvent,
@@ -71,6 +73,10 @@ MAX_ACKS: Final = 200
 MAX_PERCEPTION: Final = 10
 PERCEPTION_TTL_MS: Final = 30_000  # a report or crop delivered later than this is dropped
 _WATCH_S: Final = 0.1
+
+
+def _event_of(envelope: Envelope) -> OnboardEvent:
+    return OnboardEvent.model_validate(envelope.body)
 
 
 class OnboardLink:
@@ -171,10 +177,12 @@ class OnboardLink:
             asyncio.ensure_future(self._watch(session)),
         ]
         self._wake.set()
+        lost: list[OnboardEvent] = []
         try:
             while True:
                 event = await session.next_event()
                 if isinstance(event, Closed):
+                    lost += [_event_of(e) for e in event.unacked if e.kind == "OnboardEvent"]
                     break
                 if isinstance(event, StateChanged):
                     ex.on_link(event.state is LinkState.UP, round(session.last_inbound * 1000))
@@ -182,8 +190,13 @@ class OnboardLink:
                     await self._dispatch(event)
                 elif isinstance(event, Expired):
                     log.warning("sdlink message expired: %s", event.envelope.kind)
+                    if event.envelope.kind == "OnboardEvent":
+                        lost.append(_event_of(event.envelope))
         finally:
             self._session = None
+            # An event sent into a link that was already gone is sent again on the next
+            # session, ahead of the newer ones: at least once (the ground may have it).
+            self._events.extendleft(reversed(lost[: MAX_EVENTS - len(self._events)]))
             ex.on_link(False, round(session.last_inbound * 1000))
             for task in tasks:
                 task.cancel()
@@ -213,6 +226,8 @@ class OnboardLink:
                 ex.on_pilot_position(body)
             case CommanderStatus():
                 ex.on_commander_status(body)
+            case KeepoutInstall():
+                ex.on_keepouts(body, env.msg_id)
             case ManualTakeover() if body.active:
                 ex.on_takeover(body, env.msg_id)
             case ManualTakeover():

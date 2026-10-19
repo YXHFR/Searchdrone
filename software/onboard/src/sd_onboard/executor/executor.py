@@ -4,8 +4,9 @@ ground's emergency path or the flight controller takes over.
 
 Everything time-based reads the injected clock. ``tick()`` runs at 10 Hz: the flight
 controller's mode and failsafes, the limit monitors, the running skill and the
-transitions. Inbound messages from SD-link come in through the ``on_*`` methods; what goes
-back (Acks, events, charter answers) leaves through the ``Uplink``.
+transitions. The GPS guard (L-SPOOF) runs before the limit monitors, the link-loss rule
+(``link_loss.LinkLossRule``) after them. Inbound messages from SD-link come in through the
+``on_*`` methods; what goes back (Acks, events, charter answers) leaves through the ``Uplink``.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
+from sd_mav.chain import rc_switch_moved
+from sd_mav.failsafe_signals import notice_text
 from sd_mav.mission import (
     FENCE,
     MISSION,
@@ -49,6 +52,7 @@ from sd_onboard.executor.limits import (
     PilotTracker,
     inside_charter,
 )
+from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO, LinkLossInput, LinkLossRule
 from sd_onboard.executor.override import OverrideState
 from sd_onboard.executor.override_fallback import OverrideFallback
 from sd_onboard.executor.state import (
@@ -76,16 +80,20 @@ from sd_onboard.skills.return_home import ReturnHomeHandler
 from sd_safety import evaluate
 from sd_safety.constants import (
     CLEARANCE_VALID_S,
+    EKF_SOURCE_SET_NO_GPS,
+    EKF_SOURCE_SET_TRIES,
     EXECUTOR_TICK_HZ,
     FC_HEARTBEAT_TIMEOUT_S,
     FENCE_ALT_MARGIN_M,
     FENCE_RADIUS_MARGIN_M,
+    FIND_MOVE_SPEED_MS,
     GCS_SEEN_FOR_RELEASE_S,
     HOME_MATCH_M,
     LINK_LOSS_DETECT_S,
     MODE_CONFIRM_TIMEOUT_S,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
+from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -101,7 +109,7 @@ from sd_safety.targets import Plane, distance_m, polygon_from_geojson
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
-from sd_schemas.executor import ExecutorState, ResumePoint
+from sd_schemas.executor import ExecutorState, LinkLossPhase, ResumePoint
 from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest
 from sd_schemas.link import (
     SCHEMA_MAJOR,
@@ -112,6 +120,8 @@ from sd_schemas.link import (
     CommanderStatus,
     Hello,
     HelloAck,
+    Keepout,
+    KeepoutInstall,
     ManualTakeover,
     OperatorOverrideNotice,
     OperatorRelease,
@@ -160,6 +170,9 @@ _CRITICAL: Final = frozenset(
         "limit_range_rtl",
         "limit_area",
         "link_loss_rtl",
+        "gcs_lost_rtl",
+        "gcs_lost_rtl_held",
+        "gnss_spoof_suspected",
         "forbidden_mavlink_blocked",
         "gate_disagreement",
         "return_home_failed",
@@ -175,6 +188,12 @@ _WARNING: Final = frozenset(
         "limit_speed",
         "limit_nav",
         "link_lost",
+        "link_loss_hold",
+        "find_hold_started",
+        "find_move_deadline",
+        "find_hold_ended",
+        "gcs_lost_ignored_find",
+        "gnss_degraded",
         "ai_silent",
         "pilot_position_stale",
         "inbound_command_ignored",
@@ -182,6 +201,17 @@ _WARNING: Final = frozenset(
     }
 )
 _STOPPING_MODES: Final = frozenset({CopterMode.BRAKE.name, CopterMode.LOITER.name})
+_INTERNAL_GOTOS: Final = frozenset({INTERNAL_ALT_GOTO, INTERNAL_FIND_GOTO})
+# Where the link-loss rule follows the flight (it steers only in MOVING, see link_loss).
+_LINK_RULE_STATES: Final = AIRBORNE_CONTROLLED | {S.HELD, S.FAILSAFE}
+# L-SPOOF switches the EKF off GPS here; in HELD a person steers and it only raises the alarm.
+_SPOOF_ACT_STATES: Final = MOVING | {S.RTL, S.FAILSAFE}
+_EKF_SOURCE_RETRY_S: Final = 1.0
+_LINK_LIMITS: Final = frozenset({"L-LINK", "L-FIND", "L-GCS"})
+# FS_OPTIONS bit 4 keeps LOITER on a lost ground link. A hold the operator made from the
+# ground (Ta över, or a STOP once in LOITER) can no longer be steered from there, so L-GCS
+# flies home as the flight controller did without that bit. An RC-chosen mode stays.
+_GCS_HOME_HOLDS: Final = frozenset({"operator_stop", "operator_manual"})
 HOME_PARAMS: Final = ReturnHomeParams(reason="limit")
 _ISSUER_KIND: Final = {
     "operator": "operator",
@@ -224,7 +254,7 @@ class ExecutorOptions:
 @dataclass
 class _Active:
     command_id: UUID
-    skill: str  # the registry name, or INTERNAL_ALT_GOTO
+    skill: str  # the registry name, INTERNAL_ALT_GOTO or INTERNAL_FIND_GOTO
     handler: SkillHandler
     plan: SkillPlan
     origin: SendOrigin
@@ -259,8 +289,10 @@ class _IO:
     async def takeoff(self, alt_m: float) -> MavResult:
         return await self._ex.vehicle.takeoff(alt_m, origin=self._origin)
 
-    async def set_position_target(self, lat: float, lon: float, alt_m: float) -> None:
-        await self._ex.vehicle.goto(lat, lon, alt_m, origin=self._origin)
+    async def set_position_target(
+        self, lat: float, lon: float, alt_m: float, yaw_deg: float | None = None
+    ) -> None:
+        await self._ex.vehicle.goto(lat, lon, alt_m, origin=self._origin, yaw_deg=yaw_deg)
 
     async def change_speed(self, speed_ms: float) -> MavResult:
         return await self._ex.vehicle.change_speed(speed_ms, origin=self._origin)
@@ -317,6 +349,18 @@ class Executor:
             emit=self.emit,
         )
         self.limits = LimitMonitor()
+        self.link_rule = LinkLossRule()
+        self.spoof = SpoofDetector()
+        self.gps_health = GpsHealth()
+        self.keepouts: tuple[Keepout, ...] = ()
+        self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
+        self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
+        self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
+        self._gcs_home_sending = False  # ... and that one mode change is under way
+        self._gcs_home_notice: int | None = None  # the last override notice at the loss
+        self._gcs_hold_rc: int | None = None  # the RC mode switch at the last operator notice
+        self._taken_by: str | None = None  # who took over from the executor, for L-FIND
+        self._find_record: dict[str, Any] | None = None  # the running find hover's record
         self.pilot = PilotTracker()
         self.charter: MissionCharter | None = None
         self.hard_limits: SafetyLimits = DEFAULT_LIMITS
@@ -393,6 +437,8 @@ class Executor:
         """Events from ``sd_mav.Vehicle`` (``executor.*`` pass through to the ground)."""
         if kind == "mav.statustext":
             self.last_statustext = str(details.get("text", ""))[:200]
+            if notice_text(self.last_statustext) == "gcs_continue":
+                self._gcs_continue = True
         if kind.startswith("executor."):
             self.emit(kind.removeprefix("executor."), details)
 
@@ -404,9 +450,16 @@ class Executor:
     def send_gate(self, origin: SendOrigin) -> str | None:
         """Why a message from ``origin`` may not go out now, or None. Asked inside
         ``Vehicle.send`` before every single write."""
+        if origin is SendOrigin.GNSS:
+            # L-SPOOF switches a sensor, not the mode: also in FAILSAFE, never in HELD.
+            return "control_held" if self.state == S.HELD else None
         if origin not in (SendOrigin.SKILL, SendOrigin.LIMIT):
             return None  # startup traffic; the fallback path has its own rules
         now = self.now_ms()
+        if self._gcs_home_sending and self.state == S.HELD and origin is SendOrigin.LIMIT:
+            # L-GCS from an operator hold may pass HELD, but not over a newer notice (STOP,
+            # FLY HOME, a guard) or a mode the pilot chose on the RC switch since.
+            return None if self._gcs_home_allowed() else "control_held"
         if self.state in (S.HELD, S.FAILSAFE) or self.control_suspended:
             return "control_held"
         if self.auth.notice_recent(now):
@@ -556,6 +609,54 @@ class Executor:
             else:
                 log.error("executor side task failed: %r", exc)
 
+    def _gcs_home_from_hold(self) -> None:
+        # Each "Continuing Pilot Control" is a new loss (the FC says it once per failsafe),
+        # so a second loss in the same hold is handled as well.
+        if self.held_by not in _GCS_HOME_HOLDS or self._gcs_home_busy:
+            return
+        self._gcs_home_busy = True
+        self._gcs_home_notice = self.auth.notice_mono_ms  # a notice from now on is newer
+        self._side(self._home_from_hold())
+
+    def _gcs_home_allowed(self) -> bool:
+        """Still an operator hold in the LOITER it left (or the home mode being set), no
+        newer notice, and the RC mode switch where it was: a person did not choose since."""
+        t = self.vehicle.telemetry
+        modes = {int(CopterMode.LOITER)}
+        if self.auth.pending_mode is not None:
+            modes.add(int(self.auth.pending_mode))
+        return (
+            self.state == S.HELD
+            and self.held_by in _GCS_HOME_HOLDS
+            and t.fc_custom_mode in modes
+            and self.auth.notice_mono_ms == self._gcs_home_notice
+            and not rc_switch_moved(self.vehicle, self._gcs_hold_rc)
+        )
+
+    async def _home_from_hold(self) -> None:
+        # The same home the FC flew without FS_OPTIONS bit 4, on the same position source:
+        # L-SPOOF does not steer in HELD, so a spoof alarm does not change this.
+        try:
+            await self.fallback.idle()  # a STOP's own chain first, then home over it
+            if not self._gcs_home_allowed():
+                return
+            self.emit(
+                "gcs_lost_rtl_held",
+                {"held_by": self.held_by, "fc_mode": self.vehicle.telemetry.fc_mode},
+            )
+            self._gcs_home_sending = True
+            for mode in (CopterMode.SMART_RTL, CopterMode.RTL):
+                if await self.set_mode(mode, SendOrigin.LIMIT):
+                    return
+                if not self._gcs_home_allowed():
+                    return  # the pilot or a newer notice has it now: no RTL over it
+            log.warning("executor: L-GCS home from the hold not confirmed")
+        except (ControlNotAllowedError, ForbiddenMavlinkError) as exc:
+            log.warning("executor: L-GCS home from the hold refused: %s", _refusal_reason(exc))
+        finally:
+            self._gcs_home_sending = False
+            self._gcs_home_busy = False
+
     async def _loiter(self, origin: SendOrigin) -> None:
         try:
             ok = await self.set_mode(CopterMode.LOITER, origin)
@@ -602,6 +703,8 @@ class Executor:
         reason = "limit" if active.skill == INTERNAL_ALT_GOTO else "skill_done"
         if self.ai_silent_after_step:
             reason = "ai_silent"
+        if active.skill == INTERNAL_FIND_GOTO:
+            reason = "find_hold"  # T27: at the hover point beside the find
         if active.skill in ("goto", "survey_sector", "resume"):
             self.resume_point = None  # finished: nothing left to resume
         if active.ack_done:
@@ -609,6 +712,9 @@ class Executor:
         if active.skill == "takeoff":
             self.flown = True
         self._enter(target, hold_reason=reason, cause=f"{active.skill} done")
+        if active.skill == INTERNAL_FIND_GOTO and target == S.HOLD:
+            # LOITER, not GUIDED: the flight controller's GCS failsafe leaves LOITER alone.
+            self._side(self._loiter(SendOrigin.LIMIT))
 
     def _skill_failed(self, active: _Active, exc: SkillFailedError) -> None:
         self.active = None
@@ -973,6 +1079,7 @@ class Executor:
         self.fallback.start(notice.kind, notice.action_seq, rule.steps)
         now = self.now_ms()
         self.auth.notice(now)
+        self._gcs_hold_rc = self.vehicle.telemetry.rc_mode_pwm
         if rule.sets_stop_latch and self.state in ON_GROUND:
             self.clearance = None  # STOP on the ground also withdraws "clear around the drone"
         target = self.target_of(Trigger.OPERATOR_OVERRIDE)
@@ -980,6 +1087,7 @@ class Executor:
             self._save()
             return
         self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+        self._taken_by = "human"
         if self.state == S.FAILSAFE:
             self._save()  # stay in FAILSAFE: Resume must still find the failsafe's cause gone
         else:
@@ -1000,9 +1108,11 @@ class Executor:
             return
         if takeover.active:
             self.auth.notice(self.now_ms())
+            self._gcs_hold_rc = self.vehicle.telemetry.rc_mode_pwm
             target = self.target_of(Trigger.OPERATOR_OVERRIDE)
             if not isinstance(target, Refusal):
                 self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+                self._taken_by = "human"
                 if self.state != S.FAILSAFE:
                     self._enter(target, held_by="operator_manual", cause="takeover")
             self._save()
@@ -1055,6 +1165,8 @@ class Executor:
             return False
         now = self.now_ms()
         gcs = t.gcs_mavlink_seen_mono_ms
+        if self.spoof.finding is not None:
+            return False  # the EKF stays off GPS for the rest of the flight; the pilot flies
         return (
             t.battery_pct is not None
             and t.battery_pct > charter.battery_rtl_pct
@@ -1124,6 +1236,17 @@ class Executor:
             valid_for_ms=c.valid_for_ms,
             consumed=False,
         )
+        self._ack(ref_id, "done")
+
+    def on_keepouts(self, install: KeepoutInstall, ref_id: UUID) -> None:
+        """The ground's keep-out cylinders; the highest ``install_seq`` wins (L-FIND uses
+        the confirmed finds among them)."""
+        if install.install_seq < self.keepout_seq:
+            self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
+            return
+        self.keepout_seq = install.install_seq
+        self.keepouts = tuple(install.keepouts)
+        self._save()
         self._ack(ref_id, "done")
 
     def on_pilot_position(self, p: PilotPosition) -> None:
@@ -1291,6 +1414,10 @@ class Executor:
         if saved is not None:
             self.boot_id = saved.boot_id + 1
             self.resume_point = saved.resume()
+            restored = saved.keepout_install()
+            if restored is not None:
+                self.keepout_seq = restored.install_seq
+                self.keepouts = tuple(restored.keepouts)
         await self.vehicle.wait_connected(3600.0)
         v = self.vehicle_state()
         if v.armed or is_airborne(v):
@@ -1322,10 +1449,16 @@ class Executor:
             self._watch_landing()
             self._classify(now)
             self._keep_flying_home(now)
+            self._check_gnss(now)
         if self.state in MOVING and self.charter is not None and t.fc_connected:
             if self.state == S.TAKEOFF and is_airborne(self.vehicle_state()):
                 self.flown = True
             self._run_limits(now)
+        if self.state in _LINK_RULE_STATES and self.charter is not None and t.fc_connected:
+            self._run_link_rule(now)
+        if self._gcs_continue and self.state == S.HELD and t.fc_connected:
+            self._gcs_home_from_hold()
+        self._gcs_continue = False
         if (
             self.state == S.LANDED
             and self._landed_ms is not None
@@ -1375,6 +1508,7 @@ class Executor:
         if isinstance(target, Refusal):
             return
         self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+        self._taken_by = "fc_failsafe"
         self._enter(target, held_by=held_by, cause=str(key))
         self.emit(event, {})
 
@@ -1399,6 +1533,11 @@ class Executor:
         self.auth.reset()
         self.over.landed()
         self.limits.reset()
+        self.link_rule.reset()  # LL-T15
+        self.spoof.reset()
+        self.gps_health = GpsHealth()
+        self._taken_by = None
+        self._find_record = None
         self.clearance = None
         self.ai_silent_after_step = False
         self.flown = False
@@ -1425,6 +1564,7 @@ class Executor:
                 target = self.target_of(Trigger.UNEXPECTED_MODE)
                 if not isinstance(target, Refusal):
                     self.control_suspended = True  # first, so nothing more goes out
+                    self._taken_by = "fc_failsafe" if self.auth.failsafe_near_change(t) else "human"
                     self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
                     self._enter(target, held_by=held_by, cause=f"mode {change.mode}")
                     self.emit("control_taken", {"fc_mode": change.mode, "held_by": held_by})
@@ -1433,6 +1573,7 @@ class Executor:
                 if self.held_by == "external" and self.auth.failsafe_near_change(t):
                     target = self.target_of(Trigger.FAILSAFE_DETECTED)
                     if not isinstance(target, Refusal):
+                        self._taken_by = "fc_failsafe"
                         self._enter(target, cause="failsafe")
                         self.control_suspended = True
                         sig = t.last_failsafe_signal
@@ -1475,6 +1616,149 @@ class Executor:
             self.emit(action.event, dict(action.data))
             self._apply_limit(action)
 
+    def _run_link_rule(self, now: int) -> None:
+        """L-LINK, L-FIND and L-GCS, after the limit monitors (they win)."""
+        if self.charter is None:
+            raise RuntimeError("no charter installed")
+        t = self.vehicle.telemetry
+        nav_ok = (
+            t.gps_fix_type >= 3
+            and t.ekf_ok
+            and not self.limits.nav_degraded(now)
+            and self.spoof.finding is None
+        )
+        actions = self.link_rule.check(
+            LinkLossInput(
+                now_ms=now,
+                state=self.state,
+                vehicle=self.vehicle_state(),
+                charter=self.charter,
+                link_up=self.link_up,
+                link_last_inbound_ms=self.link_last_inbound_ms,
+                nav_ok=nav_ok,
+                keepouts=self.keepouts,
+                gcs_continue=self._gcs_continue,
+                active_skill=self.active.skill if self.active else None,
+                taken_by=self._taken_by,
+            )
+        )
+        for action in actions:
+            self.emit(action.event, dict(action.data))
+            if action.event == "find_hold_started":
+                self._find_hold_started(action.data)
+            elif action.event == "find_hold_ended":
+                self._find_hold_ended(action.data)
+            self._apply_limit(action)
+
+    def _find_hold_started(self, data: Mapping[str, Any]) -> None:
+        """ "The position is saved": one record when the hover starts, the full one when it
+        ends, in ``find_holds.jsonl`` next to ``executor_state.json``."""
+        c = self.charter
+        self._find_record = {
+            "vehicle_id": self.options.vehicle_id,
+            "mission_id": str(c.mission_id) if c else None,
+            "boot_id": self.boot_id,
+            **data,
+            "started_mono_ms": self.now_ms(),
+            "started_utc": _utc(self.clock),
+        }
+        self._append_find_hold({"record": "started", **self._find_record})
+
+    def _find_hold_ended(self, data: Mapping[str, Any]) -> None:
+        record = self._find_record or {"vehicle_id": self.options.vehicle_id}
+        self._find_record = None
+        self._append_find_hold(
+            {
+                "record": "ended",
+                **record,
+                "ended_reason": data.get("reason"),
+                "hovered_s": data.get("hovered_s"),
+                "ended_mono_ms": self.now_ms(),
+                "ended_utc": _utc(self.clock),
+            }
+        )
+
+    def _append_find_hold(self, record: dict[str, Any]) -> None:
+        if self.store is None:
+            return
+        try:
+            self.store.append_find_hold(record)
+        except OSError as exc:
+            log.error("could not save the find hover: %s", exc)
+
+    # --- the GPS: health and L-SPOOF ----------------------------------------------------
+
+    def _check_gnss(self, now: int) -> None:
+        if self.state not in _LINK_RULE_STATES:
+            return
+        t = self.vehicle.telemetry
+        status = self.gps_health.update(
+            fix_type=t.gps_fix_type, satellites=t.gps_satellites, hdop=t.gps_hdop, now_ms=now
+        )
+        if status == "ok":
+            self.emit("gnss_restored", {})
+        elif status is not None:
+            self.emit(
+                "gnss_degraded",
+                {
+                    "status": status,
+                    "fix": t.gps_fix_type,
+                    "satellites": t.gps_satellites,
+                    "hdop": t.gps_hdop,
+                },
+            )
+        if t.gps_mono_ms is None or t.gps_lat is None or t.gps_lon is None:
+            return
+        if t.gps_alt_msl_m is None:
+            return
+        found = self.spoof.update(
+            GnssSample(
+                mono_ms=t.gps_mono_ms,
+                fix_type=t.gps_fix_type,
+                satellites=t.gps_satellites,
+                hdop=t.gps_hdop,
+                gps_lat=t.gps_lat,
+                gps_lon=t.gps_lon,
+                gps_alt_msl_m=t.gps_alt_msl_m,
+                ekf_lat=t.lat,
+                ekf_lon=t.lon,
+                ekf_alt_msl_m=t.alt_amsl_m,
+            ),
+            armed=t.armed,
+        )
+        if found is not None:
+            self._on_spoof(found)
+
+    def _on_spoof(self, found: SpoofFinding) -> None:
+        """L-SPOOF: the EKF off GPS (source set 2) and hands off (T28), once per flight."""
+        data: dict[str, Any] = {"kind": found.kind, "value": found.value_m}
+        if self.state not in _SPOOF_ACT_STATES:
+            self.emit("gnss_spoof_suspected", {**data, "source_set_ack": None})
+            return  # HELD: a person steers; only the alarm
+        self._taken_by = "gnss"
+        target = self.target_of(Trigger.SPOOF_DETECTED)
+        if not isinstance(target, Refusal):
+            self.control_suspended = True  # first, so nothing more goes out
+            self._drop_active(stage="superseded", codes=("L-SPOOF",))
+            self._enter(target, cause="L-SPOOF")  # FAILSAFE keeps control_suspended
+        self._side(self._ekf_off_gps(data))
+
+    async def _ekf_off_gps(self, data: dict[str, Any]) -> None:
+        result = "not_sent"
+        for _ in range(EKF_SOURCE_SET_TRIES):
+            try:
+                answer = await self.vehicle.set_ekf_source_set(
+                    EKF_SOURCE_SET_NO_GPS, origin=SendOrigin.GNSS
+                )
+            except (ControlNotAllowedError, ForbiddenMavlinkError):
+                result = "refused"
+                break
+            result = answer.name
+            if answer is MavResult.ACCEPTED:
+                break
+            await self.clock.sleep(_EKF_SOURCE_RETRY_S)
+        self.emit("gnss_spoof_suspected", {**data, "source_set_ack": result})
+
     def _apply_limit(self, action: LimitAction) -> None:
         match action.kind:
             case "after_step":
@@ -1499,6 +1783,8 @@ class Executor:
                 target = self.target_of(Trigger.LIMIT_RTL)
                 if isinstance(target, Refusal):
                     return
+                if action.limit not in _LINK_LIMITS:
+                    self._taken_by = "battery" if action.limit == "L-BATT" else "limit"
                 self._drop_active(stage="superseded", codes=(action.limit,))
                 self._enter(target, cause=action.limit)
                 handler = ReturnHomeHandler()
@@ -1517,6 +1803,34 @@ class Executor:
                 plan = goto_plan(ctx, v.lat, v.lon, alt, _ALT_GOTO_SPEED_MS)
                 self._enter(target, cause=action.limit)
                 self._internal(INTERNAL_ALT_GOTO, goto, plan, SendOrigin.LIMIT)
+            case "find":
+                self._fly_to_find(action)
+            case "event":
+                pass
+
+    def _fly_to_find(self, action: LimitAction) -> None:
+        """L-FIND (T26): an internal goto to the hover point, or LOITER when already there."""
+        find = self.link_rule.plan
+        if find is None or self.charter is None:
+            return
+        arrived = self.link_rule.phase == LinkLossPhase.FIND_HOVER
+        target = self.target_of(Trigger.LIMIT_FIND, find_arrived=arrived)
+        if isinstance(target, Refusal):
+            return
+        self._drop_active(stage="superseded", codes=(action.limit,))
+        if target == S.HOLD:
+            self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
+            self._side(self._loiter(SendOrigin.LIMIT))
+            return
+        # Yaw: the nose toward the find from the start (the position target carries it),
+        # so the drone arrives facing the find and LOITER keeps that heading.
+        speed = min(FIND_MOVE_SPEED_MS, self.charter.max_speed_ms)
+        goto = GotoHandler()
+        ctx = self._plan_context(new_id())
+        goto.prepare(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed, yaw_deg=find.yaw_deg)
+        plan = goto_plan(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed)
+        self._enter(target, cause=action.limit)
+        self._internal(INTERNAL_FIND_GOTO, goto, plan, SendOrigin.LIMIT)
 
     # --- snapshot and persistence --------------------------------------------------------
 
@@ -1562,13 +1876,29 @@ class Executor:
             clearance_available=self._clearance_valid(),
             preflight_ok=self.preflight_ok(),
             preflight=dict(self.preflight),
-            limits_active=self.limits.active(),
+            limits_active=self._limits_active(),
             stop_latch=self.over.stop_latch,
             battery_rtl_active=self.over.battery_rtl_active or self.limits.battery_rtl_active,
             manual_control=self.over.manual,
             tick_ms_p95=round(p95, 2),
             sector_progress={},
+            link_loss_phase=self.link_rule.phase,
+            find_hold_keepout_id=(
+                self.link_rule.plan.keepout_id
+                if self.link_rule.find_active and self.link_rule.plan is not None
+                else None
+            ),
         )
+
+    def _limits_active(self) -> list[str]:
+        active = self.limits.active()
+        if self.spoof.finding is not None:
+            active.insert(0, "L-SPOOF")
+        if self.link_rule.link_hold_active:
+            active.append("L-LINK")
+        if self.link_rule.find_active:
+            active.append("L-FIND")
+        return active
 
     def _clearance_valid(self) -> bool:
         c = self.clearance
@@ -1599,6 +1929,13 @@ class Executor:
                     "charter_version": c.version if c else None,
                     "active_command_id": str(self.active.command_id) if self.active else None,
                     "resume_point": rp.model_dump(mode="json") if rp is not None else None,
+                    # For the log and the panel after a restart; never read back to steer.
+                    "link_loss": self.link_rule.summary(),
+                    "keepouts": KeepoutInstall(
+                        install_seq=self.keepout_seq, keepouts=list(self.keepouts)
+                    ).model_dump(mode="json")
+                    if self.keepout_seq >= 0
+                    else None,
                 }
             )
         except OSError as exc:
@@ -1611,3 +1948,7 @@ class Executor:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _utc(clock: Clock) -> str:
+    return clock.utc_now().isoformat().replace("+00:00", "Z")

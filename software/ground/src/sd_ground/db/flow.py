@@ -1219,6 +1219,19 @@ class FlowRepo:
         )
         return [dict(r) for r in rows]
 
+    async def confirmed_candidates(self, mission_id: str) -> list[dict[str, Any]]:
+        """The mission's candidates whose newest revision is ``confirmed`` (a person
+        confirmed the find and has not reopened it), by display number."""
+        rows = await self._all(
+            "SELECT candidate_id::text AS candidate_id, seq, lat, lon, sigma95_m FROM ("
+            "SELECT DISTINCT ON (candidate_id) candidate_id, seq, state, "
+            "ST_Y(geom) AS lat, ST_X(geom) AS lon, sigma95_m FROM candidates "
+            "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
+            "WHERE state = 'confirmed' ORDER BY seq, candidate_id",
+            m=mission_id,
+        )
+        return [dict(r) for r in rows]
+
     async def detections(self, mission_id: str, limit: int = 2000) -> list[dict[str, Any]]:
         """The mission's detections with a class, newest first."""
         rows = await self._all(

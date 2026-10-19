@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -691,6 +691,17 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             latch=None,
             airborne=True,
             in_flight=True,
+        ),
+        s.LinkLossPlan(
+            mode="find",
+            keepout_id=OTHER,
+            candidate_id=MISSION,
+            candidate_seq=1,
+            hover_lat=-35.36290,
+            hover_lon=149.16523,
+            lost_at_utc=T,
+            home_at_utc=T + timedelta(seconds=123),
+            hover_until_utc=T + timedelta(seconds=123),
         ),
         s.ActionRequest(client_action_id=OTHER),
         s.ActionDispatched(action_id=OTHER, action_seq=5, paths={"mavlink": "queued"}),
