@@ -34,9 +34,9 @@ DRY = np.array([182.0, 168.0, 96.0])
 SOIL = np.array([118.0, 104.0, 72.0])
 
 
-def _hash01(ix: NDArray[np.int64], iy: NDArray[np.int64], seed: int) -> Grid:
-    h = (ix.astype(np.uint32) * np.uint32(0x9E3779B1)) ^ (
-        iy.astype(np.uint32) * np.uint32(0x85EBCA77)
+def _hash01(col: NDArray[np.int64], row: NDArray[np.int64], seed: int) -> Grid:
+    h = (col.astype(np.uint32) * np.uint32(0x9E3779B1)) ^ (
+        row.astype(np.uint32) * np.uint32(0x85EBCA77)
     )
     h ^= np.uint32(seed * 0xC2B2AE3D & 0xFFFFFFFF)
     h ^= h >> np.uint32(15)
@@ -53,10 +53,10 @@ def periodic_noise(px: int, cells: int, seed: int, warp: tuple[Grid, Grid] | Non
     gy, gx = np.meshgrid(g, g, indexing="ij")
     if warp is not None:
         gx, gy = gx + warp[0], gy + warp[1]
-    ix, iy = np.floor(gx).astype(np.int64), np.floor(gy).astype(np.int64)
-    fx, fy = gx - ix, gy - iy
+    col, row = np.floor(gx).astype(np.int64), np.floor(gy).astype(np.int64)
+    fx, fy = gx - col, gy - row
     fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
-    x0, y0 = ix % cells, iy % cells
+    x0, y0 = col % cells, row % cells
     x1, y1 = (x0 + 1) % cells, (y0 + 1) % cells
     lattice = np.arange(cells)
     table = _hash01(*np.meshgrid(lattice, lattice, indexing="xy"), seed)  # [y, x]
