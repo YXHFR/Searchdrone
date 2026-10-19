@@ -1,0 +1,30 @@
+# Sim farm (`just sim-farm`). Copied to config/simfarm.toml by `just setup-config`.
+# config/simfarm.toml is gitignored: the R2 key belongs there and nowhere else.
+# On the command line: commander, idle_only, busy_gpu_pct, busy_cpu_load, max_duty and
+# max_failures override this file (`just sim-farm commander=sd-brain`); the rest is set here.
+
+[farm]
+commander = "script"          # "script" (the scripted commander) | "sd-brain" (the cloud model)
+worlds = ["sd_lake_forest"]   # worlds to draw from; add your local site's world if you have one
+max_failures = 3              # stop after this many failed rounds in a row
+
+# Politeness on your computer
+busy_gpu_pct = 40             # pause while something else uses the GPU this much (a game)
+max_gpu_temp_c = 83
+busy_cpu_load = 0.8           # pause while the load per core is this high
+max_duty = 0.75               # rounds take at most this share of the time; the farm rests in between
+idle_only = false             # true: run only when the computer has been idle for idle_minutes
+idle_minutes = 10
+max_local_gb = 50             # build/simfarm/rounds; uploaded rounds are removed first when full
+min_free_gb = 20
+nice = 10                     # CPU priority of a round (0-19, higher is kinder)
+
+# Cloudflare R2 with EU jurisdiction. Leave empty to keep everything in build/simfarm/.
+# Create the bucket with jurisdiction "European Union" and an API token limited to it
+# (Object Read & Write). The farm only talks to <account_id>.eu.r2.cloudflarestorage.com.
+[r2]
+account_id = ""
+bucket = ""
+access_key_id = ""
+secret_access_key = ""
+prefix = "simfarm/v1"

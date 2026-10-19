@@ -1,0 +1,13 @@
+# A person model for the sim farm: where it comes from and its measured box. The model
+# itself is fetched by `just sim-farm-setup` into build/ and checked against sha256.
+id = "sd_person_walking"
+owner = "OpenRobotics"
+fuel_name = "Walking person"
+version = 3
+sha256 = "89cbcc1fd470338823b9cdf82c79aaabd4c86d72935386065deccf1e481a5178"
+license = "CC0-1.0"
+credit = "Marina Kollmitz, Open Robotics (Gazebo Fuel), made with MakeHuman"
+mesh = "meshes/walking.dae"
+pose = "standing"            # the model's own pose: standing (can also lie) or sitting
+# Box in the model frame, metres, z up: x min, x max, y min, y max, z min, z max
+bounds_m = [-0.28, 0.28, -0.41, 0.48, 0.0, 1.88]
