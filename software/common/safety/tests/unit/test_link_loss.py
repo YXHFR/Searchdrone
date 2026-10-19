@@ -99,6 +99,7 @@ def test_choose_mode_hover_point_outside_the_charter() -> None:
 def test_choose_mode_nearest_then_lowest_id() -> None:
     near, far = keepout(0, 50), keepout(0, -80)
     assert choose(0, 0, [far, near]).keepout_id == near.keepout_id  # type: ignore[attr-defined]
+    assert choose(0, 0, [near, far]).keepout_id == near.keepout_id  # type: ignore[attr-defined]
     first, second = sorted((new_id(), new_id()), key=str)
     a = keepout(0, 50, keepout_id=second)
     b = keepout(0, -50, keepout_id=first)
@@ -111,6 +112,14 @@ def test_choose_mode_on_the_centre_hovers_towards_home() -> None:
     hx, hy = PLANE.xy(plan.hover_lat, plan.hover_lon)
     assert math.isclose(hx, 0, abs_tol=0.01) and math.isclose(hy, 80 - 15, abs_tol=0.01)
     assert math.isclose(plan.yaw_deg, 0.0, abs_tol=0.01)
+
+
+def test_choose_mode_on_the_centre_of_a_find_on_home_hovers_north() -> None:
+    plan = choose(0, 0, [keepout(0, 0, radius=10)])
+    assert isinstance(plan, FindPlan)
+    hx, hy = PLANE.xy(plan.hover_lat, plan.hover_lon)
+    assert math.isclose(hx, 0, abs_tol=0.01) and math.isclose(hy, 15, abs_tol=0.01)
+    assert math.isclose(plan.yaw_deg, 180.0, abs_tol=0.01)
 
 
 def test_choose_mode_clamps_the_height() -> None:

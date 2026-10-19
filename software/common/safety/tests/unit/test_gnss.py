@@ -108,6 +108,16 @@ def test_spoof_needs_a_3d_fix() -> None:
     assert feed(d, series) == []
 
 
+def test_spoof_altitude_needs_a_baseline() -> None:
+    """No 3D fix in the baseline window: no height difference to compare with, so S2
+    stays off for the flight; S1 (the position jump) still works."""
+    d = SpoofDetector()
+    no_fix = [sample(t, fix=2) for t in range(0, 12_000, STEP_MS)]
+    high = [sample(12_000 + t, alt_off=100) for t in range(0, 10_000, STEP_MS)]
+    jump = [sample(22_000 + t, north_off=100) for t in range(0, 4_000, STEP_MS)]
+    assert [kind for _, kind in feed(d, no_fix + high + jump)] == ["jump"]
+
+
 def test_spoof_fires_once_and_resets_after_landing() -> None:
     d = SpoofDetector()
     series = baseline() + [sample(12_000 + t, north_off=50) for t in range(0, 10_000, STEP_MS)]
