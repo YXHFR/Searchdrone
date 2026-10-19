@@ -97,7 +97,7 @@ class GazeboRunner:
 
     def run(self, spec: RoundSpec, work: Path) -> RawRound:
         self.check()
-        height.draw(spec.seed, spec.worlds, repo=self.repo)  # a skipped round starts nothing
+        height.draw(spec.seed, spec.worlds)  # a skipped round starts nothing
         work.mkdir(parents=True, exist_ok=True)
         spec_path = work / "spec.json"
         spec.write(spec_path)

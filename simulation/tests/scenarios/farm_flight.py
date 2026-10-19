@@ -159,7 +159,8 @@ async def _start_with_decider(sc: Scenario, height_m: float) -> Exam:
     from sd_brain.runtime.cloud import CloudModelRuntime
     from sd_brain.secrets import brain_env, optional_secret
 
-    await sc.ready("charter_test")
+    # The AI picks its own heights: the charter keeps them at the round's height or above.
+    await sc.ready("charter_test", **farm_height.charter_floor(height_m))
     brain = await sc.start_brain(SCRIPT)
     local = ROOT / "config" / "brain.toml"
     cfg = load_config(local if local.is_file() else None)  # the owner's cloud model

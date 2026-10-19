@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ import shapely
 import yaml
 
 from sd_sim import fixture, paths, site, site_world, terrain, world
+from sd_sim.farm import gazebo as farm_gazebo
 from sd_sim.farm import height
 from sd_sim.farm import round as farm_round
 
@@ -55,6 +57,23 @@ def test_no_round_is_planned_under_a_tree_top(monkeypatch: pytest.MonkeyPatch) -
     assert min(drawn) < max(tops)  # the draw alone would have flown into the tree
 
 
+def test_the_area_holds_a_straight_return_home_from_the_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The survey ends at a line end such as (35, 150); RTL flies straight home from there,
+    # beside the way out. A tree in that wedge counts.
+    fix = fixture.load()
+    wedge = world.Tree("wedge", 25.0, 100.0, 45.0)
+    assert shapely.distance(shapely.LineString([(0, 0), (0, 200)]), shapely.Point(25, 100)) > 15
+    assert shapely.contains_xy(height.flight_area(fix), 17.5, 75.0)  # on the RTL line
+    monkeypatch.setattr(world, "trees", lambda: [wedge])
+    assert height.draw(1, [world.WORLD_NAME], fix).height_m >= 45.0 + height.CLEARANCE_M
+
+
+def test_the_charter_keeps_the_ai_at_the_round_s_height() -> None:
+    assert height.charter_floor(75.0) == {"alt_min_agl_m": 75.0, "default_alt_agl_m": 75.0}
+
+
 def test_today_s_lake_forest_rounds_keep_their_drawn_height() -> None:
     # sd_lake_forest's own trees stand well west of the demo's flight.
     fix = fixture.load()
@@ -68,7 +87,9 @@ def test_flown_height_is_whole_steps_over_the_clearance() -> None:
     assert height.flown_m(25.0, 0.0, 120.0) == 25.0
     assert height.flown_m(60.0, 30.0, 120.0) == 60.0
     assert height.flown_m(25.0, 31.2, 120.0) == 60.0  # 56.2 up to whole 5 m
-    assert height.flown_m(25.0, 95.0, 120.0) == 120.0  # exactly the ceiling
+    assert height.flown_m(25.0, 90.0, 120.0) == 115.0
+    with pytest.raises(farm_round.SkippedError):
+        height.flown_m(25.0, 95.0, 120.0)  # the charter's lowest height would be its ceiling
 
 
 def test_a_round_that_cannot_clear_the_trees_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,35 +115,49 @@ def test_a_skipped_round_writes_its_reason_and_exits_3(tmp_path: Path) -> None:
     assert "för högt" in result["error"]
 
 
-def test_a_site_round_clears_the_real_trees(tmp_path: Path) -> None:
+def test_a_site_round_clears_the_real_trees_under_its_own_fixture(tmp_path: Path) -> None:
     _sw.make_site(tmp_path)
     shutil.copytree(paths.REPO / "simulation" / "scenarios", tmp_path / "simulation" / "scenarios")
     trees = tmp_path / "build" / "trees" / "testsite"
     trees.mkdir(parents=True)
+    # A 40 m tree on the site fixture's line from home to its search box, one beside it.
     (trees / "trees.csv").write_text(
-        "east_m,north_m,height_m,species\n-50.0,60.0,21.5,spruce\n-70.0,-15.0,30.0,deciduous\n",
+        "east_m,north_m,height_m,species\n0.0,60.0,40.0,deciduous\n-70.0,-15.0,30.0,deciduous\n",
         encoding="ascii",
     )
     np.save(trees / "chm_dm.npy", np.zeros((200, 200), np.uint16))
-    # The demo's fixture with its search box moved over the test site's forest.
-    data = yaml.safe_load((paths.SIMULATION / "scenarios" / "demo_fixture.yaml").read_text())
-    for pin in data["pins"]:
-        if pin["id"] == "P1":
-            pin["east_m"], pin["north_m"] = -50.0, 30.0
-    data["survey_box"]["size_m"] = [60.0, 60.0]
-    fix = fixture.parse(data)
     s = site.load("testsite", tmp_path)
     ground = terrain.ground_grid(s)
-    tree_top = float(ground.at(np.array([-50.0]), np.array([60.0]))[0]) + 21.5
-    area = height.flight_area(fix)
-    assert height.obstacle_top("sd_testsite", area, tmp_path) == pytest.approx(
-        site_world.tallest(s, ground, area)
-    )
+    own = fixture.parse(yaml.safe_load(site_world.fixture_yaml(s, ground, tmp_path)))
+    tree_top = float(ground.at(np.array([0.0]), np.array([60.0]))[0]) + 40.0
+    assert shapely.contains_xy(height.flight_area(own), 0.0, 60.0)
+    top, ceiling = height.clear_of("sd_testsite", fixture.load(), tmp_path)
+    assert top == pytest.approx(tree_top) and ceiling == 120.0
     for seed in range(10):
-        sc = height.draw(seed, ["sd_testsite"], fix, tmp_path)
+        sc = height.draw(seed, ["sd_testsite"], repo=tmp_path)
         assert sc.height_m >= tree_top + height.CLEARANCE_M, seed
 
 
 def test_an_unknown_world_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(farm_round.RoundError, match="okänd värld"):
-        height.obstacle_top("sd_nowhere", shapely.box(0, 0, 1, 1), tmp_path)
+        height.clear_of("sd_nowhere", fixture.load(), tmp_path)
+
+
+def test_the_runner_starts_nothing_for_a_skipped_round(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(world, "trees", lambda: [world.Tree("mast", 0.0, 220.0, 97.3)])
+    monkeypatch.setattr(farm_gazebo.GazeboRunner, "check", lambda self: None)
+    calls: list[Any] = []
+    path = tmp_path / "round" / "spec.json"
+    path.parent.mkdir()
+    farm_round.RoundSpec.new(3, "script", "0123456789").write(path)
+
+    def run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    runner = farm_gazebo.GazeboRunner(run=run, repo=tmp_path)
+    assert farm_round.execute(path, runner) == farm_round.EXIT_ERROR
+    result = farm_round.read_result(path.parent)
+    assert result is not None and result["status"] == "skipped" and calls == []
