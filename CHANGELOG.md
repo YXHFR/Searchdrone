@@ -63,6 +63,13 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- The simulator can fly the owner's 7-inch quad: `just sim vehicle=fpv7` and
+  `just sim-smoke vehicle=fpv7` use `sd_fpv7`, whose mass, centre of gravity, inertia and
+  looks are generated from the CAD model `hardware/cad/fpv7` (`just sim-model-fpv7`); the
+  hw-cad CI job fails when the two drift apart. It has its own SITL parameter layer and
+  builtin-physics frame (6S 10 000 mAh, 7x4 three-blade propellers). `sd_quad14` stays the
+  default. The smoke flight's `result.json` gains `vehicle` and, with builtin physics,
+  `hover_current_a`.
 - Perception chain: `sd-onboard` takes stills from a camera folder (`[perception]` in
   `config/onboard.toml`, off by default), runs the class register's detector sources,
   places each detection on the ground with the flight controller's position and attitude

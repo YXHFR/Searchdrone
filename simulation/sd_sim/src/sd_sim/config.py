@@ -45,6 +45,11 @@ class ConfigError(Exception):
     """A setting has an invalid value (exit 2)."""
 
 
+# Searchdrone's own models (Gazebo and builtin physics), then ArduPilot's stock quad.
+VEHICLES = ("sd_quad14", "sd_fpv7", "stock")
+VEHICLE_ALIASES = {"quad14": "sd_quad14", "fpv7": "sd_fpv7"}
+
+
 @dataclass
 class SimConfig:
     instance: int = 0
@@ -146,7 +151,8 @@ def load(
         cfg.video = "test"
     cfg.world = str(merged.get("world", default_world)).strip() or default_world
     cfg.objects = str(merged.get("objects", "")).strip()
-    cfg.vehicle = _choice("vehicle", merged.get("vehicle", cfg.vehicle), ("sd_quad14", "stock"))
+    vehicle = str(merged.get("vehicle", cfg.vehicle)).strip()
+    cfg.vehicle = _choice("vehicle", VEHICLE_ALIASES.get(vehicle, vehicle), VEHICLES)
     cfg.qgc = _bool("qgc", merged.get("qgc", False))
     cfg.link_profile = _choice(
         "link_profile", merged.get("link_profile", "perfect"), ("perfect", "field_typical", "dead")

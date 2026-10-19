@@ -48,6 +48,11 @@ FILTER: tuple[str, ...] = (
     "hardware/**",
     "software/hwcalc/**",
     "tools/check_hw_files.py",
+    # The simulator model generated from hardware/cad/fpv7 (hw-cad checks it).
+    "simulation/gazebo/models/sd_fpv7/**",
+    "tools/sim_model_from_cad.py",
+    "tools/sim_model_drift.py",
+    "simulation/sd_sim/src/sd_sim/terrain.py",  # the mesh writer it uses
     "tools/ci_aggregate.jq",
     ".github/workflows/hardware.yml",
     ".github/actions/setup/**",

@@ -1,7 +1,8 @@
 """Rules for the simulator's parameter layers.
 
-* The sim-only layer (``sd_quad14-sim.parm``) may only set ``SIM_*`` and the names in
-  ``tools/params_allowlist.toml``.
+* A model's sim-only layer (``sd_quad14-sim.parm``, ``sd_fpv7-sim.parm``) may only set
+  ``SIM_*``, the names in ``tools/params_allowlist.toml`` and that model's own
+  ``[vehicles.<model>]`` names there.
 * A per-test override under ``simulation/sitl/params/tests/`` may only set names that the
   safety layer also sets, and must name its test in a comment line (``# test: <name>``).
 * ArduPilot's default layers (``copter.parm``, ``gazebo-iris.parm``) must not set a
@@ -25,6 +26,7 @@ REPO = Path(__file__).resolve().parent.parent
 PARAMS = REPO / "simulation" / "sitl" / "params"
 SAFETY = PARAMS / "searchdrone-safety.parm"
 SIM = PARAMS / "sd_quad14-sim.parm"
+SIM_LAYERS = {"sd_quad14": SIM, "sd_fpv7": PARAMS / "sd_fpv7-sim.parm"}
 OVERRIDES = PARAMS / "tests"
 ALLOWLIST = REPO / "tools" / "params_allowlist.toml"
 SHADOW_PREFIXES = (
@@ -57,13 +59,16 @@ def names(text: str) -> list[str]:
     return out
 
 
-def allowlist(path: Path = ALLOWLIST) -> set[str]:
-    return set(tomllib.loads(path.read_text(encoding="utf-8"))["allowed"])
+def allowlist(path: Path = ALLOWLIST, vehicle: str = "sd_quad14") -> set[str]:
+    """The names every sim-only layer may set, plus ``vehicle``'s own."""
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    own = data.get("vehicles", {}).get(vehicle, {}).get("allowed", [])
+    return set(data["allowed"]) | set(own)
 
 
-def sim_layer_problems(sim_text: str, allowed: set[str]) -> list[str]:
+def sim_layer_problems(sim_text: str, allowed: set[str], layer: str = SIM.name) -> list[str]:
     return [
-        f"{SIM.name}: {name} är varken SIM_* eller med i {ALLOWLIST.name}"
+        f"{layer}: {name} är varken SIM_* eller med i {ALLOWLIST.name}"
         for name in names(sim_text)
         if not name.startswith("SIM_") and name not in allowed
     ]
@@ -102,7 +107,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ardupilot-home", type=Path)
     args = parser.parse_args(argv)
     safety_names = set(names(SAFETY.read_text(encoding="utf-8")))
-    problems = sim_layer_problems(SIM.read_text(encoding="utf-8"), allowlist())
+    problems = []
+    for vehicle, path in SIM_LAYERS.items():
+        text = path.read_text(encoding="utf-8")
+        problems += sim_layer_problems(text, allowlist(vehicle=vehicle), path.name)
     problems += override_problems(OVERRIDES.glob("*.parm"), safety_names)
     if args.ardupilot_home is not None:
         layers = default_layers(args.ardupilot_home)
