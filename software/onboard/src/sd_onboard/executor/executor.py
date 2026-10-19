@@ -20,6 +20,7 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
+from sd_mav.chain import rc_switch_moved
 from sd_mav.failsafe_signals import notice_text
 from sd_mav.mission import (
     FENCE,
@@ -354,9 +355,10 @@ class Executor:
         self.keepouts: tuple[Keepout, ...] = ()
         self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
-        self._gcs_home_held = False  # L-GCS sent the home mode for this operator hold
+        self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way
         self._gcs_home_notice: int | None = None  # the last override notice when it began
+        self._gcs_hold_rc: int | None = None  # the RC mode switch at the last operator notice
         self._taken_by: str | None = None  # who took over from the executor, for L-FIND
         self._find_record: dict[str, Any] | None = None  # the running find hover's record
         self.pilot = PilotTracker()
@@ -457,9 +459,7 @@ class Executor:
         if self._gcs_home_sending and self.state == S.HELD and origin is SendOrigin.LIMIT:
             # L-GCS from an operator hold may pass HELD, but not over a newer notice (STOP,
             # FLY HOME, a guard) or a mode the pilot chose on the RC switch since.
-            if self.auth.notice_mono_ms != self._gcs_home_notice:
-                return "override_notice"
-            return self.auth.mode_problem(self.vehicle.telemetry, now)
+            return None if self._gcs_home_allowed() else "control_held"
         if self.state in (S.HELD, S.FAILSAFE) or self.control_suspended:
             return "control_held"
         if self.auth.notice_recent(now):
@@ -548,8 +548,6 @@ class Executor:
         self.state = target
         self.hold_reason = hold_reason if target == S.HOLD else None
         self.held_by = held_by if target == S.HELD else None
-        if target != old:
-            self._gcs_home_held = False
         if target not in (S.HELD, S.FAILSAFE):
             self.control_suspended = False
         if target != old:
@@ -612,32 +610,52 @@ class Executor:
                 log.error("executor side task failed: %r", exc)
 
     def _gcs_home_from_hold(self) -> None:
-        if self.held_by not in _GCS_HOME_HOLDS or self._gcs_home_held:
+        # Each "Continuing Pilot Control" is a new loss (the FC says it once per failsafe),
+        # so a second loss in the same hold is handled as well.
+        if self.held_by not in _GCS_HOME_HOLDS or self._gcs_home_busy:
             return
-        self._gcs_home_held = True
-        self.emit(
-            "gcs_lost_rtl_held",
-            {"held_by": self.held_by, "fc_mode": self.vehicle.telemetry.fc_mode},
-        )
+        self._gcs_home_busy = True
         self._side(self._home_from_hold())
 
+    def _gcs_home_allowed(self) -> bool:
+        """Still an operator hold in the LOITER it left (or the home mode being set), no
+        newer notice, and the RC mode switch where it was: a person did not choose since."""
+        t = self.vehicle.telemetry
+        modes = {int(CopterMode.LOITER)}
+        if self.auth.pending_mode is not None:
+            modes.add(int(self.auth.pending_mode))
+        return (
+            self.state == S.HELD
+            and self.held_by in _GCS_HOME_HOLDS
+            and t.fc_custom_mode in modes
+            and self.auth.notice_mono_ms == self._gcs_home_notice
+            and not rc_switch_moved(self.vehicle, self._gcs_hold_rc)
+        )
+
     async def _home_from_hold(self) -> None:
-        await self.fallback.idle()  # a STOP's own chain first, then home over it
-        if self.state != S.HELD or self.held_by not in _GCS_HOME_HOLDS:
-            return
-        self._gcs_home_notice = self.auth.notice_mono_ms
-        self._gcs_home_sending = True
+        # The same home the FC flew without FS_OPTIONS bit 4, on the same position source:
+        # L-SPOOF does not steer in HELD, so a spoof alarm does not change this.
         try:
+            await self.fallback.idle()  # a STOP's own chain first, then home over it
+            self._gcs_home_notice = self.auth.notice_mono_ms
+            if not self._gcs_home_allowed():
+                return
+            self.emit(
+                "gcs_lost_rtl_held",
+                {"held_by": self.held_by, "fc_mode": self.vehicle.telemetry.fc_mode},
+            )
+            self._gcs_home_sending = True
             for mode in (CopterMode.SMART_RTL, CopterMode.RTL):
                 if await self.set_mode(mode, SendOrigin.LIMIT):
                     return
-                if self.auth.notice_mono_ms != self._gcs_home_notice:
-                    return  # a newer notice has its own chain: no RTL over it
+                if not self._gcs_home_allowed():
+                    return  # the pilot or a newer notice has it now: no RTL over it
             log.warning("executor: L-GCS home from the hold not confirmed")
         except (ControlNotAllowedError, ForbiddenMavlinkError) as exc:
             log.warning("executor: L-GCS home from the hold refused: %s", _refusal_reason(exc))
         finally:
             self._gcs_home_sending = False
+            self._gcs_home_busy = False
 
     async def _loiter(self, origin: SendOrigin) -> None:
         try:
@@ -1061,6 +1079,7 @@ class Executor:
         self.fallback.start(notice.kind, notice.action_seq, rule.steps)
         now = self.now_ms()
         self.auth.notice(now)
+        self._gcs_hold_rc = self.vehicle.telemetry.rc_mode_pwm
         if rule.sets_stop_latch and self.state in ON_GROUND:
             self.clearance = None  # STOP on the ground also withdraws "clear around the drone"
         target = self.target_of(Trigger.OPERATOR_OVERRIDE)
@@ -1089,6 +1108,7 @@ class Executor:
             return
         if takeover.active:
             self.auth.notice(self.now_ms())
+            self._gcs_hold_rc = self.vehicle.telemetry.rc_mode_pwm
             target = self.target_of(Trigger.OPERATOR_OVERRIDE)
             if not isinstance(target, Refusal):
                 self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))

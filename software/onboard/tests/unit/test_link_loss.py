@@ -385,6 +385,49 @@ async def test_gcs_lost_in_a_takeover_goes_home_but_not_in_an_rc_mode() -> None:
         assert "executor.gcs_lost_rtl_held" not in r.up.kinds()
 
 
+async def test_gcs_home_from_a_takeover_leaves_an_rc_switch_and_handles_a_second_loss() -> None:
+    """The RC switch moved during a take-over stays; a second loss in one hold goes home."""
+
+    def take_over(r: Rig) -> None:
+        r.ex.on_takeover(
+            ManualTakeover(
+                takeover_id=new_id(),
+                active=True,
+                action_seq=r.next_seq(),
+                operator_id="operator:pilot",
+            ),
+            new_id(),
+        )
+        r.fc.set_mode_external(CopterMode.LOITER)
+
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        take_over(r)
+        await r.run(1)
+        r.fc.rc_mode_switch(1800, CopterMode.POSHOLD)
+        await r.run(3)
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(2)
+        assert r.fc.mode == CopterMode.POSHOLD
+        assert "executor.gcs_lost_rtl_held" not in r.up.kinds()
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        take_over(r)
+        await r.run(1)
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(2)
+        assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
+        take_over(r)  # the link came back and the operator took over again
+        await r.run(3)
+        assert r.ex.state == S.HELD and r.fc.mode == CopterMode.LOITER
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(3)
+        assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
+        assert r.up.kinds().count("executor.gcs_lost_rtl_held") == 2
+
+
 async def test_gcs_home_from_a_hold_yields_to_the_rc_switch_and_newer_notices() -> None:
     """The HELD exception covers only the home mode change, never what the pilot did since."""
     async with rig() as r:
@@ -398,11 +441,11 @@ async def test_gcs_home_from_a_hold_yields_to_the_rc_switch_and_newer_notices() 
         assert r.ex.send_gate(SendOrigin.SKILL) == "control_held"
         r.fc.set_mode_external(CopterMode.POSHOLD)  # the RC switch, mid-way
         await r.run(1)
-        assert r.ex.send_gate(SendOrigin.LIMIT) == "mode_POSHOLD"
+        assert r.ex.send_gate(SendOrigin.LIMIT) == "control_held"
         r.fc.set_mode_external(CopterMode.LOITER)
         await r.run(1)
         r.ex.on_override(r.notice("stop"))  # a newer STOP or guard notice
-        assert r.ex.send_gate(SendOrigin.LIMIT) == "override_notice"
+        assert r.ex.send_gate(SendOrigin.LIMIT) == "control_held"
 
 
 async def test_keepout_install_highest_seq_wins() -> None:
