@@ -419,16 +419,14 @@ e2e *args:
     # networks and user (compose recreates a service whose settings differ).
     SD_SIM__REQUIRE_VIDEO=1 {{_just}} ci-sitl mode=e2e "runs=$runs" workers=4
 
-# Performance measurement on the owner's computer (keys: runs). Times the cloud model's
-# answer when SD_CLOUD_API_KEY is set, else says it skips that; P0-P8 come with B1-17.
+# Performance measurement on the owner's computer: the demo with Gazebo and the cloud AI,
+# P0-P8 and the cloud model's answer time, report in data/reports/ (keys: runs, gui, eval)
 perf *args:
     #!/usr/bin/env bash
     set -euo pipefail
     uv run --no-sync python tools/just_args.py perf "$@"
-    runs=10
-    for a in "$@"; do case "$a" in runs=*) runs="${a#runs=}" ;; esac; done
-    uv run --package sd-brain sd-brain perf-cloud --runs "$runs"
-    echo "övriga mätningar (P0-P8): inte byggt än (B1-17)"
+    [[ " $* " == *" dry=1 "* ]] && exit 0
+    uv run --all-packages python -m sd_sim.perf "$@"
 
 alias bench := perf
 

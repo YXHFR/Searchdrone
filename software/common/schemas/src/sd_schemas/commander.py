@@ -30,7 +30,12 @@ from sd_schemas.base import (
     VehicleId,
     json_bytes_at_most,
 )
-from sd_schemas.charter import AutonomyMode, CharterValidationResult, MissionCharter
+from sd_schemas.charter import (
+    AutonomyMode,
+    CharterValidationError,
+    CharterValidationResult,
+    MissionCharter,
+)
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateDecision, StateRef
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
@@ -202,9 +207,16 @@ class DecisionLog(SdModel):
     gate_decision: Literal["ALLOW", "REJECT", "PENDING_APPROVAL"] | None
     reason_codes: list[str] = Field(default_factory=list[str], max_length=64)
     error: Literal["deadline", "timeout", "http_error", "parse_error", "round_limit"] | None
-    retry_of: Id | None = None
+    retry_of: Id | None = None  # the turn whose refused order or charter this one retries
+    attempt: int | None = Field(default=None, ge=1, le=10)  # the charter attempt (1 = first)
     proposal_id: Id | None = None
     proposal_ok: bool | None = None
+    # Why the charter proposal was refused (by the brain in the turn or by the ground),
+    # and the draft the AI sent, for reading a failed run afterwards.
+    proposal_errors: list[CharterValidationError] = Field(
+        default_factory=list[CharterValidationError], max_length=32
+    )
+    proposal_draft: Annotated[dict[str, Any], json_bytes_at_most(PARAMS_MAX_BYTES)] | None = None
     prompt_json: Annotated[dict[str, Any], json_bytes_at_most(PROMPT_JSON_MAX_BYTES)] | None
     # stored as a file, never in the database
 

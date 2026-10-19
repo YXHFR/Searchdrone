@@ -45,6 +45,15 @@ def test_example_config_is_valid() -> None:
     assert cfg.decide.stop_check_timeout_s == 0.5
 
 
+@pytest.mark.parametrize("path", [None, ROOT / "config/brain.example.toml"])
+def test_a_full_prompt_and_a_long_reasoned_answer_fit(path: Path | None) -> None:
+    # The cloud model's reasoning counts against max_tokens; 512 cut a turn off before
+    # its tool call. A full prompt plus a full answer must fit, or the turn is refused.
+    llm = load_config(path, {}).llm
+    assert llm.max_tokens >= 4096
+    assert llm.prompt_budget_tokens + llm.max_tokens <= llm.context_tokens
+
+
 def test_config_with_dotenv_secrets(tmp_path: Path) -> None:
     token = _token(tmp_path)
     env = {

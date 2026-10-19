@@ -34,6 +34,7 @@ from gate_fixtures import (
 )
 
 from sd_safety import evaluate
+from sd_safety.constants import ALT_OVERSHOOT_M
 from sd_safety.priority import REASON_PRIORITY
 from sd_schemas.base import LatLon, LatLonAlt
 from sd_schemas.charter import AutonomyMode
@@ -216,6 +217,30 @@ def test_planned_path_heights_are_checked() -> None:
     without_charter = ctx(side="onboard", charter=None, mission_state=None, snapshot_age_ms=0)
     r0 = req("resume", {}, phase="onboard", planned_path=high, charter_version=None)
     assert "ALT_ABOVE_LIMIT" not in codes(r0, without_charter)
+
+
+def test_the_current_height_is_not_a_target() -> None:
+    # Braking at the ceiling the drone balloons a little; path[0] is where it is now. An
+    # order to the ceiling or below passes onboard as it does on the ground; one above
+    # the ceiling, or a planned point above it, is still refused.
+    c = onboard_ctx()
+    ceiling = c.charter.alt_max_agl_m if c.charter is not None else 0.0
+    over = [_lla(0, 0, alt=ceiling + 0.4), _lla(0, 100, alt=ceiling)]
+    assert codes(req(params=goto(0, 100), phase="onboard", planned_path=over), c) == []
+    down = [_lla(0, 0, alt=ceiling + 0.4), _lla(0, 100, alt=ceiling - 5)]
+    assert codes(req("resume", {}, phase="onboard", planned_path=down), c) == []
+    up = [_lla(0, 0, alt=ceiling), _lla(0, 100, alt=ceiling + 0.1)]
+    assert "ALT_ABOVE_CHARTER" in codes(req("resume", {}, phase="onboard", planned_path=up), c)
+    top_of_climb = [_lla(0, 0, alt=ceiling + 0.1)]  # takeoff: one point, the target
+    climb = req("resume", {}, phase="onboard", planned_path=top_of_climb)
+    assert "ALT_ABOVE_CHARTER" in codes(climb, c)
+    # Farther over than L-ALT's tolerance (a lowered ceiling, L-ALT's own descent): no
+    # order may replace that descent with a sloped line, so the current height counts.
+    far = [_lla(0, 0, alt=ceiling + ALT_OVERSHOOT_M + 0.5), _lla(0, 100, alt=ceiling - 5)]
+    far_req = req("resume", {}, phase="onboard", planned_path=far)
+    assert "ALT_ABOVE_CHARTER" in codes(far_req, c)
+    edge = [_lla(0, 0, alt=ceiling + ALT_OVERSHOOT_M), _lla(0, 100, alt=ceiling - 5)]
+    assert codes(req("resume", {}, phase="onboard", planned_path=edge), c) == []
 
 
 def _lla(east: float, north: float, alt: float = 40.0) -> LatLonAlt:

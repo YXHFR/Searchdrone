@@ -2896,6 +2896,19 @@
           "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
           "type": "string"
         },
+        "attempt": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "backend": {
           "enum": [
             "llm",
@@ -3009,6 +3022,25 @@
           "minimum": 0,
           "type": "integer"
         },
+        "proposal_draft": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_errors": {
+          "items": {
+            "$ref": "#/$defs/CharterValidationError"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
         "proposal_id": {
           "anyOf": [
             {
@@ -3106,6 +3138,19 @@
         "ai_config_hash": {
           "pattern": "^[0-9a-zA-Z_.:-]{1,128}$",
           "type": "string"
+        },
+        "attempt": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "backend": {
           "enum": [
@@ -3229,6 +3274,25 @@
         "prompt_tokens": {
           "minimum": 0,
           "type": "integer"
+        },
+        "proposal_draft": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_errors": {
+          "items": {
+            "$ref": "#/$defs/CharterValidationError"
+          },
+          "maxItems": 32,
+          "type": "array"
         },
         "proposal_id": {
           "anyOf": [
@@ -4387,7 +4451,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "With lon, instead of pin."
         },
         "lon": {
           "anyOf": [
@@ -4400,7 +4465,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "With lat."
         },
         "pin": {
           "anyOf": [
@@ -4412,7 +4478,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Map pin id. The target: always give pin, or lat and lon (one of the two, never neither)."
         },
         "speed_ms": {
           "anyOf": [

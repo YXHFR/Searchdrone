@@ -57,6 +57,8 @@ class Limits:
     battery_rtl_pct: float
     mission_alt_max_agl_m: float  # the mission's own limits (the highest allowed)
     mission_max_speed_ms: float
+    mission_max_range_from_pilot_m: float
+    mission_battery_rtl_pct: float  # the lowest allowed
 
 
 def current_limits(s: Situation) -> Limits:
@@ -73,6 +75,8 @@ def current_limits(s: Situation) -> Limits:
             battery_rtl_pct=max(c.battery_rtl_pct, lim.battery_rtl_pct),
             mission_alt_max_agl_m=lim.max_alt_agl_m,
             mission_max_speed_ms=lim.max_speed_ms,
+            mission_max_range_from_pilot_m=lim.max_range_from_pilot_m,
+            mission_battery_rtl_pct=lim.battery_rtl_pct,
         )
     return Limits(
         alt_min_agl_m=15.0,
@@ -83,6 +87,8 @@ def current_limits(s: Situation) -> Limits:
         battery_rtl_pct=lim.battery_rtl_pct,
         mission_alt_max_agl_m=lim.max_alt_agl_m,
         mission_max_speed_ms=lim.max_speed_ms,
+        mission_max_range_from_pilot_m=lim.max_range_from_pilot_m,
+        mission_battery_rtl_pct=lim.battery_rtl_pct,
     )
 
 

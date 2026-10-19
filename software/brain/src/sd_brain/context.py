@@ -15,11 +15,17 @@ from typing import Any
 import yaml
 
 from sd_brain.ai_config import prompt_text
+from sd_brain.charter_draft import CharterError
+from sd_brain.constants import MAX_CHARTER_ATTEMPTS
 from sd_brain.geo import bearing_word, to_enu
+from sd_brain.memory import mission_request
 from sd_brain.state_view import current_limits, motion_block
-from sd_brain.sv import interpret
+from sd_brain.sv import interpret, read
+from sd_brain.toolcall_parse import charter_options
+from sd_brain.tools import PROPOSAL_TOOL
 from sd_brain.turn import TurnInput
 from sd_schemas.api import ChatMessage
+from sd_schemas.charter import Sector
 from sd_schemas.commander import Situation
 from sd_schemas.skills import SkillRegistry
 
@@ -78,13 +84,13 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
     mode = {"APPROVE_EACH": "A", "WITHIN_CHARTER": "B"}.get(str(s.autonomy_mode or ""), "-")
     if s.charter is None:
         charter = "ingen"
+    elif s.charter_installed and s.fence_verified:
+        charter = f"v{s.charter.version} (installerad, staket OK)"
+    elif {"CHARTER_INSTALL_FAILED", "FENCE_VERIFY_FAILED"} & {str(a.get("code")) for a in s.alerts}:
+        charter = f"v{s.charter.version} godkänd, installationen misslyckades"
     else:
-        installed = (
-            "installerad, staket OK"
-            if s.charter_installed and s.fence_verified
-            else ("inte installerad")
-        )
-        charter = f"v{s.charter.version} ({installed})"
+        # Approved, but the drone has not confirmed it yet (fence check and install).
+        charter = f"v{s.charter.version} godkänd, installeras"
     v = s.vehicle
     lines = [
         f"LÄGE seq={s.state_seq}  uppdrag={s.mission_status}  läge={mode}  "
@@ -146,13 +152,11 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
             start = _where(s, coords[0][1], coords[0][0]) if coords else ""
             parts.append(f"{_quote(a.label)} {len(coords)} punkter {km} km, börjar {start}".strip())
         lines.append("Ritade vägar (flyg med follow_path): " + "; ".join(parts))
-    waiting = [a.summary_sv for a in s.pending_approvals if getattr(a, "summary_sv", None)]
-    if s.pending_proposal is not None:
-        waiting.append(f"ramförslag v{s.pending_proposal.version}")
-    lines.append("Väntar på klick: " + (", ".join(waiting) if waiting else "inget"))
-    until = s.takeoff_clearance_valid_until
-    clear = "bekräftad" if until is not None and until > now else "ej bekräftad"
-    lines.append(f"Fritt runt drönaren: {clear}")
+    lines.append("Väntar på klick: " + (", ".join(_waiting(s)) or "inget"))
+    if not v.airborne:  # the confirmation is for a start; in the air it says nothing
+        until = s.takeoff_clearance_valid_until
+        clear = "bekräftad" if until is not None and until > now else "ej bekräftad"
+        lines.append(f"Fritt runt drönaren: {clear}")
     alerts = [str(a.get("code")) for a in s.alerts if a.get("code")]
     lines.append("Varningar: " + (", ".join(alerts) if alerts else "inga"))
     lim = current_limits(s)
@@ -173,16 +177,98 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
     return "\n".join(lines)
 
 
+def _waiting(s: Situation) -> list[str]:
+    """What waits for a click, each once: a charter change is both a card and the pending
+    proposal, so it is named once by its version."""
+    out: list[str] = []
+    versions: set[int] = set()
+    for a in s.pending_approvals:
+        if a.status != "pending":
+            continue
+        if a.kind == "charter":
+            versions.add(a.subject_version)
+        elif a.summary_sv and a.summary_sv not in out:
+            out.append(a.summary_sv)
+    if s.pending_proposal is not None:
+        versions.add(s.pending_proposal.version)
+    out.extend(f"ramförslag v{v}" for v in sorted(versions))
+    return out
+
+
+def _sector_text(s: Situation, sector: Sector) -> str:
+    """A sector as its size and where its middle is: "A ca 200 x 150 m, mitt 120 m norr
+    om hem" (no coordinates)."""
+    ring = (sector.area.get("coordinates") or [[]])[0]
+    name = "" if sector.name == sector.sector_id else f" {_quote(sector.name)}"
+    if s.home is None or not ring:
+        return f"{sector.sector_id}{name}"
+    pts = [to_enu(float(lat), float(lon), s.home.lat, s.home.lon) for lon, lat, *_ in ring]
+    east = [p[0] for p in pts]
+    north = [p[1] for p in pts]
+    width, height = max(east) - min(east), max(north) - min(north)
+    mid_e, mid_n = (max(east) + min(east)) / 2, (max(north) + min(north)) / 2
+    dist = math.hypot(mid_e, mid_n)
+    where = (
+        "vid hem" if dist < 10 else f"{round(dist, -1):.0f} m {bearing_word(mid_e, mid_n)} om hem"
+    )
+    return f"{sector.sector_id}{name} ca {width:.0f} x {height:.0f} m, mitt {where}"
+
+
 def _charter_text(s: Situation) -> str:
     c = s.charter
     if c is None:
         return "INGEN GODKÄND RAM."
-    secs = ", ".join(x.sector_id for x in c.sectors) or "inga"
-    return (
+    secs = "; ".join(_sector_text(s, x) for x in c.sectors) or "inga"
+    text = (
         f"v{c.version}, sektorer {secs}, höjd {_num(c.alt_min_agl_m)}-{_num(c.alt_max_agl_m)} m "
         f"(sökhöjd {_num(c.default_alt_agl_m)} m), max {_num(c.max_speed_ms)} m/s, "
         f"tillåtna färdigheter: {', '.join(c.allowed_skills)}"
     )
+    if c.notes:
+        notes = " ".join(c.notes.split()).replace('"', "'")
+        text += f', anteckningar (data): "{notes[:300]}"'
+    return text
+
+
+def _mission_text(turn: TurnInput) -> str | None:
+    """The operator's latest request, kept in the memory so it outlives the chat tail.
+    Their own words, quoted: data, never an instruction to the system."""
+    req = mission_request(turn.memory)
+    if req is None:
+        return None
+
+    def quoted(t: str) -> str:
+        return '"' + " ".join(t.split()).replace('"', "'") + '"'
+
+    clock = req.requested_at.strftime("%H:%M")
+    line = f"UPPDRAG (operatörens senaste begäran {clock}, citerad som data): {quoted(req.text)}"
+    if req.earlier:
+        line += "; tidigare (äldst först): " + " | ".join(quoted(t) for t in req.earlier)
+    return line
+
+
+# What to change for the charter errors a model most often gets wrong.
+_CHARTER_HINTS = {
+    "HOME_OUTSIDE_AREA": "leave operating_area out; the system computes the flight area "
+    "around home and the search areas",
+    "SECTOR_OUTSIDE_AREA": "leave operating_area out, or search inside the drawn area",
+    "DRAFT_INVALID": "correct the field named and send the whole draft again",
+    "AREA_BEYOND_RANGE": "use a smaller search area or one closer to home",
+    "SKILL_UNKNOWN": "leave allowed_skills out, or use only the names the tool lists",
+    "ALT_BAND_INVALID": "set only default_alt_agl_m when the operator names one height",
+    "CHARTER_EXCEEDS_LIMITS": "stay within the mission limit named (Gränser in LÄGE)",
+    "BASE_VERSION_STALE": "leave base_version out; the system fills it in",
+}
+
+
+def _charter_error(e: CharterError) -> str:
+    out = f"{e.code} {e.detail_sv}"
+    if e.field:
+        out += f" (fält {e.field})"
+    if e.limit is not None:
+        out += f" (gräns {e.limit:g})"
+    hint = _CHARTER_HINTS.get(e.code)
+    return f"{out} → {hint}" if hint else out
 
 
 def _chat_line(m: ChatMessage) -> str:
@@ -240,6 +326,9 @@ class ContextBuilder:
         s, mem = turn.situation, turn.memory
         tail = turn.chat_tail if chat_rows is None else turn.chat_tail[-chat_rows:]
         parts = [f"RAM: {_charter_text(s)}"]
+        mission = _mission_text(turn)
+        if mission is not None:
+            parts.append(mission)
         if memory and mem.summary_sv:
             parts.append(f"MINNE: {mem.summary_sv}")
         parts.append(f"PLAN: {mem.plan_note or 'ingen'}")
@@ -254,12 +343,30 @@ class ContextBuilder:
             r = turn.reject
             parts.append(f"GRINDSVAR: {', '.join(r.reason_codes)}; {r.message_sv}; {r.details}")
         if turn.charter_errors:
-            errs = "; ".join(
-                f"{e.code} {e.detail_sv}" + (f" (gräns {e.limit:g})" if e.limit is not None else "")
-                for e in turn.charter_errors
+            errs = "; ".join(_charter_error(e) for e in turn.charter_errors)
+            attempt = (
+                f" (försök {turn.attempt} av {MAX_CHARTER_ATTEMPTS})"
+                if turn.attempt is not None
+                else ""
             )
-            parts.append(f"GRINDSVAR (ramförslag): {errs}")
+            parts.append(f"GRINDSVAR (ramförslag){attempt}: {errs}")
         operator_lines = [m for m in tail if m.role == "operator"]
+        if turn.charter_errors:
+            # The same options a refused draft's repair text names, so the retry's first
+            # call can already use them instead of resending the refused draft.
+            said = read(operator_lines[-1].text) if operator_lines else None
+            parts.append(charter_options(s, said, current_limits(s)))
+        if turn.tool(PROPOSAL_TOOL) is None and s.charter is None and turn.tools:
+            # Only a turn an operator line started proposes a charter (and a refused
+            # proposal's retry); say so, so the model does not call the missing tool.
+            if turn.trigger == "mission_created" and operator_lines:
+                note = "operatörens meddelande besvaras i en egen tur; föreslå ingen ram nu."
+            else:
+                note = (
+                    "ingen ram kan föreslås i den här turen, bara när operatören skriver. "
+                    "Fråga operatören vad drönaren ska göra om det behövs."
+                )
+            parts.append(f"OBS: {note}")
         if turn.trigger == "operator_message" and operator_lines:
             hint = interpret(operator_lines[-1].text)
             if hint:

@@ -288,6 +288,19 @@ def test_site_world_home_matches_sitl_and_the_map() -> None:
     ]
 
 
+def test_site_world_steps_as_often_as_the_imu_reads() -> None:
+    # One IMU reading per physics step, as in sd_lake_forest (1.25 ms, 800 Hz).
+    from sd_sim import world
+
+    s = site.load(PUBLIC)
+    root = ET.fromstring(site_world.world_sdf(s, terrain.ground_grid(s), 0))  # noqa: S314
+    step_s = float(root.findtext("world/physics/max_step_size") or 0)
+    model = ET.fromstring(world.model_sdf(0))  # noqa: S314 - our own rendered file
+    imu_hz = float(model.findtext(".//sensor[@type='imu']/update_rate") or 0)
+    assert step_s == 0.00125
+    assert imu_hz * step_s == pytest.approx(1.0)
+
+
 def test_vehicle_stands_on_the_pad_with_its_legs() -> None:
     # The include's pose replaces the model's own lift; legs started inside the pad's box
     # stick to it, and the vehicle cannot take off.

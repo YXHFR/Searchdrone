@@ -22,9 +22,9 @@ scripted_file = ""                    # only for kind = scripted
 [llm]                                 # how a turn uses the language model
 temperature = 0.2
 top_p = 0.8
-max_tokens = 512
+max_tokens = 4096                     # the model's reasoning counts too; answers are 100-300
 seed = 42                             # only used in evaluations (not sent to the cloud)
-context_tokens = 8192
+context_tokens = 16384
 prompt_budget_tokens = 6000
 
 [cloud]                               # any OpenAI-compatible API, default OpenRouter
@@ -63,7 +63,11 @@ model = "gpt-6-luna"
 
 [behaviour]
 max_read_tool_rounds = 4
-max_repair_rounds = 1
+max_repair_rounds = 1            # a refused order: corrections in the same turn
+max_proposal_repair_rounds = 3   # a refused charter draft: corrections in the same turn (0-3)
 idle_airborne_tick_s = 60
+finish_idle_s = 180              # airborne with nothing to do and nothing said or ordered
+                                 # for this long (60-1800 s): the system says so in the chat
+                                 # and flies home through the safety gate; STOP stops it
 takeoff_policy = "request_then_clearance"   # the AI starts only when the operator asked
 rule_takeoff = true

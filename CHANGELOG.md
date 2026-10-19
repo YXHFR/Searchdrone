@@ -85,6 +85,17 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `just perf` (alias `just bench`, keys `runs`, `gui`, `eval`): the performance run on
+  the owner's computer. It starts the demo with Gazebo (without a window unless
+  `gui=true`), camera video and the cloud AI commander, flies SC01 with a test rig pilot
+  and measures cold start, Gazebo's real time factor, video frames in headless Google
+  Chrome, memory in WSL, Windows and the graphics card, STOP latency from the radio log,
+  telemetry latency and the chat's answer time, then times the cloud model's answers
+  (`sd-brain perf-cloud`). The report goes to `data/reports/perf-<time>.json` and `.md`;
+  the run exits 0 only when every limit holds.
+- Both simulator worlds step at 1.25 ms (800 Hz) and the drone's IMU runs at 800 Hz: at
+  1 ms Gazebo in WSL2 reached only about 0.7 real time in lockstep with SITL, and
+  ArduPilot arms only with the gyro at 1.8 times its 400 Hz loop.
 - Real trees in `sd_hellasgarden`: `just trees-fetch site=<site>` takes every tree's
   position and height from Skogsstyrelsen's tree height raster (1 m) and its species from
   Naturvårdsverket's NMD 2023, and `just tree-pictures-fetch` makes a PBR texture atlas from
@@ -338,6 +349,60 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The AI's charter proposals no longer fail five times on the demo request. The brain
+  turns every draft into the proposal inside the turn, so an unknown pin, a rectangle
+  without its size, a skill name the registry does not have, a value beyond the mission
+  limits, a height band the ground would refuse, a stale `base_version`, home outside the
+  flight area or an area beyond the range is sent back to the model at once, every fault
+  in one repair text with the ground station's reason code (up to three repair rounds,
+  `behaviour.max_proposal_repair_rounds`, within the turn's deadline) without a POST. A
+  draft still refused when the rounds or the turn's time run out, or when the model stops
+  answering, counts as a refused attempt instead of ending in "Jag hann inte svara".
+  So does the same refused draft sent again (no more repairs then), and a turn that ends
+  with a text after a refused draft instead of a proposal (unless the text explains a
+  mission limit the request exceeds), and a retry turn that proposes nothing: the AI no
+  longer goes quiet after it, and a retry that ends without a proposal resets the
+  attempts for the next request. The repair text, and the retry turn's context, list the
+  map pins and drawn areas in the situation (or "none"), the shape of a rectangle on a
+  pin and, when the operator's line names a box and a pin, the search area it describes
+  (without a height or a size the mission would refuse). The tool schema offers a drawn
+  area and `operating_area` only when an area is drawn, with the known labels and pin ids
+  as its only values; without pins, an area needs `center`.
+  The AI can no longer draw the flight area: it names only the search
+  areas (or an area the operator drew) and the system computes the flight area around
+  home. The tool schema gives each area kind its own required fields, a description on
+  every field, the registry's skill names as `allowed_skills` values and the mission's
+  height and speed limits. A refused proposal may be corrected up to three times per
+  request (an operator line no longer drops the errors); after the third the AI asks the pilot
+  one question with `refs.charter_failed` and the error codes. `just perf` no longer
+  answers "Ja, godkänn." to questions; it fails at once on that line, or on an answer to
+  its request marked `refs.turn_failed` (no answer in time, an unreadable reply), instead
+  of waiting for a card. The chat
+  is read before the situation in every turn, the charter error line shows the field and
+  a hint, and the decision log stores `retry_of`, `attempt`, `proposal_errors` and
+  `proposal_draft`. `HOME_OUTSIDE_AREA` and `SECTOR_OUTSIDE_AREA` now say "utanför
+  flygområdet".
+- The perf run's mission now ends at home. Fortsätt right after STOPP takes effect at
+  once: the onboard executor ends the stop's notice window and its fallback chain, so
+  LOITER is sent instead of the drone staying in BRAKE (a new STOPP still blocks), and a
+  refused mode write is logged with its reason. The brain keeps the operator's latest
+  requests in the mission memory and shows them on every turn as `UPPDRAG` (quoted as
+  data; a "ja kör" or a "fortsätt" replaces nothing; cleared after landing), shows the
+  sectors' size and position and the charter notes on the charter line, and the system
+  prompt says to call `return_home` when the request is done. A finish backstop
+  (`behaviour.finish_idle_s`, default 180 s, 60-1800 s): airborne with nothing running or
+  waiting and no operator input, find or AI order for that long, the brain says so in the
+  chat and orders `return_home` through the gate. A charter is proposed only in a turn an
+  operator line started (or the retry of a refused proposal), an approved charter wakes
+  the AI once the drone has installed it, and the situation text says "godkänd,
+  installeras" (or that the install failed), names a pending change once and drops
+  "Fritt runt drönaren" in the air. The goto schema requires its target (a map pin, or
+  `KOORDINATER` with lat and lon), the same refused order twice ends the turn, a plan
+  note sent with an order is kept, each model call is bounded as a whole (a trickling
+  cloud starts the cloud pause), and the decision log keeps the prompt, the offered tools
+  and the calls when a turn hits its deadline. `just perf` still reports the browser
+  measurements (P2, P7), the chat answer times (P8) and the model's answer time when the
+  flight breaks off, and its notes say what happened.
 - The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
   (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
   vehicle now starts with its legs on the ground in every world; in a site world they were

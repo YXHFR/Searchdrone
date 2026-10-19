@@ -15,6 +15,7 @@ from sd_brain.constants import FRESH_SNAPSHOT_WAIT_S
 from sd_brain.decide.engines import EngineAnswer
 from sd_brain.decide.service import DecisionService
 from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
+from sd_brain.memory import mission_request, pending_request
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.base import new_id
 from sd_schemas.decide import ChatIntentReport, ChoiceAnswer, DecideRequest, DecisionEngine
@@ -116,7 +117,7 @@ async def test_late_reject_wakes_without_retry() -> None:
     assert len(backend.turns) == 2  # running does not wake
 
 
-async def test_charter_error_retries_once() -> None:
+async def test_charter_error_retries_up_to_three_attempts() -> None:
     draft = {
         "search_areas": [{"kind": "rect", "center_pin_id": "P1", "width_m": 100, "height_m": 100}],
         "alt_max_agl_m": 150,
@@ -128,11 +129,14 @@ async def test_charter_error_retries_once() -> None:
         charter_proposal=CharterDraft.model_validate(draft),
         diagnostics=TurnDiagnostics(backend="llm"),
     )
-    second = TurnOutput(
-        charter_proposal=CharterDraft.model_validate(draft),
-        diagnostics=TurnDiagnostics(backend="llm"),
+    second, third = (
+        TurnOutput(
+            charter_proposal=CharterDraft.model_validate(draft),
+            diagnostics=TurnDiagnostics(backend="llm"),
+        )
+        for _ in range(2)
     )
-    backend = Steps(first, second)
+    backend = Steps(first, second, third)
     loop, fg, _ = make_loop(backend)
     err = {
         "ok": False,
@@ -148,9 +152,30 @@ async def test_charter_error_retries_once() -> None:
     fg.responses = [{"match": {"skill": "propose_charter_change"}, "result": err}]
     loop.handle_event(fg.operator_message("Flyg på 150 m"))
     await loop.settle()
-    assert len(fg.proposals) == 2
+    assert len(fg.proposals) == 3 and len(backend.turns) == 3
+    assert [t.trigger for t in backend.turns] == [
+        "operator_message",
+        "gate_reject_retry",
+        "gate_reject_retry",
+    ]
+    assert [t.attempt for t in backend.turns] == [None, 2, 3]
     assert backend.turns[1].charter_errors[0].code == "CHARTER_EXCEEDS_LIMITS"
-    assert "Högsta höjd är 120 m." in fg.posted[-1].text
+    asked = fg.chat_rows[0].id
+    assert [t.in_reply_to for t in backend.turns] == [asked, asked, asked]
+    assert len(fg.posted) == 1  # only the final line, nothing in between
+    final = fg.posted[0]
+    assert "Högsta höjd är 120 m." in final.text and "efter 3 försök" in final.text
+    assert final.kind == "question" and final.in_reply_to == asked
+    assert final.refs == {
+        "charter_failed": True,
+        "codes": ["CHARTER_EXCEEDS_LIMITS"],
+        "attempts": 3,
+    }
+    logs = [d for d in fg.decisions if d.trigger != "stop_check"]
+    assert [d.attempt for d in logs] == [1, 2, 3]
+    assert logs[0].retry_of is None and str(logs[1].retry_of) == loop.records[0].turn_id
+    assert logs[2].proposal_errors[0].field == "alt_max_agl_m"
+    assert logs[0].proposal_draft is not None and logs[0].proposal_draft["alt_max_agl_m"] == 150
 
 
 async def test_state_changed_retries_once() -> None:
@@ -335,10 +360,8 @@ async def test_rule_takeoff_after_clearance() -> None:
     )
     loop.handle_event(fg.operator_message("Lyft till 30 m"))
     await loop.settle()
-    assert (
-        fg.mem.pending_operator_request is not None
-        and fg.mem.pending_operator_request["alt_m"] == 30
-    )
+    req = pending_request(fg.mem)
+    assert req is not None and req.alt_m == 30
     clock.t += 5
     evt = {
         "type": "event.takeoff_clearance",
@@ -350,7 +373,10 @@ async def test_rule_takeoff_after_clearance() -> None:
     assert fg.commands[-1].skill == "takeoff" and fg.commands[-1].params == {"alt_m": 30.0}
     assert fg.commands[-1].backend == "rule"
     assert fg.posted[-1].text == "Startar till 30 m."
-    assert fg.mem.pending_operator_request is None
+    # The start request is used up; the operator's request (UPPDRAG) stays until landing.
+    assert pending_request(fg.mem) is None
+    mission = mission_request(fg.mem)
+    assert mission is not None and mission.text == "Lyft till 30 m"
 
 
 async def test_rule_takeoff_rejected_says_gate_text() -> None:
@@ -390,6 +416,57 @@ async def test_idle_tick() -> None:
     loop2.idle_tick(force=True)
     await loop2.settle()
     assert not loop2.records
+
+
+@pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
+async def test_idle_tick_waits_only_for_its_own_action_card(kind: str, waits: bool) -> None:
+    """After a failed turn in the air the idle tick tries again. The AI's own charter
+    proposal waiting for a click does not stop it (the drone hovered 15 minutes); its own
+    action card does, since that order needs the pilot's yes first."""
+    from brain_helpers import situation
+
+    from sd_schemas.charter import CharterProposal
+
+    if kind == "charter":
+        in_force = situation().charter
+        assert in_force is not None
+        draft = CharterProposal.model_validate({"area": in_force.area, "reason_sv": "Mindre."})
+        first = TurnOutput(ready_proposal=draft, diagnostics=TurnDiagnostics(backend="llm"))
+    else:
+        first = act("goto", pin="P1")
+    backend = Steps(first, say("Jag fortsätter mot P1."))
+    loop, fg, _ = make_loop(backend)
+    fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "PENDING_APPROVAL"}}]
+    loop.idle_tick(force=True)  # the AI's own card: a charter proposal or an order card
+    await loop.settle()
+    rec = loop.records[-1]
+    own = rec.proposal.approval_id if rec.proposal is not None else None
+    if rec.result is not None:
+        own = rec.result.approval_id
+    assert own is not None
+    card = {
+        "id": str(own),
+        "mission_id": fg.sit["mission_id"],
+        "vehicle_id": fg.sit["vehicle_id"],
+        "kind": kind,
+        "subject_id": "01a150c5-0000-7000-8000-000000000002",
+        "subject_version": 2 if kind == "charter" else 1,
+        "status": "pending",
+        "summary_sv": "Uppdragsram v2" if kind == "charter" else "Flyg till P1 på 40 m",
+        "required_confirmations": [],
+        "default_autonomy_mode": None,
+        "gate": None,
+        "requested_by": "brain",
+        "requested_at": "2026-10-18T20:47:07Z",
+        "expires_at": None,
+        "decided_by": None,
+        "decided_at": None,
+        "reason": None,
+    }
+    fg.sit["pending_approvals"] = [card]
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == (1 if waits else 2)
 
 
 class _StopEngine:
@@ -633,13 +710,20 @@ async def test_the_wait_reads_the_skill_event_among_others() -> None:
     assert backend.turns and backend.turns[0].trigger == "skill_event"
 
 
-async def test_resume_waits_until_the_release_is_confirmed() -> None:
+@pytest.mark.parametrize(
+    ("status", "paused_by"),
+    [("PAUSED", "operator"), ("HELD", None)],  # HELD: STOP's BRAKE right after takeoff
+)
+async def test_resume_waits_until_the_release_is_confirmed(
+    status: str, paused_by: str | None
+) -> None:
     """The pilot's Resume reaches the AI before the onboard computer has confirmed it (the
-    mission is still PAUSED by the operator): the turn waits for the confirmed picture."""
+    mission is still PAUSED by the operator, or HELD by the STOP): the turn waits for the
+    confirmed picture, or the AI sees a lock and only asks the pilot to resume again."""
     backend = Steps(act("resume"))
     loop, fg, _ = make_loop(backend)
-    fg.sit["mission_status"] = "PAUSED"
-    fg.sit["paused_by"] = "operator"
+    fg.sit["mission_status"] = status
+    fg.sit["paused_by"] = paused_by
     calls = 0
     situation = fg.situation
 

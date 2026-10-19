@@ -95,6 +95,48 @@ sim_setup() {
     glxinfo -B 2>/dev/null | grep -E "OpenGL renderer" || warn "glxinfo visar ingen grafik"
     command -v nvidia-smi >/dev/null && nvidia-smi -L || warn "inget NVIDIA-kort syns i WSL (se reservvägarna i guiden)"
 
+    # 2b. NVIDIA Container Toolkit: llama-server runs in Docker and needs the GPU there
+    if command -v nvidia-smi >/dev/null; then
+        local nct
+        nct="$(ver nvidia_container_toolkit_version)"
+        if ! dpkg -s nvidia-container-toolkit 2>/dev/null | grep -q "^Version: ${nct}$"; then
+            say "NVIDIA Container Toolkit $nct"
+            tmpkey="$(mktemp)"
+            curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey -o "$tmpkey"
+            # NVIDIA's signing key for libnvidia-container (docs.nvidia.com container-toolkit)
+            key_is "$tmpkey" C95B321B61E88C1809C4F759DDCAE044F796ECB0 \
+                || { echo "Fel fingeravtryck på NVIDIAs nyckel"; exit 1; }
+            sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg "$tmpkey"
+            rm -f "$tmpkey"
+            echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/\$(ARCH) /" \
+                | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y "nvidia-container-toolkit=$nct" "nvidia-container-toolkit-base=$nct" \
+                "libnvidia-container-tools=$nct" "libnvidia-container1=$nct"
+        fi
+        if ! docker info 2>/dev/null | grep -q "nvidia"; then
+            sudo nvidia-ctk runtime configure --runtime=docker
+            sudo systemctl restart docker
+        fi
+    fi
+
+    # 2c. Google Chrome: Playwright's own Chromium cannot play H.264 (video tests, just perf)
+    if ! command -v google-chrome >/dev/null; then
+        say "Google Chrome"
+        tmpkey="$(mktemp)"
+        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o "$tmpkey"
+        # Google's Linux package signing key (google.com/linuxrepositories)
+        key_is "$tmpkey" EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 \
+            || { echo "Fel fingeravtryck på Googles nyckel"; exit 1; }
+        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/google-chrome.gpg "$tmpkey"
+        rm -f "$tmpkey"
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+            | sudo tee /etc/apt/sources.list.d/google-chrome.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    fi
+    sudo apt-get install -y ffmpeg   # ffprobe for the video tests
+
     # 3. ArduPilot SITL at the locked tag, built under ~/ardupilot (never under /mnt/c)
     if [ -f "$ap/.sd_version" ] && [ "$(cat "$ap/.sd_version")" = "$tag" ] \
         && [ -x "$ap/build/sitl/bin/arducopter" ]; then
@@ -152,7 +194,10 @@ sim_setup() {
             && cmake --build build -j"$(nproc)")
     fi
 
-    # 6. Environment: ONE file that ~/.bashrc reads
+    # 6. Environment: ONE file that ~/.bashrc reads. Under WSLg Mesa otherwise picks the
+    # virtual render node (vgem) and draws with the processor; d3d12 uses the Windows GPU.
+    local gl_env=""
+    [ -e /dev/dxg ] && gl_env="export GALLIUM_DRIVER=d3d12             # WSLg: draw on the Windows GPU"
     cat > "$HOME/.searchdrone_env" <<EOF
 # Written by tools/setup/wsl-setup.sh sim. Read by ~/.bashrc.
 export GZ_VERSION=harmonic
@@ -162,6 +207,7 @@ export SD_ARDUCOPTER_BIN="\$HOME/ardupilot/build/sitl/bin/arducopter"
 export SD_ARDUPILOT_GAZEBO_HOME="$agz"
 export GZ_SIM_SYSTEM_PLUGIN_PATH="$agz/build:\${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
 export GZ_SIM_RESOURCE_PATH="$REPO/simulation/gazebo/models:$REPO/build/sim/models:$agz/models:$agz/worlds:\${GZ_SIM_RESOURCE_PATH:-}"
+$gl_env
 EOF
     grep -q searchdrone_env "$HOME/.bashrc" || echo '. "$HOME/.searchdrone_env"' >> "$HOME/.bashrc"
     # shellcheck source=/dev/null
