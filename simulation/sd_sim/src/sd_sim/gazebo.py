@@ -26,6 +26,9 @@ STOCK_WORLD = "iris_runway"
 CAMERA_FPS = {"sd_quad14": 15, "stock": 10}
 CAMERA_WAIT_S = 30.0
 GZ_PASSTHROUGH = ("GZ_VERSION", "GZ_SIM_SYSTEM_PLUGIN_PATH", "GZ_SIM_RESOURCE_PATH")
+# Gazebo Harmonic's Python bindings are built for Ubuntu 24.04's system Python
+# (sd_sim.gz_stills runs with it).
+GZ_PYTHON = "/usr/bin/python3.12"
 
 
 @dataclass(frozen=True)
