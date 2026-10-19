@@ -13,7 +13,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from sd_sim import paths, site
+from sd_sim import paths
 from sd_sim.farm.host import Limits
 from sd_sim.farm.store import R2Config
 
@@ -89,17 +89,6 @@ def _max_failures(raw: Any) -> int:
     return value
 
 
-def refuse_photo_worlds(worlds: list[str], repo: Path = paths.REPO) -> None:
-    """With an R2 key the farm uploads its pictures: never of a world draped with the
-    owner's orthophoto, which must stay on the owner's computer."""
-    draped = site.photo_worlds(worlds, repo)
-    if draped:
-        raise FarmConfigError(
-            f"{', '.join(draped)} har ett ortofoto i build/ och simfarmen laddar upp till R2: "
-            "ta bort världen ur farm.worlds, eller R2-nyckeln, eller fotot"
-        )
-
-
 def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> FarmConfig:
     merged: dict[str, Any] = {"farm": {}, "r2": {}}
     for path in (repo / EXAMPLE, repo / LOCAL):
@@ -126,8 +115,6 @@ def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> Fa
         raise FarmConfigError(
             f"{LOCAL} har R2-nyckeln och kan läsas av andra: kör chmod 600 {LOCAL}"
         )
-    if r2 is not None:
-        refuse_photo_worlds([str(w) for w in worlds], repo)
     return FarmConfig(
         commander=commander,
         worlds=tuple(str(w) for w in worlds),

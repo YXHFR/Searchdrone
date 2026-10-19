@@ -408,6 +408,7 @@ def _tree_lines(stats: dict[str, Any]) -> list[str]:
 def summary(r: dict[str, Any]) -> str:
     road = r.get("road", {})
     vram = r.get("gpu_memory_used_mib")
+    rtf = r.get("real_time_factor")
     lines = [
         f"## World {r['world']}",
         "",
@@ -423,8 +424,16 @@ def summary(r: dict[str, Any]) -> str:
         f"({'ok' if r['checks'].get('map_overlap') else 'FAIL'}, limit 2 m).",
         f"- Ground texture: {r['stats'].get('ground_texture', 'painted from the map')}; "
         f"global illumination {r.get('gi', 'off')}; "
-        f"real-time factor while rendering {r.get('real_time_factor', '-')}; "
-        + (f"graphics memory in use {vram} MiB." if vram else "graphics memory not measured."),
+        + (
+            f"real-time factor while rendering {rtf}; "
+            if rtf is not None
+            else "real-time factor not measured; "
+        )
+        + (
+            f"graphics memory in use {vram} MiB."
+            if vram is not None
+            else "graphics memory not measured."
+        ),
         f"- Pictures: {', '.join(k for k, v in r['views'].items() if v['saved'])}.",
         "",
     ]

@@ -22,8 +22,7 @@ All notable changes to this project are listed here. The format follows
   fails CI when a picture-shaped array, a GeoTIFF, a symbolic link or a world, snapshot or
   ground texture marked as built from a photo is in git (also its history), an uploaded
   artifact or the cache; every upload and cache in the workflows runs it on what it
-  uploads or caches. The sim farm does not upload to R2 while one of its worlds has a
-  photo.
+  uploads or caches. The sim farm never uploads to R2 a round flown over the photo.
 - Simulator exams for the AI commander: `sd-brain eval --backend sim` (`just
   brain-eval-sim`) flies random search scenarios with an answer key in a fast 2D world
   through the real commander loop and a gate with the area, height and speed rules. The

@@ -26,8 +26,8 @@ import numpy as np
 import shapely
 import yaml
 
+from sd_sim import config, objects, paths, site, terrain, world
 from sd_sim import forest as forest_mod
-from sd_sim import objects, paths, site, terrain, world
 from sd_sim.util import say
 
 TEMPLATE = "worlds/sd_site.sdf.jinja"
@@ -57,7 +57,7 @@ GI_VCT = {
     "thin_wall_counter": 1.0,
     "conserve_memory": "true",
 }
-GI_MODES = ("off", "vct")
+GI_MODES = config.GI_MODES
 
 
 def frame(s: site.Site, ground: terrain.Ground) -> world.Frame:
@@ -129,6 +129,8 @@ def render(
     out.mkdir(parents=True, exist_ok=True)
     sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light, gi)
     truth = world.world_truth(s.world, placed, frame=frame(s, ground))
+    if s.ortho is not None:  # the sim farm never uploads a round flown over the photo
+        truth["ground_texture"] = "orthophoto"
     path = out / f"{s.world}_i{instance}.sdf"
     path.write_text(sdf, encoding="utf-8")
     world.truth_path(s.world, instance, repo).write_text(

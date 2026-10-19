@@ -341,6 +341,14 @@ def _roots(paths: str) -> list[str]:
     return out
 
 
+def _caches(inputs: dict[str, Any]) -> bool:
+    """Whether a setup action's inputs turn on its own cache (setup-uv, setup-node,
+    setup-python and the like)."""
+    on = str(inputs.get("enable-cache", "")).lower() == "true" or bool(inputs.get("cache"))
+    pm = inputs.get("package-manager-cache")
+    return on or (pm is not None and str(pm).lower() != "false")
+
+
 def _covered(root: str, checked: list[str]) -> bool:
     return any(c in (".", "") or root == c or root.startswith(c + "/") for c in checked)
 
@@ -373,11 +381,13 @@ def test_nothing_is_uploaded_or_cached_without_the_orthophoto_check(path: Path) 
                 checked = [p for s in after for p in _checked(s)]
                 for root in _roots(paths):
                     assert _covered(root, checked), f"{where}: {root} is cached unchecked"
-            elif str(step.get("with", {}).get("enable-cache", "")).lower() == "true":
+            elif _caches(step.get("with") or {}):
                 assert uses.startswith(PACKAGE_CACHES), f"{where}: a cache the test does not know"
 
 
 def test_the_coverage_rules_see_a_gap() -> None:
+    assert _caches({"cache": "pip"}) and _caches({"package-manager-cache": True})
+    assert not _caches({"package-manager-cache": False}) and not _caches({})
     assert _roots("runs/**/x.json\n!runs/**/secrets/**\ndist/\n") == ["runs", "dist"]
     assert _covered("build/tree_models", ["build"])
     assert not _covered("build2/x", ["build"])

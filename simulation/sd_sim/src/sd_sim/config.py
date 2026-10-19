@@ -17,6 +17,10 @@ from typing import Any
 from sd_sim import paths, site
 from sd_sim.sitl import CMAC_HOME
 
+# Global illumination for the cameras: off, or Gazebo's voxel cone tracing
+# (``sd_sim.site_world.GI_VCT``).
+GI_MODES = ("off", "vct")
+
 DEMO_HOME_REFUSED = (
     "Demo kräver en offentlig startplats (CMAC eller en offentlig världs hem). "
     "Ta bort home_override eller kör just sim."
@@ -170,7 +174,7 @@ def load(
     cfg.lan = _bool("lan", merged.get("lan", False))
     cfg.private_db = _bool("private_db", merged.get("private_db", False))
     cfg.open_browser = _bool("open.browser", merged.get("open_browser", True))
-    cfg.gi = _choice("gi", merged.get("gi", "off"), ("off", "vct"))
+    cfg.gi = _choice("gi", merged.get("gi", "off"), GI_MODES)
     home = str(merged.get("home_override", "")).strip()
     if home and not demo:
         if not _HOME.match(home):

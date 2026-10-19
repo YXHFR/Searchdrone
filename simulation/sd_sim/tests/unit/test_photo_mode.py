@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from sd_sim import config, gazebo, png, site, site_world, snapshot, terrain, world
-from sd_sim.farm import config as farm_config
+from sd_sim.farm import store as farm_store
 
 _spec = importlib.util.spec_from_file_location(
     "site_world_tests", Path(__file__).with_name("test_site_world.py")
@@ -232,6 +232,10 @@ def test_snapshot_summary_reports_lighting_rtf_and_memory() -> None:
     assert "global illumination vct" in text and "0.47" in text and "not measured" in text
     r["gpu_memory_used_mib"] = 2100
     assert "2100 MiB" in snapshot.summary(r)
+    r["gpu_memory_used_mib"] = 0
+    assert "0 MiB" in snapshot.summary(r)
+    r["real_time_factor"] = None
+    assert "real-time factor not measured" in snapshot.summary(r)
 
 
 def test_what_a_draped_world_writes_is_caught_by_the_orthophoto_check(small: Path) -> None:
@@ -302,10 +306,34 @@ def test_gpu_memory_from_nvidia_smi(
     assert snapshot.gpu_memory_mib() == expected
 
 
-def test_the_farm_never_uploads_a_draped_world(small: Path) -> None:
-    assert site.photo_worlds(["sd_testsite", "sd_lake_forest"], small) == []
-    farm_config.refuse_photo_worlds(["sd_testsite"], small)
+def test_a_round_flown_over_the_photo_is_never_uploaded(
+    small: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The world's facit says the ground was the photo, the round keeps that facit, and
+    the farm's upload refuses it even after the photo is gone."""
+    monkeypatch.setattr(world, "render_model", lambda *a, **k: None)
+    site_world.render("testsite", 0, small)
+    truth_path = world.truth_path("sd_testsite", 0, small)
+    assert "ground_texture" not in json.loads(truth_path.read_text())
     put_photo(small)
-    assert site.photo_worlds(["sd_testsite", "sd_lake_forest"], small) == ["sd_testsite"]
-    with pytest.raises(farm_config.FarmConfigError, match="ortofoto"):
-        farm_config.refuse_photo_worlds(["sd_lake_forest", "sd_testsite"], small)
+    site_world.render("testsite", 0, small)
+    truth = json.loads(truth_path.read_text())
+    assert truth["ground_texture"] == "orthophoto"
+    round_dir = tmp_path / "rounds" / "r1"
+    round_dir.mkdir(parents=True)
+    (round_dir / "truth.json").write_text(json.dumps(truth, indent=1))
+    assert farm_store.draped(round_dir)
+    assert check_no_orthophotos.check_paths([round_dir])  # and CI's check sees it too
+    sent: list[Any] = []
+
+    def send(req: Any) -> tuple[int, dict[str, str]]:
+        sent.append(req)
+        return 200, {}
+
+    r2 = farm_store.R2Config("0" * 32, "bucket", "key", "secret")
+    s = farm_store.R2Store(r2, farm_store.Ledger(tmp_path / "up.jsonl"), send)
+    with pytest.raises(farm_store.DrapedRoundError):
+        s.upload_round(round_dir)
+    assert sent == []
+    (round_dir / "truth.json").write_text(json.dumps({"objects": []}))
+    assert not farm_store.draped(round_dir)
