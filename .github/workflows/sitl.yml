@@ -378,7 +378,7 @@ jobs:
     # the AI must find every red block.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 300  # 60 install + 15 smoke + 15 before + 30 trees + 20 twice-build + 15 + 15 + 3 x 15 fpv7 + 20 parity + 45 SK-RED + margin
+    timeout-minutes: 320  # 60 install + 15 smoke + 15 before + 15 pictures + 30 trees + 20 twice-build + 15 + 15 + 3 x 15 fpv7 + 20 parity + 45 SK-RED + margin
     steps:
       - *checkout
       - *check-ref
@@ -400,23 +400,26 @@ jobs:
           source "$HOME/.searchdrone_env"
           just world-snapshot
           for d in runs/*-snapshot-i0; do mv "$d" "runs/before-real-trees-$(basename "$d")"; done
-      # The tree list and the raster stay in build/: never committed (see fetch_trees.py).
-      # A cached copy spares Skogsstyrelsen's server the county file every night.
+      # Only the CC0 tree pictures (Poly Haven) are cached. The tree list and the raster
+      # crop in build/trees come from Skogsstyrelsen's tree height raster, whose download
+      # terms forbid redistribution, so they are fetched again on every run and never
+      # cached: a cache saved on main can be restored by any pull request's workflow,
+      # also from a fork. No step may upload or cache build/trees.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: trees
+        id: tree-pictures
         with:
-          path: |
-            build/trees
-            build/tree_models
-          key: real-trees-${{ hashFiles('tools/terrain/fetch_trees.py', 'tools/terrain/fetch_tree_models.py', 'simulation/gazebo/sites/hellasgarden/site.toml') }}
-      - name: The real trees and the tree pictures
-        if: steps.trees.outputs.cache-hit != 'true'
+          path: build/tree_models
+          key: tree-pictures-cc0-${{ hashFiles('tools/terrain/fetch_tree_models.py', 'tools/terrain/fetch_site.py') }}
+      - name: The tree pictures (Poly Haven, CC0)
+        if: steps.tree-pictures.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        run: just tree-pictures-fetch
+      - name: The real trees (tree height raster and land cover, fetched every run)
         timeout-minutes: 30
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends gdal-bin
           just trees-fetch site=hellasgarden
-          just tree-pictures-fetch
       - name: The terrain world built twice from scratch gives the same files
         timeout-minutes: 20
         run: uv run --package sd-sim python -m sd_sim.terrain site=hellasgarden twice=1
