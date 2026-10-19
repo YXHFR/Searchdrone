@@ -109,6 +109,9 @@ class ExampleBank(Protocol):
     def put(self, name: str, record: dict[str, Any]) -> str: ...
 
 
+_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
 def _gz(record: dict[str, Any]) -> bytes:
     raw = json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return gzip.compress(raw, mtime=0)
@@ -121,6 +124,8 @@ class LocalBank:
         self.where = str(self.folder)
 
     def put(self, name: str, record: dict[str, Any]) -> str:
+        if not _NAME.fullmatch(name):
+            raise BankError("ogiltigt namn i exempelbanken")
         self.folder.mkdir(parents=True, exist_ok=True)
         path = self.folder / f"{name}.json.gz"
         path.write_bytes(_gz(record))
@@ -212,7 +217,7 @@ class R2Bank:
         }
 
     def put(self, name: str, record: dict[str, Any]) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        if not _NAME.fullmatch(name):
             raise BankError("ogiltigt namn i exempelbanken")
         body = _gz(record)
         path = f"/{self.bucket}/{self.prefix}/{name}.json.gz"

@@ -7,9 +7,12 @@ that falls with height. Each sighting becomes a map pin and a warning; a pass at
 lower within 15 m of a pin gives a close-up verdict. False sightings come at scenario
 times, and the pilot's STOP (and its release) when the scenario says.
 
-``SimGround`` is ``FakeGround`` with this world behind it and the gate's geometric rules
-that matter here (allowed skills, area, height band, speed). The AI only decides: every
-movement here happens in the world, as the executor and ArduPilot would do it.
+``SimGround`` is ``FakeGround`` with this world behind it and a deliberately reduced copy
+of the gate: allowed skills, area, height band, speed and known sectors, with the real
+reason codes. It does not check range from the pilot or approval modes (the scenarios fly
+``WITHIN_CHARTER`` with skills that need no approval); ``sd_brain`` does not depend on
+``sd_safety``. The AI only decides: every movement here happens in the world, as the
+executor and ArduPilot would do it.
 """
 
 from __future__ import annotations

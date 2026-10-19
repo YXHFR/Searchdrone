@@ -142,11 +142,12 @@ def _targets(truth: dict[str, Any]) -> list[tuple[float, float]]:
 
 
 def _grade_run(
-    run_dir: Path, rnd: dict[str, Any], targets: list[tuple[float, float]]
+    base: Path, run_dir: Path, rnd: dict[str, Any], targets: list[tuple[float, float]]
 ) -> dict[str, Any]:
     try:
-        flight = FarmFlight.model_validate(_read(run_dir / "flight.json", "flight.json"))
-        raw_brain = run_dir / "brain.json"
+        flight_path = _inside(base, str(run_dir / "flight.json"))
+        flight = FarmFlight.model_validate(_read(flight_path, "flight.json"))
+        raw_brain = _inside(base, str(run_dir / "brain.json"))
         brain = (
             BrainRecord.model_validate(_read(raw_brain, "brain.json"))
             if raw_brain.is_file()
@@ -215,10 +216,12 @@ def grade_round(round_dir: Path) -> dict[str, Any]:
     if raw_runs:
         run_dirs = [_inside(base, str(r if isinstance(r, str) else r["path"])) for r in raw_runs]
     else:
-        run_dirs = sorted(p for p in (base / "runs").glob("*") if p.is_dir())
+        runs_root = base / "runs"
+        found = sorted(p for p in runs_root.glob("*") if p.is_dir())
+        run_dirs = [_inside(base, str(p.relative_to(base))) for p in found]
     if not run_dirs:
         raise RoundError("rundan har inga körningar")
-    runs = [_grade_run(d, rnd, targets) for d in run_dirs]
+    runs = [_grade_run(base, d, rnd, targets) for d in run_dirs]
     costs = [r["cost_sek"] for r in runs]
     grade = {
         "schema": GRADE_SCHEMA,

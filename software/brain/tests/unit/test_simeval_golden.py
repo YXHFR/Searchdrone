@@ -249,6 +249,19 @@ def test_grade_round_refuses_a_bad_round(tmp_path: Path) -> None:
         grade_round(rnd)
 
 
+def test_grade_round_refuses_a_run_linked_from_outside(tmp_path: Path) -> None:
+    rnd = _round(tmp_path, brain=None)
+    data = json.loads((rnd / "round.json").read_text())
+    del data["runs"]  # discover every folder under runs/
+    (rnd / "round.json").write_text(json.dumps(data))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "flight.json").write_text((rnd / "runs" / "run1" / "flight.json").read_text())
+    (rnd / "runs" / "run2").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RoundError, match="ut ur rundan"):
+        grade_round(rnd)
+
+
 def test_cli_eval_grade(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rnd = _round(tmp_path, brain=None)
     assert main(["eval", "grade", "--round", str(rnd)]) == 0

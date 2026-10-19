@@ -168,6 +168,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
         sims = [load_fixture(p) for p in sorted((Path(args.golden) / "sim").glob("SIM-*.json"))]
         report.update(asyncio.run(_replay_sim(sims, report["failures"])))
+        report["passed"] = bool(report["passed"] and not report["sim_failed"])
     if args.backend == "cloud":
         h = ai_config_hash(SKILL_REGISTRY, Sampling(), cloud=cfg.cloud)
         report.update(
@@ -202,7 +203,8 @@ async def _replay_sim(
         _out(f"{fx['id']}: {'ok' if not bad else 'FEL'} {'; '.join(bad)[:300]}")
         if bad:
             failures[str(fx["id"])] = bad
-    return {"sim_replays": len(fixtures)}
+    sim_failed = sum(1 for fx in fixtures if str(fx["id"]) in failures)
+    return {"sim_replays": len(fixtures), "sim_failed": sim_failed}
 
 
 def cmd_eval_grade(args: argparse.Namespace) -> int:
@@ -350,7 +352,7 @@ def cmd_bank(args: argparse.Namespace) -> int:
     src = Path(args.flight)
     try:
         raw = gzip.decompress(src.read_bytes()) if src.suffix == ".gz" else src.read_bytes()
-        fixture = export_golden(json.loads(raw), args.name, os.environ)
+        fixture = export_golden(json.loads(raw), args.name, {**os.environ, **brain_env()})
     except (OSError, ValueError, KeyError) as exc:
         _err(str(exc) if isinstance(exc, GoldenError) else f"kan inte läsa {src}: {exc!r}")
         return 1

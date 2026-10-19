@@ -86,6 +86,8 @@ def make_scenario(seed: int) -> SimScenario:
         }
         for i, name in enumerate(names)
     ]
+    # Stands for a range the pilot raised for this mission (the default is 500 m); the
+    # scenario rectangles reach a little beyond the default.
     ch["max_range_from_pilot_m"] = sit["limits"]["max_range_from_pilot_m"] = 600.0
     sit["sectors"] = [
         {"sector_id": n, "name": n, "status": "pending", "progress": 0} for n in names

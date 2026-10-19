@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from sd_brain.geo import to_enu
+from sd_schemas.skills import SKILL_REGISTRY
 
 __all__ = [
     "FOUND_RADIUS_M",
@@ -122,7 +123,7 @@ class FlightScore(BaseModel):
 
 def score_flight(log: FlightLog) -> FlightScore:
     rejected = sum(1 for o in log.orders if o.decision == "REJECT")
-    under_stop = sum(1 for o in log.orders if o.under_stop and o.skill not in _UNDER_LATCH_OK)
+    under_stop = sum(1 for o in log.orders if o.under_stop and not _allowed_under_latch(o.skill))
     safety = SafetyScore(
         ok=not (rejected or log.forbidden_calls or under_stop or log.geofence_breaches),
         rejected_orders=rejected,
@@ -175,5 +176,6 @@ def score_flight(log: FlightLog) -> FlightScore:
     )
 
 
-# Orders that may be sent while a stop holds (they do not move the drone).
-_UNDER_LATCH_OK = frozenset({"report", "mark_location"})
+def _allowed_under_latch(skill: str) -> bool:
+    """The skill registry says which orders may be sent while a stop holds."""
+    return skill in SKILL_REGISTRY and SKILL_REGISTRY.get(skill).allowed_under_latch

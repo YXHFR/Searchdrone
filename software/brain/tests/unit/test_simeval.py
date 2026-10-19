@@ -132,6 +132,38 @@ async def test_gate_rejects_outside_the_area_and_that_fails_safety() -> None:
     high = req.model_copy(update={"command_id": new_id(), "params": {**req.params, "alt_m": 500}})
     assert (await ground.submit(ground.mission_id, high)).reason_codes == ["ALT_ABOVE_CHARTER"]
     assert [o.decision for o in ground.orders] == ["REJECT", "REJECT"]
+    assert world.plan is None and (world.east, world.north) == (0.0, 0.0)
+
+
+async def test_a_move_under_stop_is_rejected_and_the_world_stays_still() -> None:
+    from sd_brain.simeval.world import SimGround
+    from sd_schemas.base import new_id
+    from sd_schemas.commander import SkillRequest
+
+    seed = next(s for s in range(100) if make_scenario(s).stop_at_s is not None)
+    world = SimWorld(make_scenario(seed))
+    ground = SimGround(world, now=lambda: dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+    events: list[dict[str, Any]] = []
+    while not any(e["type"] == "event.operator_override" for e in events):
+        events = world.advance()
+    for evt in events:
+        ground.apply_event(evt)
+    before = (world.east, world.north)
+    lat, lon = world.latlon()
+    req = SkillRequest(
+        command_id=new_id(),
+        skill="goto",
+        params={"lat": lat, "lon": lon, "alt_m": 40},
+        rationale_sv="-",
+        in_reply_to=None,
+        based_on=None,
+        charter_version=1,
+        backend="llm",
+        ai_config_hash="h",
+    )
+    res = await ground.submit(ground.mission_id, req)
+    assert res.decision == "REJECT"
+    assert world.plan is None and (world.east, world.north) == before
 
 
 # --- grades -----------------------------------------------------------------------------
@@ -156,6 +188,16 @@ def test_grade_points_for_a_good_flight() -> None:
 def test_a_safety_failure_always_fails(bad: dict[str, Any]) -> None:
     s = score_flight(_log(**bad))
     assert not s.safety.ok and not s.passed and s.total == 0 and s.raw_total > 50
+
+
+def test_orders_allowed_under_stop_follow_the_skill_registry() -> None:
+    from sd_schemas.skills import SKILL_REGISTRY
+
+    for spec in SKILL_REGISTRY:
+        order = LoggedOrder(t_s=1, skill=spec.name, decision="ALLOW", under_stop=True)
+        assert score_flight(_log(orders=[order])).safety.ok == spec.allowed_under_latch, spec.name
+    unknown = LoggedOrder(t_s=1, skill="no_such_skill", decision="ALLOW", under_stop=True)
+    assert not score_flight(_log(orders=[unknown])).safety.ok
 
 
 def test_marks_far_away_cost_points_and_a_report_under_stop_is_fine() -> None:
@@ -333,6 +375,8 @@ def test_bank_folder_in_a_repository_must_be_under_data(tmp_path: Path) -> None:
         LocalBank(repo / "software" / "data")
     LocalBank(repo / "data" / "example-bank")
     LocalBank(tmp_path / "outside")  # not in a repository
+    with pytest.raises(BankError, match="ogiltigt namn"):
+        LocalBank(tmp_path / "outside").put("../escape", {})
 
 
 def test_r2_bank_must_be_in_the_eu_and_signs_its_put() -> None:
