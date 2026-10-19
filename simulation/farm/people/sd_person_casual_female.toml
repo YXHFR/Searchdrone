@@ -1,0 +1,13 @@
+# A person model for the sim farm: where it comes from and its measured box. The model
+# itself is fetched by `just sim-farm-setup` into build/ and checked against sha256.
+id = "sd_person_casual_female"
+owner = "OpenRobotics"
+fuel_name = "Casual female"
+version = 4
+sha256 = "e03944df8f010c7d6cf85fe61b2a9bf2899eed971e73fb76461f4705edeffe5d"
+license = "CC0-1.0"
+credit = "Rohit Salem, Open Robotics (Gazebo Fuel), made with MakeHuman"
+mesh = "meshes/casual_female.dae"
+pose = "standing"            # the model's own pose: standing (can also lie) or sitting
+# Box in the model frame, metres, z up: x min, x max, y min, y max, z min, z max
+bounds_m = [-0.29, 0.33, -0.37, 0.21, 0.0, 1.67]
