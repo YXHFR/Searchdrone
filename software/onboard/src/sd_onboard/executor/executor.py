@@ -170,6 +170,7 @@ _CRITICAL: Final = frozenset(
         "limit_area",
         "link_loss_rtl",
         "gcs_lost_rtl",
+        "gcs_lost_rtl_held",
         "gnss_spoof_suspected",
         "forbidden_mavlink_blocked",
         "gate_disagreement",
@@ -206,6 +207,10 @@ _LINK_RULE_STATES: Final = AIRBORNE_CONTROLLED | {S.HELD, S.FAILSAFE}
 _SPOOF_ACT_STATES: Final = MOVING | {S.RTL, S.FAILSAFE}
 _EKF_SOURCE_RETRY_S: Final = 1.0
 _LINK_LIMITS: Final = frozenset({"L-LINK", "L-FIND", "L-GCS"})
+# FS_OPTIONS bit 4 keeps LOITER on a lost ground link. A hold the operator made from the
+# ground (Ta över, or a STOP once in LOITER) can no longer be steered from there, so L-GCS
+# flies home as the flight controller did without that bit. An RC-chosen mode stays.
+_GCS_HOME_HOLDS: Final = frozenset({"operator_stop", "operator_manual"})
 HOME_PARAMS: Final = ReturnHomeParams(reason="limit")
 _ISSUER_KIND: Final = {
     "operator": "operator",
@@ -349,6 +354,8 @@ class Executor:
         self.keepouts: tuple[Keepout, ...] = ()
         self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
+        self._gcs_home_held = False  # L-GCS sent the home mode for this operator hold
+        self._gcs_home_sending = False  # ... and that one mode change is under way
         self._taken_by: str | None = None  # who took over from the executor, for L-FIND
         self._find_record: dict[str, Any] | None = None  # the running find hover's record
         self.pilot = PilotTracker()
@@ -446,6 +453,8 @@ class Executor:
         if origin not in (SendOrigin.SKILL, SendOrigin.LIMIT):
             return None  # startup traffic; the fallback path has its own rules
         now = self.now_ms()
+        if self._gcs_home_sending and self.state == S.HELD and origin is SendOrigin.LIMIT:
+            return None  # L-GCS from an operator hold: only its own home mode change
         if self.state in (S.HELD, S.FAILSAFE) or self.control_suspended:
             return "control_held"
         if self.auth.notice_recent(now):
@@ -534,6 +543,8 @@ class Executor:
         self.state = target
         self.hold_reason = hold_reason if target == S.HOLD else None
         self.held_by = held_by if target == S.HELD else None
+        if target != old:
+            self._gcs_home_held = False
         if target not in (S.HELD, S.FAILSAFE):
             self.control_suspended = False
         if target != old:
@@ -594,6 +605,31 @@ class Executor:
                 log.warning("executor side task: write refused: %s", _refusal_reason(exc))
             else:
                 log.error("executor side task failed: %r", exc)
+
+    def _gcs_home_from_hold(self) -> None:
+        if self.held_by not in _GCS_HOME_HOLDS or self._gcs_home_held:
+            return
+        self._gcs_home_held = True
+        self.emit(
+            "gcs_lost_rtl_held",
+            {"held_by": self.held_by, "fc_mode": self.vehicle.telemetry.fc_mode},
+        )
+        self._side(self._home_from_hold())
+
+    async def _home_from_hold(self) -> None:
+        await self.fallback.idle()  # a STOP's own chain first, then home over it
+        if self.state != S.HELD or self.held_by not in _GCS_HOME_HOLDS:
+            return
+        self._gcs_home_sending = True
+        try:
+            for mode in (CopterMode.SMART_RTL, CopterMode.RTL):
+                if await self.set_mode(mode, SendOrigin.LIMIT):
+                    return
+            log.warning("executor: L-GCS home from the hold not confirmed")
+        except (ControlNotAllowedError, ForbiddenMavlinkError) as exc:
+            log.warning("executor: L-GCS home from the hold refused: %s", _refusal_reason(exc))
+        finally:
+            self._gcs_home_sending = False
 
     async def _loiter(self, origin: SendOrigin) -> None:
         try:
@@ -1392,6 +1428,8 @@ class Executor:
             self._run_limits(now)
         if self.state in _LINK_RULE_STATES and self.charter is not None and t.fc_connected:
             self._run_link_rule(now)
+        if self._gcs_continue and self.state == S.HELD and t.fc_connected:
+            self._gcs_home_from_hold()
         self._gcs_continue = False
         if (
             self.state == S.LANDED
@@ -1674,8 +1712,7 @@ class Executor:
         if not isinstance(target, Refusal):
             self.control_suspended = True  # first, so nothing more goes out
             self._drop_active(stage="superseded", codes=("L-SPOOF",))
-            self._enter(target, cause="L-SPOOF")
-            self.control_suspended = True
+            self._enter(target, cause="L-SPOOF")  # FAILSAFE keeps control_suspended
         self._side(self._ekf_off_gps(data))
 
     async def _ekf_off_gps(self, data: dict[str, Any]) -> None:

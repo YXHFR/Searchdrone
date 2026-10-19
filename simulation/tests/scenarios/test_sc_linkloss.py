@@ -239,6 +239,51 @@ async def test_ll3_all_lost_in_hold(sim: Any, migrated_db: Any, tmp_path: Path) 
         await _gcs_lost_in_hold(sc, sdlink=False)
 
 
+async def _all_lost_in_operator_hold(
+    sc: Scenario, action: str, mode: str, held_by: str, *, continuing: bool
+) -> None:
+    """The operator holds it from the ground (``action``); then the whole radio goes.
+    Nobody can steer it from the ground any more, so it flies home by FS_GCS_TIMEOUT: in
+    BRAKE the flight controller's own GCS failsafe does it, in LOITER (FS_OPTIONS bit 4)
+    the flight controller only says so (``continuing``) and L-GCS flies home."""
+    await sc.airborne()
+    res = await sc.press(action)
+    assert res.status_code == 202, res.text
+    await sc.until(lambda: sc.fc_mode() == mode, 15, action)
+    await sc.until(lambda: sc.r.onboard.ex.held_by == held_by, 15, "held")
+    sc.radio(mavlink=False, sdlink=False)
+    down = time.monotonic()
+    try:
+        limit = SAFETY["FS_GCS_TIMEOUT"] + SLACK_S
+        await sc.until(lambda: sc.fc_mode() in HOME_MODES, limit + 1.0, "home")
+        took = time.monotonic() - down
+        assert took <= limit, took
+        assert took >= SAFETY["FS_GCS_TIMEOUT"] - SLACK_S, took
+        assert bool(fc_texts(sc, CONTINUING, down)) == continuing, sc.sim.harness.state.texts[-10:]
+        await sc.until(lambda: not sc.sim.harness.state.armed, 240, "landed")
+    finally:
+        sc.radio(mavlink=True, sdlink=True)
+    await sc.until(lambda: sc.r.link.up(VID), 20, "SD-link back")
+    if continuing:
+        await until_event(sc, "gcs_lost_rtl_held")
+    assert home_m(sc) <= 3.0
+    await sc.check_invariants()
+
+
+@pytest.mark.budget_s(300)
+async def test_ll13_all_lost_after_stop(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
+    async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
+        await _all_lost_in_operator_hold(sc, "stop", "BRAKE", "operator_stop", continuing=False)
+
+
+@pytest.mark.budget_s(300)
+async def test_ll13b_all_lost_in_takeover(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
+    async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
+        await _all_lost_in_operator_hold(
+            sc, "takeover", "LOITER", "operator_manual", continuing=True
+        )
+
+
 @pytest.mark.budget_s(300)
 async def test_ll12_mavlink_only_lost(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:

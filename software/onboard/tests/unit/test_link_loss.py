@@ -22,7 +22,7 @@ from sd_safety.targets import distance_m
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.executor import LinkLossPhase as P
-from sd_schemas.link import Keepout, KeepoutInstall
+from sd_schemas.link import Keepout, KeepoutInstall, ManualTakeover
 
 SPEC = Path(__file__).with_name("link_loss_spec.yaml")
 FIND_EAST, FIND_NORTH, FIND_R = 60.0, 0.0, 10.0
@@ -334,8 +334,10 @@ async def test_gcs_lost_in_loiter_goes_home() -> None:
         assert r.ex.state == S.HELD
         r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
         await r.run(1)
-        assert r.ex.state == S.HELD  # a person holds it: L-GCS stays out
+        assert r.ex.state == S.HELD  # the operator's hold, steered home as the FC would
         assert "executor.gcs_lost_rtl" not in r.up.kinds()
+        assert r.up.kinds().count("executor.gcs_lost_rtl_held") == 1
+        assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
     async with rig() as r:
         await r.install(charter())
         await r.takeoff(40)
@@ -345,6 +347,41 @@ async def test_gcs_lost_in_loiter_goes_home() -> None:
         assert r.ex.state == S.RTL
         assert "executor.gcs_lost_rtl" in r.up.kinds()
         assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
+
+
+async def test_gcs_lost_in_a_takeover_goes_home_but_not_in_an_rc_mode() -> None:
+    """Ta över from the ground has no sticks once its link is gone; the RC switch has."""
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.ex.on_takeover(
+            ManualTakeover(
+                takeover_id=new_id(),
+                active=True,
+                action_seq=r.next_seq(),
+                operator_id="operator:pilot",
+            ),
+            new_id(),
+        )
+        r.fc.set_mode_external(CopterMode.LOITER)
+        await r.run(1)
+        assert r.ex.held_by == "operator_manual"
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(1)
+        assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(1)
+        assert r.up.kinds().count("executor.gcs_lost_rtl_held") == 1  # once per hold
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.fc.set_mode_external(CopterMode.POSHOLD)  # no notice: the RC transmitter's switch
+        await r.run(1)
+        assert r.ex.state == S.HELD and r.ex.held_by == "external"
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(2)
+        assert r.fc.mode == CopterMode.POSHOLD
+        assert "executor.gcs_lost_rtl_held" not in r.up.kinds()
 
 
 async def test_keepout_install_highest_seq_wins() -> None:

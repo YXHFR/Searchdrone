@@ -83,6 +83,11 @@ class OverrideFallback:
         if self._task is not None and not self._task.done():
             self._task.cancel()
 
+    async def idle(self) -> None:
+        """Until the running chain, if any, has finished (it is not cancelled)."""
+        if self._task is not None and not self._task.done():
+            await asyncio.wait({self._task})
+
     async def close(self) -> None:
         if self._task is not None:
             self._task.cancel()
