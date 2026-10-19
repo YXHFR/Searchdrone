@@ -13,11 +13,11 @@ FS_OPTIONS 8             # bit 3 only: keep landing if a landing is already unde
 FS_EKF_ACTION 1          # bad position estimate -> LAND (no pilot with sticks in sim)
 FS_THR_ENABLE 0          # RC-loss failsafe off in the simulator profile; 4 with a real RC link
 
-# --- battery (9000 mAh pack, see hardware/drone.yaml) -----------------------------------
+# --- battery (10000 mAh 6S2P Li-ion pack, see hardware/drone.yaml) ----------------------
 BATT_MONITOR 4           # voltage and current
-BATT_CAPACITY 9000       # mAh
-BATT_LOW_MAH 1350        # 15 % of the capacity left -> low battery failsafe
-BATT_CRT_MAH 630         # 7 % left -> critical battery failsafe
+BATT_CAPACITY 10000      # mAh
+BATT_LOW_MAH 1500        # 15 % of the capacity left -> low battery failsafe
+BATT_CRT_MAH 700         # 7 % left -> critical battery failsafe
 BATT_LOW_VOLT 0          # voltage limits off in the simulator (its pack is not 6S)
 BATT_CRT_VOLT 0
 BATT_FS_LOW_ACT 3        # low battery -> SmartRTL, else RTL

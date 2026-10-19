@@ -431,7 +431,7 @@ async def start_emergency_path(
             system_action=actions.system,
         )
 
-    mav_thread = MavThread(make_core)
+    mav_thread = MavThread(make_core, cfg.wind.stage)
     mav_thread.start()
     await asyncio.to_thread(mav_thread.ready.wait, 10)
     if mav_thread.mav is None:

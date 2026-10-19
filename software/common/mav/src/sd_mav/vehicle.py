@@ -133,6 +133,7 @@ GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 500_000,
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,
     mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
+    mavlink.MAVLINK_MSG_ID_WIND: 1_000_000,  # sent only with EK3_DRAG_* set
 }
 
 
@@ -218,6 +219,12 @@ class FcTelemetry:
     battery_pct: float | None = None
     battery_charge_state: int | None = None
     battery_voltage_v: float | None = None
+    battery_current_a: float | None = None  # BATTERY_STATUS; None when not measured
+    # MAVLink WIND: the EKF's wind estimate (direction it blows from, deg). ArduCopter only
+    # sends it when EK3_DRAG_* are set; None until the first one.
+    wind_mono_ms: int | None = None
+    wind_from_deg: float = 0.0
+    wind_speed_ms: float = 0.0
     gps_fix_type: int = 0
     gps_satellites: int = 0
     ekf_ok: bool = False
@@ -875,12 +882,20 @@ class Vehicle:
             case "BATTERY_STATUS":
                 remaining = int(msg.battery_remaining)
                 volts = int(msg.voltages[0]) if msg.voltages else 65535
+                centiamps = int(msg.current_battery)
                 t = replace(
                     t,
                     battery_pct=None if remaining < 0 else float(remaining),
                     battery_charge_state=int(msg.charge_state),
                     battery_voltage_v=None if volts == 65535 else volts / 1000.0,
+                    battery_current_a=None if centiamps < 0 else centiamps / 100.0,
                 )
+            case "WIND":
+                # Display and the ground's wind warning only, so no notify. A non-finite
+                # or negative sample is dropped; the previous one ages out.
+                speed, frm = float(msg.speed), float(msg.direction)
+                if math.isfinite(speed) and math.isfinite(frm) and speed >= 0.0:
+                    t = replace(t, wind_mono_ms=now, wind_speed_ms=speed, wind_from_deg=frm % 360.0)
             case "SYS_STATUS":
                 rc_bit = mavlink.MAV_SYS_STATUS_SENSOR_RC_RECEIVER
                 present = bool(int(msg.onboard_control_sensors_present) & rc_bit)

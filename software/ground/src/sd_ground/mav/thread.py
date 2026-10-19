@@ -40,6 +40,7 @@ from sd_ground.logging import get_logger
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.services.latches import HOME_LATCHES, Latches
+from sd_ground.services.wind import WindStage, WindWatch
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.failsafe_signals import text_signal
@@ -55,7 +56,7 @@ from sd_mav.vehicle import (
 from sd_obs.clock import Clock
 from sd_safety.constants import COMPANION_WATCHDOG_S, FC_HEARTBEAT_TIMEOUT_S
 from sd_safety.limits import DEFAULT_LIMITS
-from sd_schemas.api import Attitude, Telemetry
+from sd_schemas.api import Attitude, Telemetry, WindCheck
 from sd_schemas.base import LatLon
 from sd_schemas.link import MANUAL_CONTROL_TIMEOUT_MS, StickAxes
 from sd_schemas.mission import LatchAction
@@ -618,9 +619,15 @@ async def _run[T](work: Callable[[Vehicle], Awaitable[T]], vehicle: Vehicle) -> 
 class ThreadSafeMav:
     """Calls into a ``GroundMav`` from any thread; the work runs in its own loop."""
 
-    def __init__(self, core: GroundMav, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(
+        self, core: GroundMav, loop: asyncio.AbstractEventLoop, wind: WindWatch | None = None
+    ) -> None:
         self.core = core
         self.loop = loop
+        # The wind warning is computed by the callers of ``telemetry`` (never in the
+        # MAVLink thread, so it can never slow the emergency path).
+        self.wind = WindWatch() if wind is None else wind
+        self._wind_lock = threading.Lock()
 
     def _call(self, fn: Callable[..., None], *args: Any) -> bool:
         try:
@@ -686,10 +693,13 @@ class ThreadSafeMav:
         snap = self.snapshot()
         if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
             return None
-        return to_telemetry(snap, self.core.clock.utc_now())
+        with self._wind_lock:
+            self.wind.observe(snap.telemetry, snap.now_mono_ms)
+            wind = self.wind.check(snap.telemetry, snap.now_mono_ms)
+        return to_telemetry(snap, self.core.clock.utc_now(), wind)
 
 
-def to_telemetry(snap: MavSnapshot, now: dt.datetime) -> Telemetry:
+def to_telemetry(snap: MavSnapshot, now: dt.datetime, wind: WindCheck | None = None) -> Telemetry:
     t = snap.telemetry
     fresh = (
         t.fc_heartbeat_mono_ms is not None
@@ -715,6 +725,7 @@ def to_telemetry(snap: MavSnapshot, now: dt.datetime) -> Telemetry:
         home=None if t.home is None else LatLon(lat=t.home.lat, lon=t.home.lon),
         dist_to_pilot_m=None,
         attitude=_attitude(t, snap.now_mono_ms),
+        wind=wind,
     )
 
 
@@ -740,9 +751,12 @@ def _attitude(t: FcTelemetry, now_mono_ms: int) -> Attitude | None:
 class MavThread(threading.Thread):
     """Runs a ``GroundMav`` in its own thread and event loop."""
 
-    def __init__(self, make_core: Callable[[], GroundMav]) -> None:
+    def __init__(
+        self, make_core: Callable[[], GroundMav], wind_stage: WindStage = "first_flights"
+    ) -> None:
         super().__init__(name="sd-ground-mavlink", daemon=True)
         self._make_core = make_core
+        self._wind_stage: WindStage = wind_stage
         self.ready = threading.Event()
         self.mav: ThreadSafeMav | None = None
         self._stop_event: asyncio.Event | None = None
@@ -760,7 +774,7 @@ class MavThread(threading.Thread):
         self._stop_event = asyncio.Event()
         core = self._make_core()
         await core.start()
-        self.mav = ThreadSafeMav(core, loop)
+        self.mav = ThreadSafeMav(core, loop, WindWatch(self._wind_stage))
         self.ready.set()
         try:
             await self._stop_event.wait()
