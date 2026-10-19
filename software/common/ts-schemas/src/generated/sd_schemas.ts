@@ -2752,6 +2752,37 @@ export interface Telemetry {
   lon: number;
   t: string;
   time_boot_ms: number;
+  wind?: WindCheck | null;
+}
+/**
+ * The ground station's "too windy" warning. A warning only: nothing on board or on
+ * the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
+ * calibrated against flight logs, so ``calibrated`` is always false for now.
+ *
+ * * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
+ *   the flight controller's lean limit (ATC_ANGLE_MAX).
+ * * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
+ *   margin, would leave less than the flight controller's low-battery reserve.
+ * * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
+ *   when EK3_DRAG_* are set) is over the configured wind limit.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "WindCheck".
+ */
+export interface WindCheck {
+  calibrated?: false;
+  home_mah: number | null;
+  left_mah: number | null;
+  reasons: ("TILT_MARGIN" | "ENERGY_HOME" | "WIND_LIMIT")[];
+  reserve_mah: number;
+  tilt_avg_deg: number | null;
+  tilt_warn_deg: number;
+  warning: boolean;
+  wind_from_deg: number | null;
+  wind_gust_limit_ms: number | null;
+  wind_gust_ms: number | null;
+  wind_limit_ms: number;
+  wind_ms: number | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

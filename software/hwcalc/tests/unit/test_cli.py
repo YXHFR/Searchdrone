@@ -22,7 +22,7 @@ def test_committed_files_pass(capsys: pytest.CaptureFixture[str]) -> None:
     assert report["pass"] is True
     assert report["failures"] == []
     assert report["total_mass_kg"] == pytest.approx(2.3)
-    assert report["hover_time_min"] == pytest.approx(32.92, abs=0.05)
+    assert report["hover_time_min"] == pytest.approx(36.58, abs=0.05)
     assert set(report) >= {
         "total_mass_kg",
         "hover_power_w",

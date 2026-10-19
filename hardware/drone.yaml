@@ -20,7 +20,7 @@ battery:
   chemistry: li-ion
   cells_series: 6
   cells_parallel: 2
-  capacity_mah: 9000          # whole pack
+  capacity_mah: 10000         # whole pack
   nominal_cell_v: 3.6
   mass_kg: 0.87
   usable_fraction: 0.80
