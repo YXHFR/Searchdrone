@@ -11,7 +11,8 @@ import { uuidv7 } from "../../lib/uuidv7";
 import { ClearanceControl } from "../../safety/ClearanceControl";
 import { ResumeButton, ResumeRow } from "../../safety/ResumeButton";
 import { resumeView } from "../../safety/resume";
-import { useBrainState, useCommandMode } from "../../state/brain";
+import { useAiGone } from "../../side/CommandPanel";
+import { useCommandMode } from "../../state/brain";
 import { chatOrder, type PanelChatMessage, useChatStore } from "../../state/chatStore";
 import { useLiveStore } from "../../state/liveStore";
 import { useMissionStore } from "../../state/missionStore";
@@ -194,22 +195,18 @@ function MessageList({ vehicleId }: ViewProps) {
   );
 }
 
-/** "AI:n tänker… N s", or the command-mode / AI-down notices (one line above the composer).
- * In the command mode the fixed commands are offered as buttons below the line. */
+/** "AI:n tänker… N s", or the command-mode notice with its fixed commands as buttons.
+ * That the AI is gone is said once, in the command panel. */
 export function BrainStatusRow() {
   const { t } = useTranslation();
   const since = useLiveStore((s) => s.brainBusySince);
   const missionId = useLiveStore((s) => s.mission?.id ?? null);
   const isPilot = useIsPilot();
-  const brain = useBrainState();
   const now = useNow(500);
   const command = useCommandMode();
   let text: string | null = null;
   let warn = false;
-  if (brain === "down") {
-    text = t("chat.brainDown");
-    warn = true;
-  } else if (command) {
+  if (command) {
     text = t("chat.brainDegraded");
     warn = true;
   } else if (since !== null) {
@@ -323,12 +320,13 @@ function Composer() {
 }
 
 export function ChatView(props: ViewProps) {
+  const aiGone = useAiGone();
   return (
     <div className="view-body chat" id="chat">
       <MessageList {...props} />
       <ResumeRow vehicleId={props.vehicleId} />
       <ClearanceControl />
-      <OrderButtons />
+      {aiGone ? null : <OrderButtons />}
       <BrainStatusRow />
       <Composer />
     </div>

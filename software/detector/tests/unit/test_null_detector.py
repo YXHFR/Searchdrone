@@ -34,7 +34,8 @@ def test_null_detector_says_it_is_not_built() -> None:
 
 
 def test_detection_schema() -> None:
-    assert set(Detection.model_fields) == {"label", "score", "bbox", "embedding"}
+    assert set(Detection.model_fields) == {"label", "score", "bbox", "embedding", "source"}
+    assert Detection.model_fields["source"].default is None
     assert Detection.model_fields["embedding"].is_required() is False
     assert Detection.model_fields["embedding"].default is None
     assert set(BBox.model_fields) == {"x", "y", "w", "h"}
@@ -64,9 +65,15 @@ def test_no_face_or_identity_names() -> None:
         assert not [f for f in model.model_fields if banned.search(f)], model
 
 
-@pytest.mark.parametrize("label", ["car", "dog", "face", "Person", ""])
-def test_only_people(label: str) -> None:
-    with pytest.raises(ValidationError, match="people"):
+@pytest.mark.parametrize("label", ["Person", "", "x", "red block", "a" * 40])
+def test_label_is_a_class_id(label: str) -> None:
+    with pytest.raises(ValidationError, match="label"):
+        Detection(label=label, score=0.5, bbox=BBox(x=0, y=0, w=1, h=1))
+
+
+@pytest.mark.parametrize("label", ["face", "person_face", "licence_plate", "identity"])
+def test_never_identities(label: str) -> None:
+    with pytest.raises(ValidationError, match="identities"):
         Detection(label=label, score=0.5, bbox=BBox(x=0, y=0, w=1, h=1))
 
 

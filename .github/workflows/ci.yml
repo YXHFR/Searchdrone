@@ -104,6 +104,30 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Screenshots of every panel state at three sizes and both themes, for review. Its own job:
+  # one browser at a time (software WebGL at 1920 × 1080 fills the runner's CPUs).
+  panel-screens:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Panel screenshots
+        run: |
+          pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
+          just panel-screens
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: panel-screens
+          path: software/panel/screens/
+          if-no-files-found: ignore
+          retention-days: 14
+
   reuse:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -184,7 +208,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, typecheck, unit, contract, panel-e2e, reuse, secrets, build]
+    needs: [lint, typecheck, unit, contract, panel-e2e, panel-screens, reuse, secrets, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

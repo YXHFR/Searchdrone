@@ -1,49 +1,105 @@
-/* Colour and size tokens. Dark is the default; "light" is the high-contrast daylight theme. */
+/* Design tokens. Dark is the default; [data-theme="light"] is the daylight theme. Elevation
+   is hairlines, never shadows (floating menus are the one exception). */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
-  --c-bg: #0f1417;
-  --c-panel: #171e22;
-  --c-panel-2: #1d262c;
-  --c-line: #26313a;
-  --c-text: #e6edf1;
-  --c-mute: #9fb0bc;
-  --c-acc: #4fb3ff;
-  --c-acc-text: #04121d;
-  --c-ok: #3ecf8e;
-  --c-warn: #ffb547;
-  --c-bad: #ff5a5a;
-  --c-stop: #d32f2f;
+  --c-bg: #17191c;
+  --c-panel: #1e2124;
+  --c-panel-2: #24272b;
+  --c-panel-3: #2c3035;
+  --c-line: #30343a;
+  --c-line-strong: #434950;
+  --c-text: #e6e8eb;
+  --c-mute: #a9afb6;
+  --c-faint: #8b929a;
+  --c-acc: #6aa5f7;
+  --c-acc-fill: #2f6bc6;
+  --c-acc-text: #ffffff;
+  --c-acc-soft: rgb(106 165 247 / 0.14);
+  --c-ok: #62bb8c;
+  --c-warn: #e2a640;
+  --c-warn-soft: rgb(226 166 64 / 0.12);
+  --c-bad: #e06c63;
+  --c-stop: #b52b26;
   --c-stop-text: #ffffff;
-  --c-home: #ffb547;
-  --c-home-text: #1a1200;
-  --c-focus: #ffd166;
-  --c-input: #0b1013;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --topbar-h: 48px;
-  --safety-h: 96px;
-  --z-safety: 1000;
-  --z-dialog: 900;
-  --z-menu: 800;
+  --c-home: #5b45b8;
+  --c-home-text: #ffffff;
+  --c-media: #0f1011;
+  --c-input: #1a1c1f;
+  --c-focus: #8cbcff;
+  --c-scrim: rgb(10 11 12 / 0.72);
+
+  --font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --fs-body: 13.5px;
+  --fs-small: 12px;
+  --fs-label: 11px;
+  --fs-big: 20px;
+  --fs-hud: 16px;
+
+  --r-1: 2px;
+  --r-2: 3px;
+  --r-3: 4px;
+  /* Control height: compact with a mouse, 44 px with a finger (see the pointer query below). */
+  --hit: 32px;
+
+  --topbar-h: 44px;
+  --safety-h: 76px;
+  --left-w: 296px;
+  --chat-w: 384px;
+  --sheet-peek: 168px;
+
   --z-pip: 500;
-  --radius: 10px;
+  --z-sheet: 600;
+  --z-menu: 800;
+  --z-dialog: 900;
+  --z-safety: 1000;
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --c-bg: #ffffff;
-  --c-panel: #f3f6f8;
-  --c-panel-2: #e8eef2;
-  --c-line: #9aa9b4;
-  --c-text: #0b1013;
-  --c-mute: #3b4a55;
-  --c-acc: #0b5cad;
-  --c-acc-text: #ffffff;
-  --c-ok: #0f6b45;
-  --c-warn: #8a5300;
+  --c-bg: #e8eaed;
+  --c-panel: #ffffff;
+  --c-panel-2: #f5f6f7;
+  --c-panel-3: #eaecef;
+  --c-line: #dcdfe3;
+  --c-line-strong: #c0c5cb;
+  --c-text: #15181c;
+  --c-mute: #48505a;
+  --c-faint: #626a73;
+  --c-acc: #1f66c4;
+  --c-acc-fill: #1f63c2;
+  --c-acc-soft: rgb(31 102 196 / 0.1);
+  --c-ok: #2c7a52;
+  --c-warn: #955a00;
+  --c-warn-soft: rgb(149 90 0 / 0.08);
   --c-bad: #b3261e;
-  --c-stop: #c62828;
-  --c-home: #ffb547;
-  --c-home-text: #1a1200;
-  --c-focus: #7a3dff;
+  --c-stop: #b8261f;
+  --c-home: #5338b3;
+  --c-media: #1b1d1f;
   --c-input: #ffffff;
+  --c-focus: #1f66c4;
+  --c-scrim: rgb(21 24 28 / 0.45);
   color-scheme: light;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --hit: 44px;
+  }
+}
+
+@media (min-width: 1680px) {
+  :root {
+    --left-w: 328px;
+    --chat-w: 440px;
+  }
 }
