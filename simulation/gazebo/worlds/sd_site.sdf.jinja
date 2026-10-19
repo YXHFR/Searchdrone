@@ -36,19 +36,34 @@
     </plugin>
 
     <scene>
+{% if light %}
+      <ambient>{{ light.ambient }}</ambient>
+      <background>{{ light.background }}</background>
+      <sky></sky>
+      <shadows>{{ light.shadows }}</shadows>
+{% else %}
       <ambient>0.42 0.44 0.48 1</ambient>
       <background>0.62 0.72 0.86 1</background>
       <sky></sky>
       <shadows>false</shadows>
+{% endif %}
     </scene>
 
     <!-- An afternoon sun from the south-west, about 45 degrees up. -->
     <light type="directional" name="sun">
+{% if light %}
+      <cast_shadows>{{ light.shadows }}</cast_shadows>
+      <pose>0 0 100 0 0 0</pose>
+      <diffuse>{{ light.diffuse }}</diffuse>
+      <specular>0.25 0.25 0.25 1</specular>
+      <direction>{{ light.direction }}</direction>
+{% else %}
       <cast_shadows>false</cast_shadows>
       <pose>0 0 100 0 0 0</pose>
       <diffuse>1.0 0.97 0.9 1</diffuse>
       <specular>0.25 0.25 0.25 1</specular>
       <direction>0.5 0.5 -0.7</direction>
+{% endif %}
     </light>
 
     <spherical_coordinates>

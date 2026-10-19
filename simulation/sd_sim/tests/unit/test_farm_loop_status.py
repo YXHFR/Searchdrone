@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,6 +45,9 @@ if mode == "fail":
 if mode == "not_built":
     r.write_result(out, spec, {"status": "not_built", "error": "inte byggt"})
     sys.exit(r.EXIT_NOT_BUILT)
+if mode == "ok_then_crash":
+    r.write_result(out, spec, {"status": "ok", "error": None, "images": 1})
+    sys.exit(3)
 if mode == "hang":
     (out / "started").write_text("")
     time.sleep(60)
@@ -231,18 +236,19 @@ def test_round_command_runs_under_nice_from_the_worktree(tmp_path: Path) -> None
     assert argv[-3:] == ["sd_sim.farm", "round", "spec=/x/spec.json"]
 
 
-def test_worktree_links_local_config_but_not_examples(tmp_path: Path) -> None:
+def test_worktree_links_only_the_config_a_round_reads(tmp_path: Path) -> None:
     repo, wt = tmp_path / "repo", tmp_path / "wt"
     (repo / "config").mkdir(parents=True)
-    (repo / "config" / "simfarm.toml").write_text("[r2]\n")
-    (repo / "config" / "simfarm.example.toml").write_text("")
-    (repo / "config" / "site.toml").write_text("")
+    for name in ("simfarm.toml", "simfarm.example.toml", "sim.toml", "brain.toml", "ground.toml"):
+        (repo / "config" / name).write_text("")
     (repo / ".env").write_text("X=1\n")
+    (wt / "config").mkdir(parents=True)
+    (wt / "config" / "onboard.toml").symlink_to(repo / "config" / "ground.toml")  # an old link
     loop.Worktree(repo, wt).link_local()
-    assert (wt / "config" / "site.toml").resolve() == repo / "config" / "site.toml"
+    linked = sorted(p.name for p in (wt / "config").iterdir())
+    assert linked == ["brain.toml", "sim.toml"]  # no vehicle address, no R2 key
+    assert (wt / "config" / "sim.toml").resolve() == repo / "config" / "sim.toml"
     assert (wt / ".env").is_symlink()
-    assert not (wt / "config" / "simfarm.example.toml").exists()
-    assert not (wt / "config" / "simfarm.toml").exists()  # the R2 key stays with the loop
 
 
 def test_worktree_drops_an_earlier_link_to_the_farm_config(tmp_path: Path) -> None:
@@ -254,6 +260,66 @@ def test_worktree_drops_an_earlier_link_to_the_farm_config(tmp_path: Path) -> No
     loop.Worktree(repo, wt).link_local()
     assert not (wt / "config" / "simfarm.toml").exists()
     assert (repo / "config" / "simfarm.toml").is_file()
+
+
+def test_a_round_that_breaks_after_an_ok_round_json_is_an_error(tmp_path: Path) -> None:
+    f = farm(tmp_path, ["ok_then_crash"], rounds=1)
+    f.run()
+    assert list(f.rounds_dir.iterdir()) == []
+    row = status.read_rounds(f.base / "rounds.jsonl")[0]
+    assert row["status"] == "error" and "kod 3" in row["error"]
+    assert (f.base / "failed").is_dir()
+
+
+def test_git_sees_only_its_login_and_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake(argv: list[str], **kw: Any) -> Any:
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(argv, 0, "abc\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setenv("GIT_DIR", "/elsewhere")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'core.hooksPath=/x'")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/agent")
+    assert loop._git(Path("/r"), "status") == "abc"
+    assert "GIT_DIR" not in seen and "GIT_CONFIG_PARAMETERS" not in seen
+    assert seen["SSH_AUTH_SOCK"] == "/agent" and "PATH" in seen
+
+
+def _git_repo(path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    (path / "README.md").write_text("v1\n")
+    git("add", "README.md")
+    git("commit", "-q", "-m", "v1")
+
+
+def test_worktree_update_follows_origin_main(tmp_path: Path) -> None:
+    origin, repo = tmp_path / "origin", tmp_path / "repo"
+    origin.mkdir()
+    _git_repo(origin)
+    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True)
+    (repo / "config").mkdir()
+    (repo / "config" / "sim.toml").write_text("")
+    synced: list[Path] = []
+    wt = loop.Worktree(
+        repo, repo / "build" / "simfarm" / "main", run=lambda *a, **k: synced.append(k["cwd"])
+    )
+    first = wt.update()
+    assert (wt.path / "README.md").read_text() == "v1\n"
+    assert (wt.path / "config" / "sim.toml").is_symlink() and synced == [wt.path]
+    (wt.path / "stray.txt").write_text("left by a round")
+    (origin / "README.md").write_text("v2\n")
+    subprocess.run(["git", "-C", str(origin), "commit", "-qam", "v2"], check=True)
+    second = wt.update()
+    assert second != first and (wt.path / "README.md").read_text() == "v2\n"
+    assert not (wt.path / "stray.txt").exists()  # every round starts from a clean main
+    assert (repo / "README.md").read_text() == "v1\n"  # the owner's checkout is untouched
 
 
 def test_leftover_half_made_rounds_are_removed_at_start(tmp_path: Path) -> None:
@@ -284,6 +350,7 @@ def test_update_off_is_refused_with_an_r2_key(
         f'[r2]\naccount_id = "{R2.account_id}"\nbucket = "sd-simfarm"\n'
         'access_key_id = "AK"\nsecret_access_key = "SK"\n'
     )
+    (tmp_path / "config" / "simfarm.toml").chmod(0o600)
     with pytest.raises(SystemExit) as exc:
         loop.main(["update=off"], repo=tmp_path)
     assert exc.value.code == 2
@@ -291,7 +358,6 @@ def test_update_off_is_refused_with_an_r2_key(
 
 
 def test_worktree_refuses_a_folder_that_is_not_its_own(tmp_path: Path) -> None:
-    import subprocess
 
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -20,9 +20,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
+from typing import Any, Protocol
 
 from sd_sim import (
     _args,
@@ -34,13 +36,19 @@ from sd_sim import (
     procs,
     services,
     site,
-    targets,
     world,
 )
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
 from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
+
+
+class SearchScene(Protocol):
+    """A search scenario's objects in the world (``targets.Scene``, the farm's round)."""
+
+    def objects(self) -> Sequence[objects.WorldObject]: ...
+
 
 ALLOWED_KEYS = (
     "physics",
@@ -127,13 +135,20 @@ class Stack:
         param_layers: tuple[Path, ...] = (),
         services: bool = False,
         test_rig: bool = False,
-        scene: targets.Scene | None = None,
+        scene: SearchScene | None = None,
+        light: Mapping[str, Any] | None = None,
+        stills_archive: Path | None = None,
     ) -> None:
         self.cfg = cfg
         # scene: a search scenario's objects in the Gazebo world, the vehicle's stills
         # camera instead of its video camera, and the stills captured into stills_dir.
         self.scene = scene
         self.stills_dir = run_dir / "stills"
+        # light: the world's sun and ambient light for this run (``world.light_context``).
+        self.light = light
+        # stills_archive: also keep every still with the camera's pose there, unpruned
+        # (the simulator farm's raw pictures).
+        self.stills_archive = stills_archive
         self.ground_truth: Path | None = None
         # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
         # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
@@ -279,6 +294,7 @@ class Stack:
                 vehicle=self.cfg.vehicle,
                 stills=self.scene is not None,
                 video=self.scene is None,
+                light=self.light,
                 gi=self.cfg.gi,
             )
             if placed:
@@ -307,26 +323,36 @@ class Stack:
         if self.scene is not None:
             self.start_stills_capture(env)
 
-    def start_stills_capture(self, env: dict[str, str]) -> None:
-        """The stills camera's pictures and labelled boxes into ``stills_dir``."""
+    def stills_capture_argv(self) -> list[str]:
         prefix = world.stills_topic_prefix(self.cfg.instance)
-        self.stills_dir.mkdir(parents=True, exist_ok=True)
         script = Path(__file__).with_name("gz_stills.py")
-        self.group.start(
-            "stills",
-            [
-                gazebo.GZ_PYTHON,
-                str(script),
-                "capture",
-                "--image-topic",
-                f"{prefix}/stills",
-                "--boxes-topic",
-                f"{prefix}/boxes",
-                "--out",
-                str(self.stills_dir),
-            ],
-            env=env,
-        )
+        argv = [
+            gazebo.GZ_PYTHON,
+            str(script),
+            "capture",
+            "--image-topic",
+            f"{prefix}/stills",
+            "--boxes-topic",
+            f"{prefix}/boxes",
+            "--out",
+            str(self.stills_dir),
+        ]
+        if self.stills_archive is not None and self.world is not None:
+            argv += [
+                "--poses-topic",
+                f"/world/{self.world.name}/dynamic_pose/info",
+                "--model",
+                f"{world.MODEL_NAME}_i{self.cfg.instance}",
+                "--archive",
+                str(self.stills_archive),
+            ]
+        return argv
+
+    def start_stills_capture(self, env: dict[str, str]) -> None:
+        """The stills camera's pictures and labelled boxes into ``stills_dir`` (and, for
+        ``stills_archive``, with the camera's pose into the archive)."""
+        self.stills_dir.mkdir(parents=True, exist_ok=True)
+        self.group.start("stills", self.stills_capture_argv(), env=env)
 
     def start_link_processes(self) -> None:
         py = sys.executable

@@ -266,8 +266,11 @@ def test_world_generates(tmp_path: Path) -> None:
     assert sensors is not None and sensors.findtext("render_engine") == "ogre2"
     # Every model:// in the world exists locally.
     resource_dirs = [GAZEBO / "models", tmp_path / "build" / "sim" / "models"]
-    uris = [u.text or "" for u in world_el.iter("uri")]
+    all_uris = [u.text or "" for u in world_el.iter("uri")]
+    uris = [u for u in all_uris if u.startswith("model://")]
     assert uris == ["model://sd_quad14_i0"]
+    # The rest are the generated ground's files, on this disk.
+    assert all(Path(u).is_file() for u in all_uris if u not in uris)
     # The include's pose replaces the model's own: the legs stand on the ground.
     assert pose(world_el.find("include"))[2] == world.STAND_M
     for uri in uris:
