@@ -52,6 +52,7 @@ from sd_brain.secrets import Secrets
 from sd_geo.coverage import coverage_fraction
 from sd_ground.auth import Principal, SessionRecord, new_token
 from sd_ground.auth import hash_token as hash_session_token
+from sd_ground.mav.thread import vehicle_events
 from sd_link_testing import LossyProxy
 from sd_mav import Role
 from sd_obs.clock import MonotonicClock
@@ -700,7 +701,14 @@ async def scenario(
 ) -> AsyncIterator[Scenario]:
     """``onboard_factory(sim, url, token)`` replaces the onboard side (e.g. one that also
     runs perception); otherwise ``SitlOnboard`` with ``onboard_options``."""
-    ground = _vehicle(f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}", Role.GROUND)
+    # The ground's vehicle events (status texts, the GPS texts' alarms) as sd_ground.app
+    # wires them; the sink is the rig's VehicleActions, which exists once the stack is up.
+    sink: list[Callable[[str, dict[str, Any]], None]] = []
+    ground = _vehicle(
+        f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}",
+        Role.GROUND,
+        on_event=lambda k, d: sink[0](k, d) if sink else None,
+    )
     port = free_port()
 
     def onboard(_clock: WallClock, url: str, token: str) -> Any:
@@ -723,6 +731,7 @@ async def scenario(
         serve_commander(r, port),
     ):
         r.commander.base_url = httpx.URL(f"http://127.0.0.1:{port}")  # the bound port
+        sink.append(vehicle_events(r.actions.on_event))
         sc = Scenario(r, sim, port)
         publish = r.g.bus.publish
 

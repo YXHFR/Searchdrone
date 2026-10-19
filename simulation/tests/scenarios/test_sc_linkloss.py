@@ -38,6 +38,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     scenario,
     sim,
     sim_stack,
+    survey_box_enu,
 )
 
 from sd_safety.constants import (
@@ -82,6 +83,12 @@ async def heading_north(sc: Scenario, speed_ms: float = 4.0) -> None:
     await sc.wait_command("goto", "running", 15)
 
 
+def survey_box(sc: Scenario) -> dict[str, Any]:
+    """The demo's search box around P1 as the survey's GeoJSON polygon."""
+    ring = [[lon, lat] for lat, lon in (sc.at(e, n) for e, n in survey_box_enu())]
+    return {"type": "Polygon", "coordinates": [[*ring, ring[0]]]}
+
+
 def north_m(sc: Scenario) -> float:
     return Plane(*sc.r.home).xy(sc.tel.lat, sc.tel.lon)[1]
 
@@ -121,7 +128,7 @@ def fc_texts(sc: Scenario, needle: str, since: float) -> list[float]:
 
 
 async def onboard_events(sc: Scenario, kind: str) -> list[dict[str, Any]]:
-    return [e for e in await sc.events() if e["type"] == f"executor.{kind}"]
+    return [e for e in await sc.events(f"executor.{kind}") if e["type"] == f"executor.{kind}"]
 
 
 async def back_and_land(sc: Scenario) -> None:
@@ -136,7 +143,7 @@ async def back_and_land(sc: Scenario) -> None:
 async def test_ll1_sdlink_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
         await sc.airborne()
-        res = await sc.order("survey_sector", {"sector_id": "A"})
+        res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
         assert res.get("decision") == "ALLOW", res
         await sc.wait_command("survey_sector", "running", 60)
         sc.radio(sdlink=False)
@@ -158,7 +165,7 @@ async def test_ll1_sdlink_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: P
 async def test_ll2_all_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
     async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
         await sc.airborne()
-        res = await sc.order("survey_sector", {"sector_id": "A"})
+        res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
         assert res.get("decision") == "ALLOW", res
         await sc.wait_command("survey_sector", "running", 60)
         sc.radio(mavlink=False, sdlink=False)
@@ -222,9 +229,29 @@ async def _find_hover(
     never inside its cylinder, and still there at ``until_s``. Returns the cut time and
     the points."""
     points = await find_ahead(sc)
-    flat, flon, hlat, hlon = points
     sc.radio(mavlink=mavlink, sdlink=False)
     down = time.monotonic()
+    try:
+        await _hover_checks(sc, points, down, until_s)
+    except AssertionError as exc:
+        raise AssertionError(f"{exc}\n{trace(sc, down)}") from None
+    return down, points
+
+
+def trace(sc: Scenario, since: float) -> str:
+    """The flight modes and the flight controller's texts since ``since``, for a failure."""
+    modes: list[str] = []
+    for s in sc.track:
+        if s.t >= since and (not modes or not modes[-1].endswith(s.mode)):
+            modes.append(f"{s.t - since:6.1f} s {s.mode}")
+    texts = [f"{t - since:6.1f} s {x}" for t, x in sc.sim.harness.state.texts if t >= since]
+    return "modes:\n  " + "\n  ".join(modes) + "\ntexts:\n  " + "\n  ".join(texts)
+
+
+async def _hover_checks(
+    sc: Scenario, points: tuple[float, float, float, float], down: float, until_s: float
+) -> None:
+    flat, flon, hlat, hlon = points
     await sc.until(lambda: sc.fc_mode() == "LOITER", FIND_LOITER_BY + 0.5, "find hover")
     assert time.monotonic() - down <= FIND_LOITER_BY + 0.5
     await sc.until(
@@ -238,7 +265,6 @@ async def _find_hover(
         "hovers beside the find",
     )
     assert closest_to(sc, flat, flon, down) >= RADIUS_M
-    return down, points
 
 
 @pytest.mark.budget_s(420)
