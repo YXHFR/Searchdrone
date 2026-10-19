@@ -12,7 +12,9 @@ default-groups = ["dev", "test"]
 constraint-dependencies = [
   "shapely<2.2", "numpy<2.5.4",
   # The same rule for the cad group (locked 2026-10-18); may be lifted from 2026-11-01.
-  "aiohttp<3.14.4", "ezdxf<1.4.5", "fonttools<4.67", "more-itertools<11.2", "multidict<7.1",
+  # aiohttp 3.14.4 (2026-10-05) fixes GHSA-2g87-pp6c-29x5, GHSA-494j-54xm-rwp3 and
+  # GHSA-5wr8-gcqf-gqf3 and is two weeks old.
+  "aiohttp<3.14.5", "ezdxf<1.4.5", "fonttools<4.67", "more-itertools<11.2", "multidict<7.1",
   "trame-client<4.1.4", "trame-common<1.2.8", "trame-server<4.1", "wslink<2.5.8",
 ]
 
