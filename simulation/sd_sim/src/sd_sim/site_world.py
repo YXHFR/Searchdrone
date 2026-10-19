@@ -159,6 +159,11 @@ def fixture_yaml(s: site.Site, ground: terrain.Ground, repo: Path = paths.REPO) 
     test["area_enu"] = [[west, south], [east, south], [east, north], [west, north]]
     top = tallest(s, ground, shapely.box(west, south, east, north))
     alt = max(float(base["survey_box"]["alt_m"]), math.ceil((top + SEARCH_CLEARANCE_M) / 5) * 5)
+    if alt > float(test["alt_max_agl_m"]):
+        raise ValueError(
+            f"{s.name}: the search height {alt:g} m over the tallest ground and trees "
+            f"({top:.0f} m above home) is above charter_test's {test['alt_max_agl_m']} m"
+        )
     base["survey_box"]["alt_m"] = alt
     test["default_alt_agl_m"] = alt
     header = (

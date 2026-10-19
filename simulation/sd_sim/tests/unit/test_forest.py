@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from sd_sim import forest, gltf, paths, png, site, site_world, terrain
+from sd_sim import forest, gltf, paths, png, site, site_world, snapshot, terrain
 
 _spec = importlib.util.spec_from_file_location(
     "site_world_tests", Path(__file__).with_name("test_site_world.py")
@@ -181,3 +181,82 @@ def test_world_without_the_tree_pictures_has_plain_real_trees(wooded: Path) -> N
     assert any(
         p.suffix == ".obj" and p.stem.startswith("trees_") for p in (model / "meshes").iterdir()
     )
+
+
+def test_search_height_above_the_charters_cap_is_an_error(wooded: Path) -> None:
+    s = site.load("testsite", wooded)
+    g = terrain.ground_grid(s)
+    yaml_text = site_world.fixture_yaml(s, g)
+    assert "default_alt_agl_m" in yaml_text
+    csv = wooded / "build/trees/testsite/trees.csv"
+    csv.write_text(csv.read_text().replace("-70.0,-15.0,30.0", "-70.0,-15.0,110.0"))
+    s = site.load("testsite", wooded)
+    with pytest.raises(ValueError, match="charter_test"):
+        site_world.fixture_yaml(s, terrain.ground_grid(s))
+
+
+def test_canopy_follows_the_tree_list_not_the_raster(wooded: Path) -> None:
+    def forest_drop(s: site.Site) -> float:
+        g = terrain.ground_grid(s)
+        raw = s.dem.sample(np.array([-55.0]), np.array([55.0]))[0] - s.home_alt
+        return float(raw - g.at(np.array([-55.0]), np.array([55.0]))[0])
+
+    assert forest_drop(site.load("testsite", wooded)) == pytest.approx(0.0, abs=0.05)
+    (wooded / "build/trees/testsite/trees.csv").unlink()  # the raster alone
+    s = site.load("testsite", wooded)
+    assert not s.has_real_trees and forest.load_trees(s) is None
+    assert forest_drop(s) == pytest.approx(10.0, abs=0.6)  # generated trees, canopy off
+
+
+# --- the snapshot's notices and summary ------------------------------------------------
+
+RASTER_STATS = {
+    "trees": 14669,
+    "buildings": 3,
+    "cars": 1,
+    "ground_min_m": -2.0,
+    "ground_max_m": 30.0,
+    "tree_source": "raster",
+    "tree_models": "poly-haven-cc0",
+    "trees_left_out": 421,
+    "trees_near": 482,
+    "tree_triangles": 527414,
+    "tree_height_vs_raster_mean_abs_m": 0.325,
+    "tree_height_max_m": 33.5,
+}
+
+
+def test_attribution_names_the_tree_sources_only_when_used() -> None:
+    generated = snapshot.attribution({"trees": 10})
+    assert generated == snapshot.ATTRIBUTION
+    full = snapshot.attribution(RASTER_STATS)
+    assert full == snapshot.ATTRIBUTION + snapshot.TREES_ATTRIBUTION + (
+        snapshot.TREE_MODELS_ATTRIBUTION
+    )
+    assert "Lantmäteriet, CC BY 4.0" in full and "Poly Haven" in full
+    plain = snapshot.attribution({**RASTER_STATS, "tree_models": "plain"})
+    assert plain == snapshot.ATTRIBUTION + snapshot.TREES_ATTRIBUTION
+
+
+def _result(stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "world": "sd_testsite",
+        "home_alt_m": 20.0,
+        "stats": stats,
+        "views": {"nadir_40m_road": {"saved": True}, "oblique": {"saved": False}},
+        "checks": {"road_width": True, "map_overlap": False},
+        "road": {"width_m": 6.9, "expected_width_m": 7.0, "offset_m": 2.5},
+    }
+
+
+def test_summary_tells_real_trees_from_generated_ones() -> None:
+    text = snapshot.summary(_result(RASTER_STATS))
+    assert "14669 real trees from the tree height raster (421 on roads" in text
+    assert "482 detailed near home; 527414 triangles; models poly-haven-cc0." in text
+    assert "mean error 0.325 m, tallest 33.5 m." in text
+    assert "6.9 m, map 7.0 m (ok" in text and "2.5 m (FAIL" in text
+    assert "Pictures: nadir_40m_road." in text
+    stats = {k: RASTER_STATS[k] for k in ("trees", "buildings", "cars")}
+    stats |= {"ground_min_m": 0.0, "ground_max_m": 1.0, "tree_triangles": 900}
+    text = snapshot.summary(_result(stats))
+    assert "- Forest: generated (900 triangles)." in text and "real trees" not in text

@@ -161,6 +161,12 @@ class Site:
         return float(self.dem.sample(np.array([0.0]), np.array([0.0]))[0])
 
     @property
+    def has_real_trees(self) -> bool:
+        """Whether ``just trees-fetch`` has written the site's tree list: then the world
+        has the real trees and the ground keeps the forest in its heights."""
+        return self.trees_folder is not None and (self.trees_folder / "trees.csv").is_file()
+
+    @property
     def chm_path(self) -> Path | None:
         """The tree height raster on the site's 1 m grid (decimetres), if fetched."""
         if self.trees_folder is None:
@@ -172,7 +178,7 @@ class Site:
         """Metres of forest to take off the height source at these points: none for a
         bare-ground source or where the real trees stand in the world (they are the
         forest), else ``canopy_m`` inside the map's forest."""
-        if self.surface != "dsm" or self.chm_path is not None:
+        if self.surface != "dsm" or self.has_real_trees:
             return np.zeros_like(np.asarray(east, dtype=np.float64))
         return self.canopy_m * self.canopy_weight(east, north)
 

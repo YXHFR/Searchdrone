@@ -76,6 +76,7 @@ NMD_LAYER = "LC.LandCoverRaster.Bas.2023.v2.x"
 NMD_CELL_M = 10.0
 SWEREF = "EPSG:3006"
 CHUNK = 16 * 1024 * 1024
+TIFF_HEAD = 4 * 1024 * 1024  # uncompressed bytes that hold the TIFF tags
 PARALLEL = 8
 TRIES = 4
 TIMEOUT_S = 120
@@ -379,7 +380,7 @@ def fetch_chm(site: SiteDef, county: int, work: Path) -> tuple[Path, dict[str, A
             fetched += len(chunk)
             buf += inflater.inflate(chunk)
             if info is None:
-                if len(buf) < 4 * 1024 * 1024:
+                if len(buf) < TIFF_HEAD:
                     continue
                 info = parse_bigtiff(bytes(buf))
                 c0 = math.floor((west - info.origin[0]) / info.cell)
@@ -544,6 +545,11 @@ def nmd_legend() -> dict[tuple[int, int, int], int]:
         f"{NMD_WMS}?service=WMS&version=1.3.0&request=GetLegendGraphic&format=application/json"
         f"&layer={NMD_LAYER}"
     )
+    return parse_legend(raw)
+
+
+def parse_legend(raw: bytes) -> dict[tuple[int, int, int], int]:
+    """The WMS legend's colour map: (r, g, b) to land-cover class."""
     out: dict[tuple[int, int, int], int] = {}
     for legend in json.loads(raw).get("Legend", []):
         for rule in legend.get("rules", []):
@@ -557,6 +563,29 @@ def nmd_legend() -> dict[tuple[int, int, int], int]:
     if not any(111 <= v <= 128 for v in out.values()):
         raise FetchError("Naturvårdsverkets teckenförklaring saknar skogsklasserna")
     return out
+
+
+def classes_from_colours(
+    img: NDArray[np.uint8], legend: Mapping[tuple[int, int, int], int]
+) -> NDArray[np.int32]:
+    """Land-cover classes of an RGB picture; 0 where the colour is not in the legend, and
+    an error when more than 2 % of the picture is."""
+    h, w = img.shape[:2]
+    classes = np.zeros((h, w), dtype=np.int32)
+    flat = img.reshape(-1, 3)
+    keys = flat[:, 0].astype(np.int64) << 16 | flat[:, 1].astype(np.int64) << 8 | flat[:, 2]
+    lut = {r << 16 | g << 8 | b: v for (r, g, b), v in legend.items()}
+    unknown = 0
+    out = classes.reshape(-1)
+    for key in np.unique(keys):
+        v = lut.get(int(key))
+        if v is None:
+            unknown += int((keys == key).sum())
+            continue
+        out[keys == key] = v
+    if unknown > 0.02 * keys.size:
+        raise FetchError(f"{unknown} rutor i marktäckekartan har en okänd färg")
+    return classes
 
 
 def fetch_nmd(site: SiteDef, work: Path) -> Path:
@@ -588,21 +617,7 @@ def fetch_nmd(site: SiteDef, work: Path) -> Path:
     img = np.asarray(Image.open(io.BytesIO(_request(f"{NMD_WMS}?{query}"))).convert("RGB"))
     if img.shape[:2] != (h, w):
         raise FetchError(f"marktäckekartan kom som {img.shape}, inte {h} x {w}")
-    legend = nmd_legend()
-    classes = np.zeros((h, w), dtype=np.int32)
-    flat = img.reshape(-1, 3)
-    keys = flat[:, 0].astype(np.int64) << 16 | flat[:, 1].astype(np.int64) << 8 | flat[:, 2]
-    lut = {r << 16 | g << 8 | b: v for (r, g, b), v in legend.items()}
-    unknown = 0
-    out = classes.reshape(-1)
-    for key in np.unique(keys):
-        v = lut.get(int(key))
-        if v is None:
-            unknown += int((keys == key).sum())
-            continue
-        out[keys == key] = v
-    if unknown > 0.02 * keys.size:
-        raise FetchError(f"{unknown} rutor i marktäckekartan har en okänd färg")
+    classes = classes_from_colours(img, nmd_legend())
     asc = work / "nmd.asc"
     asc.write_text(
         f"ncols {w}\nnrows {h}\nxllcorner {west}\nyllcorner {south}\ncellsize {NMD_CELL_M}\n"

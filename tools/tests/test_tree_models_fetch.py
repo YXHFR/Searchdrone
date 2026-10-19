@@ -4,6 +4,7 @@ and drawing them."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -69,3 +70,14 @@ def test_fit_fills_the_cell_with_the_trunk_at_the_bottom_centre() -> None:
     out, occl = models.fit(canvas, np.ones((200, 200), np.float32), 100.0, 190.0)
     assert out.shape == (models.INNER, models.INNER, 4) and occl.shape == out.shape[:2]
     assert out[0, models.INNER // 2, 3] > 0.5 and out[-1, models.INNER // 2, 3] > 0.5
+
+
+def test_downloads_only_from_poly_haven(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = {"diffuse": {"1k": {"png": {"url": "file:///etc/passwd", "md5": "0"}}}}
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        models, "_get", lambda url: fetched.append(url) or json.dumps(index).encode()
+    )
+    with pytest.raises(models.FetchError, match="oväntad adress"):
+        models.Source().picture("bark_brown_02", "diffuse", "RGB")
+    assert fetched == [models.API.format(asset="bark_brown_02")]

@@ -67,11 +67,9 @@ class RealTree:
 
 
 def load_trees(site: Site) -> list[RealTree] | None:
-    if site.trees_folder is None:
+    if site.trees_folder is None or not site.has_real_trees:
         return None
     path = site.trees_folder / "trees.csv"
-    if not path.is_file():
-        return None
     with path.open(encoding="ascii", newline="") as f:
         rows = list(csv.DictReader(f))
     out = []

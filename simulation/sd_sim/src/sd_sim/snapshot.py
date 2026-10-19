@@ -330,15 +330,19 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
         json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (out / "summary.md").write_text(summary(result), encoding="utf-8")
-    stats = result["stats"]
-    attribution = ATTRIBUTION
-    if stats.get("tree_source") == "raster":
-        attribution += TREES_ATTRIBUTION
-    if stats.get("tree_models") == "poly-haven-cc0":
-        attribution += TREE_MODELS_ATTRIBUTION
-    (out / "ATTRIBUTION.txt").write_text(attribution, encoding="utf-8")
+    (out / "ATTRIBUTION.txt").write_text(attribution(result["stats"]), encoding="utf-8")
     shutil.rmtree(frames, ignore_errors=True)
     return (0 if result["passed"] else 1), out
+
+
+def attribution(stats: dict[str, Any]) -> str:
+    """The text that goes with the pictures: the trees' sources only when they were used."""
+    text = ATTRIBUTION
+    if stats.get("tree_source") == "raster":
+        text += TREES_ATTRIBUTION
+    if stats.get("tree_models") == "poly-haven-cc0":
+        text += TREE_MODELS_ATTRIBUTION
+    return text
 
 
 def _tree_lines(stats: dict[str, Any]) -> list[str]:

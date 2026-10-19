@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetch_site import ROOT, USER_AGENT, FetchError
 
 API = "https://api.polyhaven.com/files/{asset}"
+DOWNLOAD_PREFIX = "https://dl.polyhaven.org/"
 # (asset, map) pairs, all at 1k.
 MAPS = {
     "spruce_twig": ("fir_tree_01", "twig_diff", "twig_alpha"),
@@ -98,6 +99,8 @@ class Source:
             entry = self._index[asset][name]["1k"]["png"]
         except KeyError as exc:
             raise FetchError(f"Poly Haven: {asset} saknar {name} (1k png)") from exc
+        if not str(entry["url"]).startswith(DOWNLOAD_PREFIX):
+            raise FetchError(f"Poly Haven: oväntad adress {entry['url']}")
         data = _get(entry["url"])
         md5 = hashlib.md5(data, usedforsecurity=False).hexdigest()
         if md5 != entry["md5"]:
