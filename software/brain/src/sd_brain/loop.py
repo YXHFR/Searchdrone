@@ -310,6 +310,11 @@ class CommanderLoop:
                 if now - self._alert_seen.get(code, -1e9) >= 60:
                     self._alert_seen[code] = now
                     trigger = "alert_critical" if level == "critical" else "alert_warning"
+        elif kind == "event.detection" and body.get("kind") == "target":
+            # A new find of a search target wakes the AI; context (roads, buildings) only
+            # tells it what it flies over. The AI may look closer and ask the pilot; it
+            # never confirms a find.
+            trigger = "detection"
         elif kind == "event.mission" and body.get("created"):
             trigger = "mission_created"
             mid = evt.get("mission_id") or body.get("mission_id")

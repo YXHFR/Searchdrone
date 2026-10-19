@@ -430,6 +430,11 @@ class GeoDetectionMsg(SdModel):
     sigma95_m: float = Field(ge=0, le=1000)  # 95 % position uncertainty
     px_size: float = Field(gt=0)  # the box's longest side in still pixels
     crop_inline: bool  # True: a CropData for this detection follows
+    # The class from the detector's class register (``sd_detect``) and the kind of source
+    # that saw it ("oracle" = the simulator's own labels, simulator only). Empty from a
+    # detector that has no classes.
+    label: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    source: Literal["model", "color", "oracle"] | None = None
 
 
 class PerceptionReport(SdModel):

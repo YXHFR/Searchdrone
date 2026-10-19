@@ -275,7 +275,20 @@ class ContextBuilder:
             kind = str(e.get("type", turn.trigger)).removeprefix("event.")
             detail = ", ".join(
                 f"{k}={body[k]}"
-                for k in ("skill", "status", "action", "via", "code", "kind", "result", "version")
+                for k in (
+                    "skill",
+                    "status",
+                    "action",
+                    "via",
+                    "code",
+                    "kind",
+                    "result",
+                    "version",
+                    "name_sv",
+                    "source",
+                    "lat",
+                    "lon",
+                )
                 if body.get(k) is not None
             )
             bits.append(f"{kind} ({detail})" if detail else kind)

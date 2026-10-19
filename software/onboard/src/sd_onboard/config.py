@@ -33,6 +33,7 @@ __all__ = [
     "ConfigError",
     "Loaded",
     "OnboardConfig",
+    "PerceptionConfig",
     "TestHooks",
     "check",
     "load",
@@ -55,6 +56,21 @@ class TestHooks(BaseModel):
     takeoff_delay_after_arm_s: float = Field(default=0.0, ge=0, le=30)
 
 
+class PerceptionConfig(BaseModel):
+    """Stills, detector sources and reports to the ground (off unless a camera exists)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    # A folder a camera process writes stills to (<name>.ppm + <name>.json).
+    still_dir: str = ""
+    width_px: int = Field(default=1280, ge=16, le=8192)
+    height_px: int = Field(default=720, ge=16, le=8192)
+    hfov_deg: float = Field(default=66.0, gt=0, lt=180)
+    period_s: float = Field(default=0.5, ge=0.05, le=10)
+    keep_stills: bool = False  # save stills with detections in the state folder
+
+
 class OnboardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -75,6 +91,7 @@ class OnboardConfig(BaseModel):
         default_factory=lambda: ["simulation/sitl/params/searchdrone-safety.parm"]
     )
     test_hooks: TestHooks = Field(default_factory=TestHooks)
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
 
 
 @dataclass(frozen=True)
@@ -122,10 +139,12 @@ def _env_layer(env: dict[str, str]) -> dict[str, Any]:
         value: Any = raw
         if parts[-1] in ("fc_sysid", "own_compid", "gcs_sysid"):
             value = int(raw)
-        elif parts[-1] in ("allow_companion_arm", "require_rc"):
+        elif parts[-1] in ("allow_companion_arm", "require_rc", "enabled", "keep_stills"):
             value = raw.strip().lower() in ("1", "true", "yes")
-        elif parts[-1] == "takeoff_delay_after_arm_s":
+        elif parts[-1] in ("takeoff_delay_after_arm_s", "hfov_deg", "period_s"):
             value = float(raw)
+        elif parts[-1] in ("width_px", "height_px"):
+            value = int(raw)
         elif parts[-1] == "expected_param_files":
             value = [p for p in raw.split(",") if p]
         node = layer
@@ -184,6 +203,8 @@ def check(loaded: Loaded) -> list[str]:
     hooks_set = cfg.test_hooks != TestHooks()
     if hooks_set and not (cfg.profile == "sim" and loaded.env.get("SD_TEST") == "1"):
         errors.append("[test_hooks] gäller bara i tester (SD_TEST=1) / test hooks need SD_TEST=1.")
+    if cfg.perception.enabled and not cfg.perception.still_dir:
+        errors.append("[perception] still_dir saknas / still_dir is required when enabled.")
     files = loaded.param_files()
     if not files:
         errors.append("expected_param_files får inte vara tom / no parameter file given.")

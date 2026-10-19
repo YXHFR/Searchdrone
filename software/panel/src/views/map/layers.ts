@@ -224,6 +224,18 @@ export function addOverlay(map: maplibregl.Map, labels: boolean, flavor: MapFlav
   });
   text("pins-label", "pins", "label");
   add({
+    id: "finds-point",
+    type: "circle",
+    source: "finds",
+    paint: {
+      "circle-radius": ["case", ["==", ["get", "kind"], "target"], 8, 5],
+      "circle-color": ["case", ["==", ["get", "kind"], "target"], C.warn, C.grey],
+      "circle-stroke-color": ["case", ["==", ["get", "kind"], "target"], C.bad, C.halo],
+      "circle-stroke-width": ["case", ["==", ["get", "kind"], "target"], 3, 1],
+    },
+  });
+  text("finds-label", "finds", "label");
+  add({
     id: "draw-line",
     type: "line",
     source: "draw",

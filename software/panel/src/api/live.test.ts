@@ -92,6 +92,7 @@ const RESYNC = [
   "GET /api/v1/missions/M1/approvals?status=pending",
   "GET /api/v1/missions/M1/sectors",
   "GET /api/v1/missions/M1/annotations",
+  "GET /api/v1/missions/M1/finds",
   "GET /api/v1/missions/M1/chat?limit=50",
   "GET /api/v1/missions/M1/track?max_points=5000",
 ];

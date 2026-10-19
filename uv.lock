@@ -1603,6 +1603,7 @@ dependencies = [
     { name = "geoalchemy2" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "sd-detect" },
     { name = "sd-geo" },
     { name = "sd-link" },
     { name = "sd-mav" },
@@ -1626,6 +1627,7 @@ requires-dist = [
     { name = "geoalchemy2", specifier = ">=0.17" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-detect", editable = "software/detector" },
     { name = "sd-geo", editable = "software/common/geo" },
     { name = "sd-link", editable = "software/common/link" },
     { name = "sd-mav", editable = "software/common/mav" },
@@ -1719,7 +1721,9 @@ name = "sd-onboard"
 version = "0.0.0"
 source = { editable = "software/onboard" }
 dependencies = [
+    { name = "pillow" },
     { name = "pydantic" },
+    { name = "sd-detect" },
     { name = "sd-geo" },
     { name = "sd-link" },
     { name = "sd-mav" },
@@ -1731,7 +1735,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pillow", specifier = ">=11" },
     { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-detect", editable = "software/detector" },
     { name = "sd-geo", editable = "software/common/geo" },
     { name = "sd-link", editable = "software/common/link" },
     { name = "sd-mav", editable = "software/common/mav" },
