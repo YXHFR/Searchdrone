@@ -409,7 +409,7 @@ jobs:
         id: tree-pictures
         with:
           path: build/tree_models
-          key: tree-pictures-cc0-${{ hashFiles('tools/terrain/fetch_tree_models.py') }}
+          key: tree-pictures-cc0-${{ hashFiles('tools/terrain/fetch_tree_models.py', 'tools/terrain/fetch_site.py') }}
       - name: The tree pictures (Poly Haven, CC0)
         if: steps.tree-pictures.outputs.cache-hit != 'true'
         timeout-minutes: 15

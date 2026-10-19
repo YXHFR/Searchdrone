@@ -261,7 +261,7 @@ STORING_ACTIONS = ("actions/cache", "actions/upload-artifact", "actions/upload-p
 
 def storable(entry: str) -> bool:
     parts = tuple(p for p in entry.split("/") if p)
-    if not parts or "*" in parts[0] or any("${{" in p for p in parts[1:]):
+    if not parts or "*" in parts[0] or any(p in (".", "..") or "${{" in p for p in parts[1:]):
         return False
     if parts[0] == "build":
         return any(parts[: len(d)] == d for d in SHAREABLE_BUILD_DIRS)
@@ -279,6 +279,9 @@ def test_storable_paths() -> None:
         "**/trees",
         "${{ env.DIR }}",
         "trees.csv",
+        "runs/../build/trees",
+        "build/tree_models/../trees",
+        "./build/trees",
     ):
         assert not storable(bad), bad
 
