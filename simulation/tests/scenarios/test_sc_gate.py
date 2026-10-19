@@ -156,11 +156,16 @@ async def test_sc09_takeoff_needs_charter_and_clearance(
             )
 
         await sc.until(installed_v2, 90, "version 2 installed with its fence")
-        await sc.until(
-            lambda: (snap := sc.r.flow.snapshot(VID)[0]) is not None and snap.preflight_ok,
-            90,
-            "preflight ok for version 2",
-        )
+        ex = sc.r.onboard.ex
+
+        def preflight_v2() -> bool:
+            # The onboard reads (parameters, fence) for this version, not a snapshot from
+            # before the install: the parameter read takes a few seconds.
+            snap = sc.r.flow.snapshot(VID)[0]
+            fresh = ex.params_ok is True and ex.fence_ok is True and ex.preflight_ok()
+            return fresh and snap is not None and snap.preflight_ok
+
+        await sc.until(preflight_v2, 90, "preflight ok for version 2")
         await asyncio.sleep(3.1)
         await refused(sc, "takeoff", {"alt_m": 40}, "CLEARANCE_REQUIRED")
         assert not any(s.armed for s in sc.track)
