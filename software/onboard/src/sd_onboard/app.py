@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sd_geo import PinholeCamera
 from sd_mav.connection import Role, connect
 from sd_mav.vehicle import SendOrigin, Vehicle
 from sd_obs.clock import MonotonicClock
@@ -24,6 +25,8 @@ from sd_onboard.io.params import effective_params
 from sd_onboard.io.persistence import StateStore
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.logs import setup_logging
+from sd_onboard.perception.loop import PerceptionLoop
+from sd_onboard.perception.sources import DirStillSource
 
 __all__ = ["main", "serve"]
 
@@ -77,6 +80,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         StateStore(loaded.state_dir, clock),
     )
     link.executor = executor
+    perception = _perception(loaded, vehicle, link, clock)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, RuntimeError):
@@ -86,6 +90,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
         asyncio.ensure_future(executor.run(stop)),
         asyncio.ensure_future(link.run(stop)),
     ]
+    side_tasks = [] if perception is None else [asyncio.ensure_future(perception.run(stop))]
     failed: list[BaseException] = []
 
     def supervise(task: asyncio.Future[None]) -> None:
@@ -101,15 +106,43 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
 
     for task in tasks:
         task.add_done_callback(supervise)
+    for task in side_tasks:  # perception ending is logged, never a reason to stop flying
+        task.add_done_callback(_log_side_task)
     try:
         await stop.wait()
     finally:
-        for task in tasks:
+        for task in tasks + side_tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, *side_tasks, return_exceptions=True)
         await executor.close()
         await vehicle.close()
     return 1 if failed else 0
+
+
+def _perception(
+    loaded: Loaded, vehicle: Vehicle, link: OnboardLink, clock: MonotonicClock
+) -> PerceptionLoop | None:
+    p = loaded.config.perception
+    if not p.enabled:
+        return None
+    return PerceptionLoop(
+        DirStillSource(
+            loaded.path(p.still_dir),
+            synthetic=loaded.config.profile == "sim",
+            max_size=(p.width_px, p.height_px),
+        ),
+        lambda: vehicle.telemetry,
+        link.perception,
+        clock,
+        PinholeCamera(p.width_px, p.height_px, p.hfov_deg),
+        period_s=p.period_s,
+        keep_dir=loaded.state_dir / "stills" if p.keep_stills else None,
+    )
+
+
+def _log_side_task(task: asyncio.Future[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        log.error("perception stopped: %r", task.exception())
 
 
 def main(argv: list[str] | None = None) -> int:

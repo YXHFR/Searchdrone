@@ -149,6 +149,8 @@ class MissionFlow:
     coverage: Coverage = field(default_factory=Coverage)
     clearances: Clearances = field(default_factory=Clearances)
     rates: dict[str, BrainRate] = field(default_factory=dict[str, BrainRate])
+    finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
+    reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])
@@ -580,7 +582,8 @@ class MissionFlow:
     async def on_inbound(self, vehicle_id: str, inbound: Inbound) -> None:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
-        from sd_schemas.link import Ack, CharterAck, OnboardEvent
+        from sd_ground.services import perception as perception_service
+        from sd_schemas.link import Ack, CharterAck, CropData, OnboardEvent, PerceptionReport
 
         body = inbound.body
         if isinstance(body, Ack):
@@ -598,6 +601,10 @@ class MissionFlow:
             )
         elif isinstance(body, StateSnapshot):
             await self._on_snapshot(vehicle_id, body)
+        elif isinstance(body, PerceptionReport):
+            perception_service.enqueue(self, vehicle_id, body)  # never waits for storage
+        elif isinstance(body, CropData):
+            perception_service.add_crop(self, vehicle_id, body)  # kept until its report is stored
 
     async def _on_snapshot(self, vehicle_id: str, snap: StateSnapshot) -> None:
         from sd_ground.services import commands as commands_service

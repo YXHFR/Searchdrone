@@ -56,3 +56,27 @@ def test_a_lifted_latch_is_not_a_resume() -> None:
     out = to_commander(event("latch.updated", stop))
     assert out is not None and out["type"] == "event.operator_override"
     assert out["body"]["action"] == "stop"
+
+
+def test_a_new_find_reaches_the_ai_and_updates_do_not() -> None:
+    find = {
+        "find_id": "f1",
+        "label": "red_block",
+        "name_sv": "rött block",
+        "kind": "target",
+        "source": "color",
+        "score": 0.7,
+        "lat": -35.3615,
+        "lon": 149.1652,
+        "sigma95_m": 5.2,
+        "count": 1,
+        "thumb_detection_id": "f1",
+        "synthetic": True,
+    }
+    out = to_commander(event("find.new", find))
+    assert out is not None and out["type"] == "event.detection"
+    assert out["body"] == {
+        k: v for k, v in find.items() if k not in ("count", "thumb_detection_id")
+    }
+    assert to_commander(event("find.updated", find)) is None
+    assert to_commander(event("detection.new", find)) is None

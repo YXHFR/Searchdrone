@@ -74,7 +74,7 @@ def test_roundtrip(fresh_db: Db) -> None:
     assert _tables(db) == TABLES
     assert "3.6" in db.run("SELECT postgis_full_version() AS v")[0]["v"]
     head = db.run("SELECT version_num FROM alembic_version", role="sd_app")
-    assert [r["version_num"] for r in head] == ["0003_search"]
+    assert [r["version_num"] for r in head] == ["0004_detections"]
 
 
 def test_app_role_has_no_delete_anywhere(migrated_db: Db) -> None:
@@ -314,3 +314,35 @@ def test_one_approved_charter_and_one_active_clearance(migrated_db: Db) -> None:
     db.run(clearance, mission, charter, role="sd_app")
     with pytest.raises(asyncpg.UniqueViolationError):
         db.run(clearance, mission, charter, role="sd_app")
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("label", "'Red Block'"),
+        ("source", "'guess'"),
+        ("kind", "'other'"),
+        ("kind", "NULL"),  # a class comes with its kind and source
+    ],
+)
+def test_detection_classes_are_checked(migrated_db: Db, column: str, value: str) -> None:
+    db = migrated_db
+    mission = _seed(db)
+    still = db.run(
+        "INSERT INTO perception_stills (mission_id, vehicle_id, still_id, captured_utc, sensor, "
+        "pose, footprint, px_per_m, detector) VALUES ($1::uuid, 'sim-01', uuidv7(), now(), "
+        "'rgb', '{}', ST_GeomFromText('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))', 4326), 50, '{}') "
+        "RETURNING still_id::text",
+        mission,
+        role="sd_app",
+    )[0]["still_id"]
+    row = {"label": "'car'", "kind": "'context'", "source": "'oracle'"} | {column: value}
+    # Column names and values come from the fixed lists above, never from input.
+    sql = (
+        "INSERT INTO detections (mission_id, vehicle_id, detection_id, still_id, score, bbox, "  # noqa: S608
+        f"geom, sigma95_m, px_size, find_id, {', '.join(row)}) VALUES ($1::uuid, 'sim-01', "
+        "uuidv7(), $2::uuid, 0.6, '{}', ST_GeomFromText('POINT(0.5 0.5)', 4326), 4.5, 90, "
+        f"uuidv7(), {', '.join(row.values())})"
+    )
+    with pytest.raises(asyncpg.CheckViolationError):
+        db.run(sql, mission, still, role="sd_app")

@@ -3322,6 +3322,99 @@
       "title": "DecisionLogStored",
       "type": "object"
     },
+    "DetectionRow": {
+      "additionalProperties": false,
+      "description": "A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.\n``source = \"oracle\"`` is the simulator's own label, not a detector.",
+      "properties": {
+        "bbox": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "find_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "has_crop": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "target",
+            "context"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "score": {
+          "type": "number"
+        },
+        "sigma95_m": {
+          "type": "number"
+        },
+        "size_m": {
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "model",
+            "color",
+            "oracle"
+          ],
+          "type": "string"
+        },
+        "still_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "synthetic": {
+          "type": "boolean"
+        },
+        "vehicle_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "find_id",
+        "vehicle_id",
+        "still_id",
+        "captured_at",
+        "label",
+        "kind",
+        "source",
+        "score",
+        "bbox",
+        "lat",
+        "lon",
+        "sigma95_m",
+        "size_m",
+        "synthetic",
+        "has_crop"
+      ],
+      "title": "DetectionRow",
+      "type": "object"
+    },
     "DetectorInfo": {
       "additionalProperties": false,
       "description": "Which detector looked at a still, and how it went.",
@@ -3635,6 +3728,84 @@
         }
       },
       "title": "Features",
+      "type": "object"
+    },
+    "Find": {
+      "additionalProperties": false,
+      "description": "One found object: detections of one class at the same place, joined\n(``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:\nonly a person confirms.",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "find_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "target",
+            "context"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "name_sv": {
+          "type": "string"
+        },
+        "score": {
+          "type": "number"
+        },
+        "sigma95_m": {
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "model",
+            "color",
+            "oracle"
+          ],
+          "type": "string"
+        },
+        "synthetic": {
+          "type": "boolean"
+        },
+        "thumb_detection_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "find_id",
+        "label",
+        "name_sv",
+        "kind",
+        "source",
+        "lat",
+        "lon",
+        "sigma95_m",
+        "score",
+        "count",
+        "thumb_detection_id",
+        "synthetic"
+      ],
+      "title": "Find",
       "type": "object"
     },
     "FindMeParams": {
@@ -4124,6 +4295,18 @@
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
+        "label": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{1,31}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "lat": {
           "maximum": 90,
           "minimum": -90,
@@ -4147,6 +4330,22 @@
           "maximum": 1000,
           "minimum": 0,
           "type": "number"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "model",
+                "color",
+                "oracle"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

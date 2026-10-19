@@ -24,6 +24,7 @@ import { useShellStore } from "../../state/shellStore";
 import { useUiStore } from "../../state/uiStore";
 import { useTheme } from "../../theme/theme";
 import type { ViewProps } from "../registry";
+import { FindCard } from "./FindCard";
 import {
   areasData,
   bounds,
@@ -32,6 +33,7 @@ import {
   drawData,
   droneData,
   type FC,
+  findsData,
   homeData,
   nextLabel,
   pilotRangeData,
@@ -89,6 +91,7 @@ const TOGGLES: ToggleId[] = [
   "track",
   "areas",
   "pins",
+  "finds",
   "paths",
 ];
 const TRACK_EVERY_MS = 500;
@@ -150,6 +153,7 @@ function overlayData(): Partial<Record<SourceId, FC>> {
     ),
     areas: areasData(anns),
     pins: pinsData(anns),
+    finds: findsData(Object.values(m.finds)),
   };
 }
 
@@ -177,6 +181,8 @@ export default function MapView({ isCompact }: ViewProps) {
   basemapRef.current = basemap;
   const [cursor, setCursor] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  const [findId, setFindId] = useState<string | null>(null);
+  const find = useMissionStore((s) => (findId ? (s.finds[findId] ?? null) : null));
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const savePinRef = useRef(noPin);
@@ -263,7 +269,8 @@ export default function MapView({ isCompact }: ViewProps) {
           s.commands !== p.commands ||
           s.activeCommandId !== p.activeCommandId ||
           s.sectors !== p.sectors ||
-          s.annotations !== p.annotations
+          s.annotations !== p.annotations ||
+          s.finds !== p.finds
         )
           push();
       }),
@@ -276,6 +283,26 @@ export default function MapView({ isCompact }: ViewProps) {
     return () => {
       clearInterval(tick);
       for (const u of unsubs) u();
+    };
+  }, [ready]);
+
+  // A new target find opens its card; a click on a find's marker opens that one.
+  useEffect(() => {
+    const h = handle.current;
+    if (!ready || !h) return;
+    const unsub = useMissionStore.subscribe((s, p) => {
+      if (s.finds === p.finds) return;
+      const fresh = Object.values(s.finds).find((f) => f.kind === "target" && !p.finds[f.find_id]);
+      if (fresh) setFindId(fresh.find_id);
+    });
+    const onFind = (e: { features?: { properties?: Record<string, unknown> }[] }): void => {
+      const id = e.features?.[0]?.properties?.id;
+      if (modeRef.current === "none" && typeof id === "string") setFindId(id);
+    };
+    h.map.on("click", "finds-point", onFind);
+    return () => {
+      unsub();
+      h.map.off("click", "finds-point", onFind);
     };
   }, [ready]);
 
@@ -638,6 +665,9 @@ export default function MapView({ isCompact }: ViewProps) {
           </p>
         ) : null}
         {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
+        {find && missionId && !isCompact ? (
+          <FindCard find={find} missionId={missionId} onClose={() => setFindId(null)} />
+        ) : null}
       </div>
       {mode !== "none" ? (
         <div className="map-draw" role="status" data-testid="draw-bar">

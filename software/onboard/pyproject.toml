@@ -6,9 +6,10 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "sd-schemas", "sd-safety", "sd-mav", "sd-link", "sd-obs", "sd-geo",
+  "sd-schemas", "sd-safety", "sd-mav", "sd-link", "sd-obs", "sd-geo", "sd-detect",
   "pydantic>=2.9",
   "shapely>=2.1",  # BSD-3-Clause
+  "pillow>=11",  # MIT-CMU, the JPEG thumbnails of detections
 ]
 
 [project.scripts]
