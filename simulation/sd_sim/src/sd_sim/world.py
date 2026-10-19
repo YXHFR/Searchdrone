@@ -62,6 +62,8 @@ BLADE_CP_M = 0.084
 CLA = 4.25
 BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
+# The stills camera a search scenario adds (the real camera's 66 degrees; 1280 x 720 in CI).
+STILLS = {"width": 1280, "height": 720, "hfov_deg": 66.0, "rate_hz": 1}
 
 # The world, in metres east/north of the landing pad.
 GROUND_SIZE_M = 1200.0
@@ -109,6 +111,11 @@ def stand_m(vehicle: str = MODEL_NAME) -> float:
     return fpv7.stand_m() if vehicle == fpv7.MODEL_NAME else STAND_M
 
 
+def stills_topic_prefix(instance: int) -> str:
+    """Where the instance's stills and labelled boxes are published (Gazebo Transport)."""
+    return f"/sd_i{instance}"
+
+
 def fpv7_context(instance: int) -> dict[str, Any]:
     ctx = fpv7.model_context(instance, ports.for_instance(instance))
     area = blade_area_m2(
@@ -127,9 +134,19 @@ def fpv7_context(instance: int) -> dict[str, Any]:
 
 
 def model_context(
-    instance: int, drone: Drone | None = None, vehicle: str = MODEL_NAME
+    instance: int,
+    drone: Drone | None = None,
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
 ) -> dict[str, Any]:
+    """``stills`` adds the stills camera and its bounding-box camera; ``video = False``
+    leaves out the video camera (it costs rendering time and a search does not need it).
+    Only sd_quad14 has that choice; sd_fpv7 always carries its video camera."""
     if vehicle == fpv7.MODEL_NAME:
+        if stills or not video:
+            raise ValueError("sd_fpv7 har bara videokameran; stillskameran finns på sd_quad14")
         return fpv7_context(instance)
     if vehicle != MODEL_NAME:
         raise ValueError(f"okänt fordon {vehicle!r}")
@@ -178,6 +195,16 @@ def model_context(
         "cla": CLA,
         "air_density": AIR_DENSITY,
         "camera": {**CAMERA, "hfov_rad": round(math.radians(CAMERA["hfov_deg"]), 6)},
+        "video": video,
+        "stills": (
+            {
+                **STILLS,
+                "hfov_rad": round(math.radians(STILLS["hfov_deg"]), 6),
+                "topic_prefix": stills_topic_prefix(instance),
+            }
+            if stills
+            else None
+        ),
     }
 
 
@@ -319,8 +346,15 @@ def _env() -> jinja2.Environment:
     )
 
 
-def model_sdf(instance: int, drone: Drone | None = None, vehicle: str = MODEL_NAME) -> str:
-    context = model_context(instance, drone, vehicle)
+def model_sdf(
+    instance: int,
+    drone: Drone | None = None,
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
+) -> str:
+    context = model_context(instance, drone, vehicle, stills=stills, video=video)
     return _env().get_template(f"models/{vehicle}/model.sdf.jinja").render(**context)
 
 
@@ -408,11 +442,20 @@ def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
     }
 
 
-def render_model(instance: int, repo: Path = paths.REPO, vehicle: str = MODEL_NAME) -> Path:
+def render_model(
+    instance: int,
+    repo: Path = paths.REPO,
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
+) -> Path:
     """Write the instance's model; returns its folder (``model://<vehicle>_i<N>``)."""
     out = repo / "build" / "sim" / "models" / f"{vehicle}_i{instance}"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "model.sdf").write_text(model_sdf(instance, vehicle=vehicle), encoding="utf-8")
+    (out / "model.sdf").write_text(
+        model_sdf(instance, vehicle=vehicle, stills=stills, video=video), encoding="utf-8"
+    )
     (out / "model.config").write_text(model_config(instance, vehicle), encoding="utf-8")
     return out
 
@@ -438,8 +481,12 @@ def render_world(
     repo: Path = paths.REPO,
     placed: Sequence[objects.WorldObject] = (),
     vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
 ) -> Path:
     """Write the instance's world and model, the objects' facit and the GeoJSON layer.
+    ``stills`` and ``video`` choose the vehicle's cameras.
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
     the layer only depends on the fixture's home and the fixed scenery. The facit
@@ -449,8 +496,10 @@ def render_world(
     if name in sites:
         from sd_sim import site_world
 
-        return site_world.render(sites[name], instance, repo, placed, vehicle=vehicle)
-    render_model(instance, repo, vehicle)
+        return site_world.render(
+            sites[name], instance, repo, placed, vehicle=vehicle, stills=stills, video=video
+        )
+    render_model(instance, repo, vehicle, stills=stills, video=video)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)

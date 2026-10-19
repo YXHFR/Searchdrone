@@ -104,3 +104,16 @@ def test_boxes_by_class() -> None:
     assert render_stills.boxes_by_class(raw, {1: "red_block"}) == [
         {"cls": "red_block", "x": 10.0, "y": 20.0, "w": 20.0, "h": 5.0}
     ]
+
+
+def test_prune_keeps_the_newest(tmp_path: Path) -> None:
+    for n in range(5):
+        gz_stills.write_still(tmp_path, f"{n:08d}", n, (1, 1, b"\x00\x00\x00"), [])
+    assert gz_stills.prune(tmp_path, 2) == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "00000003.json",
+        "00000003.ppm",
+        "00000004.json",
+        "00000004.ppm",
+    ]
+    assert gz_stills.prune(tmp_path, 2) == 0

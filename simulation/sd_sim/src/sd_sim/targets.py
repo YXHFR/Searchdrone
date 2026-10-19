@@ -26,7 +26,7 @@ from typing import Any
 from sd_detect.classes import ClassRegistry, default_registry
 from sd_sim import fixture, objects, world
 
-__all__ = ["SCENARIOS", "TEMPLATE", "Target", "layout", "search_box"]
+__all__ = ["SCENARIOS", "TEMPLATE", "Scene", "Target", "layout", "search_box"]
 
 TEMPLATE = "objects/sd_target.sdf.jinja"
 
@@ -45,6 +45,17 @@ MIN_GAP_M = 12.0  # between any two objects' centres
 ROAD_CLEAR_M = 7.0  # targets stay this far from the road's centre line
 
 SCENARIOS = ("SK-RED",)
+
+
+@dataclass(frozen=True)
+class Scene:
+    """A search scenario's objects in the world: which scenario and which seed."""
+
+    scenario: str = "SK-RED"
+    seed: int = 1
+
+    def objects(self, fix: fixture.Fixture | None = None) -> list[Target]:
+        return layout(self.scenario, self.seed, fix)
 
 
 @dataclass(frozen=True)

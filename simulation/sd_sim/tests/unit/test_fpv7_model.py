@@ -166,6 +166,12 @@ def test_world_includes_the_chosen_model(tmp_path: Path) -> None:
         world.model_context(0, vehicle="x8")
 
 
+@pytest.mark.parametrize(("stills", "video"), [(True, True), (False, False)])
+def test_fpv7_refuses_the_search_cameras(stills: bool, video: bool) -> None:
+    with pytest.raises(ValueError, match="stillskameran"):
+        world.model_context(0, vehicle=fpv7.MODEL_NAME, stills=stills, video=video)
+
+
 # --- builtin physics and parameters --------------------------------------------------------
 
 
