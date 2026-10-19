@@ -1,13 +1,14 @@
 [project]
 name = "sd-detect"
 version = "0.0.0"
-description = "The person-detector interface and a null detector."
+description = "The detector interface, the class register and the detector sources."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "sd-schemas",
   "pydantic>=2.9",
+  "numpy>=2.0",  # BSD-3-Clause, the colour detector's pixel arithmetic
 ]
 
 [build-system]

@@ -4,6 +4,8 @@ Geometry helpers in a local east/north plane (metres):
 
 - `lawnmower`: the back-and-forth search pattern over a polygon (also concave ones).
 - `coverage_fraction`: how much of a polygon a flown track has covered.
+- `georef`: from a pixel in a still to a point on the ground (`ground_offset`) and back
+  (`project`), the picture's footprint, pixels per metre and the 95 % position error.
 
 Projection between WGS84 and the plane, distances and containment come from the safety
 gate (`sd_safety.targets`), so the gate and the executor measure with the same geometry.
