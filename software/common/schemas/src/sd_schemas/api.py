@@ -82,6 +82,8 @@ __all__ = [
     "Vehicle",
     "VehicleLive",
     "VideoConfig",
+    "WindCheck",
+    "WindReason",
 ]
 
 CHAT_MAX_CHARS = 4000
@@ -246,6 +248,37 @@ class Attitude(SdModel):
     yaw_deg: float = Field(ge=0, lt=360)
 
 
+WindReason = Literal["TILT_MARGIN", "ENERGY_HOME", "WIND_LIMIT"]
+
+
+class WindCheck(SdModel):
+    """The ground station's "too windy" warning. A warning only: nothing on board or on
+    the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
+    calibrated against flight logs, so ``calibrated`` is always false for now.
+
+    * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
+      the flight controller's lean limit (ATC_ANGLE_MAX).
+    * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
+      margin, would leave less than the flight controller's low-battery reserve.
+    * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
+      when EK3_DRAG_* are set) is over the configured wind limit.
+    """
+
+    warning: bool
+    reasons: list[WindReason]
+    calibrated: Literal[False] = False
+    tilt_avg_deg: float | None  # None until 10 s of attitude in the air
+    tilt_warn_deg: float
+    wind_ms: float | None  # mean of WIND over the last 60 s; None without WIND
+    wind_gust_ms: float | None  # highest WIND over the last 60 s
+    wind_from_deg: float | None
+    wind_limit_ms: float
+    wind_gust_limit_ms: float | None  # None: no gust limit at this stage
+    home_mah: float | None  # estimated cost of flying home now, margin included
+    left_mah: float | None
+    reserve_mah: float
+
+
 class Telemetry(SdModel):
     """From the ground station's own MAVLink channel."""
 
@@ -270,6 +303,8 @@ class Telemetry(SdModel):
     # None when the flight controller has sent no ATTITUDE within the last second; the
     # panel then draws no horizon rather than a guessed one.
     attitude: Attitude | None = None
+    # The ground station's wind warning; None until the ground has computed one.
+    wind: WindCheck | None = None
 
 
 class LinkStatus(SdModel):

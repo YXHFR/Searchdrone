@@ -98,8 +98,14 @@ FC_SAFETY_EXPECTED: Final = MappingProxyType(
         "MAV_GCS_SYSID": 250,
         "BATT_FS_LOW_ACT": 3,
         "BATT_FS_CRT_ACT": 1,
+        # Read by the ground station's wind warning (sd_ground.services.wind).
+        "BATT_CAPACITY": 10000,  # mAh, the 6S2P Li-ion pack
+        "BATT_LOW_MAH": 1500,  # the flight controller's low-battery reserve
+        "RTL_SPEED_MS": 8,  # ground speed on the way home
     }
 )
+# ATC_ANGLE_MAX: the safety file leaves ArduPilot's default (30 degrees in Copter-4.7.1).
+FC_ANGLE_MAX_DEG: Final = 30.0
 
 # What the flight controller can represent (ArduPilot Copter 4.7 parameter ranges).
 FC_FENCE_ALT_MAX_RANGE_M: Final = (10.0, 1000.0)
