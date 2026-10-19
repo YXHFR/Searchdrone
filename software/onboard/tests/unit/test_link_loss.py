@@ -14,6 +14,7 @@ from onboard_helpers import PLANE, Rig, at, charter, rig
 from test_limits import C, vs
 
 from sd_mav.modes import CopterMode
+from sd_mav.vehicle import SendOrigin
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO, LinkLossInput, LinkLossRule
 from sd_onboard.io.persistence import StateStore
 from sd_safety.constants import FIND_HOVER_EDGE_MARGIN_M, FIND_HOVER_S, LINK_LOSS_DETECT_S
@@ -382,6 +383,26 @@ async def test_gcs_lost_in_a_takeover_goes_home_but_not_in_an_rc_mode() -> None:
         await r.run(2)
         assert r.fc.mode == CopterMode.POSHOLD
         assert "executor.gcs_lost_rtl_held" not in r.up.kinds()
+
+
+async def test_gcs_home_from_a_hold_yields_to_the_rc_switch_and_newer_notices() -> None:
+    """The HELD exception covers only the home mode change, never what the pilot did since."""
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(1)
+        r.ex._gcs_home_notice = r.ex.auth.notice_mono_ms
+        r.ex._gcs_home_sending = True
+        assert r.ex.send_gate(SendOrigin.LIMIT) is None
+        assert r.ex.send_gate(SendOrigin.SKILL) == "control_held"
+        r.fc.set_mode_external(CopterMode.POSHOLD)  # the RC switch, mid-way
+        await r.run(1)
+        assert r.ex.send_gate(SendOrigin.LIMIT) == "mode_POSHOLD"
+        r.fc.set_mode_external(CopterMode.LOITER)
+        await r.run(1)
+        r.ex.on_override(r.notice("stop"))  # a newer STOP or guard notice
+        assert r.ex.send_gate(SendOrigin.LIMIT) == "override_notice"
 
 
 async def test_keepout_install_highest_seq_wins() -> None:

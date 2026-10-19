@@ -356,6 +356,7 @@ class Executor:
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_held = False  # L-GCS sent the home mode for this operator hold
         self._gcs_home_sending = False  # ... and that one mode change is under way
+        self._gcs_home_notice: int | None = None  # the last override notice when it began
         self._taken_by: str | None = None  # who took over from the executor, for L-FIND
         self._find_record: dict[str, Any] | None = None  # the running find hover's record
         self.pilot = PilotTracker()
@@ -454,7 +455,11 @@ class Executor:
             return None  # startup traffic; the fallback path has its own rules
         now = self.now_ms()
         if self._gcs_home_sending and self.state == S.HELD and origin is SendOrigin.LIMIT:
-            return None  # L-GCS from an operator hold: only its own home mode change
+            # L-GCS from an operator hold may pass HELD, but not over a newer notice (STOP,
+            # FLY HOME, a guard) or a mode the pilot chose on the RC switch since.
+            if self.auth.notice_mono_ms != self._gcs_home_notice:
+                return "override_notice"
+            return self.auth.mode_problem(self.vehicle.telemetry, now)
         if self.state in (S.HELD, S.FAILSAFE) or self.control_suspended:
             return "control_held"
         if self.auth.notice_recent(now):
@@ -620,11 +625,14 @@ class Executor:
         await self.fallback.idle()  # a STOP's own chain first, then home over it
         if self.state != S.HELD or self.held_by not in _GCS_HOME_HOLDS:
             return
+        self._gcs_home_notice = self.auth.notice_mono_ms
         self._gcs_home_sending = True
         try:
             for mode in (CopterMode.SMART_RTL, CopterMode.RTL):
                 if await self.set_mode(mode, SendOrigin.LIMIT):
                     return
+                if self.auth.notice_mono_ms != self._gcs_home_notice:
+                    return  # a newer notice has its own chain: no RTL over it
             log.warning("executor: L-GCS home from the hold not confirmed")
         except (ControlNotAllowedError, ForbiddenMavlinkError) as exc:
             log.warning("executor: L-GCS home from the hold refused: %s", _refusal_reason(exc))
