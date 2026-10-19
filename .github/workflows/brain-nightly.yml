@@ -43,8 +43,12 @@ jobs:
       - name: Grade trend
         if: always() && env.HAS_KEY == 'true'
         run: uv run --no-sync sd-brain scores
-      - name: Upload the grades (JSON only)
+      - name: No orthophotos in the grades
+        id: ortho
         if: always() && env.HAS_KEY == 'true'
+        run: python3 tools/check_no_orthophotos.py data/brain-scores data/reports
+      - name: Upload the grades (JSON only)
+        if: always() && env.HAS_KEY == 'true' && steps.ortho.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: brain-scores

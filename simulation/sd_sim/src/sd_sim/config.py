@@ -31,6 +31,10 @@ SCRIPTED_SITE_REFUSED = (
     "brain=scripted fungerar bara i den platta testvärlden sd_lake_forest: manusen har "
     "nålar, ramar och höjder för den."
 )
+GI_SITE_ONLY = (
+    "gi=vct (global belysning för kameran) fungerar bara med physics=gz i en platsvärld, "
+    "t.ex. world=sd_hellasgarden."
+)
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
 _TRUE = ("1", "true", "yes", "on")
@@ -69,6 +73,7 @@ class SimConfig:
     open_browser: bool = True
     home: str = CMAC_HOME
     personal_home: bool = False
+    gi: str = "off"  # "off" | "vct": global illumination for the cameras (sd_sim.site_world)
 
 
 def _bool(key: str, value: Any) -> bool:
@@ -165,6 +170,7 @@ def load(
     cfg.lan = _bool("lan", merged.get("lan", False))
     cfg.private_db = _bool("private_db", merged.get("private_db", False))
     cfg.open_browser = _bool("open.browser", merged.get("open_browser", True))
+    cfg.gi = _choice("gi", merged.get("gi", "off"), ("off", "vct"))
     home = str(merged.get("home_override", "")).strip()
     if home and not demo:
         if not _HOME.match(home):
@@ -185,4 +191,6 @@ def load(
                 cfg.personal_home = not public
         except site.SiteError as exc:
             raise ConfigError(str(exc)) from exc
+    if cfg.gi != "off" and (cfg.world not in sites or cfg.physics != "gz"):
+        raise ConfigError(GI_SITE_ONLY)
     return cfg

@@ -28,5 +28,8 @@ Fetched by the tools into build/ and never committed. Simulator pictures made wi
 - tools/terrain/fetch_site.py with [dem] source = "lantmateriet-mhm": Markhöjdmodell
   (c) Lantmäteriet, CC BY 4.0; processed. A public site that switches to it commits a
   dem.asc under CC BY 4.0: change its REUSE.toml annotation and this file with it.
-- tools/terrain/fetch_site.py, local sites only: Lantmäteriet's orthophoto with the
-  owner's own login, never committed or uploaded anywhere.
+- tools/terrain/fetch_ortho.py (just ortho-fetch) and tools/terrain/fetch_site.py for
+  local sites: Lantmäteriet's orthophoto (c) Lantmäteriet, CC BY 4.0; resampled. Fetched
+  with the owner's own Geotorget login and never committed, uploaded or cached anywhere
+  (tools/check_no_orthophotos.py); pictures of a world draped with it stay on the
+  owner's computer too and say so in their ATTRIBUTION.txt.

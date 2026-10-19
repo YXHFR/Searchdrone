@@ -161,7 +161,7 @@ jobs:
         run: |
           if [ -f runs/summary.md ]; then cat runs/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
       - &scan
-        name: No secrets in the test results
+        name: No secrets or orthophotos in the test results
         id: scan
         if: always()
         run: |
@@ -172,6 +172,7 @@ jobs:
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" dir runs/ --config .gitleaks.toml --redact --exit-code 1
+          python3 tools/check_no_orthophotos.py runs/
       - &results
         name: Upload results
         if: always() && steps.scan.outcome == 'success'
@@ -515,6 +516,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - *logs
+      # The cache above is saved when the job has passed: nothing it may hold looks like
+      # an orthophoto.
+      - name: No orthophotos in what the job caches
+        run: python3 tools/check_no_orthophotos.py build/
 
   sitl-e2e:
     # The panel in a browser against the simulator and the scripted commander, logged in

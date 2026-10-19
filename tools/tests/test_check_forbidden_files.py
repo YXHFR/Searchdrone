@@ -396,3 +396,11 @@ def test_unreadable_git_content_fails_closed(tmp_path: Path) -> None:
 
     found = cff.check_files([("software/x/a.py", broken)], PLACES, None)
     assert [f.rule for f in found] == ["unreadable"]
+
+
+def test_orthophoto_like_files_are_blocked() -> None:
+    found = cff.check_files([("sim/ortho.npy", lambda _p: None)], [], None)
+    assert [f.rule for f in found] == ["orthophoto"]
+    meta = b'{"ground_texture": "orthophoto"}'
+    found = cff.check_files([("runs/x/metrics.json", lambda _p: meta)], [], None)
+    assert "orthophoto" in [f.rule for f in found]

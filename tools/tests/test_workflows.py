@@ -245,3 +245,29 @@ def test_brain_nightly_runs_only_from_main_with_the_secret() -> None:
     assert all(p.endswith(".json") for p in upload["with"]["path"].split())  # no images
     exam = next(s for s in job["steps"] if s.get("name") == "Short cloud exam")
     assert "--max-cost-sek" in exam["run"]
+
+
+UPLOADS = ("actions/upload-artifact@", "actions/upload-pages-artifact@")
+ORTHO_CHECK = "tools/check_no_orthophotos.py"
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=ids(WORKFLOWS))
+def test_nothing_is_uploaded_or_cached_without_the_orthophoto_check(path: Path) -> None:
+    """Orthophotos stay on the owner's computer: every job checks what it uploads before
+    the upload (and an upload that runs after a failure waits for that check to pass),
+    and what it caches after the last step that could have written it."""
+    for name, job in load(path).get("jobs", {}).items():
+        job_steps = job.get("steps", [])
+        checks = [i for i, s in enumerate(job_steps) if ORTHO_CHECK in str(s.get("run", ""))]
+        for i, step in enumerate(job_steps):
+            uses = str(step.get("uses", ""))
+            where = f"{path.name} {name}: {step.get('name', uses)}"
+            if uses.startswith(UPLOADS):
+                before = [job_steps[c] for c in checks if c < i]
+                assert before, f"{where}: no {ORTHO_CHECK} before the upload"
+                cond = str(step.get("if", ""))
+                if "always()" in cond or "failure()" in cond:
+                    ids_ok = [f"steps.{s['id']}.outcome == 'success'" for s in before if "id" in s]
+                    assert any(x in cond for x in ids_ok), f"{where}: uploads after a failed check"
+            if uses.startswith("actions/cache@"):
+                assert any(c > i for c in checks), f"{where}: no {ORTHO_CHECK} after the cache"

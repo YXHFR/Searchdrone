@@ -8,6 +8,19 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Photo mode for the simulator: `just ortho-fetch site=hellasgarden` fetches
+  Lantmäteriet's newest colour orthophoto over the site (0.16 m per pixel, all tiles of the
+  newest flight year, colour only) with the owner's own Geotorget login from a gitignored
+  `config/geotorget.local.toml` (example in `config/geotorget.example.toml`) to
+  `build/ortho/<site>/`, never in CI. The terrain then shows the photo on the open ground
+  and keeps the painted forest floor under every tree's crown, where the world's own trees
+  stand; without the photo the world is the same file for file. `just sim-photo` checks
+  that the photo is there (and says how to get it) and starts `just sim` in the site world
+  with `gi=vct`: Gazebo's voxel cone tracing for the cameras, also `just sim gi=vct` in a
+  site world. `just world-snapshot` takes `gi=` and writes the real-time factor and the
+  graphics card's memory in use while the cameras render. `tools/check_no_orthophotos.py`
+  fails CI when anything that looks like an orthophoto is in git (also its history), an
+  uploaded artifact or the cache; every upload and cache in the workflows runs it first.
 - Simulator exams for the AI commander: `sd-brain eval --backend sim` (`just
   brain-eval-sim`) flies random search scenarios with an answer key in a fast 2D world
   through the real commander loop and a gate with the area, height and speed rules. The

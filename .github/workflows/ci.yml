@@ -95,14 +95,18 @@ jobs:
             pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium firefox webkit
             just test-panel-e2e
           fi
-      - name: Upload the tests' screenshots (mock data only)
+      - name: No orthophotos in the screenshots
+        id: ortho
         if: always()
+        run: python3 tools/check_no_orthophotos.py software/panel/test-results
+      - name: Upload the tests' screenshots (mock data only)
+        if: always() && steps.ortho.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: panel-screenshots
           path: software/panel/test-results/**/*.png
       - name: Screenshots of the drawn-path flow
-        if: always()
+        if: always() && steps.ortho.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: panel-e2e-screenshots
@@ -125,8 +129,12 @@ jobs:
         run: |
           pnpm --filter @searchdrone/panel exec playwright install --with-deps chromium
           just panel-screens
-      - name: Upload the screenshots
+      - name: No orthophotos in the screenshots
+        id: ortho
         if: always()
+        run: python3 tools/check_no_orthophotos.py software/panel/screens
+      - name: Upload the screenshots
+        if: always() && steps.ortho.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: panel-screens
@@ -203,6 +211,8 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
       - run: just build
+      - name: No orthophotos in the build
+        run: python3 tools/check_no_orthophotos.py dist software/panel/dist
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build

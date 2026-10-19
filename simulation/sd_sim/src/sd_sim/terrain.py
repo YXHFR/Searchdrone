@@ -9,8 +9,10 @@ the tree pictures; nothing is downloaded here:
 
 - Terrain: a mesh every ``MESH_STEP_M`` in ``TILES`` x ``TILES`` tiles, each with its own
   texture painted from the map layers (forest floor, meadow, lake, asphalt, gravel, road
-  markings) with deterministic noise, about 0.15 m per pixel. A local site with an
-  orthophoto uses the photo instead.
+  markings) with deterministic noise, about 0.15 m per pixel. With a fetched orthophoto
+  (``just ortho-fetch``; ``Site.ortho``) the open ground shows the photo instead, and the
+  painted forest floor stays under every tree's crown (``photo_cover``): the photo shows
+  the trees from above, and the world's own trees stand there.
 - Forest: the site's real trees where they have been fetched (``just trees-fetch``: every
   tree where Skogsstyrelsen's tree height raster has it, as tall as it says, its species
   from Naturvårdsverket's land cover map), as textured models when the tree pictures have
@@ -67,6 +69,11 @@ REAL_TREE_ROOF_M = 1.0
 PARKING_STALL_M = (2.6, 5.2)
 PARKING_OCCUPANCY = 0.5
 CAR_SIZE_M = (4.5, 1.8, 1.5)
+# Under a tree the ground keeps its painted floor out to this much more than the crown
+# (the photo's crowns lean away from where it was taken), blended over PHOTO_EDGE_M.
+PHOTO_CROWN_SCALE = 1.15
+PHOTO_CROWN_MARGIN_M = 0.5
+PHOTO_EDGE_M = 0.6
 
 Grid = NDArray[np.floating[Any]]
 Rgb = tuple[int, int, int]
@@ -468,16 +475,54 @@ def paint_tile(site: Site, paint: Paint, ti: int, tj: int, px: int, seed: int) -
     marks = mask(paint.markings)
     rgb[marks] = (224, 224, 214)
     if site.ortho is not None:
-        rgb = ortho_tile(site, west, north, size, px)
+        near = [
+            c
+            for c in paint.crowns
+            if bounds[0] - 15 < c[0] < bounds[2] + 15 and bounds[1] - 15 < c[1] < bounds[3] + 15
+        ]
+        cover = photo_cover(near, ex, ny, west, north, step)[..., None]
+        rgb = ortho_tile(site, west, north, size, px) * (1.0 - cover) + rgb * cover
     return np.clip(np.round(rgb), 0, 255).astype(np.uint8)
 
 
+def photo_cover(
+    crowns: Sequence[tuple[float, float, float]],
+    ex: Grid,
+    ny: Grid,
+    west: float,
+    north: float,
+    step: float,
+) -> Grid:
+    """Where the painted floor stays instead of the photo: 1 under a tree's crown (scaled
+    by PHOTO_CROWN_SCALE plus PHOTO_CROWN_MARGIN_M), 0 on open ground, soft in between."""
+    cover = np.zeros(ex.shape)
+    rows, cols = ex.shape
+    for cx, cy, r in crowns:
+        reach = r * PHOTO_CROWN_SCALE + PHOTO_CROWN_MARGIN_M
+        c0 = max(int((cx - reach - west) / step), 0)
+        c1 = min(int((cx + reach - west) / step) + 1, cols)
+        r0 = max(int((north - cy - reach) / step), 0)
+        r1 = min(int((north - cy + reach) / step) + 1, rows)
+        if c1 <= c0 or r1 <= r0:
+            continue
+        d = np.hypot(ex[r0:r1, c0:c1] - cx, ny[r0:r1, c0:c1] - cy)
+        f = np.clip((reach - d) / PHOTO_EDGE_M, 0.0, 1.0)
+        cover[r0:r1, c0:c1] = np.maximum(cover[r0:r1, c0:c1], f)
+    return cover
+
+
 def ortho_tile(site: Site, west: float, north: float, size: float, px: int) -> Grid:
-    """The tile cut from a local site's orthophoto (``ortho.npy``, 0.25 m per pixel)."""
+    """The tile cut from the site's orthophoto (``ortho.npy``: n x n x 3 bytes, row 0
+    north, covering the site edge to edge; 0.16 m per pixel from ``just ortho-fetch``)."""
     if site.ortho is None:
         raise ValueError(f"{site.name} har inget ortofoto")
-    photo = np.load(site.ortho)
+    photo = np.load(site.ortho, mmap_mode="r")
     n = photo.shape[0]
+    if photo.dtype != np.uint8 or photo.ndim != 3 or photo.shape[1:] != (n, 3):
+        raise ValueError(
+            f"{site.ortho}: väntade n x n x 3 byte, fick {photo.shape} {photo.dtype}; "
+            "hämta igen med just ortho-fetch"
+        )
     cell = 2 * site.half_size_m / n
     xs = west + (np.arange(px) + 0.5) * size / px
     ys = north - (np.arange(px) + 0.5) * size / px
@@ -1067,6 +1112,7 @@ def build(
     stats = {
         "trees": len(trees),
         **tree_stats,
+        **({"ground_texture": "orthophoto"} if site.ortho is not None else {}),
         "buildings": len(buildings),
         "cars": len(cars),
         "terrain_triangles": sum(m.triangles() for _, _, m in tiles),

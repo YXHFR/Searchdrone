@@ -1,0 +1,13 @@
+# Your own Lantmäteriet Geotorget login, for `just ortho-fetch` and the local sites in
+# `just world-fetch`. Copy this file to config/geotorget.local.toml (gitignored, never
+# committed), fill in your account and make it readable by you only:
+#
+#   cp config/geotorget.example.toml config/geotorget.local.toml
+#   chmod 600 config/geotorget.local.toml
+#
+# SD_LM_USER and SD_LM_PASSWORD in the environment win over this file. The login is only
+# handed to GDAL while it downloads; it is never printed or written anywhere else.
+
+[geotorget]
+user = ""
+password = ""

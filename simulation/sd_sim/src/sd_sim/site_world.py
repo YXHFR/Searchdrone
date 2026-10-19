@@ -33,6 +33,21 @@ TEMPLATE = "worlds/sd_site.sdf.jinja"
 PAD_SIZE_M = 3.0
 # The fixture's search height must clear the tallest thing under the charter by this much.
 SEARCH_CLEARANCE_M = 25.0
+# Global illumination for the cameras (``gi=vct``): Gazebo's voxel cone tracing in the
+# Sensors system (ogre2 only). Light bounces off the ground and the trees into the
+# shadows, so a camera looking down sees the ground's own colours, as in an aerial photo,
+# rather than the flat ambient term. Voxels over the whole site: 256 x 256 cells of
+# 4.7 m across a 1.2 km world and 32 layers of height; three bounces.
+GI_VCT = {
+    "resolution": "256 256 32",
+    "octant_count": "1 1 1",
+    "bounce_count": 3,
+    "high_quality": "false",
+    "anisotropic": "true",
+    "thin_wall_counter": 1.0,
+    "conserve_memory": "true",
+}
+GI_MODES = ("off", "vct")
 
 
 def frame(s: site.Site, ground: terrain.Ground) -> world.Frame:
@@ -49,7 +64,10 @@ def world_sdf(
     placed: Sequence[objects.WorldObject] = (),
     cameras: Sequence[str] = (),
     vehicle: str = world.MODEL_NAME,
+    gi: str = "off",
 ) -> str:
+    if gi not in GI_MODES:
+        raise ValueError(f"gi ska vara en av {', '.join(GI_MODES)}, inte {gi!r}")
     fr = frame(s, ground)
     objects.check(placed, s.half_size_m)
     return (
@@ -67,6 +85,7 @@ def world_sdf(
             model_uri=f"model://{vehicle}_i{instance}",
             vehicle_z=world.stand_m(vehicle),
             vehicle_yaw=round(math.radians(90.0 - s.heading_deg), 6),
+            gi=GI_VCT if gi == "vct" else None,
         )
     )
 
@@ -82,6 +101,7 @@ def render(
     vehicle: str = world.MODEL_NAME,
     stills: bool = False,
     video: bool = True,
+    gi: str = "off",
 ) -> Path:
     s = site.load(site_name, repo)
     terrain.build(s, repo, progress=progress)
@@ -89,7 +109,7 @@ def render(
     world.render_model(instance, repo, vehicle, stills=stills, video=video)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
-    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle)
+    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, gi)
     truth = world.world_truth(s.world, placed, frame=frame(s, ground))
     path = out / f"{s.world}_i{instance}.sdf"
     path.write_text(sdf, encoding="utf-8")
