@@ -33,6 +33,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The nightly Gazebo job caches only the CC0 tree pictures (`build/tree_models`). The
+  real trees (`build/trees`, derived from Skogsstyrelsen's tree height raster, which may
+  not be redistributed) are fetched again on every run and never stored in the GitHub
+  Actions cache, which pull request workflows, also from forks, can restore.
 - The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY
   10000` in `searchdrone-safety.parm` with the reserves kept at 15 % and 7 %
   (`BATT_LOW_MAH 1500`, `BATT_CRT_MAH 700`), `capacity_mah` in `hardware/drone.yaml` and

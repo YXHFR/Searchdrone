@@ -245,3 +245,26 @@ def test_brain_nightly_runs_only_from_main_with_the_secret() -> None:
     assert all(p.endswith(".json") for p in upload["with"]["path"].split())  # no images
     exam = next(s for s in job["steps"] if s.get("name") == "Short cloud exam")
     assert "--max-cost-sek" in exam["run"]
+
+
+# Paths under build/ that a workflow may cache or upload. Everything else there can hold
+# data that must not leave the runner: the tree list and raster crop in build/trees
+# (Skogsstyrelsen's terms forbid redistribution), a site's map data in build/sites and the
+# generated world in build/sim. A cache saved on main can be restored by any pull
+# request's workflow, so a cached path counts as published.
+SHAREABLE_BUILD_PATHS = ("build/cad/fpv7/", "build/cad/vendor", "build/tree_models")
+STORING_ACTIONS = ("actions/cache", "actions/upload-artifact", "actions/upload-pages-artifact")
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
+def test_only_shareable_build_paths_are_cached_or_uploaded(path: Path) -> None:
+    for step in steps(load(path)):
+        if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
+            continue
+        for line in str(step.get("with", {}).get("path", "")).splitlines():
+            entry = line.strip()
+            if entry.startswith("!") or "build" not in entry:
+                continue
+            assert entry.startswith(SHAREABLE_BUILD_PATHS), (
+                f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
+            )
