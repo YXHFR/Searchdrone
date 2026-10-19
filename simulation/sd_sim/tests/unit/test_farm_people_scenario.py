@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from sd_detect.classes import default_registry
 from sd_sim import objects, world
 from sd_sim.farm import people, scenario
 from sd_sim.farm.people import CATALOG, Person, PersonModel
@@ -27,6 +28,11 @@ def test_catalog_is_pinned_and_licensed() -> None:
         assert m.url.startswith("https://fuel.gazebosim.org/1.0/")
         x0, x1, y0, y1, z0, z1 = m.bounds_m
         assert x0 < x1 and y0 < y1 and z0 == 0.0 and 0.5 < z1 < 2.1
+
+
+def test_person_label_is_the_class_registers() -> None:
+    labels = {spec.id: spec.params.get("gz_label") for spec in default_registry()}
+    assert labels["person"] == people.PERSON_LABEL
 
 
 def test_person_sdf_passes_the_world_check() -> None:
