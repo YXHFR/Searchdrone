@@ -31,8 +31,15 @@ from sd_sim import objects, paths, site, terrain, world
 
 TEMPLATE = "worlds/sd_site.sdf.jinja"
 PAD_SIZE_M = 3.0
-# The fixture's search height must clear the tallest thing under the charter by this much.
+# The fixture's search height must clear the tallest thing under the charter by this much,
+# in whole SEARCH_STEP_M.
 SEARCH_CLEARANCE_M = 25.0
+SEARCH_STEP_M = 5.0
+
+
+def search_floor_m(top_m: float) -> float:
+    """The lowest search height that keeps ``SEARCH_CLEARANCE_M`` over ``top_m``."""
+    return math.ceil((top_m + SEARCH_CLEARANCE_M) / SEARCH_STEP_M) * SEARCH_STEP_M
 
 
 def frame(s: site.Site, ground: terrain.Ground) -> world.Frame:
@@ -163,7 +170,7 @@ def fixture_yaml(s: site.Site, ground: terrain.Ground, repo: Path = paths.REPO) 
     south, north = min(-100.0, cy - 100.0), max(300.0, cy + 100.0)
     test["area_enu"] = [[west, south], [east, south], [east, north], [west, north]]
     top = tallest(s, ground, shapely.box(west, south, east, north))
-    alt = max(float(base["survey_box"]["alt_m"]), math.ceil((top + SEARCH_CLEARANCE_M) / 5) * 5)
+    alt = max(float(base["survey_box"]["alt_m"]), search_floor_m(top))
     if alt > float(test["alt_max_agl_m"]):
         raise ValueError(
             f"{s.name}: the search height {alt:g} m over the tallest ground and trees "

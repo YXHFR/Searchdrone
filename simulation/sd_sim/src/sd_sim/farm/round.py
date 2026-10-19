@@ -61,6 +61,11 @@ class RoundError(RuntimeError):
     """The round could not run (the simulator, a missing model, a broken still)."""
 
 
+class SkippedError(RoundError):
+    """The round is not flown (its height cannot clear the trees under the charter's
+    ceiling). Exit 3 like an error, with status ``skipped`` and the reason."""
+
+
 class NotBuiltError(RoundError):
     """The round runner needs a part of the simulator that is not built yet. The round
     contract's exit 2: the loop stops instead of counting a failure. No runner raises it
@@ -352,6 +357,10 @@ def _execute(spec_path: Path, runner: Runner) -> int:
     except NotBuiltError as exc:
         write_result(out, spec, {"status": "not_built", "error": str(exc)})
         return EXIT_NOT_BUILT
+    except SkippedError as exc:
+        write_result(out, spec, {"status": "skipped", "error": str(exc)})
+        print(f"sd_sim.farm round: {exc}", file=sys.stderr)  # noqa: T201
+        return EXIT_ERROR
     except (RoundError, OSError, ValueError, KeyError) as exc:
         write_result(out, spec, {"status": "error", "error": f"{type(exc).__name__}: {exc}"})
         return EXIT_ERROR

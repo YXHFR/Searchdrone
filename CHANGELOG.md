@@ -125,7 +125,12 @@ All notable changes to this project are listed here. The format follows
   drawn from noise and repeated every 60 m) instead of one flat green, so pictures from
   the air show ground texture; the colour stays away from red, and SK-RED still passes on
   it. A readable `config/simfarm.toml` that holds an R2 key now stops the farm
-  (`chmod 600`) instead of warning, and uploads never follow a link.
+  (`chmod 600`) instead of warning, and uploads never follow a link. A round's drawn
+  height is raised to clear the highest ground or tree top where it can fly (home, the
+  search box and the straight way home, 15 m wider) by the site fixtures' 25 m, in whole
+  5 m, below the test charter's ceiling; with `commander=sd-brain` the charter's lowest
+  height is the round's, so the gate rejects lower orders. A round that cannot clear the
+  trees is skipped before the simulator starts, with the reason in `round.json`.
 - "Too windy" warning on the ground station (`sd_ground.services.wind`), a warning only:
   nothing on board or on the ground acts on it, and STOP, FLY HOME and the flight
   controller's failsafes are unchanged. `Telemetry.wind` (`WindCheck`) carries three
