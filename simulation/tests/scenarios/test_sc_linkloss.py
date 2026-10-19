@@ -41,6 +41,7 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     survey_box_enu,
 )
 
+from sd_onboard.io.persistence import FIND_HOLDS
 from sd_safety.constants import (
     FC_LOITER_CAP_S,
     FIND_HOVER_EDGE_MARGIN_M,
@@ -303,7 +304,8 @@ async def _hover_checks(
 
 @pytest.mark.budget_s(420)
 async def test_ll4_find_sdlink_lost(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
-    async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
+    state = tmp_path / "onboard"
+    async with scenario(sim, migrated_db, tmp_path, proxied_link=True, state_dir=state) as sc:
         await sc.airborne()
         try:
             down, (flat, flon, hlat, hlon) = await _find_hover(sc, mavlink=True)
@@ -323,10 +325,7 @@ async def test_ll4_find_sdlink_lost(sim: Any, migrated_db: Any, tmp_path: Path) 
         assert started and ended, (started, ended)
         assert ended[-1]["payload"]["reason"] == "timeout"
         keepout = started[-1]["payload"]["keepout_id"]
-        lines = [
-            json.loads(line)
-            for line in sc.r.onboard.ex.store.find_holds_path.read_text().splitlines()
-        ]
+        lines = [json.loads(line) for line in (state / FIND_HOLDS).read_text().splitlines()]
         done = [x for x in lines if x.get("record") == "ended"]
         assert done and done[-1]["keepout_id"] == keepout
         assert distance_m(hlat, hlon, done[-1]["hover_lat"], done[-1]["hover_lon"]) <= 1.0
