@@ -134,6 +134,22 @@ def fc_texts(sc: Scenario, needle: str, since: float) -> list[float]:
     return [t for t, text in sc.sim.harness.state.texts if t >= since and needle in text]
 
 
+def home_m(sc: Scenario) -> float:
+    """From home on the rig's own channel (the ground's MAVLink may still be catching up)."""
+    s = sc.sim.harness.state
+    return distance_m(sc.r.home[0], sc.r.home[1], s.lat, s.lon)
+
+
+async def until_event(sc: Scenario, kind: str, within_s: float = 15.0) -> list[dict[str, Any]]:
+    """The onboard computer's events of ``kind`` once one is in (queued ones come in after
+    the link is back)."""
+    deadline = time.monotonic() + within_s
+    while not (found := await onboard_events(sc, kind)):
+        assert time.monotonic() < deadline, f"no executor.{kind}"
+        await asyncio.sleep(0.5)
+    return found
+
+
 async def onboard_events(sc: Scenario, kind: str) -> list[dict[str, Any]]:
     return [e for e in await sc.events(f"executor.{kind}") if e["type"] == f"executor.{kind}"]
 
@@ -165,7 +181,7 @@ async def test_ll1_sdlink_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: P
             await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         finally:
             sc.radio(sdlink=True)
-        assert sc.from_home_m() <= 3.0
+        assert home_m(sc) <= 3.0
         await sc.check_invariants()
 
 
@@ -186,7 +202,7 @@ async def test_ll2_all_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: Path
             await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         finally:
             sc.radio(mavlink=True, sdlink=True)
-        assert sc.from_home_m() <= 3.0
+        assert home_m(sc) <= 3.0
         await sc.check_invariants()
 
 
@@ -211,8 +227,8 @@ async def _gcs_lost_in_hold(sc: Scenario, *, sdlink: bool) -> None:
     finally:
         sc.radio(mavlink=True, sdlink=True)
     await sc.until(lambda: sc.r.link.up(VID), 20, "SD-link back")
-    assert await onboard_events(sc, "gcs_lost_rtl")
-    assert sc.from_home_m() <= 3.0
+    await until_event(sc, "gcs_lost_rtl")
+    assert home_m(sc) <= 3.0
     await sc.check_invariants()
 
 
@@ -250,9 +266,11 @@ async def _find_hover(
 def trace(sc: Scenario, since: float) -> str:
     """The flight modes and the flight controller's texts since ``since``, for a failure."""
     modes: list[str] = []
+    last = None
     for s in sc.track:
-        if s.t >= since and (not modes or not modes[-1].endswith(s.mode)):
+        if s.t >= since and s.mode != last:
             modes.append(f"{s.t - since:6.1f} s {s.mode}")
+            last = s.mode
     texts = [f"{t - since:6.1f} s {x}" for t, x in sc.sim.harness.state.texts if t >= since]
     return "modes:\n  " + "\n  ".join(modes) + "\ntexts:\n  " + "\n  ".join(texts)
 
@@ -296,7 +314,7 @@ async def test_ll4_find_sdlink_lost(sim: Any, migrated_db: Any, tmp_path: Path) 
             assert closest_to(sc, flat, flon, down) >= RADIUS_M
         finally:
             await back_and_land(sc)
-        assert sc.from_home_m() <= 3.0
+        assert home_m(sc) <= 3.0
         await sc.until(
             lambda: _has(sc, "executor.find_hold_ended"), 15, "the queued events after the link"
         )
@@ -332,7 +350,7 @@ async def test_ll5_find_all_lost(sim: Any, migrated_db: Any, tmp_path: Path) -> 
             await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         finally:
             await back_and_land(sc)
-        assert sc.from_home_m() <= 3.0
+        assert home_m(sc) <= 3.0
         await sc.check_invariants()
 
 
@@ -365,7 +383,11 @@ async def test_ll7_find_rc_switch(sim: Any, migrated_db: Any, tmp_path: Path) ->
             await sc.rc_switch("RTL")
             await sc.until(lambda: sc.fc_mode() == "RTL", 3, "RTL from the switch")
             ex = sc.r.onboard.ex
-            await sc.until(lambda: str(ex.state) == "HELD", 5, "the onboard computer lets go")
+            # HELD (a person), or FAILSAFE when it cannot tell the switch from the GCS
+            # failsafe the flight controller already reports: either way it lets go
+            await sc.until(
+                lambda: str(ex.state) in ("HELD", "FAILSAFE"), 5, "the onboard computer lets go"
+            )
             await sc.hold_for(10.0, lambda: sc.fc_mode() == "RTL", "RTL stays")
             assert time.monotonic() - down < FIND_HOME_AT
             await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
@@ -435,7 +457,8 @@ async def test_ll9_find_link_back(sim: Any, migrated_db: Any, tmp_path: Path) ->
             "still in HOLD after 123 s",
         )
         live = await sc.onboard_state()
-        assert (live["executor_state"], live["hold_reason"]) == ("HOLD", "find_hold"), live
+        # still holding where it hovered; the find hover itself ended with the link
+        assert live["executor_state"] == "HOLD", live
         assert [a for a in sc.published("alert") if a.get("code") == "LINK_BACK_HOLD"]
         assert (await sc.press("return_home")).status_code == 202
         await sc.until(lambda: sc.fc_mode() in HOME_MODES, 5, "FLY HOME works")
@@ -465,7 +488,7 @@ async def test_ll10_find_onboard_dies(sim: Any, migrated_db: Any, tmp_path: Path
             await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         finally:
             sc.radio(mavlink=True, sdlink=True)
-        assert sc.from_home_m() <= 3.0
+        assert home_m(sc) <= 3.0
         await sc.check_invariants(exempt=("INV2",))
 
 

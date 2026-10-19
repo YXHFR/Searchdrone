@@ -18,8 +18,9 @@ What                                   Allowed
                                        RTL; BRAKE and LAND only from the fallback path
 ``COMPONENT_ARM_DISARM`` (400)         arm only (``param1 = 1``, ``param2 = 0``), skills
 ``NAV_TAKEOFF`` (22)                   ``0 < param7 <= max height``, skills
-``SET_POSITION_TARGET_GLOBAL_INT``     frame 6, type mask 0x0DF8, ``0 <= alt <= max``,
-                                       within the fence radius from home
+``SET_POSITION_TARGET_GLOBAL_INT``     frame 6, type mask 0x0DF8 (or 0x09F8 with a yaw
+                                       ``0 <= yaw < 2 pi``), ``0 <= alt <= max``, within
+                                       the fence radius from home
 ``DO_CHANGE_SPEED`` (178)              ``param1 = 1``, ``0 < param2 <= max``, ``param3 = -1``
 ``MISSION_COUNT``, ``MISSION_ITEM_INT``  mission type 0, commands 16, 178, 19, 20 with the
                                        same number checks
@@ -86,6 +87,7 @@ __all__ = [
     "GROUND_STREAMS",
     "ONBOARD_STREAMS",
     "POSITION_TYPE_MASK",
+    "POSITION_YAW_TYPE_MASK",
     "Profile",
     "SendContext",
     "SendEnvelope",
@@ -94,6 +96,7 @@ __all__ = [
 
 FC_COMPID: Final = mavlink.MAV_COMP_ID_AUTOPILOT1  # 1
 POSITION_TYPE_MASK: Final = 0x0DF8  # position only: ignore velocity, acceleration and yaw
+POSITION_YAW_TYPE_MASK: Final = 0x09F8  # position and yaw: ignore velocity, acc. and yaw rate
 FENCE_MAX_VERTICES: Final = 70
 # The refusal while the vehicle is not known to stand disarmed on the ground (also when
 # its telemetry is late): the ground may wait for fresh telemetry and try again.
@@ -431,8 +434,13 @@ def _position_target(msg: Any, ctx: SendContext) -> str | None:
         return bad
     if int(msg.coordinate_frame) != _GUIDED_FRAME:
         return f"frame {int(msg.coordinate_frame)} not allowed"
-    if int(msg.type_mask) != POSITION_TYPE_MASK:
-        return f"type mask {int(msg.type_mask):#06x} not allowed"
+    mask = int(msg.type_mask)
+    if mask not in (POSITION_TYPE_MASK, POSITION_YAW_TYPE_MASK):
+        return f"type mask {mask:#06x} not allowed"
+    if mask == POSITION_YAW_TYPE_MASK:
+        yaw = float(msg.yaw)
+        if not (math.isfinite(yaw) and 0.0 <= yaw < 2 * math.pi):
+            return "yaw out of range"
     return (
         _alt_ok(float(msg.alt), ctx)
         or _within_fence(int(msg.lat_int), int(msg.lon_int), ctx)

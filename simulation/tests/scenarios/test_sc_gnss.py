@@ -152,7 +152,6 @@ async def test_gp2_gps_back(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
             await gps(sc, on=True)
         await sc.until(lambda: not sim.harness.state.armed, 240, "landed")
         assert true_from_home_m(sc) <= 3.0, true_from_home_m(sc)
-        assert sc.from_home_m() <= 3.0
         assert "GPS_OK" in alert_codes(sc), alert_codes(sc)
         await sc.check_invariants(exempt=("INV2",))
 

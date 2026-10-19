@@ -283,8 +283,10 @@ class _IO:
     async def takeoff(self, alt_m: float) -> MavResult:
         return await self._ex.vehicle.takeoff(alt_m, origin=self._origin)
 
-    async def set_position_target(self, lat: float, lon: float, alt_m: float) -> None:
-        await self._ex.vehicle.goto(lat, lon, alt_m, origin=self._origin)
+    async def set_position_target(
+        self, lat: float, lon: float, alt_m: float, yaw_deg: float | None = None
+    ) -> None:
+        await self._ex.vehicle.goto(lat, lon, alt_m, origin=self._origin, yaw_deg=yaw_deg)
 
     async def change_speed(self, speed_ms: float) -> MavResult:
         return await self._ex.vehicle.change_speed(speed_ms, origin=self._origin)
@@ -1755,12 +1757,12 @@ class Executor:
             self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
             self._side(self._loiter(SendOrigin.LIMIT))
             return
-        # Yaw: GUIDED faces the way it flies, and the hover point lies on the line from
-        # the find towards the drone, so it arrives facing the find.
+        # Yaw: the nose toward the find from the start (the position target carries it),
+        # so the drone arrives facing the find and LOITER keeps that heading.
         speed = min(FIND_MOVE_SPEED_MS, self.charter.max_speed_ms)
         goto = GotoHandler()
         ctx = self._plan_context(new_id())
-        goto.prepare(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed)
+        goto.prepare(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed, yaw_deg=find.yaw_deg)
         plan = goto_plan(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed)
         self._enter(target, cause=action.limit)
         self._internal(INTERNAL_FIND_GOTO, goto, plan, SendOrigin.LIMIT)

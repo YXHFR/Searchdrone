@@ -112,6 +112,13 @@ def test_send_default_deny_edges() -> None:
     assert sends(position_target(*offset(lat, lon, 529.0), 40), c)
     assert not sends(position_target(*offset(lat, lon, 531.0), 40), c)
     assert not sends(position_target(*offset(lat, lon, 0, 531.0), 40), c)
+    # with a heading (the find hover faces the find): a yaw in 0..2 pi, nothing else
+    assert sends(position_target(lat, lon, 40, mask=0x09F8, yaw=3.0), c)
+    assert not sends(position_target(lat, lon, 40, mask=0x09F8, yaw=-0.1), c)
+    assert not sends(position_target(lat, lon, 40, mask=0x09F8, yaw=7.0), c)
+    assert not sends(position_target(lat, lon, 40, mask=0x09F8, yaw=float("nan")), c)
+    assert not sends(position_target(lat, lon, 40, mask=0x01F8), c)  # yaw rate: never
+    assert not sends(position_target(lat, lon, 40, mask=0x0DF0), c)  # velocity: never
 
 
 @settings(max_examples=400, deadline=None)

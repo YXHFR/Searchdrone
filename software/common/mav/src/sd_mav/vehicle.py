@@ -26,6 +26,7 @@ from pymavlink.dialects.v20 import ardupilotmega as mavlink
 from sd_mav.allowlist import (
     FC_COMPID,
     POSITION_TYPE_MASK,
+    POSITION_YAW_TYPE_MASK,
     Profile,
     SendContext,
     SendEnvelope,
@@ -633,14 +634,25 @@ class Vehicle:
         result = await self.send(msg, origin=origin)
         return MavResult.TIMEOUT if result is None else result
 
-    async def goto(self, lat: float, lon: float, alt_m: float, *, origin: SendOrigin) -> None:
-        """A GUIDED position target, height above home."""
+    async def goto(
+        self,
+        lat: float,
+        lon: float,
+        alt_m: float,
+        *,
+        origin: SendOrigin,
+        yaw_deg: float | None = None,
+    ) -> None:
+        """A GUIDED position target, height above home. With ``yaw_deg`` (0 = north,
+        clockwise) the nose points that way; without it the flight controller chooses."""
+        mask = POSITION_TYPE_MASK if yaw_deg is None else POSITION_YAW_TYPE_MASK
+        yaw = 0.0 if yaw_deg is None else math.radians(yaw_deg % 360.0)
         msg = mavlink.MAVLink_set_position_target_global_int_message(
             0,
             self.fc_sysid,
             FC_COMPID,
             mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-            POSITION_TYPE_MASK,
+            mask,
             round(lat * 1e7),
             round(lon * 1e7),
             alt_m,
@@ -650,7 +662,7 @@ class Vehicle:
             0,
             0,
             0,
-            0,
+            yaw,
             0,
         )
         await self.send(msg, origin=origin)

@@ -253,9 +253,12 @@ async def test_find_hover_then_home(tmp_path: Path) -> None:
         r.link = False
         closest = math.inf
         hover_at = home_at = None
+        yaws: set[float] = set()
         while r.clock.monotonic() - cut < LINK_LOSS_DETECT_S + FIND_HOVER_S + 3:
             await r.run(0.1)
             closest = min(closest, distance_m(r.fc.lat, r.fc.lon, find.lat, find.lon))
+            if r.ex.link_rule.phase == P.FIND_MOVE and r.fc.target_yaw_deg is not None:
+                yaws.add(round(r.fc.target_yaw_deg, 1))
             if hover_at is None and r.ex.state == S.HOLD and r.fc.mode == CopterMode.LOITER:
                 hover_at = r.clock.monotonic() - cut
                 assert r.ex.hold_reason == "find_hold"
@@ -266,6 +269,10 @@ async def test_find_hover_then_home(tmp_path: Path) -> None:
             if home_at is None and r.ex.state == S.RTL:
                 home_at = r.clock.monotonic() - cut
         assert hover_at is not None and hover_at <= 15.0
+        # the nose toward the find on the way to the hover point (about east here)
+        started = next(d for t, _, d in r.up.events if t == "executor.find_hold_started")
+        assert yaws and all(abs(y - started["yaw_deg"]) <= 0.2 for y in yaws), yaws
+        assert 60.0 < started["yaw_deg"] < 120.0
         assert home_at is not None and abs(home_at - (LINK_LOSS_DETECT_S + FIND_HOVER_S)) <= 1
         assert closest >= find.radius_m
         kinds = r.up.kinds()

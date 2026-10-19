@@ -22,7 +22,7 @@ from typing import Any, Final
 
 from pymavlink.dialects.v20 import ardupilotmega as mavlink
 
-from sd_mav.allowlist import FC_COMPID
+from sd_mav.allowlist import FC_COMPID, POSITION_YAW_TYPE_MASK
 from sd_mav.connection import GCS_COMPID, GCS_SYSID, ONBOARD_COMPID, Role
 from sd_mav.mission import FENCE, MISSION, MissionItem
 from sd_mav.modes import AIRBORNE_ALT_M, CopterMode
@@ -125,6 +125,7 @@ class FakeFlightController:
         self.armed = False
         self.lat, self.lon, self.alt_rel = home[0], home[1], 0.0
         self.target: tuple[float, float, float] | None = None
+        self.target_yaw_deg: float | None = None  # the last position target's yaw, if any
         self.speed_ms = EXECUTOR_DEFAULT_SPEED_MS
         self.battery_pct = 100.0
         self.charge_state = mavlink.MAV_BATTERY_CHARGE_STATE_OK
@@ -396,6 +397,8 @@ class FakeFlightController:
             self._ack(link, int(msg.command), self._command(link, msg))
         elif kind == "SET_POSITION_TARGET_GLOBAL_INT" and self.mode == CopterMode.GUIDED:
             self.target = (msg.lat_int / 1e7, msg.lon_int / 1e7, float(msg.alt))
+            with_yaw = int(msg.type_mask) == POSITION_YAW_TYPE_MASK
+            self.target_yaw_deg = math.degrees(float(msg.yaw)) if with_yaw else None
         elif kind in ("PARAM_REQUEST_READ", "PARAM_SET"):
             name = msg.param_id if isinstance(msg.param_id, str) else msg.param_id.decode()
             name = name.rstrip("\x00")
