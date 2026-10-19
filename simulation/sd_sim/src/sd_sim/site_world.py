@@ -47,6 +47,7 @@ def world_sdf(
     instance: int,
     placed: Sequence[objects.WorldObject] = (),
     cameras: Sequence[str] = (),
+    vehicle: str = world.MODEL_NAME,
     light: Mapping[str, Any] | None = None,
 ) -> str:
     fr = frame(s, ground)
@@ -63,8 +64,8 @@ def world_sdf(
             pad_size=PAD_SIZE_M,
             objects=[world.checked_fragment(obj, fr) for obj in placed],
             cameras=list(cameras),
-            model_uri=f"model://{world.MODEL_NAME}_i{instance}",
-            vehicle_z=world.STAND_M,
+            model_uri=f"model://{vehicle}_i{instance}",
+            vehicle_z=world.stand_m(vehicle),
             vehicle_yaw=round(math.radians(90.0 - s.heading_deg), 6),
             light=world.light_context(light),
         )
@@ -79,6 +80,7 @@ def render(
     *,
     cameras: Sequence[str] = (),
     progress: Callable[[str], None] = lambda _: None,
+    vehicle: str = world.MODEL_NAME,
     stills: bool = False,
     video: bool = True,
     light: Mapping[str, Any] | None = None,
@@ -86,10 +88,10 @@ def render(
     s = site.load(site_name, repo)
     terrain.build(s, repo, progress=progress)
     ground = terrain.load_ground(s, repo)
-    world.render_model(instance, repo, stills=stills, video=video)
+    world.render_model(instance, repo, vehicle, stills=stills, video=video)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
-    sdf = world_sdf(s, ground, instance, placed, cameras, light)
+    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light)
     truth = world.world_truth(s.world, placed, frame=frame(s, ground))
     path = out / f"{s.world}_i{instance}.sdf"
     path.write_text(sdf, encoding="utf-8")

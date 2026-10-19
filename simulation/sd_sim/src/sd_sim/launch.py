@@ -63,6 +63,7 @@ ALLOWED_KEYS = (
     "lan",
     "private_db",
     "dry",
+    "vehicle",
     "objects",
     "world",
 )
@@ -240,7 +241,7 @@ class Stack:
         """Only the Searchdrone world is rendered here, and only with Gazebo physics."""
         return (
             self.cfg.physics == "gz"
-            and self.cfg.vehicle == "sd_quad14"
+            and self.cfg.vehicle in world.MODELS
             and self.cfg.world in world.known_worlds(self.repo)
         )
 
@@ -253,7 +254,10 @@ class Stack:
         """Load and check ``objects=`` (and a search scenario's objects) before anything
         starts; refuse them where they cannot apply."""
         scene: list[objects.WorldObject] = [] if self.scene is None else list(self.scene.objects())
-        if scene and not self.renders_world():
+        # The stills camera follows whether a scenario is set, so check that, not whether
+        # its layout came back with objects.
+        searching = self.scene is not None
+        if searching and (not self.renders_world() or self.cfg.vehicle != world.MODEL_NAME):
             raise InfraError(
                 "Ett sökscenario kräver physics=gz, vehicle=sd_quad14 och "
                 f"världen {world.WORLD_NAME}."
@@ -262,7 +266,8 @@ class Stack:
             return scene
         if not self.renders_world():
             raise InfraError(
-                "objects= kräver physics=gz, vehicle=sd_quad14 och en av Searchdrones världar."
+                "objects= kräver physics=gz, en Searchdrone-modell (vehicle=sd_quad14 eller "
+                "sd_fpv7) och en av Searchdrones världar."
             )
         path = (self.repo / self.cfg.objects).resolve()
         if not path.is_relative_to(self.repo.resolve()):
@@ -285,6 +290,7 @@ class Stack:
                 self.cfg.instance,
                 self.repo,
                 placed,
+                vehicle=self.cfg.vehicle,
                 stills=self.scene is not None,
                 video=self.scene is None,
                 light=self.light,
@@ -438,8 +444,8 @@ class Stack:
             raise InfraError(f"{argv[0]} finns inte. Kör just sim-setup först.")
         work = self.run_dir / "sitl"
         work.mkdir(parents=True, exist_ok=True)
-        if self.cfg.physics == "builtin" and self.cfg.vehicle == "sd_quad14":
-            self.sitl_layout().stage_frame(work)
+        if self.cfg.physics == "builtin" and self.cfg.vehicle != "stock":
+            self.sitl_layout().stage_frame(work, self.cfg.vehicle)
         return self.group.start("arducopter", argv, env=procs.clean_env(), cwd=work)
 
     def wait_vehicle_observed(self, sitl: procs.Proc) -> None:

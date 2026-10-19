@@ -372,12 +372,13 @@ jobs:
 
   sitl-nightly-gz:
     # Gazebo as a server with headless rendering (no window, no GPU). Not required.
-    # The smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14.
-    # Then SK-RED: the stills camera in Gazebo, the colour detector and the whole chain
-    # to the ground and the AI must find every red block.
+    # The smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14;
+    # the sd_fpv7 smoke flights fly the 7-inch built from the CAD model. Then SK-RED: the
+    # stills camera in Gazebo, the colour detector and the whole chain to the ground and
+    # the AI must find every red block.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 215  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + 20 parity + 45 SK-RED + margin
+    timeout-minutes: 260  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + 3 x 15 fpv7 + 20 parity + 45 SK-RED + margin
     steps:
       - *checkout
       - *check-ref
@@ -407,12 +408,34 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just world-snapshot
+      - name: sd_fpv7 smoke flight in the standard world (sd_lake_forest at CMAC)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=gz gui=false vehicle=fpv7
+      - name: sd_fpv7 smoke flight in the terrain world
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=gz gui=false world=sd_hellasgarden vehicle=fpv7
+      - name: sd_fpv7 smoke flight with builtin physics (hover current in result.json)
+        # Gazebo's JSON link carries no battery data; the builtin model's current does.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=builtin gui=false vehicle=fpv7
       - name: Terrain world in the job summary
         if: always()
         run: |
           for f in runs/*-smoke-i0/result.json; do
             [ -f "$f" ] || continue
-            jq -r '"- smoke \(.world // "-"): passed \(.passed), real-time factor \(.real_time_factor // "-"), camera \(.camera_frames_10s // "-") frames in 10 s"' "$f" \
+            jq -r '"- smoke \(.vehicle // "-") \(.physics) \(.world // "-"): passed \(.passed), real-time factor \(.real_time_factor // "-"), camera \(.camera_frames_10s // "-") frames in 10 s, hover current \(.hover_current_a // "-") A"' "$f" \
               >> "$GITHUB_STEP_SUMMARY"
           done
           for f in runs/*-snapshot-i0/snapshots/summary.md; do

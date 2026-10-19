@@ -220,6 +220,8 @@ def test_launcher_loads_the_file(tmp_path: Path) -> None:
     (tmp_path / "o.yaml").write_text(RED_BLOCK.read_text(encoding="utf-8"), encoding="utf-8")
     assert [o.name for o in _stack(tmp_path, objects="o.yaml").world_objects()] == ["red_block"]
     assert _stack(tmp_path).world_objects() == []
+    fpv7 = _stack(tmp_path, objects="o.yaml", vehicle="sd_fpv7", physics="gz")
+    assert [o.name for o in fpv7.world_objects()] == ["red_block"]
 
 
 @pytest.mark.parametrize(

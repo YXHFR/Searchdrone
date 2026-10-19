@@ -80,14 +80,57 @@ def test_rules_agree_with_the_ground_station() -> None:
         assert exact[name] == value, name
 
 
-def test_no_parameter_file_moves_the_lean_limit() -> None:
-    """The ground station's tilt warning assumes ArduPilot's default ATC_ANGLE_MAX; a file
-    that changes it must change FC_ANGLE_MAX_DEG too."""
+# A vehicle's sim layer may raise ATC_ANGLE_MAX this far above FC_ANGLE_MAX_DEG and no
+# further: the ground station's tilt warning stays at FC_ANGLE_MAX_DEG - 10, so it then
+# comes at most 15 degrees before the limit instead of 10.
+SIM_LEAN_HEADROOM_DEG = 5.0
+
+
+def lean_limit_problem(name: str, values: dict[str, float], sim_layers: set[str]) -> str | None:
+    """Why ``name`` moves the lean limit in a way the tilt warning cannot follow, or None."""
     from sd_safety.constants import FC_ANGLE_MAX_DEG
 
+    angle = values.get("ATC_ANGLE_MAX", FC_ANGLE_MAX_DEG)
+    if name in sim_layers:
+        if FC_ANGLE_MAX_DEG <= angle <= FC_ANGLE_MAX_DEG + SIM_LEAN_HEADROOM_DEG:
+            return None
+    elif angle == FC_ANGLE_MAX_DEG:
+        return None
+    return f"{name}: ATC_ANGLE_MAX {angle:g}"
+
+
+def test_no_parameter_file_moves_the_lean_limit() -> None:
+    """The ground station's tilt warning assumes ArduPilot's default ATC_ANGLE_MAX; a file
+    that changes it must change FC_ANGLE_MAX_DEG too. Only a vehicle's declared sim layer
+    may raise it, by at most SIM_LEAN_HEADROOM_DEG: the warning then comes early, never
+    late. The safety and field files keep the default."""
+    from sd_sim.sitl import SIM_PARAM_FILES
+
+    sim_layers = set(SIM_PARAM_FILES.values())
     for path in sorted(SAFETY_FILE.parent.rglob("*.parm")):
         values = params.parse_parm(path.read_text(encoding="utf-8"), path.name)
-        assert values.get("ATC_ANGLE_MAX", FC_ANGLE_MAX_DEG) == FC_ANGLE_MAX_DEG, path.name
+        layer = str(path.relative_to(SAFETY_FILE.parent))
+        assert lean_limit_problem(layer, values, sim_layers) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "angle", "ok"),
+    [
+        ("sd_fpv7-sim.parm", 30.0, True),
+        ("sd_fpv7-sim.parm", 35.0, True),
+        ("sd_fpv7-sim.parm", 25.0, False),
+        ("sd_fpv7-sim.parm", 36.0, False),
+        ("other-sim.parm", 35.0, False),
+        ("searchdrone-safety.parm", 35.0, False),
+        ("searchdrone-safety.field.parm", 25.0, False),
+    ],
+)
+def test_lean_limit_rule_refuses_lower_higher_and_undeclared(
+    name: str, angle: float, ok: bool
+) -> None:
+    sim_layers = {"sd_quad14-sim.parm", "sd_fpv7-sim.parm"}
+    problem = lean_limit_problem(name, {"ATC_ANGLE_MAX": angle}, sim_layers)
+    assert (problem is None) is ok
 
 
 FIELD_FILE = SAFETY_FILE.with_name("searchdrone-safety.field.parm")
