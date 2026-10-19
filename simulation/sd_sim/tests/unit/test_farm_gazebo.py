@@ -292,3 +292,15 @@ def test_the_world_lays_the_meadow_on_its_ground(tmp_path: Path) -> None:
     assert root.find("world/model[@name='ground']/link/collision/geometry/plane") is not None
     assert "map_Kd meadow_v" in (Path(uri).parent / "ground.mtl").read_text()
     assert world.world_sdf(world.WORLD_NAME, 0).count("<plane>") == 2  # unrendered: flat
+
+
+def test_a_failed_ground_write_leaves_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def full(self: Path, target: Path) -> Path:
+        raise OSError("disken är full")
+
+    monkeypatch.setattr(Path, "replace", full)
+    with pytest.raises(OSError, match="disken är full"):
+        meadow.write(tmp_path / "meadow", 100.0)
+    assert list((tmp_path / "meadow").iterdir()) == []
