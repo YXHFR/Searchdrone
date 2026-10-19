@@ -83,6 +83,12 @@ async def heading_north(sc: Scenario, speed_ms: float = 4.0) -> None:
     await sc.wait_command("goto", "running", 15)
 
 
+async def surveying(sc: Scenario) -> None:
+    """The survey is flying its lines (not still turning onto the first one in LOITER)."""
+    st = sc.sim.harness.state
+    await sc.until(lambda: st.mode != "LOITER" and st.ground_speed_ms > 2.0, 60, "surveying")
+
+
 def survey_box(sc: Scenario) -> dict[str, Any]:
     """The demo's search box around P1 as the survey's GeoJSON polygon."""
     ring = [[lon, lat] for lat, lon in (sc.at(e, n) for e, n in survey_box_enu())]
@@ -90,7 +96,8 @@ def survey_box(sc: Scenario) -> dict[str, Any]:
 
 
 def north_m(sc: Scenario) -> float:
-    return Plane(*sc.r.home).xy(sc.tel.lat, sc.tel.lon)[1]
+    s = sc.sim.harness.state  # the rig's own channel: also with the radio down
+    return Plane(*sc.r.home).xy(s.lat, s.lon)[1]
 
 
 async def find_ahead(sc: Scenario, find_north_m: float = 150.0, cut_at_m: float = 90.0) -> Any:
@@ -146,6 +153,7 @@ async def test_ll1_sdlink_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: P
         res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
         assert res.get("decision") == "ALLOW", res
         await sc.wait_command("survey_sector", "running", 60)
+        await surveying(sc)
         sc.radio(sdlink=False)
         down = time.monotonic()
         try:
@@ -168,6 +176,7 @@ async def test_ll2_all_lost_in_survey(sim: Any, migrated_db: Any, tmp_path: Path
         res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
         assert res.get("decision") == "ALLOW", res
         await sc.wait_command("survey_sector", "running", 60)
+        await surveying(sc)
         sc.radio(mavlink=False, sdlink=False)
         down = time.monotonic()
         try:
@@ -255,10 +264,17 @@ async def _hover_checks(
     await sc.until(lambda: sc.fc_mode() == "LOITER", FIND_LOITER_BY + 0.5, "find hover")
     assert time.monotonic() - down <= FIND_LOITER_BY + 0.5
     await sc.until(
-        lambda: distance_m(hlat, hlon, sc.tel.lat, sc.tel.lon) <= 3.0, 20, "at the hover point"
+        lambda: distance_m(hlat, hlon, sc.sim.harness.state.lat, sc.sim.harness.state.lon) <= 3.0,
+        20,
+        "at the hover point",
     )
     heading = sc.sim.harness.state.heading_deg
-    assert angle_off(heading, bearing_deg(sc.tel.lat, sc.tel.lon, flat, flon)) <= 15.0, heading
+    assert (
+        angle_off(
+            heading, bearing_deg(sc.sim.harness.state.lat, sc.sim.harness.state.lon, flat, flon)
+        )
+        <= 15.0
+    ), heading
     await sc.hold_for(
         max(0.0, until_s - SLACK_S - (time.monotonic() - down)),
         lambda: sc.fc_mode() == "LOITER",
