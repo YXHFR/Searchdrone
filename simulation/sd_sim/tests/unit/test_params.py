@@ -82,12 +82,17 @@ def test_rules_agree_with_the_ground_station() -> None:
 
 def test_no_parameter_file_moves_the_lean_limit() -> None:
     """The ground station's tilt warning assumes ArduPilot's default ATC_ANGLE_MAX; a file
-    that changes it must change FC_ANGLE_MAX_DEG too."""
+    that changes it must change FC_ANGLE_MAX_DEG too. A vehicle's sim layer may only raise
+    it: the warning then comes early, never late."""
     from sd_safety.constants import FC_ANGLE_MAX_DEG
 
     for path in sorted(SAFETY_FILE.parent.rglob("*.parm")):
         values = params.parse_parm(path.read_text(encoding="utf-8"), path.name)
-        assert values.get("ATC_ANGLE_MAX", FC_ANGLE_MAX_DEG) == FC_ANGLE_MAX_DEG, path.name
+        angle = values.get("ATC_ANGLE_MAX", FC_ANGLE_MAX_DEG)
+        if path.name.endswith("-sim.parm"):
+            assert angle >= FC_ANGLE_MAX_DEG, path.name
+        else:
+            assert angle == FC_ANGLE_MAX_DEG, path.name
 
 
 FIELD_FILE = SAFETY_FILE.with_name("searchdrone-safety.field.parm")

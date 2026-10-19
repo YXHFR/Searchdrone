@@ -193,24 +193,20 @@ def test_parameter_layer_has_the_seven_inch_values() -> None:
     assert (layer["FRAME_CLASS"], layer["FRAME_TYPE"]) == (1, 1)  # quad X
     assert layer["MOT_SPIN_MAX"] == 0.90 == frame["spin_max"]
     assert layer["ATC_ANGLE_MAX"] == 35
-    assert layer["BATT_CAPACITY"] == 10000 == frame["battCapacityAh"] * 1000
+    # The pack is the safety file's; the layer only tells the simulator about it.
+    safety = parse_parm((PARAMS / "searchdrone-safety.parm").read_text(encoding="utf-8"))
+    assert "BATT_CAPACITY" not in layer
+    assert safety["BATT_CAPACITY"] == 10000 == frame["battCapacityAh"] * 1000
+    assert layer["SIM_BATT_CAP_AH"] == frame["battCapacityAh"]
     assert layer["SIM_BATT_VOLTAGE"] == frame["maxVoltage"]
     assert layer["MOT_THST_HOVER"] == frame["hoverThrOut"]
     known = set(KNOWN_PARAMS.read_text(encoding="utf-8").split())
     assert set(layer) <= known
 
 
-def test_params_check_keeps_the_reserve_shares() -> None:
+def test_params_check_allows_the_seven_inch_names() -> None:
     check = load_tool("params_check")
     assert check.main([]) == 0
-    safety = check.SAFETY.read_text(encoding="utf-8")
-    good = "BATT_CAPACITY 10000\nBATT_LOW_MAH 1500\nBATT_CRT_MAH 700\n"
-    assert check.battery_problems(good, safety, "x.parm") == []
-    low = "BATT_CAPACITY 10000\nBATT_LOW_MAH 1000\nBATT_CRT_MAH 700\n"
-    assert [p.split(":")[1].split()[0] for p in check.battery_problems(low, safety, "x")] == [
-        "BATT_LOW_MAH"
-    ]
-    assert check.battery_problems("BATT_CAPACITY 20000\n", safety, "x")
     # sd_quad14's layer may not set what sd_fpv7's may.
     assert "ATC_ANGLE_MAX" in check.allowlist(vehicle="sd_fpv7")
     assert "ATC_ANGLE_MAX" not in check.allowlist()

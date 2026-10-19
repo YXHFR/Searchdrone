@@ -21,7 +21,4 @@ allowed = [
   "ATC_RAT_PIT_D",
   "ATC_RAT_YAW_P",
   "ATC_RAT_YAW_I",
-  "BATT_CAPACITY",
-  "BATT_LOW_MAH",
-  "BATT_CRT_MAH",
 ]
