@@ -9,9 +9,9 @@ MAV_GCS_SYSID 250        # only sd-ground (250/190) keeps the GCS failsafe away
 # --- lost ground station --------------------------------------------------------------
 FS_GCS_ENABLE 3          # no ground station heartbeat -> SmartRTL, else RTL
 FS_GCS_TIMEOUT 20        # seconds; equals FS_GCS_TIMEOUT_S in sd_safety.constants
-FS_OPTIONS 24            # bit 3: keep landing if a landing is under way; bit 4: in LOITER (not an
-                         # autopilot mode) the FC only reports the lost ground station and the
-                         # onboard computer decides (link-loss rule, sd_gcs_loiter_cap.lua as backup)
+# FS_OPTIONS bit 4: in LOITER (not an autopilot mode) the FC only reports the lost ground
+# station and the onboard computer decides (link-loss rule, sd_gcs_loiter_cap.lua as backup)
+FS_OPTIONS 24            # bit 3: keep landing if a landing is under way; bit 4: see above
 FS_EKF_ACTION 1          # bad position estimate -> LAND (no pilot with sticks in sim)
 FS_EKF_THRESH 0.8        # ArduPilot's default, written out so it is read back
 FS_THR_ENABLE 0          # RC-loss failsafe off in the simulator profile; 4 with a real RC link

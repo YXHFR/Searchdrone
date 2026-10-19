@@ -225,7 +225,13 @@ def test_sim_params_clean() -> None:
     assert check.main([]) == 0
     sim = check.SIM.read_text(encoding="utf-8")
     assert check.sim_layer_problems(sim, check.allowlist()) == []
-    assert check.allowlist() == {"MOT_THST_HOVER"}
+    # the hover throttle and the EKF's drag coefficients depend on the model
+    assert check.allowlist() == {
+        "MOT_THST_HOVER",
+        "EK3_DRAG_BCOEF_X",
+        "EK3_DRAG_BCOEF_Y",
+        "EK3_DRAG_MCOEF",
+    }
     bad = "SIM_WIND_SPD 0\nBATT_CAPACITY 10000\nFENCE_ENABLE 0\n"
     found = check.sim_layer_problems(bad, check.allowlist())
     assert len(found) == 2 and "BATT_CAPACITY" in found[0]

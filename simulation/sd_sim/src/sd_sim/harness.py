@@ -133,8 +133,9 @@ class Harness:
             s.max_rel_alt_m = max(s.max_rel_alt_m, s.rel_alt_m)
             s.lat, s.lon = msg.lat / 1e7, msg.lon / 1e7
             s.ground_speed_ms = math.hypot(msg.vx, msg.vy) / 100.0
-            if msg.hdg != 65535:
-                s.heading_deg = msg.hdg / 100.0
+            hdg = getattr(msg, "hdg", 65535)  # UINT16_MAX: unknown
+            if hdg != 65535:
+                s.heading_deg = hdg / 100.0
         elif kind == "SIMSTATE":
             s.true_lat, s.true_lon = msg.lat / 1e7, msg.lng / 1e7
         elif kind == "SYS_STATUS":
