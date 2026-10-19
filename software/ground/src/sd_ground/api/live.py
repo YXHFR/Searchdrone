@@ -4,10 +4,13 @@ Authenticated with the session cookie (same origin), or for scripts with
 ``Authorization: Bearer <CLI token>`` and no ``Origin`` (``PanelGuard`` refuses the
 combination). The server says ``hello``; the client subscribes and may resume with
 ``server_epoch`` + ``since_seq``; otherwise it gets ``resync_required`` and reloads over
-REST. ``ping`` every 10 s; 30 s without one closes the socket. A pilot WebSocket counts as
-an operator who is present. While a pilot steers by hand ("Ta över") the panel sends its
-stick values here as ``{"op": "manual", ...ManualControlInput}`` for the subscribed
-vehicle; anything malformed, or from an observer, is dropped without closing the socket.
+REST. ``ping`` every 10 s; 30 s without one closes the socket. A ping with an integer
+``client_ns`` gets ``server_ns`` (wall clock) and ``server_mono_ns`` (the monotonic clock
+that stamps ``Telemetry.time_boot_ms``) back, so a client can estimate its clock offset.
+A pilot WebSocket counts as an operator who is present. While a pilot steers by hand
+("Ta över") the panel sends its stick values here as ``{"op": "manual",
+...ManualControlInput}`` for the subscribed vehicle; anything malformed, or from an
+observer, is dropped without closing the socket.
 """
 
 from __future__ import annotations
@@ -135,6 +138,7 @@ async def live(ws: WebSocket) -> None:
                     pong: dict[str, Any] = {"type": "pong"}
                     if isinstance(msg.get("client_ns"), int):
                         pong["server_ns"] = time.clock_gettime_ns(time.CLOCK_REALTIME)
+                        pong["server_mono_ns"] = time.monotonic_ns()
                     await ws.send_json(pong)
                 elif msg.get("op") == "manual":
                     _manual(g, sub.vehicle_id, msg, who)

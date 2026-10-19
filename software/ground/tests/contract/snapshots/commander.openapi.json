@@ -1156,6 +1156,20 @@
             "title": "Ai Config Hash",
             "type": "string"
           },
+          "attempt": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attempt"
+          },
           "backend": {
             "enum": [
               "llm",
@@ -1280,6 +1294,27 @@
             "minimum": 0,
             "title": "Prompt Tokens",
             "type": "integer"
+          },
+          "proposal_draft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Draft"
+          },
+          "proposal_errors": {
+            "items": {
+              "$ref": "#/components/schemas/CharterValidationError"
+            },
+            "maxItems": 32,
+            "title": "Proposal Errors",
+            "type": "array"
           },
           "proposal_id": {
             "anyOf": [

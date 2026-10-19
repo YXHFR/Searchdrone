@@ -77,9 +77,11 @@ class LlmConfig(_Section):
 
     temperature: float = Field(default=0.2, ge=0, le=2)
     top_p: float = Field(default=0.8, gt=0, le=1)
-    max_tokens: int = Field(default=512, ge=1, le=4096)
+    # The cloud model reasons before it answers and the reasoning counts here: at 512 a
+    # turn after STOP and Resume ran out before its tool call. Answers are 100-300.
+    max_tokens: int = Field(default=4096, ge=1, le=4096)
     seed: int | None = 42
-    context_tokens: int = Field(default=8192, ge=1024)
+    context_tokens: int = Field(default=16384, ge=1024)  # prompt budget + max_tokens fit
     prompt_budget_tokens: int = Field(default=6000, ge=512)
 
 
@@ -196,8 +198,15 @@ class DecideConfig(_Section):
 class BehaviourConfig(_Section):
     max_read_tool_rounds: int = Field(default=4, ge=0, le=8)
     max_repair_rounds: int = Field(default=1, ge=0, le=2)
+    # A charter draft the brain refuses (unknown pin, missing size, home outside the
+    # flight area, ...) is answered in the same turn up to this many times.
+    max_proposal_repair_rounds: int = Field(default=3, ge=0, le=3)
     max_actions_per_turn: Literal[1] = 1
     idle_airborne_tick_s: float = Field(default=60, gt=0)
+    # The finish backstop: airborne, nothing running or waiting, and no operator input,
+    # AI order, skill end or card decision for this long: the system says it flies home
+    # and orders return_home through the gate (3 min; at least 1, at most 30).
+    finish_idle_s: float = Field(default=180, ge=60, le=1800)
     language: Literal["sv"] = "sv"
     takeoff_policy: Literal["request_then_clearance"] = "request_then_clearance"
     rule_takeoff: bool = True

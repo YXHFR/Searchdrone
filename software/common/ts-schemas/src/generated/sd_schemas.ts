@@ -1150,6 +1150,7 @@ export interface ScoreAnswer {
  */
 export interface DecisionLog {
   ai_config_hash: string;
+  attempt?: number | null;
   backend: "llm" | "grammar" | "scripted" | "rule" | "cloud";
   command_id: string | null;
   completion_tokens: number;
@@ -1164,6 +1165,13 @@ export interface DecisionLog {
   } | null;
   prompt_sha256: string;
   prompt_tokens: number;
+  proposal_draft?: {
+    [k: string]: unknown;
+  } | null;
+  /**
+   * @maxItems 32
+   */
+  proposal_errors?: CharterValidationError[];
   proposal_id?: string | null;
   proposal_ok?: boolean | null;
   /**
@@ -1188,6 +1196,7 @@ export interface DecisionLog {
  */
 export interface DecisionLogStored {
   ai_config_hash: string;
+  attempt?: number | null;
   backend: "llm" | "grammar" | "scripted" | "rule" | "cloud";
   command_id: string | null;
   completion_tokens: number;
@@ -1203,6 +1212,13 @@ export interface DecisionLogStored {
   } | null;
   prompt_sha256: string;
   prompt_tokens: number;
+  proposal_draft?: {
+    [k: string]: unknown;
+  } | null;
+  /**
+   * @maxItems 32
+   */
+  proposal_errors?: CharterValidationError[];
   proposal_id?: string | null;
   proposal_ok?: boolean | null;
   /**
@@ -1489,8 +1505,17 @@ export interface GeoDetectionMsg {
  */
 export interface GotoAiParams {
   alt_m?: number | null;
+  /**
+   * With lon, instead of pin.
+   */
   lat?: number | null;
+  /**
+   * With lat.
+   */
   lon?: number | null;
+  /**
+   * Map pin id. The target: always give pin, or lat and lon (one of the two, never neither).
+   */
   pin?: string | null;
   speed_ms?: number | null;
 }

@@ -444,10 +444,13 @@ _AiAlt = Field(default=None, ge=AI_SCHEMA_MIN_ALT_M)
 _AiSpeed = Field(default=None, ge=1)
 
 
+_GOTO_TARGET = "The target: always give pin, or lat and lon (one of the two, never neither)."
+
+
 class GotoAiParams(SdModel):
-    pin: str | None = Field(default=None, pattern=_PIN)
-    lat: float | None = Field(default=None, ge=-90, le=90)
-    lon: float | None = Field(default=None, ge=-180, le=180)
+    pin: str | None = Field(default=None, pattern=_PIN, description=f"Map pin id. {_GOTO_TARGET}")
+    lat: float | None = Field(default=None, ge=-90, le=90, description="With lon, instead of pin.")
+    lon: float | None = Field(default=None, ge=-180, le=180, description="With lat.")
     alt_m: float | None = _AiAlt
     speed_ms: float | None = _AiSpeed
 
@@ -455,7 +458,7 @@ class GotoAiParams(SdModel):
     def _target(self) -> GotoAiParams:
         has_point = self.lat is not None and self.lon is not None
         if (self.lat is None) != (self.lon is None) or (self.pin is None) == (not has_point):
-            raise ValueError("give pin, or lat and lon")
+            raise ValueError("a target is required: give pin, or lat and lon (not both)")
         return self
 
 
@@ -617,7 +620,10 @@ _SPECS: tuple[SkillSpec, ...] = (
         moves_vehicle=True,
         allowed_when="airborne",
         rate_class="action",
-        description_en="Fly to a map pin or a point and hover there. Also changes height.",
+        description_en=(
+            "Fly to a map pin or a point and hover there. A target (pin, or lat and lon) is "
+            "always required; alt_m sets the height on the way."
+        ),
         synonyms_sv=["flyg till", "åk till", "byt höjd"],
         title_sv="Flyg till punkt",
     ),

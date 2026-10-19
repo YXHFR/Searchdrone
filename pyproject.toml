@@ -21,7 +21,7 @@ members = [
   "software/common/schemas", "software/common/safety", "software/common/geo",
   "software/common/mav", "software/common/link", "software/common/link_testing",
   "software/common/obs", "software/common/testing", "software/detector", "software/onboard", "software/ground",
-  "software/brain", "software/hwcalc", "simulation/sd_sim",
+  "software/brain", "software/hwcalc", "simulation/sd_sim", "simulation/searchsim",
 ]
 
 [tool.uv.sources]
@@ -39,6 +39,7 @@ sd-ground = { workspace = true }
 sd-brain = { workspace = true }
 sd-hwcalc = { workspace = true }
 sd-sim = { workspace = true }
+sd-searchsim = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -72,7 +73,9 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PTH", "TID
 "tools/**" = ["T20"]
 "simulation/sd_sim/src/sd_sim/launch.py" = ["T20"]
 "simulation/sd_sim/src/sd_sim/testrun.py" = ["T20"]
+"simulation/sd_sim/src/sd_sim/perf/__main__.py" = ["T20"]
 "simulation/sd_sim/src/sd_sim/_args.py" = ["T20"]
+"simulation/searchsim/src/sd_searchsim/cli.py" = ["T20"]
 # Hand-written SQL migrations keep one column per line (B0-04)
 "software/ground/migrations/versions/**" = ["E501"]
 
@@ -90,7 +93,7 @@ executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
 [tool.pytest.ini_options]
 # Tests may only reach loopback and Unix sockets (pytest-socket): nothing calls the internet.
 addopts = "--import-mode=importlib -ra --strict-markers --disable-socket --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
-testpaths = ["software", "simulation/sd_sim", "tools/tests"]
+testpaths = ["software", "simulation/sd_sim", "simulation/searchsim", "tools/tests"]
 pythonpath = ["tools"]     # tools/tests import the scripts in tools/ (not a package)
 norecursedirs = ["node_modules", ".venv", "dist", "build", "generated"]
 asyncio_mode = "auto"

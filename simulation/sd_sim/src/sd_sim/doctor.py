@@ -70,8 +70,9 @@ def check_glx() -> Row:
     return Row(
         "Grafik (glxinfo -B)",
         WARN,
-        "Inget NVIDIA-kort syns, Gazebo ritar med processorn. Prova "
-        "MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA eller gui=false.",
+        "Inget NVIDIA-kort syns, Gazebo ritar med processorn. Kör bash "
+        "tools/setup/wsl-setup.sh sim (sätter GALLIUM_DRIVER=d3d12) och öppna en ny "
+        "terminal, prova MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA eller gui=false.",
     )
 
 

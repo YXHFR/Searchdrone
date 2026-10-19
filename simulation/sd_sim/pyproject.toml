@@ -12,6 +12,8 @@ dependencies = [
   "pymavlink>=2.4.47",  # LGPL-3.0, used unmodified
   "pyyaml>=6.0",
   "jinja2>=3.1",  # BSD-3-Clause, renders the Gazebo model and world
+  "asyncpg>=0.30",  # Apache-2.0, the instance database (also sd-ground's driver)
+  "websockets>=15",  # BSD-3-Clause, the perf pilot's live connection
   "numpy>=2.4",  # BSD-3-Clause, terrain heights and textures for site worlds
   "shapely>=2.1",  # BSD-3-Clause, map layers for site worlds
 ]

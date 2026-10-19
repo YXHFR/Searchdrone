@@ -9,12 +9,13 @@ not slowed down by a cloud that does not answer.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
 from typing import Any, Literal
 
-from sd_brain.runtime.base import ModelError, ModelReply, Sampling
+from sd_brain.runtime.base import ModelError, ModelReply, ModelTimeoutError, Sampling
 from sd_brain.runtime.cloud import CloudModelRuntime
 
 __all__ = ["BestAvailableRuntime", "CloudUnavailableError", "EngineName"]
@@ -72,7 +73,13 @@ class BestAvailableRuntime:
             self.last_engine = "command"
             raise CloudUnavailableError("ingen molnmodell nu; kommandoläget svarar")
         try:
-            reply = await self.cloud.chat(messages, tools, timeout_s, sampling)
+            # Bounded as a whole here, so a cloud that trickles its answer past the limit
+            # starts the pause like any other failed call.
+            try:
+                async with asyncio.timeout(timeout_s):
+                    reply = await self.cloud.chat(messages, tools, timeout_s, sampling)
+            except TimeoutError:
+                raise ModelTimeoutError("molnmodellen svarade inte i tid") from None
         except ModelError as exc:
             self._cloud_failed_at = self._mono()
             self.last_engine = "command"

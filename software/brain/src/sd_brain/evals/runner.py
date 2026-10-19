@@ -31,6 +31,7 @@ from sd_brain.decide.service import DecisionService
 from sd_brain.evals.fake_ground import FakeGround
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop, TurnRecord
+from sd_brain.memory import pending_request
 from sd_brain.runtime.base import ModelRuntime, Sampling
 from sd_brain.runtime.replay import ReplayRuntime, load_golden
 from sd_schemas.skills import SKILL_REGISTRY
@@ -127,7 +128,11 @@ def _norm(text: str) -> str:
 def _action_name(r: TurnRecord) -> str | None:
     if r.ai_action is not None:
         return r.ai_action.skill
-    if r.proposal_draft is not None or (r.output and r.output.ready_proposal is not None):
+    if (
+        r.proposal_draft is not None
+        or r.refused_draft is not None
+        or (r.output and r.output.ready_proposal is not None)
+    ):
         return "propose_charter_change"
     return None
 
@@ -137,6 +142,8 @@ def _action_params(r: TurnRecord) -> dict[str, Any]:
         return dict(r.ai_action.params)
     if r.proposal_draft is not None:
         return r.proposal_draft.model_dump(mode="json")
+    if r.refused_draft is not None:  # the brain refused it in the turn: what the AI tried
+        return dict(r.refused_draft)
     return {}
 
 
@@ -380,7 +387,7 @@ async def run_scenario(
         follow = [r for r in records[1:] if r.retry_of is not None]
         exp = dict(step.get("expect") or {})
         fails = check_expect(exp, main, follow, records)
-        if exp.get("memory_pending") is False and fg.mem.pending_operator_request is not None:
+        if exp.get("memory_pending") is False and pending_request(fg.mem) is not None:
             fails.append("a start request was remembered")
         if exp.get("no_turn") and records:
             fails.append(f"expected no turn, got {[r.trigger for r in records]}")

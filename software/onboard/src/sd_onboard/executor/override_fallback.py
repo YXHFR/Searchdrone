@@ -77,6 +77,12 @@ class OverrideFallback:
         self._seq = action_seq
         self._task = asyncio.ensure_future(self._run(kind, action_seq, steps))
 
+    def stop(self) -> None:
+        """An accepted Resume: the chain of the notice it answers never sends again."""
+        self._seq = None
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+
     async def close(self) -> None:
         if self._task is not None:
             self._task.cancel()

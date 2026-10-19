@@ -21,6 +21,7 @@ from sd_brain.constants import EXPOSED_STAGE, TAKEOFF_REQUEST_TTL_S
 from sd_brain.state_view import Limits, current_limits, motion_block, takeoff_ok
 from sd_brain.turn import ToolSpec
 from sd_schemas.commander import MissionMemory, Situation
+from sd_schemas.safety import MIN_ALT_AGL_M
 from sd_schemas.skills import SkillRegistry, SkillSpec
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "STATE_ALLOWS",
     "AdaptError",
     "adapt",
+    "charter_skills",
     "clean_schema",
     "exposed_tools",
     "read_tools",
@@ -61,7 +63,11 @@ class AdaptError(ValueError):
 
 
 def clean_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Inline ``$ref``, drop titles and ``null`` alternatives: easier for a small model."""
+    """Inline ``$ref``, drop titles and ``null`` alternatives: easier for a small model.
+
+    A tagged union (pydantic's ``oneOf`` + ``discriminator``) becomes a plain ``anyOf``
+    and ``const`` a one-value ``enum``: what every OpenAI-compatible tool format reads.
+    The validation stays pydantic's, tag first."""
     defs = schema.get("$defs", {})
 
     def walk(node: Any) -> Any:
@@ -74,8 +80,12 @@ def clean_schema(schema: dict[str, Any]) -> dict[str, Any]:
             return walk(defs[name])
         out: dict[str, Any] = {}
         for key, value in node.items():
-            if key in ("title", "$defs") or (key == "default" and value is None):
+            if key in ("title", "$defs", "discriminator") or (key == "default" and value is None):
                 continue
+            if key == "oneOf":
+                key = "anyOf"
+            if key == "const":
+                key, value = "enum", [value]
             out[key] = walk(value)
         alts = out.get("anyOf")
         if isinstance(alts, list):
@@ -105,11 +115,108 @@ def _description(spec: SkillSpec) -> str:
     return f"{spec.description_en} Swedish: {', '.join(spec.synonyms_sv)}."
 
 
-def skill_tool(spec: SkillSpec, lim: Limits | None) -> ToolSpec:
-    """The OpenAI tool for a skill, with this turn's height and speed bounds."""
+def charter_skills(reg: SkillRegistry) -> list[str]:
+    """The skill names a charter may allow: every implemented skill of this stage (the
+    ground station's default set). ``allowed_skills`` in a draft is a subset of these."""
+    return sorted(k.name for k in reg if k.status == "implemented" and k.stage <= EXPOSED_STAGE)
+
+
+def _situated_areas(params: dict[str, Any], s: Situation) -> None:
+    """Offer only the area options this situation can fill: ``drawn`` (and
+    ``operating_area``) only when the operator drew an area, ``area_id`` and
+    ``center_pin_id`` as the known labels, no pin field without pins (``center`` is then
+    required). What remains follows ``CharterDraft`` (only "exactly one of center_pin_id
+    and center" is left to the turn's check, which is unchanged)."""
+    props = params["properties"]
+    items = props["search_areas"]["items"]
+    shapes = {a["properties"]["kind"]["enum"][0]: a for a in items["anyOf"]}
+    # Unique and in a fixed order: an enum must not repeat a value, and labels may.
+    areas = sorted({a.label for a in s.areas if a.kind == "area"})
+    pins = list(dict.fromkeys(p.id for p in s.pins))
+    for kind in ("rect", "circle"):
+        shape = shapes[kind]
+        fields = shape["properties"]
+        if pins:
+            fields["center_pin_id"].pop("pattern", None)
+            fields["center_pin_id"]["enum"] = pins
+            fields["center_pin_id"]["description"] = "A map pin listed under Kartnålar in LÄGE."
+        else:
+            # Without pins the centre must be coordinates (CharterDraft wants one of the two).
+            del fields["center_pin_id"]
+            fields["center"]["description"] = "Centre as coordinates the operator wrote."
+            fields["kind"]["description"] = f"A {'rectangle' if kind == 'rect' else 'circle'}."
+            shape["required"] = [*shape.get("required", []), "center"]
+    if areas:
+        shapes["drawn"]["properties"]["area_id"]["enum"] = areas
+        props["operating_area"]["properties"]["area_id"]["enum"] = areas
+    else:
+        del shapes["drawn"]
+        del props["operating_area"]
+        props["search_areas"]["description"] = "The areas to search: a rect or circle."
+    items["anyOf"] = list(shapes.values())
+
+
+# goto's pin value for "the coordinates given" when map pins exist (never a pin id).
+GOTO_COORDS = "KOORDINATER"
+
+
+def _situated_goto(params: dict[str, Any], s: Situation) -> None:
+    """A goto target this situation can fill, required: with map pins the pin (one of
+    them, or ``GOTO_COORDS`` for the coordinates the operator wrote), without pins
+    coordinates. ``GotoAiParams`` takes either; this schema makes the model name its
+    target. The parser drops ``GOTO_COORDS`` before the params are checked."""
+    props = params["properties"]
+    pins = list(dict.fromkeys(p.id for p in s.pins))
+    if pins:
+        props["pin"].pop("pattern", None)
+        props["pin"]["enum"] = [*pins, GOTO_COORDS]
+        props["pin"]["description"] = (
+            f"The map pin to fly to (Kartnålar in LÄGE), or {GOTO_COORDS} to fly to the "
+            "lat and lon the operator wrote. Required."
+        )
+        props["lat"]["description"] = f"Only with pin {GOTO_COORDS}: latitude the operator wrote."
+        props["lon"]["description"] = f"Only with pin {GOTO_COORDS}: longitude."
+        required = ["pin"]
+    else:
+        props.pop("pin", None)
+        props["lat"]["description"] = "Latitude the operator wrote (no map pins exist)."
+        props["lon"]["description"] = "Longitude the operator wrote."
+        required = ["lat", "lon"]
+    params["required"] = sorted({*params.get("required", []), *required})
+
+
+def _proposal_schema(
+    lim: Limits | None, skills: list[str] | None, s: Situation | None = None
+) -> dict[str, Any]:
+    params = clean_schema(CharterDraft.model_json_schema())
+    params["additionalProperties"] = False
+    props = params.get("properties", {})
+    if s is not None:
+        _situated_areas(params, s)
+    if skills is not None:
+        props["allowed_skills"]["items"] = {"type": "string", "enum": list(skills)}
+    if lim is not None:
+        # A charter is bounded by the mission's own limits, not by the charter in force.
+        for name in ("alt_min_agl_m", "alt_max_agl_m", "default_alt_agl_m"):
+            props[name]["minimum"] = MIN_ALT_AGL_M
+            props[name]["maximum"] = lim.mission_alt_max_agl_m
+        props["max_speed_ms"]["maximum"] = lim.mission_max_speed_ms
+        props["max_range_from_pilot_m"]["maximum"] = lim.mission_max_range_from_pilot_m
+        props["battery_rtl_pct"]["minimum"] = lim.mission_battery_rtl_pct
+    return params
+
+
+def skill_tool(
+    spec: SkillSpec,
+    lim: Limits | None,
+    skills: list[str] | None = None,
+    s: Situation | None = None,
+) -> ToolSpec:
+    """The OpenAI tool for a skill, with this turn's height and speed bounds. ``skills``:
+    the names a charter proposal may allow (:func:`charter_skills`); ``s``: the situation
+    whose pins and drawn areas a proposal may name (``None``: every option)."""
     if spec.name == PROPOSAL_TOOL:
-        params = clean_schema(CharterDraft.model_json_schema())
-        params["additionalProperties"] = False
+        params = _proposal_schema(lim, skills, s)
         kind: Literal["action", "proposal"] = "proposal"
     else:
         model = spec.ai_params_model or spec.params_model
@@ -119,6 +226,8 @@ def skill_tool(spec: SkillSpec, lim: Limits | None) -> ToolSpec:
         params["required"] = sorted({*params.get("required", []), "rationale_sv"})
         params["type"] = "object"
         params["additionalProperties"] = False
+        if spec.name == "goto" and s is not None:
+            _situated_goto(params, s)
         kind = "action"
     return ToolSpec(
         name=spec.name,
@@ -193,23 +302,29 @@ def exposed_tools(
     ttl_s: float = TAKEOFF_REQUEST_TTL_S,
     actions: bool = True,
     pilot: bool = True,
+    proposals: bool = True,
 ) -> list[ToolSpec]:
-    """The tools for one turn (read tools first). ``actions = False``: read tools only."""
+    """The tools for one turn (read tools first). ``actions = False``: read tools only;
+    ``proposals = False``: no charter proposal (the loop offers it only in a turn an
+    operator line started, or in the retry of a refused proposal)."""
     out = read_tools()
     if not actions:
         return out
     lim = current_limits(s)
     blocked = motion_block(s)
+    skills = charter_skills(reg)
     for k in reg:
         if k.status != "implemented" or k.stage > EXPOSED_STAGE or not k.ai_allowed:
             continue
         if not pilot and k.name != "report":
             continue
+        if not proposals and k.name == PROPOSAL_TOOL:
+            continue
         if not s.ai_enabled and k.name != "report":
             continue
         if blocked is not None:
             if k.allowed_under_latch:
-                out.append(skill_tool(k, lim))
+                out.append(skill_tool(k, lim, skills, s))
             continue
         allowed_here = STATE_ALLOWS.get(s.mission_status)
         if allowed_here is not None and k.name not in allowed_here:
@@ -226,16 +341,17 @@ def exposed_tools(
             continue
         if k.allowed_from and s.vehicle.executor_state not in k.allowed_from:
             continue  # the onboard executor would refuse it in this state
-        out.append(skill_tool(k, lim))
+        out.append(skill_tool(k, lim, skills, s))
     return out
 
 
 def registry_tool_schemas(reg: SkillRegistry) -> list[dict[str, Any]]:
     """Every exposable tool with the registry's fixed bounds (for ``ai_config_hash``)."""
     tools = [t.openai for t in read_tools()]
+    skills = charter_skills(reg)
     for k in reg:
         if k.status == "implemented" and k.stage <= EXPOSED_STAGE and k.ai_allowed:
-            tools.append(skill_tool(k, None).openai)
+            tools.append(skill_tool(k, None, skills).openai)
     return json.loads(json.dumps(tools, sort_keys=True))
 
 

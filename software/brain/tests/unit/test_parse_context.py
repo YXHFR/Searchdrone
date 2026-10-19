@@ -8,11 +8,12 @@ import re
 
 from brain_helpers import REG, situation
 
+from sd_brain.charter_draft import CharterError
 from sd_brain.context import ContextBuilder, situation_text
 from sd_brain.memory import empty_memory
 from sd_brain.runtime.base import ModelReply, RawToolCall
 from sd_brain.state_view import current_limits
-from sd_brain.sv import interpret
+from sd_brain.sv import Said, interpret, read
 from sd_brain.toolcall_parse import parse_tool_calls, strip_think, truncate
 from sd_brain.tools import exposed_tools
 from sd_brain.turn import OutMessage, TurnInput
@@ -56,6 +57,9 @@ def test_valid_and_invalid_calls() -> None:
     )
     assert "unknown pin" in (_parse(_reply(("goto", {"pin": "P5"})))[1] or "")
     assert _parse(_reply(("goto", {"sector": "A"})))[1] is not None
+    no_target = _parse(_reply(("goto", {"alt_m": 40, "rationale_sv": "x"})))[1] or ""
+    assert "a target is required" in no_target and "Map pins: P1" in no_target
+    assert "Call goto again with corrected arguments." in no_target
     assert _parse(_reply(("brain_note", {"x": 1})))[1] is not None
     assert _parse(_reply(("get_log", {"n": "x"})))[1] is not None
     assert _parse(_reply(("estimate", {})))[1] is not None
@@ -124,6 +128,29 @@ def test_prompt_contains_rules_and_budget() -> None:
     assert counted.count_tokens("abc") == 3
 
 
+def test_charter_errors_show_field_attempt_and_hint() -> None:
+    ctx = ContextBuilder(REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=6000)
+    errors = [
+        CharterError(
+            code="HOME_OUTSIDE_AREA",
+            detail_sv="Hemplatsen ligger utanför flygområdet.",
+            field="area",
+        ),
+        CharterError(code="AREA_BEYOND_RANGE", detail_sv="För långt.", field="area", limit=500),
+        CharterError(
+            code="DRAFT_INVALID",
+            detail_sv="Ogiltigt värde i search_areas.0.rect.width_m.",
+            field="search_areas.0.rect.width_m",
+        ),
+    ]
+    block = ctx.turn_block(_turn(trigger="gate_reject_retry", charter_errors=errors, attempt=2))
+    line = next(x for x in block.splitlines() if x.startswith("GRINDSVAR (ramförslag)"))
+    assert line.startswith("GRINDSVAR (ramförslag) (försök 2 av 3): ")
+    assert "HOME_OUTSIDE_AREA Hemplatsen ligger utanför flygområdet. (fält area) → leave" in line
+    assert "(fält area) (gräns 500) → use a smaller search area" in line
+    assert "(fält search_areas.0.rect.width_m) → correct the field" in line
+
+
 def test_out_message_question_kind() -> None:
     assert OutMessage(text="Ska jag flyga hem?").kind == "question"
     assert OutMessage(text="Klart.").kind == "text"
@@ -137,3 +164,10 @@ def test_interpret() -> None:
     assert "ruta=100x100 m" in (interpret("en ruta 100 gånger 100 meter") or "")
     assert "sektor=A" in (interpret("sök sektor a") or "")
     assert interpret("hej") is None
+
+
+def test_read_is_what_interpret_shows() -> None:
+    line = "Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd."
+    assert read(line) == Said(alt_m=40, pins=("P1",), box_m=(100, 100))
+    assert interpret(line) == "höjd=40 m; punkt=P1; ruta=100x100 m"
+    assert read("Hur går det?") == Said() and interpret("Hur går det?") is None

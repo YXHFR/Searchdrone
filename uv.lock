@@ -16,6 +16,7 @@ members = [
     "sd-onboard",
     "sd-safety",
     "sd-schemas",
+    "sd-searchsim",
     "sd-sim",
     "sd-testing",
     "searchdrone-workspace",
@@ -1778,10 +1779,22 @@ requires-dist = [
 ]
 
 [[package]]
+name = "sd-searchsim"
+version = "0.0.0"
+source = { editable = "simulation/searchsim" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=2.4" }]
+
+[[package]]
 name = "sd-sim"
 version = "0.0.0"
 source = { editable = "simulation/sd_sim" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "pymavlink" },
@@ -1789,11 +1802,13 @@ dependencies = [
     { name = "sd-detect" },
     { name = "sd-hwcalc" },
     { name = "sd-safety" },
+    { name = "websockets" },
     { name = "shapely" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "numpy", specifier = ">=2.4" },
     { name = "pymavlink", specifier = ">=2.4.47" },
@@ -1801,6 +1816,7 @@ requires-dist = [
     { name = "sd-detect", editable = "software/detector" },
     { name = "sd-hwcalc", editable = "software/hwcalc" },
     { name = "sd-safety", editable = "software/common/safety" },
+    { name = "websockets", specifier = ">=15" },
     { name = "shapely", specifier = ">=2.1" },
 ]
 

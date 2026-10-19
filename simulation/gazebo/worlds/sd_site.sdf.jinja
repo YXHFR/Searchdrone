@@ -7,8 +7,10 @@
 -->
 <sdf version="1.9">
   <world name="{{ name }}">
-    <physics name="1ms" type="ignore">
-      <max_step_size>0.001</max_step_size>
+    <!-- 1.25 ms (800 Hz), as sd_lake_forest: the drone's IMU reads once per step, and
+         ArduPilot arms only with the gyro at 1.8 x its 400 Hz loop (720 Hz). -->
+    <physics name="1.25ms" type="ignore">
+      <max_step_size>0.00125</max_step_size>
       <real_time_factor>1.0</real_time_factor>
     </physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
