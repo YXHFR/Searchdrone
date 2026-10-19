@@ -42,14 +42,14 @@ describe("the hover point beside a find while the link is down", () => {
   const plan = {
     mode: "find" as const,
     candidate_seq: 3,
-    hover_lat: 59.3,
-    hover_lon: 18.1,
+    hover_lat: 59.288,
+    hover_lon: 18.16,
     lost_at_utc: "2026-10-19T10:00:00Z",
     home_at_utc: "2026-10-19T10:02:00Z",
   };
   it("one point labelled K<n> in find mode, nothing otherwise", () => {
     const fc = findHoverData(plan);
-    expect(fc.features[0]?.geometry.coordinates).toEqual([18.1, 59.3]);
+    expect(fc.features[0]?.geometry.coordinates).toEqual([18.16, 59.288]);
     expect(fc.features[0]?.properties.label).toBe("K3");
     expect(findHoverData({ ...plan, mode: "normal" }).features).toHaveLength(0);
     expect(findHoverData(null).features).toHaveLength(0);
