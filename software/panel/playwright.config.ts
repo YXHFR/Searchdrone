@@ -60,6 +60,15 @@ export default defineConfig({
       },
     },
     {
+      name: "medium",
+      testMatch: /(safety|views)\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1024, height: 768 },
+        launchOptions: chromium,
+      },
+    },
+    {
       name: "phone-390",
       testMatch: /safety\.spec\.ts/,
       use: {

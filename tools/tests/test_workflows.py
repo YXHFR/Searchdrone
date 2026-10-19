@@ -102,6 +102,7 @@ def test_ci_ok_needs_every_ci_job() -> None:
         "unit",
         "contract",
         "panel-e2e",
+        "panel-screens",
         "reuse",
         "secrets",
         "build",

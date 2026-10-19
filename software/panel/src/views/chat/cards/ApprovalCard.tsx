@@ -6,11 +6,15 @@ import { paths } from "../../../api/paths";
 import type { Approval, AutonomyMode } from "../../../api/types";
 import { mmss, useNow } from "../../../lib/useNow";
 import { ClearanceControl } from "../../../safety/ClearanceControl";
-import { useMissionStore } from "../../../state/missionStore";
+import { useLiveStore } from "../../../state/liveStore";
+import { activeCharter, useMissionStore } from "../../../state/missionStore";
 import { useIsPilot } from "../../../state/sessionStore";
 import { useUiStore } from "../../../state/uiStore";
+import { HoldButton } from "../../../ui/HoldButton";
 import { CharterBody, ProblemList, useCharterProblems } from "./CharterBody";
 import { LimitsButton } from "./LimitsForm";
+import { MiniMap } from "./MiniMap";
+import { outerRing, type Ring } from "./miniMap";
 import { SkillBody } from "./SkillBody";
 
 type Outcome = "superseded" | "expired" | null;
@@ -94,6 +98,28 @@ function DecidedLine({ a, outcome }: { a: PanelApproval; outcome: Outcome }) {
   ) : null;
 }
 
+/** The proposal drawn dashed against the approved area and what has been swept. */
+function ProposalMap({ a }: { a: PanelApproval }) {
+  const activeId = useLiveStore((s) => s.mission?.active_charter_id ?? null);
+  const current = useMissionStore((s) => activeCharter(s, activeId));
+  const sectors = useMissionStore((s) => s.sectors);
+  const tel = useLiveStore((s) => s.telemetry);
+  const c = a.charter?.body;
+  if (!c) return null;
+  const rings = (gs: unknown[]): Ring[] => gs.map(outerRing).filter((r): r is Ring => r !== null);
+  return (
+    <MiniMap
+      home={{ lat: c.home.lat, lon: c.home.lon }}
+      current={current && current.id !== a.charter?.id ? outerRing(current.body.area) : null}
+      proposed={outerRing(c.area)}
+      proposedSectors={rings(c.sectors.map((s) => s.area))}
+      swept={rings(sectors.map((s) => s.properties.covered))}
+      drone={tel && Number.isFinite(tel.lat) ? { lat: tel.lat, lon: tel.lon } : null}
+      rangeM={c.max_range_from_pilot_m ?? null}
+    />
+  );
+}
+
 /** Shell shared by every approval card: title, who and why, body, Godkänn / Avvisa. */
 export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
   const { t } = useTranslation();
@@ -143,17 +169,22 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
       data-testid={`approval-${a.approval_id}`}
       data-kind={a.kind}
     >
-      {pending ? <p className="approval-need">{t("cards.needsApproval")}</p> : null}
-      <h3 id={titleId}>{title}</h3>
-      <p className="muted">
-        {t(a.requested_by.startsWith("brain") ? "cards.byAi" : "cards.byOperator")} ·{" "}
-        {new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" }).format(
-          new Date(a.created_at),
-        )}
-        {pending && left !== null ? ` · ${t("cards.expiresIn", { left: mmss(left) })}` : ""}
+      <p className="approval-top">
+        {pending ? <span className="approval-need">{t("cards.needsApproval")}</span> : null}
+        <span className="approval-by">
+          {t(a.requested_by.startsWith("brain") ? "cards.byAi" : "cards.byOperator")} ·{" "}
+          {new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" }).format(
+            new Date(a.created_at),
+          )}
+          {pending && left !== null ? ` · ${t("cards.expiresIn", { left: mmss(left) })}` : ""}
+        </span>
       </p>
-      <p>{a.summary_sv}</p>
-      {a.rationale ? <p className="muted">{a.rationale}</p> : null}
+      <h3 id={titleId}>{title}</h3>
+      <p className="approval-sum">{a.summary_sv}</p>
+      {a.rationale && a.rationale !== a.summary_sv ? (
+        <p className="approval-why">{a.rationale}</p>
+      ) : null}
+      {pending && isCharter && !a.subject_loading ? <ProposalMap a={a} /> : null}
       {a.subject_loading ? (
         <p className="muted">{t("common.loading")}</p>
       ) : isCharter ? (
@@ -166,7 +197,7 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
         <fieldset className="mode-choice">
           <legend>{t("cards.mode.legend")}</legend>
           {(["APPROVE_EACH", "WITHIN_CHARTER"] as const).map((m) => (
-            <label key={m}>
+            <label key={m} data-on={mode === m}>
               <input
                 type="radio"
                 name={`mode-${a.approval_id}`}
@@ -183,18 +214,29 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
       {pending && needsClearance ? <ClearanceControl force /> : null}
       {pending ? (
         <div className="approval-actions">
+          {isCharter ? (
+            <HoldButton
+              testId="approve"
+              disabled={approveDisabled}
+              hint={t("cards.holdHint")}
+              onDone={() => void decide("approve", { autonomy_mode: mode })}
+            >
+              {t(a.kind === "charter" ? "cards.approveArea" : "cards.approveChange")}
+            </HoldButton>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-decide"
+              data-testid="approve"
+              disabled={approveDisabled}
+              onClick={() => void decide("approve", {})}
+            >
+              {t("cards.approve")}
+            </button>
+          )}
           <button
             type="button"
-            className="btn btn-primary"
-            data-testid="approve"
-            disabled={approveDisabled}
-            onClick={() => void decide("approve", isCharter ? { autonomy_mode: mode } : {})}
-          >
-            {t("cards.approve")}
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline"
+            className="btn btn-decide"
             data-testid="reject"
             disabled={!isPilot || busy}
             onClick={() =>
@@ -206,7 +248,7 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
           {isCharter && isPilot ? (
             <button
               type="button"
-              className="btn btn-outline"
+              className="btn btn-quiet"
               data-testid="edit-charter"
               onClick={() =>
                 useUiStore.getState().setDraft({ text: t("cards.editPrefix"), replyTo: null }, true)

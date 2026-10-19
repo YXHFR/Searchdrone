@@ -13,7 +13,7 @@ import {
   vehicleLive,
 } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { showView } from "../helpers/safety";
+import { holdClick, showView } from "../helpers/safety";
 
 const CHAT = "/api/v1/missions/M1/chat";
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -73,7 +73,11 @@ test.describe("chat and approval cards", () => {
     await expect(card).toContainText("Sök av sektor");
     // The owner chose approval directly on the card (no review step).
     await expect(card.getByRole("radio", { name: /B – AI:n flyger fritt/ })).toBeChecked();
+    // A habitual tap approves nothing: the area has to be held for 0.8 s.
     await card.getByTestId("approve").click();
+    await page.waitForTimeout(1_000);
+    expect(ground.posts("/api/v1/approvals/AP1/decision")).toEqual([]);
+    await holdClick(page, "approve", card);
     await expect.poll(() => ground.posts("/api/v1/approvals/AP1/decision").length).toBe(1);
     expect(ground.posts("/api/v1/approvals/AP1/decision")[0]?.body).toEqual({
       decision: "approve",
@@ -141,7 +145,7 @@ test.describe("chat and approval cards", () => {
       detail_sv: "Ersatt",
     });
     const card = page.getByTestId("approval-AP1");
-    await card.getByTestId("approve").click();
+    await holdClick(page, "approve", card);
     await expect(card).toContainText("Ersatt av en nyare version");
     await expect(card.getByTestId("approve")).toHaveCount(0);
 
@@ -226,10 +230,13 @@ test.describe("chat and approval cards", () => {
     await expect(page.getByTestId("brain-row")).toHaveText("");
     // The ground reports the AI process going away with chat.brain_status.
     ground.pushLive("chat", "chat.brain_status", { state: "down", typing: false });
-    await expect(page.getByTestId("brain-row")).toContainText("AI:n är nere");
+    // Said once, in the command panel, which then holds the order buttons.
+    await expect(page.getByTestId("ai-down-banner")).toContainText("AI:n svarar inte.");
+    await expect(page.getByTestId("ai-down-banner").getByTestId("cmd-manual")).toBeVisible();
+    await expect(page.getByTestId("brain-row")).toHaveText("");
     await expect(page.getByTestId("pill-ai")).toContainText("AI borta");
     ground.pushLive("chat", "chat.brain_status", { state: "ready", typing: false });
-    await expect(page.getByTestId("brain-row")).toHaveText("");
+    await expect(page.getByTestId("ai-down-banner")).toHaveCount(0);
 
     ground.mission = { ...ground.mission, active_charter_id: "C1" };
     ground.pushLive(
@@ -246,9 +253,11 @@ test.describe("chat and approval cards", () => {
       data: {},
     });
     const banner = page.getByTestId("ai-down-banner");
-    await expect(banner).toHaveText(
-      "AI:n svarar inte. Drönaren gör klart steget och svävar sedan. STOPP och FLYG HEM fungerar.",
+    await expect(banner).toContainText("AI:n svarar inte.");
+    await expect(banner.getByTestId("cmd-behaviour")).toHaveText(
+      "Drönaren gör klart steget och svävar sedan.",
     );
+    await expect(banner).toContainText("STOPP och FLYG HEM fungerar.");
     await expect(banner).not.toContainText(/\d+:\d\d/);
     ground.pushLive("system", "system.status", {
       version: "0.0.0",
