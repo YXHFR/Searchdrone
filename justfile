@@ -411,6 +411,19 @@ maps-fetch *args:
 world-fetch *args:
     uv run --no-sync python tools/terrain/fetch_site.py "$@"
 
+# Sim farm: rounds in Gazebo from the newest main until Ctrl+C, pictures with facit to
+# build/simfarm/ (and R2 in the EU with a key) (keys: commander, rounds, max_minutes, seed, idle_only, update)
+sim-farm *args:
+    uv run --package sd-sim python -m sd_sim.farm run "$@"
+
+# What the sim farm is doing: pictures, rounds per hour, latest errors
+sim-farm-status:
+    uv run --package sd-sim python -m sd_sim.farm status
+
+# Fetch the sim farm's person models (CC0 / CC BY 4.0, from Gazebo Fuel) into build/
+sim-farm-setup:
+    uv run --package sd-sim python -m sd_sim.farm setup
+
 # Pictures of a site world from the camera at 40 m and 100 m and from the side, with the
 # road's width and the map overlap measured in them (keys: world, instance)
 world-snapshot *args:
