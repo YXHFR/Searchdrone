@@ -1,6 +1,6 @@
 // Pure functions: store state → the GeoJSON each map layer shows. No MapLibre here, so this
 // is unit-tested without WebGL and stays out of the map chunk's way.
-import type { Annotation, Approval, Charter, Command, Telemetry } from "../../api/types";
+import type { Annotation, Approval, Charter, Command, Find, Telemetry } from "../../api/types";
 import { areaM2, circleRing } from "../../lib/geo";
 import type { SectorFeature, Track } from "../../state/missionStore";
 
@@ -25,6 +25,7 @@ export const SOURCE_IDS = [
   "track",
   "areas",
   "pins",
+  "finds",
   "draw",
   "drone",
 ] as const;
@@ -170,6 +171,25 @@ export function pinsData(anns: Annotation[]): FC {
         geometry: a.geometry as Feature["geometry"],
         properties: { id: a.id, label: a.label },
       })),
+  );
+}
+
+const pct = new Intl.NumberFormat("sv-SE", { style: "percent", maximumFractionDigits: 0 });
+
+/** Found objects: one point each, labelled with the class name and how sure the source
+ * is; the simulator's own labels say "facit" so nobody takes them for a real detector. */
+export function findsData(finds: Find[]): FC {
+  return fc(
+    finds.map((f) =>
+      point(f.lon, f.lat, {
+        id: f.find_id,
+        kind: f.kind,
+        label:
+          f.source === "oracle"
+            ? `${f.name_sv} (facit)`
+            : `${f.name_sv} ${pct.format(f.score)}${f.count > 1 ? ` ×${f.count}` : ""}`,
+      }),
+    ),
   );
 }
 

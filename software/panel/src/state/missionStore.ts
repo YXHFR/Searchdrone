@@ -2,7 +2,7 @@
 // clearance, sectors, map annotations and the flown track. Filled by the resync (REST) and
 // kept current by the live socket; emptied when the mission or the server epoch changes.
 import { create } from "zustand";
-import type { Annotation, Approval, Charter, Clearance, Command } from "../api/types";
+import type { Annotation, Approval, Charter, Clearance, Command, Find } from "../api/types";
 
 export interface SectorFeature {
   type: "Feature";
@@ -39,6 +39,8 @@ interface MissionState {
   sectors: SectorFeature[];
   annotations: Record<string, Annotation>;
   track: Track;
+  /** Found objects (detections joined per object), by find id. Never confirmed finds. */
+  finds: Record<string, Find>;
   /** Approval ids whose subject was already requested once (fetch-once rule). */
   subjectFetched: Record<string, true>;
   reset(missionId: string | null): void;
@@ -55,6 +57,8 @@ interface MissionState {
   removeAnnotation(id: string): void;
   setAnnotations(list: Annotation[]): void;
   setTrack(t: Track): void;
+  upsertFind(f: Find): void;
+  setFinds(list: Find[]): void;
   appendTrack(lon: number, lat: number): void;
   markSubjectFetched(approvalId: string): void;
 }
@@ -74,6 +78,7 @@ export const useMissionStore = create<MissionState>((set) => ({
   sectors: [],
   annotations: {},
   track: [],
+  finds: {},
   subjectFetched: {},
   reset: (missionId) =>
     set({
@@ -86,6 +91,7 @@ export const useMissionStore = create<MissionState>((set) => ({
       sectors: [],
       annotations: {},
       track: [],
+      finds: {},
       subjectFetched: {},
     }),
   upsertCharter: (c) => set((s) => ({ charters: { ...s.charters, [c.id]: c } })),
@@ -119,6 +125,8 @@ export const useMissionStore = create<MissionState>((set) => ({
     }),
   setAnnotations: (list) => set({ annotations: byId(list) }),
   setTrack: (track) => set({ track: track.slice(-MAX_TRACK) }),
+  upsertFind: (f) => set((s) => ({ finds: { ...s.finds, [f.find_id]: f } })),
+  setFinds: (list) => set({ finds: Object.fromEntries(list.map((f) => [f.find_id, f])) }),
   appendTrack: (lon, lat) =>
     set((s) => {
       const last = s.track.at(-1);

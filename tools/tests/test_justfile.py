@@ -62,6 +62,8 @@ RECIPES = [
     "brain-token",
     "brain-eval",
     "brain-eval-cloud",
+    "brain-eval-sim",
+    "brain-scores",
 ]
 ALIASES = ["gen-schemas", "sim-up", "sim-down", "bench"]
 

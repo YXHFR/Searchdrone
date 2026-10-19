@@ -125,7 +125,20 @@
         "areas": "Ritade områden",
         "pins": "Nålar",
         "swept": "Avsökt yta",
-        "paths": "Ritade vägar"
+        "paths": "Ritade vägar",
+        "finds": "Fynd"
+      },
+      "find": {
+        "title": "Fynd",
+        "close": "Stäng",
+        "score": "Säkerhet {{score}}",
+        "seen": "Sett {{count}} gånger",
+        "where": "{{lat}}, {{lon}} (±{{sigma}} m)",
+        "oracle": "Simulatorns facit, inte en riktig detektor",
+        "color": "Färgdetektor",
+        "model": "Detektor",
+        "unconfirmed": "Inte bekräftat. Bara du kan bekräfta ett fynd.",
+        "noThumb": "Ingen bild"
       }
     },
     "video": {

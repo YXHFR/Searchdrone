@@ -1202,6 +1202,31 @@ export interface DecisionLogStored {
   turn_id: string;
 }
 /**
+ * A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.
+ * ``source = "oracle"`` is the simulator's own label, not a detector.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "DetectionRow".
+ */
+export interface DetectionRow {
+  bbox: number[];
+  captured_at: string;
+  find_id: string;
+  has_crop: boolean;
+  id: string;
+  kind: "target" | "context";
+  label: string;
+  lat: number;
+  lon: number;
+  score: number;
+  sigma95_m: number;
+  size_m: number;
+  source: "model" | "color" | "oracle";
+  still_id: string;
+  synthetic: boolean;
+  vehicle_id: string;
+}
+/**
  * Which detector looked at a still, and how it went.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1274,6 +1299,28 @@ export interface Features {
   manual_control?: boolean;
   order_buttons?: boolean;
   voice?: boolean;
+}
+/**
+ * One found object: detections of one class at the same place, joined
+ * (``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:
+ * only a person confirms.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Find".
+ */
+export interface Find {
+  count: number;
+  find_id: string;
+  kind: "target" | "context";
+  label: string;
+  lat: number;
+  lon: number;
+  name_sv: string;
+  score: number;
+  sigma95_m: number;
+  source: "model" | "color" | "oracle";
+  synthetic: boolean;
+  thumb_detection_id: string | null;
 }
 /**
  * Stage 2. Unresolved here: the operator's position is checked onboard.
@@ -1408,11 +1455,13 @@ export interface GeoDetectionMsg {
   bbox: BBox;
   crop_inline: boolean;
   detection_id: string;
+  label?: string | null;
   lat: number;
   lon: number;
   px_size: number;
   score: number;
   sigma95_m: number;
+  source?: ("model" | "color" | "oracle") | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

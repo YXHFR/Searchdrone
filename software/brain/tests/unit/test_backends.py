@@ -304,6 +304,65 @@ async def test_llm_runtime_error() -> None:
     assert out.diagnostics.error == "timeout"
 
 
+async def test_scripted_flies_to_a_target_find_and_asks_the_pilot(tmp_path: Path) -> None:
+    script = tmp_path / "find.yaml"
+    script.write_text(
+        "scenario: SK-RED\n"
+        "turns:\n"
+        "  - on: detection\n"
+        "    when: {label: red_block}\n"
+        "    once: false\n"
+        '    say: ["{name_sv} hittat, bekräfta?"]\n'
+        '    action: {skill: goto, params: {at: "event:find", alt_m: 25}}\n',
+        encoding="utf-8",
+    )
+    b = ScriptedBackend.from_file(script)
+    find = {
+        "find_id": "f1",
+        "label": "red_block",
+        "name_sv": "Rött block",
+        "kind": "target",
+        "source": "color",
+        "lat": -35.3615,
+        "lon": 149.1652,
+    }
+    ev = [{"type": "event.detection", "body": find}]
+    out = await b.decide(_turn(None, trigger="detection", events=ev), _NoTools())
+    assert [m.text for m in out.messages] == ["Rött block hittat, bekräfta?"]
+    assert out.action is not None and out.action.skill == "goto"
+    assert out.action.params == {"lat": -35.3615, "lon": 149.1652, "alt_m": 25}
+    other = [{"type": "event.detection", "body": {**find, "label": "person"}}]
+    assert (
+        await b.decide(_turn(None, trigger="detection", events=other), _NoTools())
+    ).action is None
+
+
+async def test_scripted_regex_groups_win_over_event_fields(tmp_path: Path) -> None:
+    script = tmp_path / "clash.yaml"
+    script.write_text(
+        "scenario: SK-RED\n"
+        "turns:\n"
+        "  - on: operator_message\n"
+        "    match: '^Vad är (?P<label>\\w+)\\?$'\n"
+        "    once: false\n"
+        '    say: ["{label}"]\n',
+        encoding="utf-8",
+    )
+    b = ScriptedBackend.from_file(script)
+    ev = [{"type": "event.detection", "body": {"label": "red_block", "kind": "target"}}]
+    out = await b.decide(_turn("Vad är bil?", events=ev), _NoTools())
+    assert [m.text for m in out.messages] == ["bil"]  # no TypeError over the shared key
+
+
+def test_event_find_only_for_at(tmp_path: Path) -> None:
+    from sd_brain.backends.scripted import _Fixture, _resolve  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ScriptError, match="event:find"):
+        _resolve({"polygon": "event:find"}, _Fixture(None), _turn(None), {"lat": 1, "lon": 2})
+    with pytest.raises(ScriptError, match="event:find"):
+        _resolve({"at": "event:find"}, _Fixture(None), _turn(None), {})
+
+
 HERE_SCRIPT = SCRIPT.replace(
     "  - on: operator_message\n    match: '.*'",
     "  - on: operator_message\n    match: '^Upp\\.$'\n"

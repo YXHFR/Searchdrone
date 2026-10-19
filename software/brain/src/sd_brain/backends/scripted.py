@@ -15,11 +15,12 @@ Script format (``simulation/scenarios/scripts/SCxx.yaml``)::
 
 ``ai: true`` on an action sends the parameters in the model's form through the adapter
 (``{path: pa-1}`` becomes the drawn path's points). ``fixture:<pin>`` under ``at``
-becomes ``lat``/``lon`` (``at: here`` is the drone's position in the turn's situation);
-``fixture:<area>`` under ``polygon`` becomes a GeoJSON polygon;
-``charter_proposal: {from_fixture: <name>}`` sends that charter from the fixture.
-``delay_s`` delays the turn and ``fail: timeout | crash`` simulates a broken backend.
-Unknown keys refuse to load.
+becomes ``lat``/``lon`` (``at: here`` is the drone's position in the turn's situation,
+``at: "event:find"`` the find that started a ``detection`` turn; ``say`` may use the
+event's fields, e.g. ``{name_sv}``); ``fixture:<area>`` under ``polygon`` becomes a
+GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}`` sends that charter from the
+fixture. ``delay_s`` delays the turn and ``fail: timeout | crash`` simulates a broken
+backend. Unknown keys refuse to load.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ WHEN_FIELDS: dict[str, frozenset[str]] = {
     "operator_message": frozenset(),
     "operator_override": frozenset({"action", "via"}),
     "skill_event": frozenset({"skill", "status", "status_reason", "issuer_kind"}),
+    "detection": frozenset({"label", "kind", "source"}),
     "approval_event": frozenset({"kind", "decision"}),
     "charter_event": frozenset({"status", "install_status"}),
     "takeoff_clearance": frozenset(),
@@ -92,6 +94,7 @@ class ScriptTurn(_Strict):
         "operator_message",
         "operator_override",
         "skill_event",
+        "detection",
         "approval_event",
         "charter_event",
         "takeoff_clearance",
@@ -220,7 +223,15 @@ class _Fixture:
         return CharterProposal.model_validate(body)
 
 
-def _resolve(params: dict[str, Any], fx: _Fixture, turn: TurnInput) -> dict[str, Any]:
+def _resolve(
+    params: dict[str, Any],
+    fx: _Fixture,
+    turn: TurnInput,
+    event: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """``fixture:<name>`` takes a pin or an area from the fixture, ``at: here`` the drone's
+    position, and ``event:find`` (only for ``at``) the position of the event that started
+    the turn (a find)."""
     out: dict[str, Any] = {}
     for key, value in params.items():
         if key == "at" and value == "here":
@@ -228,6 +239,11 @@ def _resolve(params: dict[str, Any], fx: _Fixture, turn: TurnInput) -> dict[str,
             if v.lat is None or v.lon is None:
                 raise ScriptError("at: here, men drönarens position är okänd")
             out["lat"], out["lon"] = v.lat, v.lon
+            continue
+        if isinstance(value, str) and value == "event:find":
+            if key != "at" or not event or "lat" not in event or "lon" not in event:
+                raise ScriptError("event:find går bara att använda för at i en detection-tur")
+            out["lat"], out["lon"] = float(event["lat"]), float(event["lon"])
             continue
         if isinstance(value, str) and value.startswith("fixture:"):
             name = value.removeprefix("fixture:")
@@ -304,7 +320,9 @@ class ScriptedBackend:
             text = next((m.text for m in reversed(turn.chat_tail) if m.role == "operator"), "")
             m = re.fullmatch(t.match, text)
             groups = {k: v for k, v in (m.groupdict() if m else {}).items() if v is not None}
-        out.messages = [OutMessage(text=line.format(**groups)) for line in t.say]
+        event = next((b for b in _event_bodies(turn) if _matches_when(t.when, b)), {})
+        fields = {k: str(v) for k, v in event.items() if isinstance(v, str | int | float)}
+        out.messages = [OutMessage(text=line.format(**{**fields, **groups})) for line in t.say]
         if t.charter_proposal is not None:
             name = t.charter_proposal.get("from_fixture", "").format(**groups)
             out.ready_proposal = self.fixture.charter(name, f"Ram {name} ur manuset.")
@@ -313,7 +331,7 @@ class ScriptedBackend:
         elif t.action is not None:
             out.action = AiAction(
                 skill=t.action.skill,
-                params=_resolve(t.action.params, self.fixture, turn),
+                params=_resolve(t.action.params, self.fixture, turn, event),
                 rationale_sv="Steg i manuset.",
                 adapted=not t.action.ai,
             )

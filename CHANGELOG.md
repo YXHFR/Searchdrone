@@ -6,6 +6,31 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Simulator exams for the AI commander: `sd-brain eval --backend sim` (`just
+  brain-eval-sim`) flies random search scenarios with an answer key in a fast 2D world
+  through the real commander loop and a gate with the area, height and speed rules. The
+  cloud model decides; the executor flies. Each flight gets a JSON grade (safety, found or
+  not, time to find, coverage, pilot questions, cost in kronor) under `data/brain-scores/`;
+  any safety failure (a rejected or forbidden order, an order during STOP, a geofence
+  breach) fails the flight. The cloud model has a hard cap of 30 kr per day counted on the
+  provider's stated price per call (`usage.cost`), shared by all runs on the machine; at
+  the cap, without a key, with a refused key (`key_invalid`) or when the cloud fails, a
+  fixed search script takes over and the flight is not counted as an exam. A cost the
+  provider did not state is shown as not measured, never guessed. Good and failed exams go
+  to an example bank (a gitignored local folder, or an R2 bucket in the EU,
+  `SD_BANK_R2_*`): `sd-brain bank export-golden` turns a good one into a replay fixture
+  (`tests/golden/sim/`, only the seed and the model's answers) that `just brain-eval`
+  flies again in CI without a network, and `sd-brain bank failures` lists the failed ones
+  with what went wrong. `sd-brain eval grade --round <dir>` grades a simulator-farm round
+  and writes `grade.json` in its folder.
+  `just brain-scores` shows the grade per day and model and flags a worse day. The
+  decision maker (`sd_brain.simeval.make_decision_maker`) and the grading
+  (`score_flight`) are plain interfaces for a simulator farm. A nightly workflow
+  (`brain-nightly`) runs a short cloud exam from main when the repository has the
+  `OPENROUTER_API_KEY` secret and uploads the grades as an artifact.
+
 ### Changed
 
 - The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY
@@ -38,6 +63,23 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Perception chain: `sd-onboard` takes stills from a camera folder (`[perception]` in
+  `config/onboard.toml`, off by default), runs the class register's detector sources,
+  places each detection on the ground with the flight controller's position and attitude
+  and sends a `PerceptionReport` followed by a `CropData` JPEG for each target over
+  SD-link, in its own lowest-priority queue. A detection may now
+  carry its class (`GeoDetectionMsg.label` and `source`). `sd-ground` queues reports per
+  vehicle off the link's inbound loop, waits a moment for a report's crops, stores the
+  still and its classed detections (`perception_stills` and `detections`; migration
+  `0004_detections` adds `label`, `kind`, `source` and `find_id`), joins them into one
+  find per object (rebuilt from the table by find id after a restart), saves thumbnails
+  in the mission folder and serves
+  `GET /missions/{id}/detections`, `/finds` and `/detections/{id}/crop`; live events
+  `detection.new`, `find.new` and `find.updated` on the `detections` topic. The AI
+  commander gets `event.detection` for new finds and wakes on targets (trigger
+  `detection`); the scripted commander can fly to a find (`at: "event:find"`) and ask the
+  pilot to confirm. The panel draws finds on the map and opens a card with the class,
+  score, thumbnail and source; the simulator's labels are marked "facit".
 - `just sim-farm`, `just sim-farm-status` and `just sim-farm-setup`: a loop that runs
   randomized search rounds from the newest `main` and keeps camera pictures with person
   boxes (YOLO and COCO) computed from the simulator's facit and the camera's pose, plus a
