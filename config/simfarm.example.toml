@@ -5,7 +5,9 @@
 
 [farm]
 commander = "script"          # "script" (the scripted commander) | "sd-brain" (the cloud model)
-worlds = ["sd_lake_forest"]   # worlds to draw from; add your local site's world if you have one
+worlds = ["sd_lake_forest"]   # worlds to draw from; only sd_lake_forest is flown for now
+# A site world (your own place) needs its search box in the world's local metres, not lat/lon;
+# until the farm knows it, a round drawn in another world stops with an error.
 max_failures = 3              # stop after this many failed rounds in a row
 
 # Politeness on your computer

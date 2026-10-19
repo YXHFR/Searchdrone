@@ -22,7 +22,6 @@ from sd_sim.farm.camera import (
     quat_from_rpy,
     rotate,
 )
-from sd_sim.farm.gazebo import GazeboRunner
 from sd_sim.farm.people import PERSON_LABEL, Person
 
 CAM = Intrinsics(1280, 720, math.radians(66.0))
@@ -266,14 +265,6 @@ def test_facit_that_misses_fails_the_check() -> None:
     result = qc.check(t)
     assert not result.ok
     assert any("utanför facit" in r for r in result.reasons)
-
-
-def test_gazebo_round_is_not_built_yet(tmp_path: Path) -> None:
-    assert farm_round.execute(spec(tmp_path), GazeboRunner()) == farm_round.EXIT_NOT_BUILT
-    result = farm_round.read_result(tmp_path)
-    assert result is not None and result["status"] == "not_built"
-    assert "inte byggt än" in result["error"]
-    assert "truth" not in result  # no truth.json was written
 
 
 PEOPLE_OK = [Person("person_0", "sd_person_walking", "standing", 3, 3, 0)]

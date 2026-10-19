@@ -22,7 +22,7 @@ import math
 import random
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -263,11 +263,32 @@ def checked_fragment(obj: objects.WorldObject, frame: Frame | None = None) -> st
     return text
 
 
+def light_context(light: Mapping[str, Any] | None) -> dict[str, str] | None:
+    """A round's light (``FarmScenario.light`` of the simulator farm: the sun's strength
+    and direction, the ambient light, haze and shadows) as SDF values; ``None`` keeps the
+    world's own light."""
+    if light is None:
+        return None
+    sun = max(0.0, min(1.5, float(light["sun_intensity"])))
+    amb = max(0.0, min(1.0, float(light["ambient"])))
+    haze = max(0.0, min(1.0, float(light.get("haze", 0.0))))
+    dx, dy, dz = (float(v) for v in light["sun_direction"])
+    sky = [round(c + (0.8 - c) * haze, 3) for c in (0.62, 0.72, 0.86)]
+    return {
+        "ambient": f"{amb:.3f} {amb:.3f} {amb:.3f} 1",
+        "diffuse": f"{sun:.3f} {sun * 0.97:.3f} {sun * 0.9:.3f} 1",
+        "direction": f"{dx:.4f} {dy:.4f} {dz:.4f}",
+        "background": f"{sky[0]} {sky[1]} {sky[2]} 1",
+        "shadows": "true" if light.get("shadows") else "false",
+    }
+
+
 def world_context(
     name: str,
     instance: int,
     fix: fixture.Fixture,
     placed: Sequence[objects.WorldObject] = (),
+    light: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     objects.check(placed, GROUND_SIZE_M / 2)
     home = fix.home
@@ -286,6 +307,7 @@ def world_context(
         "trees": trees(),
         "trunk_radius": TRUNK_RADIUS_M,
         "objects": [checked_fragment(obj) for obj in placed],
+        "light": light_context(light),
     }
 
 
@@ -318,10 +340,11 @@ def world_sdf(
     instance: int,
     fix: fixture.Fixture | None = None,
     placed: Sequence[objects.WorldObject] = (),
+    light: Mapping[str, Any] | None = None,
 ) -> str:
     fix = fixture.load() if fix is None else fix
     template = _env().get_template(f"worlds/{name}.sdf.jinja")
-    return template.render(**world_context(name, instance, fix, placed))
+    return template.render(**world_context(name, instance, fix, placed, light))
 
 
 def world_truth(
@@ -427,9 +450,11 @@ def render_world(
     *,
     stills: bool = False,
     video: bool = True,
+    light: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write the instance's world and model, the objects' facit and the GeoJSON layer.
-    ``stills`` and ``video`` choose the vehicle's cameras.
+    ``stills`` and ``video`` choose the vehicle's cameras; ``light`` replaces the world's
+    sun and ambient light (``light_context``).
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
     the layer only depends on the fixture's home and the fixed scenery. The facit
@@ -439,13 +464,15 @@ def render_world(
     if name in sites:
         from sd_sim import site_world
 
-        return site_world.render(sites[name], instance, repo, placed, stills=stills, video=video)
+        return site_world.render(
+            sites[name], instance, repo, placed, stills=stills, video=video, light=light
+        )
     render_model(instance, repo, stills=stills, video=video)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}_i{instance}.sdf"
-    sdf = world_sdf(name, instance, fix, placed)
+    sdf = world_sdf(name, instance, fix, placed, light)
     truth = json.dumps(world_truth(name, placed, fix), indent=1) + "\n"
     path.write_text(sdf, encoding="utf-8")
     truth_path(name, instance, repo).write_text(truth, encoding="utf-8")

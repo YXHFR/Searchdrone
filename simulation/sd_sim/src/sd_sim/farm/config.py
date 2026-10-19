@@ -114,7 +114,9 @@ def load(overrides: dict[str, str] | None = None, repo: Path = paths.REPO) -> Fa
     warnings: list[str] = []
     local = repo / LOCAL
     if r2 is not None and local.is_file() and local.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-        warnings.append(f"{LOCAL} har R2-nyckeln och kan läsas av andra: kör chmod 600 {LOCAL}")
+        raise FarmConfigError(
+            f"{LOCAL} har R2-nyckeln och kan läsas av andra: kör chmod 600 {LOCAL}"
+        )
     return FarmConfig(
         commander=commander,
         worlds=tuple(str(w) for w in worlds),

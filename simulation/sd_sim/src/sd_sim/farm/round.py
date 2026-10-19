@@ -17,6 +17,8 @@ A round folder::
     labels/<id>.txt    YOLO, class 0 = person
     meta/<id>.json     per picture: world, time, weather, height, camera, people
     coco.json          COCO for the whole round
+    runs/<run>/        what the grade reads of each flight: ``flight.json`` and, when
+                       sd-brain decided, ``brain.json``
     grade.json         (optional) the AI commander's grade, when sd-brain can grade
 
 ``finalize()`` turns a runner's raw stills (``<name>.ppm`` plus ``<name>.json`` with the
@@ -36,6 +38,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from sd_sim import _args
 from sd_sim.farm import labels, qc
 from sd_sim.farm.camera import CameraPose, Intrinsics
 from sd_sim.farm.people import BY_ID
@@ -43,7 +46,8 @@ from sd_sim.farm.people import BY_ID
 SPEC_SCHEMA = "simfarm.spec/v1"
 ROUND_SCHEMA = "simfarm.round/v1"
 COMMANDERS = ("script", "sd-brain")
-EXIT_OK, EXIT_QC, EXIT_NOT_BUILT, EXIT_ERROR = 0, 1, 2, 3
+EXIT_OK, EXIT_QC, EXIT_ERROR = 0, 1, 3
+EXIT_NOT_BUILT = _args.NOT_BUILT_EXIT
 GRADE_MODULE = "sd_brain.simeval.farm"
 GRADE_TIMEOUT_S = 600
 DEFAULT_WORLDS = ("sd_lake_forest",)
@@ -114,6 +118,7 @@ class RawRound:
     camera: Intrinsics
     max_height_m: float | None = None  # from the flight log, if the runner has it
     extra: dict[str, Any] = field(default_factory=dict)  # run folder, mission id, ...
+    runs_dir: Path | None = None  # <run>/flight.json and brain.json, for the grade
 
 
 class Runner(Protocol):
@@ -140,6 +145,27 @@ def _pose(meta: Mapping[str, Any]) -> CameraPose:
     if len(p) != 3 or len(q) != 4 or not 0.99 < norm < 1.01:
         raise RoundError(f"stillbild {meta.get('name')!r} har ett ogiltigt kameraläge")
     return CameraPose((p[0], p[1], p[2]), (q[0], q[1], q[2], q[3]))
+
+
+RUN_FILES = ("flight.json", "brain.json")
+
+
+def copy_runs(runs_dir: Path | None, out: Path) -> list[str]:
+    """The flights' records into ``out/runs/<run>/``: only ``RUN_FILES``, only regular
+    files (never through a link). Returns the runs copied."""
+    if runs_dir is None or not runs_dir.is_dir():
+        return []
+    copied = []
+    for run in sorted(p for p in runs_dir.iterdir() if p.is_dir() and not p.is_symlink()):
+        files = [run / f for f in RUN_FILES if (run / f).is_file() and not (run / f).is_symlink()]
+        if not files:
+            continue
+        dest = out / "runs" / run.name
+        dest.mkdir(parents=True, exist_ok=True)
+        for f in files:
+            (dest / f.name).write_bytes(f.read_bytes())
+        copied.append(run.name)
+    return copied
 
 
 def credits(truth: Mapping[str, Any]) -> list[dict[str, str]]:
@@ -228,6 +254,7 @@ def finalize(spec: RoundSpec, raw: RawRound, out: Path) -> tuple[qc.QcResult, in
         )
         kept += 1
     coco.write(out / "coco.json")
+    copy_runs(raw.runs_dir, out)
     return qc.check(tally), kept
 
 
@@ -275,7 +302,8 @@ def targets(truth: Mapping[str, Any]) -> list[dict[str, float]]:
 
 
 def write_result(out: Path, spec: RoundSpec, result: Mapping[str, Any]) -> None:
-    """``round.json``, written last and by rename: a reader that sees it sees a whole round."""
+    """``round.json``, written last and by rename: a reader that sees it sees a whole round.
+    ``"grade": None`` means the grade is pending (the grader runs after this write)."""
     data = {
         **result,  # the contract's own keys below always win
         "schema": ROUND_SCHEMA,

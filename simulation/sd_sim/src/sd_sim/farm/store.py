@@ -24,6 +24,7 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -189,12 +190,11 @@ def files_of(round_dir: Path) -> Iterator[Path]:
         yield path
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def read_nofollow(path: Path) -> bytes:
+    """The file's bytes; a link swapped in after the listing is refused, never followed."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as f:
+        return f.read()
 
 
 class Ledger:
@@ -286,12 +286,13 @@ class R2Store:
         self.puts += 1
 
     def upload_file(self, key: str, path: Path) -> str:
-        sha = sha256_file(path)
+        data = read_nofollow(path)  # hash and upload the same bytes
+        sha = hashlib.sha256(data).hexdigest()
         if self.ledger.objects.get(key) == sha:
             return sha
         if not self.has(key, sha):
             ctype = CONTENT_TYPES.get(path.suffix, "application/octet-stream")
-            self.put(key, path.read_bytes(), sha, ctype)
+            self.put(key, data, sha, ctype)
         self.ledger.add_object(key, sha)
         return sha
 

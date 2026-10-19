@@ -82,14 +82,27 @@ UV_ENV_KEYS = (
 # What the round process may see of the farm's environment (as ``procs.clean_env``): uv,
 # the network proxy and certificates, and the display for a Gazebo window. Keys are read
 # from the linked ``.env`` by whoever needs them, never passed on here.
-ROUND_ENV_KEYS = (
-    *procs.GRAPHICS_ENV_KEYS,
+NET_ENV_KEYS = (
     "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
     "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
-    *UV_ENV_KEYS,
 )  # fmt: skip
-# Git variables that would point the worktree's commands at another repository.
-GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+# Where the simulator is installed (``tools/setup/wsl-setup.sh sim``).
+SIM_ENV_KEYS = (
+    "GZ_VERSION", "GZ_IP", "GZ_SIM_SYSTEM_PLUGIN_PATH",
+    "ARDUPILOT_HOME", "SD_ARDUCOPTER_BIN", "SD_ARDUPILOT_GAZEBO_HOME",
+)  # fmt: skip
+ROUND_ENV_KEYS = (*procs.GRAPHICS_ENV_KEYS, *NET_ENV_KEYS, *SIM_ENV_KEYS, *UV_ENV_KEYS)
+# The local config a round reads: the simulator's and sd-brain's (its cloud model). Never
+# the ground station's or the onboard side's, so no vehicle address reaches a round: it
+# flies SITL on loopback only.
+ROUND_CONFIGS = ("config/sim.toml", "config/brain.toml")
+# What git may see of the environment: its login and the network, never a variable that
+# points it at another repository, index or config.
+GIT_ENV_KEYS = (
+    *NET_ENV_KEYS,
+    "SSH_AUTH_SOCK", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS",
+    "GIT_TERMINAL_PROMPT", "XDG_CONFIG_HOME",
+)  # fmt: skip
 
 
 def say(msg: str) -> None:
@@ -117,7 +130,7 @@ def _signal_group(proc: subprocess.Popen[bytes], sig: int) -> None:
 
 
 def _git(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_S) -> str:
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
+    env = procs.clean_env(passthrough=GIT_ENV_KEYS)
     out = subprocess.run(  # noqa: S603 - fixed argv
         ["git", "-C", str(repo), *args],  # noqa: S607
         env=env,
@@ -177,13 +190,14 @@ class Worktree:
         return _git(self.path, "rev-parse", "HEAD")
 
     def link_local(self) -> None:
-        """Point the worktree's local config and secrets at the owner's checkout."""
-        names = [f"config/{p.name}" for p in (self.repo / "config").glob("*.toml")]
-        # Not the farm's own config: its R2 key is for the loop's uploads, never a round's.
-        names = [
-            n for n in names if not n.endswith(".example.toml") and n != farm_config.LOCAL
-        ] + list(LINKED)
-        for name in names:
+        """Point the worktree's local config (``ROUND_CONFIGS``) and secrets at the owner's
+        checkout. Not the farm's own config: its R2 key is for the loop's uploads, never a
+        round's; a config a round must not read is removed if an earlier farm linked it."""
+        for stale in (self.path / "config").glob("*.toml"):
+            rel = f"config/{stale.name}"
+            if stale.is_symlink() and rel not in ROUND_CONFIGS:
+                stale.unlink()
+        for name in (*ROUND_CONFIGS, *LINKED):
             src, dst = self.repo / name, self.path / name
             if not src.exists():
                 continue
@@ -193,9 +207,6 @@ class Worktree:
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.symlink_to(src)
-        own = self.path / farm_config.LOCAL  # linked by an earlier farm
-        if own.is_symlink():
-            own.unlink()
 
 
 @dataclass
@@ -363,7 +374,11 @@ class Farm:
             "finished_utc": dt.datetime.now(dt.UTC).isoformat(),
             "grade": result.get("grade"),
         }
-        if code == farm_round.EXIT_OK and result.get("status") == "ok":
+        if result.get("status") == "ok" and code != farm_round.EXIT_OK:
+            # round.json says ok, the process did not: it broke after writing it.
+            row["status"] = "error"
+            row["error"] = f"varvet avslutades med kod {code} efter ett godkänt round.json"
+        if code == farm_round.EXIT_OK and row["status"] == "ok":
             final = self.rounds_dir / spec.round_id
             partial.rename(final)
             shutil.rmtree(final / "work", ignore_errors=True)
@@ -461,9 +476,17 @@ class Farm:
             self.sleep(min(1.0, end - self.clock()))
 
 
+# sd-brain's cost ledger in the owner's checkout: the day's cap for the cloud model.
+COST_LEDGER = Path("data") / "brain-eval" / "cost-ledger.json"
+
+
 def round_env(where: Path) -> dict[str, str]:
     """The round's environment: an allowlist, never the farm's whole environment."""
-    return procs.clean_env({"GZ_SIM_RESOURCE_PATH": _resource_path(where)}, ROUND_ENV_KEYS)
+    extra = {
+        "GZ_SIM_RESOURCE_PATH": _resource_path(where),
+        "SD_FARM_COST_LEDGER": str(paths.REPO / COST_LEDGER),
+    }
+    return procs.clean_env(extra, ROUND_ENV_KEYS)
 
 
 def _resource_path(where: Path) -> str:
