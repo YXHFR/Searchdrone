@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sd_sim import config, launch, paths
+from sd_sim import config, doctor, launch, paths
 from sd_sim.sitl import CMAC_HOME
 
 EXAMPLE = (paths.REPO / "config" / "sim.example.toml").read_text(encoding="utf-8")
@@ -94,3 +94,35 @@ def test_old_local_brain_loads_as_cloud(tmp_path: Path) -> None:
     repo = fake_repo(tmp_path)
     (repo / "config" / "sim.toml").write_text('[brain]\nkind = "llm_local"\n', encoding="utf-8")
     assert config.load({}, repo=repo, environ={}).brain == "cloud"
+
+
+def test_stale_local_warnings(tmp_path: Path) -> None:
+    repo = fake_repo(tmp_path)
+    assert config.stale_local_warnings(repo) == []
+    local = repo / "config" / "sim.toml"
+    local.write_text(EXAMPLE, encoding="utf-8")
+    assert config.stale_local_warnings(repo) == []
+    local.write_text(
+        '[sim]\nworld = "sd_lake_forest"\n\n[brain]\nkind = "llm_local"\n', encoding="utf-8"
+    )
+    old_brain, old_world = config.stale_local_warnings(repo)
+    assert "llm_local" in old_brain
+    assert "sd_lake_forest" in old_world
+    assert config.LAUNCH_WORLD in old_world
+    row = doctor.check_sim_toml(repo)
+    assert row.status == doctor.WARN
+    assert "llm_local" in row.detail
+
+
+def test_stale_world_matches_example(tmp_path: Path) -> None:
+    repo = fake_repo(tmp_path)
+    (repo / "config" / "sim.example.toml").write_text('[sim]\nworld = "a"\n', encoding="utf-8")
+    local = repo / "config" / "sim.toml"
+    local.write_text('[sim]\nworld = "a"\n', encoding="utf-8")
+    assert config.stale_local_warnings(repo) == []
+    local.write_text('[sim]\nworld = "b"\n', encoding="utf-8")
+    assert config.stale_local_warnings(repo) == [
+        'config/sim.toml sätter world = "b", exemplet sätter "a". '
+        "Ta bort raden om du inte valt världen med flit."
+    ]
+    assert doctor.check_sim_toml(tmp_path / "none").status == doctor.OK

@@ -1,4 +1,4 @@
-"""``sd-brain run | eval | perf-cloud | print-prompt | config-check``."""
+"""``sd-brain run | eval | scores | bank | perf-cloud | print-prompt | config-check``."""
 
 from __future__ import annotations
 
@@ -153,11 +153,22 @@ def cmd_eval(args: argparse.Namespace) -> int:
     from sd_brain.runtime.base import Sampling
     from sd_schemas.skills import SKILL_REGISTRY
 
+    if args.action == "grade":
+        return cmd_eval_grade(args)
+    if args.backend == "sim":
+        return cmd_eval_sim(args)
+
     paths = sorted(Path(args.scenarios).glob("*.yaml"))
     if args.only:
         paths = [p for p in paths if any(o in p.name for o in args.only.split(","))]
     cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
     report = asyncio.run(_eval(args, paths, cfg))
+    if args.backend == "replay" and args.golden:
+        from sd_brain.simeval.golden import load_fixture
+
+        sims = [load_fixture(p) for p in sorted((Path(args.golden) / "sim").glob("SIM-*.json"))]
+        report.update(asyncio.run(_replay_sim(sims, report["failures"])))
+        report["passed"] = bool(report["passed"] and not report["sim_failed"])
     if args.backend == "cloud":
         h = ai_config_hash(SKILL_REGISTRY, Sampling(), cloud=cfg.cloud)
         report.update(
@@ -179,6 +190,180 @@ def cmd_eval(args: argparse.Namespace) -> int:
     if args.backend == "replay":
         return 0 if not report["failures"] else 1
     return 0 if report["passed"] else 1
+
+
+async def _replay_sim(
+    fixtures: list[dict[str, Any]], failures: dict[str, list[str]]
+) -> dict[str, Any]:
+    """Fly the simulator replay fixtures again (``tests/golden/sim``)."""
+    from sd_brain.simeval.golden import replay_golden
+
+    for fx in fixtures:
+        bad = await replay_golden(fx)
+        _out(f"{fx['id']}: {'ok' if not bad else 'FEL'} {'; '.join(bad)[:300]}")
+        if bad:
+            failures[str(fx["id"])] = bad
+    sim_failed = sum(1 for fx in fixtures if str(fx["id"]) in failures)
+    return {"sim_replays": len(fixtures), "sim_failed": sim_failed}
+
+
+def cmd_eval_grade(args: argparse.Namespace) -> int:
+    """Grade one simulator-farm round; writes ``grade.json`` in the round folder."""
+    from sd_brain.simeval.farm import RoundError, grade_round
+
+    if not args.round:
+        _err("ange rundans katalog: sd-brain eval grade --round <katalog>")
+        return 2
+    try:
+        grade = grade_round(Path(args.round))
+    except RoundError as exc:
+        _err(str(exc))
+        return 1
+    _out(json.dumps({k: v for k, v in grade.items() if k != "runs"}, ensure_ascii=False))
+    return 0
+
+
+async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
+    import httpx
+
+    from sd_brain.runtime.base import Sampling
+    from sd_brain.runtime.cloud import CloudModelRuntime
+    from sd_brain.simeval.bank import bank_from_env, bank_name, example_record, worth_keeping
+    from sd_brain.simeval.budget import CostLedger, MeteredRuntime
+    from sd_brain.simeval.decider import make_decision_maker
+    from sd_brain.simeval.runner import fly
+    from sd_brain.simeval.scenario import make_scenario
+    from sd_schemas.skills import SKILL_REGISTRY
+
+    key = optional_secret("SD_CLOUD_API_KEY", brain_env().get("SD_CLOUD_API_KEY"))
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
+    install_log_masking(Secrets(brain_token="", cloud_api_key=key))
+    ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
+    sampling = Sampling(temperature=0.2, top_p=0.8, max_tokens=512)
+    h = ai_config_hash(SKILL_REGISTRY, sampling, cloud=cfg.cloud)
+    bank = bank_from_env(os.environ, Path(args.bank_dir)) if args.bank_dir else None
+    seed = args.seed if args.seed is not None else int(dt.datetime.now(dt.UTC).timestamp())
+    scores_dir = Path(args.scores_dir) / ledger.day()
+    results = []
+    async with httpx.AsyncClient() as client:
+        meter = None
+        if key is not None and cfg.cloud.model:
+            cloud = CloudModelRuntime(cfg.cloud, key, client)
+            meter = MeteredRuntime(cloud, ledger, run_cap_sek=args.max_cost_sek)
+        for i in range(args.flights):
+            scenario = make_scenario(seed + i)
+            decider = make_decision_maker(meter, cfg.behaviour, sampling=sampling)
+            before = meter.cost_sek if meter is not None else 0.0
+            res = await fly(
+                scenario,
+                decider,
+                model=cfg.cloud.model,
+                ai_config_hash=h,
+                cost_before_sek=before,
+                meter=meter,
+                max_turns=args.max_turns,
+            )
+            sc = res.score
+            scores_dir.mkdir(parents=True, exist_ok=True)
+            path = scores_dir / f"{sc.flight_id}.json"
+            path.write_text(sc.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            kept = ""
+            if bank is not None and worth_keeping(sc):
+                record = example_record(sc, res.records, {"seed": scenario.seed}, res.replies)
+                kept = " sparad: " + bank.put(bank_name(sc), record)
+            _out(
+                f"flygning {i + 1}/{args.flights} seed {scenario.seed}: {sc.decider}"
+                f"{'' if sc.exam else ' (inget prov: ' + str(res.switch_reason) + ')'} "
+                f"betyg {sc.total:.0f} {'godkänd' if sc.passed else 'underkänd'}"
+                f"{'' if sc.safety.ok else ' SÄKERHETSFEL'} "
+                f"hittad {'ja' if sc.found else 'nej'} täckning {sc.coverage:.0%} "
+                f"frågor {sc.pilot_questions} kostnad {_cost_text(sc)}{kept}"
+            )
+            results.append(sc)
+    return results
+
+
+def _cost_text(sc: Any) -> str:
+    return f"{sc.cost_sek:.2f} kr" if sc.cost_measured else "ej uppmätt"
+
+
+def cmd_eval_sim(args: argparse.Namespace) -> int:
+    """Random search flights with an answer key; the cloud model decides under the cap."""
+    from sd_brain.simeval.budget import CostLedger
+
+    cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+    if args.model:
+        cfg.cloud = cfg.cloud.model_copy(update={"model": args.model})
+    scores = asyncio.run(_eval_sim(args, cfg))
+    exams = [s for s in scores if s.exam]
+    n = len(scores) or 1
+    ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
+    measured = all(s.cost_measured for s in scores) and bool(scores)
+    cost = round(sum(s.cost_sek for s in scores), 4) if measured else None
+    report = {
+        "backend": "sim",
+        "model": cfg.cloud.model,
+        "flights": len(scores),
+        "exams": len(exams),
+        "mean_total": round(sum(s.total for s in scores) / n, 1),
+        "pass_rate": round(sum(s.passed for s in scores) / n, 2),
+        "found_rate": round(sum(s.found for s in scores) / n, 2),
+        "safety_fails": sum(not s.safety.ok for s in scores),
+        # Only what the provider priced; null ("ej uppmätt") when any call went unpriced.
+        "cost_sek": cost,
+        "cost_per_exam_sek": round(sum(s.cost_sek for s in exams) / len(exams), 4)
+        if exams and measured
+        else None,
+        "cost_measured": measured,
+        "fallback_reasons": sorted({str(s.fallback_reason) for s in scores if s.fallback_reason}),
+        "spent_today_sek": round(ledger.spent_sek(), 4),
+        "cap_sek": args.cap_sek,
+        "git_sha": _git_sha(Path.cwd()),
+    }
+    out_dir = Path(args.report_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = out_dir / f"eval-sim-{stamp}.json"
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _out(json.dumps(report, ensure_ascii=False))
+    _out(f"Rapport: {path}")
+    return 0 if report["safety_fails"] == 0 else 1
+
+
+def cmd_scores(args: argparse.Namespace) -> int:
+    from sd_brain.simeval.trend import load_scores, trend_rows, trend_text
+
+    rows = trend_rows(load_scores(Path(args.scores_dir)))
+    _out(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else trend_text(rows))
+    return 0
+
+
+def cmd_bank(args: argparse.Namespace) -> int:
+    """``bank export-golden``: a good exam to a replay fixture; ``bank failures``: the list."""
+    import gzip
+
+    from sd_brain.simeval.golden import GoldenError, export_golden
+    from sd_brain.simeval.trend import failure_rows, failure_text, load_scores
+
+    if args.bank_cmd == "failures":
+        rows = failure_rows(load_scores(Path(args.scores_dir)))
+        _out(json.dumps(rows, ensure_ascii=False, indent=2) if args.json else failure_text(rows))
+        return 0
+    src = Path(args.flight)
+    try:
+        raw = gzip.decompress(src.read_bytes()) if src.suffix == ".gz" else src.read_bytes()
+        fixture = export_golden(json.loads(raw), args.name, {**os.environ, **brain_env()})
+    except (OSError, ValueError, KeyError) as exc:
+        _err(str(exc) if isinstance(exc, GoldenError) else f"kan inte läsa {src}: {exc!r}")
+        return 1
+    out = Path(args.out) / f"{args.name}.json"
+    if out.exists() and not args.replace:
+        _err(f"{out} finns redan (--replace skriver över)")
+        return 1
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _out(f"Replay-fixtur: {out} (seed {fixture['seed']}, {len(fixture['replies'])} svar)")
+    return 0
 
 
 def cmd_perf_cloud(args: argparse.Namespace) -> int:
@@ -264,13 +449,38 @@ def parser() -> argparse.ArgumentParser:
         if name == "print-prompt":
             sp.add_argument("--mission", required=True)
     ev = sub.add_parser("eval")
-    ev.add_argument("--backend", choices=["replay", "cloud"], default="replay")
+    ev.add_argument("action", nargs="?", choices=["grade"], help="grade: a farm round")
+    ev.add_argument("--round", default="", help="the round folder (eval grade)")
+    ev.add_argument("--backend", choices=["replay", "cloud", "sim"], default="replay")
     ev.add_argument("--scenarios", default="software/brain/src/sd_brain/evals/scenarios")
     ev.add_argument("--golden", default="software/brain/tests/golden")
     ev.add_argument("--repeat", type=int, default=1)
     ev.add_argument("--report-dir", default="data/reports")
     ev.add_argument("--config", default="config/brain.toml")
     ev.add_argument("--only", default="")
+    # --backend sim
+    ev.add_argument("--flights", type=int, default=3)
+    ev.add_argument("--seed", type=int, default=None)
+    ev.add_argument("--model", default="")
+    ev.add_argument("--max-turns", type=int, default=40)
+    ev.add_argument("--max-cost-sek", type=float, default=None)
+    ev.add_argument("--cap-sek", type=float, default=30.0)
+    ev.add_argument("--ledger", default="data/brain-eval/cost-ledger.json")
+    ev.add_argument("--scores-dir", default="data/brain-scores")
+    ev.add_argument("--bank-dir", default="data/example-bank")
+    sc = sub.add_parser("scores")
+    sc.add_argument("--scores-dir", default="data/brain-scores")
+    sc.add_argument("--json", action="store_true")
+    bk = sub.add_parser("bank")
+    bsub = bk.add_subparsers(dest="bank_cmd", required=True)
+    ex = bsub.add_parser("export-golden")
+    ex.add_argument("flight", help="a good-<id>.json.gz from the local example bank")
+    ex.add_argument("--name", required=True, help="SIM-NN")
+    ex.add_argument("--out", default="software/brain/tests/golden/sim")
+    ex.add_argument("--replace", action="store_true")
+    fl = bsub.add_parser("failures")
+    fl.add_argument("--scores-dir", default="data/brain-scores")
+    fl.add_argument("--json", action="store_true")
     pc = sub.add_parser("perf-cloud")
     pc.add_argument("--runs", type=int, default=10)
     pc.add_argument("--report-dir", default="data/reports")
@@ -285,6 +495,8 @@ def main(argv: list[str] | None = None) -> int:
         "config-check": cmd_config_check,
         "eval": cmd_eval,
         "perf-cloud": cmd_perf_cloud,
+        "scores": cmd_scores,
+        "bank": cmd_bank,
         "print-prompt": cmd_print_prompt,
     }
     try:

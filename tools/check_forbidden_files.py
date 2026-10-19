@@ -12,6 +12,7 @@ Rules:
   e) coordinates far from the public test sites in ``tools/allowed_coordinates.toml``
   f) the owner's private search patterns (``--private-patterns``); only file, line
      and the pattern's line number are printed, never the pattern or the matched text
+  g) anything that looks like an orthophoto (``check_no_orthophotos.check``)
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ import tomllib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import check_no_orthophotos
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_FIXTURE_BYTES = 200 * 1024
@@ -491,6 +495,9 @@ def check_files(
         except UnreadableError:
             found.append(Finding(path, 0, "unreadable", "could not read the file from git"))
             data = None
+        found += [
+            Finding(path, 0, "orthophoto", why) for why in check_no_orthophotos.check(path, data)
+        ]
         if data is not None:
             found += check_size_and_exif(path, data)
             if is_binary(data):

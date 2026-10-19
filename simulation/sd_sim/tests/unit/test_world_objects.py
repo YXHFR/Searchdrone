@@ -49,7 +49,9 @@ def test_objects_are_in_the_world_with_label(tmp_path: Path) -> None:
     assert model.findtext("plugin[@name='gz::sim::systems::Label']/label") == "1"
     assert model.findtext("link/visual/geometry/box/size") == "1 1 0.5"
     # The vehicle is still the last include and the world has no remote URIs.
-    assert [u.text for u in root.iter("uri")] == ["model://sd_quad14_i0"]
+    uris = [u.text or "" for u in root.iter("uri")]
+    assert uris[-1] == "model://sd_quad14_i0"
+    assert all(u.startswith(("model://", "/")) for u in uris)  # the ground mesh is local
 
 
 def test_truth_file_matches_the_world(tmp_path: Path) -> None:
@@ -218,6 +220,8 @@ def test_launcher_loads_the_file(tmp_path: Path) -> None:
     (tmp_path / "o.yaml").write_text(RED_BLOCK.read_text(encoding="utf-8"), encoding="utf-8")
     assert [o.name for o in _stack(tmp_path, objects="o.yaml").world_objects()] == ["red_block"]
     assert _stack(tmp_path).world_objects() == []
+    fpv7 = _stack(tmp_path, objects="o.yaml", vehicle="sd_fpv7", physics="gz")
+    assert [o.name for o in fpv7.world_objects()] == ["red_block"]
 
 
 @pytest.mark.parametrize(

@@ -104,3 +104,63 @@ def test_boxes_by_class() -> None:
     assert render_stills.boxes_by_class(raw, {1: "red_block"}) == [
         {"cls": "red_block", "x": 10.0, "y": 20.0, "w": 20.0, "h": 5.0}
     ]
+
+
+def test_prune_keeps_the_newest(tmp_path: Path) -> None:
+    for n in range(5):
+        gz_stills.write_still(tmp_path, f"{n:08d}", n, (1, 1, b"\x00\x00\x00"), [])
+    assert gz_stills.prune(tmp_path, 2) == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "00000003.json",
+        "00000003.ppm",
+        "00000004.json",
+        "00000004.ppm",
+    ]
+    assert gz_stills.prune(tmp_path, 2) == 0
+
+
+def _pose(name: str, xyz: tuple[float, float, float], wxyz: tuple[float, ...]) -> Any:
+    w, x, y, z = wxyz
+    return SimpleNamespace(
+        name=name,
+        position=SimpleNamespace(x=xyz[0], y=xyz[1], z=xyz[2]),
+        orientation=SimpleNamespace(w=w, x=x, y=y, z=z),
+    )
+
+
+def _poses(sec: int, nsec: int, *poses: Any) -> Any:
+    return SimpleNamespace(
+        header=SimpleNamespace(stamp=SimpleNamespace(sec=sec, nsec=nsec)), pose=list(poses)
+    )
+
+
+def test_camera_pose_is_the_farms_camera_frame() -> None:
+    from sd_sim.farm import camera
+
+    yaw = camera.quat_from_rpy(0.0, 0.0, math.pi / 2)  # nose to the north
+    got = gz_stills.camera_pose(((10.0, 20.0, 40.0), yaw), ((0.06, 0.0, -0.06), (1, 0, 0, 0)))
+    assert got["position_m"] == pytest.approx([10.0, 20.06, 39.94])
+    want = camera.quat_mul(yaw, camera.DOWN)
+    assert got["orientation_wxyz"] == pytest.approx(list(want), abs=1e-6)
+    # Looking straight down: the optical axis (camera x) points to -z in the world.
+    q = tuple(got["orientation_wxyz"])
+    assert camera.rotate(q, (1.0, 0.0, 0.0)) == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)  # type: ignore[arg-type]
+
+
+def test_recorder_matches_a_picture_with_the_pose_of_its_moment() -> None:
+    rec = gz_stills.Recorder("sd_quad14", "camera_link")
+    level = (1.0, 0.0, 0.0, 0.0)
+    link = _pose("camera_link", (0.0, 0.0, 0.0), level)
+    rec.on_poses(_poses(1, 10_000_000, _pose("sd_quad14", (1.0, 2.0, 30.0), level), link))
+    rec.on_poses(_poses(2, 5_000_000, _pose("sd_quad14", (3.0, 2.0, 31.0), level), link))
+    rec.on_poses(_poses(3, 0, _pose("rotor_0", (0.0, 0.0, 0.0), level)))  # no model: ignored
+    assert rec.camera_at(2_000_000_000, 0.05)["position_m"] == [3.0, 2.0, 31.0]  # type: ignore[index]
+    assert rec.camera_at(1_000_000_000, 0.05)["position_m"] == [1.0, 2.0, 30.0]  # type: ignore[index]
+    assert rec.camera_at(1_500_000_000, 0.05) is None  # nothing near enough
+
+
+def test_capture_needs_the_model_with_the_poses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GZ_IP", "127.0.0.1")
+    argv = ["capture", "--image-topic", "a", "--boxes-topic", "b", "--out", "c"]
+    with pytest.raises(SystemExit):
+        gz_stills.main([*argv, "--poses-topic", "/world/w/dynamic_pose/info"])

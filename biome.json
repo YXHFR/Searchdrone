@@ -5,6 +5,7 @@
     "includes": [
       "**",
       "!**/generated",
+      "!simulation/gazebo/models/sd_fpv7/cad.json",
       "!software/ground/tests/contract/snapshots",
       "!**/node_modules",
       "!**/dist",

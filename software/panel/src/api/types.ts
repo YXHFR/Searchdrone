@@ -12,6 +12,8 @@ export type {
   Clearance,
   Command,
   CommandResult,
+  DetectionRow,
+  Find,
   GateDecision,
   ManualControlInput,
   ManualControlState,

@@ -17,6 +17,10 @@ from typing import Any
 from sd_sim import paths, site
 from sd_sim.sitl import CMAC_HOME
 
+# Global illumination for the cameras: off, or Gazebo's voxel cone tracing
+# (``sd_sim.site_world.GI_VCT``).
+GI_MODES = ("off", "vct")
+
 DEMO_HOME_REFUSED = (
     "Demo kräver en offentlig startplats (CMAC eller en offentlig världs hem). "
     "Ta bort home_override eller kör just sim."
@@ -31,6 +35,10 @@ SCRIPTED_SITE_REFUSED = (
     "brain=scripted fungerar bara i den platta testvärlden sd_lake_forest: manusen har "
     "nålar, ramar och höjder för den."
 )
+GI_SITE_ONLY = (
+    "gi=vct (global belysning för kameran) fungerar bara med physics=gz i en platsvärld, "
+    "t.ex. world=sd_hellasgarden."
+)
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
 _TRUE = ("1", "true", "yes", "on")
@@ -43,6 +51,11 @@ class DemoHomeError(Exception):
 
 class ConfigError(Exception):
     """A setting has an invalid value (exit 2)."""
+
+
+# Searchdrone's own models (Gazebo and builtin physics), then ArduPilot's stock quad.
+VEHICLES = ("sd_quad14", "sd_fpv7", "stock")
+VEHICLE_ALIASES = {"quad14": "sd_quad14", "fpv7": "sd_fpv7"}
 
 
 @dataclass
@@ -64,6 +77,7 @@ class SimConfig:
     open_browser: bool = True
     home: str = CMAC_HOME
     personal_home: bool = False
+    gi: str = "off"  # "off" | "vct": global illumination for the cameras (sd_sim.site_world)
 
 
 def _bool(key: str, value: Any) -> bool:
@@ -92,6 +106,28 @@ def _read_toml(path: Path) -> dict[str, Any]:
 
 def _has_home(data: dict[str, Any]) -> bool:
     return bool(str(data.get("sim", {}).get("home_override", "")).strip())
+
+
+def stale_local_warnings(repo: Path = paths.REPO) -> list[str]:
+    """Settings in ``config/sim.toml`` that newer versions changed. ``just setup-config``
+    never overwrites an existing file, so an old copy keeps pinning what it pinned."""
+    example = _read_toml(repo / "config" / "sim.example.toml")
+    local = _read_toml(repo / "config" / "sim.toml")
+    warnings = []
+    if local.get("brain", {}).get("kind") == "llm_local":
+        warnings.append(
+            'config/sim.toml har brain.kind = "llm_local", som inte finns längre '
+            '(cloud används). Byt till kind = "cloud" eller ta bort raden.'
+        )
+    world = local.get("sim", {}).get("world")
+    example_world = example.get("sim", {}).get("world")
+    if world is not None and world != example_world:
+        default = f'"{example_world}"' if example_world else f"ingen (just sim kör {LAUNCH_WORLD})"
+        warnings.append(
+            f'config/sim.toml sätter world = "{world}", exemplet sätter {default}. '
+            "Ta bort raden om du inte valt världen med flit."
+        )
+    return warnings
 
 
 def load(
@@ -146,7 +182,8 @@ def load(
         cfg.video = "test"
     cfg.world = str(merged.get("world", default_world)).strip() or default_world
     cfg.objects = str(merged.get("objects", "")).strip()
-    cfg.vehicle = _choice("vehicle", merged.get("vehicle", cfg.vehicle), ("sd_quad14", "stock"))
+    vehicle = str(merged.get("vehicle", cfg.vehicle)).strip()
+    cfg.vehicle = _choice("vehicle", VEHICLE_ALIASES.get(vehicle, vehicle), VEHICLES)
     cfg.qgc = _bool("qgc", merged.get("qgc", False))
     cfg.link_profile = _choice(
         "link_profile", merged.get("link_profile", "perfect"), ("perfect", "field_typical", "dead")
@@ -159,6 +196,7 @@ def load(
     cfg.lan = _bool("lan", merged.get("lan", False))
     cfg.private_db = _bool("private_db", merged.get("private_db", False))
     cfg.open_browser = _bool("open.browser", merged.get("open_browser", True))
+    cfg.gi = _choice("gi", merged.get("gi", "off"), GI_MODES)
     home = str(merged.get("home_override", "")).strip()
     if home and not demo:
         if not _HOME.match(home):
@@ -179,4 +217,6 @@ def load(
                 cfg.personal_home = not public
         except site.SiteError as exc:
             raise ConfigError(str(exc)) from exc
+    if cfg.gi != "off" and (cfg.world not in sites or cfg.physics != "gz"):
+        raise ConfigError(GI_SITE_ONLY)
     return cfg

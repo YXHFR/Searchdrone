@@ -32,7 +32,7 @@ from typing import Any
 
 from sd_detect.classes import default_registry
 from sd_safety.targets import Plane
-from sd_sim import _args, fixture, objects, paths, targets, world
+from sd_sim import _args, fixture, gazebo, objects, paths, targets, world
 
 __all__ = ["CAMERA", "RIG_MODEL", "StillRig", "boxes_by_class", "render", "shot_poses"]
 
@@ -46,8 +46,6 @@ DEFAULT_SEED = 11
 GZ_START_S = 120.0
 SHOTS_TIMEOUT_S = 600.0
 ALLOWED_KEYS = ("out", "seed", "instance")
-# Gazebo Harmonic's Python bindings are built for Ubuntu 24.04's system Python.
-GZ_PYTHON = "/usr/bin/python3.12"
 
 
 def shot_poses(scene: list[targets.Target]) -> list[dict[str, Any]]:
@@ -215,7 +213,7 @@ def render(
             script = Path(__file__).with_name("gz_stills.py")
             subprocess.run(  # noqa: S603 - fixed argv
                 [
-                    GZ_PYTHON,
+                    gazebo.GZ_PYTHON,
                     str(script),
                     "shots",
                     "--world",

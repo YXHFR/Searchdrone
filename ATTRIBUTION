@@ -1,0 +1,35 @@
+Third-party data and pictures used by Searchdrone
+=================================================
+
+Committed in this repository (see REUSE.toml for the licence of each file):
+
+- simulation/gazebo/sites/*/osm.geojson: map layers (c) OpenStreetMap contributors,
+  ODbL-1.0, https://www.openstreetmap.org/copyright
+- simulation/gazebo/sites/*/dem.asc: produced using Copernicus WorldDEM-30 (c) DLR e.V.
+  2010-2014 and (c) Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by
+  the European Union and ESA; all rights reserved. The organisations in charge of the
+  Copernicus programme by law or by delegation do not incur any liability for any use of
+  the Copernicus WorldDEM-30.
+
+Fetched by the tools into build/ and never committed. Simulator pictures made with them
+(the nightly job's world snapshots) carry this attribution in their ATTRIBUTION.txt:
+
+- tools/terrain/fetch_trees.py (just trees-fetch): tree positions and heights from
+  Skogsstyrelsen's Trädhöjd (tree height raster, Laserdata skog), based on Laserdata
+  Nedladdning, skog (c) Lantmäteriet, CC BY 4.0; processed. The tree list is not
+  committed because the raster's own terms could not be confirmed: Skogsstyrelsen's
+  general terms say CC0, the raster's map service says CC BY, and its download feed asks
+  for registration and no redistribution.
+- tools/terrain/fetch_trees.py: tree species from Nationella Marktäckedata 2023
+  (NMD2023), källa: NMD, Naturvårdsverket, CC0.
+- tools/terrain/fetch_tree_models.py (just tree-pictures-fetch): tree pictures made from
+  Poly Haven's fir_tree_01, pine_tree_01, island_tree_02, pine_bark and bark_brown_02,
+  CC0, https://polyhaven.com/license
+- tools/terrain/fetch_site.py with [dem] source = "lantmateriet-mhm": Markhöjdmodell
+  (c) Lantmäteriet, CC BY 4.0; processed. A public site that switches to it commits a
+  dem.asc under CC BY 4.0: change its REUSE.toml annotation and this file with it.
+- tools/terrain/fetch_ortho.py (just ortho-fetch) and tools/terrain/fetch_site.py for
+  local sites: Lantmäteriet's orthophoto (c) Lantmäteriet, CC BY 4.0; resampled. Fetched
+  with the owner's own Geotorget login and never committed, uploaded or cached anywhere
+  (tools/check_no_orthophotos.py); pictures of a world draped with it stay on the
+  owner's computer too and say so in their ATTRIBUTION.txt.

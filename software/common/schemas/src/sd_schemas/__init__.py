@@ -31,8 +31,10 @@ from sd_schemas.api import (
     Command,
     CommandResult,
     CommandStatus,
+    DetectionRow,
     Event,
     Features,
+    Find,
     Health,
     LinkStatus,
     LoginRequest,
@@ -55,6 +57,7 @@ from sd_schemas.api import (
     Vehicle,
     VehicleLive,
     VideoConfig,
+    WindCheck,
 )
 from sd_schemas.base import Id, LatLon, LatLonAlt, new_id
 from sd_schemas.charter import (
@@ -233,12 +236,14 @@ __all__ = [
     "DecideResult",
     "DecisionLog",
     "DecisionLogStored",
+    "DetectionRow",
     "DetectorInfo",
     "Envelope",
     "EstimateResult",
     "Event",
     "ExecutorState",
     "Features",
+    "Find",
     "FindMeParams",
     "FollowMeParams",
     "FollowPathAiParams",
@@ -337,5 +342,6 @@ __all__ = [
     "VehicleState",
     "VehicleSummary",
     "VideoConfig",
+    "WindCheck",
     "new_id",
 ]

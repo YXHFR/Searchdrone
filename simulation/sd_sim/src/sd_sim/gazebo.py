@@ -3,8 +3,9 @@
 Gazebo Transport carries its topics on loopback (``GZ_IP=127.0.0.1``; its discovery
 sockets bind all addresses by design, see listen_allowlist.yaml) and every instance gets
 its own partition, so two worlds never mix their topics. The launcher renders the
-Searchdrone world ``sd_lake_forest`` with ``sd_quad14`` before Gazebo starts
-(``sd_sim.world``); ``vehicle=stock`` uses ArduPilot's ``iris_runway`` world instead.
+Searchdrone world ``sd_lake_forest`` with ``sd_quad14`` (or ``vehicle=sd_fpv7``) before
+Gazebo starts (``sd_sim.world``); ``vehicle=stock`` uses ArduPilot's ``iris_runway`` world
+instead.
 """
 
 from __future__ import annotations
@@ -23,16 +24,19 @@ from sd_sim.errors import InfraError
 
 STOCK_WORLD = "iris_runway"
 # Camera frame rates of the models, used for the frame-count check.
-CAMERA_FPS = {"sd_quad14": 15, "stock": 10}
+CAMERA_FPS = {"sd_quad14": 15, "sd_fpv7": 15, "stock": 10}
 CAMERA_WAIT_S = 30.0
 GZ_PASSTHROUGH = ("GZ_VERSION", "GZ_SIM_SYSTEM_PLUGIN_PATH", "GZ_SIM_RESOURCE_PATH")
+# Gazebo Harmonic's Python bindings are built for Ubuntu 24.04's system Python
+# (sd_sim.gz_stills runs with it).
+GZ_PYTHON = "/usr/bin/python3.12"
 
 
 @dataclass(frozen=True)
 class World:
     name: str
     path: Path
-    vehicle: str  # "sd_quad14" | "stock"
+    vehicle: str  # "sd_quad14" | "sd_fpv7" | "stock"
     note: str = ""
 
 
@@ -43,8 +47,8 @@ def ardupilot_gazebo_home() -> Path:
 
 def resolve_world(cfg: SimConfig, repo: Path) -> World:
     generated = repo / "build" / "sim" / "worlds" / f"{cfg.world}_i{cfg.instance}.sdf"
-    if cfg.vehicle == "sd_quad14" and generated.is_file():
-        return World(cfg.world, generated, "sd_quad14")
+    if cfg.vehicle != "stock" and generated.is_file():
+        return World(cfg.world, generated, cfg.vehicle)
     if cfg.instance != 0:
         raise InfraError(
             f"Standardvärlden {STOCK_WORLD} fungerar bara för instans 0 (fast FDM-port)."
@@ -63,7 +67,7 @@ def resolve_world(cfg: SimConfig, repo: Path) -> World:
 
 
 def gz_env(instance: int, *, gui: bool) -> dict[str, str]:
-    passthrough = GZ_PASSTHROUGH + (procs.GRAPHICS_ENV_KEYS if gui else ())
+    passthrough = GZ_PASSTHROUGH + procs.GPU_ENV_KEYS + (procs.DISPLAY_ENV_KEYS if gui else ())
     return procs.clean_env(
         {"GZ_IP": "127.0.0.1", "GZ_PARTITION": f"sd_i{instance}"}, passthrough=passthrough
     )

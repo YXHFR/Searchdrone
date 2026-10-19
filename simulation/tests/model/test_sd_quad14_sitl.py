@@ -53,7 +53,9 @@ CRUISE_FROM_M, CRUISE_TO_M = 100.0, 250.0  # the part of the leg at full speed
 HOVER_THROTTLE_BAND = (0.35, 0.55)
 HOVER_BAND_M = 1.0
 SPEED_BAND_MS = (14.0, 15.5)
-HOVER_TIME_MIN = (25.0, 40.0)
+# A plausible mean hover current: the 25-40 min hover band the model was tuned to at 9 Ah.
+# The minute limits follow the frame's capacity, so a new pack size does not move the check.
+HOVER_CURRENT_A = (11.5, 18.4)
 USABLE_CAPACITY = 0.85
 
 CAMERA_FRAMES_10S = 135
@@ -210,12 +212,15 @@ def parity_flight(physics: str) -> Callable[[Harness, Report], None]:
         if physics == "builtin":
             mean_a = statistics.fmean(hover.current) if hover.current else 0.0
             minutes = USABLE_CAPACITY * battery_ah() / mean_a * 60 if mean_a > 0 else 0.0
+            limit_min = sorted(
+                round(USABLE_CAPACITY * battery_ah() / a * 60, 1) for a in HOVER_CURRENT_A
+            )
             rep.check(
                 "PAR.4",
                 "Uppskattad svävtid (0,85 x kapacitet / medelström)",
-                HOVER_TIME_MIN[0] <= minutes <= HOVER_TIME_MIN[1],
+                limit_min[0] <= minutes <= limit_min[1],
                 measured={"minutes": round(minutes, 1), "mean_current_a": round(mean_a, 2)},
-                limit=list(HOVER_TIME_MIN),
+                limit=limit_min,
                 unit="min",
             )
         else:

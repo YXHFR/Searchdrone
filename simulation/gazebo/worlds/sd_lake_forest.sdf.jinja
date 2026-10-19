@@ -25,13 +25,33 @@
     </plugin>
 
     <scene>
+{% if light %}
+      <ambient>{{ light.ambient }}</ambient>
+      <background>{{ light.background }}</background>
+      <sky></sky>
+      <shadows>{{ light.shadows }}</shadows>
+{% else %}
       <ambient>1.0 1.0 1.0</ambient>
       <background>0.8 0.8 0.8</background>
       <sky></sky>
       <shadows>false</shadows>
+{% endif %}
     </scene>
 
     <light type="directional" name="sun">
+{% if light %}
+      <cast_shadows>{{ light.shadows }}</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>{{ light.diffuse }}</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>{{ light.direction }}</direction>
+{% else %}
       <cast_shadows>false</cast_shadows>
       <pose>0 0 10 0 0 0</pose>
       <diffuse>0.8 0.8 0.8 1</diffuse>
@@ -43,6 +63,7 @@
         <quadratic>0.001</quadratic>
       </attenuation>
       <direction>-0.5 0.1 -0.9</direction>
+{% endif %}
     </light>
 
     <spherical_coordinates>
@@ -66,6 +87,14 @@
           </geometry>
         </collision>
         <visual name="visual">
+{% if ground_mesh %}
+          <!-- A generated meadow (sd_sim.meadow); the collision stays a plane. -->
+          <geometry>
+            <mesh>
+              <uri>{{ ground_mesh }}</uri>
+            </mesh>
+          </geometry>
+{% else %}
           <geometry>
             <plane>
               <normal>0 0 1</normal>
@@ -76,6 +105,7 @@
             <ambient>0.30 0.45 0.20 1</ambient>
             <diffuse>0.30 0.45 0.20 1</diffuse>
           </material>
+{% endif %}
         </visual>
       </link>
     </model>

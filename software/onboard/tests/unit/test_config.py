@@ -7,6 +7,7 @@ import os
 import shutil
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,6 +78,20 @@ def test_good_config_starts(root: Path, env: dict[str, str]) -> None:
 )
 def test_startup_checks(root: Path, env: dict[str, str], key: str, value: str) -> None:
     assert check(load(root, {**env, key: value}))
+
+
+def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> None:
+    on = {"SD_ONBOARD__PERCEPTION__ENABLED": "true"}
+    assert any("still_dir" in e for e in check(load(root, {**env, **on})))
+    folder = {**on, "SD_ONBOARD__PERCEPTION__STILL_DIR": "${SD_DATA_DIR}/stills"}
+    loaded = load(root, {**env, **folder, "SD_ONBOARD__PERCEPTION__HFOV_DEG": "70"})
+    assert check(loaded) == []
+    assert loaded.config.perception.hfov_deg == 70.0
+    link = SimpleNamespace(perception=lambda _r: None)
+    made = app._perception(loaded, SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert made is not None and made.camera.hfov_deg == 70.0
+    off = app._perception(load(root, env), SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert off is None
 
 
 def test_test_hooks_rejected_outside_test(root: Path, env: dict[str, str]) -> None:

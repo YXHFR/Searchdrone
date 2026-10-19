@@ -39,7 +39,7 @@ import yaml
 # Names the world templates already use at world level.
 RESERVED_NAMES = frozenset({"ground", "landing_pad", "lake", "path", "forest", "vehicle", "sun"})
 # The vehicle, a site's model and the snapshot cameras.
-RESERVED_PREFIXES = ("sd_quad14", "sd_site_", "snap_")
+RESERVED_PREFIXES = ("sd_quad14", "sd_fpv7", "sd_site_", "snap_")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 BOX_REQUIRED = {"name", "kind", "east_m", "north_m", "size_m", "color"}
 BOX_OPTIONAL = {"up_m", "yaw_deg", "label", "truth"}

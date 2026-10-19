@@ -1,4 +1,5 @@
-"""B1-14: the stage 2 stubs answer empty, say they are not built, and never act."""
+"""B1-14: the stage 2 stub (candidates) answers empty, says it is not built, and never
+acts. Detections are real now (contract tests in test_perception.py) and read only."""
 
 from __future__ import annotations
 
@@ -16,16 +17,9 @@ def test_candidates_are_an_empty_stub(logged_in: TestClient) -> None:
     assert res.headers[STAGE2_HEADER] == STAGE2_VALUE
 
 
-def test_detections_are_an_empty_stub(logged_in: TestClient) -> None:
-    res = logged_in.get(f"/api/v1/missions/{MISSION}/detections")
-    assert res.status_code == 200, res.text
-    assert res.json() == []
-    assert res.headers[STAGE2_HEADER] == STAGE2_VALUE
-
-
 def test_stubs_need_a_login(panel: TestClient) -> None:
-    for what in ("candidates", "detections"):
-        assert panel.get(f"/api/v1/missions/{MISSION}/{what}").status_code == 401
+    for what in ("candidates", "detections", "finds", f"detections/{MISSION}/crop"):
+        assert panel.get(f"/api/v1/missions/{MISSION}/{what}").status_code == 401, what
 
 
 def test_stubs_have_no_write_route(logged_in: TestClient) -> None:

@@ -4,14 +4,22 @@
 ``model.config``, ``meshes/``; that folder is on Gazebo's resource path) and
 ``build/sim/sites/<name>/`` with ``ground.npy`` (the terrain heights the world uses to
 put objects on the ground) and ``manifest.json``. Everything is generated here from the site's
-height grid and map layers, with no downloads and no third-party textures or meshes:
+height grid and map layers and, when they have been fetched into ``build/``, its trees and
+the tree pictures; nothing is downloaded here:
 
 - Terrain: a mesh every ``MESH_STEP_M`` in ``TILES`` x ``TILES`` tiles, each with its own
   texture painted from the map layers (forest floor, meadow, lake, asphalt, gravel, road
-  markings) with deterministic noise, about 0.15 m per pixel. A local site with an
-  orthophoto uses the photo instead.
-- Forest: spruce, pine and birch in real sizes, low-poly, merged into one mesh per tile.
-  Trees have no collision (see the README); the terrain, buildings and pad do.
+  markings) with deterministic noise, about 0.15 m per pixel. With a fetched orthophoto
+  (``just ortho-fetch``; ``Site.ortho``) the open ground shows the photo instead, and the
+  painted forest floor stays under every tree's crown (``photo_cover``): the photo shows
+  the trees from above, and the world's own trees stand there.
+- Forest: the site's real trees where they have been fetched (``just trees-fetch``: every
+  tree where Skogsstyrelsen's tree height raster has it, as tall as it says, its species
+  from Naturvårdsverket's land cover map), as textured models when the tree pictures have
+  been fetched too (``just tree-pictures-fetch``; ``sd_sim.forest``). Without them, spruce,
+  pine and birch in real sizes on a jittered grid in the map's forest, low-poly in flat
+  colours. Merged into one mesh per tile. Trees have no collision (see the README); the
+  terrain, buildings and pad do.
 - Buildings from the map's footprints, extruded to their tagged height (or a typical one
   for their type) with a gabled roof on rectangular houses.
 - Cars (4.5 x 1.8 x 1.5 m) parked in rows in the map's parking areas.
@@ -39,10 +47,11 @@ from numpy.typing import NDArray
 from shapely.geometry import LineString, MultiLineString, Polygon, box
 from shapely.ops import substring
 
+from sd_sim import forest as forest_mod
 from sd_sim import paths, png, raster
 from sd_sim.site import Site
 
-GENERATOR_VERSION = 5
+GENERATOR_VERSION = 6
 # Gazebo needs a square heightmap of 2^n + 1 pixels: 257 gives 4.7 m over 1.2 km.
 HEIGHTMAP_PX = 257
 HEIGHTMAP = "ground_collision.png"
@@ -53,9 +62,21 @@ TEXTURE_PX = 2048
 # 500-1500, but the canopy painted on the ground under them closes the gaps from above).
 TREE_DENSITY = 0.03
 TREE_KEEP_OUT_M = 2.5  # from roads, buildings and water
+# Real trees are left out only where a tree cannot stand: on a road or a path (a crown
+# over it), on a roof (the raster sees buildings too), in water or a car park, on the pad.
+REAL_TREE_ROAD_M = 0.5
+REAL_TREE_ROOF_M = 1.0
 PARKING_STALL_M = (2.6, 5.2)
 PARKING_OCCUPANCY = 0.5
 CAR_SIZE_M = (4.5, 1.8, 1.5)
+# Written into every ground texture draped with the photo, so tools/check_no_orthophotos.py
+# finds the texture even when it is copied without the world's manifest.
+PHOTO_PNG_TEXT = {"Source": "Searchdrone ground_texture=orthophoto"}
+# Under a tree the ground keeps its painted floor out to this much more than the crown
+# (the photo's crowns lean away from where it was taken), blended over PHOTO_EDGE_M.
+PHOTO_CROWN_SCALE = 1.15
+PHOTO_CROWN_MARGIN_M = 0.5
+PHOTO_EDGE_M = 0.6
 
 Grid = NDArray[np.floating[Any]]
 Rgb = tuple[int, int, int]
@@ -457,16 +478,60 @@ def paint_tile(site: Site, paint: Paint, ti: int, tj: int, px: int, seed: int) -
     marks = mask(paint.markings)
     rgb[marks] = (224, 224, 214)
     if site.ortho is not None:
-        rgb = ortho_tile(site, west, north, size, px)
+        m = max((photo_reach(c[2]) for c in paint.crowns), default=0.0)
+        near = [
+            c
+            for c in paint.crowns
+            if bounds[0] - m < c[0] < bounds[2] + m and bounds[1] - m < c[1] < bounds[3] + m
+        ]
+        cover = photo_cover(near, ex, ny, west, north, step)[..., None]
+        rgb = ortho_tile(site, west, north, size, px) * (1.0 - cover) + rgb * cover
     return np.clip(np.round(rgb), 0, 255).astype(np.uint8)
 
 
+def photo_reach(crown_radius_m: float) -> float:
+    """How far from a crown's centre the ground keeps its painted floor."""
+    return crown_radius_m * PHOTO_CROWN_SCALE + PHOTO_CROWN_MARGIN_M
+
+
+def photo_cover(
+    crowns: Sequence[tuple[float, float, float]],
+    ex: Grid,
+    ny: Grid,
+    west: float,
+    north: float,
+    step: float,
+) -> Grid:
+    """Where the painted floor stays instead of the photo: 1 under a tree's crown (scaled
+    by PHOTO_CROWN_SCALE plus PHOTO_CROWN_MARGIN_M), 0 on open ground, soft in between."""
+    cover = np.zeros(ex.shape)
+    rows, cols = ex.shape
+    for cx, cy, r in crowns:
+        reach = photo_reach(r)
+        c0 = max(int((cx - reach - west) / step), 0)
+        c1 = min(int((cx + reach - west) / step) + 1, cols)
+        r0 = max(int((north - cy - reach) / step), 0)
+        r1 = min(int((north - cy + reach) / step) + 1, rows)
+        if c1 <= c0 or r1 <= r0:
+            continue
+        d = np.hypot(ex[r0:r1, c0:c1] - cx, ny[r0:r1, c0:c1] - cy)
+        f = np.clip((reach - d) / PHOTO_EDGE_M, 0.0, 1.0)
+        cover[r0:r1, c0:c1] = np.maximum(cover[r0:r1, c0:c1], f)
+    return cover
+
+
 def ortho_tile(site: Site, west: float, north: float, size: float, px: int) -> Grid:
-    """The tile cut from a local site's orthophoto (``ortho.npy``, 0.25 m per pixel)."""
+    """The tile cut from the site's orthophoto (``ortho.npy``: n x n x 3 bytes, row 0
+    north, covering the site edge to edge; 0.16 m per pixel from ``just ortho-fetch``)."""
     if site.ortho is None:
         raise ValueError(f"{site.name} har inget ortofoto")
-    photo = np.load(site.ortho)
+    photo = np.load(site.ortho, mmap_mode="r")
     n = photo.shape[0]
+    if photo.dtype != np.uint8 or photo.ndim != 3 or photo.shape[1:] != (n, 3):
+        raise ValueError(
+            f"{site.ortho}: väntade n x n x 3 byte, fick {photo.shape} {photo.dtype}; "
+            "hämta igen med just ortho-fetch"
+        )
     cell = 2 * site.half_size_m / n
     xs = west + (np.arange(px) + 0.5) * size / px
     ys = north - (np.arange(px) + 0.5) * size / px
@@ -900,7 +965,14 @@ def build(
     """Write the site's model folder (``model://sd_site_<name>``) and return it."""
     folder = out_dir(site, repo)
     model = repo / "build" / "sim" / "models" / model_name(site)
+    real = forest_mod.load_trees(site)
+    atlas = forest_mod.load_atlas(repo) if real is not None else None
     digest = site.input_digest()
+    if atlas is not None:
+        h = hashlib.sha256(digest.encode())
+        for name in ("atlas.json", *forest_mod.ATLAS_FILES):
+            h.update((forest_mod.atlas_folder(repo) / name).read_bytes())
+        digest = h.hexdigest()
     manifest_path = folder / "manifest.json"
     if not force and manifest_path.is_file():
         old = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -939,14 +1011,47 @@ def build(
         ]
     )
     progress("skog")
-    trees = plant_trees(site, ground, blocked)
+    if real is None:
+        trees = plant_trees(site, ground, blocked)
+        crowns = [(t.east, t.north, t.crown_radius) for t in trees]
+        kept: list[forest_mod.RealTree] = []
+    else:
+        no_tree = shapely.union_all(
+            [
+                asphalt.buffer(REAL_TREE_ROAD_M),
+                gravel,
+                footprints.buffer(REAL_TREE_ROOF_M),
+                site.union("water", "parking"),
+                shapely.Point(0, 0).buffer(40.0),
+            ]
+        )
+        inside = shapely.contains_xy(
+            no_tree, np.array([t.east for t in real]), np.array([t.north for t in real])
+        )
+        kept = [t for t, out in zip(real, inside, strict=True) if not out]
+        crowns = [(t.east, t.north, t.crown_radius) for t in kept]
+        trees = [
+            Tree(
+                t.east,
+                t.north,
+                round(float(z), 2),
+                "birch" if t.species == "deciduous" else t.species,
+                t.height,
+                round(t.yaw, 4),
+            )
+            for t, z in zip(
+                kept,
+                ground.at(np.array([t.east for t in kept]), np.array([t.north for t in kept])),
+                strict=True,
+            )
+        ]
     paint = Paint(
         areas={kind: site.union(kind) for kind in PAINT_ORDER},
         asphalt=asphalt,
         gravel=gravel,
         markings=markings,
         buildings=footprints,
-        crowns=[(t.east, t.north, t.crown_radius) for t in trees],
+        crowns=crowns,
     )
     tiles = terrain_tiles(ground)
     for ti, tj, mesh in tiles:
@@ -955,10 +1060,48 @@ def build(
         (meshes / f"{stem}.obj").write_text(terrain_obj(mesh, ground, ti, tj), encoding="utf-8")
         mat = Material(stem, (1.0, 1.0, 1.0), 0.02, f"{stem}.png")
         (meshes / f"{stem}.mtl").write_text(mat.mtl(), encoding="utf-8")
-        png.write(meshes / f"{stem}.png", paint_tile(site, paint, ti, tj, TEXTURE_PX, seed))
-    forest = tree_meshes(trees, site.half_size_m)
-    for (ti, tj), mesh in sorted(forest.items()):
-        write_obj(meshes, f"trees_{ti}_{tj}", mesh, TREE_MATERIALS)
+        png.write(
+            meshes / f"{stem}.png",
+            paint_tile(site, paint, ti, tj, TEXTURE_PX, seed),
+            PHOTO_PNG_TEXT if site.ortho is not None else None,
+        )
+    tree_stats: dict[str, Any]
+    if atlas is not None:
+        progress("träd (Poly Haven-bilder)")
+        for name in forest_mod.ATLAS_FILES:
+            shutil.copyfile(forest_mod.atlas_folder(repo) / name, meshes / name)
+        woods = forest_mod.build_forest(
+            kept, np.array([t.z for t in trees]), site.half_size_m, atlas
+        )
+        tree_files = [f"{stem}.glb" for stem in forest_mod.write_tiles(woods, meshes, ".")]
+        tree_stats = {
+            "tree_triangles": woods.triangles,
+            "trees_near": woods.near,
+            "tree_model_triangles": woods.model_triangles,
+            "tree_models": "poly-haven-cc0",
+        }
+    else:
+        plain = tree_meshes(trees, site.half_size_m)
+        tree_files = []
+        for (ti, tj), mesh in sorted(plain.items()):
+            write_obj(meshes, f"trees_{ti}_{tj}", mesh, TREE_MATERIALS)
+            tree_files.append(f"trees_{ti}_{tj}.obj")
+        tree_stats = {
+            "tree_triangles": sum(m.triangles() for m in plain.values()),
+            "tree_models": "plain",
+        }
+    if real is not None:
+        chm = np.load(site.chm_path) / 10.0 if site.chm_path is not None else None
+        check = forest_mod.height_check(kept, chm, site.half_size_m)
+        tree_stats |= {
+            "tree_source": "raster",
+            "trees_raster": len(real),
+            "trees_left_out": len(real) - len(kept),
+            "tree_height_max_m": max((t.height for t in kept), default=0.0),
+            "tree_height_vs_raster_mean_abs_m": None if check is None else round(check, 3),
+        }
+    else:
+        tree_stats["tree_source"] = "generated"
     if buildings:
         write_obj(meshes, "buildings", building_mesh(buildings), BUILDING_MATERIALS)
     if cars:
@@ -970,7 +1113,7 @@ def build(
         model_sdf(
             site,
             [f"terrain_{ti}_{tj}" for ti, tj, _ in tiles],
-            [f"trees_{ti}_{tj}" for ti, tj in sorted(forest)],
+            tree_files,
             bool(buildings),
             bool(cars),
             not water.empty,
@@ -981,7 +1124,8 @@ def build(
     (model / "model.config").write_text(model_config(site), encoding="utf-8")
     stats = {
         "trees": len(trees),
-        "tree_triangles": sum(m.triangles() for m in forest.values()),
+        **tree_stats,
+        **({"ground_texture": "orthophoto"} if site.ortho is not None else {}),
         "buildings": len(buildings),
         "cars": len(cars),
         "terrain_triangles": sum(m.triangles() for _, _, m in tiles),
@@ -1057,7 +1201,10 @@ def model_sdf(
         parts.append(f'      <visual name="{stem}">{_mesh(f"{base}/{stem}.obj")}</visual>')
     links.append(("terrain", parts))
     links.append(
-        ("forest", [f'      <visual name="{s}">{_mesh(f"{base}/{s}.obj")}</visual>' for s in trees])
+        (
+            "forest",
+            [f'      <visual name="{Path(f).stem}">{_mesh(f"{base}/{f}")}</visual>' for f in trees],
+        )
     )
     if buildings:
         links.append(

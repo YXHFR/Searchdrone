@@ -1,0 +1,51 @@
+# SK-RED (Gazebo, stills camera): the AI searches the box at P1 for red blocks. Each new
+# red block the detector finds wakes it: it says what it saw and asks the pilot to confirm
+# (it never confirms a find itself), flies over the find for a closer look, then searches
+# the box again. When the search is done it flies home and lands. Test data for the
+# scripted commander.
+scenario: SK-RED
+timeout_s: 1800
+expected_runtime_s: 900
+fixture: ../demo_fixture.yaml
+turns:
+  - on: mission_created
+    say: ["Hej. Säg vilken ram vi ska använda."]
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: skill_event
+    when: {skill: takeoff, status: done}
+    say: ["På 40 meter. Flyger till P1."]
+    action: {skill: goto, params: {at: "fixture:P1", alt_m: 40}}
+  # The first arrival (at P1, or at a find seen on the way) starts the search.
+  - on: skill_event
+    when: {skill: goto, status: done}
+    say: ["Söker av rutan efter röda block."]
+    action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40, spacing_m: 30, speed_ms: 7}}
+  # A new red block: tell the pilot, ask for confirmation and look closer.
+  - on: detection
+    when: {label: red_block}
+    once: false
+    say: ["Rött block hittat, bekräfta?"]
+    action: {skill: goto, params: {at: "event:find", alt_m: 40}}
+  # After a closer look the search goes on (the whole box again; found blocks stay found).
+  - on: skill_event
+    when: {skill: goto, status: done}
+    once: false
+    say: ["Söker vidare."]
+    action: {skill: survey_sector, params: {polygon: "fixture:survey_box", alt_m: 40, spacing_m: 30, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: survey_sector, status: done}
+    say: ["Rutan är sökt. Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Sökningen klar."}}
+  - on: skill_event
+    when: {skill: return_home, status: done}
+    say: ["Uppdraget är klart. Drönaren har landat."]
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

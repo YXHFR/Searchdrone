@@ -6,8 +6,59 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Photo mode for the simulator: `just ortho-fetch site=hellasgarden` fetches
+  Lantmäteriet's newest colour orthophoto over the site (0.16 m per pixel, all tiles of the
+  newest flight year, colour only) with the owner's own Geotorget login from a gitignored
+  `config/geotorget.local.toml` (example in `config/geotorget.example.toml`) to
+  `build/ortho/<site>/`, never in CI. The terrain then shows the photo on the open ground
+  and keeps the painted forest floor under every tree's crown, where the world's own trees
+  stand; without the photo the world is the same file for file. `just sim-photo` checks
+  that the photo is there (and says how to get it) and starts `just sim` in the site world
+  with `gi=vct`: Gazebo's voxel cone tracing for the cameras, also `just sim gi=vct` in a
+  site world. `just world-snapshot` takes `gi=` and writes the real-time factor and the
+  graphics card's memory in use while the cameras render. `tools/check_no_orthophotos.py`
+  fails CI when a picture-shaped array, a GeoTIFF, a symbolic link or a world, snapshot or
+  ground texture marked as built from a photo is in git (also its history), an uploaded
+  artifact or the cache; every upload and cache in the workflows runs it on what it
+  uploads or caches. The sim farm never uploads to R2 a round flown over the photo.
+- Simulator exams for the AI commander: `sd-brain eval --backend sim` (`just
+  brain-eval-sim`) flies random search scenarios with an answer key in a fast 2D world
+  through the real commander loop and a gate with the area, height and speed rules. The
+  cloud model decides; the executor flies. Each flight gets a JSON grade (safety, found or
+  not, time to find, coverage, pilot questions, cost in kronor) under `data/brain-scores/`;
+  any safety failure (a rejected or forbidden order, an order during STOP, a geofence
+  breach) fails the flight. The cloud model has a hard cap of 30 kr per day counted on the
+  provider's stated price per call (`usage.cost`), shared by all runs on the machine; at
+  the cap, without a key, with a refused key (`key_invalid`) or when the cloud fails, a
+  fixed search script takes over and the flight is not counted as an exam. A cost the
+  provider did not state is shown as not measured, never guessed. Good and failed exams go
+  to an example bank (a gitignored local folder, or an R2 bucket in the EU,
+  `SD_BANK_R2_*`): `sd-brain bank export-golden` turns a good one into a replay fixture
+  (`tests/golden/sim/`, only the seed and the model's answers) that `just brain-eval`
+  flies again in CI without a network, and `sd-brain bank failures` lists the failed ones
+  with what went wrong. `sd-brain eval grade --round <dir>` grades a simulator-farm round
+  and writes `grade.json` in its folder.
+  `just brain-scores` shows the grade per day and model and flags a worse day. The
+  decision maker (`sd_brain.simeval.make_decision_maker`) and the grading
+  (`score_flight`) are plain interfaces for a simulator farm. A nightly workflow
+  (`brain-nightly`) runs a short cloud exam from main when the repository has the
+  `OPENROUTER_API_KEY` secret and uploads the grades as an artifact.
+
 ### Changed
 
+- The nightly Gazebo job caches only the CC0 tree pictures (`build/tree_models`). The
+  real trees (`build/trees`, derived from Skogsstyrelsen's tree height raster, which may
+  not be redistributed) are fetched again on every run and never stored in the GitHub
+  Actions cache, which pull request workflows, also from forks, can restore.
+  The CAD job no longer caches the manufacturer models (`build/cad/vendor`) either, as
+  some of them may not be redistributed. A workflow test fails when a cache or artifact
+  stores anything outside a short list of folders.
+- The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY
+  10000` in `searchdrone-safety.parm` with the reserves kept at 15 % and 7 %
+  (`BATT_LOW_MAH 1500`, `BATT_CRT_MAH 700`), `capacity_mah` in `hardware/drone.yaml` and
+  `battCapacityAh` in the SITL frame `sd_quad14.json`.
 - Real flights only use zero-data-retention cloud endpoints: `[cloud.provider] zdr` now
   defaults to `true` when `profile` is `bench` or `field` and to `false` in `sim`, so
   OpenRouter gets `provider.zdr = true` for both the main and the fallback model. An
@@ -34,6 +85,85 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Real trees in `sd_hellasgarden`: `just trees-fetch site=<site>` takes every tree's
+  position and height from Skogsstyrelsen's tree height raster (1 m) and its species from
+  Naturvårdsverket's NMD 2023, and `just tree-pictures-fetch` makes a PBR texture atlas from
+  Poly Haven's CC0 tree scans. The world then has about 14 700 trees of up to 34 m (mean
+  height error 0.3 m against the raster), detailed card models within 150 m of home and
+  cheap impostors further out, in glTF tiles. The tree list and pictures stay in `build/`
+  and the nightly Gazebo job fetches them; its snapshot artifact has pictures from before
+  and after. With the real trees the ground heights are Copernicus's as they are (no fixed
+  12 m canopy taken off), and a public site can use Lantmäteriet's 1 m ground model with
+  `[dem] source = "lantmateriet-mhm"`, `surface = "dtm"`. Sources and licences are in
+  `ATTRIBUTION`.
+- The simulator can fly the owner's 7-inch quad: `just sim vehicle=fpv7` and
+  `just sim-smoke vehicle=fpv7` use `sd_fpv7`, whose mass, centre of gravity, inertia and
+  looks are generated from the CAD model `hardware/cad/fpv7` (`just sim-model-fpv7`); the
+  hw-cad CI job fails when the two drift apart. It has its own SITL parameter layer and
+  builtin-physics frame (6S 10 000 mAh, 7x4 three-blade propellers). `sd_quad14` stays the
+  default. The smoke flight's `result.json` gains `vehicle` and, with builtin physics,
+  `hover_current_a`.
+- Perception chain: `sd-onboard` takes stills from a camera folder (`[perception]` in
+  `config/onboard.toml`, off by default), runs the class register's detector sources,
+  places each detection on the ground with the flight controller's position and attitude
+  and sends a `PerceptionReport` followed by a `CropData` JPEG for each target over
+  SD-link, in its own lowest-priority queue. A detection may now
+  carry its class (`GeoDetectionMsg.label` and `source`). `sd-ground` queues reports per
+  vehicle off the link's inbound loop, waits a moment for a report's crops, stores the
+  still and its classed detections (`perception_stills` and `detections`; migration
+  `0004_detections` adds `label`, `kind`, `source` and `find_id`), joins them into one
+  find per object (rebuilt from the table by find id after a restart), saves thumbnails
+  in the mission folder and serves
+  `GET /missions/{id}/detections`, `/finds` and `/detections/{id}/crop`; live events
+  `detection.new`, `find.new` and `find.updated` on the `detections` topic. The AI
+  commander gets `event.detection` for new finds and wakes on targets (trigger
+  `detection`); the scripted commander can fly to a find (`at: "event:find"`) and ask the
+  pilot to confirm. The panel draws finds on the map and opens a card with the class,
+  score, thumbnail and source; the simulator's labels are marked "facit".
+- `just sim-farm`, `just sim-farm-status` and `just sim-farm-setup`: a loop that runs
+  randomized search rounds from the newest `main` and keeps camera pictures with person
+  boxes (YOLO and COCO) computed from the simulator's facit and the camera's pose, plus a
+  metadata file per picture. Each round passes a quality check; three failed rounds in a
+  row stop the farm, `max_minutes=N` caps its run time, and it pauses while the GPU or
+  CPU is busy (optionally only when the computer is idle). Passed rounds stay in
+  `build/simfarm/` and, with a key in `config/simfarm.toml`, are also uploaded once to
+  Cloudflare R2 in the EU. Person models (CC0, CC BY 4.0) are fetched pinned from Gazebo
+  Fuel and credited. A round flies a seeded search in `sd_lake_forest` with SITL, the
+  ground station and perception, lit by the round's drawn sun, ambient light and haze
+  (clouds and haze change only the sky colour for now). Each still carries the camera's
+  pose from Gazebo, matched to the picture within 20 ms. `commander=script` flies the
+  scripted search (`SIMFARM.yaml`) at the round's height; `commander=sd-brain` hands the
+  flight to sd-brain's exam decision maker on the cloud model. The flight's record for
+  grading is kept under `runs/<run>/` in the round. People are seen through the
+  simulator's labels until a person detector exists. A round needs `just db-up`. The
+  lake-forest world's ground is now a generated meadow (grass, dry streaks and bare soil,
+  drawn from noise and repeated every 60 m) instead of one flat green, so pictures from
+  the air show ground texture; the colour stays away from red, and SK-RED still passes on
+  it. A readable `config/simfarm.toml` that holds an R2 key now stops the farm
+  (`chmod 600`) instead of warning, and uploads never follow a link. A round's drawn
+  height is raised to clear the highest ground or tree top where it can fly (home, the
+  search box and the straight way home, 15 m wider) by the site fixtures' 25 m, in whole
+  5 m, below the test charter's ceiling; with `commander=sd-brain` the charter's lowest
+  height is the round's, so the gate rejects lower orders. A round that cannot clear the
+  trees is skipped before the simulator starts, with the reason in `round.json`.
+- "Too windy" warning on the ground station (`sd_ground.services.wind`), a warning only:
+  nothing on board or on the ground acts on it, and STOP, FLY HOME and the flight
+  controller's failsafes are unchanged. `Telemetry.wind` (`WindCheck`) carries three
+  checks: the mean tilt over 10 s in the air against `ATC_ANGLE_MAX` - 10 deg
+  (`TILT_MARGIN`), the energy to fly home now at `RTL_SPEED_MS` and the measured current
+  x 1.3 against what is left above `BATT_LOW_MAH` (`ENERGY_HOME`), and the flight
+  controller's MAVLink WIND over the stage's limit (`WIND_LIMIT`; `[wind] stage` in
+  `ground.toml`: `first_flights` 4 m/s, `until_calibrated` 8 m/s mean and 12 m/s gusts).
+  ArduCopter sends WIND only with `EK3_DRAG_*` set, so that check is silent until the drag
+  is measured. Nothing is calibrated yet (`calibrated: false`). The event log and the
+  `vehicle` topic get `vehicle.wind_warning` and `vehicle.wind_ok` when the reasons change.
+  The ground station now also reads the battery current and the WIND message.
+- SITL wind tests with ArduPilot's own wind (`simulation/tests/model/test_wind_sitl.py`,
+  all marked uncalibrated): W1 hold in 10 m/s (and with turbulence), W2 RTL home against
+  12 m/s within 1.5 x the model's time and its mAh + 20 %, W3 a 10 s gust from 8 to 15 m/s
+  on a survey leg, W4 the flight controller's battery failsafe 500 m out against 10 m/s.
+  The nightly SITL job sweeps W2 over 0-18 m/s and is red only if the drone does not get
+  home in 12 m/s or less.
 - Class register and detector sources (`sd_detect`): a table of classes (`person`,
   `red_block`, `car`, `building`, `road`) with Swedish names, kind, source and plausible
   size; a colour detector on real pixels for red blocks (with a lowest score per class,

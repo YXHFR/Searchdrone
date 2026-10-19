@@ -226,6 +226,24 @@ def _telemetry() -> s.Telemetry:
         home=_ll(),
         dist_to_pilot_m=120.0,
         attitude=s.Attitude(roll_deg=-3.5, pitch_deg=-8.0, yaw_deg=72.0),
+        wind=_wind(),
+    )
+
+
+def _wind() -> s.WindCheck:
+    return s.WindCheck(
+        warning=True,
+        reasons=["TILT_MARGIN"],
+        tilt_avg_deg=21.5,
+        tilt_warn_deg=20.0,
+        wind_ms=None,
+        wind_gust_ms=None,
+        wind_from_deg=None,
+        wind_limit_ms=4.0,
+        wind_gust_limit_ms=None,
+        home_mah=420.0,
+        left_mah=8100.0,
+        reserve_mah=1500.0,
     )
 
 
@@ -657,6 +675,7 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         ),
         s.Vehicle(id=VEHICLE, name="Sim 1", kind="sim", mav_sysid=1, connected=True),
         s.Attitude(roll_deg=0.0, pitch_deg=0.0, yaw_deg=0.0),
+        _wind(),
         _telemetry(),
         s.LinkStatus(sdlink="up", mavlink="up", onboard_heartbeat_age_ms=200, rtt_ms=12.0),
         s.ManualControlState(
@@ -746,6 +765,38 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             area_m2=None,
         ),
         s.AnnotationCreate(kind="pin", label="P1", geometry=PIN),
+        s.DetectionRow(
+            id=COMMAND,
+            find_id=COMMAND,
+            vehicle_id="sim-01",
+            still_id=OTHER,
+            captured_at=T,
+            label="red_block",
+            kind="target",
+            source="color",
+            score=0.71,
+            bbox=[452.0, 286.0, 34.0, 32.0],
+            lat=HOME_LAT + 0.0018,
+            lon=HOME_LON,
+            sigma95_m=4.9,
+            size_m=0.7,
+            synthetic=True,
+            has_crop=True,
+        ),
+        s.Find(
+            find_id=COMMAND,
+            label="car",
+            name_sv="bil",
+            kind="context",
+            source="oracle",
+            lat=HOME_LAT + 0.0016,
+            lon=HOME_LON + 0.0004,
+            sigma95_m=5.5,
+            score=1.0,
+            count=3,
+            thumb_detection_id=None,
+            synthetic=True,
+        ),
         s.Clearance(
             id=OTHER,
             mission_id=MISSION,

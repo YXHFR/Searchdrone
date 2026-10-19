@@ -9,7 +9,7 @@
   "refAlt": 100,
   "refTempC": 20,
   "maxVoltage": 25.2,
-  "battCapacityAh": 9.0,
+  "battCapacityAh": 10.0,
   "refBatRes": 0.03,
   "propExpo": 0.65,
   "refRotRate": 120,
