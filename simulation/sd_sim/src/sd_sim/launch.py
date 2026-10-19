@@ -239,7 +239,10 @@ class Stack:
         """Load and check ``objects=`` (and a search scenario's objects) before anything
         starts; refuse them where they cannot apply."""
         scene: list[objects.WorldObject] = [] if self.scene is None else list(self.scene.objects())
-        if scene and (not self.renders_world() or self.cfg.vehicle != world.MODEL_NAME):
+        # The stills camera follows whether a scenario is set, so check that, not whether
+        # its layout came back with objects.
+        searching = self.scene is not None
+        if searching and (not self.renders_world() or self.cfg.vehicle != world.MODEL_NAME):
             raise InfraError(
                 "Ett sökscenario kräver physics=gz, vehicle=sd_quad14 och "
                 f"världen {world.WORLD_NAME}."
