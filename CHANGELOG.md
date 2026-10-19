@@ -173,6 +173,14 @@ All notable changes to this project are listed here. The format follows
   footprint, pixels per metre, 95 % position error). The SK-RED scene as world objects
   (`sd_sim.targets`, placed with `render_world(placed=)`) and `python -m
   sd_sim.render_stills`, which renders the detector's test pictures headless in Gazebo.
+- `sd-searchsim`: a fast 2D search simulator (probability map with terrain and canopy,
+  a lost-person motion model, battery and mission time) and a small learned policy that
+  suggests which sector to search next. `just rl-train` trains it on CPU with evolution
+  strategies (`size=ci` for a short run); `just rl-eval` compares it with lawnmower,
+  spiral and two greedy rules on the same held-out seeded scenarios and writes
+  `build/rl/eval.json`. Weights stay in `build/rl/`, never in git. Advisory only: no
+  flight-path package imports it (import contract), and nothing about flight safety
+  changes. CI trains and evaluates the CI size and uploads the comparison.
 - A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
   Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
   OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain

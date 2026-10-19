@@ -106,6 +106,7 @@ def test_ci_ok_needs_every_ci_job() -> None:
         "reuse",
         "secrets",
         "build",
+        "rl",
     }
     assert set(jobs) == expected | {"ci-ok"}
     assert set(jobs["ci-ok"]["needs"]) == expected

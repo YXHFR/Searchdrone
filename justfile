@@ -236,6 +236,16 @@ brain-eval-sim *args:
 brain-scores:
     uv run --package sd-brain sd-brain scores
 
+# --- search policy (2D simulator, advisory only) -----------------------------------
+
+# Train the next-sector search policy on CPU (keys: size=full|ci, seed, workers, out)
+rl-train *args:
+    uv run --package sd-searchsim sd-searchsim train "$@"
+
+# Compare the policy with lawnmower, spiral and greedy; writes JSON (keys: size, workers, policy, out)
+rl-eval *args:
+    uv run --package sd-searchsim sd-searchsim eval "$@"
+
 # --- panel ---------------------------------------------------------------------------
 
 # Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)

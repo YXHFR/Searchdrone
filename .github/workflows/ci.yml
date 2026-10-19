@@ -222,9 +222,39 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  rl:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Train the search policy, CI size, on CPU
+        run: just rl-train size=ci
+      - name: Compare it with lawnmower, spiral and greedy
+        run: just rl-eval size=ci out="$RUNNER_TEMP/rl/eval.json"
+      # Clearly better than the lawnmower, and not clearly worse than the rule it starts from.
+      - name: Check the comparison
+        run: >-
+          jq -e '.policy_vs.lawnmower.score_diff.ci95_low > 0
+          and .policy_vs.greedy_psr.score_diff.ci95_high >= 0' "$RUNNER_TEMP/rl/eval.json"
+      - name: No orthophotos in the comparison
+        id: ortho
+        if: always()
+        run: python3 tools/check_no_orthophotos.py "$RUNNER_TEMP/rl"
+      - name: Upload the comparison (no weights)
+        if: always() && steps.ortho.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rl-eval
+          path: ${{ runner.temp }}/rl/eval.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   ci-ok:
     if: always()
-    needs: [lint, typecheck, unit, contract, panel-e2e, panel-screens, reuse, secrets, build]
+    needs: [lint, typecheck, unit, contract, panel-e2e, panel-screens, reuse, secrets, build, rl]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
