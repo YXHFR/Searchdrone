@@ -42,6 +42,9 @@ export const paths = {
     return `${API}/missions/${enc(missionId)}/chat?${p.toString()}`;
   },
   missionAnnotations: (missionId: string) => `${API}/missions/${enc(missionId)}/annotations`,
+  missionFinds: (missionId: string) => `${API}/missions/${enc(missionId)}/finds`,
+  detectionCrop: (missionId: string, detectionId: string) =>
+    `${API}/missions/${enc(missionId)}/detections/${enc(detectionId)}/crop`,
   annotation: (annotationId: string) => `${API}/annotations/${enc(annotationId)}`,
   missionTrack: (missionId: string) => `${API}/missions/${enc(missionId)}/track?max_points=5000`,
   liveSocket: () => "/ws/v1/live",

@@ -19,3 +19,12 @@ expected_param_files = ["simulation/sitl/params/searchdrone-safety.parm"]
 
 [test_hooks]                                      # only with profile "sim" and SD_TEST=1
 takeoff_delay_after_arm_s = 0.0
+
+[perception]                                      # stills -> detections -> reports to the ground
+enabled = false                                   # needs a camera writing stills to still_dir
+still_dir = ""                                    # folder the camera writes <name>.ppm + .json to
+width_px = 1280                                   # the stills camera
+height_px = 720
+hfov_deg = 66.0
+period_s = 0.5                                    # how often the folder is looked at
+keep_stills = false                               # save stills with detections in state_dir

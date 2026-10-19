@@ -551,6 +551,25 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             kind = "event.pin_set"
             coords = geometry.get("coordinates") or [None, None]
             body = {"pin_id": d.get("label"), "lat": coords[1], "lon": coords[0]}
+    elif event.type == "find.new":
+        # A new found object (one per object, not per still). Context classes such as
+        # roads tell the AI what it flies over; targets wake it. Never a confirmed find.
+        kind = "event.detection"
+        body = {
+            k: d.get(k)
+            for k in (
+                "find_id",
+                "label",
+                "name_sv",
+                "kind",
+                "source",
+                "score",
+                "lat",
+                "lon",
+                "sigma95_m",
+                "synthetic",
+            )
+        }
     if kind is None:
         return None
     return {

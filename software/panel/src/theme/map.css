@@ -179,3 +179,54 @@
 .map-box .maplibregl-ctrl-bottom-left {
   bottom: 20px;
 }
+/* A found object's card: bottom right above the attribution, small, so the map tools (which
+   can wrap to several rows), the drone and the safety bar stay visible. */
+.map-find {
+  position: absolute;
+  bottom: 28px;
+  right: 8px;
+  width: 168px;
+  max-height: calc(100% - 96px);
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-left: 3px solid var(--c-warn);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.map-find header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.map-find img {
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: cover;
+  margin: 6px 0;
+  border-radius: 6px;
+}
+.map-find p {
+  margin: 2px 0;
+}
+.map-find .warn {
+  color: var(--c-warn);
+}
+/* On a phone the sheet covers the map's foot: the card sits above it on the left (the camera
+   button is on the right) and scrolls if the tools leave it little room. */
+.shell[data-vp="phone"] .map-find {
+  right: auto;
+  left: 8px;
+  bottom: calc(var(--sheet-peek) + 8px);
+  max-height: calc(100% - var(--sheet-peek) - 136px);
+}
+/* With the sheet half open the card rides above it, like the small window, and keeps at
+   least its header in view. */
+.shell[data-vp="phone"] .centre:has(.sheet[data-size="half"]) .map-find {
+  bottom: calc(52% + 8px);
+  max-height: calc(48% - 136px);
+  min-height: 48px;
+}
