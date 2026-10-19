@@ -5,8 +5,9 @@ runner (``sd_sim.farm.gazebo``) starts it with pytest, since it flies on the sce
 tests' rig, with ``SD_FARM_SPEC`` (the round's ``spec.json``) and ``SD_FARM_WORK`` (an
 empty folder for what the round leaves behind).
 
-The round's world comes from the seed (``sd_sim.farm.scenario.sample``): people, decoys,
-sun, weather and the flight height, inside the demo's search box. The vehicle carries the
+The round's world comes from the seed (``sd_sim.farm.height.draw``): people, decoys,
+sun, weather and the flight height, inside the demo's search box. The height is raised to
+clear the tallest tree under the flight (``sd_sim.farm.height``). The vehicle carries the
 stills camera; every still is kept with the camera's pose in the world. The onboard side
 runs the perception task as in SK-RED; until there is a person model for the simulator,
 people are reported from the simulator's labels (the oracle source), as cars are.
@@ -65,12 +66,12 @@ from sd_brain.simeval.decider import make_decision_maker
 from sd_geo import PinholeCamera
 from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
-from sd_sim import fixture, world
+from sd_sim import world
 from sd_sim.farm import flight
+from sd_sim.farm import height as farm_height
 from sd_sim.farm import scenario as farm_scenario
 from sd_sim.farm.round import RoundSpec
 from sd_sim.invariants import check_track
-from sd_sim.targets import search_box
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.gz]
 __all__ = ["fresh_db", "migrated_db", "passwords"]
@@ -99,9 +100,9 @@ def _spec() -> tuple[RoundSpec, Path]:
 
 
 def draw(spec: RoundSpec) -> farm_scenario.FarmScenario:
-    """The round's world: the seed's draw inside the demo's search box."""
-    fix = fixture.load()
-    return farm_scenario.sample(spec.seed, spec.worlds, search_box(fix), fix.home.lat)
+    """The round's world: the seed's draw inside the demo's search box, at a height clear
+    of the trees under the flight."""
+    return farm_height.draw(spec.seed, spec.worlds)
 
 
 class FarmOnboard(SitlOnboard):

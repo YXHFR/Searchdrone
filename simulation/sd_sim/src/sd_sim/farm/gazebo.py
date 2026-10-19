@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_sim import paths, world
-from sd_sim.farm import people
+from sd_sim.farm import height, people
 from sd_sim.farm.camera import Intrinsics
 from sd_sim.farm.round import RawRound, RoundError, RoundSpec
 
@@ -97,6 +97,7 @@ class GazeboRunner:
 
     def run(self, spec: RoundSpec, work: Path) -> RawRound:
         self.check()
+        height.draw(spec.seed, spec.worlds, repo=self.repo)  # a skipped round starts nothing
         work.mkdir(parents=True, exist_ok=True)
         spec_path = work / "spec.json"
         spec.write(spec_path)
