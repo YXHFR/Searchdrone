@@ -8,6 +8,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY
+  10000` in `searchdrone-safety.parm` with the reserves kept at 15 % and 7 %
+  (`BATT_LOW_MAH 1500`, `BATT_CRT_MAH 700`), `capacity_mah` in `hardware/drone.yaml` and
+  `battCapacityAh` in the SITL frame `sd_quad14.json`.
 - Real flights only use zero-data-retention cloud endpoints: `[cloud.provider] zdr` now
   defaults to `true` when `profile` is `bench` or `field` and to `false` in `sim`, so
   OpenRouter gets `provider.zdr = true` for both the main and the fallback model. An
@@ -45,6 +49,24 @@ All notable changes to this project are listed here. The format follows
   12 m canopy taken off), and a public site can use Lantmäteriet's 1 m ground model with
   `[dem] source = "lantmateriet-mhm"`, `surface = "dtm"`. Sources and licences are in
   `ATTRIBUTION`.
+- "Too windy" warning on the ground station (`sd_ground.services.wind`), a warning only:
+  nothing on board or on the ground acts on it, and STOP, FLY HOME and the flight
+  controller's failsafes are unchanged. `Telemetry.wind` (`WindCheck`) carries three
+  checks: the mean tilt over 10 s in the air against `ATC_ANGLE_MAX` - 10 deg
+  (`TILT_MARGIN`), the energy to fly home now at `RTL_SPEED_MS` and the measured current
+  x 1.3 against what is left above `BATT_LOW_MAH` (`ENERGY_HOME`), and the flight
+  controller's MAVLink WIND over the stage's limit (`WIND_LIMIT`; `[wind] stage` in
+  `ground.toml`: `first_flights` 4 m/s, `until_calibrated` 8 m/s mean and 12 m/s gusts).
+  ArduCopter sends WIND only with `EK3_DRAG_*` set, so that check is silent until the drag
+  is measured. Nothing is calibrated yet (`calibrated: false`). The event log and the
+  `vehicle` topic get `vehicle.wind_warning` and `vehicle.wind_ok` when the reasons change.
+  The ground station now also reads the battery current and the WIND message.
+- SITL wind tests with ArduPilot's own wind (`simulation/tests/model/test_wind_sitl.py`,
+  all marked uncalibrated): W1 hold in 10 m/s (and with turbulence), W2 RTL home against
+  12 m/s within 1.5 x the model's time and its mAh + 20 %, W3 a 10 s gust from 8 to 15 m/s
+  on a survey leg, W4 the flight controller's battery failsafe 500 m out against 10 m/s.
+  The nightly SITL job sweeps W2 over 0-18 m/s and is red only if the drone does not get
+  home in 12 m/s or less.
 - Class register and detector sources (`sd_detect`): a table of classes (`person`,
   `red_block`, `car`, `building`, `road`) with Swedish names, kind, source and plausible
   size; a colour detector on real pixels for red blocks (with a lowest score per class,

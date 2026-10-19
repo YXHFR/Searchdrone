@@ -133,6 +133,7 @@ GROUND_STREAMS: Final = frozenset(
         mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE,
         mavlink.MAVLINK_MSG_ID_HOME_POSITION,
         mavlink.MAVLINK_MSG_ID_RC_CHANNELS,  # the RC mode switch: a person took over
+        mavlink.MAVLINK_MSG_ID_WIND,  # the EKF's wind estimate for the wind warning
     }
 )
 _REQUESTABLE: Final = frozenset(

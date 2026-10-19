@@ -64,7 +64,7 @@ def test_failure_messages_are_swedish_and_name_the_values() -> None:
 
 
 def test_hover_time_scales_with_battery() -> None:
-    small = compute(drone(battery__capacity_mah=4500)).usable_energy_wh
+    small = compute(drone(battery__capacity_mah=5000)).usable_energy_wh
     assert small == pytest.approx(compute(drone()).usable_energy_wh / 2)
 
 
