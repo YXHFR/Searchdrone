@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 from typing import Any
 
 from sd_ground.mav.gnss_watch import GnssWatch, text_alarm
+from sd_ground.mav.thread import vehicle_events
 from sd_mav.vehicle import FcTelemetry
 
 # Public CMAC test field (ArduPilot's default SITL home), never a private place.
@@ -73,3 +75,12 @@ def test_flight_controller_texts() -> None:
     assert dr[2]["dr_timeout_s"] == 30 and dr[2]["started_utc"].startswith("2026-01-01")
     assert text_alarm("Dead Reckoning timeout", "x") is None
     assert text_alarm("Glitch cleared", "x") is None
+
+
+def test_dead_reckoning_start_comes_from_the_injected_clock() -> None:
+    seen: list[tuple[str, str, dict[str, Any]]] = []
+    when = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.UTC)
+    on = vehicle_events(lambda k, s, p: seen.append((k, s, p)), now=lambda: 0.0, utc=lambda: when)
+    on("mav.statustext", {"text": "Dead Reckoning started", "severity": 2})
+    dr = [p for k, _s, p in seen if k == "alarm.DEAD_RECKONING"]
+    assert dr == [dr[0]] and dr[0]["started_utc"] == when.isoformat()

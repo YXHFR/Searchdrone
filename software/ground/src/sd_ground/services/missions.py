@@ -56,6 +56,7 @@ from sd_schemas.skills import SKILL_REGISTRY, SkillSpec
 if TYPE_CHECKING:
     from sd_ground.context import Ground
     from sd_ground.link import GroundLink
+    from sd_ground.services.link_loss import LinkWatch
     from sd_ground.services.vehicle_actions import VehicleActions
     from sd_link.session import Expired, Inbound
 
@@ -153,7 +154,7 @@ class MissionFlow:
     rates: dict[str, BrainRate] = field(default_factory=dict[str, BrainRate])
     finds: dict[str, Any] = field(default_factory=dict[str, Any])  # mission id -> Finds
     reports: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> ReportQueue
-    link_watch: dict[str, Any] = field(default_factory=dict[str, Any])  # vehicle id -> LinkWatch
+    link_watch: dict[str, LinkWatch] = field(default_factory=dict[str, "LinkWatch"])
     _watch: dict[str, _VehicleWatch] = field(default_factory=dict[str, _VehicleWatch])
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _tasks: set[asyncio.Task[Any]] = field(default_factory=set[asyncio.Task[Any]])

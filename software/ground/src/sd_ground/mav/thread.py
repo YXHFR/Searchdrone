@@ -157,13 +157,16 @@ EVENTS_PER_KIND_S: Final = 1.0  # at most one event per kind and second from the
 
 
 def vehicle_events(
-    sink: EventSink, now: Callable[[], float] | None = None
+    sink: EventSink,
+    now: Callable[[], float] | None = None,
+    utc: Callable[[], dt.datetime] | None = None,
 ) -> Callable[[str, dict[str, Any]], None]:
     """The ``Vehicle``'s events that the ground station keeps; status texts at warning
     level or worse, and failsafe texts at any level, become ``fc.statustext``. At most one
     per kind and second (the rest are counted in the next one), so a flood on the MAVLink
     channel cannot fill the main loop's queue."""
     clock = now or time.monotonic
+    wall = utc or (lambda: dt.datetime.now(dt.UTC))
     last: dict[str, float] = {}
     dropped: dict[str, int] = {}
 
@@ -179,7 +182,7 @@ def vehicle_events(
     def on_event(kind: str, details: dict[str, Any]) -> None:
         if kind == "mav.statustext":
             text = str(details.get("text", ""))
-            gps = text_alarm(text, dt.datetime.now(dt.UTC).isoformat())
+            gps = text_alarm(text, wall().isoformat())
             if gps is not None:
                 emit(*gps)
             # Warnings and worse, and every failsafe text (ArduCopter sends a fence breach
