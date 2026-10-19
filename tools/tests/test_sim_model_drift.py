@@ -71,3 +71,6 @@ def test_close_compares_structure() -> None:
     assert not drift.close({"a": [1, 2]}, {"a": [1, 2, 3]})
     assert not drift.close({"a": 1}, {"b": 1})
     assert not drift.close("sd_fpv7", "sd_quad14")
+    assert drift.close(True, True)
+    assert not drift.close(True, 1)
+    assert not drift.close(1, True)

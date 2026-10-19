@@ -85,10 +85,6 @@ def prop_radius_m() -> float:
     return float(cad()["prop"]["diameter_m"]) / 2
 
 
-def _outer(a: Vec, b: Vec) -> Mat:
-    return [[x * y for y in b] for x in a]
-
-
 def _shift(mass: float, d: Vec) -> Mat:
     """Parallel-axis term: inertia of a point mass ``mass`` at ``d`` about the origin."""
     d2 = sum(v * v for v in d)
@@ -173,17 +169,6 @@ def links() -> dict[str, dict[str, Any]]:
     com = [m / mass for m in moment]
     base = {"mass": mass, "com": com, "inertia": _add(about_origin, _shift(mass, com), -1)}
     return {"base_link": base, **small}
-
-
-def composite(parts: dict[str, dict[str, Any]]) -> tuple[float, Vec, Mat]:
-    """Mass, centre of mass and inertia about it of links given as ``links()`` gives them."""
-    mass = sum(p["mass"] for p in parts.values())
-    com = [sum(p["mass"] * p["com"][k] for p in parts.values()) / mass for k in range(3)]
-    inertia = _diag(0.0, 0.0, 0.0)
-    for p in parts.values():
-        d = [a - b for a, b in zip(p["com"], com, strict=True)]
-        inertia = _add(inertia, _add(p["inertia"], _shift(p["mass"], d)))
-    return mass, com, inertia
 
 
 def _r(values: Vec, digits: int = 9) -> list[float]:

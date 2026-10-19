@@ -19,7 +19,9 @@ def close(a: Any, b: Any) -> bool:
         return a.keys() == b.keys() and all(close(a[k], b[k]) for k in a)
     if isinstance(a, list) and isinstance(b, list):
         return len(a) == len(b) and all(close(x, y) for x, y in zip(a, b, strict=True))
-    if isinstance(a, float | int) and isinstance(b, float | int) and not isinstance(a, bool):
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    if isinstance(a, float | int) and isinstance(b, float | int):
         return math.isclose(a, b, rel_tol=JSON_TOLERANCE, abs_tol=JSON_TOLERANCE * 1e-3)
     return a == b
 
