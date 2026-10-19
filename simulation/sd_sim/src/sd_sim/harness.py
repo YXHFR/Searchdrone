@@ -284,6 +284,8 @@ class Harness:
                 if int(msg.type) != mavlink.MAV_MISSION_ACCEPTED:
                     raise VehicleError(f"staketet nekades (MISSION_ACK {int(msg.type)})")
                 return
+            if not 0 <= int(msg.seq) < len(corners):
+                raise VehicleError(f"staketet: FC bad om punkt {int(msg.seq)} av {len(corners)}")
             lat, lon = corners[int(msg.seq)]
             self._conn.mav.mission_item_int_send(
                 FC_SYSID,

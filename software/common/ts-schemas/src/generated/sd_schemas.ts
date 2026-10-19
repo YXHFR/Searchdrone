@@ -1706,9 +1706,21 @@ export interface MapConfig {
   assets_url?: string;
   attribution?: string;
   center: LatLon;
+  imagery?: MapImagery | null;
   maxzoom?: number;
   pack_url: string;
   zoom: number;
+}
+/**
+ * An aerial photo pack (raster PMTiles) drawn under the map's roads, paths and names.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "MapImagery".
+ */
+export interface MapImagery {
+  attribution: string;
+  maxzoom: number;
+  pack_url: string;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

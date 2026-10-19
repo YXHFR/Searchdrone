@@ -34,6 +34,7 @@ import {
   VEHICLE,
   vehicleLive,
 } from "../fixtures";
+import { syntheticImagery } from "../fixtures/syntheticImagery";
 
 export interface SeenRequest {
   method: string;
@@ -291,15 +292,20 @@ export class FakeGround {
       this.tiles.push({ path, status });
       await route.fulfill(body ? { status, body, headers } : { status, headers });
     };
-    if (path === "/tiles/fixture.pmtiles") {
-      const data = readFileSync(FIXTURE_PACK);
+    const pack =
+      path === "/tiles/fixture.pmtiles"
+        ? readFileSync(FIXTURE_PACK)
+        : path === "/tiles/imagery.pmtiles"
+          ? syntheticImagery()
+          : null;
+    if (pack) {
       const range = /^bytes=(\d+)-(\d*)$/.exec((await req.allHeaders()).range ?? "");
-      if (!range) return answer(200, data, { "Content-Type": "application/vnd.pmtiles" });
+      if (!range) return answer(200, pack, { "Content-Type": "application/vnd.pmtiles" });
       const start = Number(range[1]);
-      const end = Math.min(range[2] ? Number(range[2]) : data.length - 1, data.length - 1);
-      return answer(206, data.subarray(start, end + 1), {
+      const end = Math.min(range[2] ? Number(range[2]) : pack.length - 1, pack.length - 1);
+      return answer(206, pack.subarray(start, end + 1), {
         "Content-Type": "application/vnd.pmtiles",
-        "Content-Range": `bytes ${start}-${end}/${data.length}`,
+        "Content-Range": `bytes ${start}-${end}/${pack.length}`,
         "Accept-Ranges": "bytes",
       });
     }

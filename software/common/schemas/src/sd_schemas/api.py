@@ -64,6 +64,7 @@ __all__ = [
     "ManualControlInput",
     "ManualControlState",
     "MapConfig",
+    "MapImagery",
     "Mission",
     "MissionDetail",
     "MissionEndRequest",
@@ -173,6 +174,15 @@ class LoginRequest(SdModel):
 MAP_ATTRIBUTION = "© OpenStreetMap contributors, Protomaps"
 
 
+class MapImagery(SdModel):
+    """An aerial photo pack (raster PMTiles) drawn under the map's roads, paths and names."""
+
+    pack_url: str  # e.g. "/tiles/imagery.pmtiles"
+    maxzoom: int = Field(ge=0, le=22)  # highest zoom in the pack; MapLibre overzooms
+    # Plain text (never HTML), taken from the pack's metadata; the licence requires it.
+    attribution: str = Field(min_length=1, max_length=300)
+
+
 class MapConfig(SdModel):
     pack_url: str  # e.g. "/tiles/demo.pmtiles"
     center: LatLon
@@ -181,6 +191,7 @@ class MapConfig(SdModel):
     # Plain text (never HTML). OpenStreetMap data is ODbL, which requires this line.
     attribution: str = Field(default=MAP_ATTRIBUTION, min_length=1, max_length=200)
     assets_url: str = "/tiles/assets"  # glyphs under fonts/, sprites under sprites/v4/
+    imagery: MapImagery | None = None  # None: no photo pack, the panel says so
 
 
 class VideoConfig(SdModel):

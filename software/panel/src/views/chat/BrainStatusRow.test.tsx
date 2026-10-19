@@ -76,10 +76,10 @@ describe("BrainStatusRow", () => {
     expect(screen.queryByTestId("command-buttons")).toBeNull();
   });
 
-  it("offers no buttons when the AI is down (STOPP and FLYG HEM stay in the safety bar)", () => {
+  it("offers no buttons when the AI is down (the command panel says it, once)", () => {
     setUp({ brainState: "down", brainEngine: null });
     render(<BrainStatusRow />);
-    expect(screen.getByTestId("brain-row").textContent).toContain("AI:n är nere");
+    expect(screen.getByTestId("brain-row").textContent).toBe("");
     expect(screen.queryByTestId("command-buttons")).toBeNull();
   });
 

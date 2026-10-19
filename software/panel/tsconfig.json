@@ -8,5 +8,12 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts", "playwright.video.config.ts"]
+  "include": [
+    "src",
+    "e2e",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "playwright.video.config.ts",
+    "playwright.screens.config.ts"
+  ]
 }

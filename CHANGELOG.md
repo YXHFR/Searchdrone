@@ -41,6 +41,15 @@ All notable changes to this project are listed here. The format follows
   builtin-physics frame (6S 10 000 mAh, 7x4 three-blade propellers). `sd_quad14` stays the
   default. The smoke flight's `result.json` gains `vehicle` and, with builtin physics,
   `hover_current_a`.
+- Class register and detector sources (`sd_detect`): a table of classes (`person`,
+  `red_block`, `car`, `building`, `road`) with Swedish names, kind, source and plausible
+  size; a colour detector on real pixels for red blocks (with a lowest score per class,
+  so a sliver of a red car is no block); the simulator's labelled boxes as an oracle
+  source (simulator only, marked `oracle`); a size check that drops a red car posing as a
+  block. Georeferencing in `sd_geo` (pixel to ground on flat ground and back,
+  footprint, pixels per metre, 95 % position error). The SK-RED scene as world objects
+  (`sd_sim.targets`, placed with `render_world(placed=)`) and `python -m
+  sd_sim.render_stills`, which renders the detector's test pictures headless in Gazebo.
 - A simulator world from a real place: `sd_hellasgarden`, 1.2 × 1.2 km of the public
   Hellasgården outdoor area (Nacka), built from Copernicus DEM GLO-30 heights and
   OpenStreetMap layers (`simulation/gazebo/sites/hellasgarden/`). It has textured terrain

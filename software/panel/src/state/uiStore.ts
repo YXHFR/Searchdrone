@@ -1,6 +1,6 @@
 import { create } from "zustand";
+import type { ThemePref } from "../theme/theme";
 
-export type Theme = "dark" | "light";
 export interface LogEntry {
   t: number;
   level: "info" | "critical";
@@ -10,17 +10,14 @@ export interface LogEntry {
 const THEME_KEY = "sd.panel.theme";
 const MAX_LOG = 200;
 
-function initialTheme(): Theme {
+function initialThemePref(): ThemePref {
   try {
     const saved = localStorage.getItem(THEME_KEY);
-    if (saved === "dark" || saved === "light") return saved;
+    if (saved === "auto" || saved === "dark" || saved === "light") return saved;
   } catch {
     // ignore
   }
-  if (typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
-  }
-  return "dark";
+  return "auto";
 }
 
 export interface Toast {
@@ -39,7 +36,7 @@ export interface Draft {
 }
 
 interface UiState {
-  theme: Theme;
+  themePref: ThemePref;
   eventLog: LogEntry[];
   /** Latest critical message, read out with aria-live="assertive". */
   alert: string | null;
@@ -50,7 +47,7 @@ interface UiState {
   focusApproval: string | null;
   /** Latest new approval, announced with aria-live="assertive". */
   approvalAnnounce: string | null;
-  setTheme(t: Theme): void;
+  setThemePref(p: ThemePref): void;
   log(level: LogEntry["level"], message: string): void;
   toast(text: string, approvalId?: string): void;
   dismissToast(id: number): void;
@@ -62,7 +59,7 @@ const TOAST_MS = 8_000;
 let toastSeq = 0;
 
 export const useUiStore = create<UiState>((set, get) => ({
-  theme: initialTheme(),
+  themePref: initialThemePref(),
   eventLog: [],
   alert: null,
   toasts: [],
@@ -73,13 +70,13 @@ export const useUiStore = create<UiState>((set, get) => ({
     })),
   focusApproval: null,
   approvalAnnounce: null,
-  setTheme: (theme) => {
+  setThemePref: (themePref) => {
     try {
-      localStorage.setItem(THEME_KEY, theme);
+      localStorage.setItem(THEME_KEY, themePref);
     } catch {
       // ignore
     }
-    set({ theme });
+    set({ themePref });
   },
   log: (level, message) =>
     set((s) => ({
