@@ -357,7 +357,7 @@ class Executor:
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way
-        self._gcs_home_notice: int | None = None  # the last override notice when it began
+        self._gcs_home_notice: int | None = None  # the last override notice at the loss
         self._gcs_hold_rc: int | None = None  # the RC mode switch at the last operator notice
         self._taken_by: str | None = None  # who took over from the executor, for L-FIND
         self._find_record: dict[str, Any] | None = None  # the running find hover's record
@@ -615,6 +615,7 @@ class Executor:
         if self.held_by not in _GCS_HOME_HOLDS or self._gcs_home_busy:
             return
         self._gcs_home_busy = True
+        self._gcs_home_notice = self.auth.notice_mono_ms  # a notice from now on is newer
         self._side(self._home_from_hold())
 
     def _gcs_home_allowed(self) -> bool:
@@ -637,7 +638,6 @@ class Executor:
         # L-SPOOF does not steer in HELD, so a spoof alarm does not change this.
         try:
             await self.fallback.idle()  # a STOP's own chain first, then home over it
-            self._gcs_home_notice = self.auth.notice_mono_ms
             if not self._gcs_home_allowed():
                 return
             self.emit(

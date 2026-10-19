@@ -428,6 +428,75 @@ async def test_gcs_home_from_a_takeover_leaves_an_rc_switch_and_handles_a_second
         assert r.up.kinds().count("executor.gcs_lost_rtl_held") == 2
 
 
+async def test_gcs_home_from_a_hold_leaves_a_loiter_the_pilot_chose_on_the_rc_switch() -> None:
+    """The switch moved to another LOITER position: same mode, but a person chose it."""
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.fc.rc_mode_switch(1300, CopterMode.LOITER)  # an RC receiver, the switch at rest
+        await r.run(1)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(1)
+        r.fc.rc_mode_switch(1800, CopterMode.LOITER)
+        await r.run(1)
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(2)
+        assert r.fc.mode == CopterMode.LOITER
+        assert "executor.gcs_lost_rtl_held" not in r.up.kinds()
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.fc.rc_mode_switch(1300, CopterMode.LOITER)
+        await r.run(1)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(1)
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(2)
+        assert r.fc.mode in (CopterMode.SMART_RTL, CopterMode.RTL)  # unmoved: home
+
+
+async def test_gcs_home_from_a_hold_asks_again_before_the_rtl_attempt() -> None:
+    """SMART_RTL refused, then the pilot moves the RC switch: RTL is not even tried."""
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.fc.rc_mode_switch(1300, CopterMode.LOITER)
+        await r.run(1)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(1)
+        r.fc.refuse_modes.add(int(CopterMode.SMART_RTL))
+        tried: list[CopterMode] = []
+        set_mode = r.ex.set_mode
+
+        async def recording(mode: CopterMode, origin: SendOrigin) -> bool:
+            tried.append(mode)
+            ok = await set_mode(mode, origin)
+            r.fc.rc_mode_switch(1800, CopterMode.LOITER)
+            await r.run(0.5)
+            return ok
+
+        r.ex.set_mode = recording  # type: ignore[method-assign]
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(3)
+        assert tried == [CopterMode.SMART_RTL]
+        assert r.fc.mode == CopterMode.LOITER
+
+
+async def test_gcs_home_from_a_hold_yields_to_a_stop_during_the_chain() -> None:
+    """A STOP after the loss is seen, while the first STOP's chain still runs, wins."""
+    async with rig() as r:
+        await r.install(charter())
+        await r.takeoff(40)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(0.05)
+        r.fc.statustext("GCS Failsafe - Continuing Pilot Control")
+        await r.run(0.1)
+        r.ex.on_override(r.notice("stop"))
+        await r.run(3)
+        assert r.fc.mode == CopterMode.LOITER
+        assert "executor.gcs_lost_rtl_held" not in r.up.kinds()
+
+
 async def test_gcs_home_from_a_hold_yields_to_the_rc_switch_and_newer_notices() -> None:
     """The HELD exception covers only the home mode change, never what the pilot did since."""
     async with rig() as r:
