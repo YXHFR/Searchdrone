@@ -410,17 +410,24 @@ async def test_mavlink_events_are_published_only_for_alarms_and_vehicle() -> Non
     actions.on_event("mav.forbidden_mavlink_blocked", "warning", {"vehicle_id": VID})
     actions.on_event("alarm.STOP_PATH_FAILED", "critical", {"vehicle_id": VID})
     actions.on_event("vehicle.override_reasserted", "warning", {"vehicle_id": 7})
+    # An alarm with its own text (the GPS alarms) also goes to the panel's alarm list.
+    gps = {"vehicle_id": VID, "code": "GPS_LOST", "message_sv": "GPS förlorad"}
+    actions.on_event("alarm.GPS_LOST", "critical", gps)
     g = StubGround(clock)
     await actions.drain(g)
     assert g.types() == [
         "mav.forbidden_mavlink_blocked",
         "alarm.STOP_PATH_FAILED",
         "vehicle.override_reasserted",
+        "alarm.GPS_LOST",
     ]
     assert [t for t, _ in _published(g)] == [
         "alarm.STOP_PATH_FAILED",
         "vehicle.override_reasserted",
+        "alarm.GPS_LOST",
+        "alert",
     ]
+    assert _published(g)[-1][1]["code"] == "GPS_LOST"
 
 
 async def test_report_for_an_unknown_action_is_ignored() -> None:
