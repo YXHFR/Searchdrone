@@ -777,6 +777,11 @@ class CommanderLoop:
                 }
                 await self._say(OutMessage(text=text, kind="question", refs=refs), reply_to)
             return mem
+        if trigger == "gate_reject_retry" and extra.get("charter_errors"):
+            # The retry of a refused charter proposal ended without one (a text that
+            # explains a limit, an order, a model error): the request is over, so the next
+            # one starts with all its attempts.
+            self._charter_attempts = 0
         if out.action is None:
             for m in out.messages:
                 await self._say(m, reply_to)

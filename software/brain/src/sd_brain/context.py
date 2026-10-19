@@ -19,7 +19,8 @@ from sd_brain.charter_draft import CharterError
 from sd_brain.constants import MAX_CHARTER_ATTEMPTS
 from sd_brain.geo import bearing_word, to_enu
 from sd_brain.state_view import current_limits, motion_block
-from sd_brain.sv import interpret
+from sd_brain.sv import interpret, read
+from sd_brain.toolcall_parse import charter_options
 from sd_brain.tools import PROPOSAL_TOOL
 from sd_brain.turn import TurnInput
 from sd_schemas.api import ChatMessage
@@ -289,6 +290,11 @@ class ContextBuilder:
             )
             parts.append(f"GRINDSVAR (ramförslag){attempt}: {errs}")
         operator_lines = [m for m in tail if m.role == "operator"]
+        if turn.charter_errors:
+            # The same options a refused draft's repair text names, so the retry's first
+            # call can already use them instead of resending the refused draft.
+            said = read(operator_lines[-1].text) if operator_lines else None
+            parts.append(charter_options(s, said, current_limits(s)))
         if (
             turn.trigger == "mission_created"
             and operator_lines

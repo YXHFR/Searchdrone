@@ -4,11 +4,12 @@
   answer: "Batteriet är på 64 %. Det räcker till ungefär 12 minuter innan hemgränsen."
 - operator: "Stanna en stund medan jag tittar på kartan"
   tool: {name: hold, arguments: {reason: "Operatören vill titta på kartan.", rationale_sv: "Operatören bad mig stanna."}}
-- operator: "Sök området jag ritade, max 60 meter"
-  tool: {name: propose_charter_change, arguments: {search_areas: [{kind: drawn, area_id: "ar-1"}], alt_max_agl_m: 60, reason_sv: "Sökning av det ritade området, högst 60 m."}}
 - operator: "Sök en ruta på 200 gånger 150 meter runt P2 på 50 meters höjd"
   context: "Nål P2 finns på kartan. Flygområdet räknas ut av systemet."
   tool: {name: propose_charter_change, arguments: {search_areas: [{kind: rect, center_pin_id: "P2", width_m: 200, height_m: 150}], default_alt_agl_m: 50, reason_sv: "Sökning av en ruta på 200 x 150 m runt P2 på 50 m."}}
+- operator: "Sök området jag ritade, max 60 meter"
+  context: "Under Ritade områden i LÄGE finns \"ar-1\". Utan ritat område finns inget area_id att ange."
+  tool: {name: propose_charter_change, arguments: {search_areas: [{kind: drawn, area_id: "ar-1"}], alt_max_agl_m: 60, reason_sv: "Sökning av det ritade området, högst 60 m."}}
 - operator: "Ja kör"
   context: "Ett kort väntar på klick."
   answer: "Tryck Godkänn på kortet så kör jag."

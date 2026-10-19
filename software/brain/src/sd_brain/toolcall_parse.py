@@ -6,7 +6,9 @@ bounds, or a pin or sector is unknown. A charter draft is also checked against t
 mission's limits and the height band and turned into the ground station's proposal here
 (:func:`~sd_brain.charter_draft.to_proposal`), so an unknown pin, a missing size, a skill
 name the registry does not have or a flight area without home is answered in the same
-turn, before any POST, with every fault of the draft in one repair text.
+turn, before any POST, with every fault of the draft in one repair text. That text also
+says what the situation offers (the map pins, the drawn areas or "none", a rect's shape)
+and, when the operator's line names a box and a pin, the search area it describes.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from pydantic import ValidationError
 from sd_brain.charter_draft import CharterDraft, CharterError, DraftError, error_path, to_proposal
 from sd_brain.runtime.base import ModelReply
 from sd_brain.state_view import Limits
+from sd_brain.sv import Said
 from sd_brain.tools import AdaptError, adapt, charter_skills
 from sd_brain.turn import ToolSpec
 from sd_schemas.charter import CharterProposal
@@ -28,7 +31,14 @@ from sd_schemas.commander import Situation
 from sd_schemas.safety import MIN_ALT_AGL_M
 from sd_schemas.skills import SkillRegistry
 
-__all__ = ["CallError", "ParsedCall", "parse_tool_calls", "strip_think", "truncate"]
+__all__ = [
+    "CallError",
+    "ParsedCall",
+    "charter_options",
+    "parse_tool_calls",
+    "strip_think",
+    "truncate",
+]
 
 _THINK = re.compile(r"<think>.*?(</think>|$)", re.DOTALL | re.IGNORECASE)
 _RAW_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -156,8 +166,70 @@ def _check_bounds(args: dict[str, Any], lim: Limits) -> str | None:
     return None
 
 
-def _draft_error(faults: list[_Fault], args: dict[str, Any] | None) -> CallError:
-    """Every fault of a draft in one repair text, so one round can fix them all."""
+def _n(value: float) -> float | int:
+    return int(value) if float(value).is_integer() else value
+
+
+def _fits(draft: dict[str, Any], s: Situation, lim: Limits) -> bool:
+    """Whether a suggested draft would pass the checks it is meant to fix."""
+    try:
+        parsed = CharterDraft.model_validate({**draft, "reason_sv": "-"})
+        if _limit_faults(parsed, s, lim):
+            return False
+        to_proposal(parsed, s)
+    except (ValidationError, DraftError):
+        return False
+    return True
+
+
+def _suggestion(s: Situation, said: Said | None, lim: Limits) -> str:
+    """The search area the operator's line describes ("ruta 100 x 100 m runt P1"), as
+    the draft's fields; empty without a box size or a known centre, or when that area
+    itself would be refused. A height the mission does not allow is left out, so the
+    suggestion never repeats the fault it is attached to."""
+    if said is None or said.box_m is None:
+        return ""
+    known = {p.id for p in s.pins}
+    pin = next((p for p in said.pins if p in known), None)
+    area: dict[str, Any] = {"kind": "rect"}
+    if pin is not None:
+        area["center_pin_id"] = pin
+    elif said.coord is not None:
+        area["center"] = {"lat": said.coord[0], "lon": said.coord[1]}
+    else:
+        return ""
+    area["width_m"], area["height_m"] = _n(said.box_m[0]), _n(said.box_m[1])
+    draft: dict[str, Any] = {"search_areas": [area]}
+    if said.alt_m is not None and _fits({**draft, "default_alt_agl_m": said.alt_m}, s, lim):
+        draft["default_alt_agl_m"] = _n(said.alt_m)
+    elif not _fits(draft, s, lim):
+        return ""
+    fields = ", ".join(f'"{k}": {json.dumps(v)}' for k, v in draft.items())
+    # Fields, not a whole draft: the model adds reason_sv (and keeps what else it needs).
+    return f"From the operator's line: {fields}."
+
+
+def charter_options(s: Situation, said: Said | None, lim: Limits) -> str:
+    """What this situation lets a charter draft name (map pins, drawn areas, a rect's
+    shape) and, from the operator's line (``said``), the search area it describes: for
+    a refused draft's repair text and the retry turn's context."""
+    pins = ", ".join(dict.fromkeys(p.id for p in s.pins))
+    areas = ", ".join(sorted({a.label for a in s.areas if a.kind == "area"}))
+    pin = s.pins[0].id if s.pins else None
+    if pin is not None:
+        shape = (
+            f'A rect on a pin: {{"kind": "rect", "center_pin_id": "{pin}", '
+            '"width_m": <metres>, "height_m": <metres>}.'
+        )
+    else:
+        shape = "Without a pin, ask the operator to place one (or use center for coordinates)."
+    text = f"Map pins: {pins or 'none'}. Drawn areas: {areas or 'none'}. {shape}"
+    return " ".join(x for x in (text, _suggestion(s, said, lim)) if x)
+
+
+def _draft_error(faults: list[_Fault], args: dict[str, Any] | None, options: str = "") -> CallError:
+    """Every fault of a draft in one repair text, so one round can fix them all, with
+    what the situation offers (``options``, :func:`charter_options`)."""
     hints: list[str] = []
     for f in faults:
         at = f.error.field or ""
@@ -166,7 +238,9 @@ def _draft_error(faults: list[_Fault], args: dict[str, Any] | None) -> CallError
             if h not in hints:
                 hints.append(h)
     what = "; ".join(f.text.rstrip(".") for f in faults)
-    full = " ".join([f"invalid charter draft: {what}.", *hints, _DRAFT_AGAIN])
+    full = " ".join(
+        x for x in (f"invalid charter draft: {what}.", *hints, options, _DRAFT_AGAIN) if x
+    )
     return CallError(
         full,
         "proposal",
@@ -296,6 +370,7 @@ def _check_draft(
     reg: SkillRegistry,
     s: Situation,
     lim: Limits,
+    options: str = "",
 ) -> CallError | None:
     """The draft as the ground station would see it: skill names, the mission's limits,
     the height band, the version, and the proposal itself (every fault at once)."""
@@ -310,7 +385,7 @@ def _check_draft(
         if exc.field is None or exc.field not in {f.error.field for f in faults}:
             error = CharterError(code=exc.code, detail_sv=str(exc), field=exc.field)
             faults.append(_Fault(str(exc), error, exc.hint, exc.repairable))
-    return _draft_error(faults, args) if faults else None
+    return _draft_error(faults, args, options) if faults else None
 
 
 def _validation_faults(exc: ValidationError) -> list[_Fault]:
@@ -322,12 +397,17 @@ def _validation_faults(exc: ValidationError) -> list[_Fault]:
     return out
 
 
-def _unreadable(name: str, why: str, kind: Literal["action", "proposal", "read"]) -> CallError:
+def _unreadable(
+    name: str,
+    why: str,
+    kind: Literal["action", "proposal", "read"],
+    options: str,
+) -> CallError:
     text = f"invalid arguments for {name}: {why}"
     if kind != "proposal":
         return CallError(text, kind)
     fault = _fault(why, "Ramförslaget gick inte att läsa.", None)
-    return _draft_error([fault], None)
+    return _draft_error([fault], None, options)
 
 
 def _validate(
@@ -337,6 +417,7 @@ def _validate(
     reg: SkillRegistry,
     s: Situation,
     lim: Limits,
+    options: str = "",
 ) -> tuple[ParsedCall | None, str | None]:
     if tool.kind == "read":
         if name == "brain_note" and not isinstance(args.get("text"), str):
@@ -350,8 +431,9 @@ def _validate(
         try:
             draft = CharterDraft.model_validate(args)
         except ValidationError as exc:
-            return None, _draft_error([*_validation_faults(exc), *_skill_faults(args, reg)], args)
-        err = _check_draft(draft, args, reg, s, lim)
+            faults = [*_validation_faults(exc), *_skill_faults(args, reg)]
+            return None, _draft_error(faults, args, options)
+        err = _check_draft(draft, args, reg, s, lim, options)
         if err is not None:
             return None, err
         return ParsedCall(id="", name=name, kind="proposal", args=args, draft=draft), None
@@ -394,22 +476,25 @@ def parse_tool_calls(
     reg: SkillRegistry,
     s: Situation,
     lim: Limits,
+    said: Said | None = None,
 ) -> tuple[list[ParsedCall], CallError | None]:
     """The valid calls in order, or the first error (for the repair round). The error's
-    ``kind`` says whether a charter draft was refused."""
+    ``kind`` says whether a charter draft was refused. ``said``: what the operator's line
+    names, for a concrete suggestion in a refused draft's repair text."""
     offered = {t.name: t for t in tools}
     out: list[ParsedCall] = []
     for call_id, name, raw in _raw_calls(reply):
         tool = offered.get(name)
         if tool is None:
             return [], CallError(f"unknown tool {name!r}: it is not offered now")
+        options = charter_options(s, said, lim) if tool.kind == "proposal" else ""
         try:
             args = json.loads(raw) if raw.strip() else {}
         except json.JSONDecodeError:
-            return [], _unreadable(name, "not JSON", tool.kind)
+            return [], _unreadable(name, "not JSON", tool.kind, options)
         if not isinstance(args, dict):
-            return [], _unreadable(name, "not an object", tool.kind)
-        parsed, err = _validate(name, dict(args), tool, reg, s, lim)
+            return [], _unreadable(name, "not an object", tool.kind, options)
+        parsed, err = _validate(name, dict(args), tool, reg, s, lim, options)
         if err is not None or parsed is None:
             if isinstance(err, CallError):
                 return [], err

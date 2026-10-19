@@ -335,6 +335,16 @@ All notable changes to this project are listed here. The format follows
   `behaviour.max_proposal_repair_rounds`, within the turn's deadline) without a POST. A
   draft still refused when the rounds or the turn's time run out, or when the model stops
   answering, counts as a refused attempt instead of ending in "Jag hann inte svara".
+  So does the same refused draft sent again (no more repairs then), and a turn that ends
+  with a text after a refused draft instead of a proposal (unless the text explains a
+  mission limit the request exceeds), and a retry turn that proposes nothing: the AI no
+  longer goes quiet after it, and a retry that ends without a proposal resets the
+  attempts for the next request. The repair text, and the retry turn's context, list the
+  map pins and drawn areas in the situation (or "none"), the shape of a rectangle on a
+  pin and, when the operator's line names a box and a pin, the search area it describes
+  (without a height or a size the mission would refuse). The tool schema offers a drawn
+  area and `operating_area` only when an area is drawn, with the known labels and pin ids
+  as its only values; without pins, an area needs `center`.
   The AI can no longer draw the flight area: it names only the search
   areas (or an area the operator drew) and the system computes the flight area around
   home. The tool schema gives each area kind its own required fields, a description on

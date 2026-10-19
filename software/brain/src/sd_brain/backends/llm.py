@@ -4,9 +4,12 @@ When the model does not answer, the turn ends with the error and the loop lets t
 command mode (``GrammarBackend``) answer the same turn. A refused call is sent back for
 repair (``max_repair_rounds``; a charter draft ``max_proposal_repair_rounds``). A draft
 still refused when its rounds run out, when the model cannot fix it, when the model stops
-answering or when another call would not end before the turn's deadline ends the turn as
-a failed proposal: the loop handles it like a proposal the ground station refused, not as
-a parse error.
+answering, when the model sends the same refused draft again or when another call would
+not end before the turn's deadline ends the turn as a failed proposal: the loop handles it
+like a proposal the ground station refused, not as a parse error. So does a turn whose
+draft was refused and that then ends without a proposal (a text reply, a read tool, an
+error), and a retry turn of a refused proposal that proposes nothing: the attempt counts
+and the retry or the final line follows.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from sd_brain.constants import (
 from sd_brain.context import ContextBuilder
 from sd_brain.runtime.base import ModelError, ModelReply, ModelRuntime, Sampling
 from sd_brain.state_view import current_limits
+from sd_brain.sv import Said, read
 from sd_brain.toolcall_parse import (
     CallError,
     ParsedCall,
@@ -49,6 +53,9 @@ from sd_schemas.skills import SkillRegistry
 __all__ = ["LlmCommander"]
 
 PARSE_FAIL_TEXT = "Jag fick inte ihop ordern. Kan du säga det på ett annat sätt?"
+# Faults that come from the request itself (more than the mission allows): the model may
+# answer them with a text that explains the limit instead of another draft.
+REQUEST_LIMIT_CODES = frozenset({"CHARTER_EXCEEDS_LIMITS", "AREA_BEYOND_RANGE"})
 
 
 def _assistant_message(reply: ModelReply) -> dict[str, Any]:
@@ -67,6 +74,30 @@ def _assistant_message(reply: ModelReply) -> dict[str, Any]:
 
 def _tool_message(call_id: str, content: str) -> dict[str, Any]:
     return {"role": "tool", "tool_call_id": call_id, "content": content}
+
+
+def _said(turn: TurnInput) -> Said | None:
+    """What the operator's request names, for a refused draft's suggestion: the latest
+    operator line, in its own turn or in the retry of a refused proposal."""
+    if turn.trigger not in ("operator_message", "gate_reject_retry"):
+        return None
+    line = next((m for m in reversed(turn.chat_tail) if m.role == "operator"), None)
+    return read(line.text) if line is not None else None
+
+
+def _explains_limit(errors: list[CharterError], texts: list[OutMessage]) -> bool:
+    """A text reply (``texts``: those written after the refusal) to a draft refused only
+    for the mission's limits: the answer the prompt asks for ("Högsta tillåtna höjd är
+    120 m."), not a given-up attempt."""
+    return (
+        bool(errors)
+        and all(e.code in REQUEST_LIMIT_CODES for e in errors)
+        and any("turn_failed" not in m.refs for m in texts)
+    )
+
+
+def _draft_key(err: CallError) -> str | None:
+    return None if err.args is None else json.dumps(err.args, sort_keys=True, default=str)
 
 
 def _failed(err: CallError) -> FailedProposal:
@@ -110,7 +141,11 @@ class LlmCommander:
         offered = [t.openai for t in turn.tools]
         rounds = repairs = 0
         slowest = 0.0  # the longest model call in this turn, in seconds
+        said = _said(turn)
         draft_err: CallError | None = None  # the last refused draft, until a reply parses
+        refused: CallError | None = None  # the turn's last refused draft, kept to the end
+        refused_at = 0  # how many texts the turn had when that draft was refused
+        seen: set[str] = set()  # the refused drafts' arguments in this turn
         while True:
             if rounds >= self.cfg.max_read_tool_rounds + repairs + 1:
                 diag.error = "round_limit"
@@ -136,22 +171,30 @@ class LlmCommander:
             if reply.engine == "cloud":
                 diag.backend = "cloud"
             text = strip_think(reply.content)
-            calls, err = parse_tool_calls(reply, turn.tools, self.reg, turn.situation, lim)
+            calls, err = parse_tool_calls(reply, turn.tools, self.reg, turn.situation, lim, said)
             diag.tool_calls.extend(
                 {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
                 for c in reply.tool_calls
             )
             draft_err = err if err is not None and err.kind == "proposal" else None
+            repeat = False
+            if draft_err is not None:
+                refused, refused_at = draft_err, len(out.messages)
+                key = _draft_key(draft_err)
+                repeat = key is not None and key in seen
+                if key is not None:
+                    seen.add(key)
             budget = (
                 self.cfg.max_proposal_repair_rounds
                 if draft_err is not None
                 else self.cfg.max_repair_rounds
             )
             if draft_err is not None and (
-                not draft_err.repairable or end - self._clock() < slowest
+                not draft_err.repairable or repeat or end - self._clock() < slowest
             ):
-                # The model cannot fix it, or another call would not end before the turn
-                # does: the draft goes back to the loop as refused.
+                # The model cannot fix it, sent the same refused draft again (another
+                # repair text will not help), or another call would not end before the
+                # turn does: the draft goes back to the loop as refused.
                 out.failed_proposal = _failed(draft_err)
                 break
             if err is not None and repairs < budget:
@@ -188,8 +231,32 @@ class LlmCommander:
                     result = {"ok": True}
                 content = truncate(json.dumps(result, ensure_ascii=False), TOOL_RESULT_MAX_CHARS)
                 messages.append(_tool_message(c.id, content))
-        if draft_err is not None and out.failed_proposal is None and not out.has_action():
-            out.failed_proposal = _failed(draft_err)  # the rounds or the context ran out
+        given_up: FailedProposal | None = None
+        if refused is not None:
+            if not _explains_limit(refused.errors, out.messages[refused_at:]):
+                given_up = _failed(refused)
+        elif (
+            turn.trigger == "gate_reject_retry"
+            and turn.charter_errors
+            and diag.error not in ("timeout", "http_error")
+            and not _explains_limit(turn.charter_errors, out.messages)
+        ):
+            # The retry of a refused proposal that proposes nothing (a text, a read tool,
+            # the rounds ran out) gives the attempt up the same way: counted, and retried
+            # or answered with the final line, never left as a silent end of the request.
+            given_up = FailedProposal(errors=list(turn.charter_errors))
+        if given_up is not None and out.failed_proposal is None and not out.has_action():
+            # A draft was refused and none went through: the rounds or the context ran
+            # out, or the model gave up with a text reply ("rita området …"). It is a
+            # failed attempt all the same, so the loop counts it and the retry (or, after
+            # the last attempt, the charter_failed question) follows. The model's own text
+            # stays in ``messages`` for the record, but the loop never posts the texts of
+            # a refused attempt (the follow-up turn or the final line speaks instead), as
+            # with a proposal the ground refused; a parse failure's line is dropped too.
+            # Only a text that explains a mission limit the request exceeds is the turn's
+            # answer and is posted.
+            out.failed_proposal = given_up
+            out.messages = [m for m in out.messages if "turn_failed" not in m.refs]
         diag.latency_ms = int((self._clock() - start) * 1000)
         diag.prompt_json = {"messages": messages}
         out.messages = out.messages[:2]

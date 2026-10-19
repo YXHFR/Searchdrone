@@ -13,7 +13,7 @@ from sd_brain.context import ContextBuilder, situation_text
 from sd_brain.memory import empty_memory
 from sd_brain.runtime.base import ModelReply, RawToolCall
 from sd_brain.state_view import current_limits
-from sd_brain.sv import interpret
+from sd_brain.sv import Said, interpret, read
 from sd_brain.toolcall_parse import parse_tool_calls, strip_think, truncate
 from sd_brain.tools import exposed_tools
 from sd_brain.turn import OutMessage, TurnInput
@@ -164,3 +164,10 @@ def test_interpret() -> None:
     assert "ruta=100x100 m" in (interpret("en ruta 100 gånger 100 meter") or "")
     assert "sektor=A" in (interpret("sök sektor a") or "")
     assert interpret("hej") is None
+
+
+def test_read_is_what_interpret_shows() -> None:
+    line = "Flyg till P1 och sök av en ruta på 100 gånger 100 meter där, på 40 meters höjd."
+    assert read(line) == Said(alt_m=40, pins=("P1",), box_m=(100, 100))
+    assert interpret(line) == "höjd=40 m; punkt=P1; ruta=100x100 m"
+    assert read("Hur går det?") == Said() and interpret("Hur går det?") is None

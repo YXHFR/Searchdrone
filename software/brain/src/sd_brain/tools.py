@@ -121,10 +121,49 @@ def charter_skills(reg: SkillRegistry) -> list[str]:
     return sorted(k.name for k in reg if k.status == "implemented" and k.stage <= EXPOSED_STAGE)
 
 
-def _proposal_schema(lim: Limits | None, skills: list[str] | None) -> dict[str, Any]:
+def _situated_areas(params: dict[str, Any], s: Situation) -> None:
+    """Offer only the area options this situation can fill: ``drawn`` (and
+    ``operating_area``) only when the operator drew an area, ``area_id`` and
+    ``center_pin_id`` as the known labels, no pin field without pins (``center`` is then
+    required). What remains follows ``CharterDraft`` (only "exactly one of center_pin_id
+    and center" is left to the turn's check, which is unchanged)."""
+    props = params["properties"]
+    items = props["search_areas"]["items"]
+    shapes = {a["properties"]["kind"]["enum"][0]: a for a in items["anyOf"]}
+    # Unique and in a fixed order: an enum must not repeat a value, and labels may.
+    areas = sorted({a.label for a in s.areas if a.kind == "area"})
+    pins = list(dict.fromkeys(p.id for p in s.pins))
+    for kind in ("rect", "circle"):
+        shape = shapes[kind]
+        fields = shape["properties"]
+        if pins:
+            fields["center_pin_id"].pop("pattern", None)
+            fields["center_pin_id"]["enum"] = pins
+            fields["center_pin_id"]["description"] = "A map pin listed under Kartnålar in LÄGE."
+        else:
+            # Without pins the centre must be coordinates (CharterDraft wants one of the two).
+            del fields["center_pin_id"]
+            fields["center"]["description"] = "Centre as coordinates the operator wrote."
+            fields["kind"]["description"] = f"A {'rectangle' if kind == 'rect' else 'circle'}."
+            shape["required"] = [*shape.get("required", []), "center"]
+    if areas:
+        shapes["drawn"]["properties"]["area_id"]["enum"] = areas
+        props["operating_area"]["properties"]["area_id"]["enum"] = areas
+    else:
+        del shapes["drawn"]
+        del props["operating_area"]
+        props["search_areas"]["description"] = "The areas to search: a rect or circle."
+    items["anyOf"] = list(shapes.values())
+
+
+def _proposal_schema(
+    lim: Limits | None, skills: list[str] | None, s: Situation | None = None
+) -> dict[str, Any]:
     params = clean_schema(CharterDraft.model_json_schema())
     params["additionalProperties"] = False
     props = params.get("properties", {})
+    if s is not None:
+        _situated_areas(params, s)
     if skills is not None:
         props["allowed_skills"]["items"] = {"type": "string", "enum": list(skills)}
     if lim is not None:
@@ -138,11 +177,17 @@ def _proposal_schema(lim: Limits | None, skills: list[str] | None) -> dict[str, 
     return params
 
 
-def skill_tool(spec: SkillSpec, lim: Limits | None, skills: list[str] | None = None) -> ToolSpec:
+def skill_tool(
+    spec: SkillSpec,
+    lim: Limits | None,
+    skills: list[str] | None = None,
+    s: Situation | None = None,
+) -> ToolSpec:
     """The OpenAI tool for a skill, with this turn's height and speed bounds. ``skills``:
-    the names a charter proposal may allow (:func:`charter_skills`)."""
+    the names a charter proposal may allow (:func:`charter_skills`); ``s``: the situation
+    whose pins and drawn areas a proposal may name (``None``: every option)."""
     if spec.name == PROPOSAL_TOOL:
-        params = _proposal_schema(lim, skills)
+        params = _proposal_schema(lim, skills, s)
         kind: Literal["action", "proposal"] = "proposal"
     else:
         model = spec.ai_params_model or spec.params_model
@@ -243,7 +288,7 @@ def exposed_tools(
             continue
         if blocked is not None:
             if k.allowed_under_latch:
-                out.append(skill_tool(k, lim, skills))
+                out.append(skill_tool(k, lim, skills, s))
             continue
         allowed_here = STATE_ALLOWS.get(s.mission_status)
         if allowed_here is not None and k.name not in allowed_here:
@@ -260,7 +305,7 @@ def exposed_tools(
             continue
         if k.allowed_from and s.vehicle.executor_state not in k.allowed_from:
             continue  # the onboard executor would refuse it in this state
-        out.append(skill_tool(k, lim, skills))
+        out.append(skill_tool(k, lim, skills, s))
     return out
 
 

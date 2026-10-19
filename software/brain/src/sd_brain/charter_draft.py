@@ -92,7 +92,7 @@ def _center_field() -> Any:
 class DrawnArea(SdModel):
     kind: Literal["drawn"] = Field(description="An area the operator drew on the map.")
     area_id: str = Field(
-        max_length=40, description="The drawn area's label (Ritade områden in LÄGE), e.g. ar-1."
+        max_length=40, description="The label of an area listed under Ritade områden in LÄGE."
     )
 
 
@@ -131,7 +131,8 @@ class CircleArea(_Centered):
     radius_m: float = Field(ge=20, le=1000, description="Radius in metres (required).")
 
 
-AreaRef = Annotated[DrawnArea | RectArea | CircleArea, Field(discriminator="kind")]
+# A rectangle first: what a small model most often needs (and may always use with a pin).
+AreaRef = Annotated[RectArea | CircleArea | DrawnArea, Field(discriminator="kind")]
 
 
 class CharterDraft(SdModel):
@@ -149,7 +150,8 @@ class CharterDraft(SdModel):
     search_areas: list[AreaRef] = Field(
         min_length=1,
         max_length=4,
-        description="The areas to search: a drawn area, or a rect or circle around a pin.",
+        description="The areas to search: a rect or circle around a map pin, or an area "
+        "the operator drew.",
     )
     alt_min_agl_m: float | None = Field(
         default=None, ge=0, le=1000, description="Lowest height in metres above home."
@@ -246,11 +248,13 @@ def _center(a: RectArea | CircleArea, s: Situation, f: _Frame, field: str) -> tu
 def _drawn(a: DrawnArea, s: Situation, field: str) -> Any:
     area = next((x for x in s.areas if x.kind == "area" and x.label == a.area_id), None)
     if area is None:
-        known = ", ".join(x.label for x in s.areas if x.kind == "area") or "inga"
+        known = ", ".join(x.label for x in s.areas if x.kind == "area")
         raise DraftError(
-            f"Okänt område {a.area_id}; kända: {known}.",
+            f"Okänt område {a.area_id}; kända: {known or 'inga'}.",
             field,
-            hint="Use an area listed under Ritade områden in LÄGE.",
+            hint="Use an area listed under Ritade områden in LÄGE."
+            if known
+            else "No area is drawn on the map: use a rect or circle around a map pin.",
         )
     return area
 
