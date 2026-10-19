@@ -159,7 +159,9 @@ def test_camera_where_the_cad_camera_sits() -> None:
 def test_world_includes_the_chosen_model(tmp_path: Path) -> None:
     path = world.render_world(world.WORLD_NAME, 0, tmp_path, vehicle=fpv7.MODEL_NAME)
     root = ET.parse(path).getroot()  # noqa: S314 - our own rendered file
-    assert [u.text for u in root.iter("uri")] == ["model://sd_fpv7_i0"]
+    uris = [u.text or "" for u in root.iter("uri")]
+    assert [u for u in uris if u.startswith("model://")] == ["model://sd_fpv7_i0"]
+    assert all(Path(u).is_file() for u in uris if not u.startswith("model://"))  # the ground
     rendered = tmp_path / "build" / "sim" / "models" / "sd_fpv7_i0"
     assert (rendered / "model.sdf").is_file() and (rendered / "model.config").is_file()
     with pytest.raises(ValueError):

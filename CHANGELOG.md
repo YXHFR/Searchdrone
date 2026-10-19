@@ -106,8 +106,19 @@ All notable changes to this project are listed here. The format follows
   CPU is busy (optionally only when the computer is idle). Passed rounds stay in
   `build/simfarm/` and, with a key in `config/simfarm.toml`, are also uploaded once to
   Cloudflare R2 in the EU. Person models (CC0, CC BY 4.0) are fetched pinned from Gazebo
-  Fuel and credited. The Gazebo round itself comes later; until then `just sim-farm`
-  exits 2.
+  Fuel and credited. A round flies a seeded search in `sd_lake_forest` with SITL, the
+  ground station and perception, lit by the round's drawn sun, ambient light and haze
+  (clouds and haze change only the sky colour for now). Each still carries the camera's
+  pose from Gazebo, matched to the picture within 20 ms. `commander=script` flies the
+  scripted search (`SIMFARM.yaml`) at the round's height; `commander=sd-brain` hands the
+  flight to sd-brain's exam decision maker on the cloud model. The flight's record for
+  grading is kept under `runs/<run>/` in the round. People are seen through the
+  simulator's labels until a person detector exists. A round needs `just db-up`. The
+  lake-forest world's ground is now a generated meadow (grass, dry streaks and bare soil,
+  drawn from noise and repeated every 60 m) instead of one flat green, so pictures from
+  the air show ground texture; the colour stays away from red, and SK-RED still passes on
+  it. A readable `config/simfarm.toml` that holds an R2 key now stops the farm
+  (`chmod 600`) instead of warning, and uploads never follow a link.
 - "Too windy" warning on the ground station (`sd_ground.services.wind`), a warning only:
   nothing on board or on the ground acts on it, and STOP, FLY HOME and the flight
   controller's failsafes are unchanged. `Telemetry.wind` (`WindCheck`) carries three

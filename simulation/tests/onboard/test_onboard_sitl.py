@@ -75,10 +75,9 @@ from sd_schemas.link import (
 )
 from sd_sim import config, paths
 from sd_sim.harness import Harness
-from sd_sim.launch import Stack
+from sd_sim.launch import SearchScene, Stack
 from sd_sim.pytest_plugin import worker_instance
 from sd_sim.sitl import CMAC_HOME
-from sd_sim.targets import Scene
 from sd_sim.util import new_run_dir
 
 pytestmark = [
@@ -163,18 +162,22 @@ def sim_stack(
     layers: tuple[Path, ...] = (),
     *,
     physics: str = "builtin",
-    scene: Scene | None = None,
+    scene: SearchScene | None = None,
+    **stack: Any,
 ) -> Iterator[Sim]:
     """SITL with the project's parameter layers (and a test's own ``layers``, loaded
     last), checked strictly before anything flies, with the pilot's RC transmitter.
     ``physics="gz"`` flies in Gazebo; ``scene`` adds a search scenario's objects and the
-    vehicle's stills camera (``Sim.stack.stills_dir``)."""
+    vehicle's stills camera (``Sim.stack.stills_dir``); ``stack`` goes to ``Stack``
+    (the farm's ``light`` and ``stills_archive``)."""
     instance = worker_instance()
     cfg = config.load(
         {"physics": physics, "gui": "false", "video": "off", "instance": str(instance)}
     )
     cfg.home, cfg.personal_home = CMAC_HOME, False
-    st = Stack(cfg, new_run_dir(instance, name), observer=False, param_layers=layers, scene=scene)
+    st = Stack(
+        cfg, new_run_dir(instance, name), observer=False, param_layers=layers, scene=scene, **stack
+    )
     harness = Harness(st.ports["harness_mavlink"])
     try:
         st.up()

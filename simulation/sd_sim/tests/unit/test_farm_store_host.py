@@ -237,12 +237,12 @@ def test_config_with_a_key(tmp_path: Path) -> None:
         'access_key_id = "AK"\nsecret_access_key = "SK"\n'
     )
     local.chmod(0o644)
+    with pytest.raises(farm_config.FarmConfigError, match="chmod 600"):
+        farm_config.load(repo=tmp_path)
+    local.chmod(0o600)
     c = farm_config.load({"commander": "script"}, tmp_path)
     assert c.commander == "script" and c.limits.idle_only and c.limits.max_duty == 0.5
     assert c.r2 is not None and c.r2.bucket == "sd-simfarm"
-    assert any("chmod 600" in w for w in c.warnings)
-    local.chmod(0o600)
-    assert farm_config.load(repo=tmp_path).warnings == ()
     with pytest.raises(farm_config.FarmConfigError):
         farm_config.load({"commander": "pilot"}, tmp_path)
     with pytest.raises(farm_config.FarmConfigError):
@@ -326,3 +326,13 @@ def test_gpu_reading_parses_nvidia_smi(tmp_path: Path, monkeypatch: pytest.Monke
     got = gpu(lambda argv: "37, 61, 2048, 8192\n")
     assert got == GpuReading(37.0, 61.0, 2048.0, 8192.0)
     assert gpu(lambda argv: "garbage") is None
+
+
+def test_upload_refuses_a_link(tmp_path: Path) -> None:
+    real = tmp_path / "real.json"
+    real.write_text("{}")
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+    assert store.read_nofollow(real) == b"{}"
+    with pytest.raises(OSError):
+        store.read_nofollow(link)

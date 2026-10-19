@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,7 @@ def world_sdf(
     placed: Sequence[objects.WorldObject] = (),
     cameras: Sequence[str] = (),
     vehicle: str = world.MODEL_NAME,
+    light: Mapping[str, Any] | None = None,
 ) -> str:
     fr = frame(s, ground)
     objects.check(placed, s.half_size_m)
@@ -67,6 +68,7 @@ def world_sdf(
             model_uri=f"model://{vehicle}_i{instance}",
             vehicle_z=world.stand_m(vehicle),
             vehicle_yaw=round(math.radians(90.0 - s.heading_deg), 6),
+            light=world.light_context(light),
         )
     )
 
@@ -82,6 +84,7 @@ def render(
     vehicle: str = world.MODEL_NAME,
     stills: bool = False,
     video: bool = True,
+    light: Mapping[str, Any] | None = None,
 ) -> Path:
     s = site.load(site_name, repo)
     terrain.build(s, repo, progress=progress)
@@ -89,7 +92,7 @@ def render(
     world.render_model(instance, repo, vehicle, stills=stills, video=video)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
-    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle)
+    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light)
     truth = world.world_truth(s.world, placed, frame=frame(s, ground))
     path = out / f"{s.world}_i{instance}.sdf"
     path.write_text(sdf, encoding="utf-8")

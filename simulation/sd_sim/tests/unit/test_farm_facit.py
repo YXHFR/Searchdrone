@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from sd_sim.farm import labels, qc
+from sd_sim.farm import flight, labels, qc
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.camera import (
     DOWN,
@@ -22,7 +23,6 @@ from sd_sim.farm.camera import (
     quat_from_rpy,
     rotate,
 )
-from sd_sim.farm.gazebo import GazeboRunner
 from sd_sim.farm.people import PERSON_LABEL, Person
 
 CAM = Intrinsics(1280, 720, math.radians(66.0))
@@ -268,14 +268,6 @@ def test_facit_that_misses_fails_the_check() -> None:
     assert any("utanför facit" in r for r in result.reasons)
 
 
-def test_gazebo_round_is_not_built_yet(tmp_path: Path) -> None:
-    assert farm_round.execute(spec(tmp_path), GazeboRunner()) == farm_round.EXIT_NOT_BUILT
-    result = farm_round.read_result(tmp_path)
-    assert result is not None and result["status"] == "not_built"
-    assert "inte byggt än" in result["error"]
-    assert "truth" not in result  # no truth.json was written
-
-
 PEOPLE_OK = [Person("person_0", "sd_person_walking", "standing", 3, 3, 0)]
 HEIGHTS_OK = [30.0, 35, 40, 40, 45, 50]
 
@@ -312,6 +304,18 @@ def test_an_unexpected_error_is_exit_3(tmp_path: Path) -> None:
     assert farm_round.execute(spec(tmp_path), Broken([], [])) == farm_round.EXIT_ERROR
     (tmp_path / "bad.json").write_text("{")
     assert farm_round.execute(tmp_path / "bad.json", Broken([], [])) == farm_round.EXIT_ERROR
+
+
+def test_a_runner_that_is_not_built_stops_with_exit_2(tmp_path: Path) -> None:
+    class NotYet(FakeRunner):
+        def run(self, spec: farm_round.RoundSpec, work: Path) -> farm_round.RawRound:
+            raise farm_round.NotBuiltError("världen finns inte än")
+
+    path = spec(tmp_path)
+    assert farm_round.execute(path, NotYet([], [])) == farm_round.EXIT_NOT_BUILT == 2
+    result = farm_round.read_result(path.parent)
+    assert result is not None and result["status"] == "not_built"
+    assert "världen finns inte än" in result["error"]
 
 
 def test_spec_round_trip_and_bad_commander(tmp_path: Path) -> None:
@@ -377,3 +381,51 @@ def test_grade_hook(tmp_path: Path) -> None:
     (tmp_path / "grade.json").unlink()
     broken = farm_round.grade(tmp_path, available=lambda: True, run=lambda *a, **k: None)
     assert broken is not None and "error" in broken
+
+
+@pytest.mark.skipif(not HAS_GRADER(), reason="this checkout's sd-brain has no farm grader")
+def test_a_finished_round_is_what_the_grader_reads(tmp_path: Path) -> None:
+    """The round folder the farm writes, graded by the real ``sd-brain eval grade``."""
+    runs = tmp_path / "work_runs" / "flight"
+    runs.mkdir(parents=True)
+    record = flight.flight_record(
+        started=0.0,
+        ended=300.0,
+        commands=[
+            {
+                "id": "1",
+                "skill": "takeoff",
+                "status": "done",
+                "issuer_kind": "brain",
+                "created_at": "2026-10-19T10:00:00Z",
+            },
+        ],
+        gates={},
+        finds=[
+            {
+                "label": "person",
+                "lat": -35.363 + 3.0 / 111_000,
+                "lon": 149.165 + 3.0 / 90_000,
+                "thumb_detection_id": "det-a",
+            }
+        ],
+        detections=[{"detection_id": "det-a", "captured_at": "2026-10-19T10:01:00Z"}],
+        chat=[],
+        breaches=0,
+        coverage=0.9,
+        landed_home=True,
+        turns=4,
+        max_time_s=1200.0,
+    )
+    (runs / "flight.json").write_text(json.dumps(record), encoding="utf-8")
+
+    class WithRuns(FakeRunner):
+        def run(self, spec: farm_round.RoundSpec, work: Path) -> farm_round.RawRound:
+            raw = super().run(spec, work)
+            return dataclasses.replace(raw, runs_dir=runs.parent)
+
+    people = [Person("person_0", "sd_person_walking", "standing", 3, 3, 0, is_target=True)]
+    assert farm_round.execute(spec(tmp_path), WithRuns(people, HEIGHTS_OK, extra={})) == 0
+    grade = farm_round.grade(tmp_path, available=lambda: True)
+    assert grade is not None and "error" not in grade, grade
+    assert grade["commander_used"] == "script" and grade["safety_ok"] and grade["found"]
