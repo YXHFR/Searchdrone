@@ -74,6 +74,14 @@ def test_the_charter_keeps_the_ai_at_the_round_s_height() -> None:
     assert height.charter_floor(75.0) == {"alt_min_agl_m": 75.0, "default_alt_agl_m": 75.0}
 
 
+def test_no_lake_forest_tree_reaches_the_charter_the_ai_may_fly() -> None:
+    # sd-brain may fly anywhere in charter_test, not only the flight area: in the only
+    # world the farm flies, no crown reaches the charter or its geofence buffer.
+    charter = fixture.load().charters[height.CHARTER]
+    reach = shapely.buffer(shapely.Polygon(charter.area_enu), charter.geofence_buffer_m)
+    assert _tops(world.trees(), reach) == []
+
+
 def test_today_s_lake_forest_rounds_keep_their_drawn_height() -> None:
     # sd_lake_forest's own trees stand well west of the demo's flight.
     fix = fixture.load()

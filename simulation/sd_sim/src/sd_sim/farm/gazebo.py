@@ -97,7 +97,8 @@ class GazeboRunner:
 
     def run(self, spec: RoundSpec, work: Path) -> RawRound:
         self.check()
-        height.draw(spec.seed, spec.worlds)  # a skipped round starts nothing
+        # A skipped round starts nothing. The default repo, as farm_flight.draw has it.
+        height.draw(spec.seed, spec.worlds)
         work.mkdir(parents=True, exist_ok=True)
         spec_path = work / "spec.json"
         spec.write(spec_path)
