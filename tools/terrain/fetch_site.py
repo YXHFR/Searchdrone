@@ -15,9 +15,11 @@ tool writes its data next to that file, ready to commit after review:
 A *local* site is defined in the gitignored ``config/site.local.toml`` (see
 ``config/site.example.toml``). It uses Lantmäteriet's Markhöjdmodell (1 m) and orthophoto
 through their STAC API, with the owner's own Geotorget login, and writes everything to
-``build/sites/<name>/``, which is never committed or uploaded. The login is read only from
-``SD_LM_USER`` / ``SD_LM_PASSWORD`` in the environment (never from a file in the
-repository) and handed to GDAL in its environment, never on a command line.
+``build/sites/<name>/``, which is never committed or uploaded. The login is read from
+``SD_LM_USER`` / ``SD_LM_PASSWORD`` in the environment or, when they are unset, from the
+gitignored ``config/geotorget.local.toml`` (``lm_login``; see
+``config/geotorget.example.toml``), and handed to GDAL in its environment, never on a
+command line. GDAL's error text is shown with the login cut out.
 
 OpenStreetMap is read through its main API (``/api/0.6/map`` for the site's box, plus the
 site's multipolygons whole): a handful of requests for a rare, manual refresh of one
@@ -31,6 +33,7 @@ arguments.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import math
@@ -68,7 +71,11 @@ LM_STAC_DEM = "https://api.lantmateriet.se/stac-hojd/v1"
 LM_STAC_ORTHO = "https://api.lantmateriet.se/stac-bild/v1"
 LM_DEM_COLLECTION = "dtm-cog"
 LM_HOST = "dl1.lantmateriet.se"
-ORTHO_CELL_M = 0.25
+ORTHO_CELL_M = 0.16
+# Colour orthophotos only: "rgbi" is red, green, blue and near infrared (the first three
+# bands are kept); "cir" (false colour) and "pan" (grey) are not.
+ORTHO_SPECTRA = ("rgb", "rgbi")
+LOGIN_FILE = Path("config") / "geotorget.local.toml"
 # Map data is fetched this far outside the site so that ways crossing its edge are whole.
 MARGIN_M = 150.0
 COORD_DIGITS = 7  # about 1 cm
@@ -220,13 +227,39 @@ def load_site(name: str, root: Path = ROOT) -> tuple[SiteDef, dict[str, str]]:
         raise FetchError(f"{where}: dem.cell_m ska vara 1-50", 2)
     login: dict[str, str] = {}
     if source == "lantmateriet-mhm" or ortho:
-        login = {
-            "user": os.environ.get("SD_LM_USER", ""),
-            "password": os.environ.get("SD_LM_PASSWORD", ""),
-        }
-    if source == "lantmateriet-mhm" and not (login.get("user") and login.get("password")):
-        raise FetchError("Lantmäteriets inloggning saknas (SD_LM_USER och SD_LM_PASSWORD)", 2)
+        login = lm_login(root)
+    if source == "lantmateriet-mhm" and not login:
+        raise FetchError(LOGIN_MISSING, 2)
     return site, login
+
+
+LOGIN_MISSING = (
+    "Lantmäteriets inloggning saknas. Kopiera config/geotorget.example.toml till "
+    "config/geotorget.local.toml och skriv in ditt Geotorget-konto där, eller sätt "
+    "SD_LM_USER och SD_LM_PASSWORD."
+)
+
+
+def lm_login(root: Path = ROOT) -> dict[str, str]:
+    """The owner's Geotorget login: ``SD_LM_USER``/``SD_LM_PASSWORD``, else the gitignored
+    ``config/geotorget.local.toml``; empty when neither has one. The file must be readable
+    by its owner only."""
+    user, password = os.environ.get("SD_LM_USER", ""), os.environ.get("SD_LM_PASSWORD", "")
+    if user and password:
+        return {"user": user, "password": password}
+    path = root / LOGIN_FILE
+    if not path.is_file():
+        return {}
+    if os.name == "posix" and path.stat().st_mode & 0o077:
+        raise FetchError(f"{LOGIN_FILE} kan läsas av andra. Kör: chmod 600 {LOGIN_FILE}", 2)
+    try:
+        table = tomllib.loads(path.read_text(encoding="utf-8")).get("geotorget", {})
+    except tomllib.TOMLDecodeError as exc:
+        raise FetchError(f"{LOGIN_FILE} går inte att läsa: {exc}", 2) from exc
+    user, password = str(table.get("user", "")).strip(), str(table.get("password", ""))
+    if not user or not password:
+        raise FetchError(f"{LOGIN_FILE}: fyll i user och password under [geotorget]", 2)
+    return {"user": user, "password": password}
 
 
 # --- geometry -----------------------------------------------------------------------
@@ -289,7 +322,22 @@ def _gdal(argv: Sequence[str], env: Mapping[str, str] | None = None) -> None:
     full_env = {**base, "GDAL_HTTP_USERAGENT": USER_AGENT, **(env or {})}
     res = subprocess.run(argv, env=full_env, capture_output=True, text=True, check=False)  # noqa: S603
     if res.returncode != 0:
-        raise FetchError(f"{argv[0]} misslyckades: {res.stderr.strip()[-500:]}")
+        raise FetchError(f"{argv[0]} misslyckades: {redact(res.stderr, env)[-500:]}")
+
+
+def redact(text: str, env: Mapping[str, str] | None) -> str:
+    """``text`` with the login from GDAL's environment (and its parts) cut out."""
+    out = text.strip()
+    userpwd = (env or {}).get("GDAL_HTTP_USERPWD", "")
+    parts = {userpwd, *userpwd.split(":", 1)} - {""}
+    forms = set(parts)
+    for secret in parts:
+        forms.add(urllib.parse.quote(secret, safe=""))
+    if userpwd:
+        forms.add(base64.b64encode(userpwd.encode()).decode())  # Basic auth
+    for secret in sorted(forms, key=len, reverse=True):
+        out = out.replace(secret, "***")
+    return out
 
 
 def stac_items(
@@ -410,17 +458,47 @@ def write_dem(src: Path, dest: Path, site: SiteDef) -> float:
 # --- orthophoto (local sites only) ------------------------------------------------------
 
 
-def fetch_ortho(site: SiteDef, login: Mapping[str, str], work: Path, dest: Path) -> str:
-    bbox = lonlat_bbox(site, 0.0)
-    items = [
+ORTHO_IN_CI = "Ortofoton hämtas aldrig i CI: de får bara finnas på din egen dator."
+
+
+def in_ci() -> bool:
+    return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
+
+
+def choose_ortho(items: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The newest colour orthophoto over the site: every tile of the newest flight year,
+    at its finest resolution. Tiles of one year are flown at different times of day, so
+    the year (``flygar``) picks them, not the timestamp."""
+
+    def key(item: Mapping[str, Any]) -> tuple[str, int, float]:
+        props = item.get("properties", {})
+        year = str(props.get("flygar") or str(props.get("datetime", ""))[:4])
+        try:
+            return str(item.get("collection", "")), int(year or 0), float(props["upplosning"])
+        except ValueError as exc:
+            raise FetchError(f"Lantmäteriet gav ett oväntat flygår: {year!r}") from exc
+
+    usable = [
         i
-        for i in stac_items(LM_STAC_ORTHO, bbox, [])
+        for i in items
         if str(i.get("collection", "")).startswith("orto-")
+        and i.get("properties", {}).get("spektraltyp") in ORTHO_SPECTRA
+        and isinstance(i.get("properties", {}).get("upplosning"), int | float)
     ]
-    if not items:
-        raise FetchError("Lantmäteriet har inget ortofoto för platsen")
-    newest = max(str(i.get("properties", {}).get("datetime", "")) for i in items)
-    chosen = [i for i in items if str(i.get("properties", {}).get("datetime", "")) == newest]
+    if not usable:
+        raise FetchError("Lantmäteriet har inget färgortofoto för platsen")
+    year = max(key(i)[1] for i in usable)
+    cell = min(key(i)[2] for i in usable if key(i)[1] == year)
+    collection = min(key(i)[0] for i in usable if key(i)[1:] == (year, cell))
+    return [i for i in usable if key(i) == (collection, year, cell)]
+
+
+def fetch_ortho(site: SiteDef, login: Mapping[str, str], work: Path, dest: Path) -> dict[str, Any]:
+    """The orthophoto on the site's plane, ``ORTHO_CELL_M`` per pixel, row 0 north, as an
+    (n, n, 3) uint8 array in ``dest``; returns where it came from."""
+    if in_ci():
+        raise FetchError(ORTHO_IN_CI, 2)
+    chosen = choose_ortho(stac_items(LM_STAC_ORTHO, lonlat_bbox(site, 0.0), []))
     urls = sorted(_lm_href(i) for i in chosen)
     edge = site.half_size_m
     raw = work / "ortho.raw"
@@ -455,10 +533,19 @@ def fetch_ortho(site: SiteDef, login: Mapping[str, str], work: Path, dest: Path)
     size = round(2 * edge / ORTHO_CELL_M)
     data = np.fromfile(raw, dtype=np.uint8)
     bands = data.size // (size * size)
+    if data.size != bands * size * size:
+        raise FetchError(f"ortofotot har inte {size} x {size} pixlar")
     if bands < 3:
         raise FetchError("ortofotot har färre än tre färgband")
     np.save(dest, data.reshape(size, size, bands)[:, :, :3])
-    return str(chosen[0].get("collection"))
+    props = chosen[0].get("properties", {})
+    return {
+        "collection": str(chosen[0].get("collection")),
+        "year": int(props.get("flygar") or str(props.get("datetime", ""))[:4]),
+        "source_cell_m": float(props["upplosning"]),
+        "cell_m": ORTHO_CELL_M,
+        "tiles": len(urls),
+    }
 
 
 # --- OpenStreetMap --------------------------------------------------------------------
@@ -687,7 +774,7 @@ def run(argv: Sequence[str], root: Path = ROOT) -> int:
         ortho = ""
         if site.ortho:
             print("==> ortofoto (Lantmäteriet)")
-            ortho = fetch_ortho(site, login, work, site.out / "ortho.npy")
+            ortho = str(fetch_ortho(site, login, work, site.out / "ortho.npy")["collection"])
     if not site.public:
         write_local_site_toml(site)
     print("==> OpenStreetMap")

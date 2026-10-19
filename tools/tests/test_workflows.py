@@ -297,3 +297,101 @@ def test_only_shareable_paths_are_cached_or_uploaded(path: Path) -> None:
                 assert storable(entry), (
                     f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
                 )
+
+
+UPLOADS = ("actions/upload-artifact@", "actions/upload-pages-artifact@")
+CACHES = ("actions/cache@", "actions/cache/save@")
+ORTHO_CHECK = "tools/check_no_orthophotos.py"
+# Caches that only ever hold downloaded packages, never anything a job made: uv's wheel
+# cache (setup-uv's enable-cache). Anything else cached is checked after it is written.
+PACKAGE_CACHES = ("astral-sh/setup-uv@",)
+
+
+def _steps(path: Path) -> list[tuple[str, list[dict[str, Any]]]]:
+    """(job, steps) of a workflow, or of a composite action as one job."""
+    data = load(path)
+    if "runs" in data:
+        return [("composite", data["runs"].get("steps", []))]
+    return [(n, j.get("steps", [])) for n, j in data.get("jobs", {}).items()]
+
+
+def _checked(step: dict[str, Any]) -> list[str]:
+    """The paths an orthophoto check step checks."""
+    out = []
+    for line in str(step.get("run", "")).splitlines():
+        if ORTHO_CHECK in line:
+            args = line.split(ORTHO_CHECK, 1)[1].split()
+            out += [a.strip('"').replace("$RUNNER_TEMP", "${{ runner.temp }}") for a in args]
+    return [a.rstrip("/") for a in out if not a.startswith("-")]
+
+
+def _roots(paths: str) -> list[str]:
+    """The folders or files an upload or cache ``path`` reaches, before any wildcard."""
+    out = []
+    for line in paths.splitlines():
+        line = line.strip()
+        if not line or line.startswith("!"):
+            continue
+        parts = []
+        for part in line.split("/"):
+            if any(ch in part for ch in "*?["):
+                break
+            parts.append(part)
+        out.append("/".join(parts).rstrip("/"))
+    return out
+
+
+def _caches(inputs: dict[str, Any]) -> bool:
+    """Whether a setup action's inputs turn on its own cache (setup-uv, setup-node,
+    setup-python and the like)."""
+    on = str(inputs.get("enable-cache", "")).lower() == "true" or bool(inputs.get("cache"))
+    pm = inputs.get("package-manager-cache")
+    return on or (pm is not None and str(pm).lower() != "false")
+
+
+def _covered(root: str, checked: list[str]) -> bool:
+    return any(c in (".", "") or root == c or root.startswith(c + "/") for c in checked)
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
+def test_nothing_is_uploaded_or_cached_without_the_orthophoto_check(path: Path) -> None:
+    """Orthophotos stay on the owner's computer: every job checks what it uploads before
+    the upload (and an upload that runs after a failure waits for that check to pass),
+    and what it caches after the last step that could have written it. The checks cover
+    every path the upload or cache reaches."""
+    for name, job_steps in _steps(path):
+        checks = [i for i, s in enumerate(job_steps) if ORTHO_CHECK in str(s.get("run", ""))]
+        for i, step in enumerate(job_steps):
+            uses = str(step.get("uses", ""))
+            where = f"{path.name} {name}: {step.get('name', uses)}"
+            paths = str(step.get("with", {}).get("path", ""))
+            if uses.startswith(UPLOADS):
+                before = [job_steps[c] for c in checks if c < i]
+                assert before, f"{where}: no {ORTHO_CHECK} before the upload"
+                cond = str(step.get("if", ""))
+                if "always()" in cond or "failure()" in cond:
+                    ids_ok = [f"steps.{s['id']}.outcome == 'success'" for s in before if "id" in s]
+                    assert any(x in cond for x in ids_ok), f"{where}: uploads after a failed check"
+                checked = [p for s in before for p in _checked(s)]
+                for root in _roots(paths):
+                    assert _covered(root, checked), f"{where}: {root} is uploaded unchecked"
+            elif uses.startswith(CACHES):
+                after = [job_steps[c] for c in checks if c > i]
+                assert after, f"{where}: no {ORTHO_CHECK} after the cache"
+                checked = [p for s in after for p in _checked(s)]
+                for root in _roots(paths):
+                    assert _covered(root, checked), f"{where}: {root} is cached unchecked"
+            elif _caches(step.get("with") or {}):
+                assert uses.startswith(PACKAGE_CACHES), f"{where}: a cache the test does not know"
+
+
+def test_the_coverage_rules_see_a_gap() -> None:
+    assert _caches({"cache": "pip"}) and _caches({"package-manager-cache": True})
+    assert not _caches({"package-manager-cache": False}) and not _caches({})
+    assert _roots("runs/**/x.json\n!runs/**/secrets/**\ndist/\n") == ["runs", "dist"]
+    assert _covered("build/tree_models", ["build"])
+    assert not _covered("build2/x", ["build"])
+    assert _checked({"run": 'python3 tools/check_no_orthophotos.py "$RUNNER_TEMP/site" a/'}) == [
+        "${{ runner.temp }}/site",
+        "a",
+    ]

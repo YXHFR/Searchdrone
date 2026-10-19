@@ -26,8 +26,9 @@ import numpy as np
 import shapely
 import yaml
 
+from sd_sim import config, objects, paths, site, terrain, world
 from sd_sim import forest as forest_mod
-from sd_sim import objects, paths, site, terrain, world
+from sd_sim.util import say
 
 TEMPLATE = "worlds/sd_site.sdf.jinja"
 PAD_SIZE_M = 3.0
@@ -40,6 +41,23 @@ SEARCH_STEP_M = 5.0
 def search_floor_m(top_m: float) -> float:
     """The lowest search height that keeps ``SEARCH_CLEARANCE_M`` over ``top_m``."""
     return math.ceil((top_m + SEARCH_CLEARANCE_M) / SEARCH_STEP_M) * SEARCH_STEP_M
+
+
+# Global illumination for the cameras (``gi=vct``): Gazebo's voxel cone tracing in the
+# Sensors system (ogre2 only). Light bounces off the ground and the trees into the
+# shadows, so a camera looking down sees the ground's own colours, as in an aerial photo,
+# rather than the flat ambient term. Voxels over the whole site: 256 x 256 cells of
+# 4.7 m across a 1.2 km world and 32 layers of height; three bounces.
+GI_VCT = {
+    "resolution": "256 256 32",
+    "octant_count": "1 1 1",
+    "bounce_count": 3,
+    "high_quality": "false",
+    "anisotropic": "true",
+    "thin_wall_counter": 1.0,
+    "conserve_memory": "true",
+}
+GI_MODES = config.GI_MODES
 
 
 def frame(s: site.Site, ground: terrain.Ground) -> world.Frame:
@@ -57,7 +75,10 @@ def world_sdf(
     cameras: Sequence[str] = (),
     vehicle: str = world.MODEL_NAME,
     light: Mapping[str, Any] | None = None,
+    gi: str = "off",
 ) -> str:
+    if gi not in GI_MODES:
+        raise ValueError(f"gi ska vara en av {', '.join(GI_MODES)}, inte {gi!r}")
     fr = frame(s, ground)
     objects.check(placed, s.half_size_m)
     return (
@@ -76,6 +97,7 @@ def world_sdf(
             vehicle_z=world.stand_m(vehicle),
             vehicle_yaw=round(math.radians(90.0 - s.heading_deg), 6),
             light=world.light_context(light),
+            gi=GI_VCT if gi == "vct" else None,
         )
     )
 
@@ -92,15 +114,23 @@ def render(
     stills: bool = False,
     video: bool = True,
     light: Mapping[str, Any] | None = None,
+    gi: str = "off",
 ) -> Path:
     s = site.load(site_name, repo)
+    if s.ortho is not None:
+        say(
+            f"Obs: marken i {s.world} är ortofotot i {s.ortho.parent} (bara på din dator); "
+            "CI:s värld har den målade marken. Flytta bort mappen för att få den här också."
+        )
     terrain.build(s, repo, progress=progress)
     ground = terrain.load_ground(s, repo)
     world.render_model(instance, repo, vehicle, stills=stills, video=video)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
-    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light)
+    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light, gi)
     truth = world.world_truth(s.world, placed, frame=frame(s, ground))
+    if s.ortho is not None:  # the sim farm never uploads a round flown over the photo
+        truth["ground_texture"] = "orthophoto"
     path = out / f"{s.world}_i{instance}.sdf"
     path.write_text(sdf, encoding="utf-8")
     world.truth_path(s.world, instance, repo).write_text(

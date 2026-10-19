@@ -5,7 +5,9 @@ a square grid around home) and ``osm.geojson`` (map layers). Public sites live i
 ``simulation/gazebo/sites/<name>/`` and are committed; a local site (the owner's own
 area, from ``just world-fetch``) lives in ``build/sites/<name>/`` with a ``site.toml``
 written from ``config/site.local.toml`` and is never committed. A local site with the
-same name wins over a public one.
+same name wins over a public one. A site's orthophoto (``just ortho-fetch``) is never
+committed either: ``build/ortho/<name>/ortho.npy`` for a public site, the local site's
+own folder otherwise.
 
 ``Site.heights`` gives the ground's height above sea level anywhere in the site:
 bicubic interpolation of the grid, minus the forest canopy when the source is a surface
@@ -127,6 +129,9 @@ class Site:
     raw_toml: str  # site.toml as read, part of the generator's input hash
     # Where ``just trees-fetch`` puts the site's trees (trees.csv, chm_dm.npy); not committed.
     trees_folder: Path | None = None
+    # Where ``just ortho-fetch`` puts the site's orthophoto (ortho.npy); not committed. A
+    # public site's committed folder is never searched for it.
+    ortho_folder: Path | None = None
 
     @property
     def plane(self) -> Plane:
@@ -134,7 +139,8 @@ class Site:
 
     @property
     def ortho(self) -> Path | None:
-        path = self.folder / "ortho.npy"
+        """The orthophoto the ground is draped with, if it has been fetched."""
+        path = (self.ortho_folder or self.folder) / "ortho.npy"
         return path if path.is_file() else None
 
     def of_kind(self, *kinds: str) -> list[Layer]:
@@ -224,6 +230,7 @@ class Site:
         h.update(self.dem.z.tobytes())
         h.update((self.folder / "osm.geojson").read_bytes())
         if self.ortho is not None:
+            h.update(b"ortho-drape-2")  # open ground only; bumped when the draping changes
             h.update(self.ortho.read_bytes())
         if self.trees_folder is not None:
             for name in ("trees.csv", "chm_dm.npy"):
@@ -335,7 +342,13 @@ def load(name: str, repo: Path = paths.REPO) -> Site:
         layers=read_layers(folder / "osm.geojson", plane),
         raw_toml=raw,
         trees_folder=folder if not public else repo / "build" / "trees" / name,
+        ortho_folder=ortho_folder(name, folder, public, repo),
     )
+
+
+def ortho_folder(name: str, folder: Path, public: bool, repo: Path = paths.REPO) -> Path:
+    """Where the site's orthophoto lives: never a public site's committed folder."""
+    return folder if not public else repo / "build" / "ortho" / name
 
 
 def world_sites(repo: Path = paths.REPO) -> dict[str, str]:

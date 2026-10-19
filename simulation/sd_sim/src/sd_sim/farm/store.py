@@ -13,7 +13,8 @@ The upload survives interruptions and never sends the same thing twice:
 * a file already in the ledger (``build/simfarm/uploaded.jsonl``) is skipped, and one
   that the bucket already has with the same hash (``HEAD``) is recorded and skipped;
 * ``manifest.json`` (every file with its hash) goes last: a round with its manifest in
-  the bucket is whole.
+  the bucket is whole;
+* a round flown over the owner's orthophoto (its ``truth.json`` says so) never goes.
 
 The requests are signed with AWS Signature Version 4 (standard library only).
 """
@@ -46,6 +47,24 @@ CONTENT_TYPES = {".png": "image/png", ".json": "application/json", ".txt": "text
 
 class UploadError(RuntimeError):
     """The bucket refused or could not be reached; the round stays local and is retried."""
+
+
+class DrapedRoundError(UploadError):
+    """The round was flown in a world draped with the owner's orthophoto: it stays local
+    for good, since pictures of the photo must never leave the owner's computer."""
+
+
+def draped(round_dir: Path) -> bool:
+    """Whether the round's world facit says its ground was the orthophoto (written by
+    ``sd_sim.site_world.render``); an unreadable facit counts as draped."""
+    path = round_dir / "truth.json"
+    if not path.is_file():
+        return False
+    try:
+        truth = json.loads(read_nofollow(path))
+    except (OSError, ValueError):
+        return True
+    return isinstance(truth, dict) and truth.get("ground_texture") == "orthophoto"
 
 
 @dataclass(frozen=True)
@@ -301,6 +320,8 @@ class R2Store:
         round_id = round_dir.name
         if round_id in self.ledger.rounds:
             return False
+        if draped(round_dir):
+            raise DrapedRoundError(f"{round_id} flögs över ortofotot och stannar på din dator")
         manifest: list[dict[str, Any]] = []
         for path in files_of(round_dir):
             rel = path.relative_to(round_dir).as_posix()

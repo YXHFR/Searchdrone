@@ -512,10 +512,12 @@ def render_world(
     stills: bool = False,
     video: bool = True,
     light: Mapping[str, Any] | None = None,
+    gi: str = "off",
 ) -> Path:
     """Write the instance's world and model, the objects' facit and the GeoJSON layer.
     ``stills`` and ``video`` choose the vehicle's cameras; ``light`` replaces the world's
-    sun and ambient light (``light_context``).
+    sun and ambient light (``light_context``); ``gi`` the global illumination of a site
+    world (``sd_sim.site_world.GI_VCT``).
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
     the layer only depends on the fixture's home and the fixed scenery. The facit
@@ -534,7 +536,10 @@ def render_world(
             stills=stills,
             video=video,
             light=light,
+            gi=gi,
         )
+    if gi != "off":
+        raise ValueError(f"{name}: global belysning finns bara i platsvärldar")
     render_model(instance, repo, vehicle, stills=stills, video=video)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"

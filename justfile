@@ -64,6 +64,7 @@ lint:
     patterns=()
     [ -f config/local/private-patterns.txt ] && patterns=(--private-patterns config/local/private-patterns.txt)
     uv run tools/check_forbidden_files.py "${patterns[@]}"
+    uv run tools/check_no_orthophotos.py --git
     for step in check_forbidden_mavlink check_versions check_compose_ports; do
         if [[ " {{unbuilt_tools}} " == *" ${step} "* ]]; then echo "hoppar över ${step} (inte byggt än)"; else uv run "tools/${step}.py"; fi
     done
@@ -440,6 +441,17 @@ trees-fetch *args:
 # Tree pictures (one texture atlas) from Poly Haven's CC0 trees to build/tree_models/
 tree-pictures-fetch:
     uv run --no-sync python tools/terrain/fetch_tree_models.py
+
+# The site's orthophoto from Lantmäteriet with your own Geotorget login
+# (config/geotorget.local.toml, see config/geotorget.example.toml) to build/ortho/<site>/:
+# only on this computer, never committed, uploaded or fetched in CI (keys: site; needs gdal-bin)
+ortho-fetch *args:
+    uv run --no-sync python tools/terrain/fetch_ortho.py "$@"
+
+# The simulator in photo mode: the orthophoto on the open ground, the real trees on it and
+# global illumination for the camera (keys: site, gi, and those of just sim)
+sim-photo *args:
+    uv run --all-packages python -m sd_sim.photo "$@"
 
 # Sim farm: rounds in Gazebo from the newest main until Ctrl+C, pictures with facit to
 # build/simfarm/ (and R2 in the EU with a key) (keys: commander, rounds, max_minutes, seed, idle_only, update)

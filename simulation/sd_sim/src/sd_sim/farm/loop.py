@@ -46,7 +46,7 @@ from sd_sim.farm import config as farm_config
 from sd_sim.farm import people, status
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.host import CHECK_EVERY_S, Gate
-from sd_sim.farm.store import Ledger, R2Store, UploadError
+from sd_sim.farm.store import DrapedRoundError, Ledger, R2Store, UploadError
 
 ALLOWED_KEYS = (
     "commander",
@@ -272,6 +272,8 @@ class Farm:
             try:
                 if store.upload_round(d):
                     say(f"uppladdat till R2: {d.name}")
+            except DrapedRoundError as exc:
+                say(f"laddas inte upp: {exc}")
             except UploadError as exc:
                 say(f"uppladdningen väntar: {exc}")
                 return

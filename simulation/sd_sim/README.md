@@ -11,7 +11,9 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just sim-setup` | Installs ArduPilot SITL (`~/ardupilot`), Gazebo Harmonic and ArduPilot's Gazebo plugin at the versions in `simulation/versions.lock`. Safe to run again. |
 | `just sim-doctor [physics=builtin]` | Checks the environment and that every simulator port listens on 127.0.0.1 only. |
 | `just sim-smoke [physics=gz\|builtin] [gui=false] [world=sd_hellasgarden] [vehicle=fpv7]` | GUIDED, arm, take off to 20 m, land, with ArduPilot's quad at CMAC or with `world=` our vehicle in a terrain world; `vehicle=fpv7` flies the 7-inch `sd_fpv7` (in `sd_lake_forest` at CMAC without `world=`). Writes `runs/<run>/result.json` with Gazebo's real-time factor while hovering with the camera on, and the hover current where the physics reports one (builtin); exit 0 when it passed. |
-| `just world-snapshot [world=sd_hellasgarden]` | Pictures from the vehicle's camera at 40 m and 100 m and from the side, with the road's width and the map overlap measured in them (`runs/<run>/snapshots/`). |
+| `just world-snapshot [world=sd_hellasgarden] [gi=off\|vct]` | Pictures from the vehicle's camera at 40 m and 100 m and from the side, with the road's width and the map overlap measured in them, and Gazebo's real-time factor and the graphics card's memory in use while the cameras render (`runs/<run>/snapshots/`). |
+| `just ortho-fetch site=<site>` | Fetches the site's orthophoto with your own Geotorget login to `build/ortho/<site>/` (see Photo mode). |
+| `just sim-photo [site=hellasgarden] [gi=vct\|off]` | `just sim` in photo mode: the orthophoto on the open ground, the real trees on it, global illumination for the camera. Says what to run when the photo is missing. |
 | `just sim-farm [commander=script\|sd-brain] [rounds=N] [max_minutes=N] [seed=N] [idle_only=true] [update=off]` | The sim farm: randomized search rounds from the newest `main`, one after another, until Ctrl+C. Each passed round keeps camera pictures with YOLO and COCO person boxes and a metadata file per picture. Pauses while the GPU or CPU is busy; stops after `max_failures` (3) failed rounds in a row, and at `max_minutes` (the running round is stopped and dropped, exit 0). Settings in `config/simfarm.toml` (copy `config/simfarm.example.toml`). |
 | `just sim-farm-status` | What the farm is doing: running or paused and why, pictures and labels kept, rounds per hour, AI-commander exams and their cost, the upload backlog, the latest errors. |
 | `just sim-farm-setup` | Fetches the person models (pinned by SHA-256) from Gazebo Fuel into `build/simfarm/assets/`. |
@@ -43,7 +45,8 @@ OpenStreetMap). `just world-fetch site=<site>` fetches the last two again (needs
 
 - The terrain is a textured mesh every 5 m, in 16 tiles of 300 m with a 2048-pixel texture
   each (about 0.15 m per pixel). The texture is painted from the map: forest floor, meadow,
-  wetland, lake, asphalt with edge and centre lines, and gravel paths.
+  wetland, lake, asphalt with edge and centre lines, and gravel paths. With a fetched
+  orthophoto the open ground is the photo instead (see Photo mode).
 - The real trees, when they are fetched: `just trees-fetch site=<site>` reads every tree's
   position and height from Skogsstyrelsen's tree height raster (Trädhöjd, 1 m, from
   Lantmäteriet's laser scanning) with a local-maximum filter whose radius grows with the
@@ -82,10 +85,57 @@ that, the simulated vehicle can hit it: give a charter in the terrain world a re
 altitude above its highest ground.
 
 Your own area: copy `config/site.example.toml` to `config/site.local.toml`, set your area
-there and run `SD_LM_USER=... SD_LM_PASSWORD=... just world-fetch site=<name>` with your
-Geotorget login (read only from the environment, never from a file). Lantmäteriet's 1 m height model and
-orthophoto (CC BY 4.0, © Lantmäteriet) are written to `build/sites/<name>/` only, and the
-orthophoto becomes the ground's texture. Nothing of it is committed or uploaded.
+there and run `just world-fetch site=<name>` with your Geotorget login (see Photo mode for
+where it goes). Lantmäteriet's 1 m height model and orthophoto (CC BY 4.0, © Lantmäteriet)
+are written to `build/sites/<name>/` only, and the orthophoto is draped over the ground as
+in photo mode. Nothing of it is committed or uploaded.
+
+## Photo mode
+
+The camera sees the real place from above: Lantmäteriet's newest colour orthophoto over the
+site (0.16 m per pixel where it has one) on the open ground, the real trees standing on it.
+
+1. Your Geotorget login: copy `config/geotorget.example.toml` to
+   `config/geotorget.local.toml` (gitignored), fill in `user` and `password` and run
+   `chmod 600 config/geotorget.local.toml`. `SD_LM_USER` and `SD_LM_PASSWORD` in the
+   environment win over the file. The login goes to GDAL's environment only; error messages
+   have it cut out.
+2. `just ortho-fetch site=hellasgarden` (needs `gdal-bin`): the photo is written to
+   `build/ortho/hellasgarden/ortho.npy`, with where and when it came from in `ortho.toml`.
+   It refuses to run in CI.
+3. `just trees-fetch site=hellasgarden` and `just tree-pictures-fetch` once, for the real
+   trees.
+4. `just sim-photo`.
+
+Under every tree's crown (15 % wider plus 0.5 m, as the photo is not a true orthophoto
+and its crowns lean away from where it was taken) the painted forest floor stays, so the
+photo's trees do not lie flat under the world's own. Buildings, cars and water stand on
+the photo as before. Without `ortho.npy` the world is exactly the same as without photo
+mode, file for file; a photo in a public site's committed folder is never used. The
+texture size is the same either way (16 tiles of 2048 × 2048, about 270 MB, 360 MB with
+mipmaps), so photo mode needs no more graphics memory than the painted ground.
+
+`gi=vct` (the default in `just sim-photo`, also `just sim gi=vct world=<site world>`)
+turns on Gazebo's voxel cone tracing for the cameras: light bounces off the ground and the
+trees into the shadows. It works with `physics=gz` in a site world only. In a container
+without a graphics card (software rendering) it lowered the real-time factor while four
+cameras rendered from 0.68 to 0.47 and lit the shadows slightly; measure on your own card
+with `just world-snapshot gi=off` and `gi=vct` (the real-time factor and the card's memory
+in use go to `metrics.json`) and with `just sim-smoke world=sd_hellasgarden gi=off` and
+`gi=vct` (the real-time factor while hovering with the vehicle's camera on, in
+`result.json`).
+
+While `ortho.npy` is there every use of the site world has the photo, not only `just
+sim-photo` (`just sim`, `just world-snapshot`, `just sim-smoke`), and each says so when it
+builds the world; move `build/ortho/<site>/` away for the painted ground CI has.
+
+The photo, the world built from it and pictures of that world stay on your computer:
+`tools/check_no_orthophotos.py` fails CI if any of these is in git, its history, an
+uploaded artifact or the cache: a picture-shaped NumPy array, a GeoTIFF, a symbolic link,
+or a world, snapshot or ground texture marked as built from a photo. It cannot recognise
+a photo saved by hand as an ordinary picture with no such mark; no photo is ever fetched
+in CI, and images outside the test data are kept out of git anyway. The sim farm never
+uploads a round flown over the photo: its facit says so.
 
 ## Parts
 

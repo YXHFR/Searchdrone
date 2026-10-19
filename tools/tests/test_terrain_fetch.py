@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -187,3 +190,100 @@ def test_public_site_may_take_lantmateriet_heights_as_bare_ground(
     site, login = fetch.load_site("x", tmp_path)
     assert site.public and site.dem_source == "lantmateriet-mhm" and login["user"] == "u"
     assert site.out == folder
+
+
+def _ortho_item(
+    collection: str, spectrum: str, cell: float, year: int, hour: int
+) -> dict[str, Any]:
+    return {
+        "collection": collection,
+        "properties": {
+            "spektraltyp": spectrum,
+            "upplosning": cell,
+            "flygar": str(year),
+            "datetime": f"{year}-06-0{hour % 9 + 1}T{hour:02d}:00:00Z",
+        },
+    }
+
+
+def test_choose_ortho_takes_every_colour_tile_of_the_newest_year() -> None:
+    items = [
+        _ortho_item("orto-o2-2025", "rgbi", 0.16, 2025, 9),
+        _ortho_item("orto-o2-2025", "rgbi", 0.16, 2025, 14),  # same flight year, later
+        _ortho_item("orto-o2-2025", "cir", 0.16, 2025, 14),  # false colour: never
+        _ortho_item("orto-2022", "rgb", 0.25, 2022, 15),
+        _ortho_item("orto-2022", "cir", 0.25, 2022, 15),
+        _ortho_item("hojd-2025", "rgb", 0.1, 2026, 10),  # not an orthophoto collection
+    ]
+    chosen = fetch.choose_ortho(items)
+    assert len(chosen) == 2
+    assert {i["properties"]["spektraltyp"] for i in chosen} == {"rgbi"}
+    # Within a year the finest resolution wins.
+    assert fetch.choose_ortho([*items[3:5], _ortho_item("orto-2022b", "rgb", 0.5, 2022, 9)]) == [
+        items[3]
+    ]
+    with pytest.raises(fetch.FetchError, match="färgortofoto"):
+        fetch.choose_ortho([items[2], items[5]])
+    odd = _ortho_item("orto-x", "rgb", 0.16, 2025, 9)
+    odd["properties"]["flygar"] = "okänt"
+    with pytest.raises(fetch.FetchError, match="flygår"):
+        fetch.choose_ortho([odd])
+
+
+@pytest.mark.parametrize("key", ["CI", "GITHUB_ACTIONS"])
+def test_the_photo_is_never_fetched_in_ci_whoever_asks(
+    key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(key, "true")
+    monkeypatch.setattr(fetch, "stac_items", lambda *a: pytest.fail("asked Lantmäteriet"))
+    site = fetch.SiteDef.__new__(fetch.SiteDef)
+    with pytest.raises(fetch.FetchError, match="aldrig i CI"):
+        fetch.fetch_ortho(site, {"user": "u", "password": "p"}, tmp_path, tmp_path / "o.npy")
+
+
+def test_login_from_the_environment_or_a_private_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SD_LM_USER", raising=False)
+    monkeypatch.delenv("SD_LM_PASSWORD", raising=False)
+    assert fetch.lm_login(tmp_path) == {}
+    path = tmp_path / fetch.LOGIN_FILE
+    path.parent.mkdir()
+    path.write_text('[geotorget]\nuser = "u1"\npassword = "secret"\n', encoding="utf-8")
+    path.chmod(0o644)
+    with pytest.raises(fetch.FetchError, match="chmod 600"):
+        fetch.lm_login(tmp_path)
+    path.chmod(0o600)
+    assert fetch.lm_login(tmp_path) == {"user": "u1", "password": "secret"}
+    path.write_text('[geotorget]\nuser = ""\npassword = ""\n', encoding="utf-8")
+    with pytest.raises(fetch.FetchError, match="fyll i"):
+        fetch.lm_login(tmp_path)
+    monkeypatch.setenv("SD_LM_USER", "u2")
+    monkeypatch.setenv("SD_LM_PASSWORD", "p2")
+    assert fetch.lm_login(tmp_path) == {"user": "u2", "password": "p2"}
+
+
+def test_example_login_file_is_committed_and_the_real_one_ignored() -> None:
+    example = ROOT / "config" / "geotorget.example.toml"
+    table = tomllib.loads(example.read_text(encoding="utf-8"))["geotorget"]
+    assert table == {"user": "", "password": ""}
+
+    def ignored(path: str) -> bool:
+        argv = ["git", "check-ignore", "-q", "--no-index", path]
+        return subprocess.run(argv, cwd=ROOT, check=False).returncode == 0
+
+    assert ignored("config/geotorget.local.toml") and ignored("build/ortho/x/ortho.npy")
+    assert not ignored("config/geotorget.example.toml")
+
+
+def test_gdal_errors_never_show_the_login() -> None:
+    env = {"GDAL_HTTP_USERPWD": "owner@example.invalid:hunter22"}
+    text = "HTTP 401 for owner@example.invalid:hunter22 (user owner@example.invalid, hunter22)"
+    out = fetch.redact(text, env)
+    assert "hunter22" not in out and "owner@example.invalid" not in out and "HTTP 401" in out
+    assert fetch.redact(" plain ", None) == "plain"
+    # Short parts, URL-encoded and Basic-auth forms are cut too.
+    env = {"GDAL_HTTP_USERPWD": "ab:p@ss/w"}
+    basic = base64.b64encode(b"ab:p@ss/w").decode()
+    out = fetch.redact(f"user ab, url p%40ss%2Fw, Authorization: Basic {basic}", env)
+    assert "ab" not in out.replace("***", "") and "p%40ss" not in out and basic not in out

@@ -66,6 +66,7 @@ ALLOWED_KEYS = (
     "vehicle",
     "objects",
     "world",
+    "gi",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
@@ -294,6 +295,7 @@ class Stack:
                 stills=self.scene is not None,
                 video=self.scene is None,
                 light=self.light,
+                gi=self.cfg.gi,
             )
             if placed:
                 say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")

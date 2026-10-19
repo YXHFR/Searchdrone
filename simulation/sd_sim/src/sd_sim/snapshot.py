@@ -38,7 +38,7 @@ from shapely.ops import nearest_points
 from sd_sim import _args, gazebo, objects, paths, png, site, site_world, terrain, world
 from sd_sim.util import new_run_dir, say
 
-ALLOWED_KEYS = ("world", "instance")
+ALLOWED_KEYS = ("world", "instance", "gi")
 # The pictures show map and height data; their notices travel with them.
 ATTRIBUTION = """Pictures rendered by Searchdrone's simulator (Apache-2.0) from:
 - Map layers: (c) OpenStreetMap contributors, ODbL-1.0, https://www.openstreetmap.org/copyright
@@ -52,6 +52,10 @@ TREES_ATTRIBUTION = """\
   on Laserdata Nedladdning, skog (c) Lantmäteriet, CC BY 4.0; processed. Species from
   Nationella Marktäckedata 2023, källa: NMD, Naturvårdsverket (CC0).
 """
+ORTHO_ATTRIBUTION = """\
+- Ground in the open: Lantmäteriet's orthophoto (c) Lantmäteriet, CC BY 4.0; resampled.
+  Fetched with the owner's own Geotorget login and kept on this computer only.
+"""
 TREE_MODELS_ATTRIBUTION = """\
 - Tree pictures made from Poly Haven's fir_tree_01, pine_tree_01, island_tree_02,
   pine_bark and bark_brown_02 (CC0, https://polyhaven.com).
@@ -61,6 +65,7 @@ ROAD_CLEAR_M = 3.0
 OFFSET_LIMIT_M = 2.0
 FRAMES_WANTED = 3
 RUN_LIMIT_S = 240.0
+RTF_WINDOW_S = 5.0  # wall-clock seconds between the two stats samples
 RED_BLOCK = paths.SIMULATION / "scenarios" / "objects" / "red_block.yaml"
 
 
@@ -207,7 +212,9 @@ def last_frame(folder: Path) -> Path | None:
     return frames[-1] if len(frames) >= FRAMES_WANTED else None
 
 
-def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, Path]:
+def run(
+    world_name: str, instance: int, repo: Path = paths.REPO, gi: str = "off"
+) -> tuple[int, Path]:
     sites = site.world_sites(repo)
     if world_name not in sites:
         _args.fail(
@@ -252,7 +259,9 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
     ]
     for v in views:
         (frames / v.name).mkdir(parents=True, exist_ok=True)
-    path = site_world.render(s.name, instance, repo, placed, cameras=[v.sdf(frames) for v in views])
+    path = site_world.render(
+        s.name, instance, repo, placed, cameras=[v.sdf(frames) for v in views], gi=gi
+    )
     env = gazebo.gz_env(instance, gui=False)
     log = (run_dir / "gazebo.log").open("w", encoding="utf-8")
     say("==> Gazebo (headless) tills varje kamera har sparat bilder")
@@ -281,11 +290,16 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
         for v in views
     ]
     t0 = time.monotonic()
+    rtf: float | None = None
+    vram: int | None = None
     try:
         while time.monotonic() - t0 < RUN_LIMIT_S:
             if all(last_frame(frames / v.name) for v in views) or proc.poll() is not None:
                 break
             time.sleep(2.0)
+        if proc.poll() is None:
+            rtf = measure_rtf(gazebo.World(s.world, path, "stock"), instance)
+            vram = gpu_memory_mib()
     finally:
         for reader in readers:
             reader.terminate()
@@ -300,6 +314,9 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
         "world": s.world,
         "site": s.name,
         "home_alt_m": s.home_alt,
+        "gi": gi,
+        "real_time_factor": rtf,
+        "gpu_memory_used_mib": vram,
         "stats": json.loads((terrain.out_dir(s, repo) / "manifest.json").read_text())["stats"],
         "views": {},
         "checks": {},
@@ -335,11 +352,40 @@ def run(world_name: str, instance: int, repo: Path = paths.REPO) -> tuple[int, P
     return (0 if result["passed"] else 1), out
 
 
+def measure_rtf(world: gazebo.World, instance: int) -> float | None:
+    """Gazebo's real-time factor while the cameras render: simulated over wall-clock time
+    between two stats samples ``RTF_WINDOW_S`` apart, as ``just sim-smoke`` measures it."""
+    start = gazebo.world_times(world, instance)
+    time.sleep(RTF_WINDOW_S)
+    return gazebo.real_time_factor(start, gazebo.world_times(world, instance))
+
+
+def gpu_memory_mib() -> int | None:
+    """Memory in use on the first NVIDIA graphics card while the cameras render (the whole
+    card's, not Gazebo's alone); None without one."""
+    smi = shutil.which("nvidia-smi")
+    if smi is None:
+        return None
+    try:
+        out = subprocess.run(  # noqa: S603 - fixed program and arguments
+            [smi, "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout.split()
+        return int(out[0]) if out else None
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return None
+
+
 def attribution(stats: dict[str, Any]) -> str:
     """The text that goes with the pictures: the trees' sources only when they were used."""
     text = ATTRIBUTION
     if stats.get("tree_source") == "raster":
         text += TREES_ATTRIBUTION
+    if stats.get("ground_texture") == "orthophoto":
+        text += ORTHO_ATTRIBUTION
     if stats.get("tree_models") == "poly-haven-cc0":
         text += TREE_MODELS_ATTRIBUTION
     return text
@@ -361,6 +407,8 @@ def _tree_lines(stats: dict[str, Any]) -> list[str]:
 
 def summary(r: dict[str, Any]) -> str:
     road = r.get("road", {})
+    vram = r.get("gpu_memory_used_mib")
+    rtf = r.get("real_time_factor")
     lines = [
         f"## World {r['world']}",
         "",
@@ -374,6 +422,18 @@ def summary(r: dict[str, Any]) -> str:
         f"({'ok' if r['checks'].get('road_width') else 'FAIL'}, limit 10 %).",
         f"- Road in the picture from the map's road line: {road.get('offset_m', '-')} m "
         f"({'ok' if r['checks'].get('map_overlap') else 'FAIL'}, limit 2 m).",
+        f"- Ground texture: {r['stats'].get('ground_texture', 'painted from the map')}; "
+        f"global illumination {r.get('gi', 'off')}; "
+        + (
+            f"real-time factor while rendering {rtf}; "
+            if rtf is not None
+            else "real-time factor not measured; "
+        )
+        + (
+            f"graphics memory in use {vram} MiB."
+            if vram is not None
+            else "graphics memory not measured."
+        ),
         f"- Pictures: {', '.join(k for k, v in r['views'].items() if v['saved'])}.",
         "",
     ]
@@ -388,7 +448,10 @@ def main(argv: list[str] | None = None) -> int:
         instance = int(values.get("instance", "0"))
     except ValueError:
         _args.fail("sd_sim.snapshot: instance= ska vara ett heltal")
-    code, out = run(values.get("world", "sd_hellasgarden"), instance)
+    gi = values.get("gi", "off")
+    if gi not in site_world.GI_MODES:
+        _args.fail(f"sd_sim.snapshot: gi= ska vara en av {', '.join(site_world.GI_MODES)}")
+    code, out = run(values.get("world", "sd_hellasgarden"), instance, gi=gi)
     say((out / "summary.md").read_text(encoding="utf-8"))
     say(f"Bilder och mätningar: {out}")
     return code
