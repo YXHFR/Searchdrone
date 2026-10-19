@@ -60,8 +60,6 @@ stub that returns "not implemented":
 - A vision-language model on board, a Jetson, more than one drone or swarms.
 - Thermal cameras. Interfaces may carry `sensor = "thermal"` as a value, nothing more.
 - `follow_me`, `find_me` and the phone's position.
-- Reinforcement learning for where the drone searches.
-- An agent simulation of how the missing person moves.
 - A national elevation model for georeferencing. Flat ground at home altitude plus the
   simulator's world elevation is used.
 - The 14-inch drone. The 7-inch quad is the vehicle that flies in this stage.
