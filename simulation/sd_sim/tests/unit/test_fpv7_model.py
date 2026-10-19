@@ -10,7 +10,7 @@ import json
 import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -211,6 +211,49 @@ def test_params_check_allows_the_seven_inch_names() -> None:
     assert "ATC_ANGLE_MAX" in check.allowlist(vehicle="sd_fpv7")
     assert "ATC_ANGLE_MAX" not in check.allowlist()
     assert check.sim_layer_problems("ATC_ANGLE_MAX 35\n", check.allowlist())
+
+
+def test_params_check_and_sitl_know_the_same_layers() -> None:
+    """params_check checks exactly the sim layers SITL can load, so no layer escapes it."""
+    from sd_sim.sitl import SIM_PARAM_FILES
+
+    check = load_tool("params_check")
+    assert {p.name for p in check.SIM_LAYERS.values()} == set(SIM_PARAM_FILES.values())
+    for vehicle, path in check.SIM_LAYERS.items():
+        assert SIM_PARAM_FILES[vehicle] == path.name
+
+
+def test_vehicles_and_world_models_agree() -> None:
+    assert (*world.MODELS, "stock") == config.VEHICLES
+    assert set(config.VEHICLE_ALIASES.values()) == set(world.MODELS)
+
+
+class FakeHarness:
+    def __init__(self, currents: list[float], clock: list[float]) -> None:
+        self.currents = iter(currents)
+        self.clock = clock
+        self.state = SimpleNamespace(battery_current_a=0.0)
+
+    def pump(self, seconds: float) -> None:
+        self.clock[0] += seconds
+        self.state.battery_current_a = next(self.currents, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("currents", "expected"),
+    [
+        ([15.0, 16.0, 15.555, 0.0], 15.52),  # the 0 A sample is left out
+        ([0.0, 0.0, 0.0, 0.0], None),  # Gazebo's JSON link reports no current
+        ([], None),
+    ],
+)
+def test_hover_current_averages_positive_samples(
+    monkeypatch: pytest.MonkeyPatch, currents: list[float], expected: float | None
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("sd_sim.smoke.time.monotonic", lambda: clock[0])
+    harness = FakeHarness(currents, clock)
+    assert smoke.hover_current(harness, seconds=1.0) == expected  # type: ignore[arg-type]
 
 
 def fake_layout(tmp_path: Path) -> SitlLayout:

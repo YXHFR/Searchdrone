@@ -46,6 +46,10 @@ def changes(repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> str:
         ("hardware/electronics/test.kicad_sch", "true"),
         ("software/hwcalc/src/sd_hwcalc/calc.py", "true"),
         ("tools/check_hw_files.py", "true"),
+        ("tools/sim_model_from_cad.py", "true"),
+        ("tools/sim_model_drift.py", "true"),
+        ("simulation/sd_sim/src/sd_sim/terrain.py", "true"),
+        ("simulation/sd_sim/src/sd_sim/world.py", "false"),
         (".github/workflows/hardware.yml", "true"),
     ],
 )

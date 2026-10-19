@@ -5,8 +5,7 @@
 allowed = ["MOT_THST_HOVER"]
 
 # A model other than sd_quad14 may also set its frame, motor range, tilt limit and rate
-# gains, and its own pack size: BATT_CAPACITY with BATT_LOW_MAH and BATT_CRT_MAH at the
-# safety file's shares of it (params_check compares them).
+# gains. Its pack size and reserves (BATT_*) stay in the safety file.
 [vehicles.sd_fpv7]
 allowed = [
   "FRAME_CLASS",
