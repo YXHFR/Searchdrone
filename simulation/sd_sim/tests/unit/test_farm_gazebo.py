@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from sd_sim import launch, paths, world
+from sd_sim import gazebo, launch, paths, world
 from sd_sim.config import SimConfig
 from sd_sim.farm import flight, people
 from sd_sim.farm import gazebo as farm_gazebo
@@ -34,8 +34,8 @@ def _ready(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """SITL and the person models are 'installed'."""
     sitl = tmp_path / "arducopter"
     sitl.write_text("")
-    monkeypatch.setattr(farm_gazebo.paths, "arducopter_bin", lambda: sitl)
-    monkeypatch.setattr(farm_gazebo.people, "missing", lambda _repo=None: [])
+    monkeypatch.setattr(paths, "arducopter_bin", lambda: sitl)
+    monkeypatch.setattr(people, "missing", lambda _repo=None: [])
 
 
 def _spec(tmp_path: Path, commander: str = "script") -> Path:
@@ -110,10 +110,10 @@ def test_a_flight_that_hangs_is_stopped(tmp_path: Path) -> None:
 
 def test_missing_pieces_say_what_to_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = farm_gazebo.GazeboRunner(run=FakeFlight(), repo=tmp_path)
-    monkeypatch.setattr(farm_gazebo.people, "missing", lambda _repo=None: ["sd_person_walking"])
+    monkeypatch.setattr(people, "missing", lambda _repo=None: ["sd_person_walking"])
     with pytest.raises(farm_round.RoundError, match="just sim-farm-setup"):
         runner.check()
-    monkeypatch.setattr(farm_gazebo.paths, "arducopter_bin", lambda: tmp_path / "none")
+    monkeypatch.setattr(paths, "arducopter_bin", lambda: tmp_path / "none")
     with pytest.raises(farm_round.RoundError, match="just sim-setup"):
         runner.check()
 
@@ -244,7 +244,7 @@ def test_a_drawn_round_lights_the_world() -> None:
 
 def test_stack_archives_stills_with_the_camera_pose(tmp_path: Path) -> None:
     stack = launch.Stack(SimConfig(instance=2), tmp_path / "run", stills_archive=tmp_path / "a")
-    stack.world = launch.gazebo.World("sd_lake_forest", tmp_path, "sd_quad14")
+    stack.world = gazebo.World("sd_lake_forest", tmp_path, "sd_quad14")
     argv = stack.stills_capture_argv()
     i = argv.index("--poses-topic")
     assert argv[i + 1] == "/world/sd_lake_forest/dynamic_pose/info"

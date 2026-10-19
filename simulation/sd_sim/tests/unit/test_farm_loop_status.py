@@ -278,7 +278,7 @@ def test_git_sees_only_its_login_and_the_network(monkeypatch: pytest.MonkeyPatch
         seen.update(kw["env"])
         return subprocess.CompletedProcess(argv, 0, "abc\n", "")
 
-    monkeypatch.setattr(loop.subprocess, "run", fake)
+    monkeypatch.setattr(subprocess, "run", fake)
     monkeypatch.setenv("GIT_DIR", "/elsewhere")
     monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'core.hooksPath=/x'")
     monkeypatch.setenv("SSH_AUTH_SOCK", "/agent")
