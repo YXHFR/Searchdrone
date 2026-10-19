@@ -96,6 +96,8 @@ class TurnDiagnostics(BrainModel):
     rounds: int = 0
     repairs: int = 0
     error: TurnError | None = None
+    # error "deadline" from the backend's own time guard: no call was cut off.
+    guard_stop: bool = False
     tool_calls: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     prompt_json: dict[str, Any] | None = None
 

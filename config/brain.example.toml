@@ -66,5 +66,8 @@ max_read_tool_rounds = 4
 max_repair_rounds = 1            # a refused order: corrections in the same turn
 max_proposal_repair_rounds = 3   # a refused charter draft: corrections in the same turn (0-3)
 idle_airborne_tick_s = 60
+finish_idle_s = 180              # airborne with nothing to do and nothing said or ordered
+                                 # for this long (60-1800 s): the system says so in the chat
+                                 # and flies home through the safety gate; STOP stops it
 takeoff_policy = "request_then_clearance"   # the AI starts only when the operator asked
 rule_takeoff = true

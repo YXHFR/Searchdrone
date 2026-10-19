@@ -322,7 +322,10 @@ async def test_mission_created_does_not_propose_when_the_operator_wrote() -> Non
         {"type": "event.mission", "mission_id": fg2.mission_id, "body": {"created": True}}
     )
     await loop2.settle()
-    assert PROPOSAL_TOOL in {t.name for t in backend2.turns[0].tools}  # type: ignore[attr-defined]
+    # Owner decision (perf run 20261019): a charter is proposed only in a turn an operator
+    # line started (or a refused proposal's retry), so a new mission without a line does
+    # not offer it either (it used to).
+    assert PROPOSAL_TOOL not in {t.name for t in backend2.turns[0].tools}  # type: ignore[attr-defined]
 
 
 def test_mission_created_says_why_it_does_not_propose() -> None:

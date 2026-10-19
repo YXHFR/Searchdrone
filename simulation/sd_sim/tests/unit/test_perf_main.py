@@ -248,6 +248,7 @@ def test_no_resume_ends_the_loop() -> None:
     assert len(latencies) == 1
     assert pilot.calls == ["stop", "resume"]
     assert "efter Fortsätt" in notes[0]
+    assert "avbröt P6 efter 1 av 5 STOPP" in notes[0]
 
 
 def test_on_the_ground_nothing_is_pressed() -> None:
@@ -258,6 +259,7 @@ def test_on_the_ground_nothing_is_pressed() -> None:
     )
     assert latencies == [] and pilot.calls == []
     assert "inte i luften" in notes[0]
+    assert "avbröt P6 efter 0 av 5 STOPP" in notes[0]
 
 
 # --- the browser's result -------------------------------------------------------------------------
@@ -272,22 +274,26 @@ def _ping(t: int, offset: int) -> dict[str, int]:
     }
 
 
-def test_browser_result_reads_video_and_telemetry() -> None:
+def _browser_data() -> dict[str, object]:
+    """A good perf-browser.json: 15 fps video, 5 Hz telemetry 50 ms on the way."""
     offset = -5_000_000_000  # server monotonic = page clock - 5 s
     base = 10_000_000_000
     start = [_ping(base + i * 10_000_000, offset) for i in range(10)]
     end = [_ping(base + 200_000_000_000 + i * 10_000_000, offset) for i in range(10)]
-    arrivals = []
+    arrivals: list[list[int]] = []
     for i in range(100):
         boot_ms = 5_000 + i * 200  # 5 Hz
         page_ns = boot_ms * 1_000_000 - offset + 50_000_000  # 50 ms on the way
         arrivals.append([boot_ms, page_ns])
-    data = {
+    return {
         "video": {"frames": 450, "seconds": 30, "fps": 15.0, "mode": "webrtc"},
         "telemetry": {"arrivals": arrivals, "pings_start": start, "pings_end": end},
         "errors": ["first", 3],
     }
-    res = perf.browser_result(data)
+
+
+def test_browser_result_reads_video_and_telemetry() -> None:
+    res = perf.browser_result(_browser_data())
     assert res.video_fps == 15.0
     assert "450 bilder på 30 s, läge webrtc" in res.video_detail
     assert res.notes == ["webbläsaren: first"]
@@ -308,6 +314,199 @@ def test_browser_result_without_a_file_or_parts() -> None:
     )
     assert broken.video_fps is None
     assert broken.telemetry is not None and broken.telemetry.valid is False
+
+
+def test_the_browser_notes_tell_the_cases_apart() -> None:
+    missing = perf.browser_note("missing")
+    assert "perf-browser.json saknas" in missing and "avbröts" not in missing
+    assert "avbröts innan den blev klar" in perf.browser_note("missing", aborted=True)
+    assert "gick inte att läsa" in perf.browser_note("broken")
+    never = perf.browser_note("not_started", aborted=True)
+    assert "startade inte" in never and "saknas" not in never
+    assert perf.browser_result(None, "not_started", aborted=True).notes == [never]
+
+
+def test_read_browser_file_states(tmp_path: Path) -> None:
+    path = tmp_path / "perf-browser.json"
+    assert perf.read_browser_file(path) == (None, "missing")
+    path.write_text("{not json", encoding="utf-8")
+    assert perf.read_browser_file(path) == (None, "broken")
+    path.write_text("[1, 2]", encoding="utf-8")
+    assert perf.read_browser_file(path) == (None, "broken")
+    path.write_text(json.dumps({"video": {}}), encoding="utf-8")
+    assert perf.read_browser_file(path) == ({"video": {}}, "read")
+
+
+# --- a flight that breaks off still reads the browser and the chat ---------------------------
+
+
+class _FakeStack:
+    def __init__(self, root: Path) -> None:
+        self.repo = root
+        self.run_dir = root / "run"
+        self.world = None
+        self.ports = {"ground_panel": 18080}
+        self.login_url = "http://127.0.0.1:18080/#login=code"
+
+    def up(self) -> None:
+        pass
+
+    def down(self) -> None:
+        pass
+
+    def mask(self, text: str) -> str:
+        return text
+
+
+class _FlightPilot:
+    """Airborne at once; the flight itself breaks off with ``fail`` (or ends fine)."""
+
+    def __init__(self, fail: BaseException | None, *, airborne_fails: bool = False) -> None:
+        self.fail = fail
+        self.airborne_fails = airborne_fails
+        self.chat_reads = 0
+
+    def fly_demo_until_airborne(self, _timeout_s: float) -> None:
+        if self.airborne_fails and self.fail is not None:
+            raise self.fail
+
+    def wait_flight_done(self, _timeout_s: float) -> None:
+        if self.fail is not None:
+            raise self.fail
+
+    def chat_latencies_s(self, _stack: object = None) -> list[float]:
+        self.chat_reads += 1
+        return [2.5, 3.5]
+
+    def close(self) -> None:
+        pass
+
+
+def _fly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pilot: _FlightPilot,
+    browser_file: str | None,
+    *,
+    eval_: bool = False,
+) -> tuple[perf.LiveRun, BaseException | None]:
+    """fly_and_measure with every live part faked; the browser 'writes' ``browser_file``."""
+    stack = _FakeStack(tmp_path)
+    started: list[str] = []
+
+    def fake_start(self: perf.BrowserRun, base_url: str, code: str) -> None:
+        started.append(base_url)
+        if browser_file is not None:
+            self.result.parent.mkdir(parents=True, exist_ok=True)
+            self.result.write_text(browser_file, encoding="utf-8")
+
+    monkeypatch.setattr(perf, "build_panel", lambda *_a: None)
+    monkeypatch.setattr(perf, "start_mediamtx", lambda *_a: None)
+    monkeypatch.setattr(perf, "Pilot", lambda _stack: pilot)
+    monkeypatch.setattr(perf.BrowserRun, "start", fake_start)
+    monkeypatch.setattr(perf, "measure_stops", lambda *_a, **_k: ([0.3], []))
+    monkeypatch.setattr(
+        perf, "run_cloud_perf", lambda *_a: perf_report.ModelResult(900.0, 1500.0, "r", True)
+    )
+    live = perf.LiveRun()
+    live.timeline.mark("start")
+    error: BaseException | None = None
+    try:
+        perf.fly_and_measure(
+            perf.PerfArgs(eval=eval_),
+            stack,  # pyright: ignore[reportArgumentType]
+            live,
+            [],
+        )
+    except BaseException as exc:  # the test looks at what came out
+        error = exc
+    return live, error
+
+
+def _metrics(live: perf.LiveRun) -> dict[str, perf_report.Metric]:
+    res = perf.browser_result(live.browser, live.browser_state, aborted=live.aborted)
+    m = perf_report.Measurements(
+        video_fps=res.video_fps,
+        video_detail=res.video_detail,
+        telemetry=res.telemetry,
+        chat_latencies_s=live.chat,
+        model=live.model,
+        notes=live.notes + res.notes,
+    )
+    return {x.id: x for x in perf_report.evaluate(m)}
+
+
+def test_a_broken_off_flight_still_yields_p2_p7_and_p8(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pilot = _FlightPilot(VehicleError("flygningen blev inte klar inom 900 s"))
+    live, error = _fly(monkeypatch, tmp_path, pilot, json.dumps(_browser_data()), eval_=True)
+    assert isinstance(error, VehicleError)  # the flight's own error still ends the run
+    assert live.aborted and live.browser_state == "read"
+    assert live.stops == [0.3]
+    assert live.chat == [2.5, 3.5] and pilot.chat_reads == 1
+    assert live.model is not None and live.model.p50_ms == 900.0
+    metrics = _metrics(live)
+    assert metrics["P2"].value == 15.0
+    assert metrics["P7"].value is not None
+    assert metrics["P8"].value is not None
+    notes = live.notes + perf.browser_result(live.browser, live.browser_state).notes
+    assert not any("resultatfil" in n for n in notes)
+
+
+def test_a_broken_off_flight_without_the_file_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    live, error = _fly(monkeypatch, tmp_path, _FlightPilot(InfraError("borta")), None)
+    assert isinstance(error, InfraError)
+    assert live.browser_state == "missing"
+    note = perf.browser_result(live.browser, live.browser_state, aborted=live.aborted).notes[0]
+    assert "saknas" in note and "avbröts innan den blev klar" in note
+    assert live.chat == [2.5, 3.5]
+
+
+def test_a_flight_that_never_got_airborne_never_started_the_browser(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pilot = _FlightPilot(VehicleError("lyfte inte"), airborne_fails=True)
+    live, error = _fly(monkeypatch, tmp_path, pilot, json.dumps(_browser_data()))
+    assert isinstance(error, VehicleError)
+    assert live.browser_state == "not_started" and live.browser is None
+    note = perf.browser_result(live.browser, live.browser_state, aborted=live.aborted).notes[0]
+    assert "startade inte" in note
+    assert pilot.chat_reads == 1  # the chat is still read
+
+
+def test_a_finished_flight_reads_everything(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pilot = _FlightPilot(None)
+    live, error = _fly(monkeypatch, tmp_path, pilot, json.dumps(_browser_data()))
+    assert error is None and not live.aborted
+    assert live.browser_state == "read" and live.chat == [2.5, 3.5]
+    assert live.model is None  # eval=0
+
+
+def test_a_failing_read_is_a_note_not_a_new_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pilot = _FlightPilot(VehicleError("flygningen"))
+
+    def broken_chat(_stack: object = None) -> list[float]:
+        raise InfraError("Databasen svarar inte på 127.0.0.1:5432")
+
+    pilot.chat_latencies_s = broken_chat  # type: ignore[method-assign]
+    live, error = _fly(monkeypatch, tmp_path, pilot, json.dumps(_browser_data()))
+    assert isinstance(error, VehicleError)  # the flight's error, not the database's
+    assert live.browser_state == "read"
+    assert any(n.startswith("P8:") and "Databasen" in n for n in live.notes)
+
+
+def test_a_stop_request_collects_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pilot = _FlightPilot(StopRequestedError())
+    live, error = _fly(monkeypatch, tmp_path, pilot, json.dumps(_browser_data()))
+    assert isinstance(error, StopRequestedError)
+    assert pilot.chat_reads == 0 and live.browser is None
 
 
 # --- the model's result ---------------------------------------------------------------

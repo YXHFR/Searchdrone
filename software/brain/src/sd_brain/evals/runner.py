@@ -31,6 +31,7 @@ from sd_brain.decide.service import DecisionService
 from sd_brain.evals.fake_ground import FakeGround
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop, TurnRecord
+from sd_brain.memory import pending_request
 from sd_brain.runtime.base import ModelRuntime, Sampling
 from sd_brain.runtime.replay import ReplayRuntime, load_golden
 from sd_schemas.skills import SKILL_REGISTRY
@@ -386,7 +387,7 @@ async def run_scenario(
         follow = [r for r in records[1:] if r.retry_of is not None]
         exp = dict(step.get("expect") or {})
         fails = check_expect(exp, main, follow, records)
-        if exp.get("memory_pending") is False and fg.mem.pending_operator_request is not None:
+        if exp.get("memory_pending") is False and pending_request(fg.mem) is not None:
             fails.append("a start request was remembered")
         if exp.get("no_turn") and records:
             fails.append(f"expected no turn, got {[r.trigger for r in records]}")

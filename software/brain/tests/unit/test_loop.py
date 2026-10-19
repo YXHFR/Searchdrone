@@ -15,6 +15,7 @@ from sd_brain.constants import FRESH_SNAPSHOT_WAIT_S
 from sd_brain.decide.engines import EngineAnswer
 from sd_brain.decide.service import DecisionService
 from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
+from sd_brain.memory import mission_request, pending_request
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.base import new_id
 from sd_schemas.decide import ChatIntentReport, ChoiceAnswer, DecideRequest, DecisionEngine
@@ -359,10 +360,8 @@ async def test_rule_takeoff_after_clearance() -> None:
     )
     loop.handle_event(fg.operator_message("Lyft till 30 m"))
     await loop.settle()
-    assert (
-        fg.mem.pending_operator_request is not None
-        and fg.mem.pending_operator_request["alt_m"] == 30
-    )
+    req = pending_request(fg.mem)
+    assert req is not None and req.alt_m == 30
     clock.t += 5
     evt = {
         "type": "event.takeoff_clearance",
@@ -374,7 +373,10 @@ async def test_rule_takeoff_after_clearance() -> None:
     assert fg.commands[-1].skill == "takeoff" and fg.commands[-1].params == {"alt_m": 30.0}
     assert fg.commands[-1].backend == "rule"
     assert fg.posted[-1].text == "Startar till 30 m."
-    assert fg.mem.pending_operator_request is None
+    # The start request is used up; the operator's request (UPPDRAG) stays until landing.
+    assert pending_request(fg.mem) is None
+    mission = mission_request(fg.mem)
+    assert mission is not None and mission.text == "Lyft till 30 m"
 
 
 async def test_rule_takeoff_rejected_says_gate_text() -> None:

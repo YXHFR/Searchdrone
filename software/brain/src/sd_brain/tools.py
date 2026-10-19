@@ -156,6 +156,35 @@ def _situated_areas(params: dict[str, Any], s: Situation) -> None:
     items["anyOf"] = list(shapes.values())
 
 
+# goto's pin value for "the coordinates given" when map pins exist (never a pin id).
+GOTO_COORDS = "KOORDINATER"
+
+
+def _situated_goto(params: dict[str, Any], s: Situation) -> None:
+    """A goto target this situation can fill, required: with map pins the pin (one of
+    them, or ``GOTO_COORDS`` for the coordinates the operator wrote), without pins
+    coordinates. ``GotoAiParams`` takes either; this schema makes the model name its
+    target. The parser drops ``GOTO_COORDS`` before the params are checked."""
+    props = params["properties"]
+    pins = list(dict.fromkeys(p.id for p in s.pins))
+    if pins:
+        props["pin"].pop("pattern", None)
+        props["pin"]["enum"] = [*pins, GOTO_COORDS]
+        props["pin"]["description"] = (
+            f"The map pin to fly to (Kartnålar in LÄGE), or {GOTO_COORDS} to fly to the "
+            "lat and lon the operator wrote. Required."
+        )
+        props["lat"]["description"] = f"Only with pin {GOTO_COORDS}: latitude the operator wrote."
+        props["lon"]["description"] = f"Only with pin {GOTO_COORDS}: longitude."
+        required = ["pin"]
+    else:
+        props.pop("pin", None)
+        props["lat"]["description"] = "Latitude the operator wrote (no map pins exist)."
+        props["lon"]["description"] = "Longitude the operator wrote."
+        required = ["lat", "lon"]
+    params["required"] = sorted({*params.get("required", []), *required})
+
+
 def _proposal_schema(
     lim: Limits | None, skills: list[str] | None, s: Situation | None = None
 ) -> dict[str, Any]:
@@ -197,6 +226,8 @@ def skill_tool(
         params["required"] = sorted({*params.get("required", []), "rationale_sv"})
         params["type"] = "object"
         params["additionalProperties"] = False
+        if spec.name == "goto" and s is not None:
+            _situated_goto(params, s)
         kind = "action"
     return ToolSpec(
         name=spec.name,
@@ -271,8 +302,11 @@ def exposed_tools(
     ttl_s: float = TAKEOFF_REQUEST_TTL_S,
     actions: bool = True,
     pilot: bool = True,
+    proposals: bool = True,
 ) -> list[ToolSpec]:
-    """The tools for one turn (read tools first). ``actions = False``: read tools only."""
+    """The tools for one turn (read tools first). ``actions = False``: read tools only;
+    ``proposals = False``: no charter proposal (the loop offers it only in a turn an
+    operator line started, or in the retry of a refused proposal)."""
     out = read_tools()
     if not actions:
         return out
@@ -283,6 +317,8 @@ def exposed_tools(
         if k.status != "implemented" or k.stage > EXPOSED_STAGE or not k.ai_allowed:
             continue
         if not pilot and k.name != "report":
+            continue
+        if not proposals and k.name == PROPOSAL_TOOL:
             continue
         if not s.ai_enabled and k.name != "report":
             continue

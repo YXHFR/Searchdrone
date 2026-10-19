@@ -5,7 +5,14 @@ next one, which takes the trigger with the highest priority. Every order goes to
 ground station and through the safety gate; the AI says what it does only after the
 gate's answer. Some steps are rules without a model: the answer to "fortsätt" during a
 stop (press Resume), the start after "clear around the drone" when the operator asked
-for a start, and the quick stop check on every chat line.
+for a start, the quick stop check on every chat line, and the finish backstop: airborne
+with nothing to do and nothing said or ordered for ``behaviour.finish_idle_s``, the
+system says so and orders ``return_home`` through the gate like any AI order.
+
+The operator's latest request (``UPPDRAG``) is kept in the mission memory from its turn
+until the drone has flown and landed, or a newer request replaces it, so it outlives the
+chat tail. A charter is proposed only in a turn an operator line started, or in the
+retry of a refused proposal.
 """
 
 from __future__ import annotations
@@ -21,6 +28,8 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+from pydantic import ValidationError
 
 from sd_brain.backends.base import BackendCrashError, CommanderBackend
 from sd_brain.charter_draft import (
@@ -49,7 +58,15 @@ from sd_brain.decide.service import DecisionService, EngineOutcome
 from sd_brain.decide.stop_check import StopCheckResult, stop_check
 from sd_brain.ground_client import GroundApi, GroundError
 from sd_brain.health import HealthState
-from sd_brain.memory import PendingRequest, empty_memory, to_update, with_changes
+from sd_brain.memory import (
+    PendingRequest,
+    empty_memory,
+    is_acknowledgement,
+    mission_request,
+    next_request,
+    to_update,
+    with_changes,
+)
 from sd_brain.runtime.fallback import EngineName
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.sv import height_m
@@ -101,6 +118,34 @@ BATTERY_TEXT = (
 CLEARED_NO_REQUEST = "Fritt runt är bekräftat. Säg till när jag ska starta."
 CHARTER_WITH_REQUEST = "Ramen gäller. Jag startar direkt när du trycker Fritt runt drönaren."
 RATE_TEXT = "Jag skickade för många order. Jag pausar AI:n; skriv 'hjälp' för kommandon."
+# The finish backstop's line, posted before its return_home order.
+# It is posted before the gate answers, so it says what is asked for, not that it flies.
+FINISH_TEXT = (
+    "Inget har hänt på {minutes} min och inget väntar på dig, så jag ber om att få flyga "
+    "hem. Tryck STOPP om drönaren ska stanna."
+)
+FINISH_REASON = "Uppdraget är klart och inget har hänt på en stund."
+FINISH_DONE_TEXT = "Jag flyger hem."
+# A finish check (not a model turn) at most this often while one is due.
+FINISH_CHECK_S = 5.0
+# Operator input and decisions that restart the backstop's idle time (a target find
+# counts too, see handle_event; a charter decision when it wakes a turn).
+ACTIVITY_EVENTS = frozenset(
+    {
+        "event.operator_message",
+        "event.operator_override",
+        "event.vehicle_action",  # e.g. the hand-back after a manual takeover
+        "event.skill",
+        "event.approval",
+        "event.approval_requested",
+        "event.takeoff_clearance",
+        "event.pin_set",
+        "event.area_drawn",
+        "event.path_drawn",
+    }
+)
+# A charter proposal the ground took, when the model wrote nothing with it.
+PROPOSED_TEXT = "Jag har lagt fram ett ramförslag. Tryck Godkänn på kortet om det stämmer."
 # The brain gives up a charter after MAX_CHARTER_ATTEMPTS refused proposals. The line is a
 # question to the pilot (the panel offers Svara) with refs.charter_failed and the codes:
 # "Hur vill du gå vidare?" asks for a new instruction, not for an approval.
@@ -225,6 +270,12 @@ class CommanderLoop:
         self.last_stop_check: StopCheckResult | None = None
         self.records: list[TurnRecord] = []
         self.turn_deadline_s = BRAIN_TURN_DEADLINE_S
+        # The last operator input, AI order, skill end or card decision (the finish
+        # backstop counts its idle time from here), and the last finish check.
+        self._activity_at = self.clock.monotonic()
+        self._finish_checked_at = -1e9
+        # The charter decisions that already woke a turn: (charter_id, version, status).
+        self._charter_woken: set[tuple[str, Any, Any]] = set()
 
     # --- status for the heartbeat -----------------------------------------------------
 
@@ -266,6 +317,7 @@ class CommanderLoop:
             self._backlog.clear()
             self._charter_attempts = 0
             self._carry = None
+            self._activity_at = self.clock.monotonic()
 
     async def connected(self, reconnect: bool) -> None:
         """The stream is up. After a reconnect the AI says it is back."""
@@ -292,6 +344,8 @@ class CommanderLoop:
         other = evt.get("mission_id") and self.mission_id and evt["mission_id"] != self.mission_id
         if other and not (kind == "event.mission" and body.get("created")):
             return
+        if kind in ACTIVITY_EVENTS or (kind == "event.detection" and body.get("kind") == "target"):
+            self._activity_at = self.clock.monotonic()  # not idle: the backstop waits
         trigger: Trigger | None = None
         if kind == "event.operator_message":
             if body.get("handled_by") == "ground":
@@ -314,10 +368,19 @@ class CommanderLoop:
             ):
                 trigger = "approval_event"
         elif kind == "event.charter":
+            # An approved charter wakes the AI once the drone has it (install_status
+            # "installed"); the earlier updates of the same approval ("none", "pending")
+            # would show a charter not yet in force.
+            # A resend of the same install (after a reconnect) is no news: it wakes the AI
+            # once per charter version.
+            key = (str(body.get("charter_id")), body.get("version"), body.get("status"))
             if (
-                body.get("status") in ("approved", "rejected")
+                body.get("status") == "rejected"
                 or body.get("install_status") == "failed"
-            ):
+                or (body.get("status") == "approved" and body.get("install_status") == "installed")
+            ) and (body.get("install_status") == "failed" or key not in self._charter_woken):
+                self._charter_woken.add(key)
+                self._activity_at = self.clock.monotonic()
                 trigger = "charter_event"
             if body.get("status") in ("approved", "rejected"):
                 # The pilot decided: a new request starts over, and an older refusal's
@@ -390,18 +453,26 @@ class CommanderLoop:
         self._wake.set()
 
     def idle_tick(self, *, force: bool = False) -> bool:
-        """Wake a turn when airborne, idle and nothing waits (checked by the next turn)."""
+        """Wake a turn when airborne, idle and nothing waits (checked by the next turn).
+        Once the finish backstop is due, a finish check (no model) runs instead, at most
+        every ``FINISH_CHECK_S``."""
         if self._turn_task is not None or self._queue or self._followups:
             return False
-        if (
-            not force
-            and self.clock.monotonic() - self._last_turn_at
-            < self.cfg.behaviour.idle_airborne_tick_s
-        ):
+        now = self.clock.monotonic()
+        if self._finish_due() and now - self._finish_checked_at >= FINISH_CHECK_S:
+            self._finish_checked_at = now
+            body = {"finish": True}
+            self._queue.append(_Pending("idle_tick", {"type": "idle_tick", "body": body}))
+            self._wake.set()
+            return True
+        if not force and now - self._last_turn_at < self.cfg.behaviour.idle_airborne_tick_s:
             return False
         self._queue.append(_Pending("idle_tick", {"type": "idle_tick", "body": {}}))
         self._wake.set()
         return True
+
+    def _finish_due(self) -> bool:
+        return self.clock.monotonic() - self._activity_at >= self.cfg.behaviour.finish_idle_s
 
     # --- running ------------------------------------------------------------------------
 
@@ -463,8 +534,17 @@ class CommanderLoop:
         mid = self.mission_id
         if mid is None:
             return
+        # A finish check is no model turn: it leaves the idle tick's own timing alone.
+        finish = trigger == "idle_tick" and any((e.get("body") or {}).get("finish") for e in events)
         self._busy_since = self.clock.monotonic()
-        self._last_turn_at = self._busy_since
+        if not finish:
+            self._last_turn_at = self._busy_since
+        elif not self._finish_ok(await self.ground.situation(mid)):
+            # Not now (on the ground, held, a card waits, ...): the idle time starts over,
+            # so the backstop waits a whole ``finish_idle_s`` after this and the check runs
+            # at most once per that time instead of every few seconds.
+            self._activity_at = self.clock.monotonic()
+            return
         now = self.clock.utc_now()
         # The chat first, then the situation: the picture is at least as new as the chat,
         # so a pin the operator placed before writing is in it.
@@ -487,9 +567,18 @@ class CommanderLoop:
             # observer's line cannot propose, so the carry waits for the pilot's next).
             extra = {**self._carry, "in_reply_to": None, **extra}
             self._carry = None
-        if trigger == "idle_tick" and not self._idle_ok(s):
+        if trigger == "idle_tick" and not finish and not self._idle_ok(s):
             return
+        if finish and not (self._finish_due() and self._finish_ok(s)):
+            self._activity_at = self.clock.monotonic()
+            return  # a finish check only: no model turn
+        if finish:
+            self._last_turn_at = self._busy_since
+            # Whatever the order's outcome (refused, not sent), the backstop speaks at most
+            # once per ``finish_idle_s``.
+            self._activity_at = self.clock.monotonic()
         mem_before = mem
+        mem = self._mission_memory(mem, s, trigger, op_msg if pilot else None)
         # Rule: a start request is remembered before any model call.
         if op_msg is not None and pilot and s.vehicle.landed and is_takeoff_request(op_msg.text):
             alt = height_m(op_msg.text)
@@ -506,10 +595,18 @@ class CommanderLoop:
             ):
                 mem = with_changes(mem, pending=None)
         record_base: dict[str, Any] = {"trigger": trigger, "retry_of": extra.get("retry_of")}
-        rule_out = self._rule_step(trigger, s, mem, now, op_msg)
+        rule_out = (
+            await self._finish_step() if finish else self._rule_step(trigger, s, mem, now, op_msg)
+        )
         if rule_out is not None:
             out = rule_out
         else:
+            # A charter is proposed only for an operator's line (its own turn, where the
+            # picture is read after the line) or as the retry of a refused proposal; never
+            # on an idle tick, an event or a charter's own approval.
+            proposals = trigger == "operator_message" or (
+                trigger == "gate_reject_retry" and bool(extra.get("charter_errors"))
+            )
             tools = exposed_tools(
                 self.reg,
                 s,
@@ -517,11 +614,8 @@ class CommanderLoop:
                 now,
                 actions=trigger != "recovered",
                 pilot=pilot,
+                proposals=proposals,
             )
-            if trigger == "mission_created" and any(m.role == "operator" for m in tail):
-                # Every live operator line gets its own operator_message turn (with a
-                # picture read after it): only that turn proposes the charter.
-                tools = [t for t in tools if t.name != PROPOSAL_TOOL]
             turn = TurnInput(
                 turn_id=new_id(),
                 mission_id=s.mission_id,
@@ -541,6 +635,11 @@ class CommanderLoop:
                 budget_s=self.turn_deadline_s,
             )
             out = await self._decide(turn)
+            order = out.action is not None and (pilot or out.action.skill != "report")
+            if (trigger == "recovered" or not pilot) and (
+                order or out.charter_proposal is not None
+            ):
+                out.note_update = None  # a plan note sent with an order that is not sent
             if trigger == "recovered":
                 out.action = None
                 out.charter_proposal = None
@@ -562,10 +661,72 @@ class CommanderLoop:
         self.records.append(record)
         mem = await self._execute(mid, s, mem, out, record, trigger, op_msg, extra)
         if mem != mem_before:
-            with contextlib.suppress(GroundError):
+            try:
                 await self.ground.put_memory(mid, to_update(mem))
+            except GroundError:
+                pass
+            except ValidationError as exc:  # too large for the schema: log, keep the turn
+                log.warning("kunde inte spara minnet: %s", exc.errors()[:1])
         await self._log_decision(mid, record, out)
         self._last_turn_ms = out.diagnostics.latency_ms
+
+    def _mission_memory(
+        self, mem: MissionMemory, s: Situation, trigger: Trigger, op_msg: ChatMessage | None
+    ) -> MissionMemory:
+        """Keep the operator's latest request (``UPPDRAG``): a pilot's new line replaces
+        it and the one before moves to ``earlier`` (a "fortsätt" to a stop, or a line that
+        only answers, "ja kör", "ok", is no new request); it ends once the drone has
+        flown and is landed and disarmed again."""
+        req = mission_request(mem)
+        v = s.vehicle
+        if req is not None and req.flown and v.landed and not v.armed:
+            mem = with_changes(mem, mission=None)
+        elif req is not None and not req.flown and v.airborne:
+            mem = with_changes(mem, mission=req.model_copy(update={"flown": True}))
+        if (
+            trigger == "operator_message"
+            and op_msg is not None
+            and op_msg.text.strip()
+            and not is_resume_request(op_msg.text)
+            and not is_acknowledgement(op_msg.text)
+        ):
+            new = next_request(
+                mission_request(mem),
+                op_msg.text,
+                op_msg.id,
+                op_msg.created_at,
+                flown=v.airborne,
+            )
+            mem = with_changes(mem, mission=new)
+        return mem
+
+    def _finish_ok(self, s: Situation) -> bool:
+        """The finish backstop may act: airborne in an active mission, no skill running,
+        nothing waiting for a click, no stop, pause, hold or latch, and the AI enabled."""
+        return (
+            s.vehicle.airborne
+            and s.mission_status == MissionState.ACTIVE
+            and s.active_command is None
+            and s.pending_proposal is None
+            and not any(a.status == "pending" for a in s.pending_approvals)
+            and motion_block(s) is None
+            and s.ai_enabled
+        )
+
+    async def _finish_step(self) -> TurnOutput:
+        """The backstop's line first, then the same ``return_home`` an AI order is (it
+        goes through the gate; the operator's STOP stops it as always)."""
+        minutes = _fmt(round(self.cfg.behaviour.finish_idle_s / 60, 1))
+        await self._say(OutMessage(text=FINISH_TEXT.format(minutes=minutes), kind="status"))
+        return TurnOutput(
+            action=AiAction(
+                skill="return_home",
+                params={"reason": FINISH_REASON},
+                rationale_sv=FINISH_REASON,
+                adapted=True,
+            ),
+            diagnostics=TurnDiagnostics(backend="rule"),
+        )
 
     def _idle_ok(self, s: Situation) -> bool:
         return (
@@ -634,7 +795,9 @@ class CommanderLoop:
         if (
             trigger == "charter_event"
             and s.charter is not None
-            and s.mission_status == "READY"
+            and s.vehicle.landed
+            # The ground publishes "installed" just before it moves the mission to READY.
+            and (s.mission_status == "READY" or (s.charter_installed and s.fence_verified))
             and fresh_request(s, mem, now, TAKEOFF_REQUEST_TTL_S) is not None
         ):
             return TurnOutput(messages=[OutMessage(text=CHARTER_WITH_REQUEST)], diagnostics=diag)
@@ -648,10 +811,17 @@ class CommanderLoop:
             async with asyncio.timeout(self.turn_deadline_s):
                 out = await backend.decide(turn, executor)
         except TimeoutError:
-            out = TurnOutput(
-                messages=[_deadline("deadline")],
-                diagnostics=TurnDiagnostics(backend=_wire_backend(backend.name), error="deadline"),
+            # Keep what the turn had (prompt, tools, calls) for the decision log.
+            partial = getattr(backend, "partial_diagnostics", None)
+            diag = partial(turn.turn_id) if partial is not None else None
+            diag = (
+                diag.model_copy(deep=True)
+                if diag is not None
+                else TurnDiagnostics(backend=_wire_backend(backend.name))
             )
+            diag.error = "deadline"
+            diag.latency_ms = 0
+            out = TurnOutput(messages=[_deadline("deadline")], diagnostics=diag)
         except BackendCrashError:
             out = TurnOutput(
                 messages=[_deadline("http_error")],
@@ -669,7 +839,11 @@ class CommanderLoop:
                 self.health.turn(True)
             return out
         if backend is self.backend:
-            self.health.turn(err not in ("deadline", "timeout", "http_error", "parse_error"))
+            # A turn the model's own time guard ended (every call answered) is healthy.
+            self.health.turn(
+                out.diagnostics.guard_stop
+                or err not in ("deadline", "timeout", "http_error", "parse_error")
+            )
         if (
             backend is self.backend
             and backend is not self.fallback
@@ -681,6 +855,18 @@ class CommanderLoop:
             out = await self._command_mode(turn, executor, err)
         elif err in ("timeout", "http_error") and not out.messages:
             out.messages = [_deadline(err)]
+        elif (
+            err == "deadline"
+            and turn.trigger == "operator_message"
+            and not out.messages
+            and not out.has_action()
+        ):
+            out.messages = [_deadline(err)]  # the model's own turn ran out of time
+        if turn.trigger not in ("operator_message", "gate_reject_retry", "recovered"):
+            # "Säg det på ett annat sätt" answers nobody on an event's or a tick's turn.
+            out.messages = [
+                m for m in out.messages if m.refs.get("turn_failed") not in ("parse", "repeat")
+            ]
         return out
 
     async def _command_mode(
@@ -709,6 +895,8 @@ class CommanderLoop:
             in_reply_to=in_reply_to,
             refs=msg.refs,
         )
+        if msg.kind in ("question", "proposal"):
+            self._activity_at = self.clock.monotonic()  # the operator has something to answer
         try:
             await self.ground.post_message(self.mission_id, body)
         except GroundError as exc:
@@ -743,9 +931,12 @@ class CommanderLoop:
                 record.refused_draft = out.failed_proposal.args
             if outcome.ok:
                 self._charter_attempts = 0
+                self._activity_at = self.clock.monotonic()
                 if outcome.approval_id is not None:
                     self._own_approvals.add(str(outcome.approval_id))
-                for m in out.messages:
+                said = list(out.messages) or [OutMessage(text=PROPOSED_TEXT)]
+                record.texts = [m.text for m in said]
+                for m in said:
                     await self._say(m, reply_to)
             elif attempt < MAX_CHARTER_ATTEMPTS and not (
                 out.failed_proposal is not None and out.failed_proposal.final
@@ -803,6 +994,7 @@ class CommanderLoop:
             await self._say(OutMessage(text="Ordern gick inte fram till markstationen."), reply_to)
             return mem
         self._action_times.append(self.clock.monotonic())
+        self._activity_at = self.clock.monotonic()
         record.request = req
         record.result = result
         if result.decision == "ALLOW":
@@ -812,6 +1004,12 @@ class CommanderLoop:
             texts = list(out.messages)
             if not texts and out.diagnostics.backend == "rule" and out.action.skill == "takeoff":
                 texts = [OutMessage(text=f"Startar till {_fmt(req.params.get('alt_m'))} m.")]
+            elif (
+                not texts
+                and out.diagnostics.backend == "rule"
+                and out.action.skill == "return_home"
+            ):
+                texts = [OutMessage(text=FINISH_DONE_TEXT)]  # the backstop's order went through
             for m in texts:
                 await self._say(m, reply_to)
             record.texts = [m.text for m in texts]

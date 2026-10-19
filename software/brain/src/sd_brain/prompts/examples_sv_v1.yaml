@@ -11,8 +11,8 @@
   context: "Under Ritade områden i LÄGE finns \"ar-1\". Utan ritat område finns inget area_id att ange."
   tool: {name: propose_charter_change, arguments: {search_areas: [{kind: drawn, area_id: "ar-1"}], alt_max_agl_m: 60, reason_sv: "Sökning av det ritade området, högst 60 m."}}
 - operator: "Ja kör"
-  context: "Ett kort väntar på klick."
-  answer: "Tryck Godkänn på kortet så kör jag."
+  context: "Ett kort väntar på klick. Ett ja i chatten godkänner inget; säg det en gång."
+  answer: "Ett ja i chatten räcker inte. Tryck Godkänn på kortet."
 - operator: "Flyg till parkeringen"
   context: "Nål P1 heter \"parkeringen\"."
   tool: {name: goto, arguments: {pin: "P1", rationale_sv: "Operatören bad mig flyga till parkeringen (P1)."}}

@@ -203,6 +203,10 @@ class BehaviourConfig(_Section):
     max_proposal_repair_rounds: int = Field(default=3, ge=0, le=3)
     max_actions_per_turn: Literal[1] = 1
     idle_airborne_tick_s: float = Field(default=60, gt=0)
+    # The finish backstop: airborne, nothing running or waiting, and no operator input,
+    # AI order, skill end or card decision for this long: the system says it flies home
+    # and orders return_home through the gate (3 min; at least 1, at most 30).
+    finish_idle_s: float = Field(default=180, ge=60, le=1800)
     language: Literal["sv"] = "sv"
     takeoff_policy: Literal["request_then_clearance"] = "request_then_clearance"
     rule_takeoff: bool = True

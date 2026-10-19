@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from sd_sim import _args, config, paths, ports, procs
 from sd_sim import report as sim_report
@@ -58,6 +58,9 @@ PANEL_BUILD_TIMEOUT_S = 600.0
 COMPOSE_TIMEOUT_S = 300.0
 VIDEO_S = 30
 TELEMETRY_S = 120
+# After a broken-off flight the spec still gets its video and telemetry windows and a
+# minute to start and write its file, not the full wait (the stack is still up then).
+ABORT_BROWSER_TIMEOUT_S = 60.0 + VIDEO_S + TELEMETRY_S
 STOP_MODE = "BRAKE"
 # The ports the stack binds on instance 0 (the launcher checks its own again in up()).
 STACK_PORTS = (
@@ -261,23 +264,29 @@ def measure_stops(
     """Press STOP ``tries`` times in the air: each latency is the press (host monotonic)
     to the vehicle's first accepted DO_SET_MODE ACK in radio.tlog. A STOP without an ACK
     within 3 s is a note and no latency (so a missing ACK makes P6 fail on missing
-    data rather than look fast). A drone that does not fly on after Resume ends P6."""
+    data rather than look fast). The first failure that leaves the drone unable to take
+    the next STOP (not flying on, not airborne, the button not getting through) ends P6;
+    its note says how many of the tries were pressed."""
     latencies: list[float] = []
     notes: list[str] = []
     wait_ns = int((ACK_WITHIN_S + FLUSH_WAIT_S) * 1e9)
+
+    def ended(pressed: int) -> str:
+        return f"avbröt P6 efter {pressed} av {tries} STOPP."
+
     for n in range(1, tries + 1):
         try:
             pilot.wait_mode(not_brake, mode_timeout_s)
         except VehicleError as exc:
-            notes.append(f"STOPP {n}: inget flygläge utom {STOP_MODE} ({exc}); avbröt P6.")
+            notes.append(f"STOPP {n}: inget flygläge utom {STOP_MODE} ({exc}); {ended(n - 1)}")
             break
         if not pilot.airborne():
-            notes.append(f"STOPP {n}: drönaren var inte i luften; avbröt P6.")
+            notes.append(f"STOPP {n}: drönaren var inte i luften; {ended(n - 1)}")
             break
         try:
             t0 = pilot.press_stop()
         except VehicleError as exc:
-            notes.append(f"STOPP {n}: knappen gick inte fram ({exc}); avbröt P6.")
+            notes.append(f"STOPP {n}: knappen gick inte fram ({exc}); {ended(n - 1)}")
             break
         ack: int | None = None
         while ack is None and clock_ns() - t0 < wait_ns:
@@ -292,13 +301,21 @@ def measure_stops(
             pilot.press_resume()
             pilot.wait_mode(not_brake, mode_timeout_s)
         except VehicleError as exc:
-            notes.append(f"STOPP {n}: drönaren lämnade inte {STOP_MODE} efter Fortsätt ({exc}).")
+            notes.append(
+                f"STOPP {n}: drönaren lämnade inte {STOP_MODE} efter Fortsätt ({exc}); {ended(n)}"
+            )
             break
         sleep(settle_s)
     return latencies, notes
 
 
 # --- browser and model results ----------------------------------------------------------------
+
+
+# What became of the browser's result file: read, never written, unreadable, or never
+# looked for because the run broke off before the browser started.
+BrowserState = Literal["read", "missing", "broken", "not_started"]
+BROWSER_FILE = "perf-browser.json"
 
 
 @dataclass
@@ -330,11 +347,27 @@ def _pings(rows: object) -> list[stats.Ping]:
     return out
 
 
-def browser_result(data: dict[str, Any] | None) -> BrowserResult:
-    """The Playwright perf spec's JSON (P2 and P7); missing parts stay None."""
+def browser_note(state: BrowserState, *, aborted: bool = False) -> str:
+    """Why P2 and P7 have no browser data, in words that tell the cases apart."""
+    if state == "not_started":
+        return (
+            "Webbläsarmätningen startade inte eftersom körningen avbröts innan dess; "
+            "P2 och P7 saknar mätvärden."
+        )
+    if state == "broken":
+        return f"Webbläsarmätningens resultatfil ({BROWSER_FILE}) gick inte att läsa."
+    note = f"Webbläsarmätningen gav ingen resultatfil ({BROWSER_FILE} saknas)"
+    return note + ("; körningen avbröts innan den blev klar." if aborted else ".")
+
+
+def browser_result(
+    data: dict[str, Any] | None, state: BrowserState = "missing", *, aborted: bool = False
+) -> BrowserResult:
+    """The Playwright perf spec's JSON (P2 and P7); missing parts stay None. Without
+    data, ``state`` says why: the file was missing, unreadable, or never looked for."""
     res = BrowserResult()
     if data is None:
-        res.notes.append("Webbläsarmätningen gav ingen resultatfil.")
+        res.notes.append(browser_note("missing" if state == "read" else state, aborted=aborted))
         return res
     res.notes.extend(f"webbläsaren: {e}" for e in data.get("errors") or [] if isinstance(e, str))
     video = data.get("video")
@@ -477,7 +510,7 @@ class BrowserRun:
 
     def __init__(self, repo: Path, run_dir: Path) -> None:
         self.repo = repo
-        self.result = run_dir / "perf-browser.json"
+        self.result = run_dir / BROWSER_FILE
         self.log = run_dir / "logs" / "playwright-perf.log"
         self.popen: subprocess.Popen[bytes] | None = None
 
@@ -505,22 +538,29 @@ class BrowserRun:
                 start_new_session=True,
             )
 
-    def wait(self, timeout_s: float) -> dict[str, Any] | None:
+    def wait(self, timeout_s: float) -> tuple[dict[str, Any] | None, BrowserState]:
+        """Let the spec finish (at most ``timeout_s``), stop it, then read its file."""
         if self.popen is not None:
             try:
                 self.popen.wait(timeout=timeout_s)
             except subprocess.TimeoutExpired:
                 say("Webbläsarmätningen blev inte klar i tid; avbryter den.")
             self.stop()
-        try:
-            data: Any = json.loads(self.result.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
+        return read_browser_file(self.result)
 
     def stop(self) -> None:
         if self.popen is not None and self.popen.poll() is None:
             procs.stop_pid(self.popen.pid, self.popen)
+
+
+def read_browser_file(path: Path) -> tuple[dict[str, Any] | None, BrowserState]:
+    if not path.is_file():
+        return None, "missing"
+    try:
+        data: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "broken"
+    return (data, "read") if isinstance(data, dict) else (None, "broken")
 
 
 def run_cloud_perf(repo: Path, logs: Path) -> perf_report.ModelResult:
@@ -573,6 +613,8 @@ class LiveRun:
     stops: list[float] = field(default_factory=list[float])
     chat: list[float] = field(default_factory=list[float])
     browser: dict[str, Any] | None = None
+    browser_state: BrowserState = "not_started"
+    aborted: bool = False
     model: perf_report.ModelResult | None = None
     notes: list[str] = field(default_factory=list[str])
 
@@ -597,23 +639,70 @@ def fly_and_measure(
         live.notes.append("Gazebo kördes inte; P1 saknar mätvärden.")
     pilot = Pilot(stack)
     cleanup.append(pilot.close)
-    pilot.fly_demo_until_airborne(AIRBORNE_TIMEOUT_S)
-    live.timeline.mark("airborne")
-    say("==> i luften; webbläsarmätningen (video och telemetri) startar")
-    browser = BrowserRun(repo, run_dir)
-    cleanup.append(browser.stop)
-    base_url = f"http://127.0.0.1:{stack.ports['ground_panel']}"
-    browser.start(base_url, login_code(stack.login_url))
-    say(f"==> P6: STOPP {STOP_TRIES} gånger")
-    live.stops, stop_notes = measure_stops(pilot, _acks_reader(run_dir / "radio.tlog"))
-    live.notes.extend(stop_notes)
-    say("==> väntar på att flygningen blir klar")
-    pilot.wait_flight_done(FLIGHT_TIMEOUT_S)
-    live.timeline.mark("done")
-    live.browser = browser.wait(BROWSER_TIMEOUT_S)
-    live.chat = pilot.chat_latencies_s(stack)
+    browser: BrowserRun | None = None
+    try:
+        pilot.fly_demo_until_airborne(AIRBORNE_TIMEOUT_S)
+        live.timeline.mark("airborne")
+        say("==> i luften; webbläsarmätningen (video och telemetri) startar")
+        browser = BrowserRun(repo, run_dir)
+        cleanup.append(browser.stop)
+        base_url = f"http://127.0.0.1:{stack.ports['ground_panel']}"
+        browser.start(base_url, login_code(stack.login_url))
+        say(f"==> P6: STOPP {STOP_TRIES} gånger")
+        live.stops, stop_notes = measure_stops(pilot, _acks_reader(run_dir / "radio.tlog"))
+        live.notes.extend(stop_notes)
+        say("==> väntar på att flygningen blir klar")
+        pilot.wait_flight_done(FLIGHT_TIMEOUT_S)
+        live.timeline.mark("done")
+    except (StopRequestedError, KeyboardInterrupt):
+        raise  # tear down at once: no report follows, so there is nothing to collect
+    except Exception:
+        live.aborted = True
+        collect_results(args, stack, live, pilot, browser)
+        raise
+    collect_results(args, stack, live, pilot, browser)
+
+
+class ResultPilot(Protocol):
+    def chat_latencies_s(self, stack: Stack | None = None) -> list[float]: ...
+
+
+def collect_results(
+    args: PerfArgs,
+    stack: Stack,
+    live: LiveRun,
+    pilot: ResultPilot,
+    browser: BrowserRun | None,
+) -> None:
+    """Read what was measured beside the flight (P2 and P7 from the browser, P8 from the
+    database, the cloud model), also when the flight broke off: the stack is still up
+    then, so the browser may still finish. A failure here becomes a note and never an
+    exception, so it cannot hide the flight's own error. A stop request still stops."""
+
+    def noted(what_sv: str, step: Callable[[], None]) -> None:
+        try:
+            step()
+        except StopRequestedError:
+            raise
+        except Exception as exc:
+            live.notes.append(f"{what_sv}: {type(exc).__name__}: {stack.mask(str(exc))}")
+
+    def read_browser(run: BrowserRun) -> None:
+        live.browser_state = "broken"  # stays so if the wait itself fails
+        timeout = ABORT_BROWSER_TIMEOUT_S if live.aborted else BROWSER_TIMEOUT_S
+        live.browser, live.browser_state = run.wait(timeout)
+
+    def read_chat() -> None:
+        live.chat = pilot.chat_latencies_s(stack)
+
+    def read_model() -> None:
+        live.model = run_cloud_perf(stack.repo, stack.run_dir / "logs")
+
+    if browser is not None:
+        noted("Webbläsarmätningen gick inte att läsa in", lambda: read_browser(browser))
+    noted("P8: chattens svarstider gick inte att läsa", read_chat)
     if args.eval:
-        live.model = run_cloud_perf(repo, logs)
+        noted("Molnmodellens svarstid mättes inte", read_model)
 
 
 def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
@@ -659,9 +748,11 @@ def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
             raise  # Ctrl-C or `just stop`: tear down, no report, no further runs
         except InfraError as exc:
             # The report still shows what was measured; the missing parts fail.
+            live.aborted = True
             live.notes.append(f"Körningen avbröts: {stack.mask(str(exc)).splitlines()[0]}")
             say(stack.mask(str(exc)))
         except Exception as exc:  # the pilot's HTTP and timeout errors too
+            live.aborted = True
             live.notes.append(f"Körningen avbröts: {type(exc).__name__}: {stack.mask(str(exc))}")
             say(live.notes[-1])
         finally:
@@ -672,7 +763,7 @@ def run_once(args: PerfArgs, index: int, repo: Path = paths.REPO) -> int:
         live.notes.append("eval=0: molnmodellens svarstid mättes inte.")
     window = live.timeline.flight_window()
     rtf = live.gz.between(*window) if live.gz is not None and window is not None else []
-    browser_res = browser_result(live.browser)
+    browser_res = browser_result(live.browser, live.browser_state, aborted=live.aborted)
     measurements = perf_report.Measurements(
         cold_start_s=live.timeline.cold_start_s,
         rtf=rtf,

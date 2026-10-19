@@ -24,7 +24,7 @@ from sd_brain.charter_draft import CharterDraft, CharterError, DraftError, error
 from sd_brain.runtime.base import ModelReply
 from sd_brain.state_view import Limits
 from sd_brain.sv import Said
-from sd_brain.tools import AdaptError, adapt, charter_skills
+from sd_brain.tools import GOTO_COORDS, AdaptError, adapt, charter_skills
 from sd_brain.turn import ToolSpec
 from sd_schemas.charter import CharterProposal
 from sd_schemas.commander import Situation
@@ -439,6 +439,8 @@ def _validate(
         return ParsedCall(id="", name=name, kind="proposal", args=args, draft=draft), None
     spec = reg.get(name)
     rationale = args.pop("rationale_sv", "")
+    if name == "goto" and args.get("pin") == GOTO_COORDS:
+        args.pop("pin")  # the schema's "fly to lat/lon" choice, not a pin
     model = spec.ai_params_model or spec.params_model
     try:
         model.model_validate(args)

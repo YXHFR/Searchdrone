@@ -11,7 +11,6 @@ back (Acks, events, charter answers) leaves through the ``Uplink``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -136,6 +135,12 @@ __all__ = ["Executor", "ExecutorOptions", "Uplink"]
 log = logging.getLogger("sd_onboard")
 S = ExecutorState
 Severity = Literal["debug", "info", "warning", "critical"]
+
+
+def _refusal_reason(exc: ControlNotAllowedError | ForbiddenMavlinkError) -> str:
+    """Why a write was refused: the send gate's reason or the allowlist's."""
+    return exc.reason if isinstance(exc, ControlNotAllowedError) else str(exc)
+
 
 TICK_S: Final = 1.0 / EXECUTOR_TICK_HZ
 _LANDED_WAIT_MS: Final = 5000
@@ -546,12 +551,21 @@ class Executor:
         self._side_tasks.discard(task)
         if not task.cancelled() and task.exception() is not None:
             exc = task.exception()
-            if not isinstance(exc, ControlNotAllowedError | ForbiddenMavlinkError):
+            if isinstance(exc, ControlNotAllowedError | ForbiddenMavlinkError):
+                log.warning("executor side task: write refused: %s", _refusal_reason(exc))
+            else:
                 log.error("executor side task failed: %r", exc)
 
     async def _loiter(self, origin: SendOrigin) -> None:
-        with contextlib.suppress(ControlNotAllowedError, ForbiddenMavlinkError):
-            await self.set_mode(CopterMode.LOITER, origin)
+        try:
+            ok = await self.set_mode(CopterMode.LOITER, origin)
+        except (ControlNotAllowedError, ForbiddenMavlinkError) as exc:
+            log.warning("executor: LOITER refused: %s", _refusal_reason(exc))
+            return
+        if not ok:
+            log.warning(
+                "executor: LOITER not confirmed (fc_mode %s)", self.vehicle.telemetry.fc_mode
+            )
 
     def _internal(
         self, skill: str, handler: SkillHandler, plan: SkillPlan, origin: SendOrigin
@@ -943,8 +957,10 @@ class Executor:
             self._side(self._cancel_into_loiter(handler, origin))
 
     async def _cancel_into_loiter(self, handler: SkillHandler, origin: SendOrigin) -> None:
-        with contextlib.suppress(ControlNotAllowedError, ForbiddenMavlinkError):
+        try:
             await handler.cancel(self._io(origin))
+        except (ControlNotAllowedError, ForbiddenMavlinkError) as exc:
+            log.warning("executor: cancel into LOITER refused: %s", _refusal_reason(exc))
 
     # --- inbound: the people in charge -----------------------------------------------------
 
@@ -1019,7 +1035,12 @@ class Executor:
         if not keep_latch:
             self.over.released()
         self.over.manual = False
-        self.auth.change = None
+        # Resume takes effect at once: the notice window would otherwise refuse the LOITER
+        # below for up to OVERRIDE_NOTICE_WINDOW_S and leave the drone in BRAKE. A new
+        # notice opens a new window. The STOP / FLY HOME fallback of the notice answered
+        # here never sends again (it would put the drone back in BRAKE).
+        self.auth.released()
+        self.fallback.stop()
         if target in (S.HOLD, S.RTL) and fc_mode is not None:
             self.auth.confirmed(CopterMode(fc_mode))
         self._enter(target, hold_reason="operator_released", cause="release")

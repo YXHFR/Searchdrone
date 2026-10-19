@@ -359,6 +359,27 @@ All notable changes to this project are listed here. The format follows
   a hint, and the decision log stores `retry_of`, `attempt`, `proposal_errors` and
   `proposal_draft`. `HOME_OUTSIDE_AREA` and `SECTOR_OUTSIDE_AREA` now say "utanför
   flygområdet".
+- The perf run's mission now ends at home. Fortsätt right after STOPP takes effect at
+  once: the onboard executor ends the stop's notice window and its fallback chain, so
+  LOITER is sent instead of the drone staying in BRAKE (a new STOPP still blocks), and a
+  refused mode write is logged with its reason. The brain keeps the operator's latest
+  requests in the mission memory and shows them on every turn as `UPPDRAG` (quoted as
+  data; a "ja kör" or a "fortsätt" replaces nothing; cleared after landing), shows the
+  sectors' size and position and the charter notes on the charter line, and the system
+  prompt says to call `return_home` when the request is done. A finish backstop
+  (`behaviour.finish_idle_s`, default 180 s, 60-1800 s): airborne with nothing running or
+  waiting and no operator input, find or AI order for that long, the brain says so in the
+  chat and orders `return_home` through the gate. A charter is proposed only in a turn an
+  operator line started (or the retry of a refused proposal), an approved charter wakes
+  the AI once the drone has installed it, and the situation text says "godkänd,
+  installeras" (or that the install failed), names a pending change once and drops
+  "Fritt runt drönaren" in the air. The goto schema requires its target (a map pin, or
+  `KOORDINATER` with lat and lon), the same refused order twice ends the turn, a plan
+  note sent with an order is kept, each model call is bounded as a whole (a trickling
+  cloud starts the cloud pause), and the decision log keeps the prompt, the offered tools
+  and the calls when a turn hits its deadline. `just perf` still reports the browser
+  measurements (P2, P7), the chat answer times (P8) and the model's answer time when the
+  flight breaks off, and its notes say what happened.
 - The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
   (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
   vehicle now starts with its legs on the ground in every world; in a site world they were

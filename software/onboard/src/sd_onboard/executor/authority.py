@@ -4,7 +4,8 @@
 message that steers is only sent when every one of these holds:
 
 1. the executor is not HELD or FAILSAFE and control is not suspended;
-2. no OperatorOverrideNotice arrived in the last ``OVERRIDE_NOTICE_WINDOW_S``;
+2. no OperatorOverrideNotice arrived in the last ``OVERRIDE_NOTICE_WINDOW_S`` (an
+   accepted Resume ends that window at once, ``released``);
 3. with an expected mode: the flight controller's mode in a HEARTBEAT at most 1.5 s old
    is the expected one (or the one we are changing to);
 4. no other mode change of ours waits for its confirmation (``set_mode`` waits).
@@ -52,6 +53,12 @@ class Authority:
 
     def notice_recent(self, now_ms: int) -> bool:
         return self.notice_mono_ms is not None and now_ms - self.notice_mono_ms <= _WINDOW_MS
+
+    def released(self) -> None:
+        """The pilot's accepted Resume ends the notice window and any classification at
+        once: the executor may steer again right away. A new notice opens a new window."""
+        self.notice_mono_ms = None
+        self.change = None
 
     def mode_problem(self, t: FcTelemetry, now_ms: int) -> str | None:
         """Why the flight controller's mode does not allow steering, or None."""
