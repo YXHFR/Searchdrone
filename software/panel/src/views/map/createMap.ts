@@ -5,8 +5,16 @@ import * as maplibregl from "maplibre-gl";
 // bundles the worker as its own same-origin file (CSP worker-src 'self').
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { Protocol } from "pmtiles";
-import { addOverlay } from "./layers";
-import { attributionHtml, buildStyle, type MapFlavor } from "./mapStyle";
+import { addOverlay, setSweptLook } from "./layers";
+import {
+  attributionHtml,
+  type Basemap,
+  buildStyle,
+  hiddenUnderPhoto,
+  IMAGERY_ID,
+  type MapFlavor,
+  PHOTO_WATER_OPACITY,
+} from "./mapStyle";
 import { addPathLayers } from "./pathLayers";
 
 export { setData, setVisible } from "./layers";
@@ -32,6 +40,7 @@ export function createMap(
   container: HTMLElement,
   cfg: MapConfig | null,
   flavor: MapFlavor,
+  basemap: Basemap,
   compact: boolean,
   start: { lon: number; lat: number } | null,
   onReady: (map: maplibregl.Map) => void,
@@ -39,7 +48,7 @@ export function createMap(
   setUpMapLibre();
   // Without a map pack: a plain background; every overlay layer still works.
   const style: maplibregl.StyleSpecification = cfg
-    ? buildStyle(cfg, flavor, window.location.origin)
+    ? buildStyle(cfg, flavor, window.location.origin, basemap)
     : {
         version: 8,
         sources: {},
@@ -70,9 +79,22 @@ export function createMap(
     "top-right",
   );
   map.on("load", () => {
-    addOverlay(map, cfg !== null);
+    addOverlay(map, cfg !== null, flavor);
     addPathLayers(map, cfg !== null);
     onReady(map);
   });
   return map;
+}
+
+/** Photo or drawn map under the roads, paths and names; no-op without a photo pack. */
+export function setBasemap(map: maplibregl.Map, basemap: Basemap, flavor: MapFlavor): void {
+  if (!map.getLayer(IMAGERY_ID)) return;
+  const photo = basemap === "photo";
+  setSweptLook(map, flavor, photo);
+  map.setLayoutProperty(IMAGERY_ID, "visibility", photo ? "visible" : "none");
+  for (const layer of map.getStyle().layers)
+    if (hiddenUnderPhoto(layer))
+      map.setLayoutProperty(layer.id, "visibility", photo ? "none" : "visible");
+  if (map.getLayer("water"))
+    map.setPaintProperty("water", "fill-opacity", photo ? PHOTO_WATER_OPACITY : 1);
 }

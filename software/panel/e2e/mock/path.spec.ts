@@ -14,7 +14,7 @@ import {
   vehicleLive,
 } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, isMobile } from "../helpers/safety";
+import { expectSafetyVisible, isMobile, showView } from "../helpers/safety";
 
 const ANN = "/api/v1/missions/M1/annotations";
 const MAP: MapConfig = {
@@ -140,13 +140,14 @@ test("draw a path, ask in the chat, approve: planned dashed, flown solid, progre
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
   const phone = isMobile(page);
-  if (phone) await page.getByTestId("tab-map").click();
+  if (phone) await showView(page, "map");
   await ground.liveConnected();
   await ground.resynced();
   ground.pushLive("telemetry", "telemetry", telemetry({ ...lonlatObj(0, 0), alt_rel_home_m: 30 }));
   await mapReady(page);
 
   // 1. Draw the path: five clicks along the trail, then Klar.
+  await page.getByTestId("draw-menu").click();
   await page.getByTestId("draw-path").click();
   for (const [e, n] of TRAIL) await mapClick(page, e, n);
   await expect(page.getByTestId("draw-bar")).toContainText("5 punkter");
@@ -167,8 +168,7 @@ test("draw a path, ask in the chat, approve: planned dashed, flown solid, progre
   }
 
   // 2. Ask the AI in the chat. The fake AI answers with a follow_path card.
-  if (phone && !(await page.getByTestId("view-chat").isVisible()))
-    await page.getByTestId("tab-chat").click();
+  if (phone) await showView(page, "chat");
   const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
   await box.fill("Flyg vägen pa-1.");
   await box.press("Enter");
@@ -207,7 +207,7 @@ test("draw a path, ask in the chat, approve: planned dashed, flown solid, progre
     "telemetry",
     telemetry({ ...lonlatObj(45, 77), alt_rel_home_m: 30 }),
   );
-  if (phone) await page.getByTestId("tab-map").click();
+  if (phone) await showView(page, "map");
   await expect(page.getByTestId("path-progress")).toContainText(/Väg pa-1: \d+ % flugen/);
   const pct = Number(
     /(\d+) %/.exec((await page.getByTestId("path-progress").textContent()) ?? "")?.[1],
@@ -252,9 +252,10 @@ test("a path outside the search area is refused in the panel, in Swedish", async
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
+  if (isMobile(page)) await showView(page, "map");
   await ground.resynced();
   await mapReady(page);
+  await page.getByTestId("draw-menu").click();
   await page.getByTestId("draw-path").click();
   await mapClick(page, 0, 20);
   await mapClick(page, 200, 60); // 80 m past the charter's east edge
