@@ -72,6 +72,7 @@ class TelemetryService:
         self.dropped = 0
         self._recording: dict[str, str] = {}  # vehicle_id -> mission_id
         self._vehicles: list[str] = [g.config.default_vehicle_id]
+        self._wind_reasons: dict[str, tuple[str, ...]] = {}
 
     async def refresh_missions(self) -> None:
         repo = self.g.repo
@@ -95,6 +96,7 @@ class TelemetryService:
                 log.error("telemetry.sample_failed", vehicle_id=vid, error=type(exc).__name__)
                 continue
             if t is not None:
+                self._wind_event(vid, t)
                 self.g.bus.publish(
                     "telemetry",
                     "telemetry",
@@ -103,6 +105,26 @@ class TelemetryService:
                     vehicle_id=vid,
                     mission_id=self._recording.get(vid),
                 )
+
+    def _wind_event(self, vid: str, t: Telemetry) -> None:
+        """``vehicle.wind_warning`` when the wind warning starts or its reasons change, and
+        ``vehicle.wind_ok`` when it ends. A warning only: nothing acts on it."""
+        reasons = tuple(t.wind.reasons) if t.wind is not None else ()
+        before = self._wind_reasons.get(vid, ())
+        if reasons == before:
+            return
+        self._wind_reasons[vid] = reasons
+        kind, severity = (
+            ("vehicle.wind_warning", "warning") if reasons else ("vehicle.wind_ok", "info")
+        )
+        payload = {} if t.wind is None else t.wind.model_dump(mode="json")
+        mission_id = self._recording.get(vid)
+        self.g.add_event(
+            kind, severity=severity, mission_id=mission_id, vehicle_id=vid, payload=payload
+        )
+        self.g.bus.publish(
+            "vehicle", kind, payload, ts=self.g.now(), vehicle_id=vid, mission_id=mission_id
+        )
 
     def publish_state(self) -> None:
         """``vehicle.state`` for each vehicle. A failure skips one sample and never stops

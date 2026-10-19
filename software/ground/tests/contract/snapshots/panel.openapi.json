@@ -3355,6 +3355,16 @@
           "time_boot_ms": {
             "title": "Time Boot Ms",
             "type": "integer"
+          },
+          "wind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WindCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3557,6 +3567,139 @@
           "hls_url"
         ],
         "title": "VideoConfig",
+        "type": "object"
+      },
+      "WindCheck": {
+        "additionalProperties": false,
+        "description": "The ground station's \"too windy\" warning. A warning only: nothing on board or on\nthe ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet\ncalibrated against flight logs, so ``calibrated`` is always false for now.\n\n* ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of\n  the flight controller's lean limit (ATC_ANGLE_MAX).\n* ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %\n  margin, would leave less than the flight controller's low-battery reserve.\n* ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent\n  when EK3_DRAG_* are set) is over the configured wind limit.",
+        "properties": {
+          "calibrated": {
+            "const": false,
+            "default": false,
+            "title": "Calibrated",
+            "type": "boolean"
+          },
+          "home_mah": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Mah"
+          },
+          "left_mah": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left Mah"
+          },
+          "reasons": {
+            "items": {
+              "enum": [
+                "TILT_MARGIN",
+                "ENERGY_HOME",
+                "WIND_LIMIT"
+              ],
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "reserve_mah": {
+            "title": "Reserve Mah",
+            "type": "number"
+          },
+          "tilt_avg_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tilt Avg Deg"
+          },
+          "tilt_warn_deg": {
+            "title": "Tilt Warn Deg",
+            "type": "number"
+          },
+          "warning": {
+            "title": "Warning",
+            "type": "boolean"
+          },
+          "wind_from_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind From Deg"
+          },
+          "wind_gust_limit_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Gust Limit Ms"
+          },
+          "wind_gust_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Gust Ms"
+          },
+          "wind_limit_ms": {
+            "title": "Wind Limit Ms",
+            "type": "number"
+          },
+          "wind_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Ms"
+          }
+        },
+        "required": [
+          "warning",
+          "reasons",
+          "tilt_avg_deg",
+          "tilt_warn_deg",
+          "wind_ms",
+          "wind_gust_ms",
+          "wind_from_deg",
+          "wind_limit_ms",
+          "wind_gust_limit_ms",
+          "home_mah",
+          "left_mah",
+          "reserve_mah"
+        ],
+        "title": "WindCheck",
         "type": "object"
       }
     }
