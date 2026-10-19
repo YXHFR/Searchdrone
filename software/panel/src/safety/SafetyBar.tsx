@@ -55,7 +55,10 @@ export function SafetyBar() {
       style={{ bottom: `${bottom}px` }}
     >
       {loggedOut ? <p className="safety-note safety-note-warn">{t("safety.notLoggedIn")}</p> : null}
-      {noContact ? <p className="safety-note">{t("safety.noVehicleContact")}</p> : null}
+      {noContact ? (
+        <p className="safety-note safety-note-warn">{t("safety.noVehicleContact")}</p>
+      ) : null}
+      <p className="safety-caption">{t("safety.caption")}</p>
       <div className="safety-buttons">
         {/* Everyone may press STOP, observers included. */}
         <SafetyButton action="stop" vehicleId={vehicleId} />

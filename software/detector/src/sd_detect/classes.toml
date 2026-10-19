@@ -1,0 +1,58 @@
+# The class register: everything a detector source may report, one [[class]] row each.
+#
+# A new class needs only a row here and a source that reports it (sd_detect.sources).
+#
+#   id       stable machine name, lower case (also the detection's label)
+#   name_sv  Swedish name shown in the panel and to the AI commander
+#   kind     "target": something a search looks for; "context": what the drone flies over
+#   source   the detector source that reports it: "color" (colour threshold on real
+#            pixels), "oracle" (the simulator's own labels, never a real model) or "model"
+#            (a trained detector; not built yet)
+#   size_m   [min, max] longest side on the ground in metres; a detection outside it is
+#            dropped once its size in metres is known (a red car is no red block)
+#   params   settings for the source (colour ranges, the simulator's label number, ...)
+#
+# No class may describe a face, a licence plate or any other identity: Searchdrone never
+# recognises who someone is.
+
+[[class]]
+id = "person"
+name_sv = "person"
+kind = "target"
+source = "model"
+size_m = [0.3, 2.2]
+params = { gz_label = 2 }
+
+[[class]]
+id = "red_block"
+name_sv = "rött block"
+kind = "target"
+source = "color"
+size_m = [0.25, 1.2]
+# Hue in degrees (0-360, red wraps around 0), saturation and value 0-1, smallest blob,
+# lowest score (a block from above is a full square, 0.6 or more; a sliver of a red car's
+# paint scores about 0.4).
+params = { gz_label = 1, hue_deg = [[0, 12], [345, 360]], min_saturation = 0.45, min_value = 0.25, min_area_px = 6, min_score = 0.5 }
+
+[[class]]
+id = "car"
+name_sv = "bil"
+kind = "context"
+source = "oracle"
+size_m = [2.5, 7.0]
+params = { gz_label = 10 }
+
+[[class]]
+id = "building"
+name_sv = "byggnad"
+kind = "context"
+source = "oracle"
+size_m = [3.0, 200.0]
+params = { gz_label = 11 }
+
+[[class]]
+id = "road"
+name_sv = "väg"
+kind = "context"
+source = "oracle"
+params = { gz_label = 12 }

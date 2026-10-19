@@ -1,0 +1,407 @@
+/* Element defaults and the shared controls: buttons, inputs, cards, menus, dialogs, toasts. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font: var(--fs-body) / 1.45 var(--font);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+#root {
+  min-height: 100%;
+}
+:focus-visible {
+  outline: 2px solid var(--c-focus);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+p {
+  margin: 0;
+}
+dl,
+ol,
+ul {
+  margin: 0;
+}
+dd {
+  margin: 0;
+}
+.num,
+time {
+  font-variant-numeric: tabular-nums;
+}
+.lbl {
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--c-faint);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: calc(var(--z-dialog) + 1); /* below the safety bar */
+  background: var(--c-acc-fill);
+  color: var(--c-acc-text);
+  padding: 8px 12px;
+  border-radius: var(--r-2);
+}
+.skip-link:focus {
+  top: 8px;
+}
+.muted {
+  color: var(--c-mute);
+}
+.error {
+  color: var(--c-bad);
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-1);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-mute);
+}
+.tag-warn {
+  border-color: var(--c-warn);
+  color: var(--c-warn);
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 1px;
+  background: var(--c-faint);
+}
+
+/* --- buttons and inputs ------------------------------------------------------------ */
+.btn,
+.icon-btn,
+.menu-item {
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-panel-2);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  min-height: var(--hit);
+  cursor: pointer;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-weight: 500;
+}
+.btn:hover:not(:disabled),
+.icon-btn:hover:not(:disabled),
+.menu-item:hover {
+  background: var(--c-panel-3);
+}
+.btn:disabled,
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--c-acc-fill);
+  border-color: var(--c-acc-fill);
+  color: var(--c-acc-text);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--c-acc-fill);
+  filter: brightness(1.08);
+}
+.btn-outline,
+.btn-quiet {
+  background: transparent;
+}
+.btn-small {
+  padding: 2px 10px;
+  font-size: var(--fs-small);
+}
+.btn-block {
+  width: 100%;
+}
+.icon-btn {
+  width: var(--hit);
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+}
+.input {
+  max-width: 100%;
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-input);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  padding: 6px 10px;
+  min-height: var(--hit);
+}
+.input::placeholder {
+  color: var(--c-faint);
+}
+textarea.input {
+  resize: none;
+}
+
+/* A decision that must be held: the fill grows while pressed, over --hold-ms. */
+.btn-hold {
+  position: relative;
+  overflow: hidden;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 12px;
+  background: var(--c-panel-2);
+  border-color: var(--c-acc);
+  color: var(--c-text);
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+.hold-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  background: var(--c-acc-soft);
+  border-bottom: 2px solid var(--c-acc);
+}
+.btn-hold[data-holding="true"] .hold-fill {
+  transform: scaleX(1);
+  transition: transform var(--hold-ms) linear;
+}
+.hold-label,
+.hold-hint {
+  position: relative;
+}
+.hold-label {
+  font-weight: 600;
+}
+.hold-hint {
+  font-size: var(--fs-label);
+  color: var(--c-mute);
+  font-weight: 400;
+}
+
+/* Two choices, side by side, the selected one raised. */
+.seg {
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  height: 28px;
+}
+.seg > button {
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+  background: transparent;
+  border: 0;
+  padding: 0 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.seg > button + button {
+  border-left: 1px solid var(--c-line-strong);
+}
+.seg > button[aria-selected="true"],
+.seg > button[aria-pressed="true"] {
+  background: var(--c-panel-3);
+  color: var(--c-text);
+  font-weight: 600;
+}
+.seg-icons > button {
+  padding: 0 8px;
+}
+
+/* --- cards, key-value rows ---------------------------------------------------------- */
+.card {
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-3);
+  padding: 12px 14px;
+}
+.card h3 {
+  margin-bottom: 8px;
+  font-size: var(--fs-label);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--c-faint);
+}
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+dl.kv {
+  display: grid;
+  gap: 2px;
+}
+dl.kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+dt {
+  color: var(--c-mute);
+}
+dd {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- menus, toasts, dialogs --------------------------------------------------------- */
+.menu {
+  position: relative;
+}
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: var(--z-menu);
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-3);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+}
+.menu-item {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+}
+.menu-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--c-line);
+  margin-bottom: 4px;
+}
+.toasts {
+  position: fixed;
+  right: 12px;
+  bottom: calc(var(--safety-h) + 12px);
+  z-index: var(--z-menu);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(400px, calc(100vw - 24px));
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--r-3);
+  background: var(--c-panel);
+  border: 1px solid var(--c-line-strong);
+  border-left: 3px solid var(--c-acc);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+}
+.toast span {
+  flex: 1;
+}
+.dialog-backdrop {
+  position: fixed;
+  inset: 0 0 var(--safety-h);
+  z-index: var(--z-dialog);
+  background: var(--c-scrim);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.dialog {
+  width: min(460px, 100%);
+  max-height: calc(100dvh - var(--safety-h) - var(--topbar-h));
+  overflow: auto;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-3);
+  padding: 16px;
+}
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* --- pages outside the shell --------------------------------------------------------- */
+.page-center {
+  min-height: calc(100dvh - var(--safety-h));
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.login-card {
+  width: min(400px, 100%);
+}
+.pin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pin-input {
+  width: 100%;
+  font-size: 22px;
+  letter-spacing: 0.3em;
+}
+.view-body {
+  padding: 12px;
+}
+.view-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--c-mute);
+}

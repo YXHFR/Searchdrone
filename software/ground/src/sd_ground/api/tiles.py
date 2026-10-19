@@ -1,15 +1,19 @@
 """The offline map: ``GET /tiles/{file}`` (outside ``/api/v1``) and ``PanelConfig.map``.
 
 ``just maps-fetch`` writes the map pack ``<data_dir>/tiles/<pack>.pmtiles`` and the glyphs
-and sprites under ``<data_dir>/tiles/assets/``. Nothing here reaches the internet: the
+and sprites under ``<data_dir>/tiles/assets/``. An aerial photo pack
+``<data_dir>/tiles/<imagery>.pmtiles`` (raster tiles, attribution in its metadata) is optional;
+the panel draws it under the map's roads, paths and names. Nothing here reaches the internet: the
 panel reads the pack with HTTP Range requests (PMTiles) and the server only hands out
 files whose names match a fixed pattern and that lie inside the tiles directory.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import struct
+import zlib
 from pathlib import Path
 from typing import Annotated
 
@@ -20,10 +24,19 @@ from sd_ground.api.deps import ApiStatusError, ground, require
 from sd_ground.auth import Principal
 from sd_ground.context import Ground
 from sd_ground.logging import get_logger
-from sd_schemas.api import MapConfig
+from sd_schemas.api import MapConfig, MapImagery
 from sd_schemas.base import LatLon
 
-__all__ = ["PACK_NAME", "map_config", "read_center", "read_maxzoom", "router", "tiles_dir"]
+__all__ = [
+    "PACK_NAME",
+    "imagery_config",
+    "map_config",
+    "read_attribution",
+    "read_center",
+    "read_maxzoom",
+    "router",
+    "tiles_dir",
+]
 
 log = get_logger("sd_ground.tiles")
 router = APIRouter()
@@ -41,10 +54,15 @@ _TYPES = {
     ".json": "application/json",
     ".png": "image/png",
 }
-# PMTiles v3 header: max zoom at byte 101, bounds at 102-117, centre at 119-126 (int32
-# little-endian, 1e-7°).
+# PMTiles v3 header: metadata offset and length at bytes 24-39 (uint64), directory
+# compression at 97, tile type at 99, max zoom at 101, bounds at 102-117, centre at 119-126
+# (int32 little-endian, 1e-7°).
 _HEADER_LEN = 127
 _MAGIC = b"PMTiles\x03"
+_RASTER_TYPES = {2, 3, 4, 5}  # png, jpeg, webp, avif
+_COMPRESSION_NONE, _COMPRESSION_GZIP = 1, 2
+_MAX_METADATA = 64 * 1024
+_MAX_ATTRIBUTION = 300
 
 
 def tiles_dir(g: Ground) -> Path:
@@ -81,6 +99,34 @@ def read_center(path: Path) -> LatLon | None:
         return None
 
 
+def read_attribution(path: Path) -> str | None:
+    """The ``attribution`` text in a PMTiles v3 pack's metadata, if it has one."""
+    head = _header(path)
+    if head is None:
+        return None
+    offset, length = struct.unpack_from("<2Q", head, 24)
+    if not 0 < length <= _MAX_METADATA:
+        return None
+    try:
+        with path.open("rb") as f:
+            f.seek(offset)
+            raw = f.read(length)
+        if head[97] == _COMPRESSION_GZIP:
+            inflate = zlib.decompressobj(wbits=31)
+            raw = inflate.decompress(raw, _MAX_METADATA)
+            if inflate.unconsumed_tail or not inflate.eof:
+                return None
+        elif head[97] != _COMPRESSION_NONE:
+            return None
+        meta = json.loads(raw)
+    except (OSError, EOFError, ValueError, RecursionError, zlib.error):
+        return None
+    text = meta.get("attribution") if isinstance(meta, dict) else None
+    if not isinstance(text, str) or not 0 < len(text.strip()) <= _MAX_ATTRIBUTION:
+        return None
+    return text.strip()
+
+
 def _contained(g: Ground, name: str) -> Path | None:
     """``<tiles>/<name>`` if it is a regular file inside the tiles directory (no symlink out)."""
     root = tiles_dir(g).resolve()
@@ -99,7 +145,27 @@ def map_config(g: Ground) -> MapConfig | None:
         log.warning("tiles.bad_pack", pack=name)
         return None
     return MapConfig(
-        pack_url=f"/tiles/{name}", center=center, zoom=g.config.map.zoom, maxzoom=maxzoom
+        pack_url=f"/tiles/{name}",
+        center=center,
+        zoom=g.config.map.zoom,
+        maxzoom=maxzoom,
+        imagery=imagery_config(g),
+    )
+
+
+def imagery_config(g: Ground) -> MapImagery | None:
+    """The aerial photo pack, set only when it is a raster pack that names its attribution."""
+    name = f"{g.config.map.imagery}.pmtiles"
+    pack = _contained(g, name)
+    if pack is None:
+        return None
+    head = _header(pack)
+    attribution = read_attribution(pack)
+    if head is None or head[99] not in _RASTER_TYPES or attribution is None:
+        log.warning("tiles.bad_imagery", pack=name)
+        return None
+    return MapImagery(
+        pack_url=f"/tiles/{name}", maxzoom=min(head[101], 22), attribution=attribution
     )
 
 

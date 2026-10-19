@@ -1,8 +1,8 @@
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toPanelApproval } from "../api/approvals";
-import { useLayoutStore } from "../state/layoutStore";
 import { useMissionStore } from "../state/missionStore";
+import { useShellStore } from "../state/shellStore";
 import { useUiStore } from "../state/uiStore";
 
 /** Short notices above the safety bar. A new approval card gets "Visa", which brings the chat up. */
@@ -42,7 +42,7 @@ export function Toasts() {
                 className="btn btn-small btn-primary"
                 data-testid="toast-show"
                 onClick={() => {
-                  useLayoutStore.getState().showView("chat");
+                  useShellStore.getState().showTab("chat");
                   useUiStore.getState().showApproval(x.approvalId ?? null);
                   useUiStore.getState().dismissToast(x.id);
                 }}
