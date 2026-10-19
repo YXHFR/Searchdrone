@@ -344,6 +344,18 @@ export interface ApprovalRef {
   command_hash: string;
 }
 /**
+ * MAVLink ATTITUDE in degrees. Roll is positive right wing down, pitch positive nose
+ * up, yaw 0-360 clockwise from north.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Attitude".
+ */
+export interface Attitude {
+  pitch_deg: number;
+  roll_deg: number;
+  yaw_deg: number;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "AutonomyRequest".
  */
@@ -1206,6 +1218,31 @@ export interface DecisionLogStored {
   turn_id: string;
 }
 /**
+ * A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.
+ * ``source = "oracle"`` is the simulator's own label, not a detector.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "DetectionRow".
+ */
+export interface DetectionRow {
+  bbox: number[];
+  captured_at: string;
+  find_id: string;
+  has_crop: boolean;
+  id: string;
+  kind: "target" | "context";
+  label: string;
+  lat: number;
+  lon: number;
+  score: number;
+  sigma95_m: number;
+  size_m: number;
+  source: "model" | "color" | "oracle";
+  still_id: string;
+  synthetic: boolean;
+  vehicle_id: string;
+}
+/**
  * Which detector looked at a still, and how it went.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1278,6 +1315,28 @@ export interface Features {
   manual_control?: boolean;
   order_buttons?: boolean;
   voice?: boolean;
+}
+/**
+ * One found object: detections of one class at the same place, joined
+ * (``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:
+ * only a person confirms.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "Find".
+ */
+export interface Find {
+  count: number;
+  find_id: string;
+  kind: "target" | "context";
+  label: string;
+  lat: number;
+  lon: number;
+  name_sv: string;
+  score: number;
+  sigma95_m: number;
+  source: "model" | "color" | "oracle";
+  synthetic: boolean;
+  thumb_detection_id: string | null;
 }
 /**
  * Stage 2. Unresolved here: the operator's position is checked onboard.
@@ -1412,11 +1471,13 @@ export interface GeoDetectionMsg {
   bbox: BBox;
   crop_inline: boolean;
   detection_id: string;
+  label?: string | null;
   lat: number;
   lon: number;
   px_size: number;
   score: number;
   sigma95_m: number;
+  source?: ("model" | "color" | "oracle") | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1719,9 +1780,21 @@ export interface MapConfig {
   assets_url?: string;
   attribution?: string;
   center: LatLon;
+  imagery?: MapImagery | null;
   maxzoom?: number;
   pack_url: string;
   zoom: number;
+}
+/**
+ * An aerial photo pack (raster PMTiles) drawn under the map's roads, paths and names.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "MapImagery".
+ */
+export interface MapImagery {
+  attribution: string;
+  maxzoom: number;
+  pack_url: string;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2737,6 +2810,7 @@ export interface Telemetry {
   alt_amsl_m: number;
   alt_rel_home_m: number;
   armed: boolean;
+  attitude?: Attitude | null;
   battery_pct: number | null;
   battery_v: number | null;
   climb_ms: number;
@@ -2752,6 +2826,37 @@ export interface Telemetry {
   lon: number;
   t: string;
   time_boot_ms: number;
+  wind?: WindCheck | null;
+}
+/**
+ * The ground station's "too windy" warning. A warning only: nothing on board or on
+ * the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
+ * calibrated against flight logs, so ``calibrated`` is always false for now.
+ *
+ * * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
+ *   the flight controller's lean limit (ATC_ANGLE_MAX).
+ * * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
+ *   margin, would leave less than the flight controller's low-battery reserve.
+ * * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
+ *   when EK3_DRAG_* are set) is over the configured wind limit.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "WindCheck".
+ */
+export interface WindCheck {
+  calibrated?: false;
+  home_mah: number | null;
+  left_mah: number | null;
+  reasons: ("TILT_MARGIN" | "ENERGY_HOME" | "WIND_LIMIT")[];
+  reserve_mah: number;
+  tilt_avg_deg: number | null;
+  tilt_warn_deg: number;
+  warning: boolean;
+  wind_from_deg: number | null;
+  wind_gust_limit_ms: number | null;
+  wind_gust_ms: number | null;
+  wind_limit_ms: number;
+  wind_ms: number | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

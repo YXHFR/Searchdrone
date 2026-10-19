@@ -215,6 +215,26 @@ brain-eval:
 brain-eval-cloud:
     uv run --package sd-brain sd-brain eval --backend cloud --repeat 3
 
+# Simulator exam: random searches with an answer key, the cloud model decides (keys:
+# flights, seed, model). Hard cap 30 kr per day on real usage, then the script flies.
+brain-eval-sim *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --no-sync python tools/just_args.py brain-eval-sim "$@"
+    opts=()
+    for a in "$@"; do
+        case "$a" in
+            flights=*) opts+=(--flights "${a#flights=}") ;;
+            seed=*) opts+=(--seed "${a#seed=}") ;;
+            model=*) opts+=(--model "${a#model=}") ;;
+        esac
+    done
+    uv run --package sd-brain sd-brain eval --backend sim "${opts[@]}"
+
+# The exam grade trend per day and model (from data/brain-scores; a worse day is flagged)
+brain-scores:
+    uv run --package sd-brain sd-brain scores
+
 # --- panel ---------------------------------------------------------------------------
 
 # Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)
@@ -227,6 +247,12 @@ test-panel-e2e:
     pnpm --filter @searchdrone/panel check
     pnpm --filter @searchdrone/panel build:test
     pnpm --filter @searchdrone/panel e2e
+
+# Screenshots of every panel state, both themes, at 1440×900, 1920×1080 and 390×844
+# (software/panel/screens/, kept out of git)
+panel-screens:
+    pnpm --filter @searchdrone/panel build:test
+    pnpm --filter @searchdrone/panel screens
 
 # The stack runs in the SITL container and Playwright beside it on this machine.
 # Panel in a browser against SITL and the scripted commander (keys as ci-sitl)
@@ -261,7 +287,7 @@ panel-build:
 dev *args:
     uv run --no-sync python tools/just_args.py dev "$@"
 
-# Start the simulator stack with Gazebo (keys: physics, gui, video, brain, ...)
+# Start the simulator stack with Gazebo (keys: physics, gui, video, brain, vehicle, ...)
 sim *args:
     uv run --all-packages python -m sd_sim.launch up "$@"
 
@@ -285,7 +311,7 @@ sim-doctor *args:
 sim-setup:
     bash tools/setup/wsl-setup.sh sim
 
-# GUIDED, arm, take off to 20 m, land (keys: physics, gui, instance)
+# GUIDED, arm, take off to 20 m, land (keys: physics, gui, instance, world, vehicle)
 sim-smoke *args:
     uv run --package sd-sim python -m sd_sim.smoke "$@"
 
@@ -403,6 +429,29 @@ maps-fetch *args:
 world-fetch *args:
     uv run --no-sync python tools/terrain/fetch_site.py "$@"
 
+# The site's real trees from Skogsstyrelsen's tree height raster and Naturvårdsverket's
+# land cover map (keys: site; needs gdal-bin and internet) to build/trees/<site>/, never
+# committed
+trees-fetch *args:
+    uv run --no-sync python tools/terrain/fetch_trees.py "$@"
+
+# Tree pictures (one texture atlas) from Poly Haven's CC0 trees to build/tree_models/
+tree-pictures-fetch:
+    uv run --no-sync python tools/terrain/fetch_tree_models.py
+
+# Sim farm: rounds in Gazebo from the newest main until Ctrl+C, pictures with facit to
+# build/simfarm/ (and R2 in the EU with a key) (keys: commander, rounds, max_minutes, seed, idle_only, update)
+sim-farm *args:
+    uv run --package sd-sim python -m sd_sim.farm run "$@"
+
+# What the sim farm is doing: pictures, rounds per hour, latest errors
+sim-farm-status:
+    uv run --package sd-sim python -m sd_sim.farm status
+
+# Fetch the sim farm's person models (CC0 / CC BY 4.0, from Gazebo Fuel) into build/
+sim-farm-setup:
+    uv run --package sd-sim python -m sd_sim.farm setup
+
 # Pictures of a site world from the camera at 40 m and 100 m and from the side, with the
 # road's width and the map overlap measured in them (keys: world, instance)
 world-snapshot *args:
@@ -426,6 +475,10 @@ cad-detailed:
 # Test the CAD model: no overlaps, propeller margins, camera view, repeatable exports
 cad-test:
     uv run --locked --group cad pytest hardware/cad/fpv7/tests
+
+# Regenerate the simulator's sd_fpv7 (mass, inertia, meshes) from the CAD model (keys: --check)
+sim-model-fpv7 *args:
+    uv run --locked --all-packages --group cad python tools/sim_model_from_cad.py "$@"
 
 # Acceptance checks for a release (keys: phase, sha)
 accept *args:

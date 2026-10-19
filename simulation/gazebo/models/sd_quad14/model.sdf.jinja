@@ -206,6 +206,7 @@
           <diffuse>0.3 0.3 0.3 1</diffuse>
         </material>
       </visual>
+{% if video %}
       <sensor name="camera" type="camera">
         <pose degrees="true">0 0 0 0 90 0</pose>
         <camera>
@@ -230,6 +231,36 @@
           <use_cuda>false</use_cuda>
         </plugin>
       </sensor>
+{% endif %}
+{% if stills %}
+      <!-- The stills camera (on request of a search scenario) and a bounding-box camera
+           with the same picture: the simulator's labelled boxes for the oracle source and
+           the evaluation. Pictures go to Gazebo Transport topics on loopback, read by
+           sd_sim's gz_stills capture process. -->
+{% for sensor, kind in [("stills", "camera"), ("boxes", "boundingbox_camera")] %}
+      <sensor name="{{ sensor }}" type="{{ kind }}">
+        <pose degrees="true">0 0 0 0 90 0</pose>
+        <topic>{{ stills.topic_prefix }}/{{ sensor }}</topic>
+        <camera>
+          <horizontal_fov>{{ stills.hfov_rad }}</horizontal_fov>
+          <image>
+            <width>{{ stills.width }}</width>
+            <height>{{ stills.height }}</height>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>5000</far>
+          </clip>
+{% if kind == "boundingbox_camera" %}
+          <box_type>2d</box_type>
+{% endif %}
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>{{ stills.rate_hz }}</update_rate>
+        <visualize>0</visualize>
+      </sensor>
+{% endfor %}
+{% endif %}
     </link>
     <joint name="camera_joint" type="fixed">
       <parent>base_link</parent>

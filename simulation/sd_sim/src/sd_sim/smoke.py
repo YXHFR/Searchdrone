@@ -1,5 +1,5 @@
 """Smoke flight: ``python -m sd_sim.smoke [physics=gz|builtin] [gui=true|false] [instance=N]
-[world=<site world>]``.
+[world=<site world>] [vehicle=fpv7]``.
 
 Starts SITL (with Gazebo for ``physics=gz``) with a standard vehicle at CMAC, or with
 ``world=`` the Searchdrone vehicle in a world built from a public site (at the site's
@@ -8,6 +8,10 @@ GUIDED, arm, take off to 20 m and land through the test rig's own MAVLink channe
 Writes ``runs/<run>/result.json`` and exits 0 only if every check passed within 3
 minutes. While flying it checks that the simulator listens on loopback only, and with
 ``gui=false`` that the camera stream delivers frames.
+
+``vehicle=fpv7`` flies the 7-inch ``sd_fpv7`` instead: at CMAC in ``sd_lake_forest``, or
+in the site's world with ``world=``. The battery current while hovering is recorded as
+``hover_current_a`` where the physics reports one (builtin physics).
 """
 
 from __future__ import annotations
@@ -21,14 +25,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from sd_sim import _args, config, gazebo, netcheck, site
+from sd_sim import _args, config, gazebo, netcheck, site, world
 from sd_sim.errors import InfraError, VehicleError
 from sd_sim.harness import Harness
 from sd_sim.launch import Stack
 from sd_sim.sitl import CMAC_HOME
 from sd_sim.util import new_run_dir, say
 
-ALLOWED_KEYS = ("physics", "gui", "instance", "dry", "world")
+ALLOWED_KEYS = ("physics", "gui", "instance", "dry", "world", "vehicle")
 TAKEOFF_ALT_M = 20.0
 ALT_TOLERANCE_M = 1.5
 MAX_DURATION_S = 180.0
@@ -39,6 +43,7 @@ MEASURE_LIMIT_S = 60.0
 # Gazebo must keep at least half of real time while hovering with the camera on.
 MIN_REAL_TIME_FACTOR = 0.5
 FRAME_SHARE = 0.9  # at least 90 % of the camera's nominal frames must arrive
+CURRENT_WINDOW_S = 3.0
 
 
 def min_frames(vehicle: str, sim_seconds: float = FRAME_WINDOW_S) -> int:
@@ -48,17 +53,22 @@ def min_frames(vehicle: str, sim_seconds: float = FRAME_WINDOW_S) -> int:
     return int(FRAME_SHARE * gazebo.CAMERA_FPS[vehicle] * sim_seconds)
 
 
-def harden(cfg: config.SimConfig) -> config.SimConfig:
+def harden(cfg: config.SimConfig, vehicle: str = "") -> config.SimConfig:
     """Settings the smoke flight always uses, whatever local config or environment say:
     no QGroundControl path (it bypasses the gate), a public home (CMAC with the standard
     vehicle, or a public site's home with sd_quad14 in that site's world), and the camera
-    only in Gazebo server mode."""
+    only in Gazebo server mode. ``vehicle`` (the smoke flight's own key, never the local
+    config's) picks sd_fpv7 instead: in the site's world, else in sd_lake_forest at CMAC."""
     cfg.qgc = False
     cfg.objects = ""
+    fpv7 = config.VEHICLE_ALIASES.get(vehicle, vehicle) == "sd_fpv7"
     name = site.world_sites().get(cfg.world)
     if name is not None and site.folder_for(name)[1]:  # public sites only
         cfg.home, cfg.personal_home = site.load(name).home_arg, False
-        cfg.vehicle = "sd_quad14"
+        cfg.vehicle = "sd_fpv7" if fpv7 else "sd_quad14"
+    elif fpv7:
+        cfg.home, cfg.personal_home = CMAC_HOME, False
+        cfg.world, cfg.vehicle = config.TEST_WORLD, "sd_fpv7"
     else:
         cfg.home, cfg.personal_home = CMAC_HOME, False
         cfg.vehicle = "stock"
@@ -97,6 +107,18 @@ def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
         if t_start is not None and t_end is not None and t_end[0] > t_start[0]:
             result["sim_seconds"] = round(t_end[0] - t_start[0], 2)
     return frames() - start
+
+
+def hover_current(harness: Harness, seconds: float = CURRENT_WINDOW_S) -> float | None:
+    """Mean battery current (A) over ``seconds`` of hovering, or None where the physics
+    reports none (Gazebo's JSON link sends no battery data, so SITL shows 0 A)."""
+    samples: list[float] = []
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        harness.pump(0.25)
+        if harness.state.battery_current_a > 0:
+            samples.append(harness.state.battery_current_a)
+    return round(sum(samples) / len(samples), 2) if samples else None
 
 
 Measure = Callable[[dict[str, Any], dict[str, bool]], None]
@@ -145,8 +167,8 @@ def fly(
     harness.wait(lambda s: not s.armed, 90, "landning och desarmering")
 
 
-def run(cfg: config.SimConfig) -> tuple[int, Path]:
-    cfg = harden(cfg)
+def run(cfg: config.SimConfig, vehicle: str = "") -> tuple[int, Path]:
+    cfg = harden(cfg, vehicle)
     t0 = time.monotonic()
     run_dir = new_run_dir(cfg.instance, "smoke")
     stack = Stack(cfg, run_dir, observer=False)
@@ -156,7 +178,8 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
         "physics": cfg.physics,
         "gui": cfg.gui,
         "instance": cfg.instance,
-        "world": cfg.world if cfg.vehicle == "sd_quad14" else gazebo.STOCK_WORLD,
+        "vehicle": cfg.vehicle,
+        "world": cfg.world if cfg.vehicle in world.MODELS else gazebo.STOCK_WORLD,
         "home": cfg.home,
         "target_alt_m": TAKEOFF_ALT_M,
     }
@@ -188,6 +211,9 @@ def run(cfg: config.SimConfig) -> tuple[int, Path]:
             # at 20 m; the harness keeps sending its heartbeat meanwhile (GCS failsafe).
             if harness is None:
                 return
+            current = hover_current(harness)
+            if current is not None:
+                result["hover_current_a"] = current
             hover_until(harness, measure, MEASURE_LIMIT_S, result, checks)
 
         fly(harness, result, t0, in_hover)
@@ -227,11 +253,14 @@ def main(argv: list[str] | None = None) -> int:
         say(json.dumps({"args": argv}))
         return 0
     values.setdefault("physics", "gz")
+    vehicle = values.pop("vehicle", "")
+    if vehicle and config.VEHICLE_ALIASES.get(vehicle, vehicle) not in config.VEHICLES:
+        _args.fail(f"sd_sim.smoke: vehicle= ska vara en av {', '.join(config.VEHICLES)}")
     try:
         cfg = config.load({**values, "video": "off", "qgc": "false"})
     except config.ConfigError as exc:
         _args.fail(f"sd_sim.smoke: {exc}")
-    code, run_dir = run(cfg)
+    code, run_dir = run(cfg, vehicle)
     summary = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     say(json.dumps(summary, indent=2, ensure_ascii=False))
     say("GODKÄNT" if code == 0 else "UNDERKÄNT")

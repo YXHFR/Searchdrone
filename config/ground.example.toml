@@ -54,6 +54,7 @@ mediamtx_hls = "http://127.0.0.1:8888"
 
 [map]
 pack = "demo"                           # <data_dir>/tiles/demo.pmtiles from `just maps-fetch`
+imagery = "imagery"                     # aerial photo: <data_dir>/tiles/imagery.pmtiles (raster)
 zoom = 15                               # start zoom in the panel
 
 [health]
@@ -61,6 +62,9 @@ internet_probe = false
 
 [sim]
 dataflash_dir = ""                      # set by the simulator (where SITL writes *.BIN)
+
+[wind]
+stage = "first_flights"                 # wind warning limit: first_flights 4 m/s; until_calibrated 8/12 m/s
 
 [remote]
 enabled = false                         # reserved; true is refused in v0.1.0

@@ -4,14 +4,20 @@
 ``model.config``, ``meshes/``; that folder is on Gazebo's resource path) and
 ``build/sim/sites/<name>/`` with ``ground.npy`` (the terrain heights the world uses to
 put objects on the ground) and ``manifest.json``. Everything is generated here from the site's
-height grid and map layers, with no downloads and no third-party textures or meshes:
+height grid and map layers and, when they have been fetched into ``build/``, its trees and
+the tree pictures; nothing is downloaded here:
 
 - Terrain: a mesh every ``MESH_STEP_M`` in ``TILES`` x ``TILES`` tiles, each with its own
   texture painted from the map layers (forest floor, meadow, lake, asphalt, gravel, road
   markings) with deterministic noise, about 0.15 m per pixel. A local site with an
   orthophoto uses the photo instead.
-- Forest: spruce, pine and birch in real sizes, low-poly, merged into one mesh per tile.
-  Trees have no collision (see the README); the terrain, buildings and pad do.
+- Forest: the site's real trees where they have been fetched (``just trees-fetch``: every
+  tree where Skogsstyrelsen's tree height raster has it, as tall as it says, its species
+  from Naturvårdsverket's land cover map), as textured models when the tree pictures have
+  been fetched too (``just tree-pictures-fetch``; ``sd_sim.forest``). Without them, spruce,
+  pine and birch in real sizes on a jittered grid in the map's forest, low-poly in flat
+  colours. Merged into one mesh per tile. Trees have no collision (see the README); the
+  terrain, buildings and pad do.
 - Buildings from the map's footprints, extruded to their tagged height (or a typical one
   for their type) with a gabled roof on rectangular houses.
 - Cars (4.5 x 1.8 x 1.5 m) parked in rows in the map's parking areas.
@@ -39,10 +45,11 @@ from numpy.typing import NDArray
 from shapely.geometry import LineString, MultiLineString, Polygon, box
 from shapely.ops import substring
 
+from sd_sim import forest as forest_mod
 from sd_sim import paths, png, raster
 from sd_sim.site import Site
 
-GENERATOR_VERSION = 5
+GENERATOR_VERSION = 6
 # Gazebo needs a square heightmap of 2^n + 1 pixels: 257 gives 4.7 m over 1.2 km.
 HEIGHTMAP_PX = 257
 HEIGHTMAP = "ground_collision.png"
@@ -53,6 +60,10 @@ TEXTURE_PX = 2048
 # 500-1500, but the canopy painted on the ground under them closes the gaps from above).
 TREE_DENSITY = 0.03
 TREE_KEEP_OUT_M = 2.5  # from roads, buildings and water
+# Real trees are left out only where a tree cannot stand: on a road or a path (a crown
+# over it), on a roof (the raster sees buildings too), in water or a car park, on the pad.
+REAL_TREE_ROAD_M = 0.5
+REAL_TREE_ROOF_M = 1.0
 PARKING_STALL_M = (2.6, 5.2)
 PARKING_OCCUPANCY = 0.5
 CAR_SIZE_M = (4.5, 1.8, 1.5)
@@ -900,7 +911,14 @@ def build(
     """Write the site's model folder (``model://sd_site_<name>``) and return it."""
     folder = out_dir(site, repo)
     model = repo / "build" / "sim" / "models" / model_name(site)
+    real = forest_mod.load_trees(site)
+    atlas = forest_mod.load_atlas(repo) if real is not None else None
     digest = site.input_digest()
+    if atlas is not None:
+        h = hashlib.sha256(digest.encode())
+        for name in ("atlas.json", *forest_mod.ATLAS_FILES):
+            h.update((forest_mod.atlas_folder(repo) / name).read_bytes())
+        digest = h.hexdigest()
     manifest_path = folder / "manifest.json"
     if not force and manifest_path.is_file():
         old = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -939,14 +957,47 @@ def build(
         ]
     )
     progress("skog")
-    trees = plant_trees(site, ground, blocked)
+    if real is None:
+        trees = plant_trees(site, ground, blocked)
+        crowns = [(t.east, t.north, t.crown_radius) for t in trees]
+        kept: list[forest_mod.RealTree] = []
+    else:
+        no_tree = shapely.union_all(
+            [
+                asphalt.buffer(REAL_TREE_ROAD_M),
+                gravel,
+                footprints.buffer(REAL_TREE_ROOF_M),
+                site.union("water", "parking"),
+                shapely.Point(0, 0).buffer(40.0),
+            ]
+        )
+        inside = shapely.contains_xy(
+            no_tree, np.array([t.east for t in real]), np.array([t.north for t in real])
+        )
+        kept = [t for t, out in zip(real, inside, strict=True) if not out]
+        crowns = [(t.east, t.north, t.crown_radius) for t in kept]
+        trees = [
+            Tree(
+                t.east,
+                t.north,
+                round(float(z), 2),
+                "birch" if t.species == "deciduous" else t.species,
+                t.height,
+                round(t.yaw, 4),
+            )
+            for t, z in zip(
+                kept,
+                ground.at(np.array([t.east for t in kept]), np.array([t.north for t in kept])),
+                strict=True,
+            )
+        ]
     paint = Paint(
         areas={kind: site.union(kind) for kind in PAINT_ORDER},
         asphalt=asphalt,
         gravel=gravel,
         markings=markings,
         buildings=footprints,
-        crowns=[(t.east, t.north, t.crown_radius) for t in trees],
+        crowns=crowns,
     )
     tiles = terrain_tiles(ground)
     for ti, tj, mesh in tiles:
@@ -956,9 +1007,43 @@ def build(
         mat = Material(stem, (1.0, 1.0, 1.0), 0.02, f"{stem}.png")
         (meshes / f"{stem}.mtl").write_text(mat.mtl(), encoding="utf-8")
         png.write(meshes / f"{stem}.png", paint_tile(site, paint, ti, tj, TEXTURE_PX, seed))
-    forest = tree_meshes(trees, site.half_size_m)
-    for (ti, tj), mesh in sorted(forest.items()):
-        write_obj(meshes, f"trees_{ti}_{tj}", mesh, TREE_MATERIALS)
+    tree_stats: dict[str, Any]
+    if atlas is not None:
+        progress("träd (Poly Haven-bilder)")
+        for name in forest_mod.ATLAS_FILES:
+            shutil.copyfile(forest_mod.atlas_folder(repo) / name, meshes / name)
+        woods = forest_mod.build_forest(
+            kept, np.array([t.z for t in trees]), site.half_size_m, atlas
+        )
+        tree_files = [f"{stem}.glb" for stem in forest_mod.write_tiles(woods, meshes, ".")]
+        tree_stats = {
+            "tree_triangles": woods.triangles,
+            "trees_near": woods.near,
+            "tree_model_triangles": woods.model_triangles,
+            "tree_models": "poly-haven-cc0",
+        }
+    else:
+        plain = tree_meshes(trees, site.half_size_m)
+        tree_files = []
+        for (ti, tj), mesh in sorted(plain.items()):
+            write_obj(meshes, f"trees_{ti}_{tj}", mesh, TREE_MATERIALS)
+            tree_files.append(f"trees_{ti}_{tj}.obj")
+        tree_stats = {
+            "tree_triangles": sum(m.triangles() for m in plain.values()),
+            "tree_models": "plain",
+        }
+    if real is not None:
+        chm = np.load(site.chm_path) / 10.0 if site.chm_path is not None else None
+        check = forest_mod.height_check(kept, chm, site.half_size_m)
+        tree_stats |= {
+            "tree_source": "raster",
+            "trees_raster": len(real),
+            "trees_left_out": len(real) - len(kept),
+            "tree_height_max_m": max((t.height for t in kept), default=0.0),
+            "tree_height_vs_raster_mean_abs_m": None if check is None else round(check, 3),
+        }
+    else:
+        tree_stats["tree_source"] = "generated"
     if buildings:
         write_obj(meshes, "buildings", building_mesh(buildings), BUILDING_MATERIALS)
     if cars:
@@ -970,7 +1055,7 @@ def build(
         model_sdf(
             site,
             [f"terrain_{ti}_{tj}" for ti, tj, _ in tiles],
-            [f"trees_{ti}_{tj}" for ti, tj in sorted(forest)],
+            tree_files,
             bool(buildings),
             bool(cars),
             not water.empty,
@@ -981,7 +1066,7 @@ def build(
     (model / "model.config").write_text(model_config(site), encoding="utf-8")
     stats = {
         "trees": len(trees),
-        "tree_triangles": sum(m.triangles() for m in forest.values()),
+        **tree_stats,
         "buildings": len(buildings),
         "cars": len(cars),
         "terrain_triangles": sum(m.triangles() for _, _, m in tiles),
@@ -1057,7 +1142,10 @@ def model_sdf(
         parts.append(f'      <visual name="{stem}">{_mesh(f"{base}/{stem}.obj")}</visual>')
     links.append(("terrain", parts))
     links.append(
-        ("forest", [f'      <visual name="{s}">{_mesh(f"{base}/{s}.obj")}</visual>' for s in trees])
+        (
+            "forest",
+            [f'      <visual name="{Path(f).stem}">{_mesh(f"{base}/{f}")}</visual>' for f in trees],
+        )
     )
     if buildings:
         links.append(

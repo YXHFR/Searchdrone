@@ -1,0 +1,127 @@
+/* STOPP and FLYG HEM: fixed at the bottom of every screen, above everything else. Flat,
+   slightly muted colours, but still the largest targets on the screen. */
+.safety-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-safety);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--c-bg);
+  border-top: 1px solid var(--c-line);
+  padding: 6px 12px calc(8px + env(safe-area-inset-bottom));
+}
+.safety-caption {
+  font-size: var(--fs-label);
+  color: var(--c-faint);
+  letter-spacing: 0.04em;
+}
+.safety-note {
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+}
+.safety-note-warn {
+  color: var(--c-warn);
+}
+.safety-buttons {
+  display: flex;
+  gap: 12px;
+}
+.safety-slot {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.safety-btn {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border: 2px solid transparent;
+  border-radius: var(--r-2);
+  font: inherit;
+  cursor: pointer;
+}
+.safety-stop {
+  background: var(--c-stop);
+  color: var(--c-stop-text);
+}
+.safety-home {
+  background: var(--c-home);
+  color: var(--c-home-text);
+}
+.safety-btn:hover:not(:disabled) {
+  filter: brightness(1.07);
+}
+.safety-btn:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.35);
+}
+.safety-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  text-align: left;
+}
+.safety-label {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.12em;
+}
+.safety-sub,
+.safety-sub2 {
+  font-size: var(--fs-small);
+  opacity: 0.92;
+}
+.safety-btn[data-state="acked"] {
+  border-color: rgb(255 255 255 / 0.85);
+}
+.safety-btn[data-state="unconfirmed"] {
+  border-color: var(--c-warn);
+}
+.safety-btn[data-state="failed"] {
+  border-color: #fff;
+  outline: 2px solid var(--c-bad);
+}
+.safety-dismiss {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-2);
+  border: 1px solid rgb(0 0 0 / 0.3);
+  background: rgb(0 0 0 / 0.25);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .safety-dismiss {
+    width: 44px;
+    height: 44px;
+  }
+}
+@media (max-width: 600px) {
+  .safety-bar {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .safety-buttons {
+    gap: 10px;
+  }
+  .safety-btn {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+  .safety-caption {
+    display: none;
+  }
+}

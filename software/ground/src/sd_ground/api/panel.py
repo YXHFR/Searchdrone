@@ -18,6 +18,7 @@ import datetime as dt
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 
 from sd_ground import emergency
@@ -46,6 +47,7 @@ from sd_ground.services import clearance as clearance_service
 from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
 from sd_ground.services import health
+from sd_ground.services import perception as perception_service
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_ground.sources import EmergencyUnavailableError
@@ -67,8 +69,10 @@ from sd_schemas.api import (
     Clearance,
     Command,
     CommandResult,
+    DetectionRow,
     Event,
     Features,
+    Find,
     Health,
     LoginRequest,
     Mission,
@@ -677,7 +681,32 @@ async def get_candidates(
     return {"items": []}
 
 
-@router.get("/missions/{mission_id}/detections")
-async def get_detections(mission_id: IdPath, _: Observer, response: Response) -> list[Any]:
-    response.headers[STAGE2_HEADER] = STAGE2_VALUE
-    return []
+@router.get("/missions/{mission_id}/detections", response_model=list[DetectionRow])
+async def get_detections(mission_id: IdPath, g: G, _: Observer) -> list[dict[str, Any]]:
+    """The mission's detections, newest first (at most 2000). ``source = "oracle"`` marks
+    the simulator's own labels, never a real detector."""
+    await _flow(g).mission(mission_id)
+    return jsonable_encoder(await _flow(g).repo.detections(mission_id))
+
+
+@router.get("/missions/{mission_id}/finds", response_model=list[Find])
+async def get_finds(mission_id: IdPath, g: G, _: Observer) -> list[dict[str, Any]]:
+    """One entry per found object: detections of a class at the same place, joined."""
+    flow = _flow(g)
+    await flow.mission(mission_id)
+    finds = await perception_service.finds_for(flow, mission_id)
+    return [f.as_dict() for f in finds.items]
+
+
+@router.get("/missions/{mission_id}/detections/{detection_id}/crop")
+async def get_detection_crop(
+    mission_id: IdPath, detection_id: IdPath, g: G, _: Observer
+) -> Response:
+    """A target detection's thumbnail (JPEG), only from inside the mission's folder."""
+    flow = _flow(g)
+    await flow.mission(mission_id)
+    rel = await flow.repo.detection_crop(mission_id, detection_id)
+    path = None if rel is None else files_service.resolve_file(flow.mission_dir(mission_id), rel)
+    if path is None:
+        raise ApiStatusError(404, "CROP_NOT_FOUND", "Bilden finns inte.")
+    return FileResponse(path, media_type="image/jpeg")

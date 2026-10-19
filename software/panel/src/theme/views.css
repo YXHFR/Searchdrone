@@ -1,0 +1,75 @@
+/* The overlays: status and limits, manual sticks. */
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  align-content: start;
+  padding: 14px;
+}
+.event-log {
+  list-style: none;
+  padding: 0;
+  font-size: var(--fs-small);
+  max-height: 260px;
+  overflow: auto;
+}
+.event-log li {
+  padding: 3px 0;
+  border-top: 1px solid var(--c-line);
+}
+.event-log li:first-child {
+  border-top: 0;
+}
+.event-log li[data-level="critical"] {
+  color: var(--c-bad);
+  font-weight: 600;
+}
+.manual {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+.manual-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.sticks {
+  display: flex;
+  justify-content: space-around;
+  gap: 16px;
+  padding: 8px 0;
+}
+.stick-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 45%;
+}
+.stick {
+  width: min(160px, 38vw);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid var(--c-line-strong);
+  background: var(--c-panel-2);
+  display: grid;
+  place-items: center;
+  touch-action: none;
+}
+.stick[data-disabled="true"] {
+  opacity: 0.5;
+}
+.stick-knob {
+  width: 38%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--c-acc-fill);
+}
+.stick-label {
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+  text-align: center;
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -406,6 +407,73 @@ def test_to_vehicle_state() -> None:
     assert FcTelemetry().fc_mode == "UNKNOWN"
 
 
+def test_attitude_is_parsed_in_degrees() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.attitude_mono_ms is not None  # the fake streams ATTITUDE
+        vehicle.fc.attitude_rad = (0.2, -0.1, 1.5)
+        await clock.run_for(0.5)
+        t = vehicle.telemetry
+        assert abs(t.roll_deg - 11.459) < 1e-3 and abs(t.pitch_deg + 5.730) < 1e-3
+        assert abs(t.yaw_deg - 85.944) < 1e-3
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_non_finite_attitude_is_ignored() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        vehicle.fc.attitude_rad = (0.2, -0.1, 1.5)
+        await clock.run_for(0.5)
+        before = vehicle.telemetry
+        assert before.attitude_mono_ms is not None
+        vehicle.fc.attitude_rad = (math.nan, 0.0, math.inf)
+        await clock.run_for(0.5)
+        t = vehicle.telemetry
+        assert t.attitude_mono_ms == before.attitude_mono_ms  # ages out instead
+        assert (t.roll_deg, t.yaw_deg) == (before.roll_deg, before.yaw_deg)
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_battery_current_and_wind_are_parsed() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(2.0)
+        t = vehicle.telemetry
+        assert t.battery_current_a is None and t.wind_mono_ms is None  # -1 and no WIND
+        vehicle.fc.battery_current_a = 18.25
+        vehicle.fc.wind = (-90.0, 6.5)
+        await clock.run_for(2.0)
+        t = vehicle.telemetry
+        assert t.battery_current_a == 18.25
+        assert t.wind_mono_ms is not None
+        assert (t.wind_from_deg, t.wind_speed_ms) == (270.0, 6.5)
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_impossible_wind_is_ignored() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        vehicle.fc.wind = (10.0, 4.0)
+        await clock.run_for(2.0)
+        before = vehicle.telemetry
+        assert before.wind_mono_ms is not None
+        for bad in ((math.nan, 4.0), (10.0, math.inf), (10.0, -1.0)):
+            vehicle.fc.wind = bad
+            await clock.run_for(2.0)
+            t = vehicle.telemetry
+            assert (t.wind_mono_ms, t.wind_speed_ms) == (before.wind_mono_ms, 4.0)
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_no_parameter_write_in_the_api() -> None:
     """No general parameter write: the one exception is ``Vehicle.set_fence_limit``, whose
     message the allowlist checks row by row. No other line of the package names a
@@ -693,6 +761,20 @@ def test_rc_mode_channel_parsing_and_switch_rule() -> None:
         assert rc_switch_moved(vehicle, None)  # an RC receiver came on: a person
         assert not rc_switch_moved(vehicle, 1150)  # noise
         assert rc_switch_moved(vehicle, 1500)
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_a_negative_yaw_becomes_a_compass_heading() -> None:
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        vehicle.fc.attitude_rad = (0.1, -0.2, -1.0)  # ArduPilot sends yaw in -pi..pi
+        await clock.run_for(0.5)
+        t = vehicle.telemetry
+        assert t.roll_deg == pytest.approx(5.7296, abs=1e-3)
+        assert t.pitch_deg == pytest.approx(-11.4592, abs=1e-3)
+        assert t.yaw_deg == pytest.approx(360.0 - 57.2958, abs=1e-3)  # compass, 0-360
         await vehicle.close()
 
     asyncio.run(run())

@@ -759,6 +759,34 @@
       "title": "ApprovalRef",
       "type": "object"
     },
+    "Attitude": {
+      "additionalProperties": false,
+      "description": "MAVLink ATTITUDE in degrees. Roll is positive right wing down, pitch positive nose\nup, yaw 0-360 clockwise from north.",
+      "properties": {
+        "pitch_deg": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "roll_deg": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "yaw_deg": {
+          "exclusiveMaximum": 360,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "roll_deg",
+        "pitch_deg",
+        "yaw_deg"
+      ],
+      "title": "Attitude",
+      "type": "object"
+    },
     "AutonomyMode": {
       "description": "Set only by the operator on the charter card; the AI can never change it.",
       "enum": [
@@ -3358,6 +3386,99 @@
       "title": "DecisionLogStored",
       "type": "object"
     },
+    "DetectionRow": {
+      "additionalProperties": false,
+      "description": "A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.\n``source = \"oracle\"`` is the simulator's own label, not a detector.",
+      "properties": {
+        "bbox": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "find_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "has_crop": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "target",
+            "context"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "score": {
+          "type": "number"
+        },
+        "sigma95_m": {
+          "type": "number"
+        },
+        "size_m": {
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "model",
+            "color",
+            "oracle"
+          ],
+          "type": "string"
+        },
+        "still_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "synthetic": {
+          "type": "boolean"
+        },
+        "vehicle_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "find_id",
+        "vehicle_id",
+        "still_id",
+        "captured_at",
+        "label",
+        "kind",
+        "source",
+        "score",
+        "bbox",
+        "lat",
+        "lon",
+        "sigma95_m",
+        "size_m",
+        "synthetic",
+        "has_crop"
+      ],
+      "title": "DetectionRow",
+      "type": "object"
+    },
     "DetectorInfo": {
       "additionalProperties": false,
       "description": "Which detector looked at a still, and how it went.",
@@ -3671,6 +3792,84 @@
         }
       },
       "title": "Features",
+      "type": "object"
+    },
+    "Find": {
+      "additionalProperties": false,
+      "description": "One found object: detections of one class at the same place, joined\n(``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:\nonly a person confirms.",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "find_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "target",
+            "context"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "name_sv": {
+          "type": "string"
+        },
+        "score": {
+          "type": "number"
+        },
+        "sigma95_m": {
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "model",
+            "color",
+            "oracle"
+          ],
+          "type": "string"
+        },
+        "synthetic": {
+          "type": "boolean"
+        },
+        "thumb_detection_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "find_id",
+        "label",
+        "name_sv",
+        "kind",
+        "source",
+        "lat",
+        "lon",
+        "sigma95_m",
+        "score",
+        "count",
+        "thumb_detection_id",
+        "synthetic"
+      ],
+      "title": "Find",
       "type": "object"
     },
     "FindMeParams": {
@@ -4160,6 +4359,18 @@
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
+        "label": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]{1,31}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "lat": {
           "maximum": 90,
           "minimum": -90,
@@ -4183,6 +4394,22 @@
           "maximum": 1000,
           "minimum": 0,
           "type": "number"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "model",
+                "color",
+                "oracle"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -5185,6 +5412,17 @@
         "center": {
           "$ref": "#/$defs/LatLon"
         },
+        "imagery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapImagery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "maxzoom": {
           "default": 15,
           "maximum": 22,
@@ -5206,6 +5444,32 @@
         "zoom"
       ],
       "title": "MapConfig",
+      "type": "object"
+    },
+    "MapImagery": {
+      "additionalProperties": false,
+      "description": "An aerial photo pack (raster PMTiles) drawn under the map's roads, paths and names.",
+      "properties": {
+        "attribution": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxzoom": {
+          "maximum": 22,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pack_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pack_url",
+        "maxzoom",
+        "attribution"
+      ],
+      "title": "MapImagery",
       "type": "object"
     },
     "MapPin": {
@@ -8349,6 +8613,17 @@
         "armed": {
           "type": "boolean"
         },
+        "attitude": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Attitude"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "battery_pct": {
           "anyOf": [
             {
@@ -8422,6 +8697,17 @@
         },
         "time_boot_ms": {
           "type": "integer"
+        },
+        "wind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WindCheck"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -8901,6 +9187,126 @@
         "hls_url"
       ],
       "title": "VideoConfig",
+      "type": "object"
+    },
+    "WindCheck": {
+      "additionalProperties": false,
+      "description": "The ground station's \"too windy\" warning. A warning only: nothing on board or on\nthe ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet\ncalibrated against flight logs, so ``calibrated`` is always false for now.\n\n* ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of\n  the flight controller's lean limit (ATC_ANGLE_MAX).\n* ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %\n  margin, would leave less than the flight controller's low-battery reserve.\n* ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent\n  when EK3_DRAG_* are set) is over the configured wind limit.",
+      "properties": {
+        "calibrated": {
+          "const": false,
+          "default": false,
+          "type": "boolean"
+        },
+        "home_mah": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left_mah": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasons": {
+          "items": {
+            "enum": [
+              "TILT_MARGIN",
+              "ENERGY_HOME",
+              "WIND_LIMIT"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reserve_mah": {
+          "type": "number"
+        },
+        "tilt_avg_deg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tilt_warn_deg": {
+          "type": "number"
+        },
+        "warning": {
+          "type": "boolean"
+        },
+        "wind_from_deg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wind_gust_limit_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wind_gust_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wind_limit_ms": {
+          "type": "number"
+        },
+        "wind_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "warning",
+        "reasons",
+        "tilt_avg_deg",
+        "tilt_warn_deg",
+        "wind_ms",
+        "wind_gust_ms",
+        "wind_from_deg",
+        "wind_limit_ms",
+        "wind_gust_limit_ms",
+        "home_mah",
+        "left_mah",
+        "reserve_mah"
+      ],
+      "title": "WindCheck",
       "type": "object"
     }
   },

@@ -96,7 +96,17 @@ def test_only_python_312(path: Path) -> None:
 
 def test_ci_ok_needs_every_ci_job() -> None:
     jobs = load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]
-    expected = {"lint", "typecheck", "unit", "contract", "panel-e2e", "reuse", "secrets", "build"}
+    expected = {
+        "lint",
+        "typecheck",
+        "unit",
+        "contract",
+        "panel-e2e",
+        "panel-screens",
+        "reuse",
+        "secrets",
+        "build",
+    }
     assert set(jobs) == expected | {"ci-ok"}
     assert set(jobs["ci-ok"]["needs"]) == expected
     assert jobs["ci-ok"]["if"] == "always()"
@@ -220,3 +230,70 @@ def test_video_job_runs_the_video_tests_without_skipping() -> None:
     assert len(runs) == 1
     assert runs[0]["env"]["SD_SIM__REQUIRE_VIDEO"] == "1"
     assert any("just video-up" in str(s.get("run", "")) for s in job["steps"])
+
+
+def test_brain_nightly_runs_only_from_main_with_the_secret() -> None:
+    doc = load(ROOT / ".github" / "workflows" / "brain-nightly.yml")
+    assert set(triggers(doc)) == {"schedule", "workflow_dispatch"}  # never pull requests
+    job = doc["jobs"]["exam"]
+    assert "github.ref == 'refs/heads/main'" in job["if"]
+    assert job["permissions"] == {"contents": "read"}
+    assert job["env"]["HAS_KEY"] == "${{ secrets.OPENROUTER_API_KEY != '' }}"
+    for step in job["steps"][1:]:
+        assert "env.HAS_KEY == 'true'" in step["if"]
+    upload = next(s for s in job["steps"] if "upload-artifact" in str(s.get("uses")))
+    assert all(p.endswith(".json") for p in upload["with"]["path"].split())  # no images
+    exam = next(s for s in job["steps"] if s.get("name") == "Short cloud exam")
+    assert "--max-cost-sek" in exam["run"]
+
+
+# Folders a workflow may cache or upload from. Under build/ only the listed subfolders:
+# everything else there can hold data that must not leave the runner (the tree list and
+# raster crop in build/trees, whose terms forbid redistribution, a site's map data in
+# build/sites, the manufacturer models in build/cad/vendor, the generated world in
+# build/sim). A cache saved on main can be restored by any pull request's workflow, also
+# from a fork, so a cached path counts as published. Any other first folder, a leading
+# wildcard or another expression fails the test until it is added here on purpose.
+STORE_ROOTS = ("data", "dist", "runs", "software", "${{ runner.temp }}")
+SHAREABLE_BUILD_DIRS = (("build", "cad", "fpv7"), ("build", "tree_models"))
+STORING_ACTIONS = ("actions/cache", "actions/upload-artifact", "actions/upload-pages-artifact")
+
+
+def storable(entry: str) -> bool:
+    parts = tuple(p for p in entry.split("/") if p)
+    if not parts or "*" in parts[0] or any(p in (".", "..") or "${{" in p for p in parts[1:]):
+        return False
+    if parts[0] == "build":
+        return any(parts[: len(d)] == d for d in SHAREABLE_BUILD_DIRS)
+    return parts[0] in STORE_ROOTS
+
+
+def test_storable_paths() -> None:
+    assert storable("build/tree_models") and storable("build/cad/fpv7/")
+    assert storable("runs/**/result.json") and storable("${{ runner.temp }}/film/")
+    for bad in (
+        "build/trees",
+        "build/tree_models_raw",
+        "build/cad/vendor",
+        "build/",
+        "**/trees",
+        "${{ env.DIR }}",
+        "trees.csv",
+        "runs/../build/trees",
+        "build/tree_models/../trees",
+        "./build/trees",
+    ):
+        assert not storable(bad), bad
+
+
+@pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
+def test_only_shareable_paths_are_cached_or_uploaded(path: Path) -> None:
+    for step in steps(load(path)):
+        if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
+            continue
+        for line in str(step.get("with", {}).get("path", "")).splitlines():
+            entry = line.strip()
+            if entry and not entry.startswith("!"):
+                assert storable(entry), (
+                    f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
+                )

@@ -136,9 +136,13 @@ class FakeFlightController:
         self.refuse_modes: set[int] = set()
         self.drop_acks = 0  # the next n COMMAND_ACKs are lost (the command still acts)
         self.drop_commands = 0  # the next n COMMAND_LONGs are lost on the way
+        self.drop_mission_items = 0  # the next n mission item answers are lost (a slow read)
         self.silent = False  # no heartbeat or telemetry, no answers
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
+        self.attitude_rad = (0.0, 0.0, 0.0)  # roll, pitch, yaw sent in ATTITUDE
+        self.battery_current_a: float | None = None  # BATTERY_STATUS current; None: -1
+        self.wind: tuple[float, float] | None = None  # WIND (from deg, m/s); None: not sent
         self.rc_link = False  # an RC transmitter is on and its receiver is healthy
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
@@ -188,6 +192,7 @@ class FakeFlightController:
         while True:
             self.step(_TICK_S)
             self._send(self._position())
+            self._send(self._attitude())
             if tick % 2 == 0:
                 self._send(self.heartbeat())
                 if self.rc_mode_pwm is not None or self.rc_link:
@@ -203,6 +208,8 @@ class FakeFlightController:
                     self._send(msg)
             if tick % 10 == 0:
                 self._send(self._home_position())
+                if self.wind is not None:
+                    self._send(mavlink.MAVLink_wind_message(*self.wind, 0.0))
             tick += 1
             await self.clock.sleep(_TICK_S)
 
@@ -249,6 +256,12 @@ class FakeFlightController:
             3,
         )
 
+    def _attitude(self) -> Any:
+        roll, pitch, yaw = self.attitude_rad
+        return mavlink.MAVLink_attitude_message(
+            int(self.clock.monotonic_ms()) & 0xFFFFFFFF, roll, pitch, yaw, 0.0, 0.0, 0.0
+        )
+
     def _position(self) -> Any:
         return mavlink.MAVLink_global_position_int_message(
             int(self.clock.monotonic_ms()) & 0xFFFFFFFF,
@@ -292,7 +305,7 @@ class FakeFlightController:
             0,
             3000,
             [16000] + [65535] * 9,
-            -1,
+            -1 if self.battery_current_a is None else round(self.battery_current_a * 100),
             -1,
             -1,
             round(self.battery_pct),
@@ -483,7 +496,9 @@ class FakeFlightController:
         elif kind == "MISSION_REQUEST_INT":
             items = self.missions.get(mtype, [])
             seq = int(msg.seq)
-            if 0 <= seq < len(items):
+            if self.drop_mission_items > 0:
+                self.drop_mission_items -= 1
+            elif 0 <= seq < len(items):
                 reply = items[seq].to_message(link.source_system)
                 reply.target_component = link.source_component
                 self._send(reply, link)

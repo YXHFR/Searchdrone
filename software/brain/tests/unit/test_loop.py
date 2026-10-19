@@ -758,3 +758,16 @@ async def test_ready_proposal_builds_on_the_charter_in_force() -> None:
     loop.handle_event(fg.operator_message("Krymp ramen"))
     await loop.settle()
     assert fg.proposals and fg.proposals[-1].base_version == in_force.version
+
+
+async def test_a_target_find_wakes_the_ai_and_context_does_not() -> None:
+    backend = Steps(say("Rött block hittat, bekräfta?"))
+    loop, _, _ = make_loop(backend)
+    base = {"find_id": "f1", "label": "road", "kind": "context", "lat": 0.0, "lon": 0.0}
+    loop.handle_event({"type": "event.detection", "mission_id": loop.mission_id, "body": base})
+    await loop.settle()
+    assert backend.turns == []
+    target = {**base, "label": "red_block", "kind": "target"}
+    loop.handle_event({"type": "event.detection", "mission_id": loop.mission_id, "body": target})
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["detection"]

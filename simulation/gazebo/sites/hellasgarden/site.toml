@@ -19,7 +19,14 @@ heading_deg = 90            # the vehicle faces east, towards the lake
 half_size_m = 600           # the world covers home ± 600 m
 
 [dem]
+# Copernicus GLO-30 (no account). "lantmateriet-mhm" with surface = "dtm" and canopy_m = 0
+# takes Lantmäteriet's 1 m bare-ground model instead (needs SD_LM_USER/SD_LM_PASSWORD;
+# CC BY 4.0, see REUSE.toml and ATTRIBUTION).
 source = "copernicus-glo30"
 cell_m = 20                 # the committed grid; the world mesh is finer, interpolated
-surface = "dsm"             # Copernicus is a surface model: forest canopy is in the heights
-canopy_m = 12               # taken off inside forest so that trees stand on the ground
+surface = "dsm"             # Copernicus is a surface model: some forest canopy is in it
+canopy_m = 12               # taken off inside forest for the generated trees only; with
+                            # the real trees fetched the heights are used as they are
+
+[trees]                     # real trees: `just trees-fetch site=hellasgarden` (tools/terrain/fetch_trees.py)
+county = 1                  # Skogsstyrelsen's tree height raster comes per county; 01 = Stockholm

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +26,20 @@ import numpy as np
 import shapely
 import yaml
 
+from sd_sim import forest as forest_mod
 from sd_sim import objects, paths, site, terrain, world
 
 TEMPLATE = "worlds/sd_site.sdf.jinja"
 PAD_SIZE_M = 3.0
-# The fixture's search height must clear the tallest thing under the charter by this much.
+# The fixture's search height must clear the tallest thing under the charter by this much,
+# in whole SEARCH_STEP_M.
 SEARCH_CLEARANCE_M = 25.0
+SEARCH_STEP_M = 5.0
+
+
+def search_floor_m(top_m: float) -> float:
+    """The lowest search height that keeps ``SEARCH_CLEARANCE_M`` over ``top_m``."""
+    return math.ceil((top_m + SEARCH_CLEARANCE_M) / SEARCH_STEP_M) * SEARCH_STEP_M
 
 
 def frame(s: site.Site, ground: terrain.Ground) -> world.Frame:
@@ -47,6 +55,8 @@ def world_sdf(
     instance: int,
     placed: Sequence[objects.WorldObject] = (),
     cameras: Sequence[str] = (),
+    vehicle: str = world.MODEL_NAME,
+    light: Mapping[str, Any] | None = None,
 ) -> str:
     fr = frame(s, ground)
     objects.check(placed, s.half_size_m)
@@ -62,9 +72,10 @@ def world_sdf(
             pad_size=PAD_SIZE_M,
             objects=[world.checked_fragment(obj, fr) for obj in placed],
             cameras=list(cameras),
-            model_uri=f"model://{world.MODEL_NAME}_i{instance}",
-            vehicle_z=world.STAND_M,
+            model_uri=f"model://{vehicle}_i{instance}",
+            vehicle_z=world.stand_m(vehicle),
             vehicle_yaw=round(math.radians(90.0 - s.heading_deg), 6),
+            light=world.light_context(light),
         )
     )
 
@@ -77,14 +88,18 @@ def render(
     *,
     cameras: Sequence[str] = (),
     progress: Callable[[str], None] = lambda _: None,
+    vehicle: str = world.MODEL_NAME,
+    stills: bool = False,
+    video: bool = True,
+    light: Mapping[str, Any] | None = None,
 ) -> Path:
     s = site.load(site_name, repo)
     terrain.build(s, repo, progress=progress)
     ground = terrain.load_ground(s, repo)
-    world.render_model(instance, repo)
+    world.render_model(instance, repo, vehicle, stills=stills, video=video)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
-    sdf = world_sdf(s, ground, instance, placed, cameras)
+    sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light)
     truth = world.world_truth(s.world, placed, frame=frame(s, ground))
     path = out / f"{s.world}_i{instance}.sdf"
     path.write_text(sdf, encoding="utf-8")
@@ -99,12 +114,22 @@ def render(
 
 
 def tallest(s: site.Site, ground: terrain.Ground, area: Any) -> float:
-    """Highest ground inside ``area`` in metres above home, plus the tallest tree when any
-    forest reaches into it."""
+    """Highest ground or tree top inside ``area`` in metres above home: the real trees'
+    tops when they have been fetched, else the highest ground plus the tallest generated
+    tree when any forest reaches into it."""
     minx, miny, maxx, maxy = area.bounds
     ex, ny = np.meshgrid(np.arange(minx, maxx + 5, 5.0), np.arange(miny, maxy + 5, 5.0))
     inside = shapely.contains_xy(area, ex, ny)
     top = float(ground.at(ex[inside], ny[inside]).max()) if inside.any() else 0.0
+    real = forest_mod.load_trees(s)
+    if real is not None:
+        e = np.array([t.east for t in real])
+        n = np.array([t.north for t in real])
+        h = np.array([t.height for t in real])
+        under = shapely.contains_xy(area, e, n) if len(real) else np.zeros(0, bool)
+        if under.any():
+            top = max(top, float((ground.at(e[under], n[under]) + h[under]).max()))
+        return top
     forest = s.union("forest")
     if not forest.is_empty and forest.intersects(area):
         top += max(hi for _, _, (_, hi) in terrain.SPECIES)
@@ -145,7 +170,12 @@ def fixture_yaml(s: site.Site, ground: terrain.Ground, repo: Path = paths.REPO) 
     south, north = min(-100.0, cy - 100.0), max(300.0, cy + 100.0)
     test["area_enu"] = [[west, south], [east, south], [east, north], [west, north]]
     top = tallest(s, ground, shapely.box(west, south, east, north))
-    alt = max(float(base["survey_box"]["alt_m"]), math.ceil((top + SEARCH_CLEARANCE_M) / 5) * 5)
+    alt = max(float(base["survey_box"]["alt_m"]), search_floor_m(top))
+    if alt > float(test["alt_max_agl_m"]):
+        raise ValueError(
+            f"{s.name}: the search height {alt:g} m over the tallest ground and trees "
+            f"({top:.0f} m above home) is above charter_test's {test['alt_max_agl_m']} m"
+        )
     base["survey_box"]["alt_m"] = alt
     test["default_alt_agl_m"] = alt
     header = (

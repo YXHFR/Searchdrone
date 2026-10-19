@@ -20,15 +20,35 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
+from typing import Any, Protocol
 
-from sd_sim import _args, config, gazebo, objects, paths, ports, procs, services, site, world
+from sd_sim import (
+    _args,
+    config,
+    gazebo,
+    objects,
+    paths,
+    ports,
+    procs,
+    services,
+    site,
+    world,
+)
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
 from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
+
+
+class SearchScene(Protocol):
+    """A search scenario's objects in the world (``targets.Scene``, the farm's round)."""
+
+    def objects(self) -> Sequence[objects.WorldObject]: ...
+
 
 ALLOWED_KEYS = (
     "physics",
@@ -43,6 +63,7 @@ ALLOWED_KEYS = (
     "lan",
     "private_db",
     "dry",
+    "vehicle",
     "objects",
     "world",
 )
@@ -113,8 +134,21 @@ class Stack:
         param_layers: tuple[Path, ...] = (),
         services: bool = False,
         test_rig: bool = False,
+        scene: SearchScene | None = None,
+        light: Mapping[str, Any] | None = None,
+        stills_archive: Path | None = None,
     ) -> None:
         self.cfg = cfg
+        # scene: a search scenario's objects in the Gazebo world, the vehicle's stills
+        # camera instead of its video camera, and the stills captured into stills_dir.
+        self.scene = scene
+        self.stills_dir = run_dir / "stills"
+        # light: the world's sun and ambient light for this run (``world.light_context``).
+        self.light = light
+        # stills_archive: also keep every still with the camera's pose there, unpruned
+        # (the simulator farm's raw pictures).
+        self.stills_archive = stills_archive
+        self.ground_truth: Path | None = None
         # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
         # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
         self.services = services
@@ -207,7 +241,7 @@ class Stack:
         """Only the Searchdrone world is rendered here, and only with Gazebo physics."""
         return (
             self.cfg.physics == "gz"
-            and self.cfg.vehicle == "sd_quad14"
+            and self.cfg.vehicle in world.MODELS
             and self.cfg.world in world.known_worlds(self.repo)
         )
 
@@ -217,12 +251,23 @@ class Stack:
         return site.load(name, self.repo).half_size_m if name else world.GROUND_SIZE_M / 2
 
     def world_objects(self) -> list[objects.WorldObject]:
-        """Load and check ``objects=`` before anything starts; refuse it where it cannot apply."""
+        """Load and check ``objects=`` (and a search scenario's objects) before anything
+        starts; refuse them where they cannot apply."""
+        scene: list[objects.WorldObject] = [] if self.scene is None else list(self.scene.objects())
+        # The stills camera follows whether a scenario is set, so check that, not whether
+        # its layout came back with objects.
+        searching = self.scene is not None
+        if searching and (not self.renders_world() or self.cfg.vehicle != world.MODEL_NAME):
+            raise InfraError(
+                "Ett sökscenario kräver physics=gz, vehicle=sd_quad14 och "
+                f"världen {world.WORLD_NAME}."
+            )
         if not self.cfg.objects:
-            return []
+            return scene
         if not self.renders_world():
             raise InfraError(
-                "objects= kräver physics=gz, vehicle=sd_quad14 och en av Searchdrones världar."
+                "objects= kräver physics=gz, en Searchdrone-modell (vehicle=sd_quad14 eller "
+                "sd_fpv7) och en av Searchdrones världar."
             )
         path = (self.repo / self.cfg.objects).resolve()
         if not path.is_relative_to(self.repo.resolve()):
@@ -235,14 +280,30 @@ class Stack:
                 world.checked_fragment(obj)
         except objects.ObjectError as exc:
             raise InfraError(f"objects={self.cfg.objects}: {exc}") from exc
-        return placed
+        return scene + placed
 
     def start_gazebo(self) -> None:
         if self.renders_world():
             placed = self.placed
-            world.render_world(self.cfg.world, self.cfg.instance, self.repo, placed)
+            world.render_world(
+                self.cfg.world,
+                self.cfg.instance,
+                self.repo,
+                placed,
+                vehicle=self.cfg.vehicle,
+                stills=self.scene is not None,
+                video=self.scene is None,
+                light=self.light,
+            )
             if placed:
                 say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")
+            if self.scene is not None:
+                # The run keeps the facit it was judged against.
+                self.ground_truth = self.run_dir / "truth.json"
+                shutil.copyfile(
+                    world.truth_path(self.cfg.world, self.cfg.instance, self.repo),
+                    self.ground_truth,
+                )
         self.world = gazebo.resolve_world(self.cfg, self.repo)
         if self.world.note:
             say(self.world.note)
@@ -257,6 +318,39 @@ class Stack:
             lambda: gazebo.world_running(running, self.cfg.instance),
             "Gazebo svarar inte. Se reservvägarna i installationsguiden (gui=false).",
         )
+        if self.scene is not None:
+            self.start_stills_capture(env)
+
+    def stills_capture_argv(self) -> list[str]:
+        prefix = world.stills_topic_prefix(self.cfg.instance)
+        script = Path(__file__).with_name("gz_stills.py")
+        argv = [
+            gazebo.GZ_PYTHON,
+            str(script),
+            "capture",
+            "--image-topic",
+            f"{prefix}/stills",
+            "--boxes-topic",
+            f"{prefix}/boxes",
+            "--out",
+            str(self.stills_dir),
+        ]
+        if self.stills_archive is not None and self.world is not None:
+            argv += [
+                "--poses-topic",
+                f"/world/{self.world.name}/dynamic_pose/info",
+                "--model",
+                f"{world.MODEL_NAME}_i{self.cfg.instance}",
+                "--archive",
+                str(self.stills_archive),
+            ]
+        return argv
+
+    def start_stills_capture(self, env: dict[str, str]) -> None:
+        """The stills camera's pictures and labelled boxes into ``stills_dir`` (and, for
+        ``stills_archive``, with the camera's pose into the archive)."""
+        self.stills_dir.mkdir(parents=True, exist_ok=True)
+        self.group.start("stills", self.stills_capture_argv(), env=env)
 
     def start_link_processes(self) -> None:
         py = sys.executable
@@ -350,8 +444,8 @@ class Stack:
             raise InfraError(f"{argv[0]} finns inte. Kör just sim-setup först.")
         work = self.run_dir / "sitl"
         work.mkdir(parents=True, exist_ok=True)
-        if self.cfg.physics == "builtin" and self.cfg.vehicle == "sd_quad14":
-            self.sitl_layout().stage_frame(work)
+        if self.cfg.physics == "builtin" and self.cfg.vehicle != "stock":
+            self.sitl_layout().stage_frame(work, self.cfg.vehicle)
         return self.group.start("arducopter", argv, env=procs.clean_env(), cwd=work)
 
     def wait_vehicle_observed(self, sitl: procs.Proc) -> None:

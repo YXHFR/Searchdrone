@@ -32,6 +32,7 @@ export const TOPICS = [
   "gate",
   "chat",
   "alerts",
+  "detections",
   "system",
 ] as const;
 

@@ -1,0 +1,14 @@
+# A person model for the sim farm: where it comes from and its measured box. The model
+# itself is fetched by `just sim-farm-setup` into build/ and checked against sha256.
+id = "sd_person_sitting"
+owner = "OpenRobotics"
+fuel_name = "Rescue Randy Sitting"
+version = 8
+sha256 = "611ef9ddadfba16be25963f2b79967fec6493c638ca77d0652f18fbbc5202fb3"
+license = "CC0-1.0"
+credit = "Rescue Randy Sitting by Open Robotics (Ian Chen, Cole Biesemeyer), Gazebo Fuel"
+mesh = "meshes/rescue_randy.dae"
+pose = "sitting"            # the model's own pose: standing (can also lie) or sitting
+# Box in the model frame, metres, z up: x min, x max, y min, y max, z min, z max
+bounds_m = [-0.48, 0.28, -0.72, 0.31, 0.0, 0.73]
+mesh_offset_z_m = -0.624  # added to the mesh's height: its own origin is 0.624 m above the feet

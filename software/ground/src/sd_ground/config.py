@@ -116,6 +116,8 @@ class VideoConfig(_Section):
 class MapConfig(_Section):
     # The offline map pack <data_dir>/tiles/<pack>.pmtiles, made by `just maps-fetch`.
     pack: str = Field(default="demo", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")  # tiles.PACK_NAME
+    # The aerial photo pack <data_dir>/tiles/<imagery>.pmtiles (raster), shown under the map.
+    imagery: str = Field(default="imagery", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     zoom: float = Field(default=15.0, ge=0, le=22)
 
 
@@ -125,6 +127,12 @@ class HealthConfig(_Section):
 
 class SimConfig(_Section):
     dataflash_dir: str = ""
+
+
+class WindConfig(_Section):
+    # The owner's wind limit on flight height for the warning (sd_ground.services.wind):
+    # first_flights = 4 m/s, until_calibrated = 8 m/s mean and 12 m/s gusts.
+    stage: Literal["first_flights", "until_calibrated"] = "first_flights"
 
 
 class RemoteConfig(_Section):
@@ -147,6 +155,7 @@ class GroundConfig(_Section):
     map: MapConfig = MapConfig()
     health: HealthConfig = HealthConfig()
     sim: SimConfig = SimConfig()
+    wind: WindConfig = WindConfig()
     remote: RemoteConfig = RemoteConfig()
 
 

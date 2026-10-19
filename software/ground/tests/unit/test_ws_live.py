@@ -310,6 +310,30 @@ async def test_a_failing_vehicle_state_never_stops_the_telemetry(
     assert "telemetry.state_failed" in {e["event"] for e in logs}
 
 
+async def test_a_failing_telemetry_sample_never_stops_the_loop(
+    ground: Ground, clock: FakeClock, vehicle_link: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each lost ``telemetry`` sample is logged and the 5 Hz loop keeps ticking."""
+
+    def broken(vehicle_id: str) -> object:
+        raise ValueError("a non-finite value from the flight controller")
+
+    monkeypatch.setattr(vehicle_link, "telemetry", broken)
+    sub = ground.bus.subscribe(["telemetry", "vehicle"])
+    task = asyncio.create_task(TelemetryService(ground).run())
+    with structlog.testing.capture_logs() as logs:
+        await clock.run_for(2.0)
+    assert not task.done()
+    task.cancel()
+    types = []
+    while not sub.queue.empty():
+        event = sub.queue.get_nowait()
+        assert event is not None
+        types.append(event.type)
+    assert "telemetry" not in types
+    assert [e["event"] for e in logs].count("telemetry.sample_failed") >= 9
+
+
 async def test_the_rest_state_has_the_same_latch_as_the_live_one(ground: Ground) -> None:
     """``/state`` reads the emergency path's own latches, as ``vehicle.state`` does."""
     from sd_ground.services import health

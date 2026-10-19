@@ -372,13 +372,18 @@ jobs:
 
   sitl-nightly-gz:
     # Gazebo as a server with headless rendering (no window, no GPU). Not required.
+    # The smoke flight flies ArduPilot's stock quad; the parity flight flies sd_quad14;
+    # the sd_fpv7 smoke flights fly the 7-inch built from the CAD model. Then SK-RED: the
+    # stills camera in Gazebo, the colour detector and the whole chain to the ground and
+    # the AI must find every red block.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 150  # 60 install + 15 smoke + 20 twice-build + 15 + 15 + margin
+    timeout-minutes: 320  # 60 install + 15 smoke + 15 before + 15 pictures + 30 trees + 20 twice-build + 15 + 15 + 3 x 15 fpv7 + 20 parity + 45 SK-RED + margin
     steps:
       - *checkout
       - *check-ref
       - *setup
+      - *db
       - name: Install ArduPilot SITL and Gazebo Harmonic (same script as on the owner's computer)
         timeout-minutes: 60
         run: bash tools/setup/wsl-setup.sh sim
@@ -388,6 +393,33 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just sim-smoke physics=gz gui=false
+      - name: Pictures of the terrain world before its real trees (generated forest)
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just world-snapshot
+          for d in runs/*-snapshot-i0; do mv "$d" "runs/before-real-trees-$(basename "$d")"; done
+      # Only the CC0 tree pictures (Poly Haven) are cached. The tree list and the raster
+      # crop in build/trees come from Skogsstyrelsen's tree height raster, whose download
+      # terms forbid redistribution, so they are fetched again on every run and never
+      # cached: a cache saved on main can be restored by any pull request's workflow,
+      # also from a fork. No step may upload or cache build/trees.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: tree-pictures
+        with:
+          path: build/tree_models
+          key: tree-pictures-cc0-${{ hashFiles('tools/terrain/fetch_tree_models.py', 'tools/terrain/fetch_site.py') }}
+      - name: The tree pictures (Poly Haven, CC0)
+        if: steps.tree-pictures.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        run: just tree-pictures-fetch
+      - name: The real trees (tree height raster and land cover, fetched every run)
+        timeout-minutes: 30
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends gdal-bin
+          just trees-fetch site=hellasgarden
       - name: The terrain world built twice from scratch gives the same files
         timeout-minutes: 20
         run: uv run --package sd-sim python -m sd_sim.terrain site=hellasgarden twice=1
@@ -403,17 +435,64 @@ jobs:
           # shellcheck disable=SC1090
           source "$HOME/.searchdrone_env"
           just world-snapshot
+      - name: sd_fpv7 smoke flight in the standard world (sd_lake_forest at CMAC)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=gz gui=false vehicle=fpv7
+      - name: sd_fpv7 smoke flight in the terrain world
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=gz gui=false world=sd_hellasgarden vehicle=fpv7
+      - name: sd_fpv7 smoke flight with builtin physics (hover current in result.json)
+        # Gazebo's JSON link carries no battery data; the builtin model's current does.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just sim-smoke physics=builtin gui=false vehicle=fpv7
       - name: Terrain world in the job summary
         if: always()
         run: |
           for f in runs/*-smoke-i0/result.json; do
             [ -f "$f" ] || continue
-            jq -r '"- smoke \(.world // "-"): passed \(.passed), real-time factor \(.real_time_factor // "-"), camera \(.camera_frames_10s // "-") frames in 10 s"' "$f" \
+            jq -r '"- smoke \(.vehicle // "-") \(.physics) \(.world // "-"): passed \(.passed), real-time factor \(.real_time_factor // "-"), camera \(.camera_frames_10s // "-") frames in 10 s, hover current \(.hover_current_a // "-") A"' "$f" \
               >> "$GITHUB_STEP_SUMMARY"
           done
           for f in runs/*-snapshot-i0/snapshots/summary.md; do
-            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+            [ -f "$f" ] || continue
+            case "$f" in
+              runs/before-real-trees-*) echo "### Before: generated forest" ;;
+              *) echo "### After: real trees" ;;
+            esac >> "$GITHUB_STEP_SUMMARY"
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
           done
+      - name: Our own vehicle in Gazebo (sd_quad14 takes off, hovers and lands like in SITL)
+        # Runs even when the smoke flight's checks fail: the two flights test different
+        # vehicles, and a red smoke flight must not hide this one.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        env:
+          SD_SIM__HEADLESS: "1"
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just test-sitl sc=test_model_parity_gz physics=gz
+      - name: SK-RED, search for red blocks with the camera (Gazebo)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        env:
+          SD_SIM__HEADLESS: "1"
+        run: |
+          # shellcheck disable=SC1090
+          source "$HOME/.searchdrone_env"
+          just test-sitl sc=SK-RED physics=gz
       - *summary
       - *scan
       - *results
@@ -427,6 +506,17 @@ jobs:
             runs/*-smoke-i0/result.json
           if-no-files-found: warn
           retention-days: 30
+      - name: Upload the search record (map, stills with the detector's boxes, numbers)
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sk-red-search
+          path: |
+            runs/**/search/**
+            runs/**/truth.json
+            !runs/**/secrets/**
+          if-no-files-found: warn
+          retention-days: 14
       - *logs
 
   sitl-e2e:

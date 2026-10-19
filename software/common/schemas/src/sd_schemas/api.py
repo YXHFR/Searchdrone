@@ -46,6 +46,7 @@ __all__ = [
     "ApiErrorItem",
     "Approval",
     "ApprovalDecisionRequest",
+    "Attitude",
     "AutonomyRequest",
     "Backend",
     "Charter",
@@ -55,14 +56,17 @@ __all__ = [
     "Command",
     "CommandResult",
     "CommandStatus",
+    "DetectionRow",
     "Event",
     "Features",
+    "Find",
     "Health",
     "LinkStatus",
     "LoginRequest",
     "ManualControlInput",
     "ManualControlState",
     "MapConfig",
+    "MapImagery",
     "Mission",
     "MissionDetail",
     "MissionEndRequest",
@@ -78,6 +82,8 @@ __all__ = [
     "Vehicle",
     "VehicleLive",
     "VideoConfig",
+    "WindCheck",
+    "WindReason",
 ]
 
 CHAT_MAX_CHARS = 4000
@@ -172,6 +178,15 @@ class LoginRequest(SdModel):
 MAP_ATTRIBUTION = "© OpenStreetMap contributors, Protomaps"
 
 
+class MapImagery(SdModel):
+    """An aerial photo pack (raster PMTiles) drawn under the map's roads, paths and names."""
+
+    pack_url: str  # e.g. "/tiles/imagery.pmtiles"
+    maxzoom: int = Field(ge=0, le=22)  # highest zoom in the pack; MapLibre overzooms
+    # Plain text (never HTML), taken from the pack's metadata; the licence requires it.
+    attribution: str = Field(min_length=1, max_length=300)
+
+
 class MapConfig(SdModel):
     pack_url: str  # e.g. "/tiles/demo.pmtiles"
     center: LatLon
@@ -180,6 +195,7 @@ class MapConfig(SdModel):
     # Plain text (never HTML). OpenStreetMap data is ODbL, which requires this line.
     attribution: str = Field(default=MAP_ATTRIBUTION, min_length=1, max_length=200)
     assets_url: str = "/tiles/assets"  # glyphs under fonts/, sprites under sprites/v4/
+    imagery: MapImagery | None = None  # None: no photo pack, the panel says so
 
 
 class VideoConfig(SdModel):
@@ -223,6 +239,46 @@ class Vehicle(SdModel):
     connected: bool  # flight controller heartbeat within 3 s
 
 
+class Attitude(SdModel):
+    """MAVLink ATTITUDE in degrees. Roll is positive right wing down, pitch positive nose
+    up, yaw 0-360 clockwise from north."""
+
+    roll_deg: float = Field(ge=-180, le=180)
+    pitch_deg: float = Field(ge=-90, le=90)
+    yaw_deg: float = Field(ge=0, lt=360)
+
+
+WindReason = Literal["TILT_MARGIN", "ENERGY_HOME", "WIND_LIMIT"]
+
+
+class WindCheck(SdModel):
+    """The ground station's "too windy" warning. A warning only: nothing on board or on
+    the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
+    calibrated against flight logs, so ``calibrated`` is always false for now.
+
+    * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
+      the flight controller's lean limit (ATC_ANGLE_MAX).
+    * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
+      margin, would leave less than the flight controller's low-battery reserve.
+    * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
+      when EK3_DRAG_* are set) is over the configured wind limit.
+    """
+
+    warning: bool
+    reasons: list[WindReason]
+    calibrated: Literal[False] = False
+    tilt_avg_deg: float | None  # None until 10 s of attitude in the air
+    tilt_warn_deg: float
+    wind_ms: float | None  # mean of WIND over the last 60 s; None without WIND
+    wind_gust_ms: float | None  # highest WIND over the last 60 s
+    wind_from_deg: float | None
+    wind_limit_ms: float
+    wind_gust_limit_ms: float | None  # None: no gust limit at this stage
+    home_mah: float | None  # estimated cost of flying home now, margin included
+    left_mah: float | None
+    reserve_mah: float
+
+
 class Telemetry(SdModel):
     """From the ground station's own MAVLink channel."""
 
@@ -244,6 +300,11 @@ class Telemetry(SdModel):
     gps_sats: int
     home: LatLon | None
     dist_to_pilot_m: float | None
+    # None when the flight controller has sent no ATTITUDE within the last second; the
+    # panel then draws no horizon rather than a guessed one.
+    attitude: Attitude | None = None
+    # The ground station's wind warning; None until the ground has computed one.
+    wind: WindCheck | None = None
 
 
 class LinkStatus(SdModel):
@@ -503,6 +564,51 @@ class Annotation(SdModel):
     created_at: AwareDatetime
     area_m2: float | None
     length_m: float | None = None  # paths only
+
+
+DetectionKind = Literal["target", "context"]
+DetectionSource = Literal["model", "color", "oracle"]
+
+
+class DetectionRow(SdModel):
+    """A stored detection (``GET /missions/{id}/detections``). A hint, never a decision.
+    ``source = "oracle"`` is the simulator's own label, not a detector."""
+
+    id: Id
+    find_id: Id
+    vehicle_id: str
+    still_id: Id
+    captured_at: AwareDatetime
+    label: str
+    kind: DetectionKind
+    source: DetectionSource
+    score: float
+    bbox: list[float]
+    lat: float
+    lon: float
+    sigma95_m: float
+    size_m: float
+    synthetic: bool
+    has_crop: bool
+
+
+class Find(SdModel):
+    """One found object: detections of one class at the same place, joined
+    (``GET /missions/{id}/finds``, live ``find.new`` / ``find.updated``). Not confirmed:
+    only a person confirms."""
+
+    find_id: Id
+    label: str
+    name_sv: str
+    kind: DetectionKind
+    source: DetectionSource
+    lat: float
+    lon: float
+    sigma95_m: float
+    score: float
+    count: int
+    thumb_detection_id: Id | None
+    synthetic: bool
 
 
 class AnnotationCreate(SdModel):

@@ -89,6 +89,43 @@ def test_old_local_model_config_still_loads(tmp_path: Path) -> None:
     assert cfg.decide.engines == ["jev", "openai_decisions"]
 
 
+@pytest.mark.parametrize(("profile", "zdr"), [("sim", False), ("bench", True), ("field", True)])
+def test_zdr_defaults_to_true_outside_sim(profile: str, zdr: bool) -> None:
+    cfg = BrainConfig.model_validate({"profile": profile})
+    assert cfg.cloud.provider.zdr is zdr
+    assert ("zdr" in cfg.cloud.extra_body()["provider"]) is zdr
+    assert cfg.cloud.fallback_model == "anthropic/claude-haiku-5.5"
+
+
+def test_example_config_in_field_sends_zdr() -> None:
+    cfg = load_config(ROOT / "config/brain.example.toml", {"SD_BRAIN__PROFILE": "field"})
+    assert cfg.cloud.extra_body()["provider"] == {
+        "data_collection": "deny",
+        "require_parameters": True,
+        "zdr": True,
+    }
+
+
+def test_explicit_zdr_wins_over_the_profile() -> None:
+    off = BrainConfig.model_validate({"profile": "field", "cloud": {"provider": {"zdr": False}}})
+    assert off.cloud.provider.zdr is False and "zdr" not in off.cloud.extra_body()["provider"]
+    on = BrainConfig.model_validate({"profile": "sim", "cloud": {"provider": {"zdr": True}}})
+    assert on.cloud.extra_body()["provider"]["zdr"] is True
+
+
+def test_explicit_zdr_off_on_a_real_flight_warns() -> None:
+    off = BrainConfig.model_validate({"profile": "field", "cloud": {"provider": {"zdr": False}}})
+    warning = off.zdr_warning()
+    assert warning is not None and "zdr = false" in warning
+    assert BrainConfig.model_validate({"profile": "field"}).zdr_warning() is None
+    sim = BrainConfig.model_validate({"profile": "sim", "cloud": {"provider": {"zdr": False}}})
+    assert sim.zdr_warning() is None
+    other_api = BrainConfig.model_validate(
+        {"profile": "field", "cloud": {"provider": {"send": False}}}
+    )
+    assert other_api.zdr_warning() is None
+
+
 def test_provider_can_be_turned_off_and_narrowed() -> None:
     off = BrainConfig.model_validate(
         {"cloud": {"reasoning_effort": "", "provider": {"send": False}}}

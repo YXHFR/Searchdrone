@@ -1,15 +1,17 @@
-"""Render the Gazebo model ``sd_quad14`` and the world ``sd_lake_forest`` for one instance.
+"""Render a Gazebo vehicle model and the world ``sd_lake_forest`` for one instance.
 
-The templates live in ``simulation/gazebo/``. ``render_model(instance)`` writes
-``build/sim/models/sd_quad14_i<N>/model.sdf`` and ``model.config``; ``render_world(name,
-instance)`` writes ``build/sim/worlds/<name>_i<N>.sdf`` (which includes
-``model://sd_quad14_i<N>``) and ``build/sim/worlds/<name>.geojson`` with the lake, the path
+The templates live in ``simulation/gazebo/``. ``render_model(instance, vehicle=...)`` writes
+``build/sim/models/<vehicle>_i<N>/model.sdf`` and ``model.config`` for ``sd_quad14`` (the
+default) or ``sd_fpv7`` (``sd_sim.fpv7``); ``render_world(name, instance, vehicle=...)``
+writes ``build/sim/worlds/<name>_i<N>.sdf`` (which includes ``model://<vehicle>_i<N>``) and
+``build/sim/worlds/<name>.geojson`` with the lake, the path
 and the forest band in WGS84. Scenario objects (``sd_sim.objects``) are placed on the
 ground and their facit is written to ``build/sim/worlds/<name>_i<N>.truth.json``.
 Everything is deterministic (fixed seed) and offline: no template may name a remote URI.
 
-The airframe's mass and propeller size come from ``hardware/drone.yaml`` (read and
-validated by ``sd_hwcalc``). In Gazebo each rotor is a joint that the ArduPilot plugin
+sd_quad14's mass and propeller size come from ``hardware/drone.yaml`` (read and
+validated by ``sd_hwcalc``); sd_fpv7's mass, centre of gravity and inertia come from its
+CAD model. In Gazebo each rotor is a joint that the ArduPilot plugin
 spins; two LiftDrag surfaces per rotor turn its speed into thrust. Their area is chosen
 so that full rotor speed lifts ``THRUST_TO_WEIGHT`` times the all-up weight.
 """
@@ -22,7 +24,7 @@ import math
 import random
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,11 +34,13 @@ import jinja2
 from sd_hwcalc.calc import compute
 from sd_hwcalc.model import Drone, load_drone
 from sd_safety.targets import Plane
-from sd_sim import fixture, objects, paths, ports, site
+from sd_sim import fixture, fpv7, meadow, objects, paths, ports, site
 
 GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
 MODEL_NAME = "sd_quad14"
+# The Searchdrone vehicles this module renders; "stock" (ArduPilot's iris) is not one.
+MODELS = (MODEL_NAME, fpv7.MODEL_NAME)
 WORLD_NAME = "sd_lake_forest"
 SEED = 42
 
@@ -58,6 +62,8 @@ BLADE_CP_M = 0.084
 CLA = 4.25
 BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
+# The stills camera a search scenario adds (the real camera's 66 degrees; 1280 x 720 in CI).
+STILLS = {"width": 1280, "height": 720, "hfov_deg": 66.0, "rate_hz": 1}
 
 # The world, in metres east/north of the landing pad.
 GROUND_SIZE_M = 1200.0
@@ -84,17 +90,66 @@ class Tree:
     height: float
 
 
-def blade_area_m2(total_mass_kg: float) -> float:
-    """LiftDrag area per surface so that full rotor speed gives THRUST_TO_WEIGHT x weight.
+def blade_area_m2(
+    total_mass_kg: float,
+    *,
+    thrust_to_weight: float = THRUST_TO_WEIGHT,
+    max_rad_s: float = MAX_ROTOR_RAD_S,
+    cp_m: float = BLADE_CP_M,
+) -> float:
+    """LiftDrag area per surface so that full rotor speed gives thrust_to_weight x weight.
 
     Each rotor has two surfaces; the lift of one is 0.5 * rho * area * CLA * a0 * v^2.
     """
-    thrust_per_surface = THRUST_TO_WEIGHT * total_mass_kg * 9.80665 / 4 / 2
-    v = MAX_ROTOR_RAD_S * BLADE_CP_M
+    thrust_per_surface = thrust_to_weight * total_mass_kg * 9.80665 / 4 / 2
+    v = max_rad_s * cp_m
     return thrust_per_surface / (0.5 * AIR_DENSITY * CLA * BLADE_A0_RAD * v * v)
 
 
-def model_context(instance: int, drone: Drone | None = None) -> dict[str, Any]:
+def stand_m(vehicle: str = MODEL_NAME) -> float:
+    """How high a world must place the vehicle's origin so that its legs touch the ground."""
+    return fpv7.stand_m() if vehicle == fpv7.MODEL_NAME else STAND_M
+
+
+def stills_topic_prefix(instance: int) -> str:
+    """Where the instance's stills and labelled boxes are published (Gazebo Transport)."""
+    return f"/sd_i{instance}"
+
+
+def fpv7_context(instance: int) -> dict[str, Any]:
+    ctx = fpv7.model_context(instance, ports.for_instance(instance))
+    area = blade_area_m2(
+        float(fpv7.cad()["mass_kg"]),
+        thrust_to_weight=fpv7.THRUST_TO_WEIGHT,
+        max_rad_s=fpv7.MAX_ROTOR_RAD_S,
+        cp_m=fpv7.blade_cp_m(),
+    )
+    return {
+        **ctx,
+        "blade_area": round(area, 7),
+        "blade_a0": BLADE_A0_RAD,
+        "cla": CLA,
+        "air_density": AIR_DENSITY,
+    }
+
+
+def model_context(
+    instance: int,
+    drone: Drone | None = None,
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
+) -> dict[str, Any]:
+    """``stills`` adds the stills camera and its bounding-box camera; ``video = False``
+    leaves out the video camera (it costs rendering time and a search does not need it).
+    Only sd_quad14 has that choice; sd_fpv7 always carries its video camera."""
+    if vehicle == fpv7.MODEL_NAME:
+        if stills or not video:
+            raise ValueError("sd_fpv7 har bara videokameran; stillskameran finns på sd_quad14")
+        return fpv7_context(instance)
+    if vehicle != MODEL_NAME:
+        raise ValueError(f"okänt fordon {vehicle!r}")
     drone = load_drone(DRONE_YAML) if drone is None else drone
     if drone.motors.count != 4:
         raise ValueError("sd_quad14 är en quad: fyra motorer och fyra propellrar")
@@ -140,6 +195,16 @@ def model_context(instance: int, drone: Drone | None = None) -> dict[str, Any]:
         "cla": CLA,
         "air_density": AIR_DENSITY,
         "camera": {**CAMERA, "hfov_rad": round(math.radians(CAMERA["hfov_deg"]), 6)},
+        "video": video,
+        "stills": (
+            {
+                **STILLS,
+                "hfov_rad": round(math.radians(STILLS["hfov_deg"]), 6),
+                "topic_prefix": stills_topic_prefix(instance),
+            }
+            if stills
+            else None
+        ),
     }
 
 
@@ -242,20 +307,43 @@ def checked_fragment(obj: objects.WorldObject, frame: Frame | None = None) -> st
     return text
 
 
+def light_context(light: Mapping[str, Any] | None) -> dict[str, str] | None:
+    """A round's light (``FarmScenario.light`` of the simulator farm: the sun's strength
+    and direction, the ambient light, haze and shadows) as SDF values; ``None`` keeps the
+    world's own light."""
+    if light is None:
+        return None
+    sun = max(0.0, min(1.5, float(light["sun_intensity"])))
+    amb = max(0.0, min(1.0, float(light["ambient"])))
+    haze = max(0.0, min(1.0, float(light.get("haze", 0.0))))
+    dx, dy, dz = (float(v) for v in light["sun_direction"])
+    sky = [round(c + (0.8 - c) * haze, 3) for c in (0.62, 0.72, 0.86)]
+    return {
+        "ambient": f"{amb:.3f} {amb:.3f} {amb:.3f} 1",
+        "diffuse": f"{sun:.3f} {sun * 0.97:.3f} {sun * 0.9:.3f} 1",
+        "direction": f"{dx:.4f} {dy:.4f} {dz:.4f}",
+        "background": f"{sky[0]} {sky[1]} {sky[2]} 1",
+        "shadows": "true" if light.get("shadows") else "false",
+    }
+
+
 def world_context(
     name: str,
     instance: int,
     fix: fixture.Fixture,
     placed: Sequence[objects.WorldObject] = (),
+    vehicle: str = MODEL_NAME,
+    light: Mapping[str, Any] | None = None,
+    ground_mesh: Path | None = None,
 ) -> dict[str, Any]:
     objects.check(placed, GROUND_SIZE_M / 2)
     home = fix.home
     return {
         "name": name,
-        "model_uri": f"model://{MODEL_NAME}_i{instance}",
+        "model_uri": f"model://{vehicle}_i{instance}",
         "home": home,
         # ENU yaw of the vehicle so that it faces the fixture's heading (clockwise from north).
-        "vehicle_z": STAND_M,
+        "vehicle_z": stand_m(vehicle),
         "vehicle_yaw": round(math.radians(90.0 - home.heading_deg), 6),
         "ground_size": GROUND_SIZE_M,
         "pad_size": PAD_SIZE_M,
@@ -265,6 +353,8 @@ def world_context(
         "trees": trees(),
         "trunk_radius": TRUNK_RADIUS_M,
         "objects": [checked_fragment(obj) for obj in placed],
+        "light": light_context(light),
+        "ground_mesh": "" if ground_mesh is None else str(ground_mesh),
     }
 
 
@@ -280,14 +370,21 @@ def _env() -> jinja2.Environment:
     )
 
 
-def model_sdf(instance: int, drone: Drone | None = None) -> str:
-    template = _env().get_template(f"models/{MODEL_NAME}/model.sdf.jinja")
-    return template.render(**model_context(instance, drone))
+def model_sdf(
+    instance: int,
+    drone: Drone | None = None,
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
+) -> str:
+    context = model_context(instance, drone, vehicle, stills=stills, video=video)
+    return _env().get_template(f"models/{vehicle}/model.sdf.jinja").render(**context)
 
 
-def model_config(instance: int) -> str:
-    template = (GAZEBO_DIR / "models" / MODEL_NAME / "model.config").read_text(encoding="utf-8")
-    return template.replace(f"<name>{MODEL_NAME}</name>", f"<name>{MODEL_NAME}_i{instance}</name>")
+def model_config(instance: int, vehicle: str = MODEL_NAME) -> str:
+    template = (GAZEBO_DIR / "models" / vehicle / "model.config").read_text(encoding="utf-8")
+    return template.replace(f"<name>{vehicle}</name>", f"<name>{vehicle}_i{instance}</name>")
 
 
 def world_sdf(
@@ -295,10 +392,14 @@ def world_sdf(
     instance: int,
     fix: fixture.Fixture | None = None,
     placed: Sequence[objects.WorldObject] = (),
+    vehicle: str = MODEL_NAME,
+    light: Mapping[str, Any] | None = None,
+    ground_mesh: Path | None = None,
 ) -> str:
     fix = fixture.load() if fix is None else fix
     template = _env().get_template(f"worlds/{name}.sdf.jinja")
-    return template.render(**world_context(name, instance, fix, placed))
+    context = world_context(name, instance, fix, placed, vehicle, light, ground_mesh)
+    return template.render(**context)
 
 
 def world_truth(
@@ -368,12 +469,21 @@ def world_geojson(fix: fixture.Fixture | None = None) -> dict[str, Any]:
     }
 
 
-def render_model(instance: int, repo: Path = paths.REPO) -> Path:
-    """Write the instance's model; returns its folder (``model://sd_quad14_i<N>``)."""
-    out = repo / "build" / "sim" / "models" / f"{MODEL_NAME}_i{instance}"
+def render_model(
+    instance: int,
+    repo: Path = paths.REPO,
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
+) -> Path:
+    """Write the instance's model; returns its folder (``model://<vehicle>_i<N>``)."""
+    out = repo / "build" / "sim" / "models" / f"{vehicle}_i{instance}"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "model.sdf").write_text(model_sdf(instance), encoding="utf-8")
-    (out / "model.config").write_text(model_config(instance), encoding="utf-8")
+    (out / "model.sdf").write_text(
+        model_sdf(instance, vehicle=vehicle, stills=stills, video=video), encoding="utf-8"
+    )
+    (out / "model.config").write_text(model_config(instance, vehicle), encoding="utf-8")
     return out
 
 
@@ -397,8 +507,15 @@ def render_world(
     instance: int,
     repo: Path = paths.REPO,
     placed: Sequence[objects.WorldObject] = (),
+    vehicle: str = MODEL_NAME,
+    *,
+    stills: bool = False,
+    video: bool = True,
+    light: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write the instance's world and model, the objects' facit and the GeoJSON layer.
+    ``stills`` and ``video`` choose the vehicle's cameras; ``light`` replaces the world's
+    sun and ambient light (``light_context``).
 
     The GeoJSON file has no instance suffix: every instance writes the same content, since
     the layer only depends on the fixture's home and the fixed scenery. The facit
@@ -408,13 +525,23 @@ def render_world(
     if name in sites:
         from sd_sim import site_world
 
-        return site_world.render(sites[name], instance, repo, placed)
-    render_model(instance, repo)
+        return site_world.render(
+            sites[name],
+            instance,
+            repo,
+            placed,
+            vehicle=vehicle,
+            stills=stills,
+            video=video,
+            light=light,
+        )
+    render_model(instance, repo, vehicle, stills=stills, video=video)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{name}_i{instance}.sdf"
-    sdf = world_sdf(name, instance, fix, placed)
+    ground = meadow.write(out / "meadow", GROUND_SIZE_M)
+    sdf = world_sdf(name, instance, fix, placed, vehicle, light, ground)
     truth = json.dumps(world_truth(name, placed, fix), indent=1) + "\n"
     path.write_text(sdf, encoding="utf-8")
     truth_path(name, instance, repo).write_text(truth, encoding="utf-8")

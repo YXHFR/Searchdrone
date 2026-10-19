@@ -1,10 +1,12 @@
 // The offline map (B1-11) with every other host blocked by the fake ground station: the
 // synthetic test pack is drawn at zoom 12, 15 and 18 (16-18 overzoomed from 15), with no
 // tile or glyph errors and the OpenStreetMap attribution visible.
+import type { Page } from "@playwright/test";
 import type { MapConfig } from "@searchdrone/schemas";
 import { charter, command, HOME, square, telemetry } from "../fixtures";
+import { IMAGERY } from "../fixtures/syntheticImagery";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, isMobile } from "../helpers/safety";
+import { expectSafetyVisible, isMobile, showView } from "../helpers/safety";
 
 const MAP: MapConfig = {
   pack_url: "/tiles/fixture.pmtiles",
@@ -38,7 +40,6 @@ test("the map draws the offline pack at zoom 12, 15 and 18", async ({ page, grou
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await page.waitForFunction(
     () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
   );
@@ -85,7 +86,6 @@ test("without a map pack the map view says so, requests no tiles and still draws
   ground,
 }) => {
   await ground.open();
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await expect(page.getByText("Ingen offlinekarta laddad")).toBeVisible();
   const webgl2 = await page.evaluate(
     () => document.createElement("canvas").getContext("webgl2") !== null,
@@ -101,6 +101,72 @@ test("without a map pack the map view says so, requests no tiles and still draws
   expect(ground.tiles).toEqual([]);
 });
 
+test("the aerial photo lies under the map, Karta is one click away, and the choice is kept", async ({
+  page,
+  ground,
+}) => {
+  ground.setConfig({ map: { ...MAP, zoom: 15, imagery: IMAGERY } });
+  await ground.open();
+  const webgl2 = await page.evaluate(
+    () => document.createElement("canvas").getContext("webgl2") !== null,
+  );
+  test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
+  const shown = (id: string) =>
+    page.evaluate((layer) => {
+      const map = (window as unknown as { __sd?: { map?: StyleMap } }).__sd?.map;
+      return map?.getLayer(layer)
+        ? (map.getLayoutProperty(layer, "visibility") ?? "visible")
+        : null;
+    }, id);
+  await page.waitForFunction(
+    () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
+  );
+  await expect.poll(() => shown("imagery")).toBe("visible");
+  expect(await shown("earth")).toBe("none");
+  expect(await shown("water")).toBe("visible");
+  // The panel's own drawing stays on top of the photo.
+  for (const id of ["swept-fill", "sectors-fill", "areas-fill"])
+    expect(await shown(id)).toBe("visible");
+  await expect
+    .poll(() => ground.tiles.filter((t) => t.path === "/tiles/imagery.pmtiles").length)
+    .toBeGreaterThan(1);
+  await expect(page.locator(".maplibregl-ctrl-attrib")).toContainText(IMAGERY.attribution);
+  await expect(page.getByTestId("no-imagery")).toHaveCount(0);
+
+  await page.getByTestId("map-layers-menu").click();
+  await expect(page.getByTestId("basemap-photo")).toBeChecked();
+  await page.getByTestId("basemap-map").check();
+  await expect.poll(() => shown("imagery")).toBe("none");
+  expect(await shown("earth")).toBe("visible");
+  await page.reload();
+  await page.waitForFunction(
+    () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
+  );
+  expect(await shown("imagery")).toBe("none");
+  await page.getByTestId("map-layers-menu").click();
+  await page.getByTestId("basemap-photo").check();
+  await expect.poll(() => shown("imagery")).toBe("visible");
+  expect(ground.tiles.every((t) => t.status < 400)).toBe(true);
+});
+
+test("without a photo pack the map shows and says there is no aerial photo", async ({
+  page,
+  ground,
+}) => {
+  ground.setConfig({ map: MAP });
+  await ground.open();
+  await expect(page.getByTestId("no-imagery")).toHaveText("Inget flygfoto för området");
+  await page.getByTestId("map-layers-menu").click();
+  await page.getByTestId("basemap-map").check();
+  await expect(page.getByTestId("no-imagery")).toHaveCount(0);
+  expect(ground.tiles.some((t) => t.path === "/tiles/imagery.pmtiles")).toBe(false);
+});
+
+interface StyleMap {
+  getLayer(id: string): unknown;
+  getLayoutProperty(id: string, name: string): string | undefined;
+}
+
 test("STOPP and FLYG HEM stay visible and work over the real map", async ({ page, ground }) => {
   ground.setConfig({ map: MAP });
   await ground.open();
@@ -108,21 +174,24 @@ test("STOPP and FLYG HEM stay visible and work over the real map", async ({ page
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await page.waitForFunction(
     () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
   );
   await expectSafetyVisible(page, "map loaded");
-  if (!isMobile(page)) {
-    await page.getByTestId("maximize-map").click();
-    await page.waitForFunction(
-      () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
-    );
-    await expectSafetyVisible(page, "map full screen");
-  }
+  await page.getByTestId("draw-menu").click();
+  await expectSafetyVisible(page, "map tool menu open");
+  await page.keyboard.press("Escape");
+  await showView(page, "status");
+  await expectSafetyVisible(page, "status over the map");
   await page.getByTestId("safety-stop").click();
   await expect.poll(() => ground.posts("/api/v1/vehicles/sim-01/actions/stop").length).toBe(1);
 });
+
+/** Rita ▾, then the tool. */
+async function draw(page: Page, tool: "polygon" | "rectangle" | "pin"): Promise<void> {
+  await page.getByTestId("draw-menu").click();
+  await page.getByTestId(`draw-${tool}`).click();
+}
 
 interface SourceMap {
   loaded(): boolean;
@@ -215,7 +284,6 @@ test("every layer is fed: drone, charter, pilot range, home, sectors, target, tr
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await ground.liveConnected();
   await ground.resynced();
   await page.waitForFunction(
@@ -303,14 +371,13 @@ test("draw a rectangle and set a pin: one POST each, shown on the map", async ({
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await ground.liveConnected();
   await ground.resynced();
   await page.waitForFunction(
     () => (window as unknown as { __sd?: { map?: SourceMap } }).__sd?.map?.loaded() === true,
   );
   await zoomIn(page);
-  await page.getByTestId("draw-rectangle").click();
+  await draw(page, "rectangle");
   await page.waitForTimeout(200); // the drawing bar takes its place under the map
   const drawBox = await page.getByTestId("map").boundingBox();
   if (!drawBox) throw new Error("no map box");
@@ -335,14 +402,17 @@ test("draw a rectangle and set a pin: one POST each, shown on the map", async ({
   expect(area.geometry.coordinates[0]).toHaveLength(5);
   await expect(page.getByTestId("toasts")).toContainText("ar-1");
   if (isMobile(page)) {
-    await expect(page.getByTestId("view-chat")).toBeVisible(); // a phone goes to the chat
-    await page.getByTestId("tab-map").click();
+    await expect(page.getByTestId("view-chat")).toBeVisible(); // a phone raises the chat
+    await expect(page.getByTestId("sheet")).toHaveAttribute("data-size", "half");
+    await page.getByTestId("sheet-handle").click();
+    await page.getByTestId("sheet-handle").click();
+    await expect(page.getByTestId("sheet")).toHaveAttribute("data-size", "peek");
   }
   await page.waitForFunction(
     () => (window as unknown as { __sd?: { map?: SourceMap } }).__sd?.map?.loaded() === true,
   );
   await expect.poll(async () => (await feats(page, "areas")).length).toBe(1);
-  await page.getByTestId("draw-pin").click();
+  await draw(page, "pin");
   await mapClick(page, 20, 20);
   await expect.poll(() => ground.posts("/api/v1/missions/M1/annotations").length).toBe(2);
   const pin = ground.posts("/api/v1/missions/M1/annotations")[1]?.body as {
@@ -362,13 +432,12 @@ test("a self-crossing polygon is refused in the panel", async ({ page, ground })
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await ground.resynced();
   await page.waitForFunction(
     () => (window as unknown as { __sd?: { map?: SourceMap } }).__sd?.map?.loaded() === true,
   );
   await zoomIn(page);
-  await page.getByTestId("draw-polygon").click();
+  await draw(page, "polygon");
   for (const [e, n] of [
     [0, 0],
     [50, 50],

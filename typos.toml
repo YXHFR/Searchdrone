@@ -50,6 +50,7 @@ tio = "tio"
 # Swedish (sd_ground: mission-flow texts, B1-12; "klick" above too)
 ser = "ser"
 ges = "ges"
+nationella = "nationella"  # Nationella Marktäckedata, the land cover map (fetch_trees.py)
 
 [default.extend-identifiers]
 # ArduPilot throttle failsafe (B1-07)

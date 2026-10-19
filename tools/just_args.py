@@ -29,6 +29,7 @@ RECIPES: dict[str, tuple[str | None, frozenset[str]]] = {
     "accept": (None, frozenset({"phase", "sha"})),
     "perf": (None, frozenset({"runs", "gui", "eval"})),
     "showcase": ("B1-18", frozenset({"stage", "brain"})),
+    "brain-eval-sim": (None, frozenset({"flights", "seed", "model"})),
 }
 
 
