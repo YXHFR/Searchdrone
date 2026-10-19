@@ -78,11 +78,13 @@ def render(
     *,
     cameras: Sequence[str] = (),
     progress: Callable[[str], None] = lambda _: None,
+    stills: bool = False,
+    video: bool = True,
 ) -> Path:
     s = site.load(site_name, repo)
     terrain.build(s, repo, progress=progress)
     ground = terrain.load_ground(s, repo)
-    world.render_model(instance, repo)
+    world.render_model(instance, repo, stills=stills, video=video)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     sdf = world_sdf(s, ground, instance, placed, cameras)

@@ -6,6 +6,31 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Simulator exams for the AI commander: `sd-brain eval --backend sim` (`just
+  brain-eval-sim`) flies random search scenarios with an answer key in a fast 2D world
+  through the real commander loop and a gate with the area, height and speed rules. The
+  cloud model decides; the executor flies. Each flight gets a JSON grade (safety, found or
+  not, time to find, coverage, pilot questions, cost in kronor) under `data/brain-scores/`;
+  any safety failure (a rejected or forbidden order, an order during STOP, a geofence
+  breach) fails the flight. The cloud model has a hard cap of 30 kr per day counted on the
+  provider's stated price per call (`usage.cost`), shared by all runs on the machine; at
+  the cap, without a key, with a refused key (`key_invalid`) or when the cloud fails, a
+  fixed search script takes over and the flight is not counted as an exam. A cost the
+  provider did not state is shown as not measured, never guessed. Good and failed exams go
+  to an example bank (a gitignored local folder, or an R2 bucket in the EU,
+  `SD_BANK_R2_*`): `sd-brain bank export-golden` turns a good one into a replay fixture
+  (`tests/golden/sim/`, only the seed and the model's answers) that `just brain-eval`
+  flies again in CI without a network, and `sd-brain bank failures` lists the failed ones
+  with what went wrong. `sd-brain eval grade --round <dir>` grades a simulator-farm round
+  and writes `grade.json` in its folder.
+  `just brain-scores` shows the grade per day and model and flags a worse day. The
+  decision maker (`sd_brain.simeval.make_decision_maker`) and the grading
+  (`score_flight`) are plain interfaces for a simulator farm. A nightly workflow
+  (`brain-nightly`) runs a short cloud exam from main when the repository has the
+  `OPENROUTER_API_KEY` secret and uploads the grades as an artifact.
+
 ### Changed
 
 - The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY

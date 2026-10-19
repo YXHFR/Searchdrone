@@ -1,0 +1,55 @@
+# Nightly simulator exam of the AI commander: a few random searches with an answer key,
+# with the cloud model (OpenRouter) deciding. Runs only from main (the schedule, or a
+# manual start on main), never for pull requests (no pull_request trigger, so never for
+# forks), and only when the repository has the secret OPENROUTER_API_KEY. At most 5 kr per
+# night, below the daily cap of 30 kr. The grades (JSON, no images) become an artifact.
+name: brain-nightly
+
+on:
+  schedule:
+    - cron: "17 4 * * *" # 04:17 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: brain-nightly
+  cancel-in-progress: false
+
+jobs:
+  exam:
+    if: github.ref == 'refs/heads/main' && github.repository == 'YXHFR/Searchdrone'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      HAS_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
+    steps:
+      - name: Without the key there is no exam
+        if: env.HAS_KEY != 'true'
+        run: echo "hoppar över molnprovet (secret OPENROUTER_API_KEY saknas)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.HAS_KEY == 'true'
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+        if: env.HAS_KEY == 'true'
+      - name: Short cloud exam
+        if: env.HAS_KEY == 'true'
+        env:
+          SD_CLOUD_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: uv run --no-sync sd-brain eval --backend sim --flights 3 --max-cost-sek 5 --bank-dir ""
+      - name: Grade trend
+        if: always() && env.HAS_KEY == 'true'
+        run: uv run --no-sync sd-brain scores
+      - name: Upload the grades (JSON only)
+        if: always() && env.HAS_KEY == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brain-scores
+          path: |
+            data/brain-scores/**/*.json
+            data/reports/eval-sim-*.json
+          if-no-files-found: ignore
+          retention-days: 90

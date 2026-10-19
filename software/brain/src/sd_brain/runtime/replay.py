@@ -8,7 +8,13 @@ from typing import Any
 
 from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling
 
-__all__ = ["ReplayExhaustedError", "ReplayNotConsumedError", "ReplayRuntime", "load_golden"]
+__all__ = [
+    "ReplayExhaustedError",
+    "ReplayNotConsumedError",
+    "ReplayRuntime",
+    "load_golden",
+    "load_golden_rows",
+]
 
 
 class ReplayExhaustedError(AssertionError):
@@ -43,10 +49,14 @@ def _reply(raw: dict[str, Any]) -> ModelReply:
     )
 
 
-def load_golden(path: Path) -> list[ModelReply]:
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-    rows.sort(key=lambda r: (int(r["step"]), int(r["call"])))
+def load_golden_rows(rows: list[dict[str, Any]]) -> list[ModelReply]:
+    rows = sorted(rows, key=lambda r: (int(r["step"]), int(r["call"])))
     return [_reply(r["reply"]) for r in rows]
+
+
+def load_golden(path: Path) -> list[ModelReply]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return load_golden_rows([json.loads(line) for line in lines if line])
 
 
 class ReplayRuntime:

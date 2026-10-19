@@ -69,9 +69,11 @@ class CloudModelRuntime:
         timeout_s: float,
         sampling: Sampling,
     ) -> ModelReply:
-        headers = (
-            _OPENROUTER_HEADERS if urlsplit(self.cfg.base_url).hostname == "openrouter.ai" else None
-        )
+        openrouter = urlsplit(self.cfg.base_url).hostname == "openrouter.ai"
+        headers = _OPENROUTER_HEADERS if openrouter else None
+        body = self.cfg.extra_body()
+        if openrouter:
+            body["usage"] = {"include": True}  # the real price of the call, for the cost cap
         # The evaluation seed is not sent: cloud providers handle it differently.
         reply = await openai_chat(
             client,
@@ -83,7 +85,7 @@ class CloudModelRuntime:
             timeout_s=timeout_s,
             sampling=sampling.model_copy(update={"seed": None}),
             extra_headers=headers,
-            extra_body=self.cfg.extra_body(),
+            extra_body=body,
         )
         reply.engine = "cloud"
         reply.model_id = reply.model_id or model

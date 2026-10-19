@@ -102,3 +102,22 @@ def test_still_rig_and_shot_poses() -> None:
     # Gazebo's front-left-up pitch is the vehicle's nose-up pitch with the sign flipped.
     assert tilted["gz"]["pitch"] == pytest.approx(-math.radians(tilted["attitude"]["pitch_deg"]))
     assert tilted["gz"]["yaw"] == pytest.approx(math.radians(90.0 - tilted["attitude"]["yaw_deg"]))
+
+
+def test_launcher_places_a_search_scene(tmp_path: Path) -> None:
+    from sd_sim import launch
+    from sd_sim.config import SimConfig
+    from sd_sim.errors import InfraError
+
+    def stack(**cfg: object) -> launch.Stack:
+        return launch.Stack(
+            SimConfig(physics="gz", **cfg),  # type: ignore[arg-type]
+            tmp_path / "run",
+            repo=tmp_path,
+            scene=targets.Scene("SK-RED", 11),
+        )
+
+    placed = stack().world_objects()
+    assert [o.name for o in placed] == [t.name for t in targets.layout("SK-RED", 11)]
+    with pytest.raises(InfraError, match="sökscenario"):
+        stack(vehicle="stock").world_objects()

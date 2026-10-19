@@ -29,6 +29,7 @@ RECIPES: dict[str, tuple[str | None, frozenset[str]]] = {
     "accept": (None, frozenset({"phase", "sha"})),
     "perf": (None, frozenset({"runs"})),  # the cloud step; P0-P8 come with B1-17
     "showcase": ("B1-18", frozenset({"stage", "brain"})),
+    "brain-eval-sim": (None, frozenset({"flights", "seed", "model"})),
 }
 
 

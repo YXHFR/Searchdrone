@@ -24,7 +24,19 @@ from http import HTTPStatus
 from pathlib import Path
 from types import FrameType
 
-from sd_sim import _args, config, gazebo, objects, paths, ports, procs, services, site, world
+from sd_sim import (
+    _args,
+    config,
+    gazebo,
+    objects,
+    paths,
+    ports,
+    procs,
+    services,
+    site,
+    targets,
+    world,
+)
 from sd_sim.config import SimConfig
 from sd_sim.errors import InfraError, StopRequestedError
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
@@ -113,8 +125,14 @@ class Stack:
         param_layers: tuple[Path, ...] = (),
         services: bool = False,
         test_rig: bool = False,
+        scene: targets.Scene | None = None,
     ) -> None:
         self.cfg = cfg
+        # scene: a search scenario's objects in the Gazebo world, the vehicle's stills
+        # camera instead of its video camera, and the stills captured into stills_dir.
+        self.scene = scene
+        self.stills_dir = run_dir / "stills"
+        self.ground_truth: Path | None = None
         # services: also start the database, sd-ground, sd-onboard and sd-brain (`just
         # sim`, `just demo` and the end-to-end test); without, SITL and its links only.
         self.services = services
@@ -217,9 +235,16 @@ class Stack:
         return site.load(name, self.repo).half_size_m if name else world.GROUND_SIZE_M / 2
 
     def world_objects(self) -> list[objects.WorldObject]:
-        """Load and check ``objects=`` before anything starts; refuse it where it cannot apply."""
+        """Load and check ``objects=`` (and a search scenario's objects) before anything
+        starts; refuse them where they cannot apply."""
+        scene: list[objects.WorldObject] = [] if self.scene is None else list(self.scene.objects())
+        if scene and not self.renders_world():
+            raise InfraError(
+                "Ett sökscenario kräver physics=gz, vehicle=sd_quad14 och "
+                f"världen {world.WORLD_NAME}."
+            )
         if not self.cfg.objects:
-            return []
+            return scene
         if not self.renders_world():
             raise InfraError(
                 "objects= kräver physics=gz, vehicle=sd_quad14 och en av Searchdrones världar."
@@ -235,14 +260,28 @@ class Stack:
                 world.checked_fragment(obj)
         except objects.ObjectError as exc:
             raise InfraError(f"objects={self.cfg.objects}: {exc}") from exc
-        return placed
+        return scene + placed
 
     def start_gazebo(self) -> None:
         if self.renders_world():
             placed = self.placed
-            world.render_world(self.cfg.world, self.cfg.instance, self.repo, placed)
+            world.render_world(
+                self.cfg.world,
+                self.cfg.instance,
+                self.repo,
+                placed,
+                stills=self.scene is not None,
+                video=self.scene is None,
+            )
             if placed:
                 say(f"{len(placed)} objekt i världen, facit i build/sim/worlds/")
+            if self.scene is not None:
+                # The run keeps the facit it was judged against.
+                self.ground_truth = self.run_dir / "truth.json"
+                shutil.copyfile(
+                    world.truth_path(self.cfg.world, self.cfg.instance, self.repo),
+                    self.ground_truth,
+                )
         self.world = gazebo.resolve_world(self.cfg, self.repo)
         if self.world.note:
             say(self.world.note)
@@ -256,6 +295,29 @@ class Stack:
             60,
             lambda: gazebo.world_running(running, self.cfg.instance),
             "Gazebo svarar inte. Se reservvägarna i installationsguiden (gui=false).",
+        )
+        if self.scene is not None:
+            self.start_stills_capture(env)
+
+    def start_stills_capture(self, env: dict[str, str]) -> None:
+        """The stills camera's pictures and labelled boxes into ``stills_dir``."""
+        prefix = world.stills_topic_prefix(self.cfg.instance)
+        self.stills_dir.mkdir(parents=True, exist_ok=True)
+        script = Path(__file__).with_name("gz_stills.py")
+        self.group.start(
+            "stills",
+            [
+                gazebo.GZ_PYTHON,
+                str(script),
+                "capture",
+                "--image-topic",
+                f"{prefix}/stills",
+                "--boxes-topic",
+                f"{prefix}/boxes",
+                "--out",
+                str(self.stills_dir),
+            ],
+            env=env,
         )
 
     def start_link_processes(self) -> None:

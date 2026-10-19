@@ -26,6 +26,7 @@ class ModelError(RuntimeError):
     """The model server failed (HTTP error, bad answer). ``kind`` goes to the turn log."""
 
     kind: Literal["http_error", "timeout", "parse_error"] = "http_error"
+    status: int | None = None  # the HTTP status when the server answered with an error
 
 
 class ModelTimeoutError(ModelError):
@@ -61,6 +62,7 @@ class ModelReply(BaseModel):
     latency_ms: int = 0
     engine: Engine | None = None
     model_id: str | None = None
+    cost_usd: float | None = None  # the provider's own price for the call (OpenRouter usage)
 
 
 class ModelRuntime(Protocol):
@@ -98,6 +100,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             for i, c in enumerate(msg.get("tool_calls") or [])
         ]
         usage = data.get("usage") or {}
+        cost = usage.get("cost")
         return ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
@@ -106,6 +109,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             completion_tokens=int(usage.get("completion_tokens") or 0),
             latency_ms=latency_ms,
             model_id=data.get("model"),
+            cost_usd=float(cost) if isinstance(cost, int | float) else None,
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")
@@ -158,7 +162,9 @@ async def openai_chat(
     except httpx.HTTPError as exc:
         raise ModelError(f"model server unreachable: {type(exc).__name__}") from None
     if resp.status_code != 200:
-        raise ModelError(f"model server answered HTTP {resp.status_code}")
+        err = ModelError(f"model server answered HTTP {resp.status_code}")
+        err.status = resp.status_code
+        raise err
     try:
         data = resp.json()
     except ValueError:
