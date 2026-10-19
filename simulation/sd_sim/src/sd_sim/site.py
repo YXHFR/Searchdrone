@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -342,8 +343,30 @@ def load(name: str, repo: Path = paths.REPO) -> Site:
         layers=read_layers(folder / "osm.geojson", plane),
         raw_toml=raw,
         trees_folder=folder if not public else repo / "build" / "trees" / name,
-        ortho_folder=folder if not public else repo / "build" / "ortho" / name,
+        ortho_folder=ortho_folder(name, folder, public, repo),
     )
+
+
+def ortho_folder(name: str, folder: Path, public: bool, repo: Path = paths.REPO) -> Path:
+    """Where the site's orthophoto lives: never a public site's committed folder."""
+    return folder if not public else repo / "build" / "ortho" / name
+
+
+def photo_worlds(worlds: Iterable[str], repo: Path = paths.REPO) -> list[str]:
+    """The site worlds among ``worlds`` whose ground would be draped with a fetched
+    orthophoto: pictures of them must stay on the owner's computer."""
+    sites = world_sites(repo)
+    out = []
+    for w in worlds:
+        if w not in sites:
+            continue
+        try:
+            folder, public = folder_for(sites[w], repo)
+        except SiteError:
+            continue
+        if (ortho_folder(sites[w], folder, public, repo) / "ortho.npy").is_file():
+            out.append(w)
+    return out
 
 
 def world_sites(repo: Path = paths.REPO) -> dict[str, str]:

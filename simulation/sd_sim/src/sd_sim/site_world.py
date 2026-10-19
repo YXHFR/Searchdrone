@@ -28,6 +28,7 @@ import yaml
 
 from sd_sim import forest as forest_mod
 from sd_sim import objects, paths, site, terrain, world
+from sd_sim.util import say
 
 TEMPLATE = "worlds/sd_site.sdf.jinja"
 PAD_SIZE_M = 3.0
@@ -107,6 +108,11 @@ def render(
     gi: str = "off",
 ) -> Path:
     s = site.load(site_name, repo)
+    if s.ortho is not None:
+        say(
+            f"Obs: marken i {s.world} är ortofotot i {s.ortho.parent} (bara på din dator); "
+            "CI:s värld har den målade marken. Flytta bort mappen för att få den här också."
+        )
     terrain.build(s, repo, progress=progress)
     ground = terrain.load_ground(s, repo)
     world.render_model(instance, repo, vehicle, stills=stills, video=video)

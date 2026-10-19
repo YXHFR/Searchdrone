@@ -9,8 +9,8 @@ cached either. Usage:
   name and by content whatever it is called (CI runs it on what it uploads or caches);
   a path that does not exist is fine;
 - ``check_no_orthophotos.py --git``: every file in every commit reachable from any ref,
-  so a photo that was committed once and deleted again is found too (CI's lint job has
-  the whole history).
+  by name and by content, so a photo that was committed once and deleted again is found
+  too (CI's lint job has the whole history).
 
 A file is flagged when:
 
@@ -18,9 +18,16 @@ A file is flagged when:
   rasters, or an aerial format (JPEG 2000, ECW, MrSID);
 - it is a NumPy array of bytes shaped like a picture (height x width x 3 or 4, both at
   least ``MIN_SIDE_PX``), the shape ``just ortho-fetch`` writes;
-- it is a GeoTIFF (a TIFF with geographic tags);
-- it is a world's manifest, a snapshot's metrics or attribution that says it was built
-  from an orthophoto.
+- it is a GeoTIFF (a classic or Big TIFF with geographic tags);
+- it is a world's manifest, a snapshot's metrics or attribution, or a ground texture
+  (PNG, by the text chunk ``terrain.py`` writes) that says it was built from an
+  orthophoto;
+- it is a symbolic link under a folder given (``upload-artifact`` would follow it).
+
+What it cannot see: a photo saved as an ordinary picture (PNG, JPEG, WebP) by hand,
+with nothing that says where it came from. Such pictures are kept out of git by
+``check_forbidden_files.py`` (no images outside ``testdata/`` and the panel's assets) and
+none is made in CI, where no photo is ever fetched.
 
 Exit code 0 when nothing was found, 1 otherwise. Standard library only.
 """
@@ -34,8 +41,9 @@ import os
 import struct
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 MIN_SIDE_PX = 256
 NAME_GLOBS = (
@@ -51,14 +59,16 @@ NAME_GLOBS = (
     "*.ecw",
     "*.sid",
 )
-# What sd_sim writes next to anything built from a photo (terrain.py, snapshot.py).
+# What sd_sim writes next to anything built from a photo (terrain.py, snapshot.py), and
+# into the ground textures themselves (terrain.PHOTO_PNG_TEXT).
 MARKERS = (b'"ground_texture": "orthophoto"', "Lantmäteriet's orthophoto".encode())
+PNG_MARKER = b"ground_texture=orthophoto"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MARKER_SUFFIXES = {".json", ".txt", ".toml"}
 # Files that name the markers to find or write them (this check and its tests).
 MARKER_EXEMPT = {"tools/check_no_orthophotos.py", "tools/tests/test_check_no_orthophotos.py"}
-CONTENT_SUFFIXES = {".npy", ".tif", ".tiff"} | MARKER_SUFFIXES
 GEOTIFF_TAGS = {33550, 33922, 34264, 34735}  # pixel scale, tie point, transform, geo keys
-TIFF_HEAD = 64 * 1024
+HEAD = 64 * 1024  # enough for a .npy header and a PNG's chunks before its pixels
 
 
 def name_rule(path: str) -> str | None:
@@ -102,21 +112,41 @@ def npy_rule(data: bytes) -> str | None:
     return None
 
 
-def tiff_rule(data: bytes) -> str | None:
-    """GeoTIFF: a classic TIFF whose first directory has geographic tags."""
-    if data[:4] not in (b"II*\x00", b"MM\x00*"):
+def tiff_tags(read: Callable[[int, int], bytes]) -> set[int] | None:
+    """The tags of a TIFF's first directory, wherever in the file it is; None when it is
+    not a TIFF. ``read(offset, size)`` gives the file's bytes there."""
+    head = read(0, 16)
+    if head[:4] in (b"II*\x00", b"MM\x00*"):
+        big = False
+    elif head[:4] in (b"II+\x00", b"MM\x00+"):
+        big = True
+    else:
         return None
-    end = "<" if data[:2] == b"II" else ">"
+    end = "<" if head[:2] == b"II" else ">"
     try:
-        (offset,) = struct.unpack_from(f"{end}I", data, 4)
-        (count,) = struct.unpack_from(f"{end}H", data, offset)
-        tags = {struct.unpack_from(f"{end}H", data, offset + 2 + 12 * i)[0] for i in range(count)}
+        if big:
+            (offset,) = struct.unpack_from(f"{end}Q", head, 8)
+            (count,) = struct.unpack_from(f"{end}Q", read(offset, 8))
+            entry, first = 20, 8
+        else:
+            (offset,) = struct.unpack_from(f"{end}I", head, 4)
+            (count,) = struct.unpack_from(f"{end}H", read(offset, 2))
+            entry, first = 12, 2
+        table = read(offset + first, entry * min(count, 4096))
+        return {struct.unpack_from(f"{end}H", table, entry * i)[0] for i in range(min(count, 4096))}
     except struct.error:
-        return None
-    return "a GeoTIFF" if tags & GEOTIFF_TAGS else None
+        return set()
+
+
+def tiff_rule(read: Callable[[int, int], bytes]) -> str | None:
+    """GeoTIFF: a TIFF whose first directory has geographic tags."""
+    tags = tiff_tags(read)
+    return "a GeoTIFF" if tags and tags & GEOTIFF_TAGS else None
 
 
 def marker_rule(path: str, data: bytes) -> str | None:
+    if data.startswith(PNG_SIGNATURE):
+        return "a picture that says it was made from an orthophoto" if PNG_MARKER in data else None
     if path in MARKER_EXEMPT or PurePosixPath(path).suffix.lower() not in MARKER_SUFFIXES:
         return None
     for marker in MARKERS:
@@ -125,45 +155,55 @@ def marker_rule(path: str, data: bytes) -> str | None:
     return None
 
 
-def check(path: str, data: bytes | None) -> list[str]:
+def _from_bytes(data: bytes) -> Callable[[int, int], bytes]:
+    return lambda offset, size: data[offset : offset + size]
+
+
+def check(
+    path: str, data: bytes | None, read: Callable[[int, int], bytes] | None = None
+) -> list[str]:
+    """What looks like an orthophoto about this file. ``data`` is its start (all of it
+    for a text file); ``read(offset, size)``, when given, reaches the rest (a TIFF's
+    directory can be anywhere)."""
     out = [r for r in (name_rule(path),) if r]
     if data is not None:
-        out += [r for r in (npy_rule(data), tiff_rule(data), marker_rule(path, data)) if r]
+        rules = (npy_rule(data), tiff_rule(read or _from_bytes(data)), marker_rule(path, data))
+        out += [r for r in rules if r]
     return out
-
-
-def needs_content(path: str) -> bool:
-    return PurePosixPath(path).suffix.lower() in CONTENT_SUFFIXES
 
 
 # --- sources -----------------------------------------------------------------------
 
 
 def walk(paths: list[Path]) -> Iterator[tuple[str, Path]]:
+    """Every file and symbolic link under the paths given (links are not followed)."""
     for root in paths:
-        if root.is_file():
+        if root.is_symlink() or root.is_file():
             yield root.as_posix(), root
         elif root.is_dir():
-            for folder, _, files in os.walk(root):
-                for name in sorted(files):
+            for folder, dirs, files in os.walk(root):
+                links = [d for d in dirs if (Path(folder) / d).is_symlink()]
+                for name in sorted([*files, *links]):
                     f = Path(folder) / name
                     yield f.as_posix(), f
-
-
-def _read_head(path: Path) -> bytes:
-    """The start of the file: enough for every header rule; markers need the whole text."""
-    suffix = path.suffix.lower()
-    with path.open("rb") as fh:
-        return fh.read() if suffix in MARKER_SUFFIXES else fh.read(TIFF_HEAD)
 
 
 def check_paths(paths: list[Path]) -> list[str]:
     findings = []
     for name, f in walk(paths):
         if f.is_symlink():
+            findings.append(f"{name}: a symbolic link (uploads follow it; it is not checked)")
             continue
-        data = _read_head(f)
-        findings += [f"{name}: {why}" for why in check(name, data)]
+        if not f.is_file():
+            continue
+        with f.open("rb") as fh:
+            data = fh.read() if f.suffix.lower() in MARKER_SUFFIXES else fh.read(HEAD)
+
+            def read(offset: int, size: int, fh: BinaryIO = fh) -> bytes:
+                fh.seek(offset)
+                return fh.read(size)
+
+            findings += [f"{name}: {why}" for why in check(name, data, read)]
     return findings
 
 
@@ -178,7 +218,8 @@ def _git(root: Path, *args: str, stdin: bytes | None = None) -> bytes:
 
 
 def check_git(root: Path) -> list[str]:
-    """Every blob in every commit reachable from any ref, by the names it had."""
+    """Every blob in every commit reachable from any ref, by the names it had and by its
+    content, whatever it was called."""
     objects = _git(root, "rev-list", "--objects", "--all").decode("utf-8", "surrogateescape")
     named: dict[str, set[str]] = {}
     for line in objects.splitlines():
@@ -186,26 +227,29 @@ def check_git(root: Path) -> list[str]:
         if path:
             named.setdefault(sha, set()).add(path)
     findings: set[str] = set()
-    wanted = []
     for sha, names in named.items():
         for name in names:
             findings.update(f"{name} (git {sha[:12]}): {why}" for why in check(name, None))
-            if needs_content(name):
-                wanted.append(sha)
-    if wanted:
-        batch = _git(root, "cat-file", "--batch", stdin="\n".join(wanted).encode() + b"\n")
-        at = 0
-        for sha in wanted:
-            nl = batch.index(b"\n", at)
-            head = batch[at:nl].split()
-            at = nl + 1
-            if len(head) < 3 or head[1] != b"blob":
+    with subprocess.Popen(
+        ["git", "cat-file", "--batch"],  # noqa: S607 - git from PATH
+        cwd=root,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    ) as cat:
+        if cat.stdin is None or cat.stdout is None:  # never: both are pipes
+            raise RuntimeError("git cat-file gav inga rör")
+        for sha, names in named.items():
+            cat.stdin.write(sha.encode() + b"\n")
+            cat.stdin.flush()
+            head = cat.stdout.readline().split()
+            if len(head) < 3:
                 continue
-            size = int(head[2])
-            data = batch[at : at + size]
-            at += size + 1
-            for name in named[sha]:
+            data = cat.stdout.read(int(head[2]) + 1)[:-1]
+            if head[1] != b"blob":
+                continue
+            for name in names:
                 findings.update(f"{name} (git {sha[:12]}): {why}" for why in check(name, data))
+        cat.stdin.close()
     return sorted(findings)
 
 
@@ -221,6 +265,10 @@ def main(argv: list[str] | None = None) -> int:
     findings += check_paths(args.paths)
     for f in findings:
         print(f)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if findings and summary:  # so a blocked upload can be told apart from a failed test
+        with Path(summary).open("a", encoding="utf-8") as fh:
+            fh.write("### Orthophoto check\n\n" + "".join(f"- `{f}`\n" for f in findings))
     if findings:
         print(
             f"{len(findings)} fil(er) som liknar ortofoton. Ortofoton får bara finnas på "

@@ -125,10 +125,17 @@ in use go to `metrics.json`) and with `just sim-smoke world=sd_hellasgarden gi=o
 `gi=vct` (the real-time factor while hovering with the vehicle's camera on, in
 `result.json`).
 
+While `ortho.npy` is there every use of the site world has the photo, not only `just
+sim-photo` (`just sim`, `just world-snapshot`, `just sim-smoke`), and each says so when it
+builds the world; move `build/ortho/<site>/` away for the painted ground CI has.
+
 The photo, the world built from it and pictures of that world stay on your computer:
-`tools/check_no_orthophotos.py` fails CI if anything that looks like an orthophoto (a
-picture-shaped array, a GeoTIFF, a world or snapshot marked as built from a photo) is in
-git, its history, an uploaded artifact or the cache.
+`tools/check_no_orthophotos.py` fails CI if any of these is in git, its history, an
+uploaded artifact or the cache: a picture-shaped NumPy array, a GeoTIFF, a symbolic link,
+or a world, snapshot or ground texture marked as built from a photo. It cannot recognise
+a photo saved by hand as an ordinary picture with no such mark; no photo is ever fetched
+in CI, and images outside the test data are kept out of git anyway. The sim farm refuses
+to upload to R2 while one of its worlds has a photo.
 
 ## Parts
 

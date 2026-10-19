@@ -177,6 +177,7 @@ def run(cfg: config.SimConfig, vehicle: str = "") -> tuple[int, Path]:
         "name": "sim-smoke",
         "physics": cfg.physics,
         "gui": cfg.gui,
+        "gi": cfg.gi,
         "instance": cfg.instance,
         "vehicle": cfg.vehicle,
         "world": cfg.world if cfg.vehicle in world.MODELS else gazebo.STOCK_WORLD,

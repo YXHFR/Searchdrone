@@ -1,13 +1,14 @@
 """A minimal, deterministic PNG writer (8-bit RGB or RGBA) for generated textures.
 
 The same array always gives the same bytes: no timestamps, a fixed zlib level and no
-optional chunks. Rows use PNG filter 0 (none).
+optional chunks unless ``text`` is given. Rows use PNG filter 0 (none).
 """
 
 from __future__ import annotations
 
 import struct
 import zlib
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +21,8 @@ def _chunk(kind: bytes, data: bytes) -> bytes:
     return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
 
-def encode(image: NDArray[np.uint8]) -> bytes:
+def encode(image: NDArray[np.uint8], text: Mapping[str, str] | None = None) -> bytes:
+    """An 8-bit RGB or RGBA PNG; ``text`` adds Latin-1 ``tEXt`` chunks (keyword: text)."""
     if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] not in (3, 4):
         raise ValueError("väntade en uint8-bild med 3 eller 4 kanaler")
     height, width, channels = image.shape
@@ -30,9 +32,14 @@ def encode(image: NDArray[np.uint8]) -> bytes:
     rows[:, 0] = 0
     rows[:, 1:] = image.reshape(height, width * channels)
     body = zlib.compress(rows.tobytes(), ZLIB_LEVEL)
+    notes = b"".join(
+        _chunk(b"tEXt", k.encode("latin-1") + b"\0" + v.encode("latin-1"))
+        for k, v in (text or {}).items()
+    )
     return (
         b"\x89PNG\r\n\x1a\n"
         + _chunk(b"IHDR", header)
+        + notes
         + _chunk(b"IDAT", body)
         + _chunk(b"IEND", b"")
     )
@@ -55,8 +62,8 @@ def encode_gray16(image: NDArray[np.uint16]) -> bytes:
     )
 
 
-def write(path: Path, image: NDArray[np.uint8]) -> None:
-    path.write_bytes(encode(image))
+def write(path: Path, image: NDArray[np.uint8], text: Mapping[str, str] | None = None) -> None:
+    path.write_bytes(encode(image, text))
 
 
 def decode(data: bytes) -> NDArray[np.uint8]:

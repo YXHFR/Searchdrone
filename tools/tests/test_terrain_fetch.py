@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import subprocess
 import sys
@@ -223,6 +224,21 @@ def test_choose_ortho_takes_every_colour_tile_of_the_newest_year() -> None:
     ]
     with pytest.raises(fetch.FetchError, match="färgortofoto"):
         fetch.choose_ortho([items[2], items[5]])
+    odd = _ortho_item("orto-x", "rgb", 0.16, 2025, 9)
+    odd["properties"]["flygar"] = "okänt"
+    with pytest.raises(fetch.FetchError, match="flygår"):
+        fetch.choose_ortho([odd])
+
+
+@pytest.mark.parametrize("key", ["CI", "GITHUB_ACTIONS"])
+def test_the_photo_is_never_fetched_in_ci_whoever_asks(
+    key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(key, "true")
+    monkeypatch.setattr(fetch, "stac_items", lambda *a: pytest.fail("asked Lantmäteriet"))
+    site = fetch.SiteDef.__new__(fetch.SiteDef)
+    with pytest.raises(fetch.FetchError, match="aldrig i CI"):
+        fetch.fetch_ortho(site, {"user": "u", "password": "p"}, tmp_path, tmp_path / "o.npy")
 
 
 def test_login_from_the_environment_or_a_private_file(
@@ -266,3 +282,8 @@ def test_gdal_errors_never_show_the_login() -> None:
     out = fetch.redact(text, env)
     assert "hunter22" not in out and "owner@example.invalid" not in out and "HTTP 401" in out
     assert fetch.redact(" plain ", None) == "plain"
+    # Short parts, URL-encoded and Basic-auth forms are cut too.
+    env = {"GDAL_HTTP_USERPWD": "ab:p@ss/w"}
+    basic = base64.b64encode(b"ab:p@ss/w").decode()
+    out = fetch.redact(f"user ab, url p%40ss%2Fw, Authorization: Basic {basic}", env)
+    assert "ab" not in out.replace("***", "") and "p%40ss" not in out and basic not in out

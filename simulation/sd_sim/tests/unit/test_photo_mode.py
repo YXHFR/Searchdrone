@@ -9,6 +9,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -16,7 +18,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from sd_sim import config, png, site, site_world, snapshot, terrain
+from sd_sim import config, gazebo, png, site, site_world, snapshot, terrain, world
+from sd_sim.farm import config as farm_config
 
 _spec = importlib.util.spec_from_file_location(
     "site_world_tests", Path(__file__).with_name("test_site_world.py")
@@ -30,6 +33,12 @@ _fs = importlib.util.spec_from_file_location(
 assert _fs is not None and _fs.loader is not None
 _forest: Any = importlib.util.module_from_spec(_fs)
 _fs.loader.exec_module(_forest)
+_ck = importlib.util.spec_from_file_location(
+    "check_no_orthophotos", _sw.paths.REPO / "tools" / "check_no_orthophotos.py"
+)
+assert _ck is not None and _ck.loader is not None
+check_no_orthophotos: Any = importlib.util.module_from_spec(_ck)
+_ck.loader.exec_module(check_no_orthophotos)
 small = _sw.small
 wooded = _forest.wooded
 
@@ -223,3 +232,80 @@ def test_snapshot_summary_reports_lighting_rtf_and_memory() -> None:
     assert "global illumination vct" in text and "0.47" in text and "not measured" in text
     r["gpu_memory_used_mib"] = 2100
     assert "2100 MiB" in snapshot.summary(r)
+
+
+def test_what_a_draped_world_writes_is_caught_by_the_orthophoto_check(small: Path) -> None:
+    """The marks terrain.py and snapshot.py write are the ones the CI check looks for."""
+    terrain.build(site.load("testsite", small), small, force=True)
+    sites = small / "build/sim/sites/testsite/manifest.json"
+    meshes = small / "build/sim/models" / terrain.model_name(site.load("testsite", small))
+    texture = meshes / "meshes" / "terrain_0_0.png"
+    assert check_no_orthophotos.check_paths([sites, texture]) == []  # painted: clean
+    put_photo(small)
+    terrain.build(site.load("testsite", small), small, force=True)
+    found = check_no_orthophotos.check_paths([sites, texture])
+    assert len(found) == 2, found
+    assert png.read(texture).shape[2] in (3, 4)  # the text chunk does not break reading
+    for name in ("metrics.json", "ATTRIBUTION.txt"):
+        stats = {"ground_texture": "orthophoto"}
+        data = (
+            json.dumps({"stats": stats}, indent=2)
+            if name.endswith(".json")
+            else snapshot.attribution(stats)
+        )
+        assert check_no_orthophotos.check(f"runs/r/snapshots/{name}", data.encode())
+
+
+def test_png_text_chunks_only_when_asked() -> None:
+    img = np.zeros((4, 4, 3), np.uint8)
+    assert b"tEXt" not in png.encode(img)
+    data = png.encode(img, terrain.PHOTO_PNG_TEXT)
+    assert b"tEXt" in data and (png.decode(data) == img).all()
+
+
+def test_gi_in_a_world_that_is_not_a_site_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="platsvärldar"):
+        world.render_world(world.WORLD_NAME, 0, tmp_path, gi="vct")
+
+
+def test_snapshot_rtf_is_measured_like_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    samples = iter([(10.0, 20.0), (13.0, 25.0)])
+    monkeypatch.setattr(gazebo, "world_times", lambda w, i: next(samples))
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    w = gazebo.World("sd_testsite", Path("w.sdf"), "stock")
+    assert snapshot.measure_rtf(w, 0) == 0.6
+    monkeypatch.setattr(gazebo, "world_times", lambda w, i: None)
+    assert snapshot.measure_rtf(w, 0) is None
+
+
+@pytest.mark.parametrize(
+    ("smi", "out", "expected"),
+    [
+        (None, "", None),
+        ("/usr/bin/nvidia-smi", "", None),
+        ("/usr/bin/nvidia-smi", "[N/A]\n", None),
+        ("/usr/bin/nvidia-smi", "timeout", None),
+        ("/usr/bin/nvidia-smi", "2100\n512\n", 2100),
+    ],
+)
+def test_gpu_memory_from_nvidia_smi(
+    monkeypatch: pytest.MonkeyPatch, smi: str | None, out: str, expected: int | None
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: smi)
+
+    def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if out == "timeout":
+            raise subprocess.TimeoutExpired("nvidia-smi", 10)
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert snapshot.gpu_memory_mib() == expected
+
+
+def test_the_farm_never_uploads_a_draped_world(small: Path) -> None:
+    assert site.photo_worlds(["sd_testsite", "sd_lake_forest"], small) == []
+    farm_config.refuse_photo_worlds(["sd_testsite"], small)
+    put_photo(small)
+    assert site.photo_worlds(["sd_testsite", "sd_lake_forest"], small) == ["sd_testsite"]
+    with pytest.raises(farm_config.FarmConfigError, match="ortofoto"):
+        farm_config.refuse_photo_worlds(["sd_lake_forest", "sd_testsite"], small)

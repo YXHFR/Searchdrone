@@ -29,10 +29,23 @@ def npy(array: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-def tiff(tags: list[int]) -> bytes:
-    """A little-endian TIFF header and one directory with these tags (no pixels)."""
+def tiff(tags: list[int], pad: int = 0) -> bytes:
+    """A little-endian TIFF header and one directory with these tags (no pixels), the
+    directory ``pad`` bytes after the header."""
     entries = b"".join(struct.pack("<HHII", t, 3, 1, 0) for t in sorted(tags))
-    return b"II*\x00" + struct.pack("<I", 8) + struct.pack("<H", len(tags)) + entries + b"\0" * 4
+    ifd = struct.pack("<H", len(tags)) + entries + b"\0" * 4
+    return b"II*\x00" + struct.pack("<I", 8 + pad) + b"\0" * pad + ifd
+
+
+def bigtiff(tags: list[int]) -> bytes:
+    """A big-endian BigTIFF header and one directory with these tags."""
+    entries = b"".join(struct.pack(">HHQQ", t, 3, 1, 0) for t in sorted(tags))
+    return b"MM\x00+" + struct.pack(">HHQ", 8, 0, 16) + struct.pack(">Q", len(tags)) + entries
+
+
+def png_with(text: bytes) -> bytes:
+    chunk = struct.pack(">I", len(text)) + b"tEXt" + text + b"\0\0\0\0"
+    return chk.PNG_SIGNATURE + chunk
 
 
 @pytest.mark.parametrize(
@@ -49,6 +62,11 @@ def tiff(tags: list[int]) -> bytes:
         ("x/float.npy", npy(np.zeros((300, 300, 3), np.float32)), False),
         ("x/map.tif", tiff([256, 257, 33550, 33922]), True),
         ("x/plain.tif", tiff([256, 257]), False),
+        ("x/far.tif", tiff([256, 257, 33922], pad=200_000), True),  # directory at the end
+        ("x/big.tif", bigtiff([256, 257, 34735]), True),
+        ("x/bigplain.tif", bigtiff([256, 257]), False),
+        ("x/terrain_0_0.png", png_with(b"Source\0Searchdrone ground_texture=orthophoto"), True),
+        ("x/terrain_0_0.png", png_with(b"Source\0Searchdrone"), False),
         (
             "runs/r/snapshots/metrics.json",
             json.dumps({"ground_texture": "orthophoto"}).encode(),
@@ -71,6 +89,34 @@ def test_folders_are_walked_and_missing_ones_are_fine(tmp_path: Path) -> None:
     assert chk.main([str(tmp_path / "a")]) == 1
 
 
+def test_findings_go_to_the_step_summary_in_ci(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    (tmp_path / "ortho.toml").write_text("")
+    assert chk.main([str(tmp_path / "ortho.toml")]) == 1
+    assert "ortho.toml" in summary.read_text()
+
+
+def test_symbolic_links_are_findings_not_followed(tmp_path: Path) -> None:
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    np.save(hidden / "x.npy", np.zeros((300, 300, 3), np.uint8))
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    (runs / "file").symlink_to(hidden / "x.npy")
+    (runs / "folder").symlink_to(hidden)
+    found = chk.check_paths([runs])
+    assert len(found) == 2 and all("symbolic link" in f for f in found)
+    assert chk.main([str(runs / "folder")]) == 1
+
+
+def test_a_tiff_directory_far_into_the_file_is_read(tmp_path: Path) -> None:
+    (tmp_path / "map.tif").write_bytes(tiff([256, 257, 33550], pad=chk.HEAD * 2))
+    assert chk.main([str(tmp_path)]) == 1
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
@@ -90,6 +136,19 @@ def test_git_history_finds_a_photo_deleted_again(tmp_path: Path) -> None:
     _git(tmp_path, "rm", "-q", "pic.npy")
     _git(tmp_path, "commit", "-qm", "three")
     assert chk.check_git(tmp_path) and "pic.npy" in chk.check_git(tmp_path)[0]
+
+
+def test_git_history_reads_every_blob_whatever_its_name(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.invalid")
+    _git(tmp_path, "config", "user.name", "test")
+    _git(tmp_path, "config", "commit.gpgsign", "false")
+    (tmp_path / "blob.dat").write_bytes(npy(np.zeros((300, 300, 3), np.uint8)))
+    (tmp_path / "geo.bin").write_bytes(bigtiff([256, 34735]))
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "one")
+    found = " ".join(chk.check_git(tmp_path))
+    assert "blob.dat" in found and "geo.bin" in found
 
 
 def test_this_repository_is_clean() -> None:

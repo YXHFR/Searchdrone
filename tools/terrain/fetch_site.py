@@ -33,6 +33,7 @@ arguments.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import math
@@ -328,9 +329,14 @@ def redact(text: str, env: Mapping[str, str] | None) -> str:
     """``text`` with the login from GDAL's environment (and its parts) cut out."""
     out = text.strip()
     userpwd = (env or {}).get("GDAL_HTTP_USERPWD", "")
-    for secret in sorted({userpwd, *userpwd.split(":", 1)}, key=len, reverse=True):
-        if len(secret) >= 3:
-            out = out.replace(secret, "***")
+    parts = {userpwd, *userpwd.split(":", 1)} - {""}
+    forms = set(parts)
+    for secret in parts:
+        forms.add(urllib.parse.quote(secret, safe=""))
+    if userpwd:
+        forms.add(base64.b64encode(userpwd.encode()).decode())  # Basic auth
+    for secret in sorted(forms, key=len, reverse=True):
+        out = out.replace(secret, "***")
     return out
 
 
@@ -452,6 +458,13 @@ def write_dem(src: Path, dest: Path, site: SiteDef) -> float:
 # --- orthophoto (local sites only) ------------------------------------------------------
 
 
+ORTHO_IN_CI = "Ortofoton hämtas aldrig i CI: de får bara finnas på din egen dator."
+
+
+def in_ci() -> bool:
+    return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
+
+
 def choose_ortho(items: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The newest colour orthophoto over the site: every tile of the newest flight year,
     at its finest resolution. Tiles of one year are flown at different times of day, so
@@ -459,8 +472,11 @@ def choose_ortho(items: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
 
     def key(item: Mapping[str, Any]) -> tuple[str, int, float]:
         props = item.get("properties", {})
-        year = props.get("flygar") or str(props.get("datetime", ""))[:4]
-        return str(item.get("collection", "")), int(year or 0), float(props["upplosning"])
+        year = str(props.get("flygar") or str(props.get("datetime", ""))[:4])
+        try:
+            return str(item.get("collection", "")), int(year or 0), float(props["upplosning"])
+        except ValueError as exc:
+            raise FetchError(f"Lantmäteriet gav ett oväntat flygår: {year!r}") from exc
 
     usable = [
         i
@@ -480,6 +496,8 @@ def choose_ortho(items: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
 def fetch_ortho(site: SiteDef, login: Mapping[str, str], work: Path, dest: Path) -> dict[str, Any]:
     """The orthophoto on the site's plane, ``ORTHO_CELL_M`` per pixel, row 0 north, as an
     (n, n, 3) uint8 array in ``dest``; returns where it came from."""
+    if in_ci():
+        raise FetchError(ORTHO_IN_CI, 2)
     chosen = choose_ortho(stac_items(LM_STAC_ORTHO, lonlat_bbox(site, 0.0), []))
     urls = sorted(_lm_href(i) for i in chosen)
     edge = site.half_size_m

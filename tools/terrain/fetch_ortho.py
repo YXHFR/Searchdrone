@@ -18,7 +18,6 @@ check failed, 2 bad arguments, no login or in CI.
 from __future__ import annotations
 
 import datetime as dt
-import os
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -28,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_site
 from fetch_site import ROOT, FetchError, SiteDef
 
-IN_CI = "Ortofoton hämtas aldrig i CI: de får bara finnas på din egen dator."
+IN_CI = fetch_site.ORTHO_IN_CI
 
 
 def out_dir(site: SiteDef, root: Path = ROOT) -> Path:
@@ -36,7 +35,7 @@ def out_dir(site: SiteDef, root: Path = ROOT) -> Path:
 
 
 def run(argv: Sequence[str], root: Path = ROOT) -> int:
-    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+    if fetch_site.in_ci():  # fetch_site.fetch_ortho refuses too, for every other caller
         raise FetchError(IN_CI, 2)
     args = fetch_site.parse_args(argv)
     site, _ = fetch_site.load_site(args["site"], root)

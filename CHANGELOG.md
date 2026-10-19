@@ -19,8 +19,11 @@ All notable changes to this project are listed here. The format follows
   with `gi=vct`: Gazebo's voxel cone tracing for the cameras, also `just sim gi=vct` in a
   site world. `just world-snapshot` takes `gi=` and writes the real-time factor and the
   graphics card's memory in use while the cameras render. `tools/check_no_orthophotos.py`
-  fails CI when anything that looks like an orthophoto is in git (also its history), an
-  uploaded artifact or the cache; every upload and cache in the workflows runs it first.
+  fails CI when a picture-shaped array, a GeoTIFF, a symbolic link or a world, snapshot or
+  ground texture marked as built from a photo is in git (also its history), an uploaded
+  artifact or the cache; every upload and cache in the workflows runs it on what it
+  uploads or caches. The sim farm does not upload to R2 while one of its worlds has a
+  photo.
 - Simulator exams for the AI commander: `sd-brain eval --backend sim` (`just
   brain-eval-sim`) flies random search scenarios with an answer key in a fast 2D world
   through the real commander loop and a gate with the area, height and speed rules. The

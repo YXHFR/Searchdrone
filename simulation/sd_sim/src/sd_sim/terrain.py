@@ -69,6 +69,9 @@ REAL_TREE_ROOF_M = 1.0
 PARKING_STALL_M = (2.6, 5.2)
 PARKING_OCCUPANCY = 0.5
 CAR_SIZE_M = (4.5, 1.8, 1.5)
+# Written into every ground texture draped with the photo, so tools/check_no_orthophotos.py
+# finds the texture even when it is copied without the world's manifest.
+PHOTO_PNG_TEXT = {"Source": "Searchdrone ground_texture=orthophoto"}
 # Under a tree the ground keeps its painted floor out to this much more than the crown
 # (the photo's crowns lean away from where it was taken), blended over PHOTO_EDGE_M.
 PHOTO_CROWN_SCALE = 1.15
@@ -475,14 +478,20 @@ def paint_tile(site: Site, paint: Paint, ti: int, tj: int, px: int, seed: int) -
     marks = mask(paint.markings)
     rgb[marks] = (224, 224, 214)
     if site.ortho is not None:
+        m = max((photo_reach(c[2]) for c in paint.crowns), default=0.0)
         near = [
             c
             for c in paint.crowns
-            if bounds[0] - 15 < c[0] < bounds[2] + 15 and bounds[1] - 15 < c[1] < bounds[3] + 15
+            if bounds[0] - m < c[0] < bounds[2] + m and bounds[1] - m < c[1] < bounds[3] + m
         ]
         cover = photo_cover(near, ex, ny, west, north, step)[..., None]
         rgb = ortho_tile(site, west, north, size, px) * (1.0 - cover) + rgb * cover
     return np.clip(np.round(rgb), 0, 255).astype(np.uint8)
+
+
+def photo_reach(crown_radius_m: float) -> float:
+    """How far from a crown's centre the ground keeps its painted floor."""
+    return crown_radius_m * PHOTO_CROWN_SCALE + PHOTO_CROWN_MARGIN_M
 
 
 def photo_cover(
@@ -498,7 +507,7 @@ def photo_cover(
     cover = np.zeros(ex.shape)
     rows, cols = ex.shape
     for cx, cy, r in crowns:
-        reach = r * PHOTO_CROWN_SCALE + PHOTO_CROWN_MARGIN_M
+        reach = photo_reach(r)
         c0 = max(int((cx - reach - west) / step), 0)
         c1 = min(int((cx + reach - west) / step) + 1, cols)
         r0 = max(int((north - cy - reach) / step), 0)
@@ -1051,7 +1060,11 @@ def build(
         (meshes / f"{stem}.obj").write_text(terrain_obj(mesh, ground, ti, tj), encoding="utf-8")
         mat = Material(stem, (1.0, 1.0, 1.0), 0.02, f"{stem}.png")
         (meshes / f"{stem}.mtl").write_text(mat.mtl(), encoding="utf-8")
-        png.write(meshes / f"{stem}.png", paint_tile(site, paint, ti, tj, TEXTURE_PX, seed))
+        png.write(
+            meshes / f"{stem}.png",
+            paint_tile(site, paint, ti, tj, TEXTURE_PX, seed),
+            PHOTO_PNG_TEXT if site.ortho is not None else None,
+        )
     tree_stats: dict[str, Any]
     if atlas is not None:
         progress("träd (Poly Haven-bilder)")

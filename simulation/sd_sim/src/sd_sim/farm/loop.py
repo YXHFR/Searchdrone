@@ -266,6 +266,11 @@ class Farm:
         store = self.store()
         if store is None:
             return
+        try:  # a photo fetched after the farm started
+            farm_config.refuse_photo_worlds(list(self.cfg.worlds), self.repo)
+        except farm_config.FarmConfigError as exc:
+            say(f"uppladdningen väntar: {exc}")
+            return
         for d in sorted(p for p in self.rounds_dir.glob("[!.]*") if p.is_dir()):
             if self.halting():
                 return

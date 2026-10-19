@@ -65,6 +65,7 @@ ROAD_CLEAR_M = 3.0
 OFFSET_LIMIT_M = 2.0
 FRAMES_WANTED = 3
 RUN_LIMIT_S = 240.0
+RTF_WINDOW_S = 5.0  # wall-clock seconds between the two stats samples
 RED_BLOCK = paths.SIMULATION / "scenarios" / "objects" / "red_block.yaml"
 
 
@@ -297,7 +298,7 @@ def run(
                 break
             time.sleep(2.0)
         if proc.poll() is None:
-            rtf = real_time_factor(gz_exe, env, s.world)
+            rtf = measure_rtf(gazebo.World(s.world, path, "stock"), instance)
             vram = gpu_memory_mib()
     finally:
         for reader in readers:
@@ -351,26 +352,12 @@ def run(
     return (0 if result["passed"] else 1), out
 
 
-def real_time_factor(gz_exe: str, env: dict[str, str], world_name: str) -> float | None:
-    """Gazebo's own real-time factor while the cameras render, the mean of a few stats
-    messages; None when none came."""
-    try:
-        text = subprocess.run(  # noqa: S603 - fixed program and topic
-            [gz_exe, "topic", "-e", "-n", "5", "-t", f"/world/{world_name}/stats"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        ).stdout
-    except subprocess.TimeoutExpired:
-        return None
-    values = [
-        float(line.split(":", 1)[1])
-        for line in text.splitlines()
-        if line.strip().startswith("real_time_factor:")
-    ]
-    return round(sum(values) / len(values), 3) if values else None
+def measure_rtf(world: gazebo.World, instance: int) -> float | None:
+    """Gazebo's real-time factor while the cameras render: simulated over wall-clock time
+    between two stats samples ``RTF_WINDOW_S`` apart, as ``just sim-smoke`` measures it."""
+    start = gazebo.world_times(world, instance)
+    time.sleep(RTF_WINDOW_S)
+    return gazebo.real_time_factor(start, gazebo.world_times(world, instance))
 
 
 def gpu_memory_mib() -> int | None:
@@ -388,7 +375,7 @@ def gpu_memory_mib() -> int | None:
             check=False,
         ).stdout.split()
         return int(out[0]) if out else None
-    except (subprocess.TimeoutExpired, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError):
         return None
 
 
