@@ -223,3 +223,10 @@
   bottom: calc(var(--sheet-peek) + 8px);
   max-height: calc(100% - var(--sheet-peek) - 136px);
 }
+/* With the sheet half open the card rides above it, like the small window, and keeps at
+   least its header in view. */
+.shell[data-vp="phone"] .centre:has(.sheet[data-size="half"]) .map-find {
+  bottom: calc(52% + 8px);
+  max-height: calc(48% - 136px);
+  min-height: 48px;
+}

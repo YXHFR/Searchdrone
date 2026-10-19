@@ -665,7 +665,7 @@ export default function MapView({ isCompact }: ViewProps) {
           </p>
         ) : null}
         {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
-        {find && missionId ? (
+        {find && missionId && !isCompact ? (
           <FindCard find={find} missionId={missionId} onClose={() => setFindId(null)} />
         ) : null}
       </div>
