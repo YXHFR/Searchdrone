@@ -49,7 +49,7 @@ ALLOWED_MESSAGES = {
     "PARAM_SET",
     "MANUAL_CONTROL",
 }
-ONBOARD_COMMANDS = {176, 400, 22, 178, 224, 511, 512}
+ONBOARD_COMMANDS = {176, 400, 22, 178, 224, 511, 512, 42007}
 GROUND_COMMANDS = {176, 400, 511}
 ALL_ORIGINS = [o.value for o in SendOrigin]
 MSG_CLASSES = all_message_classes()
@@ -441,7 +441,8 @@ def test_malformed_message_is_refused() -> None:
 def test_origin_strings_match_send_origin() -> None:
     from sd_mav import allowlist
 
-    assert {o.value for o in SendOrigin} == allowlist._ONBOARD_ORIGINS | allowlist._GROUND_ORIGINS
+    every = allowlist._ONBOARD_ORIGINS | allowlist._GROUND_ORIGINS | {allowlist._GNSS}
+    assert {o.value for o in SendOrigin} == every
     assert not allowlist._ONBOARD_ORIGINS & allowlist._GROUND_ORIGINS
 
 
@@ -520,3 +521,19 @@ def test_every_other_parameter_stays_on_the_deny_list() -> None:
         assert denied_reason(fence_limit(name, 1)) is not None
     for name in ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS"):
         assert denied_reason(fence_limit(name, 1)) is None
+
+
+def test_allowlist_ekf_source_set() -> None:
+    """The spoofing guard may switch the EKF to its set without GPS (2), nothing else:
+    never back to GPS (1) or to 3, never from another origin or the ground station."""
+    src = mavlink.MAV_CMD_SET_EKF_SOURCE_SET
+    assert sends(command(src, 2), ctx(origin="gnss"))
+    for bad in (1, 3, 0, 2.5):
+        assert not sends(command(src, bad), ctx(origin="gnss"))
+    assert not sends(command(src, 2, 1), ctx(origin="gnss"))
+    for origin in ("skill", "limit", "startup", "override_fallback", "manual", "ground"):
+        assert not sends(command(src, 2), ctx(origin=origin))
+    assert not sends(command(src, 2), ctx(Profile.GROUND, "ground"))
+    # The guard's origin sends nothing else.
+    assert not sends(set_mode(CopterMode.SMART_RTL), ctx(origin="gnss"))
+    assert not sends(command(mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 33, 100_000), ctx(origin="gnss"))

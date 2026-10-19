@@ -25,6 +25,8 @@ export interface Toast {
   text: string;
   /** Approval card to show when the toast's "Visa" is pressed. */
   approvalId?: string | undefined;
+  /** An alarm: stays until "Jag har sett det" and is read out at once (role="alert"). */
+  sticky?: boolean;
 }
 
 /** The chat composer's text and reply target, so "Ändra" and "Svara" can fill and focus it. */
@@ -50,13 +52,22 @@ interface UiState {
   setThemePref(p: ThemePref): void;
   log(level: LogEntry["level"], message: string): void;
   toast(text: string, approvalId?: string): void;
+  /** A critical alert that stays until acknowledged; also goes in the event log. */
+  alarm(text: string): void;
   dismissToast(id: number): void;
   approvalRequested(approvalId: string): void;
   showApproval(approvalId: string | null): void;
 }
 
 const TOAST_MS = 8_000;
+const MAX_TOASTS = 4;
 let toastSeq = 0;
+
+/** At most MAX_TOASTS passing notices, oldest out first; an alarm is never pushed out. */
+function trimToasts(list: Toast[]): Toast[] {
+  let extra = list.filter((x) => !x.sticky).length - MAX_TOASTS;
+  return list.filter((x) => x.sticky || extra-- <= 0);
+}
 
 export const useUiStore = create<UiState>((set, get) => ({
   themePref: initialThemePref(),
@@ -86,8 +97,20 @@ export const useUiStore = create<UiState>((set, get) => ({
   toast: (text, approvalId) => {
     toastSeq += 1;
     const id = toastSeq;
-    set((s) => ({ toasts: [...s.toasts, { id, text, approvalId }].slice(-4) }));
+    set((s) => ({ toasts: trimToasts([...s.toasts, { id, text, approvalId }]) }));
     setTimeout(() => get().dismissToast(id), TOAST_MS);
+  },
+  alarm: (text) => {
+    toastSeq += 1;
+    const id = toastSeq;
+    // The toast's role="alert" reads it out, so the log entry leaves `alert` alone.
+    set((s) => ({
+      eventLog: [{ t: Date.now(), level: "critical" as const, message: text }, ...s.eventLog].slice(
+        0,
+        MAX_LOG,
+      ),
+      toasts: trimToasts([...s.toasts, { id, text, sticky: true }]),
+    }));
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   approvalRequested: (approvalId) => {

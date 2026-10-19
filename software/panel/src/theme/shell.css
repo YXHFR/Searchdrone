@@ -683,6 +683,14 @@
   border-radius: var(--r-2);
   font-weight: 500;
 }
+.stage-banner[data-tone="yellow"],
+.stage-banner[data-tone="orange"] {
+  border-color: var(--c-warn);
+}
+.stage-banner-next {
+  display: block;
+  font-weight: 400;
+}
 
 /* --- phone: the bottom sheet ------------------------------------------------------------- */
 .sheet {

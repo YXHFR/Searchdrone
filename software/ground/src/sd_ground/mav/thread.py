@@ -39,6 +39,7 @@ from sd_ground.liveness import LoopLiveness
 from sd_ground.logging import get_logger
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
+from sd_ground.mav.gnss_watch import GnssWatch, text_alarm
 from sd_ground.services.latches import HOME_LATCHES, Latches
 from sd_ground.services.wind import WindStage, WindWatch
 from sd_ground.sources import PartState
@@ -177,9 +178,13 @@ def vehicle_events(
 
     def on_event(kind: str, details: dict[str, Any]) -> None:
         if kind == "mav.statustext":
+            text = str(details.get("text", ""))
+            gps = text_alarm(text, dt.datetime.now(dt.UTC).isoformat())
+            if gps is not None:
+                emit(*gps)
             # Warnings and worse, and every failsafe text (ArduCopter sends a fence breach
             # as a notice).
-            failsafe = text_signal(str(details.get("text", ""))) is not None
+            failsafe = text_signal(text) is not None
             if int(details.get("severity", 7)) <= 4 or failsafe:
                 emit("fc.statustext", "warning", details)
             return
@@ -262,6 +267,7 @@ class GroundMav:
         self._system_action = system_action
         self._rtl_pct = rtl_pct
         self.watchdog = CompanionWatchdog(clock.monotonic_ms())
+        self.gnss = GnssWatch(self._on_event)
         self._lock = threading.Lock()
         self._snap: MavSnapshot | None = None
         self._tracks = _Tracks()
@@ -541,6 +547,8 @@ class GroundMav:
             self._landed()
         self._watchdog(snap)
         self._battery(snap)
+        if snap.connected:
+            self.gnss.tick(snap.telemetry, snap.now_mono_ms, in_flight=snap.in_flight)
         await self._send_sticks()
 
     def _landed(self) -> None:
@@ -553,6 +561,7 @@ class GroundMav:
             )
             self._pending = None
         self._battery_low_since = None
+        self.gnss.reset()
         latch = self.latches.landed(self.vehicle_id)
         self._on_event(
             "vehicle.landed", "info", {"latch": latch.action if latch is not None else None}

@@ -637,6 +637,10 @@ class VehicleActions:
                 )
                 if item.type.startswith(("alarm.", "vehicle.")):
                     _publish(g, "vehicle", item.type, item.payload, item.vehicle_id)
+                if item.type.startswith("alarm.") and "message_sv" in item.payload:
+                    # An alarm with its own text (the GPS alarms, mav.gnss_watch): also on
+                    # the panel's alarm list, as MissionFlow.alert does.
+                    _publish(g, "alerts", "alert", item.payload, item.vehicle_id)
 
     async def _handle_post(self, g: GroundView, item: _Post) -> None:
         if item.takeover is not None and item.notice is not None:

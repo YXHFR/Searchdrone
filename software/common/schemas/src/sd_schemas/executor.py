@@ -14,6 +14,7 @@ __all__ = [
     "GotoResumePoint",
     "HeldBy",
     "HoldReason",
+    "LinkLossPhase",
     "ResumePoint",
     "SurveyResumePoint",
 ]
@@ -39,10 +40,27 @@ HoldReason = Literal[
     "operator_released",
     "limit",
     "link_loss",
+    "find_hold",  # SD-link lost at a confirmed find: hovering beside it (link-loss rule)
     "ai_silent",
     "startup",
     "manual_input_lost",  # no stick value for MANUAL_CONTROL_TIMEOUT_MS while steering by hand
 ]
+
+
+class LinkLossPhase(StrEnum):
+    """Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
+
+    Times count from the last inbound SD-link message."""
+
+    NONE = "none"  # the link is up
+    GRACE = "grace"  # 3-23 s: the running step goes on
+    HOLD = "hold"  # 23-53 s: hovering
+    FIND_MOVE = "find_move"  # 3 to at most 15 s: flying to the hover point at a find
+    FIND_HOVER = "find_hover"  # until 123 s: hovering beside the find
+    HOME = "home"  # return home sent by the link-loss rule
+    YIELDED = "yielded"  # someone else took over: a person, RC, the FC, another limit
+
+
 HeldBy = Literal[
     "operator_stop",
     "operator_home",

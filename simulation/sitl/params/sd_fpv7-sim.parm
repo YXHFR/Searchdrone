@@ -22,3 +22,8 @@ ATC_RAT_PIT_I 0.05
 ATC_RAT_PIT_D 0.0013
 ATC_RAT_YAW_P 0.12
 ATC_RAT_YAW_I 0.012
+# Drag for the EKF's wind estimate and dead reckoning: SITL's own "Suggested EK3_DRAG_..."
+# for this frame (test_drag_matches_sitl_suggestion keeps them within 10 %).
+EK3_DRAG_BCOEF_X 39.417
+EK3_DRAG_BCOEF_Y 39.417
+EK3_DRAG_MCOEF 0.082

@@ -6,8 +6,9 @@
   ground link: SmartRTL (or RTL) within 5 s of the FC's low-battery message, before the
   GCS failsafe's timeout could explain it.
 * SC07a/b: the whole radio down for 10 s: nothing changes and no AI order gets through;
-  for 90 s: the flight controller's GCS failsafe flies home after FS_GCS_TIMEOUT and
-  lands before the radio is back, and the mission does not resume on its own.
+  for 90 s: after FS_GCS_TIMEOUT the drone flies home (in LOITER the flight controller
+  only says so and the onboard computer's L-GCS flies home at its text) and lands before
+  the radio is back, and the mission does not resume on its own.
 * SC14b: only SD-link down for 30 s: the onboard computer holds after 23 s, the ground
   refuses orders as LINK_DOWN, and after the link is back the drone keeps holding.
 * SC16: the harness flies out of the charter past the gate on purpose: the flight
@@ -329,29 +330,3 @@ async def test_sc16b_fc_fence_height_braked(sim: Any, migrated_db: Any, tmp_path
         top = max(x.alt_m for x in sc.track)
         assert top <= limit + 5.0, top
         await sc.check_invariants(exempt=("INV1", "INV3"))
-
-
-@pytest.mark.budget_s(300)
-async def test_gps_lost_during_flight(sim: Any, migrated_db: Any, tmp_path: Path) -> None:
-    """GPS lost on the way to P1: the flight controller's own EKF failsafe
-    (FS_EKF_ACTION) takes over, the onboard computer sends no more targets and the
-    mission shows the failsafe."""
-    async with scenario(sim, migrated_db, tmp_path) as sc:
-        await sc.airborne()
-        await to_p1(sc, 4.0)
-        await sc.until(lambda: sc.from_home_m() > 30.0, 60, "on the way")
-        await sc.harness(sim.harness.set_sim_param, "SIM_GPS1_ENABLE", 0)
-        try:
-            want = {1.0: "LAND", 2.0: "ALT_HOLD", 3.0: "LAND"}[SAFETY["FS_EKF_ACTION"]]
-            await sc.until(lambda: sc.fc_mode() == want, 60, "the EKF failsafe")
-            await sc.r.wait_status(sc.mid, "FAILSAFE", 10)
-            live = await sc.onboard_state()
-            assert live["executor_state"] in ("FAILSAFE", "HELD"), live
-            await asyncio.sleep(3.1)
-            lat, lon = pin("P1")
-            res = await sc.order("goto", {"lat": lat, "lon": lon, "alt_m": 40})
-            assert res.get("decision") == "REJECT", res
-            await sc.until(lambda: not sim.harness.state.armed, 180, "landed")
-        finally:
-            await sc.harness(sim.harness.set_sim_param, "SIM_GPS1_ENABLE", 1)
-        await sc.check_invariants(exempt=("INV2", "INV4"))

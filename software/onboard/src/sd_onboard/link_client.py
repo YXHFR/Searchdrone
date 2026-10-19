@@ -47,6 +47,7 @@ from sd_schemas.link import (
     CommanderStatus,
     CropData,
     HelloAck,
+    KeepoutInstall,
     ManualControl,
     ManualTakeover,
     OnboardEvent,
@@ -213,6 +214,8 @@ class OnboardLink:
                 ex.on_pilot_position(body)
             case CommanderStatus():
                 ex.on_commander_status(body)
+            case KeepoutInstall():
+                ex.on_keepouts(body, env.msg_id)
             case ManualTakeover() if body.active:
                 ex.on_takeover(body, env.msg_id)
             case ManualTakeover():

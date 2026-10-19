@@ -30,6 +30,8 @@ What                                   Allowed
 ``SET_MESSAGE_INTERVAL`` (511)         the telemetry streams, 1-100 Hz
 ``REQUEST_MESSAGE`` (512)              ``HOME_POSITION``, ``AUTOPILOT_VERSION``
 ``PARAM_REQUEST_READ``                 read one parameter by name
+``SET_EKF_SOURCE_SET`` (42007)         ``param1 = 2`` only (no GPS), origin ``gnss`` only:
+                                       the spoofing guard. Back to GPS is the pilot's
 =====================================  ==================================================
 
 Ground station (sysid 250, compid 190): ``HEARTBEAT`` as a GCS, ``DO_SET_MODE`` to the
@@ -45,7 +47,8 @@ system id, so they never come from the onboard computer.
 
 Origins (``sd_mav.vehicle.SendOrigin``): ``startup`` may only read and ask for streams;
 ``skill`` and ``limit`` may fly; ``override_fallback`` may only change to the STOP and
-FLY HOME modes; ``ground`` is the ground station's origin for everything except the
+FLY HOME modes; ``gnss`` may only switch the EKF to its source set without GPS;
+``ground`` is the ground station's origin for everything except the
 sticks, which only the ground station's ``manual`` origin sends.
 """
 
@@ -66,6 +69,7 @@ from sd_mav.modes import (
     CopterMode,
 )
 from sd_safety.constants import (
+    EKF_SOURCE_SET_NO_GPS,
     FC_FENCE_ALT_MAX_RANGE_M,
     FC_FENCE_RADIUS_RANGE_M,
     FC_LOIT_SPEED_RANGE_MS,
@@ -158,8 +162,9 @@ _STARTUP: Final = "startup"
 _FALLBACK: Final = "override_fallback"
 _MANUAL: Final = "manual"
 _GROUND: Final = "ground"
+_GNSS: Final = "gnss"
 _FLYING_ORIGINS: Final = frozenset({_SKILL, _LIMIT})
-_ONBOARD_ORIGINS: Final = frozenset({_SKILL, _LIMIT, _STARTUP, _FALLBACK})
+_ONBOARD_ORIGINS: Final = frozenset({_SKILL, _LIMIT, _STARTUP, _FALLBACK})  # not _GNSS
 _GROUND_ORIGINS: Final = frozenset({_GROUND, _MANUAL})
 
 
@@ -363,6 +368,16 @@ def _request_message(p: list[float], ctx: SendContext) -> str | None:
     return _origin_for("read", ctx)
 
 
+def _ekf_source_set(p: list[float], ctx: SendContext) -> str | None:
+    """The spoofing guard's one command: the EKF stops using GPS (source set 2). Sets 1
+    (GPS) and 3 are the pilot's, with the RC switch, never the onboard computer's."""
+    if ctx.profile is Profile.GROUND:
+        return "the ground station never changes the position source"
+    if p[0] != EKF_SOURCE_SET_NO_GPS or any(v != 0 for v in p[1:]):
+        return f"SET_EKF_SOURCE_SET needs param1 = {EKF_SOURCE_SET_NO_GPS} and param2..7 = 0"
+    return None if ctx.origin == _GNSS else "the position source only from the spoofing guard"
+
+
 _COMMANDS: Final = {
     mavlink.MAV_CMD_DO_SET_MODE: _set_mode,
     mavlink.MAV_CMD_COMPONENT_ARM_DISARM: _arm_disarm,
@@ -371,6 +386,7 @@ _COMMANDS: Final = {
     mavlink.MAV_CMD_DO_SET_MISSION_CURRENT: _mission_current,
     mavlink.MAV_CMD_SET_MESSAGE_INTERVAL: _message_interval,
     mavlink.MAV_CMD_REQUEST_MESSAGE: _request_message,
+    mavlink.MAV_CMD_SET_EKF_SOURCE_SET: _ekf_source_set,
 }
 
 

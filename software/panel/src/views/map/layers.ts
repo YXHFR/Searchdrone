@@ -236,6 +236,18 @@ export function addOverlay(map: maplibregl.Map, labels: boolean, flavor: MapFlav
   });
   text("finds-label", "finds", "label");
   add({
+    id: "find-hover-point",
+    type: "circle",
+    source: "find-hover",
+    paint: {
+      "circle-radius": 11,
+      "circle-color": "rgba(0,0,0,0)",
+      "circle-stroke-color": C.warn,
+      "circle-stroke-width": 3,
+    },
+  });
+  text("find-hover-label", "find-hover", "label");
+  add({
     id: "draw-line",
     type: "line",
     source: "draw",

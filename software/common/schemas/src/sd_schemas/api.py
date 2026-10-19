@@ -61,6 +61,7 @@ __all__ = [
     "Features",
     "Find",
     "Health",
+    "LinkLossPlan",
     "LinkStatus",
     "LoginRequest",
     "ManualControlInput",
@@ -114,6 +115,19 @@ class AlertCode(StrEnum):
     LOOP_STALL = "LOOP_STALL"
     PIN_INVALIDATED = "PIN_INVALIDATED"
     MANUAL_CONTROL_LOST = "MANUAL_CONTROL_LOST"
+    # SD-link lost: what the onboard link-loss rule will do (sd_safety.link_loss)
+    LINK_LOST_ALL = "LINK_LOST_ALL"  # the usual rule, and the ground's MAVLink is down too
+    FIND_HOLD = "FIND_HOLD"  # hovering at a confirmed find; MAVLink up
+    FIND_HOLD_ALL = "FIND_HOLD_ALL"  # hovering at a confirmed find; MAVLink down too
+    LINK_BACK_HOLD = "LINK_BACK_HOLD"  # the link is back, the drone hovers
+    LINK_BACK_HOME = "LINK_BACK_HOME"  # the link is back, the drone flies home
+    # The GPS, from the ground's own MAVLink (sd_safety.gnss) and the flight controller's texts
+    GPS_WEAK = "GPS_WEAK"
+    GPS_LOST = "GPS_LOST"
+    DEAD_RECKONING = "DEAD_RECKONING"
+    GPS_GLITCH = "GPS_GLITCH"
+    GPS_SPOOF = "GPS_SPOOF"
+    GPS_OK = "GPS_OK"
 
 
 class CommandStatus(StrEnum):
@@ -324,6 +338,24 @@ class ManualControlState(SdModel):
     input_age_ms: int | None  # age of the last stick value; > 1000 ms = the vehicle stands still
 
 
+class LinkLossPlan(SdModel):
+    """What the ground expects the onboard link-loss rule to do while SD-link is down: the
+    same ``sd_safety.link_loss.choose_mode`` on the last snapshot and keep-out list. The
+    panel counts down to these times; the flight controller's real mode (over MAVLink,
+    when it is up) wins where they differ."""
+
+    mode: Literal["normal", "find"]
+    keepout_id: Id | None = None
+    candidate_id: Id | None = None
+    candidate_seq: int | None = None  # K<n> in the panel
+    hover_lat: float | None = None
+    hover_lon: float | None = None
+    lost_at_utc: AwareDatetime  # the last message from the onboard computer
+    hold_at_utc: AwareDatetime | None = None  # normal: hovers from here
+    home_at_utc: AwareDatetime  # flies home from here
+    hover_until_utc: AwareDatetime | None = None  # find: hovers until here (= home_at_utc)
+
+
 class VehicleLive(SdModel):
     vehicle_id: VehicleId
     telemetry: Telemetry | None
@@ -333,6 +365,7 @@ class VehicleLive(SdModel):
     manual: ManualControlState | None = None
     airborne: bool  # the gate's strict definition; display
     in_flight: bool  # the wide definition; drives the emergency path
+    link_loss_plan: LinkLossPlan | None = None  # only while SD-link is down in the air
 
 
 class ActionRequest(SdModel):

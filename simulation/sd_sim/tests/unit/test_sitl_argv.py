@@ -121,3 +121,15 @@ def test_safety_layer_comes_after_generated_layers(tmp_path: Path) -> None:
     layers = layout.defaults("builtin")
     safety = next(i for i, p in enumerate(layers) if p.name == "searchdrone-safety.parm")
     assert layers.index(extra) < safety
+
+
+def test_lua_scripts_are_staged_into_the_working_directory(tmp_path: Path) -> None:
+    layout = fake_layout(tmp_path)
+    scripts = layout.repo / "simulation" / "sitl" / "scripts"
+    scripts.mkdir(parents=True)
+    with pytest.raises(InfraError, match=r"sd_gcs_loiter_cap\.lua"):
+        layout.stage_scripts(tmp_path / "work")
+    (scripts / "sd_gcs_loiter_cap.lua").write_text("return")
+    staged = layout.stage_scripts(tmp_path / "work")
+    assert staged == [tmp_path / "work" / "scripts" / "sd_gcs_loiter_cap.lua"]
+    assert staged[0].read_text() == "return"

@@ -1,0 +1,23 @@
+# The link-loss rule's table (sd_onboard.executor.link_loss), written out row by row.
+# test_link_loss_table_matches_spec drives LinkLossRule into each "from" phase, applies the
+# event and requires the new phase and the events. "to: same" keeps the phase; a mapping
+# names the new phase per "from" phase.
+- {id: LL-T1, from: [none], event: detect_normal, to: grace, emits: [link_lost]}
+- {id: LL-T2, from: [none], event: detect_find, to: find_move, emits: [find_hold_started]}
+- {id: LL-T2b, from: [none], event: detect_find_at_point, to: find_hover, emits: [find_hold_started]}
+- {id: LL-T3, from: [grace], event: hold_time, to: hold, emits: [link_loss_hold]}
+- {id: LL-T4, from: [hold], event: home_time, to: home, emits: [link_loss_rtl]}
+- {id: LL-T5, from: [grace, hold], event: gcs_lost, to: home, emits: [gcs_lost_rtl]}
+- {id: LL-T6, from: [find_move], event: find_goto_done, to: find_hover, emits: []}
+- {id: LL-T7, from: [find_move], event: find_deadline, to: find_hover, emits: [find_move_deadline]}
+- {id: LL-T8, from: [find_hover], event: find_timeout, to: home, emits: [find_hold_ended]}
+- {id: LL-T9, from: [find_move, find_hover], event: gcs_lost, to: same, emits: [gcs_lost_ignored_find]}
+- {id: LL-T10, from: [grace, hold], event: other_rtl, to: yielded, emits: []}
+- {id: LL-T10b, from: [find_move, find_hover], event: other_rtl, to: yielded, emits: [find_hold_ended]}
+- {id: LL-T11, from: [grace, hold, find_move, find_hover], event: other_hold, to: {grace: grace, hold: hold, find_move: find_hover, find_hover: find_hover}, emits: []}
+- {id: LL-T12, from: [grace, hold], event: taken_over, to: yielded, emits: []}
+- {id: LL-T12b, from: [find_move, find_hover], event: taken_over, to: yielded, emits: [find_hold_ended]}
+- {id: LL-T13, from: [home], event: anything, to: home, emits: []}
+- {id: LL-T14, from: [grace, hold, home, yielded], event: link_back, to: none, emits: []}
+- {id: LL-T14b, from: [find_move, find_hover], event: link_back, to: none, emits: [find_hold_ended]}
+- {id: LL-T15, from: [none, grace, hold, find_move, find_hover, home, yielded], event: landed, to: none, emits: []}

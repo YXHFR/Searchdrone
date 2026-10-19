@@ -24,7 +24,18 @@ export type AlertCode =
   | "LATCH_ADOPTED"
   | "LOOP_STALL"
   | "PIN_INVALIDATED"
-  | "MANUAL_CONTROL_LOST";
+  | "MANUAL_CONTROL_LOST"
+  | "LINK_LOST_ALL"
+  | "FIND_HOLD"
+  | "FIND_HOLD_ALL"
+  | "LINK_BACK_HOLD"
+  | "LINK_BACK_HOME"
+  | "GPS_WEAK"
+  | "GPS_LOST"
+  | "DEAD_RECKONING"
+  | "GPS_GLITCH"
+  | "GPS_SPOOF"
+  | "GPS_OK";
 /**
  * Set only by the operator on the charter card; the AI can never change it.
  *
@@ -80,6 +91,15 @@ export type CommandStatus =
  */
 export type ExecutorState =
   "IDLE" | "PREFLIGHT" | "TAKEOFF" | "TRANSIT" | "SURVEY" | "HOLD" | "RTL" | "LAND" | "LANDED" | "HELD" | "FAILSAFE";
+/**
+ * Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
+ *
+ * Times count from the last inbound SD-link message.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "LinkLossPhase".
+ */
+export type LinkLossPhase = "none" | "grace" | "hold" | "find_move" | "find_hover" | "home" | "yielded";
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "MissionState".
@@ -1666,6 +1686,27 @@ export interface LimitCaps {
   min_battery_rtl_pct?: number;
 }
 /**
+ * What the ground expects the onboard link-loss rule to do while SD-link is down: the
+ * same ``sd_safety.link_loss.choose_mode`` on the last snapshot and keep-out list. The
+ * panel counts down to these times; the flight controller's real mode (over MAVLink,
+ * when it is up) wins where they differ.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "LinkLossPlan".
+ */
+export interface LinkLossPlan {
+  candidate_id?: string | null;
+  candidate_seq?: number | null;
+  hold_at_utc?: string | null;
+  home_at_utc: string;
+  hover_lat?: number | null;
+  hover_lon?: number | null;
+  hover_until_utc?: string | null;
+  keepout_id?: string | null;
+  lost_at_utc: string;
+  mode: "normal" | "find";
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "LinkStatus".
  */
@@ -2633,6 +2674,7 @@ export interface StateSnapshot {
   control_suspended: boolean;
   executor_state: ExecutorState;
   expected_mode: string | null;
+  find_hold_keepout_id?: string | null;
   flight_mode: string;
   groundspeed_ms: number;
   heading_deg: number;
@@ -2655,6 +2697,7 @@ export interface StateSnapshot {
         | "operator_released"
         | "limit"
         | "link_loss"
+        | "find_hold"
         | "ai_silent"
         | "startup"
         | "manual_input_lost"
@@ -2662,6 +2705,7 @@ export interface StateSnapshot {
     | null;
   last_transition_state_seq: number;
   limits_active: string[];
+  link_loss_phase?: LinkLossPhase;
   manual_control?: boolean;
   position: LatLonAlt;
   preflight: {
@@ -2853,6 +2897,7 @@ export interface VehicleLive {
   in_flight: boolean;
   latch: OperatorLatch | null;
   link: LinkStatus;
+  link_loss_plan?: LinkLossPlan | null;
   manual?: ManualControlState | null;
   snapshot: StateSnapshot | null;
   telemetry: Telemetry | null;

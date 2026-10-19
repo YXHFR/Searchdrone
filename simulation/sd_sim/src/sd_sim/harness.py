@@ -39,7 +39,7 @@ EKF_PRED_POS_HORIZ_ABS = 512
 GPS_FIX_3D = 3
 MAX_TEXTS = 50
 STREAM_HZ = 5
-_STREAMS = ("GLOBAL_POSITION_INT", "EKF_STATUS_REPORT", "GPS_RAW_INT", "SYS_STATUS")
+_STREAMS = ("GLOBAL_POSITION_INT", "EKF_STATUS_REPORT", "GPS_RAW_INT", "SYS_STATUS", "SIMSTATE")
 
 mavlink: Any = mavutil.mavlink
 
@@ -56,6 +56,11 @@ class VehicleState:
     lat: float = 0.0
     lon: float = 0.0
     ground_speed_ms: float = 0.0
+    heading_deg: float = 0.0  # GLOBAL_POSITION_INT hdg: where the nose points
+    # SIMSTATE: the simulator's true position (not what the GPS or the EKF believe);
+    # None until the first one.
+    true_lat: float | None = None
+    true_lon: float | None = None
     battery_current_a: float = -1.0  # -1: not reported yet
     battery_pct: int = -1  # SYS_STATUS battery_remaining; -1: not reported yet
     # The flight controller's STATUSTEXT lines, oldest first, with their monotonic time.
@@ -128,6 +133,10 @@ class Harness:
             s.max_rel_alt_m = max(s.max_rel_alt_m, s.rel_alt_m)
             s.lat, s.lon = msg.lat / 1e7, msg.lon / 1e7
             s.ground_speed_ms = math.hypot(msg.vx, msg.vy) / 100.0
+            if msg.hdg != 65535:
+                s.heading_deg = msg.hdg / 100.0
+        elif kind == "SIMSTATE":
+            s.true_lat, s.true_lon = msg.lat / 1e7, msg.lng / 1e7
         elif kind == "SYS_STATUS":
             if msg.current_battery >= 0:
                 s.battery_current_a = msg.current_battery / 100.0

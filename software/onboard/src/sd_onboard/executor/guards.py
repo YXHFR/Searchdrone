@@ -41,6 +41,7 @@ class GuardInput:
     failsafe_cause_gone: bool = False
     old_charter: MissionCharter | None = None
     new_charter: MissionCharter | None = None
+    find_arrived: bool = False  # LIMIT_FIND: already within the arrive radius of the point
 
 
 Outcome = ExecutorState | Refusal
@@ -120,6 +121,11 @@ def failsafe_release(g: GuardInput) -> Outcome:
     return release_target(g)
 
 
+def find_target(g: GuardInput) -> Outcome:
+    """L-FIND: fly to the hover point (TRANSIT), or hover at once when already there."""
+    return S.HOLD if g.find_arrived else S.TRANSIT
+
+
 def landed_on_ground(g: GuardInput) -> Outcome:
     v = g.vehicle
     if v is not None and v.landed_state == "on_ground" and not v.armed:
@@ -138,6 +144,7 @@ GUARDS: Final[dict[str, Callable[[GuardInput], Outcome]]] = {
         release_target,
         failsafe_release,
         landed_on_ground,
+        find_target,
     )
 }
 

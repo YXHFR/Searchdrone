@@ -39,6 +39,10 @@ FPV7_FRAME_FILE = f"{fpv7.MODEL_NAME}.json"
 # SITL's builtin frame per vehicle: sd_quad14 flies ArduPilot's "quad" (FRAME_TYPE 0 from
 # copter.parm), sd_fpv7 an X ("x", FRAME_TYPE 1 in its parameter layer).
 BUILTIN_MODELS = {"sd_quad14": f"quad:{FRAME_FILE}", fpv7.MODEL_NAME: f"x:{FPV7_FRAME_FILE}"}
+# The flight controller's Lua scripts (SCR_ENABLE 1 in the safety layer). SITL runs every
+# script in ``scripts/`` under its working directory; on a real flight controller they go
+# to the SD card's ``APM/scripts/``. A missing script stops the start.
+LUA_SCRIPTS = ("sd_gcs_loiter_cap.lua",)
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,19 @@ class SitlLayout:
         target = workdir / FRAME_FILE
         target.write_bytes(self.frame_json.read_bytes())
         return target
+
+    def stage_scripts(self, workdir: Path) -> list[Path]:
+        """Put the project's Lua scripts into ``scripts/`` under SITL's working directory."""
+        source = self.repo / "simulation" / "sitl" / "scripts"
+        target = workdir / "scripts"
+        target.mkdir(parents=True, exist_ok=True)
+        out = []
+        for name in LUA_SCRIPTS:
+            if not (source / name).is_file():
+                raise InfraError(f"{source / name} saknas: flygkontrollens Lua-skript.")
+            (target / name).write_bytes((source / name).read_bytes())
+            out.append(target / name)
+        return out
 
     def defaults(self, physics: str, vehicle: str = "sd_quad14") -> list[Path]:
         """Parameter layers, later files win: ArduPilot's sim defaults, Gazebo's (gz

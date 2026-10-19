@@ -2,7 +2,8 @@
 # may set. Checked by tools/params_check.py.
 # Every safety-relevant value (battery, fence, failsafes) belongs in the safety file
 # searchdrone-safety.parm instead; adding a name here weakens that rule and needs review.
-allowed = ["MOT_THST_HOVER"]
+# EK3_DRAG_* depend on the model (its drag), so each model file sets its own.
+allowed = ["MOT_THST_HOVER", "EK3_DRAG_BCOEF_X", "EK3_DRAG_BCOEF_Y", "EK3_DRAG_MCOEF"]
 
 # A model other than sd_quad14 may also set its frame, motor range, tilt limit and rate
 # gains. Its pack size and reserves (BATT_*) stay in the safety file.

@@ -22,6 +22,8 @@ export function vehiclePill(snap: StateSnapshot | null | undefined): {
     case "SURVEY":
       return { key: "pills.vehicle.survey", tone: "green" };
     case "HOLD":
+      if (snap.hold_reason === "find_hold")
+        return { key: "pills.vehicle.findHold", tone: "orange" };
       return { key: "pills.vehicle.hold", tone: "yellow" };
     case "HELD":
       if (snap.held_by === "operator_stop") return { key: "pills.vehicle.stopped", tone: "yellow" };

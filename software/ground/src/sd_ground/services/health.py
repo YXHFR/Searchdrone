@@ -56,6 +56,8 @@ def system_status(g: Ground) -> SystemStatus:
 
 def vehicle_state(g: Ground, vehicle_id: str, latch: OperatorLatch | None) -> VehicleLive:
     """The vehicle as the panel sees it (REST ``/state`` and the live ``vehicle.state``)."""
+    from sd_ground.services import link_loss as link_loss_service
+
     telemetry = g.vehicle_link.telemetry(vehicle_id)
     return VehicleLive(
         vehicle_id=vehicle_id,
@@ -66,6 +68,7 @@ def vehicle_state(g: Ground, vehicle_id: str, latch: OperatorLatch | None) -> Ve
         airborne=telemetry is not None and telemetry.landed_state == "in_air",
         in_flight=g.vehicle_link.in_flight(vehicle_id),
         manual=None if g.vehicle_actions is None else g.vehicle_actions.manual_state(vehicle_id),
+        link_loss_plan=None if g.flow is None else link_loss_service.plan_of(g.flow, vehicle_id),
     )
 
 

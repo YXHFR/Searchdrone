@@ -5,7 +5,8 @@ sticks centred while the drone flies. SITL without RC input keeps the throttle a
 minimum, so every hold in LOITER (after a skill, a STOP, a take-over) would sink to the
 ground. The launcher's observer therefore plays the pilot: throttle down before take-off
 and while landing (arming needs it low), centred from leaving the ground on (1500 us
-holds the height in LOITER), the other sticks centred. It never moves a stick on its own.
+holds the height in LOITER), the other sticks centred. It never moves a stick on its own;
+a scenario moves the flight-mode switch (channel 5, ``mode_pwm``) as a pilot would.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ class RcTransmitter:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="rc", daemon=True)
         self.throttle = THROTTLE_DOWN
+        self.mode_pwm = CENTRE  # FLTMODE4's band, as before the switch was ever moved
 
     def start(self) -> RcTransmitter:
         self._thread.start()
@@ -55,5 +57,7 @@ class RcTransmitter:
 
     def _run(self) -> None:
         while not self._stop.wait(SEND_PERIOD_S):
-            packet = struct.pack("<8H", CENTRE, CENTRE, self.throttle, *([CENTRE] * 5))
+            packet = struct.pack(
+                "<8H", CENTRE, CENTRE, self.throttle, CENTRE, self.mode_pwm, *([CENTRE] * 3)
+            )
             self._sock.sendto(packet, self._addr)

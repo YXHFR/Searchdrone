@@ -110,8 +110,13 @@ measure = "the FC fence"
 [[capability]]
 group = "Säkerhet"
 name = "GPS-bortfall"
-variant = "test_gps_lost_during_flight"
-measure = "the EKF failsafe"
+variant = "test_gp1_gps_lost"
+measure = "dead reckoning RTL"
+
+[[capability]]
+group = "Säkerhet"
+name = "GPS-spoofing"
+variant = "test_gp3_spoof_jump"
 
 [[capability]]
 group = "Säkerhet"
@@ -194,6 +199,12 @@ group = "Länk"
 name = "SD-link nere 30 s"
 variant = "test_sc14b_sdlink_down_30s"
 measure = "link lost"
+
+[[capability]]
+group = "Länk"
+name = "Länkbortfall vid fynd: svävar bredvid"
+variant = "test_ll4_find_sdlink_lost"
+measure = "find hover"
 
 [[capability]]
 group = "Länk"

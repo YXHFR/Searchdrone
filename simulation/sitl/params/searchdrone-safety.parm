@@ -9,8 +9,11 @@ MAV_GCS_SYSID 250        # only sd-ground (250/190) keeps the GCS failsafe away
 # --- lost ground station --------------------------------------------------------------
 FS_GCS_ENABLE 3          # no ground station heartbeat -> SmartRTL, else RTL
 FS_GCS_TIMEOUT 20        # seconds; equals FS_GCS_TIMEOUT_S in sd_safety.constants
-FS_OPTIONS 8             # bit 3 only: keep landing if a landing is already under way
+FS_OPTIONS 24            # bit 3: keep landing if a landing is under way; bit 4: in LOITER (not an
+                         # autopilot mode) the FC only reports the lost ground station and the
+                         # onboard computer decides (link-loss rule, sd_gcs_loiter_cap.lua as backup)
 FS_EKF_ACTION 1          # bad position estimate -> LAND (no pilot with sticks in sim)
+FS_EKF_THRESH 0.8        # ArduPilot's default, written out so it is read back
 FS_THR_ENABLE 0          # RC-loss failsafe off in the simulator profile; 4 with a real RC link
 
 # --- battery (10000 mAh 6S2P Li-ion pack, see hardware/drone.yaml) ----------------------
@@ -60,5 +63,34 @@ FLTMODE4 3               # AUTO
 FLTMODE5 5               # LOITER
 FLTMODE6 0               # STABILIZE
 
+# --- GPS lost, jammed or spoofed ---------------------------------------------------------
+# Without GPS the EKF keeps a position from speed and wind (EK3_DRAG_* in the model file)
+# and the dead-reckoning failsafe flies home; after FS_DR_TIMEOUT the EKF failsafe lands.
+FS_DR_ENABLE 2           # dead reckoning -> RTL
+FS_DR_TIMEOUT 30         # s on dead reckoning before the EKF failsafe (FS_EKF_ACTION)
+EK3_POS_I_GATE 500       # GPS readings beyond 5 standard deviations are rejected
+EK3_GLITCH_RAD 25        # m; sd_safety.constants.SPOOF_JUMP_M must be larger
+AHRS_GPS_MINSATS 6       # = GPS_WEAK_SATS in sd_safety.constants
+# Position source sets. 1: GPS (normal). 2: no horizontal position or speed, set by the
+# onboard computer's spoofing guard (MAV_CMD_SET_EKF_SOURCE_SET 2) or the pilot's switch.
+# 3: the same as 2 (there is no third sensor). Only the pilot switches back to 1.
+EK3_SRC1_POSXY 3         # GPS
+EK3_SRC1_VELXY 3         # GPS
+EK3_SRC1_POSZ 1          # barometer (the spoofing guard compares GPS height with it)
+EK3_SRC1_VELZ 3          # GPS
+EK3_SRC1_YAW 1           # compass
+EK3_SRC2_POSXY 0         # none
+EK3_SRC2_VELXY 0         # none
+EK3_SRC2_POSZ 1          # barometer
+EK3_SRC2_VELZ 0          # none
+EK3_SRC2_YAW 1           # compass (ArduPilot's default 0 would drop the heading)
+EK3_SRC3_POSXY 0
+EK3_SRC3_VELXY 0
+EK3_SRC3_POSZ 1
+EK3_SRC3_VELZ 0
+EK3_SRC3_YAW 1
+EK3_SRC_OPTIONS 0        # bit 0 off: set 2 must not keep fusing GPS speed
+RC8_OPTION 0             # no source switch in the simulator; 90 with a real RC link
+
 # --- scripting ------------------------------------------------------------------------
-SCR_ENABLE 0             # no Lua scripts in v0.1
+SCR_ENABLE 1             # one Lua script: sd_gcs_loiter_cap.lua (simulation/sitl/scripts)

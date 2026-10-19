@@ -4,3 +4,8 @@
 SIM_WIND_SPD 0           # no wind
 SIM_WIND_DIR 0
 MOT_THST_HOVER 0.42      # start value for the learned hover throttle
+# Drag for the EKF's wind estimate and dead reckoning: SITL's own "Suggested EK3_DRAG_..."
+# for this frame (test_drag_matches_sitl_suggestion keeps them within 10 %).
+EK3_DRAG_BCOEF_X 34.756
+EK3_DRAG_BCOEF_Y 34.756
+EK3_DRAG_MCOEF 0.134

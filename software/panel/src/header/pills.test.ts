@@ -19,6 +19,9 @@ describe("vehiclePill", () => {
       "pills.vehicle.humanTookOver",
     );
     expect(vehiclePill(snap({ executor_state: "FAILSAFE" })).tone).toBe("red");
+    expect(vehiclePill(snap({ executor_state: "HOLD", hold_reason: "find_hold" })).key).toBe(
+      "pills.vehicle.findHold",
+    );
   });
 });
 

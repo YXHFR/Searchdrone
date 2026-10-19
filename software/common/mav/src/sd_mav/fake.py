@@ -142,6 +142,11 @@ class FakeFlightController:
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
         self.attitude_rad = (0.0, 0.0, 0.0)  # roll, pitch, yaw sent in ATTITUDE
         self.battery_current_a: float | None = None  # BATTERY_STATUS current; None: -1
+        # GPS_RAW_INT: fix type, and how far the receiver's position lies from the EKF's
+        # (north m, east m, up m); a test sets it to imitate jamming or spoofing.
+        self.gps_fix_type = 3
+        self.gps_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.ekf_source_set = 1  # MAV_CMD_SET_EKF_SOURCE_SET
         self.wind: tuple[float, float] | None = None  # WIND (from deg, m/s); None: not sent
         self.rc_link = False  # an RC transmitter is on and its receiver is healthy
         self._upload: _Upload | None = None
@@ -314,8 +319,21 @@ class FakeFlightController:
         )
 
     def _gps(self) -> Any:
+        north, east, up = self.gps_offset_m
+        lat = self.lat + north / 111_320.0
+        lon = self.lon + east / (111_320.0 * max(1e-6, math.cos(math.radians(self.lat))))
+        alt_mm = round((self.home[2] + self.alt_rel + up) * 1000)
         return mavlink.MAVLink_gps_raw_int_message(
-            0, 3, round(self.lat * 1e7), round(self.lon * 1e7), 0, 100, 100, 0, 0, 12
+            int(self.clock.monotonic_ms()) * 1000,
+            self.gps_fix_type,
+            round(lat * 1e7),
+            round(lon * 1e7),
+            alt_mm,
+            100,
+            100,
+            0,
+            0,
+            12,
         )
 
     def _ekf(self) -> Any:
@@ -457,6 +475,9 @@ class FakeFlightController:
             return accepted
         if cmd == mavlink.MAV_CMD_DO_SET_MISSION_CURRENT:
             self.mission_current = int(msg.param1)
+            return accepted
+        if cmd == mavlink.MAV_CMD_SET_EKF_SOURCE_SET:
+            self.ekf_source_set = int(msg.param1)
             return accepted
         return mavlink.MAV_RESULT_UNSUPPORTED
 
