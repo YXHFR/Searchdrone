@@ -119,5 +119,24 @@ def test_launcher_places_a_search_scene(tmp_path: Path) -> None:
 
     placed = stack().world_objects()
     assert [o.name for o in placed] == [t.name for t in targets.layout("SK-RED", 11)]
+    for vehicle in ("stock", "sd_fpv7"):
+        with pytest.raises(InfraError, match="sökscenario"):
+            stack(vehicle=vehicle).world_objects()
+
+
+def test_launcher_refuses_a_search_without_objects_on_the_wrong_vehicle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sd_sim import launch
+    from sd_sim.config import SimConfig
+    from sd_sim.errors import InfraError
+
+    monkeypatch.setattr(targets.Scene, "objects", lambda self, fix=None: [])
+    stack = launch.Stack(
+        SimConfig(physics="gz", vehicle="sd_fpv7"),
+        tmp_path / "run",
+        repo=tmp_path,
+        scene=targets.Scene("SK-RED", 11),
+    )
     with pytest.raises(InfraError, match="sökscenario"):
-        stack(vehicle="stock").world_objects()
+        stack.world_objects()

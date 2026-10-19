@@ -46,6 +46,10 @@ def changes(repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> str:
         ("hardware/electronics/test.kicad_sch", "true"),
         ("software/hwcalc/src/sd_hwcalc/calc.py", "true"),
         ("tools/check_hw_files.py", "true"),
+        ("tools/sim_model_from_cad.py", "true"),
+        ("tools/sim_model_drift.py", "true"),
+        ("simulation/sd_sim/src/sd_sim/terrain.py", "true"),
+        ("simulation/sd_sim/src/sd_sim/world.py", "false"),
         (".github/workflows/hardware.yml", "true"),
     ],
 )
@@ -106,6 +110,8 @@ def test_filter_matches_spec_paths_and_workflow_uses_script() -> None:
         "software/hwcalc/**",
         "tools/check_hw_files.py",
         ".github/workflows/hardware.yml",
+        "simulation/gazebo/models/sd_fpv7/**",
+        "tools/sim_model_from_cad.py",
     }
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "tools/check_hw_files.py --changes" in text
@@ -130,6 +136,7 @@ def test_jobs_and_aggregate() -> None:
     assembly = (ROOT / "hardware" / "cad" / "fpv7" / "assembly.py").read_text(encoding="utf-8")
     assert '"build" / "cad" / "fpv7-detailed"' in assembly
     assert "just cad-test" in cad_runs
+    assert "just sim-model-fpv7 --check" in cad_runs  # the simulator model follows the CAD
     assert jobs["changes"]["outputs"]["run"]
 
 

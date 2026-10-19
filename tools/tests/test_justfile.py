@@ -58,6 +58,7 @@ RECIPES = [
     "cad",
     "cad-test",
     "cad-detailed",
+    "sim-model-fpv7",
     "check-traceability",
     "brain-token",
     "brain-eval",
