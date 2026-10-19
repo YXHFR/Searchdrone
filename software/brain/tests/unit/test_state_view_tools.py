@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from typing import Any
 
 import pytest
@@ -10,7 +11,14 @@ from brain_helpers import REG, situation, with_stub
 
 from sd_brain.memory import PendingRequest, empty_memory, pending_request, to_update, with_changes
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
-from sd_brain.tools import AdaptError, adapt, exposed_tools, read_tools, registry_tool_schemas
+from sd_brain.tools import (
+    AdaptError,
+    adapt,
+    charter_skills,
+    exposed_tools,
+    read_tools,
+    registry_tool_schemas,
+)
 from sd_schemas.base import new_id
 from sd_schemas.skills import SkillRegistry
 
@@ -225,7 +233,39 @@ def test_tool_bounds_follow_the_charter() -> None:
     assert "rationale_sv" in tools["goto"].openai["function"]["parameters"]["required"]
     proposal = tools["propose_charter_change"].openai["function"]["parameters"]
     assert "autonomy_mode" not in proposal["properties"]
-    assert proposal["properties"]["alt_max_agl_m"].get("maximum") == 1000
+    # A charter proposal is bounded by the mission's limits, not by the charter in force.
+    assert proposal["properties"]["alt_max_agl_m"].get("maximum") == 120
+    assert proposal["properties"]["default_alt_agl_m"].get("minimum") == 5
+    assert proposal["properties"]["max_speed_ms"].get("maximum") == 15
+
+
+def test_proposal_schema_shapes_and_skill_names() -> None:
+    """R2/D1/D2: kind selects the shape, the flight area is only a drawn one, the skill
+    names come from the registry, and the schema has no oneOf/discriminator/const."""
+    s = situation("draft_p1.json")
+    tools = {t.name: t for t in exposed_tools(REG, s, _mem(False), NOW)}
+    params = tools["propose_charter_change"].openai["function"]["parameters"]
+    props = params["properties"]
+    assert props["allowed_skills"]["items"]["enum"] == charter_skills(REG)
+    assert {"goto", "survey_sector", "return_home"} <= set(charter_skills(REG))
+    assert "search" not in charter_skills(REG) and "rtl" not in charter_skills(REG)
+    assert props["operating_area"]["properties"]["kind"]["enum"] == ["drawn"]
+    shapes = {
+        a["properties"]["kind"]["enum"][0]: set(a["required"])
+        for a in props["search_areas"]["items"]["anyOf"]
+    }
+    assert shapes == {
+        "drawn": {"kind", "area_id"},
+        "rect": {"kind", "width_m", "height_m"},
+        "circle": {"kind", "radius_m"},
+    }
+    text = json.dumps(params)
+    assert "oneOf" not in text and "discriminator" not in text and '"const"' not in text
+    assert "$ref" not in text and "$defs" not in text
+    fields = [*props.items(), *props["operating_area"]["properties"].items()]
+    for shape in props["search_areas"]["items"]["anyOf"]:
+        fields += shape["properties"].items()
+    assert [k for k, v in fields if "description" not in v] == []
 
 
 def test_registry_schemas_have_fixed_bounds() -> None:

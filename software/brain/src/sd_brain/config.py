@@ -198,6 +198,9 @@ class DecideConfig(_Section):
 class BehaviourConfig(_Section):
     max_read_tool_rounds: int = Field(default=4, ge=0, le=8)
     max_repair_rounds: int = Field(default=1, ge=0, le=2)
+    # A charter draft the brain refuses (unknown pin, missing size, home outside the
+    # flight area, ...) is answered in the same turn up to this many times.
+    max_proposal_repair_rounds: int = Field(default=3, ge=0, le=3)
     max_actions_per_turn: Literal[1] = 1
     idle_airborne_tick_s: float = Field(default=60, gt=0)
     language: Literal["sv"] = "sv"

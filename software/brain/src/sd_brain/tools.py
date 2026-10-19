@@ -21,6 +21,7 @@ from sd_brain.constants import EXPOSED_STAGE, TAKEOFF_REQUEST_TTL_S
 from sd_brain.state_view import Limits, current_limits, motion_block, takeoff_ok
 from sd_brain.turn import ToolSpec
 from sd_schemas.commander import MissionMemory, Situation
+from sd_schemas.safety import MIN_ALT_AGL_M
 from sd_schemas.skills import SkillRegistry, SkillSpec
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "STATE_ALLOWS",
     "AdaptError",
     "adapt",
+    "charter_skills",
     "clean_schema",
     "exposed_tools",
     "read_tools",
@@ -61,7 +63,11 @@ class AdaptError(ValueError):
 
 
 def clean_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Inline ``$ref``, drop titles and ``null`` alternatives: easier for a small model."""
+    """Inline ``$ref``, drop titles and ``null`` alternatives: easier for a small model.
+
+    A tagged union (pydantic's ``oneOf`` + ``discriminator``) becomes a plain ``anyOf``
+    and ``const`` a one-value ``enum``: what every OpenAI-compatible tool format reads.
+    The validation stays pydantic's, tag first."""
     defs = schema.get("$defs", {})
 
     def walk(node: Any) -> Any:
@@ -74,8 +80,12 @@ def clean_schema(schema: dict[str, Any]) -> dict[str, Any]:
             return walk(defs[name])
         out: dict[str, Any] = {}
         for key, value in node.items():
-            if key in ("title", "$defs") or (key == "default" and value is None):
+            if key in ("title", "$defs", "discriminator") or (key == "default" and value is None):
                 continue
+            if key == "oneOf":
+                key = "anyOf"
+            if key == "const":
+                key, value = "enum", [value]
             out[key] = walk(value)
         alts = out.get("anyOf")
         if isinstance(alts, list):
@@ -105,11 +115,34 @@ def _description(spec: SkillSpec) -> str:
     return f"{spec.description_en} Swedish: {', '.join(spec.synonyms_sv)}."
 
 
-def skill_tool(spec: SkillSpec, lim: Limits | None) -> ToolSpec:
-    """The OpenAI tool for a skill, with this turn's height and speed bounds."""
+def charter_skills(reg: SkillRegistry) -> list[str]:
+    """The skill names a charter may allow: every implemented skill of this stage (the
+    ground station's default set). ``allowed_skills`` in a draft is a subset of these."""
+    return sorted(k.name for k in reg if k.status == "implemented" and k.stage <= EXPOSED_STAGE)
+
+
+def _proposal_schema(lim: Limits | None, skills: list[str] | None) -> dict[str, Any]:
+    params = clean_schema(CharterDraft.model_json_schema())
+    params["additionalProperties"] = False
+    props = params.get("properties", {})
+    if skills is not None:
+        props["allowed_skills"]["items"] = {"type": "string", "enum": list(skills)}
+    if lim is not None:
+        # A charter is bounded by the mission's own limits, not by the charter in force.
+        for name in ("alt_min_agl_m", "alt_max_agl_m", "default_alt_agl_m"):
+            props[name]["minimum"] = MIN_ALT_AGL_M
+            props[name]["maximum"] = lim.mission_alt_max_agl_m
+        props["max_speed_ms"]["maximum"] = lim.mission_max_speed_ms
+        props["max_range_from_pilot_m"]["maximum"] = lim.mission_max_range_from_pilot_m
+        props["battery_rtl_pct"]["minimum"] = lim.mission_battery_rtl_pct
+    return params
+
+
+def skill_tool(spec: SkillSpec, lim: Limits | None, skills: list[str] | None = None) -> ToolSpec:
+    """The OpenAI tool for a skill, with this turn's height and speed bounds. ``skills``:
+    the names a charter proposal may allow (:func:`charter_skills`)."""
     if spec.name == PROPOSAL_TOOL:
-        params = clean_schema(CharterDraft.model_json_schema())
-        params["additionalProperties"] = False
+        params = _proposal_schema(lim, skills)
         kind: Literal["action", "proposal"] = "proposal"
     else:
         model = spec.ai_params_model or spec.params_model
@@ -200,6 +233,7 @@ def exposed_tools(
         return out
     lim = current_limits(s)
     blocked = motion_block(s)
+    skills = charter_skills(reg)
     for k in reg:
         if k.status != "implemented" or k.stage > EXPOSED_STAGE or not k.ai_allowed:
             continue
@@ -209,7 +243,7 @@ def exposed_tools(
             continue
         if blocked is not None:
             if k.allowed_under_latch:
-                out.append(skill_tool(k, lim))
+                out.append(skill_tool(k, lim, skills))
             continue
         allowed_here = STATE_ALLOWS.get(s.mission_status)
         if allowed_here is not None and k.name not in allowed_here:
@@ -226,16 +260,17 @@ def exposed_tools(
             continue
         if k.allowed_from and s.vehicle.executor_state not in k.allowed_from:
             continue  # the onboard executor would refuse it in this state
-        out.append(skill_tool(k, lim))
+        out.append(skill_tool(k, lim, skills))
     return out
 
 
 def registry_tool_schemas(reg: SkillRegistry) -> list[dict[str, Any]]:
     """Every exposable tool with the registry's fixed bounds (for ``ai_config_hash``)."""
     tools = [t.openai for t in read_tools()]
+    skills = charter_skills(reg)
     for k in reg:
         if k.status == "implemented" and k.stage <= EXPOSED_STAGE and k.ai_allowed:
-            tools.append(skill_tool(k, None).openai)
+            tools.append(skill_tool(k, None, skills).openai)
     return json.loads(json.dumps(tools, sort_keys=True))
 
 

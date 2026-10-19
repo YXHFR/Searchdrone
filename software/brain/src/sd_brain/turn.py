@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from sd_brain.charter_draft import CharterDraft, CharterError
+from sd_brain.constants import BRAIN_TURN_DEADLINE_S
 from sd_schemas.api import ChatMessage
 from sd_schemas.base import Id
 from sd_schemas.charter import CharterProposal
@@ -17,6 +18,7 @@ __all__ = [
     "TRIGGER_PRIORITY",
     "AiAction",
     "BrainModel",
+    "FailedProposal",
     "OutMessage",
     "ToolSpec",
     "Trigger",
@@ -96,6 +98,16 @@ class TurnDiagnostics(BrainModel):
     prompt_json: dict[str, Any] | None = None
 
 
+class FailedProposal(BrainModel):
+    """A charter draft the brain refused in the turn until the repair rounds (or the
+    turn's time) ran out: the loop treats it like a proposal the ground refused.
+    ``final``: the model cannot fix it (e.g. home not known yet), so no retry."""
+
+    errors: list[CharterError]
+    args: dict[str, Any] | None = None  # the model's last draft, for the decision log
+    final: bool = False
+
+
 class TurnInput(BrainModel):
     turn_id: Id
     mission_id: Id
@@ -109,8 +121,10 @@ class TurnInput(BrainModel):
     retry_of: Id | None = None
     reject: GateDecision | None = None
     charter_errors: list[CharterError] = Field(default_factory=list[CharterError])
+    attempt: int | None = None  # the charter attempt this turn makes (1 = the first)
     in_reply_to: Id | None = None
     now: AwareDatetime
+    budget_s: float = BRAIN_TURN_DEADLINE_S  # the loop's deadline for this turn
 
     def tool(self, name: str) -> ToolSpec | None:
         return next((t for t in self.tools if t.name == name), None)
@@ -136,12 +150,17 @@ class TurnOutput(BrainModel):
     request: SkillRequest | None = None  # filled by the loop when the order is sent
     charter_proposal: CharterDraft | None = None
     ready_proposal: CharterProposal | None = None  # scripted: already the wire form
+    failed_proposal: FailedProposal | None = None  # refused in the turn, nothing sent
     note_update: str | None = Field(default=None, max_length=400)
     diagnostics: TurnDiagnostics
 
     @model_validator(mode="after")
     def _one_action(self) -> TurnOutput:
-        proposals = (self.charter_proposal is not None) + (self.ready_proposal is not None)
+        proposals = (
+            (self.charter_proposal is not None)
+            + (self.ready_proposal is not None)
+            + (self.failed_proposal is not None)
+        )
         if (self.action is not None) + proposals > 1:
             raise ValueError("a turn has at most one action: an order or a charter proposal")
         return self

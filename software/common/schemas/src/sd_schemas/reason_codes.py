@@ -93,8 +93,8 @@ APPROVAL_OUTCOME_CODES: Final = MappingProxyType(
 CHARTER_VALIDATION_CODES: Final = MappingProxyType(
     {
         "AREA_INVALID": "Sökområdet är ogiltigt eller för stort.",
-        "HOME_OUTSIDE_AREA": "Hemplatsen ligger utanför sökområdet.",
-        "SECTOR_OUTSIDE_AREA": "En sektor ligger utanför sökområdet.",
+        "HOME_OUTSIDE_AREA": "Hemplatsen ligger utanför flygområdet.",
+        "SECTOR_OUTSIDE_AREA": "En sektor ligger utanför flygområdet.",
         "SECTOR_TOO_LARGE": f"En sektor är större än {_sv_int(SECTOR_MAX_AREA_M2)} m².",
         "AREA_BEYOND_RANGE": "Sökområdet ligger för långt från piloten.",
         "AREA_BEYOND_FC_FENCE": GATE_REASON_CODES["AREA_BEYOND_FC_FENCE"],

@@ -1,7 +1,12 @@
 """``LlmCommander``: one turn with the cloud language model.
 
 When the model does not answer, the turn ends with the error and the loop lets the
-command mode (``GrammarBackend``) answer the same turn.
+command mode (``GrammarBackend``) answer the same turn. A refused call is sent back for
+repair (``max_repair_rounds``; a charter draft ``max_proposal_repair_rounds``). A draft
+still refused when its rounds run out, when the model cannot fix it, when the model stops
+answering or when another call would not end before the turn's deadline ends the turn as
+a failed proposal: the loop handles it like a proposal the ground station refused, not as
+a parse error.
 """
 
 from __future__ import annotations
@@ -12,13 +17,33 @@ from collections.abc import Callable
 from typing import Any
 
 from sd_brain.backends.base import ToolExecutor
+from sd_brain.charter_draft import CharterError
 from sd_brain.config import BehaviourConfig
-from sd_brain.constants import LLM_CALL_TIMEOUT_S, MESSAGE_MAX_CHARS, TOOL_RESULT_MAX_CHARS
+from sd_brain.constants import (
+    LLM_CALL_TIMEOUT_S,
+    MESSAGE_MAX_CHARS,
+    MIN_CALL_TIMEOUT_S,
+    TOOL_RESULT_MAX_CHARS,
+    TURN_MARGIN_S,
+)
 from sd_brain.context import ContextBuilder
 from sd_brain.runtime.base import ModelError, ModelReply, ModelRuntime, Sampling
 from sd_brain.state_view import current_limits
-from sd_brain.toolcall_parse import ParsedCall, parse_tool_calls, strip_think, truncate
-from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
+from sd_brain.toolcall_parse import (
+    CallError,
+    ParsedCall,
+    parse_tool_calls,
+    strip_think,
+    truncate,
+)
+from sd_brain.turn import (
+    AiAction,
+    FailedProposal,
+    OutMessage,
+    TurnDiagnostics,
+    TurnInput,
+    TurnOutput,
+)
 from sd_schemas.skills import SkillRegistry
 
 __all__ = ["LlmCommander"]
@@ -44,6 +69,13 @@ def _tool_message(call_id: str, content: str) -> dict[str, Any]:
     return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
+def _failed(err: CallError) -> FailedProposal:
+    errors = err.errors or [
+        CharterError(code="DRAFT_INVALID", detail_sv="Ramförslaget gick inte att läsa.")
+    ]
+    return FailedProposal(errors=errors, args=err.args, final=not err.repairable)
+
+
 class LlmCommander:
     name = "cloud"
 
@@ -56,7 +88,7 @@ class LlmCommander:
         sampling: Sampling,
         *,
         context_tokens: int = 8192,
-        remaining: Callable[[], float] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.runtime = runtime
         self.context = context
@@ -64,16 +96,21 @@ class LlmCommander:
         self.cfg = behaviour
         self.sampling = sampling
         self.context_tokens = context_tokens
-        self._remaining = remaining or (lambda: LLM_CALL_TIMEOUT_S)
+        self._clock = clock
 
     async def decide(self, turn: TurnInput, tools: ToolExecutor) -> TurnOutput:
-        start = time.monotonic()
+        start = self._clock()
+        # The turn's own end, a little before the loop's deadline: a refused draft is
+        # then still handed back as a failed proposal instead of being cut off.
+        end = start + turn.budget_s - TURN_MARGIN_S
         messages = self.context.build(turn)
         diag = TurnDiagnostics(backend="llm", prompt_json={"messages": list(messages)})
         out = TurnOutput(diagnostics=diag)
         lim = current_limits(turn.situation)
         offered = [t.openai for t in turn.tools]
         rounds = repairs = 0
+        slowest = 0.0  # the longest model call in this turn, in seconds
+        draft_err: CallError | None = None  # the last refused draft, until a reply parses
         while True:
             if rounds >= self.cfg.max_read_tool_rounds + repairs + 1:
                 diag.error = "round_limit"
@@ -82,12 +119,14 @@ class LlmCommander:
             if used + self.sampling.max_tokens > self.context_tokens:
                 diag.error = "round_limit"
                 break
-            timeout = min(LLM_CALL_TIMEOUT_S, self._remaining())
+            timeout = min(LLM_CALL_TIMEOUT_S, max(end - self._clock(), MIN_CALL_TIMEOUT_S))
+            called = self._clock()
             try:
                 reply = await self.runtime.chat(messages, offered, timeout, self.sampling)
             except ModelError as exc:
                 diag.error = exc.kind
                 break
+            slowest = max(slowest, self._clock() - called)
             rounds += 1
             diag.rounds = rounds
             diag.engine = reply.engine
@@ -102,7 +141,20 @@ class LlmCommander:
                 {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
                 for c in reply.tool_calls
             )
-            if err is not None and repairs < self.cfg.max_repair_rounds:
+            draft_err = err if err is not None and err.kind == "proposal" else None
+            budget = (
+                self.cfg.max_proposal_repair_rounds
+                if draft_err is not None
+                else self.cfg.max_repair_rounds
+            )
+            if draft_err is not None and (
+                not draft_err.repairable or end - self._clock() < slowest
+            ):
+                # The model cannot fix it, or another call would not end before the turn
+                # does: the draft goes back to the loop as refused.
+                out.failed_proposal = _failed(draft_err)
+                break
+            if err is not None and repairs < budget:
                 repairs += 1
                 diag.repairs = repairs
                 messages.append(_assistant_message(reply))
@@ -113,9 +165,12 @@ class LlmCommander:
                     again = err if err.endswith(".") else f"{err}. Try again."
                     messages.append({"role": "user", "content": again})
                 continue
+            if draft_err is not None:
+                out.failed_proposal = _failed(draft_err)
+                break
             if err is not None:
                 diag.error = "parse_error"
-                out.messages = [OutMessage(text=PARSE_FAIL_TEXT)]
+                out.messages = [OutMessage(text=PARSE_FAIL_TEXT, refs={"turn_failed": "parse"})]
                 break
             if text:
                 out.messages.append(OutMessage(text=truncate(text, MESSAGE_MAX_CHARS)))
@@ -133,7 +188,9 @@ class LlmCommander:
                     result = {"ok": True}
                 content = truncate(json.dumps(result, ensure_ascii=False), TOOL_RESULT_MAX_CHARS)
                 messages.append(_tool_message(c.id, content))
-        diag.latency_ms = int((time.monotonic() - start) * 1000)
+        if draft_err is not None and out.failed_proposal is None and not out.has_action():
+            out.failed_proposal = _failed(draft_err)  # the rounds or the context ran out
+        diag.latency_ms = int((self._clock() - start) * 1000)
         diag.prompt_json = {"messages": messages}
         out.messages = out.messages[:2]
         return out

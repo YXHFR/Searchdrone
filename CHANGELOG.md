@@ -195,6 +195,29 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The AI's charter proposals no longer fail five times on the demo request. The brain
+  turns every draft into the proposal inside the turn, so an unknown pin, a rectangle
+  without its size, a skill name the registry does not have, a value beyond the mission
+  limits, a height band the ground would refuse, a stale `base_version`, home outside the
+  flight area or an area beyond the range is sent back to the model at once, every fault
+  in one repair text with the ground station's reason code (up to three repair rounds,
+  `behaviour.max_proposal_repair_rounds`, within the turn's deadline) without a POST. A
+  draft still refused when the rounds or the turn's time run out, or when the model stops
+  answering, counts as a refused attempt instead of ending in "Jag hann inte svara".
+  The AI can no longer draw the flight area: it names only the search
+  areas (or an area the operator drew) and the system computes the flight area around
+  home. The tool schema gives each area kind its own required fields, a description on
+  every field, the registry's skill names as `allowed_skills` values and the mission's
+  height and speed limits. A refused proposal may be corrected up to three times per
+  request (an operator line no longer drops the errors); after the third the AI asks the pilot
+  one question with `refs.charter_failed` and the error codes. `just perf` no longer
+  answers "Ja, godkänn." to questions; it fails at once on that line, or on an answer to
+  its request marked `refs.turn_failed` (no answer in time, an unreadable reply), instead
+  of waiting for a card. The chat
+  is read before the situation in every turn, the charter error line shows the field and
+  a hint, and the decision log stores `retry_of`, `attempt`, `proposal_errors` and
+  `proposal_draft`. `HOME_OUTSIDE_AREA` and `SECTOR_OUTSIDE_AREA` now say "utanför
+  flygområdet".
 - The Gazebo model `sd_quad14` can take off: each rotor now has its own two lift surfaces
   (they all sat on rotors 0 and 1, where the clockwise pair cancelled the lift). The
   vehicle now starts with its legs on the ground in every world; in a site world they were

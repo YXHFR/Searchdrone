@@ -127,7 +127,11 @@ def _norm(text: str) -> str:
 def _action_name(r: TurnRecord) -> str | None:
     if r.ai_action is not None:
         return r.ai_action.skill
-    if r.proposal_draft is not None or (r.output and r.output.ready_proposal is not None):
+    if (
+        r.proposal_draft is not None
+        or r.refused_draft is not None
+        or (r.output and r.output.ready_proposal is not None)
+    ):
         return "propose_charter_change"
     return None
 
@@ -137,6 +141,8 @@ def _action_params(r: TurnRecord) -> dict[str, Any]:
         return dict(r.ai_action.params)
     if r.proposal_draft is not None:
         return r.proposal_draft.model_dump(mode="json")
+    if r.refused_draft is not None:  # the brain refused it in the turn: what the AI tried
+        return dict(r.refused_draft)
     return {}
 
 

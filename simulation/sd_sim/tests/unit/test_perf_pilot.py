@@ -17,7 +17,6 @@ from sd_sim.errors import InfraError, VehicleError
 from sd_sim.perf import pilot as pilot_mod
 from sd_sim.perf.pilot import (
     DEMO_REQUEST,
-    DEMO_YES,
     Pilot,
     flight_done,
     is_brake,
@@ -64,7 +63,6 @@ class FakePanel:
         self.stop_status = 202
         self.chat: list[dict[str, Any]] = []
         self.card = True  # the AI's charter card is pending
-        self.card_after_yes = False  # the card appears once the pilot answers "Ja"
 
     def request(
         self,
@@ -82,9 +80,7 @@ class FakePanel:
         if path == "/api/v1/missions/m1/chat" and method == "GET":
             return 200, {"items": self.chat, "next_before": None}
         if path == "/api/v1/missions/m1/chat":
-            if self.card_after_yes and body is not None and body["text"] == DEMO_YES:
-                self.card = True
-            return 201, {}
+            return 201, {"id": "req-1"}
         if path == "/api/v1/missions/m1/annotations":
             return 201, {}
         if path == "/api/v1/missions/m1/approvals":
@@ -384,27 +380,100 @@ def test_http_panel_sends_the_token_and_reads_errors() -> None:
         )
 
 
-def test_the_pilot_answers_once_when_the_ai_asks_instead_of_proposing(tmp_path: Path) -> None:
+def test_the_pilot_never_answers_a_question_in_the_chat(tmp_path: Path) -> None:
+    """Only a real card is approved: a question in the chat gets no "Ja", the pilot
+    waits for the card (and here times out)."""
     panel = FakePanel()
-    panel.card, panel.card_after_yes = False, True
+    panel.card = False
     panel.chat = [
         {"seq": 2, "role": "brain", "kind": "question", "text": "Vill du godkänna detta?"},
         {"seq": 1, "role": "operator", "kind": "text", "text": DEMO_REQUEST},
     ]
     p, _ = make(tmp_path, panel)
     try:
-        assert p.fly_demo_until_airborne(5.0) == "m1"
+        with pytest.raises(VehicleError, match="ramkort"):
+            p.fly_demo_until_airborne(1.0)
     finally:
         p.close()
     chats = [b for path, b in panel.posts() if path == "/api/v1/missions/m1/chat"]
-    assert [b["text"] for b in chats if b is not None] == [DEMO_REQUEST, DEMO_YES]
+    assert [b["text"] for b in chats if b is not None] == [DEMO_REQUEST]
 
 
-def test_the_pilot_does_not_answer_its_own_line(tmp_path: Path) -> None:
+def test_the_run_fails_at_once_when_the_ai_gives_up_the_charter(tmp_path: Path) -> None:
+    panel = FakePanel()
+    panel.card = False
+    panel.chat = [
+        {"seq": 1, "role": "operator", "kind": "text", "text": DEMO_REQUEST},
+        {
+            "seq": 2,
+            "role": "brain",
+            "kind": "status",
+            "text": "Ramförslaget gick inte igenom efter 3 försök: x. Hur vill du gå vidare?",
+            "refs": {"charter_failed": True, "codes": ["DRAFT_INVALID", "HOME_OUTSIDE_AREA"]},
+        },
+    ]
+    p, _ = make(tmp_path, panel)
+    start = time.monotonic()
+    try:
+        with pytest.raises(VehicleError, match="DRAFT_INVALID, HOME_OUTSIDE_AREA"):
+            p.fly_demo_until_airborne(60.0)
+    finally:
+        p.close()
+    assert time.monotonic() - start < 10.0  # not the card's whole wait
+
+
+def test_charter_failure_reads_only_the_ais_marker(tmp_path: Path) -> None:
     panel = FakePanel()
     panel.chat = [{"seq": 1, "role": "operator", "kind": "text", "text": DEMO_REQUEST}]
     p, _ = make(tmp_path, panel)
     p.mid = "m1"
-    assert not p.brain_asked()
-    panel.chat.append({"seq": 2, "role": "brain", "kind": "text", "text": "Ok."})
-    assert not p.brain_asked()
+    assert p.charter_failure() is None
+    panel.chat.append({"seq": 2, "role": "brain", "kind": "question", "text": "Ok?", "refs": {}})
+    assert p.charter_failure() is None
+    panel.chat.append(
+        {"seq": 3, "role": "operator", "kind": "text", "text": "x", "refs": {"charter_failed": 1}}
+    )
+    assert p.charter_failure() is None
+    panel.chat.append(
+        {"seq": 4, "role": "brain", "kind": "status", "text": "y", "refs": {"charter_failed": True}}
+    )
+    assert p.charter_failure() == []
+
+
+def test_a_failed_answer_to_the_request_fails_the_run_at_once(tmp_path: Path) -> None:
+    """The AI's answer to the request says no card follows (``refs.turn_failed``, e.g.
+    no answer in time): the run fails at once. Such a line for another message does not
+    count."""
+    panel = FakePanel()
+    panel.card = False
+    panel.chat = [
+        {"seq": 1, "role": "operator", "kind": "text", "text": DEMO_REQUEST, "id": "req-1"},
+        {
+            "seq": 2,
+            "role": "brain",
+            "kind": "text",
+            "text": "Jag hann inte svara.",
+            "in_reply_to": None,
+            "refs": {"turn_failed": "deadline"},
+        },
+    ]
+    p, _ = make(tmp_path, panel)
+    p.mid = "m1"
+    assert p.charter_failure("req-1") is None  # not the answer to the request
+    panel.chat.append(
+        {
+            "seq": 3,
+            "role": "brain",
+            "kind": "question",
+            "text": "Jag fick inte ihop ordern. Kan du säga det på ett annat sätt?",
+            "in_reply_to": "req-1",
+            "refs": {"turn_failed": "parse"},
+        }
+    )
+    start = time.monotonic()
+    try:
+        with pytest.raises(VehicleError, match="turn_failed:parse"):
+            p.fly_demo_until_airborne(60.0)
+    finally:
+        p.close()
+    assert time.monotonic() - start < 10.0

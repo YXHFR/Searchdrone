@@ -116,7 +116,7 @@ async def test_late_reject_wakes_without_retry() -> None:
     assert len(backend.turns) == 2  # running does not wake
 
 
-async def test_charter_error_retries_once() -> None:
+async def test_charter_error_retries_up_to_three_attempts() -> None:
     draft = {
         "search_areas": [{"kind": "rect", "center_pin_id": "P1", "width_m": 100, "height_m": 100}],
         "alt_max_agl_m": 150,
@@ -128,11 +128,14 @@ async def test_charter_error_retries_once() -> None:
         charter_proposal=CharterDraft.model_validate(draft),
         diagnostics=TurnDiagnostics(backend="llm"),
     )
-    second = TurnOutput(
-        charter_proposal=CharterDraft.model_validate(draft),
-        diagnostics=TurnDiagnostics(backend="llm"),
+    second, third = (
+        TurnOutput(
+            charter_proposal=CharterDraft.model_validate(draft),
+            diagnostics=TurnDiagnostics(backend="llm"),
+        )
+        for _ in range(2)
     )
-    backend = Steps(first, second)
+    backend = Steps(first, second, third)
     loop, fg, _ = make_loop(backend)
     err = {
         "ok": False,
@@ -148,9 +151,30 @@ async def test_charter_error_retries_once() -> None:
     fg.responses = [{"match": {"skill": "propose_charter_change"}, "result": err}]
     loop.handle_event(fg.operator_message("Flyg på 150 m"))
     await loop.settle()
-    assert len(fg.proposals) == 2
+    assert len(fg.proposals) == 3 and len(backend.turns) == 3
+    assert [t.trigger for t in backend.turns] == [
+        "operator_message",
+        "gate_reject_retry",
+        "gate_reject_retry",
+    ]
+    assert [t.attempt for t in backend.turns] == [None, 2, 3]
     assert backend.turns[1].charter_errors[0].code == "CHARTER_EXCEEDS_LIMITS"
-    assert "Högsta höjd är 120 m." in fg.posted[-1].text
+    asked = fg.chat_rows[0].id
+    assert [t.in_reply_to for t in backend.turns] == [asked, asked, asked]
+    assert len(fg.posted) == 1  # only the final line, nothing in between
+    final = fg.posted[0]
+    assert "Högsta höjd är 120 m." in final.text and "efter 3 försök" in final.text
+    assert final.kind == "question" and final.in_reply_to == asked
+    assert final.refs == {
+        "charter_failed": True,
+        "codes": ["CHARTER_EXCEEDS_LIMITS"],
+        "attempts": 3,
+    }
+    logs = [d for d in fg.decisions if d.trigger != "stop_check"]
+    assert [d.attempt for d in logs] == [1, 2, 3]
+    assert logs[0].retry_of is None and str(logs[1].retry_of) == loop.records[0].turn_id
+    assert logs[2].proposal_errors[0].field == "alt_max_agl_m"
+    assert logs[0].proposal_draft is not None and logs[0].proposal_draft["alt_max_agl_m"] == 150
 
 
 async def test_state_changed_retries_once() -> None:

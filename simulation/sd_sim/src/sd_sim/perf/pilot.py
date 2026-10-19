@@ -62,8 +62,6 @@ DEMO_REQUEST = (
     "Landa hemma sen."
 )
 DEMO_PIN = "P1"  # the pin the request names; the AI only knows the pins on the map
-# The pilot's answer when the AI asks in the chat instead of showing its charter card.
-DEMO_YES = "Ja, godkänn."
 EARTH_RADIUS_M = 6_378_137.0
 HEADERS = {"X-SD-Client": "panel", "Content-Type": "application/json"}
 POLL_S = 0.2  # the watcher: five times a second, as demo_rig
@@ -406,18 +404,29 @@ class Pilot:
         }
         self._post(f"/api/v1/missions/{self.mid}/annotations", body, 201, f"nålen {name}")
 
-    def brain_asked(self) -> bool:
-        """The newest chat line is the AI's question (the model sometimes
-        asks "Vill du godkänna detta?" instead of proposing the charter as a card)."""
+    def charter_failure(self, request_id: str | None = None) -> list[str] | None:
+        """The error codes when the AI gave up its charter proposal (its line with
+        ``refs.charter_failed``), or ``turn_failed:<why>`` when its answer to the line
+        ``request_id`` says no card follows (``refs.turn_failed``: no answer in time, a
+        reply it could not read); else None. Reads the newest 200 lines. The pilot never
+        answers a question in the chat: only a real card is approved."""
         page = self._get(f"/api/v1/missions/{self.mid}/chat", limit="200")
-        items = sorted(page.get("items", []), key=lambda m: int(m.get("seq", 0)))
-        return (
-            bool(items) and items[-1].get("role") == "brain" and items[-1].get("kind") == "question"
-        )
+        for m in page.get("items", []):
+            refs = m.get("refs") or {}
+            if m.get("role") != "brain":
+                continue
+            if refs.get("charter_failed"):
+                return [str(c) for c in refs.get("codes") or []]
+            replies = request_id is not None and str(m.get("in_reply_to")) == request_id
+            if replies and refs.get("turn_failed"):
+                return [f"turn_failed:{refs['turn_failed']}"]
+        return None
 
-    def say(self, text: str) -> None:
+    def say(self, text: str) -> str:
+        """Writes ``text`` in the chat as the pilot; returns the line's id."""
         body = {"client_msg_id": str(new_uuid7()), "text": text}
-        self._post(f"/api/v1/missions/{self.mid}/chat", body, 201, "chatten")
+        reply = self._post(f"/api/v1/missions/{self.mid}/chat", body, 201, "chatten")
+        return str((reply or {}).get("id"))
 
     def wait_command(self, skill: str, status: str, timeout_s: float) -> dict[str, Any]:
         """The AI's newest ``skill`` order reaches ``status``; another end fails."""
@@ -439,26 +448,27 @@ class Pilot:
 
     def fly_demo_until_airborne(self, timeout_s: float = 300.0) -> str:
         """The demo's opening (D2-D5): open a mission, the pin P1 on the map (the AI
-        places its search box by the pin's label), the request in the chat (answered
-        once with "Ja, godkänn." if the AI asks instead of proposing), "Godkänn
-        ram" in mode B, the onboard checks, "Fritt runt drönaren" and the AI's take-off to
-        40 m. Every step may use what is left of ``timeout_s``. Returns the mission id."""
+        places its search box by the pin's label), the request in the chat, "Godkänn
+        ram" on the AI's charter card in mode B, the onboard checks, "Fritt runt
+        drönaren" and the AI's take-off to 40 m. Every step may use what is left of
+        ``timeout_s``. When the AI gives up its charter (``refs.charter_failed``), or its
+        answer to the request says no card follows (``refs.turn_failed``), the run fails
+        at once with the error codes. Returns the mission id."""
         self.start()
         deadline = time.monotonic() + timeout_s
         opened = self._post(f"/api/v1/vehicles/{VEHICLE_ID}/missions/open", {}, 200, "uppdraget")
         self.mid = str(opened["id"])
         self.place_pin(DEMO_PIN)
-        self.say(DEMO_REQUEST)
+        request_id = self.say(DEMO_REQUEST)
         cards: list[dict[str, Any]] = []
-        answered = False
 
         def card() -> bool:
-            nonlocal answered
             pending = self._get(f"/api/v1/missions/{self.mid}/approvals", status="pending")
             cards[:] = [a for a in pending if a.get("kind") == "charter"]
-            if not cards and not answered and self.brain_asked():
-                self.say(DEMO_YES)  # as a pilot would, once
-                answered = True
+            if not cards and (codes := self.charter_failure(request_id)) is not None:
+                raise VehicleError(
+                    "AI:n gav upp ramförslaget: " + (", ".join(codes) or "okänt fel")
+                )
             return bool(cards)
 
         self._until(card, remaining_s(deadline), "AI:ns ramkort")

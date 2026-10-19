@@ -8,6 +8,7 @@ import re
 
 from brain_helpers import REG, situation
 
+from sd_brain.charter_draft import CharterError
 from sd_brain.context import ContextBuilder, situation_text
 from sd_brain.memory import empty_memory
 from sd_brain.runtime.base import ModelReply, RawToolCall
@@ -125,6 +126,29 @@ def test_prompt_contains_rules_and_budget() -> None:
         REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=900, count_tokens=len
     )
     assert counted.count_tokens("abc") == 3
+
+
+def test_charter_errors_show_field_attempt_and_hint() -> None:
+    ctx = ContextBuilder(REG, takeoff_policy="request_then_clearance", prompt_budget_tokens=6000)
+    errors = [
+        CharterError(
+            code="HOME_OUTSIDE_AREA",
+            detail_sv="Hemplatsen ligger utanför flygområdet.",
+            field="area",
+        ),
+        CharterError(code="AREA_BEYOND_RANGE", detail_sv="För långt.", field="area", limit=500),
+        CharterError(
+            code="DRAFT_INVALID",
+            detail_sv="Ogiltigt värde i search_areas.0.rect.width_m.",
+            field="search_areas.0.rect.width_m",
+        ),
+    ]
+    block = ctx.turn_block(_turn(trigger="gate_reject_retry", charter_errors=errors, attempt=2))
+    line = next(x for x in block.splitlines() if x.startswith("GRINDSVAR (ramförslag)"))
+    assert line.startswith("GRINDSVAR (ramförslag) (försök 2 av 3): ")
+    assert "HOME_OUTSIDE_AREA Hemplatsen ligger utanför flygområdet. (fält area) → leave" in line
+    assert "(fält area) (gräns 500) → use a smaller search area" in line
+    assert "(fält search_areas.0.rect.width_m) → correct the field" in line
 
 
 def test_out_message_question_kind() -> None:

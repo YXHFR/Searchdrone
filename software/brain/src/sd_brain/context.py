@@ -15,9 +15,12 @@ from typing import Any
 import yaml
 
 from sd_brain.ai_config import prompt_text
+from sd_brain.charter_draft import CharterError
+from sd_brain.constants import MAX_CHARTER_ATTEMPTS
 from sd_brain.geo import bearing_word, to_enu
 from sd_brain.state_view import current_limits, motion_block
 from sd_brain.sv import interpret
+from sd_brain.tools import PROPOSAL_TOOL
 from sd_brain.turn import TurnInput
 from sd_schemas.api import ChatMessage
 from sd_schemas.commander import Situation
@@ -185,6 +188,30 @@ def _charter_text(s: Situation) -> str:
     )
 
 
+# What to change for the charter errors a model most often gets wrong.
+_CHARTER_HINTS = {
+    "HOME_OUTSIDE_AREA": "leave operating_area out; the system computes the flight area "
+    "around home and the search areas",
+    "SECTOR_OUTSIDE_AREA": "leave operating_area out, or search inside the drawn area",
+    "DRAFT_INVALID": "correct the field named and send the whole draft again",
+    "AREA_BEYOND_RANGE": "use a smaller search area or one closer to home",
+    "SKILL_UNKNOWN": "leave allowed_skills out, or use only the names the tool lists",
+    "ALT_BAND_INVALID": "set only default_alt_agl_m when the operator names one height",
+    "CHARTER_EXCEEDS_LIMITS": "stay within the mission limit named (Gränser in LÄGE)",
+    "BASE_VERSION_STALE": "leave base_version out; the system fills it in",
+}
+
+
+def _charter_error(e: CharterError) -> str:
+    out = f"{e.code} {e.detail_sv}"
+    if e.field:
+        out += f" (fält {e.field})"
+    if e.limit is not None:
+        out += f" (gräns {e.limit:g})"
+    hint = _CHARTER_HINTS.get(e.code)
+    return f"{out} → {hint}" if hint else out
+
+
 def _chat_line(m: ChatMessage) -> str:
     who = {"operator": "OPERATÖR", "brain": "AI", "system": "SYSTEM"}[m.role]
     clock = m.created_at.strftime("%H:%M")
@@ -254,12 +281,22 @@ class ContextBuilder:
             r = turn.reject
             parts.append(f"GRINDSVAR: {', '.join(r.reason_codes)}; {r.message_sv}; {r.details}")
         if turn.charter_errors:
-            errs = "; ".join(
-                f"{e.code} {e.detail_sv}" + (f" (gräns {e.limit:g})" if e.limit is not None else "")
-                for e in turn.charter_errors
+            errs = "; ".join(_charter_error(e) for e in turn.charter_errors)
+            attempt = (
+                f" (försök {turn.attempt} av {MAX_CHARTER_ATTEMPTS})"
+                if turn.attempt is not None
+                else ""
             )
-            parts.append(f"GRINDSVAR (ramförslag): {errs}")
+            parts.append(f"GRINDSVAR (ramförslag){attempt}: {errs}")
         operator_lines = [m for m in tail if m.role == "operator"]
+        if (
+            turn.trigger == "mission_created"
+            and operator_lines
+            and turn.tool(PROPOSAL_TOOL) is None
+        ):
+            parts.append(
+                "OBS: operatörens meddelande besvaras i en egen tur; föreslå ingen ram nu."
+            )
         if turn.trigger == "operator_message" and operator_lines:
             hint = interpret(operator_lines[-1].text)
             if hint:

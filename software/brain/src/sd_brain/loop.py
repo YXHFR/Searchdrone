@@ -23,7 +23,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from sd_brain.backends.base import BackendCrashError, CommanderBackend
-from sd_brain.charter_draft import CharterError, CharterProposalOutcome, DraftError, to_proposal
+from sd_brain.charter_draft import (
+    CharterDraft,
+    CharterError,
+    CharterProposalOutcome,
+    DraftError,
+    to_proposal,
+)
 from sd_brain.clock import utc_now
 from sd_brain.config import BrainConfig
 from sd_brain.constants import (
@@ -31,6 +37,7 @@ from sd_brain.constants import (
     CHAT_TAIL,
     FRESH_SNAPSHOT_WAIT_S,
     MAX_ACTIONS_PER_MINUTE,
+    MAX_CHARTER_ATTEMPTS,
     MESSAGE_MAX_CHARS,
     MIN_ACTION_INTERVAL_S,
     SYNC_REJECT_MEMORY_S,
@@ -59,7 +66,8 @@ from sd_brain.turn import (
     TurnOutput,
 )
 from sd_schemas.api import ChatMessage
-from sd_schemas.base import new_id
+from sd_schemas.base import PARAMS_MAX_BYTES, new_id
+from sd_schemas.charter import CharterValidationError
 from sd_schemas.commander import (
     BrainMessage,
     DecisionLog,
@@ -93,6 +101,10 @@ BATTERY_TEXT = (
 CLEARED_NO_REQUEST = "Fritt runt är bekräftat. Säg till när jag ska starta."
 CHARTER_WITH_REQUEST = "Ramen gäller. Jag startar direkt när du trycker Fritt runt drönaren."
 RATE_TEXT = "Jag skickade för många order. Jag pausar AI:n; skriv 'hjälp' för kommandon."
+# The brain gives up a charter after MAX_CHARTER_ATTEMPTS refused proposals. The line is a
+# question to the pilot (the panel offers Svara) with refs.charter_failed and the codes:
+# "Hur vill du gå vidare?" asks for a new instruction, not for an approval.
+CHARTER_FAILED_TEXT = "Ramförslaget gick inte igenom efter {n} försök: "
 BACK_TEXT = "AI:n är tillbaka."
 # The ground station could not be reached with the stop check's report: ask for the
 # button and stop where it is (a model's reading never flies home, owner decision).
@@ -149,6 +161,8 @@ class TurnRecord:
     proposal_draft: Any = None
     error: str | None = None
     retry_of: str | None = None
+    attempt: int | None = None  # the charter attempt this turn's proposal was
+    refused_draft: dict[str, Any] | None = None  # a draft the brain refused in the turn
     tools: list[str] = field(default_factory=list[str])
 
 
@@ -204,6 +218,10 @@ class CommanderLoop:
         # the AI's own action cards: only these make it wait (its own charter proposals do not)
         self._own_action_approvals: set[str] = set()
         self._backlog_ids: set[str] = set()
+        # Refused charter proposals since the last approved/rejected charter (or mission).
+        self._charter_attempts = 0
+        # A charter (or gate) retry that an operator line overtook: merged into that turn.
+        self._carry: dict[str, Any] | None = None
         self.last_stop_check: StopCheckResult | None = None
         self.records: list[TurnRecord] = []
         self.turn_deadline_s = BRAIN_TURN_DEADLINE_S
@@ -246,6 +264,8 @@ class CommanderLoop:
             self._queue.clear()
             self._followups.clear()
             self._backlog.clear()
+            self._charter_attempts = 0
+            self._carry = None
 
     async def connected(self, reconnect: bool) -> None:
         """The stream is up. After a reconnect the AI says it is back."""
@@ -299,6 +319,12 @@ class CommanderLoop:
                 or body.get("install_status") == "failed"
             ):
                 trigger = "charter_event"
+            if body.get("status") in ("approved", "rejected"):
+                # The pilot decided: a new request starts over, and an older refusal's
+                # errors (carried or queued) no longer apply.
+                self._charter_attempts = 0
+                self._carry = None
+                self._followups = [(t, x) for t, x in self._followups if "charter_errors" not in x]
         elif kind == "event.takeoff_clearance":
             if body.get("status") in ("active", "confirmed", None):
                 trigger = "takeoff_clearance"
@@ -316,15 +342,31 @@ class CommanderLoop:
             trigger = "mission_created"
             mid = evt.get("mission_id") or body.get("mission_id")
             if mid:
+                if str(mid) != self.mission_id:
+                    self._charter_attempts = 0
+                    self._carry = None
                 self.mission_id = str(mid)
         if trigger is None:
             return
         if trigger in ("operator_override", "operator_message") and self._turn_task is not None:
             if trigger == "operator_override":
                 self._turn_task.cancel()  # the human decision wins; the turn is dropped
-            self._followups.clear()
+            self._drop_followups(keep_retry=trigger == "operator_message")
         self._queue.append(_Pending(trigger, evt))
         self._wake.set()
+
+    def _drop_followups(self, *, keep_retry: bool) -> None:
+        """An operator line overtakes the queued follow-ups. A retry's errors (a refused
+        charter or order) are kept for that line's turn, so the AI still knows why its
+        last try failed; ``keep_retry = False`` (an override) drops them too."""
+        if keep_retry:
+            for trigger, extra in self._followups:
+                if trigger == "gate_reject_retry":
+                    self._carry = dict(extra)
+        else:
+            self._carry = None
+            self._charter_attempts = 0  # the operator's decision ends the request
+        self._followups.clear()
 
     def _before_ready(self, body: dict[str, Any]) -> bool:
         created = body.get("created_at")
@@ -370,7 +412,8 @@ class CommanderLoop:
             if self._queue and any(
                 p.trigger in ("operator_override", "operator_message") for p in self._queue
             ):
-                self._followups.clear()
+                override = any(p.trigger == "operator_override" for p in self._queue)
+                self._drop_followups(keep_retry=not override)
             if self._followups and not self._queue:
                 trigger, extra = self._followups.pop(0)
                 events = [extra] if extra.get("type") else []
@@ -418,10 +461,12 @@ class CommanderLoop:
         self._busy_since = self.clock.monotonic()
         self._last_turn_at = self._busy_since
         now = self.clock.utc_now()
+        # The chat first, then the situation: the picture is at least as new as the chat,
+        # so a pin the operator placed before writing is in it.
+        chat = await self.ground.chat(mid, 0, 200)
         s = await self.ground.situation(mid)
         if trigger in ("skill_event", "operator_override"):
             s = await self._fresh_situation(mid, s, trigger, events)
-        chat = await self.ground.chat(mid, 0, 200)
         try:
             mem = await self.ground.memory(mid)
         except GroundError:
@@ -432,6 +477,11 @@ class CommanderLoop:
             self._backlog_ids = set()
         op_msg = self._operator_message(events, chat) if trigger == "operator_message" else None
         pilot = op_msg is None or op_msg.author_role == "pilot"
+        if trigger == "operator_message" and pilot and self._carry is not None:
+            # The retry this line overtook: its errors and attempt go with this turn (an
+            # observer's line cannot propose, so the carry waits for the pilot's next).
+            extra = {**self._carry, "in_reply_to": None, **extra}
+            self._carry = None
         if trigger == "idle_tick" and not self._idle_ok(s):
             return
         mem_before = mem
@@ -463,6 +513,10 @@ class CommanderLoop:
                 actions=trigger != "recovered",
                 pilot=pilot,
             )
+            if trigger == "mission_created" and any(m.role == "operator" for m in tail):
+                # Every live operator line gets its own operator_message turn (with a
+                # picture read after it): only that turn proposes the charter.
+                tools = [t for t in tools if t.name != PROPOSAL_TOOL]
             turn = TurnInput(
                 turn_id=new_id(),
                 mission_id=s.mission_id,
@@ -476,17 +530,21 @@ class CommanderLoop:
                 retry_of=extra.get("retry_of"),
                 reject=extra.get("reject"),
                 charter_errors=extra.get("charter_errors", []),
-                in_reply_to=op_msg.id if op_msg is not None else None,
+                attempt=extra.get("attempt"),
+                in_reply_to=op_msg.id if op_msg is not None else extra.get("in_reply_to"),
                 now=now,
+                budget_s=self.turn_deadline_s,
             )
             out = await self._decide(turn)
             if trigger == "recovered":
                 out.action = None
                 out.charter_proposal = None
                 out.ready_proposal = None
+                out.failed_proposal = None
             if not pilot:
                 out.action = out.action if out.action and out.action.skill == "report" else None
                 out.charter_proposal = None
+                out.failed_proposal = None
         if out.note_update is not None:
             mem = with_changes(mem, plan_note=out.note_update)
         record = TurnRecord(
@@ -586,12 +644,12 @@ class CommanderLoop:
                 out = await backend.decide(turn, executor)
         except TimeoutError:
             out = TurnOutput(
-                messages=[OutMessage(text=DEADLINE_TEXT)],
+                messages=[_deadline("deadline")],
                 diagnostics=TurnDiagnostics(backend=_wire_backend(backend.name), error="deadline"),
             )
         except BackendCrashError:
             out = TurnOutput(
-                messages=[OutMessage(text=DEADLINE_TEXT)],
+                messages=[_deadline("http_error")],
                 diagnostics=TurnDiagnostics(
                     backend=_wire_backend(backend.name), error="http_error"
                 ),
@@ -599,6 +657,12 @@ class CommanderLoop:
         if out.diagnostics.latency_ms == 0:
             out.diagnostics.latency_ms = int((self.clock.monotonic() - start) * 1000)
         err = out.diagnostics.error
+        if out.failed_proposal is not None:
+            # A refused draft, even when a later call failed: the charter path answers
+            # (a retry, or the final line), and the model did answer.
+            if backend is self.backend:
+                self.health.turn(True)
+            return out
         if backend is self.backend:
             self.health.turn(err not in ("deadline", "timeout", "http_error", "parse_error"))
         if (
@@ -611,7 +675,7 @@ class CommanderLoop:
             # The model did not answer: the command mode answers the same turn.
             out = await self._command_mode(turn, executor, err)
         elif err in ("timeout", "http_error") and not out.messages:
-            out.messages = [OutMessage(text=DEADLINE_TEXT)]
+            out.messages = [_deadline(err)]
         return out
 
     async def _command_mode(
@@ -621,7 +685,7 @@ class CommanderLoop:
         # Runs after the turn deadline, so the fallback must stay pure code with no I/O.
         out = await self.fallback.decide(turn, executor)
         if not out.messages and out.action is None and turn.trigger == "operator_message":
-            out.messages = [OutMessage(text=COMMAND_MODE_TEXT)]
+            out.messages = [OutMessage(text=COMMAND_MODE_TEXT, refs={"turn_failed": "command"})]
         out.diagnostics.error = err
         out.diagnostics.engine = "command"
         if out.diagnostics.latency_ms == 0:
@@ -656,33 +720,57 @@ class CommanderLoop:
         op_msg: ChatMessage | None,
         extra: dict[str, Any],
     ) -> MissionMemory:
-        reply_to = op_msg.id if op_msg is not None else None
+        # A follow-up turn answers the operator line its first try answered.
+        reply_to = op_msg.id if op_msg is not None else extra.get("in_reply_to")
         record.texts = [m.text for m in out.messages]
         record.messages = list(out.messages)
-        if out.charter_proposal is not None or out.ready_proposal is not None:
+        if (
+            out.charter_proposal is not None
+            or out.ready_proposal is not None
+            or out.failed_proposal is not None
+        ):
             outcome = await self._propose(mid, s, out)
+            attempt = self._charter_attempts + 1
             record.proposal = outcome
+            record.attempt = attempt
             record.proposal_draft = out.charter_proposal
+            if out.failed_proposal is not None:
+                record.refused_draft = out.failed_proposal.args
             if outcome.ok:
+                self._charter_attempts = 0
                 if outcome.approval_id is not None:
                     self._own_approvals.add(str(outcome.approval_id))
                 for m in out.messages:
                     await self._say(m, reply_to)
-            elif extra.get("retry_of") is None:
+            elif attempt < MAX_CHARTER_ATTEMPTS and not (
+                out.failed_proposal is not None and out.failed_proposal.final
+            ):
+                self._charter_attempts = attempt
                 record.texts = []  # nothing was said: the follow-up turn explains
                 self._followups.append(
                     (
                         "gate_reject_retry",
-                        {"retry_of": record.turn_id, "charter_errors": outcome.errors},
+                        {
+                            "retry_of": record.turn_id,
+                            "charter_errors": outcome.errors,
+                            "attempt": attempt + 1,
+                            "in_reply_to": reply_to,
+                        },
                     )
                 )
             else:
-                text = "Ramförslaget gick inte igenom: " + "; ".join(
+                self._charter_attempts = 0  # given up: the next request starts over
+                text = CHARTER_FAILED_TEXT.format(n=attempt) + "; ".join(
                     e.detail_sv for e in outcome.errors
                 )
                 text = truncate(text, 400) + " Hur vill du gå vidare?"
                 record.texts = [text]
-                await self._say(OutMessage(text=text), reply_to)
+                refs = {
+                    "charter_failed": True,
+                    "codes": sorted({e.code for e in outcome.errors})[:16],
+                    "attempts": attempt,
+                }
+                await self._say(OutMessage(text=text, kind="question", refs=refs), reply_to)
             return mem
         if out.action is None:
             for m in out.messages:
@@ -740,7 +828,7 @@ class CommanderLoop:
             if out.diagnostics.backend == "rule":
                 record.texts = [result.message_sv]
                 await self._say(OutMessage(text=result.message_sv), reply_to)
-            elif extra.get("retry_of") is None:
+            elif extra.get("reject") is None:  # this turn was not already the order's retry
                 decision = GateDecision(
                     decision="REJECT",
                     reason_codes=result.reason_codes,
@@ -750,7 +838,10 @@ class CommanderLoop:
                     side="ground",
                 )
                 self._followups.append(
-                    ("gate_reject_retry", {"retry_of": record.turn_id, "reject": decision})
+                    (
+                        "gate_reject_retry",
+                        {"retry_of": record.turn_id, "reject": decision, "in_reply_to": reply_to},
+                    )
                 )
             else:
                 text = (
@@ -758,7 +849,7 @@ class CommanderLoop:
                     + " Hur vill du gå vidare?"
                 )
                 record.texts = [text]
-                await self._say(OutMessage(text=text), reply_to)
+                await self._say(OutMessage(text=text, refs={"turn_failed": "gate"}), reply_to)
         return mem
 
     async def _fresh_situation(
@@ -839,14 +930,15 @@ class CommanderLoop:
         }
 
     async def _propose(self, mid: str, s: Situation, out: TurnOutput) -> CharterProposalOutcome:
+        if out.failed_proposal is not None:  # refused in the turn: nothing is sent
+            return CharterProposalOutcome(ok=False, errors=out.failed_proposal.errors)
         proposal = out.ready_proposal
         if proposal is None and out.charter_proposal is not None:
             try:
                 proposal = to_proposal(out.charter_proposal, s)
             except DraftError as exc:
-                return CharterProposalOutcome(
-                    ok=False, errors=[CharterError(code="DRAFT_INVALID", detail_sv=str(exc))]
-                )
+                error = CharterError(code=exc.code, detail_sv=str(exc), field=exc.field)
+                return CharterProposalOutcome(ok=False, errors=[error])
         if proposal is None:
             return CharterProposalOutcome(ok=False)
         if proposal.base_version is None and s.charter is not None:
@@ -884,9 +976,12 @@ class CommanderLoop:
             gate_decision=result.decision if result else None,
             reason_codes=result.reason_codes if result else [],
             error=d.error,
-            retry_of=None,
+            retry_of=uuid.UUID(record.retry_of) if record.retry_of else None,
+            attempt=record.attempt,
             proposal_id=record.proposal.proposal_id if record.proposal else None,
             proposal_ok=record.proposal.ok if record.proposal else None,
+            proposal_errors=_logged_errors(record.proposal),
+            proposal_draft=_logged_draft(record.proposal_draft or record.refused_draft),
             prompt_json=json.loads(prompt_bytes) if len(prompt_bytes) < 900_000 else None,
         )
         try:
@@ -1071,6 +1166,35 @@ class _ReadTools:
         except (GroundError, AdaptError, ValueError, KeyError) as exc:
             return {"error": truncate(str(exc), TOOL_RESULT_MAX_CHARS)}
         return {"error": f"unknown tool {name}"}
+
+
+def _logged_errors(outcome: CharterProposalOutcome | None) -> list[CharterValidationError]:
+    if outcome is None:
+        return []
+    return [
+        CharterValidationError(
+            code=e.code, detail_sv=truncate(e.detail_sv, 500), field=e.field, limit=e.limit
+        )
+        for e in outcome.errors[:32]
+    ]
+
+
+def _logged_draft(draft: Any) -> dict[str, Any] | None:
+    """The turn's charter draft (a ``CharterDraft``, or a refused draft's raw arguments)
+    for the decision log, when it fits."""
+    if draft is None:
+        return None
+    body = draft.model_dump(mode="json") if isinstance(draft, CharterDraft) else draft
+    if not isinstance(body, dict):
+        return None
+    raw = json.dumps(body, ensure_ascii=False, default=str)
+    return json.loads(raw) if len(raw.encode()) <= PARAMS_MAX_BYTES else None
+
+
+def _deadline(why: str) -> OutMessage:
+    """The answer when the model did not answer in time (``refs.turn_failed``: no card
+    or order follows from this turn)."""
+    return OutMessage(text=DEADLINE_TEXT, refs={"turn_failed": why})
 
 
 def _wire_backend(name: str) -> Literal["llm", "grammar", "scripted"]:
