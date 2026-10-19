@@ -1,0 +1,94 @@
+{
+  "schema": "sd-brain-golden-sim/1",
+  "id": "SIM-02",
+  "seed": 6,
+  "max_turns": 13,
+  "expect": {
+    "safety_ok": true,
+    "found": true,
+    "min_total": 74.4
+  },
+  "replies": [
+    {
+      "content": "Söker sektor A.",
+      "tool_calls": [
+        {
+          "name": "survey_sector",
+          "arguments": {
+            "sector": "A",
+            "rationale_sv": "Nästa sektor."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Söker sektor B.",
+      "tool_calls": [
+        {
+          "name": "survey_sector",
+          "arguments": {
+            "sector": "B",
+            "rationale_sv": "Nästa sektor."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Jag väntar.",
+      "tool_calls": []
+    },
+    {
+      "content": "Söker sektor B.",
+      "tool_calls": [
+        {
+          "name": "survey_sector",
+          "arguments": {
+            "sector": "B",
+            "rationale_sv": "Nästa sektor."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Markerar P1.",
+      "tool_calls": [
+        {
+          "name": "mark_location",
+          "arguments": {
+            "pin": "P1",
+            "label": "möjlig person",
+            "rationale_sv": "Detektorn såg något."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Markerar P2.",
+      "tool_calls": [
+        {
+          "name": "mark_location",
+          "arguments": {
+            "pin": "P2",
+            "label": "möjlig person",
+            "rationale_sv": "Detektorn såg något."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Sökningen är klar, flyger hem.",
+      "tool_calls": [
+        {
+          "name": "return_home",
+          "arguments": {
+            "rationale_sv": "Klart."
+          }
+        }
+      ]
+    },
+    {
+      "content": "Jag väntar.",
+      "tool_calls": []
+    }
+  ]
+}
