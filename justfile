@@ -215,6 +215,26 @@ brain-eval:
 brain-eval-cloud:
     uv run --package sd-brain sd-brain eval --backend cloud --repeat 3
 
+# Simulator exam: random searches with an answer key, the cloud model decides (keys:
+# flights, seed, model). Hard cap 30 kr per day on real usage, then the script flies.
+brain-eval-sim *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --no-sync python tools/just_args.py brain-eval-sim "$@"
+    opts=()
+    for a in "$@"; do
+        case "$a" in
+            flights=*) opts+=(--flights "${a#flights=}") ;;
+            seed=*) opts+=(--seed "${a#seed=}") ;;
+            model=*) opts+=(--model "${a#model=}") ;;
+        esac
+    done
+    uv run --package sd-brain sd-brain eval --backend sim "${opts[@]}"
+
+# The exam grade trend per day and model (from data/brain-scores; a worse day is flagged)
+brain-scores:
+    uv run --package sd-brain sd-brain scores
+
 # --- panel ---------------------------------------------------------------------------
 
 # Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)
