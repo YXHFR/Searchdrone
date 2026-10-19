@@ -1,0 +1,225 @@
+/* The map: labelled tools along the top, the drawing bar below the map, never over it. */
+.map-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* The map and what lies over it; the drawing bar sits below, never under an overlay. */
+.map-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.map-box {
+  flex: 1;
+  min-height: 0;
+}
+.map-tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: none;
+}
+.map-tools > * {
+  pointer-events: auto;
+}
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  color: var(--c-text);
+  background: var(--c-panel);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tool:hover {
+  background: var(--c-panel-2);
+}
+.tool[aria-pressed="true"],
+.tool[aria-expanded="true"] {
+  border-color: var(--c-acc);
+  color: var(--c-acc);
+}
+.tool svg {
+  color: var(--c-mute);
+}
+.tool[aria-pressed="true"] svg,
+.tool[aria-expanded="true"] svg {
+  color: inherit;
+}
+.tool-chev {
+  margin-right: -2px;
+}
+.tool-pop {
+  left: 0;
+  right: auto;
+  min-width: 200px;
+}
+.tool-pop .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tool-pop .menu-item[aria-pressed="true"] {
+  color: var(--c-acc);
+  font-weight: 600;
+}
+.map-layers {
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.map-layers label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: var(--hit);
+  cursor: pointer;
+}
+.map-layers input {
+  accent-color: var(--c-acc);
+  margin: 0;
+}
+.map-draw {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--c-panel);
+  border-top: 2px solid var(--c-acc);
+}
+.map-note,
+.map-cursor,
+.map-path-progress {
+  position: absolute;
+  margin: 0;
+  padding: 3px 8px;
+  border-radius: var(--r-2);
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  font-size: var(--fs-small);
+}
+.map-note {
+  top: 48px;
+  left: 8px;
+  color: var(--c-mute);
+}
+.map-cursor {
+  right: 8px;
+  bottom: 28px;
+  color: var(--c-mute);
+  font-variant-numeric: tabular-nums;
+}
+.map-path-progress {
+  left: 8px;
+  bottom: 28px;
+  border-color: var(--c-warn);
+  font-weight: 600;
+}
+.surface.is-pip .map-tools,
+.surface.is-pip .map-cursor,
+.surface.is-pip .map-path-progress,
+.surface.is-pip .map-note,
+.surface.is-pip .maplibregl-ctrl-top-right,
+.surface.is-pip .maplibregl-ctrl-bottom-left {
+  display: none;
+}
+
+/* MapLibre's own controls in the panel's colours. */
+.map-box .maplibregl-ctrl-group:not(:empty) {
+  background: var(--c-panel);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  box-shadow: none;
+}
+.map-box .maplibregl-ctrl-scale {
+  background: rgb(255 255 255 / 0.78);
+  border-color: #333;
+  color: #222;
+  font-size: var(--fs-label);
+}
+.map-box .maplibregl-ctrl-attrib {
+  font-size: var(--fs-label);
+}
+.map-layers legend {
+  padding: 6px 0 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-faint);
+}
+.map-basemap {
+  border-bottom: 1px solid var(--c-line);
+  padding-bottom: 4px;
+}
+/* The scale sits above the attribution line, which can run the map's full width. */
+.map-box .maplibregl-ctrl-bottom-left {
+  bottom: 20px;
+}
+/* A found object's card: bottom right above the attribution, small, so the map tools (which
+   can wrap to several rows), the drone and the safety bar stay visible. */
+.map-find {
+  position: absolute;
+  bottom: 28px;
+  right: 8px;
+  width: 168px;
+  max-height: calc(100% - 96px);
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-left: 3px solid var(--c-warn);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.map-find header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.map-find img {
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: cover;
+  margin: 6px 0;
+  border-radius: 6px;
+}
+.map-find p {
+  margin: 2px 0;
+}
+.map-find .warn {
+  color: var(--c-warn);
+}
+/* On a phone the sheet covers the map's foot: the card sits above it on the left (the camera
+   button is on the right) and scrolls if the tools leave it little room. */
+.shell[data-vp="phone"] .map-find {
+  right: auto;
+  left: 8px;
+  bottom: calc(var(--sheet-peek) + 8px);
+  max-height: calc(100% - var(--sheet-peek) - 136px);
+}

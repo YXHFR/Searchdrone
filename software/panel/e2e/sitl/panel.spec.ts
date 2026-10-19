@@ -3,7 +3,7 @@
 // HOME with the AI process stopped, after a take-over with the sticks (PS-4). Video (PS-1) is e2e/video/panel.spec.ts, run by
 // `just test-video` with Google Chrome; the ground-station restart (PS-5) is not covered.
 import { expect, type Page, test } from "@playwright/test";
-import { showView } from "../helpers/safety";
+import { holdClick, showView } from "../helpers/safety";
 import { stackUrl, stopBrain } from "./stack";
 
 interface Hooks {
@@ -139,7 +139,7 @@ async function readyMission(page: Page): Promise<void> {
   const card = page.locator('[data-kind="charter"]').last();
   await expect(card.getByTestId("approve")).toBeEnabled({ timeout: 30_000 });
   await expect(card.getByRole("radio", { name: /B – AI:n flyger fritt/ })).toBeChecked();
-  await card.getByTestId("approve").click();
+  await holdClick(page, "approve", card);
   await untilStatus(page, "READY", 90_000);
 }
 
@@ -240,8 +240,10 @@ test("Ta över och FLYG HEM med AI:n avstängd (PS-4)", async ({ page }) => {
   );
 
   stopBrain();
-  await expect(page.getByTestId("brain-row")).toContainText("AI:n är nere", { timeout: 6_000 });
-  await expect(page.getByTestId("ai-down-banner")).toBeVisible({ timeout: 6_000 });
+  await expect(page.getByTestId("ai-down-banner")).toContainText("AI:n svarar inte", {
+    timeout: 6_000,
+  });
+  await expect(page.getByTestId("pill-ai")).toContainText("AI borta");
 
   // Ta över with the AI down: the take-over, then the panel's 15 Hz sticks through the real
   // ground (live socket → stick path → MAVLink thread → LOITER), and back again.

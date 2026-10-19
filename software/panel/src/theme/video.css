@@ -1,0 +1,224 @@
+/* The camera feed, its last frame when the link drops (grey, with its age), and the HUD. */
+.video-body {
+  position: relative;
+  height: 100%;
+  padding: 0;
+  display: flex;
+  background: var(--c-media);
+  min-height: 0;
+  overflow: hidden;
+}
+.video-el,
+.video-frozen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--c-media);
+}
+.video-frozen {
+  filter: grayscale(1) brightness(0.72);
+}
+.video-el[hidden],
+.video-frozen[hidden] {
+  display: none;
+}
+.video-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-2);
+  background: rgb(15 16 17 / 0.72);
+  color: #fff;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+.video-badge-stale {
+  border: 1px solid #e2a640;
+  color: #f0bd5c;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.surface.is-pip .video-badge:not(.video-badge-stale) {
+  display: none;
+}
+.surface.is-pip .video-badge-stale {
+  top: 4px;
+  left: 4px;
+  font-size: var(--fs-label);
+}
+.video-note {
+  position: absolute;
+  inset: auto 0 45% 0;
+  margin: 0;
+  text-align: center;
+  color: #e6e8eb;
+}
+.video-none {
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #c9cdd2;
+  background: var(--c-media);
+}
+.video-none-over {
+  background: transparent;
+  justify-content: flex-start;
+  padding-top: 40%;
+}
+.surface.is-pip .video-none {
+  gap: 4px;
+  font-size: var(--fs-small);
+}
+.surface.is-pip .video-none-over {
+  display: none;
+}
+
+/* --- HUD: white on video, every number the drone's own, grey when old ---------------------- */
+.hud {
+  --hud: #ffffff;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  color: var(--hud);
+  font-size: var(--fs-small);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
+}
+.hud[data-stale="true"] {
+  --hud: #a9afb6;
+}
+.hud svg {
+  overflow: visible;
+  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.8));
+}
+.hud-tape {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.hud-tape line {
+  stroke: var(--hud);
+  stroke-width: 1.2;
+}
+.hud-tape text {
+  fill: var(--hud);
+  font-size: 11px;
+  font-weight: 600;
+}
+.hud-heading {
+  margin-top: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--hud);
+  border-radius: var(--r-1);
+  font-size: var(--fs-hud);
+  background: rgb(0 0 0 / 0.35);
+}
+.hud-centre {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+}
+.hud-horizon {
+  width: 260px;
+  height: auto;
+}
+.hud-horizon line {
+  stroke: var(--hud);
+  stroke-width: 1.5;
+}
+.hud-horizon .hud-hz {
+  stroke-width: 2;
+}
+.hud-horizon .hud-below line {
+  stroke-dasharray: 4 3;
+}
+.hud-horizon text {
+  fill: var(--hud);
+  font-size: 10px;
+}
+.hud-craft {
+  fill: none;
+  stroke: #e2a640;
+  stroke-width: 2.5;
+}
+.hud[data-stale="true"] .hud-craft {
+  stroke: var(--hud);
+}
+.hud-note {
+  padding: 3px 10px;
+  border: 1px solid var(--hud);
+  border-radius: var(--r-2);
+  background: rgb(0 0 0 / 0.45);
+}
+.hud-box {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 4px;
+  min-width: 82px;
+  padding: 4px 10px 6px;
+  border: 1px solid var(--hud);
+  border-radius: var(--r-1);
+  background: rgb(0 0 0 / 0.35);
+}
+.hud-box span {
+  grid-column: 1 / -1;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.hud-box b {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.hud-left {
+  left: 14%;
+}
+.hud-right {
+  right: 14%;
+  text-align: right;
+}
+.hud-corner {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 8px;
+  border-radius: var(--r-1);
+  background: rgb(0 0 0 / 0.35);
+  font-weight: 600;
+}
+.hud-tr {
+  top: 10px;
+  right: 10px;
+  align-items: flex-end;
+  font-size: var(--fs-hud);
+}
+.hud-br {
+  right: 10px;
+  bottom: 10px;
+}
+.hud-age {
+  font-size: var(--fs-small);
+  color: #e2a640;
+}

@@ -5,7 +5,7 @@
 import type { Find, MapConfig } from "@searchdrone/schemas";
 import { HOME } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, isMobile } from "../helpers/safety";
+import { expectSafetyVisible } from "../helpers/safety";
 
 const MAP: MapConfig = {
   pack_url: "/tiles/fixture.pmtiles",
@@ -63,7 +63,6 @@ test("a find shows on the map with its class, score and thumbnail", async ({ pag
     () => document.createElement("canvas").getContext("webgl2") !== null,
   );
   test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
-  if (isMobile(page)) await page.getByTestId("tab-map").click();
   await page.waitForFunction(
     () => (window as unknown as { __sd?: { map?: TestMap } }).__sd?.map?.loaded() === true,
   );

@@ -18,6 +18,7 @@ export const SOURCE_IDS = [
   "charter-area",
   "charter-preview",
   "sectors",
+  "swept",
   "pilot-range",
   "home",
   "target",
@@ -89,6 +90,19 @@ export function sectorsData(sectors: SectorFeature[]): FC {
           progress: s.properties.progress,
           label: `${s.properties.name} · ${Math.round(s.properties.progress * 100)} %`,
         },
+      })),
+  );
+}
+
+/** What the camera has actually covered, as the ground station reports it per sector. */
+export function sweptData(sectors: SectorFeature[]): FC {
+  return fc(
+    sectors
+      .filter((s) => isPolygon(s.properties.covered))
+      .map((s) => ({
+        type: "Feature",
+        geometry: s.properties.covered as Feature["geometry"],
+        properties: { sector_id: s.properties.sector_id },
       })),
   );
 }

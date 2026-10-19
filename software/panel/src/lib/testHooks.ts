@@ -1,8 +1,9 @@
 // Test build only (vite --mode test). In the production build these branches are removed,
 // and scripts/check-offline.mjs fails if the hook name is found in dist/.
-import type { ViewId } from "../layout/layoutModel";
+
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
+import type { ViewId } from "../views/registry";
 
 export const TEST_HOOKS = import.meta.env.VITE_SD_TEST_HOOKS === "1";
 
