@@ -102,12 +102,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
-      # The manufacturer models change only with vendor.yaml (pinned SHA-256), so a
-      # cached copy spares the download; vendor.py checks the checksum either way.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/cad/vendor
-          key: cad-vendor-${{ hashFiles('hardware/cad/fpv7/vendor.yaml') }}
+      # The manufacturer models are downloaded on every run and never cached: some of
+      # them may not be redistributed (vendor.yaml), and a cache saved on main can be
+      # restored by any pull request's workflow. vendor.py checks each SHA-256.
       - name: Build the CAD models (STEP, STL, report, picture, detailed STEP)
         run: just cad-detailed
       - name: Overlaps, propeller margins, camera view and repeatable exports

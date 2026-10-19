@@ -378,7 +378,7 @@ jobs:
     # the AI must find every red block.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
-    timeout-minutes: 300  # 60 install + 15 smoke + 15 before + 15 pictures + 30 trees + 20 twice-build + 15 + 15 + 3 x 15 fpv7 + 20 parity + 45 SK-RED + margin
+    timeout-minutes: 320  # 60 install + 15 smoke + 15 before + 15 pictures + 30 trees + 20 twice-build + 15 + 15 + 3 x 15 fpv7 + 20 parity + 45 SK-RED + margin
     steps:
       - *checkout
       - *check-ref

@@ -37,6 +37,9 @@ All notable changes to this project are listed here. The format follows
   real trees (`build/trees`, derived from Skogsstyrelsen's tree height raster, which may
   not be redistributed) are fetched again on every run and never stored in the GitHub
   Actions cache, which pull request workflows, also from forks, can restore.
+  The CAD job no longer caches the manufacturer models (`build/cad/vendor`) either, as
+  some of them may not be redistributed. A workflow test fails when a cache or artifact
+  stores anything outside a short list of folders.
 - The simulated and planned pack is 10 000 mAh (6S2P Li-ion), not 9 000: `BATT_CAPACITY
   10000` in `searchdrone-safety.parm` with the reserves kept at 15 % and 7 %
   (`BATT_LOW_MAH 1500`, `BATT_CRT_MAH 700`), `capacity_mah` in `hardware/drone.yaml` and

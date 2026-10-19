@@ -247,24 +247,50 @@ def test_brain_nightly_runs_only_from_main_with_the_secret() -> None:
     assert "--max-cost-sek" in exam["run"]
 
 
-# Paths under build/ that a workflow may cache or upload. Everything else there can hold
-# data that must not leave the runner: the tree list and raster crop in build/trees
-# (Skogsstyrelsen's terms forbid redistribution), a site's map data in build/sites and the
-# generated world in build/sim. A cache saved on main can be restored by any pull
-# request's workflow, so a cached path counts as published.
-SHAREABLE_BUILD_PATHS = ("build/cad/fpv7/", "build/cad/vendor", "build/tree_models")
+# Folders a workflow may cache or upload from. Under build/ only the listed subfolders:
+# everything else there can hold data that must not leave the runner (the tree list and
+# raster crop in build/trees, whose terms forbid redistribution, a site's map data in
+# build/sites, the manufacturer models in build/cad/vendor, the generated world in
+# build/sim). A cache saved on main can be restored by any pull request's workflow, also
+# from a fork, so a cached path counts as published. Any other first folder, a leading
+# wildcard or another expression fails the test until it is added here on purpose.
+STORE_ROOTS = ("data", "dist", "runs", "software", "${{ runner.temp }}")
+SHAREABLE_BUILD_DIRS = (("build", "cad", "fpv7"), ("build", "tree_models"))
 STORING_ACTIONS = ("actions/cache", "actions/upload-artifact", "actions/upload-pages-artifact")
 
 
+def storable(entry: str) -> bool:
+    parts = tuple(p for p in entry.split("/") if p)
+    if not parts or "*" in parts[0] or any("${{" in p for p in parts[1:]):
+        return False
+    if parts[0] == "build":
+        return any(parts[: len(d)] == d for d in SHAREABLE_BUILD_DIRS)
+    return parts[0] in STORE_ROOTS
+
+
+def test_storable_paths() -> None:
+    assert storable("build/tree_models") and storable("build/cad/fpv7/")
+    assert storable("runs/**/result.json") and storable("${{ runner.temp }}/film/")
+    for bad in (
+        "build/trees",
+        "build/tree_models_raw",
+        "build/cad/vendor",
+        "build/",
+        "**/trees",
+        "${{ env.DIR }}",
+        "trees.csv",
+    ):
+        assert not storable(bad), bad
+
+
 @pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
-def test_only_shareable_build_paths_are_cached_or_uploaded(path: Path) -> None:
+def test_only_shareable_paths_are_cached_or_uploaded(path: Path) -> None:
     for step in steps(load(path)):
         if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
             continue
         for line in str(step.get("with", {}).get("path", "")).splitlines():
             entry = line.strip()
-            if entry.startswith("!") or "build" not in entry:
-                continue
-            assert entry.startswith(SHAREABLE_BUILD_PATHS), (
-                f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
-            )
+            if entry and not entry.startswith("!"):
+                assert storable(entry), (
+                    f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
+                )
