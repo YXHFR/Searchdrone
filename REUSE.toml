@@ -33,6 +33,10 @@ precedence = "override"
 SPDX-FileCopyrightText = "OpenStreetMap contributors (https://www.openstreetmap.org/copyright)"
 SPDX-License-Identifier = "ODbL-1.0"
 
+# Committed from Copernicus; a site that sets [dem] source = "lantmateriet-mhm" commits a
+# dem.asc from Lantmäteriet's Markhöjdmodell instead: "© Lantmäteriet", CC-BY-4.0 (add
+# LICENSES/CC-BY-4.0.txt with it). Data the tools fetch into build/ and never commit (the
+# real trees, the tree pictures) is listed with its attribution in ATTRIBUTION.
 [[annotations]]
 path = "simulation/gazebo/sites/*/dem.asc"
 precedence = "override"

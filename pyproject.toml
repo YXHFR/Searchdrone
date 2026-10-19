@@ -49,6 +49,8 @@ dev = [
   "pytest-socket>=0.7",  # B1-05: tests may only reach loopback
   # B1-11: build the small synthetic map fixture for the panel tests
   "pmtiles>=3.8.1", "mapbox-vector-tile>=2.2.0", "shapely>=2.1",
+  # tools/terrain/fetch_trees.py: the county tree height archive is Deflate64
+  "inflate64>=1.0.4",
 ]
 # Test-only workspace packages. Production packages never import these.
 test = ["sd-link-testing", "sd-testing"]

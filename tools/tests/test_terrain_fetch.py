@@ -165,3 +165,25 @@ def test_stac_hrefs_must_be_lantmateriet_https() -> None:
     for href in ("http://dl1.lantmateriet.se/x.tif", "https://evil.example/x.tif"):
         with pytest.raises(fetch.FetchError):
             fetch._lm_href({"assets": {"data": {"href": href}}})
+
+
+def test_public_site_may_take_lantmateriet_heights_as_bare_ground(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SD_LM_USER", raising=False)
+    monkeypatch.delenv("SD_LM_PASSWORD", raising=False)
+    folder = tmp_path / "simulation" / "gazebo" / "sites" / "x"
+    folder.mkdir(parents=True)
+    body = "[home]\nlat = 0\nlon = 0\n[area]\nhalf_size_m = 500\n[dem]\ncell_m = 20\n"
+    body += 'source = "lantmateriet-mhm"\n'
+    (folder / "site.toml").write_text(body)
+    with pytest.raises(fetch.FetchError, match="dtm"):
+        fetch.load_site("x", tmp_path)
+    (folder / "site.toml").write_text(body + 'surface = "dtm"\n')
+    with pytest.raises(fetch.FetchError, match="inloggning"):
+        fetch.load_site("x", tmp_path)
+    monkeypatch.setenv("SD_LM_USER", "u")
+    monkeypatch.setenv("SD_LM_PASSWORD", "p")
+    site, login = fetch.load_site("x", tmp_path)
+    assert site.public and site.dem_source == "lantmateriet-mhm" and login["user"] == "u"
+    assert site.out == folder

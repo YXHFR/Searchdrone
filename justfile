@@ -431,6 +431,16 @@ maps-fetch *args:
 world-fetch *args:
     uv run --no-sync python tools/terrain/fetch_site.py "$@"
 
+# The site's real trees from Skogsstyrelsen's tree height raster and Naturvårdsverket's
+# land cover map (keys: site; needs gdal-bin and internet) to build/trees/<site>/, never
+# committed
+trees-fetch *args:
+    uv run --no-sync python tools/terrain/fetch_trees.py "$@"
+
+# Tree pictures (one texture atlas) from Poly Haven's CC0 trees to build/tree_models/
+tree-pictures-fetch:
+    uv run --no-sync python tools/terrain/fetch_tree_models.py
+
 # Sim farm: rounds in Gazebo from the newest main until Ctrl+C, pictures with facit to
 # build/simfarm/ (and R2 in the EU with a key) (keys: commander, rounds, max_minutes, seed, idle_only, update)
 sim-farm *args:

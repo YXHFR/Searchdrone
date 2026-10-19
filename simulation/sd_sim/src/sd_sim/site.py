@@ -9,7 +9,13 @@ same name wins over a public one.
 
 ``Site.heights`` gives the ground's height above sea level anywhere in the site:
 bicubic interpolation of the grid, minus the forest canopy when the source is a surface
-model, lakes set below their water level, and a flat pad around home. The world origin
+model, lakes set below their water level, and a flat pad around home. Where the site's
+real trees have been fetched (``just trees-fetch``) the height source is used as it is:
+Copernicus is a 30 m radar surface model that sees only part of the canopy, and taking
+the raster's real canopy (or a fixed one) off it puts the forest floor metres under the
+open ground next to it. Without real trees ``dem.canopy_m`` is taken off inside the map's
+forest, so that the generated trees stand on the ground. A bare-ground source
+(``dem.surface = "dtm"``) is always used as it is. The world origin
 is home on the ground: world z = height - ``Site.home_alt``.
 """
 
@@ -119,6 +125,8 @@ class Site:
     canopy_m: float
     layers: tuple[Layer, ...]
     raw_toml: str  # site.toml as read, part of the generator's input hash
+    # Where ``just trees-fetch`` puts the site's trees (trees.csv, chm_dm.npy); not committed.
+    trees_folder: Path | None = None
 
     @property
     def plane(self) -> Plane:
@@ -152,9 +160,31 @@ class Site:
     def raw_home_alt(self) -> float:
         return float(self.dem.sample(np.array([0.0]), np.array([0.0]))[0])
 
+    @property
+    def has_real_trees(self) -> bool:
+        """Whether ``just trees-fetch`` has written the site's tree list: then the world
+        has the real trees and the ground keeps the forest in its heights."""
+        return self.trees_folder is not None and (self.trees_folder / "trees.csv").is_file()
+
+    @property
+    def chm_path(self) -> Path | None:
+        """The tree height raster on the site's 1 m grid (decimetres), if fetched."""
+        if self.trees_folder is None:
+            return None
+        path = self.trees_folder / "chm_dm.npy"
+        return path if path.is_file() else None
+
+    def canopy(self, east: Grid, north: Grid) -> Grid:
+        """Metres of forest to take off the height source at these points: none for a
+        bare-ground source or where the real trees stand in the world (they are the
+        forest), else ``canopy_m`` inside the map's forest."""
+        if self.surface != "dsm" or self.has_real_trees:
+            return np.zeros_like(np.asarray(east, dtype=np.float64))
+        return self.canopy_m * self.canopy_weight(east, north)
+
     def heights(self, east: Grid, north: Grid) -> Grid:
         """Ground height above sea level on a regular grid of points (2-D arrays)."""
-        z = self.dem.sample(east, north) - self.canopy_m * self.canopy_weight(east, north)
+        z = self.dem.sample(east, north) - self.canopy(east, north)
         for geom, level in self.water_levels:
             inside = raster.coverage(geom, east, north) > 0.5
             z = np.where(inside, np.minimum(z, level - LAKE_DEPTH_M), z)
@@ -177,9 +207,9 @@ class Site:
         exactly as the terrain around it has it (same grid step as the world's mesh)."""
         xs = np.arange(-60.0, 60.0 + HOME_STEP_M / 2, HOME_STEP_M)
         east, north = np.meshgrid(xs, xs[::-1])
-        weight = self.canopy_weight(east, north)
+        canopy = self.canopy(east, north)
         centre = len(xs) // 2
-        return round(self.raw_home_alt - self.canopy_m * float(weight[centre, centre]), 2)
+        return round(self.raw_home_alt - float(canopy[centre, centre]), 2)
 
     @property
     def home_arg(self) -> str:
@@ -195,6 +225,10 @@ class Site:
         h.update((self.folder / "osm.geojson").read_bytes())
         if self.ortho is not None:
             h.update(self.ortho.read_bytes())
+        if self.trees_folder is not None:
+            for name in ("trees.csv", "chm_dm.npy"):
+                if (self.trees_folder / name).is_file():
+                    h.update((self.trees_folder / name).read_bytes())
         return h.hexdigest()
 
 
@@ -300,6 +334,7 @@ def load(name: str, repo: Path = paths.REPO) -> Site:
         canopy_m=float(dem.get("canopy_m", 0.0)),
         layers=read_layers(folder / "osm.geojson", plane),
         raw_toml=raw,
+        trees_folder=folder if not public else repo / "build" / "trees" / name,
     )
 
 
