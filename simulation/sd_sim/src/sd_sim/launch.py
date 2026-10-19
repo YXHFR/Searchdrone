@@ -912,6 +912,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status(cfg.instance)
     if cfg.personal_home:
         say(f"\033[33m{config.PERSONAL_HOME_WARNING}\033[0m")
+    for warning in [] if demo else config.stale_local_warnings():
+        say(f"\033[33mVarning: {warning}\033[0m")
     site_name = site.world_sites().get(cfg.world)
     if site_name is not None:
         say(

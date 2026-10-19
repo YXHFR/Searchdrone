@@ -108,6 +108,28 @@ def _has_home(data: dict[str, Any]) -> bool:
     return bool(str(data.get("sim", {}).get("home_override", "")).strip())
 
 
+def stale_local_warnings(repo: Path = paths.REPO) -> list[str]:
+    """Settings in ``config/sim.toml`` that newer versions changed. ``just setup-config``
+    never overwrites an existing file, so an old copy keeps pinning what it pinned."""
+    example = _read_toml(repo / "config" / "sim.example.toml")
+    local = _read_toml(repo / "config" / "sim.toml")
+    warnings = []
+    if local.get("brain", {}).get("kind") == "llm_local":
+        warnings.append(
+            'config/sim.toml har brain.kind = "llm_local", som inte finns längre '
+            '(cloud används). Byt till kind = "cloud" eller ta bort raden.'
+        )
+    world = local.get("sim", {}).get("world")
+    example_world = example.get("sim", {}).get("world")
+    if world is not None and world != example_world:
+        default = f'"{example_world}"' if example_world else f"ingen (just sim kör {LAUNCH_WORLD})"
+        warnings.append(
+            f'config/sim.toml sätter world = "{world}", exemplet sätter {default}. '
+            "Ta bort raden om du inte valt världen med flit."
+        )
+    return warnings
+
+
 def load(
     args: dict[str, str],
     *,

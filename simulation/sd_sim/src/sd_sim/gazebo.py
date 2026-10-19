@@ -67,7 +67,7 @@ def resolve_world(cfg: SimConfig, repo: Path) -> World:
 
 
 def gz_env(instance: int, *, gui: bool) -> dict[str, str]:
-    passthrough = GZ_PASSTHROUGH + (procs.GRAPHICS_ENV_KEYS if gui else ())
+    passthrough = GZ_PASSTHROUGH + procs.GPU_ENV_KEYS + (procs.DISPLAY_ENV_KEYS if gui else ())
     return procs.clean_env(
         {"GZ_IP": "127.0.0.1", "GZ_PARTITION": f"sd_i{instance}"}, passthrough=passthrough
     )

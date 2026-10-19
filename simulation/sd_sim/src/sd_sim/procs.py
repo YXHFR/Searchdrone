@@ -36,17 +36,17 @@ def defer_stop() -> bool:
 
 
 BASE_ENV_KEYS = ("PATH", "HOME", "USER", "LOGNAME", "TMPDIR")
-# Display and graphics variables a Gazebo window needs under WSLg.
-GRAPHICS_ENV_KEYS = (
-    "DISPLAY",
-    "WAYLAND_DISPLAY",
-    "XDG_RUNTIME_DIR",
-    "PULSE_SERVER",
+# Display variables a Gazebo window needs under WSLg.
+DISPLAY_ENV_KEYS = ("DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "PULSE_SERVER")
+# Mesa's choice of GPU. The headless server renders the camera through Mesa too: without
+# these it falls back to llvmpipe on the processor and runs well below real time.
+GPU_ENV_KEYS = (
     "LIBGL_ALWAYS_SOFTWARE",
     "MESA_D3D12_DEFAULT_ADAPTER_NAME",
     "GALLIUM_DRIVER",
     "LD_LIBRARY_PATH",
 )
+GRAPHICS_ENV_KEYS = DISPLAY_ENV_KEYS + GPU_ENV_KEYS
 
 
 def clean_env(

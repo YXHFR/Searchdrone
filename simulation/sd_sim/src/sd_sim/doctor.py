@@ -168,8 +168,20 @@ def check_loopback(physics: str) -> Row:
     return Row("Bara loopback lyssnar", OK)
 
 
+def check_sim_toml(repo: Path = paths.REPO) -> Row:
+    warnings = config.stale_local_warnings(repo)
+    if warnings:
+        return Row("config/sim.toml aktuell", WARN, " ".join(warnings))
+    return Row("config/sim.toml aktuell", OK)
+
+
 def run_checks(physics: str) -> list[Row]:
-    checks: list[Callable[[], Row]] = [check_ubuntu, check_repo_location, check_ardupilot]
+    checks: list[Callable[[], Row]] = [
+        check_ubuntu,
+        check_repo_location,
+        check_sim_toml,
+        check_ardupilot,
+    ]
     gz_checks = [check_glx, check_gz_version, check_gz_plugin, check_gz_ip]
     if physics == "gz":
         checks += gz_checks
