@@ -1,9 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { approval, charter, command } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { isMobile } from "../helpers/safety";
+import { type ShownView, showView, withCamera } from "../helpers/safety";
 
-const VIEWS = ["chat", "map", "video", "candidates", "status", "manual"] as const;
+const VIEWS: ShownView[] = ["chat", "events", "map", "video", "candidates", "status", "manual"];
 
 async function scan(page: import("@playwright/test").Page, label: string): Promise<void> {
   const r = await new AxeBuilder({ page }).analyze();
@@ -23,17 +23,11 @@ for (const theme of ["dark", "light"] as const) {
       "desktop, tablet, phone-360",
     );
     await page.addInitScript((t) => localStorage.setItem("sd.panel.theme", t), theme);
+    withCamera(ground);
     await ground.open();
     await expect(page.getByTestId("topbar")).toBeVisible();
     for (const v of VIEWS) {
-      if (isMobile(page)) {
-        await page.getByTestId(`tab-${v}`).click();
-      } else {
-        const first = page.locator("[data-view]").first();
-        if ((await first.getAttribute("data-view")) !== v)
-          await first.locator("select").first().selectOption(v);
-      }
-      await expect(page.getByTestId(`view-${v}`)).toBeVisible();
+      await showView(page, v);
       await scan(page, `${theme}/${v}`);
     }
   });
@@ -46,12 +40,13 @@ test("axe: login page", async ({ page, ground }) => {
   await scan(page, "login");
 });
 
-test("axe: full screen and re-login sheet", async ({ page, ground }) => {
+test("axe: the video as the large view, and the re-login sheet", async ({ page, ground }) => {
   test.skip(page.viewportSize()?.width !== 1280, "desktop");
+  withCamera(ground);
   await ground.open();
   await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
-  await page.getByTestId("maximize-chat").click();
-  await scan(page, "maximized");
+  await showView(page, "video");
+  await scan(page, "video-main");
   ground.setSession(null);
   ground.failNext("POST /api/v1/missions/M1/chat", 401, { code: "UNAUTHENTICATED" });
   const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });

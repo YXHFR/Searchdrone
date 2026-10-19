@@ -5345,6 +5345,17 @@
         "center": {
           "$ref": "#/$defs/LatLon"
         },
+        "imagery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MapImagery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "maxzoom": {
           "default": 15,
           "maximum": 22,
@@ -5366,6 +5377,32 @@
         "zoom"
       ],
       "title": "MapConfig",
+      "type": "object"
+    },
+    "MapImagery": {
+      "additionalProperties": false,
+      "description": "An aerial photo pack (raster PMTiles) drawn under the map's roads, paths and names.",
+      "properties": {
+        "attribution": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxzoom": {
+          "maximum": 22,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pack_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pack_url",
+        "maxzoom",
+        "attribution"
+      ],
+      "title": "MapImagery",
       "type": "object"
     },
     "MapPin": {

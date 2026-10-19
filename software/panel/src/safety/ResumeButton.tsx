@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useLiveStore } from "../state/liveStore";
 import { useIsPilot } from "../state/sessionStore";
 import { resumeView } from "./resume";
-import { actionText } from "./SafetyButton";
+import { actionText, sentFeedback } from "./SafetyButton";
 import { useVehicleAction } from "./useVehicleAction";
 
 const ARM_DELAY_MS = 2_000;
@@ -14,11 +14,12 @@ export function ResumeButton({ vehicleId }: { vehicleId: string }) {
   const { t } = useTranslation();
   const a = useVehicleAction(vehicleId, "resume");
   const [armed, setArmed] = useState(false);
+  const [pressedAt, setPressedAt] = useState<number | null>(null);
   useEffect(() => {
     const id = setTimeout(() => setArmed(true), ARM_DELAY_MS);
     return () => clearTimeout(id);
   }, []);
-  const status = actionText(t, a.text);
+  const status = sentFeedback(t, a.state, actionText(t, a.text), pressedAt);
   return (
     <span className="resume">
       <button
@@ -26,7 +27,10 @@ export function ResumeButton({ vehicleId }: { vehicleId: string }) {
         className="btn btn-outline resume-btn"
         data-testid="resume"
         disabled={!armed}
-        onClick={() => a.trigger()}
+        onClick={() => {
+          setPressedAt(Date.now());
+          a.trigger();
+        }}
       >
         <Play aria-hidden="true" size={16} />
         {t("resume.button")}

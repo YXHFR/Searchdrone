@@ -7,6 +7,7 @@ import {
   pilotRangeData,
   rectangle,
   sectorsData,
+  sweptData,
   targetData,
   trackData,
 } from "./mapData";
@@ -67,6 +68,32 @@ describe("map data", () => {
       },
     ]);
     expect(fc.features[0]?.properties?.label).toBe("A · 48 %");
+  });
+
+  it("the swept band is the ground's covered geometry, never the planned sector", () => {
+    const sq = {
+      type: "Polygon",
+      coordinates: [
+        [
+          [0, 0],
+          [0, 1],
+          [1, 1],
+          [0, 0],
+        ],
+      ],
+    };
+    const sector = (id: string, covered?: unknown) => ({
+      type: "Feature" as const,
+      geometry: sq,
+      properties: { sector_id: id, name: id, status: "active", progress: 0.5, covered },
+    });
+    const fc = sweptData([
+      sector("A", sq),
+      sector("B"),
+      sector("C", { type: "Point", coordinates: [0, 0] }),
+    ]);
+    expect(fc.features.map((f) => f.properties.sector_id)).toEqual(["A"]);
+    expect(fc.features[0]?.geometry).toBe(sq);
   });
 
   it("labels: the next free P<n> and ar-<n>", () => {

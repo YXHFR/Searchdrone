@@ -236,6 +236,36 @@ export function CharterDiff({ before, after }: { before: MissionCharter; after: 
   );
 }
 
+/** The four facts a pilot decides on; every field is one press away below. */
+export function CharterKeyFacts({ c }: { c: MissionCharter }) {
+  const { t } = useTranslation();
+  const mid = centroid(c.area);
+  const homeLL = { lat: c.home.lat, lon: c.home.lon };
+  const where = mid
+    ? t("charter.areaMid", {
+        m: nf(0).format(distanceM(homeLL, mid)),
+        dir: t(`charter.dir.${compass(mid.lon - homeLL.lon, mid.lat - homeLL.lat)}`),
+      })
+    : "";
+  const dash = (v: number | null | undefined): string => (v == null ? "–" : nf(1).format(v));
+  const facts: [string, string][] = [
+    ["area", `${nf(1).format(areaM2(c.area) / 10_000)} ha${where ? ` · ${where}` : ""}`],
+    ["alt", `${dash(c.alt_min_agl_m)}–${dash(c.alt_max_agl_m)} m`],
+    ["speed", `≤ ${dash(c.max_speed_ms)} m/s`],
+    ["rtl", t("charter.key.rtlValue", { pct: dash(c.battery_rtl_pct) })],
+  ];
+  return (
+    <dl className="facts" data-testid="charter-facts">
+      {facts.map(([k, v]) => (
+        <div key={k} data-fact={k}>
+          <dt>{t(`charter.key.${k}`)}</dt>
+          <dd>{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function CharterBody({ approval }: { approval: PanelApproval }) {
   const { t } = useTranslation();
   const c = approval.charter?.body;
@@ -245,7 +275,8 @@ export function CharterBody({ approval }: { approval: PanelApproval }) {
       {approval.kind === "charter_change" && approval.base_charter ? (
         <CharterDiff before={approval.base_charter.body} after={c} />
       ) : null}
-      <details open={approval.kind === "charter"}>
+      <CharterKeyFacts c={c} />
+      <details className="all-fields">
         <summary>{t("charter.allFields", { v: approval.subject_version })}</summary>
         <CharterFields c={c} />
       </details>

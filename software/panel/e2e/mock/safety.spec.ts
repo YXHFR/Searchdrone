@@ -1,42 +1,45 @@
 import { observerSession, outcome, vehicleLive } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, isMobile } from "../helpers/safety";
+import { expectSafetyVisible, type ShownView, showView, withCamera } from "../helpers/safety";
 
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const VIEWS = ["chat", "map", "video", "candidates", "status", "manual"] as const;
+const VIEWS: ShownView[] = ["chat", "events", "map", "video", "candidates", "status", "manual"];
 const STOP = "/api/v1/vehicles/sim-01/actions/stop";
 const HOME = "/api/v1/vehicles/sim-01/actions/return_home";
 
 test.describe("safety bar is always visible", () => {
-  test("in every view, in full screen and on phones in every tab", async ({ page, ground }) => {
+  test("in every view, with menus open and on phones with the sheet at every size", async ({
+    page,
+    ground,
+  }) => {
+    withCamera(ground);
     await ground.open();
     await expectSafetyVisible(page, "start");
-    if (isMobile(page)) {
-      for (const v of VIEWS) {
-        await page.getByTestId(`tab-${v}`).click();
-        await expectSafetyVisible(page, `tab ${v}`);
+    for (const v of VIEWS) {
+      await showView(page, v);
+      await expectSafetyVisible(page, `view ${v}`);
+    }
+    await showView(page, "map");
+    await page.getByTestId("main-menu").click();
+    await expectSafetyVisible(page, "main menu open");
+    await page.keyboard.press("Escape");
+    if ((await page.locator(".shell").getAttribute("data-vp")) === "phone") {
+      const sizes = ["peek", "half", "full"];
+      const start = sizes.indexOf(
+        (await page.getByTestId("sheet").getAttribute("data-size")) ?? "",
+      );
+      for (const i of [1, 2, 3]) {
+        const size = sizes[(start + i) % 3] ?? "peek";
+        await page.getByTestId("sheet-handle").click();
+        await expect(page.getByTestId("sheet")).toHaveAttribute("data-size", size);
+        await expectSafetyVisible(page, `sheet ${size}`);
       }
-      await page.getByTestId("tab-chat").click();
-      await page.getByTestId("pip-toggle").click();
-      await expectSafetyVisible(page, "pip");
-      // The tab row and the safety bar keep a gap with a divider, so a missed tab tap never
-      // hits a safety button.
-      const tabs = await page.getByTestId("mobile-tabs").boundingBox();
+      // The sheet's tab row and the safety bar keep a gap, so a missed tab tap never hits a
+      // safety button.
+      const tabs = await page.getByTestId("side-tab-chat").boundingBox();
       const bar = await page.getByTestId("safety-bar").boundingBox();
       expect((bar?.y ?? 0) - ((tabs?.y ?? 0) + (tabs?.height ?? 0))).toBeGreaterThanOrEqual(12);
-      await expect(page.locator(".tabs-gap")).toBeVisible();
-      return;
     }
-    for (const v of VIEWS) {
-      const first = page.locator("[data-view]").first();
-      if ((await first.getAttribute("data-view")) !== v)
-        await first.locator("select").first().selectOption(v);
-      await page.getByTestId(`maximize-${v}`).click();
-      await expectSafetyVisible(page, `full screen ${v}`);
-      await page.keyboard.press("Escape");
-    }
-    await page.getByTestId("layout-menu").click();
-    await expectSafetyVisible(page, "layout menu open");
   });
 
   test("while the panel is still loading", async ({ page, ground }) => {
@@ -48,7 +51,7 @@ test.describe("safety bar is always visible", () => {
 
   test("with the chat field focused", async ({ page, ground }) => {
     await ground.open();
-    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await showView(page, "chat");
     await page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" }).focus();
     await expectSafetyVisible(page, "chat focus");
   });
@@ -70,7 +73,7 @@ test.describe("safety bar is always visible", () => {
     await expect(page.getByTestId("topbar")).toBeVisible();
     // The session runs out in flight: the next API call (here a chat message) gets 401.
     ground.setSession(null);
-    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await showView(page, "chat");
     ground.failNext("POST /api/v1/missions/M1/chat", 401, { code: "UNAUTHENTICATED" });
     const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
     await box.fill("hej");
@@ -103,8 +106,12 @@ test.describe("safety bar is always visible", () => {
     expect(ms).toBeLessThanOrEqual(1_500);
   });
 
-  test("tab order: skip link, then STOP, then RETURN HOME", async ({ page, ground }) => {
-    test.skip(isMobile(page), "keyboard on desktop");
+  test("tab order: skip link, then STOP, then RETURN HOME", async ({
+    page,
+    ground,
+    isMobile: phone,
+  }) => {
+    test.skip(phone, "keyboard, not a phone");
     await ground.open();
     await expect(page.getByTestId("topbar")).toBeVisible();
     await page.keyboard.press("Tab");
@@ -136,7 +143,9 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
       expect(Object.keys(body)).toEqual(["client_action_id"]);
       expect(body.client_action_id).toMatch(UUIDV7);
       expect(post?.headers["x-sd-client"]).toBe("panel");
-      await expect(page.getByTestId(testId)).toContainText("Skickat – väntar på drönaren");
+      await expect(page.getByTestId(testId)).toContainText(
+        /Skickat \d\d:\d\d · väntar på drönaren/,
+      );
 
       // Onboard receipt is not an acknowledgement.
       ground.pushLive(
@@ -191,6 +200,13 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
   }) => {
     await ground.open();
     await expect(page.getByTestId("topbar")).toBeVisible();
+    await ground.liveConnected();
+    await page.waitForFunction(
+      () =>
+        (
+          window as unknown as { __sd: { liveStore: { getState(): { ws: string } } } }
+        ).__sd.liveStore.getState().ws === "up",
+    );
     ground.refuseSockets = true;
     await ground.dropSocket();
     // The banner waits 2 s after the socket is lost: not before, and soon after (the rest
@@ -257,8 +273,8 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
     expect(ground.calls(/^GET \/api\/v1\/missions\/active/).length).toBeGreaterThanOrEqual(1);
   });
 
-  test("no keyboard shortcut triggers STOP", async ({ page, ground }) => {
-    test.skip(isMobile(page), "keyboard on desktop");
+  test("no keyboard shortcut triggers STOP", async ({ page, ground, isMobile: phone }) => {
+    test.skip(phone, "keyboard, not a phone");
     await ground.open();
     await expect(page.getByTestId("topbar")).toBeVisible();
     await page.locator("body").press("Space");
@@ -281,7 +297,7 @@ test.describe("Resume and manual control", () => {
   }) => {
     await ground.open();
     await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
-    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await showView(page, "chat");
     await ground.liveConnected();
     ground.pushLive("vehicle", "vehicle.state", held("operator_stop"));
     const resume = page.getByTestId("view-chat").getByTestId("resume");
@@ -301,7 +317,7 @@ test.describe("Resume and manual control", () => {
   }) => {
     await ground.open();
     await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
-    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await showView(page, "chat");
     await ground.liveConnected();
     ground.pushLive("vehicle", "vehicle.state", held("onboard_restart"));
     await expect(page.getByTestId("resume")).toBeVisible();
@@ -314,13 +330,12 @@ test.describe("Resume and manual control", () => {
     ground.setSession(observerSession);
     await ground.open();
     await expect(page.getByTestId("mission-title")).toContainText("Uppdrag");
-    if (isMobile(page)) await page.getByTestId("tab-chat").click();
+    await showView(page, "chat");
     await ground.liveConnected();
     ground.pushLive("vehicle", "vehicle.state", held("operator_stop"));
     await expect(page.getByTestId("resume-row")).toBeVisible();
     await expect(page.getByTestId("resume")).toHaveCount(0);
-    if (isMobile(page)) await page.getByTestId("tab-manual").click();
-    else await page.locator("[data-view]").first().locator("select").first().selectOption("manual");
+    await showView(page, "manual");
     await expect(page.getByTestId("takeover")).toBeDisabled();
     await expect(page.getByText("Bara piloten kan styra för hand.")).toBeVisible();
   });
