@@ -315,6 +315,9 @@ def test_reroute_from_inside() -> None:
     out = reroute([(10.0, 0.0), (-200.0, 0.0)], cyl)
     assert out is not None and out[1][1] == 0.0 and out[1][0] > 45.0
     assert xy_route_violation(out[1:], cyl) is None
+    # Only the position, inside: straight out from the centre.
+    out = reroute([(10.0, 0.0)], cyl)
+    assert out is not None and len(out) == 2 and out[1][1] == 0.0 and out[1][0] > 45.0
     # On the centre itself every way is out: the route stays as it is.
     assert reroute([(0.0, 0.0), (0.0, -200.0)], cyl) == [(0.0, 0.0), (0.0, -200.0)]
     # Every corner left is inside: nothing to fly.
