@@ -115,10 +115,10 @@ home internet line.
 
 9. **Use it.** The on-board computer (`sd_onboard`) loads the model when
    `SD_DETECTOR_MODEL` in its environment points at the `.json` file that
-   `pick-detector` printed. Before it connects to the flight controller it checks the
-   manifest and the ONNX file's SHA-256, and it refuses to start, with a message, if the
-   file is missing or changed. If the model still cannot be loaded later, only the
-   detector is turned off: flying goes on. When the variable is not set, no model is
+   `pick-detector` printed. It checks the manifest and the ONNX file's SHA-256 before
+   using it. If the file is missing or changed, only the detector is turned off, and the
+   ground station gets the reason (`executor.perception_off`) so you can see that person
+   detection is off. Flying goes on. When the variable is not set, no model is
    loaded. The simulator keeps its stand-in detector.
 
 ## If something goes wrong

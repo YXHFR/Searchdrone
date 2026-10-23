@@ -25,8 +25,9 @@ never takes the whole CPU from the flight executor on the companion computer.
 
 ``load_model`` reads a model's manifest (``<name>.json`` next to ``<name>.onnx``, written
 by ``tools/train/export_onnx.py``) and gives the ``model`` source: the engine behind a
-``TiledDetector``. ``check_model`` does the same checks without ONNX Runtime, for a
-start check. Like every detector it gives hints, never decisions.
+``TiledDetector``. Like every detector it gives hints, never decisions, so a model
+that cannot be used only turns perception off; it never stops ``sd_onboard``, which
+may be restarted in the air.
 """
 
 from __future__ import annotations
@@ -51,7 +52,6 @@ __all__ = [
     "ModelError",
     "ModelSource",
     "OnnxDetector",
-    "check_model",
     "load_model",
     "sha256_of",
 ]
@@ -65,7 +65,7 @@ NMS_IOU = 0.5
 MANIFEST_SCHEMA = "sd.detector-model/v1"
 MODEL_LICENCE = "Apache-2.0"  # what ``ModelSource.license`` reports; a manifest must agree
 THREADS = 2
-MAX_MODEL_BYTES = 512 << 20
+MAX_MODEL_BYTES = 128 << 20  # read whole beside ONNX Runtime's copy, in sd-onboard
 
 
 class ModelError(Exception):
@@ -248,20 +248,6 @@ def _read_manifest(manifest_path: Path) -> dict[str, Any]:
             f"Modellens licens ska vara {MODEL_LICENCE}, inte {manifest.get('licence')!r}"
         )
     return dict(manifest)
-
-
-def check_model(manifest_path: Path) -> None:
-    """The checks ``load_model`` makes (manifest, file, size, SHA-256), without ONNX
-    Runtime: for a start check before anything else runs. Any doubt is a ``ModelError``."""
-    manifest_path = Path(manifest_path)
-    manifest = _read_manifest(manifest_path)
-    model_path = manifest_path.with_name(str(manifest["onnx"]))
-    if not model_path.is_file():
-        raise ModelError(f"Modellfilen finns inte: {model_path}")
-    if model_path.stat().st_size > MAX_MODEL_BYTES:
-        raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
-    if sha256_of(model_path) != str(manifest.get("sha256", "")).lower():
-        raise ModelError(f"Modellfilens kontrollsumma stämmer inte ({model_path.name})")
 
 
 def load_model(

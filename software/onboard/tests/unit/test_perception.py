@@ -344,11 +344,14 @@ async def test_a_model_that_cannot_be_built_only_turns_perception_off(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     lp = loop(tmp_path, FakeClock(), {"SD_DETECTOR_MODEL": str(tmp_path / "gone.json")})
+    reasons: list[str] = []
+    lp.off = reasons.append
     # built in the task, never when sd-onboard starts the executor and link
     assert lp._built is None  # pyright: ignore[reportPrivateUsage]
     with caplog.at_level("ERROR", logger="sd_onboard.perception"):
         await asyncio.wait_for(lp.run(asyncio.Event()), 5)  # ends, never raises
     assert "perception off" in caplog.text
+    assert len(reasons) == 1 and "gone.json" in reasons[0]  # the ground is told why
 
 
 class _BrokenModel:

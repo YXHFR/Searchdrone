@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +19,6 @@ from sd_detect.onnx import (
     MANIFEST_SCHEMA,
     ModelError,
     OnnxDetector,
-    check_model,
     load_model,
     sha256_of,
 )
@@ -154,16 +152,9 @@ def test_the_model_source_tiles_a_still(tmp_path: Path) -> None:
         ({"onnx": "gone.onnx"}, "finns inte"),
     ],
 )
-@pytest.mark.parametrize("check", [load_model, check_model])
-def test_a_wrong_manifest_is_refused(
-    tmp_path: Path, over: dict[str, object], why: str, check: Callable[[Path], object]
-) -> None:
+def test_a_wrong_manifest_is_refused(tmp_path: Path, over: dict[str, object], why: str) -> None:
     with pytest.raises(ModelError, match=why):
-        check(_manifest(tmp_path, **over))
-
-
-def test_the_start_check_passes_a_good_model(tmp_path: Path) -> None:
-    check_model(_manifest(tmp_path))  # no error
+        load_model(_manifest(tmp_path, **over))
 
 
 def test_onnx_runtime_gets_few_threads_and_no_busy_wait(tmp_path: Path) -> None:

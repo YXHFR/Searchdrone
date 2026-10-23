@@ -17,9 +17,10 @@ The detector interface, the class register and the detector sources.
   - `model`: the trained person detector (`sd_detect.onnx`), built only when
     `SD_DETECTOR_MODEL` names its manifest (`tools/train/README.md`). Unset: `person` is
     not reported. Set but wrong (missing file, wrong SHA-256, unknown family or
-    licence): `sd_onboard`'s start check refuses it before the flight controller is
-    connected (`check_model`), never a silent fallback. A model that still fails later
-    only turns perception off. The SHA-256 guards against a damaged or swapped file, not
+    licence): perception is turned off and `sd_onboard` sends the reason to the ground
+    (`executor.perception_off`), never a silent fallback to another detector. Flying
+    goes on: `sd_onboard` may be restarted in the air, so a hint never stops it. The
+    SHA-256 guards against a damaged or swapped file, not
     against someone who can write the model folder. What it is and is not for:
     [`MODEL_CARD.md`](MODEL_CARD.md).
 - `build_sources`, `detect_all` and `keep_plausible`: build the sources the register

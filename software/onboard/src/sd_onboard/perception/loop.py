@@ -8,7 +8,8 @@ Reading the still and the detector work run in a worker thread so a slow picture
 blocks the event loop the executor ticks on. A failing still is logged and skipped; the
 loop keeps going. The detector sources (a trained model among them) are built in a
 worker thread when the task starts, after the executor and link run; if that fails,
-perception is off and the reason is logged, and flying goes on. Kept stills (for a
+perception is off, the reason is logged and sent to the ground (``off``), and flying
+goes on. Kept stills (for a
 run's record) are capped at ``KEEP_MAX``, the oldest removed first.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
@@ -124,6 +125,7 @@ class PerceptionLoop:
         period_s: float = 0.5,
         keep_dir: Path | None = None,
         env: dict[str, str] | None = None,
+        off: Callable[[str], None] | None = None,
     ) -> None:
         self.source = source
         self.telemetry = telemetry
@@ -134,6 +136,7 @@ class PerceptionLoop:
         self.period_s = period_s
         self.keep_dir = keep_dir
         self.env = env
+        self.off = off  # told why, when perception cannot start
         self._built: BuiltSources | None = None
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
@@ -213,8 +216,10 @@ class PerceptionLoop:
     async def run(self, stop: asyncio.Event) -> None:
         try:
             await asyncio.to_thread(lambda: self.built)
-        except Exception:
+        except Exception as exc:
             log.exception("perception off: the detector sources could not be built")
+            if self.off is not None:
+                self.off(f"{type(exc).__name__}: {exc}"[:300])
             return
         log.info(
             "perception on: sources %s, skipped %s", sorted(self.built.sources), self.built.skipped

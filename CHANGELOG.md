@@ -34,9 +34,9 @@ All notable changes to this project are listed here. The format follows
   against PyTorch; `just bench-detector model=<name>` measures it and `just
   pick-detector` chooses on the val part (recall over 32 px, then 16–32 px, then speed).
   `sd_detect.onnx` runs such a model on board with ONNX Runtime only, when
-  `SD_DETECTOR_MODEL` names its manifest; a missing or changed file stops `sd_onboard`'s
-  start check before the flight controller is connected, never a silent fallback. A model
-  that fails later only turns perception off. ONNX Runtime uses at most two threads.
+  `SD_DETECTOR_MODEL` names its manifest; a missing or changed file turns perception off
+  and the reason goes to the ground (`executor.perception_off`), never a silent fallback;
+  flying goes on. ONNX Runtime uses at most two threads.
   Model card: `software/detector/MODEL_CARD.md`.
 - Photo mode for the simulator: `just ortho-fetch site=hellasgarden` fetches
   Lantmäteriet's newest colour orthophoto over the site (0.16 m per pixel, all tiles of the

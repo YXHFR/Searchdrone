@@ -94,36 +94,27 @@ def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> Non
     assert off is None
 
 
-def test_a_wrong_detector_model_stops_the_start(
+def test_a_wrong_detector_model_never_stops_the_start(
     root: Path, env: dict[str, str], tmp_path: Path
 ) -> None:
-    import hashlib
-    import json
-
+    """sd-onboard may restart in the air: a missing or changed model only turns perception
+    off (in its own task, which tells the ground), never the executor and link."""
     on = {
         "SD_ONBOARD__PERCEPTION__ENABLED": "true",
         "SD_ONBOARD__PERCEPTION__STILL_DIR": "${SD_DATA_DIR}/stills",
+        "SD_DETECTOR_MODEL": str(tmp_path / "gone.json"),
     }
-    missing = {**on, "SD_DETECTOR_MODEL": str(tmp_path / "gone.json")}
-    assert any("SD_DETECTOR_MODEL" in e for e in check(load(root, {**env, **missing})))
-    onnx = tmp_path / "person.onnx"
-    onnx.write_bytes(b"not checked here, only hashed")
-    manifest = tmp_path / "person.json"
-    body = {
-        "schema": "sd.detector-model/v1",
-        "onnx": onnx.name,
-        "family": "yolox",
-        "sha256": hashlib.sha256(onnx.read_bytes()).hexdigest(),
-        "classes": ["person"],
-        "licence": "Apache-2.0",
-    }
-    manifest.write_text(json.dumps(body), encoding="utf-8")
-    good = {**on, "SD_DETECTOR_MODEL": str(manifest)}
-    assert check(load(root, {**env, **good})) == []
-    onnx.write_bytes(b"changed after export")
-    assert any("kontrollsumma" in e for e in check(load(root, {**env, **good})))
-    # perception off: the model is never used, so it is not checked
-    assert check(load(root, {**env, "SD_DETECTOR_MODEL": str(tmp_path / "gone.json")})) == []
+    loaded = load(root, {**env, **on})
+    assert check(loaded) == []
+    events: list[tuple[str, str, dict[str, str]]] = []
+    link = SimpleNamespace(
+        perception=lambda _r: None,
+        event=lambda *a: events.append(a),  # pyright: ignore[reportUnknownLambdaType]
+    )
+    made = app._perception(loaded, SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert made is not None and made.off is not None
+    made.off("ModelError: gone")
+    assert events == [("executor.perception_off", "warning", {"reason": "ModelError: gone"})]
 
 
 def test_test_hooks_rejected_outside_test(root: Path, env: dict[str, str]) -> None:
