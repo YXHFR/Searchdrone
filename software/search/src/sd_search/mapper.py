@@ -109,6 +109,9 @@ class MapService:
                 self.missions.pop(mid, None)
             except GroundError as exc:
                 log.warning("sannolikhetskartan för %s: %s", mid, exc)
+            except Exception:  # the map is advice: a fault in it never stops the candidates
+                log.exception("sannolikhetskartan för %s kunde inte byggas", mid)
+                self.missions.pop(mid, None)
         return written
 
     async def _mission_step(self, mission_id: str) -> int:
@@ -135,6 +138,7 @@ class MapService:
         built = await asyncio.to_thread(
             m.builder.build, _inputs(profile, inputs, m.stills, candidates)
         )
+        seen = (m.last_key, m.passes)
         reason = self._reason(m, profile, inputs, built, candidates)
         if reason is None:
             return 0
@@ -155,7 +159,11 @@ class MapService:
             p_z=encode_f32(state.p),
             pod_z=encode_f32(state.pod_cum),
         )
-        written = await self.api.write_map(mission_id, body)
+        try:
+            written = await self.api.write_map(mission_id, body)
+        except BaseException:
+            m.last_key, m.passes = seen  # not on the ground: the next round tries again
+            raise
         m.written_at = self.monotonic()
         m.frozen = written.frozen
         return 1

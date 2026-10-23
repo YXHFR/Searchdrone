@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import math
 import struct
 import zlib
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -32,7 +31,7 @@ from sd_ground.api.deps import ApiStatusError
 from sd_ground.db.probmap import MapWriteError, ProbabilityMapRepo
 from sd_ground.logging import get_logger
 from sd_ground.services import search_profile as profile_service
-from sd_schemas.geo import plane_offset
+from sd_schemas.geo import plane_distance_m, plane_offset
 from sd_schemas.probmap import (
     ProbabilityGrid,
     ProbabilityMapInputs,
@@ -177,10 +176,7 @@ async def write(
         raise _invalid("Kartan nämner en sektor som inte finns i uppdragsramen.")
     grid = _bounded_grid(body.grid)
     ls = profile.last_seen
-    north_r = 111_320.0  # metres per degree, enough for a 1 m check
-    east_r = north_r * math.cos(math.radians(ls.lat))
-    off = math.hypot((grid.ipp_lat - ls.lat) * north_r, (grid.ipp_lon - ls.lon) * east_r)
-    if off > IPP_TOLERANCE_M:
+    if plane_distance_m(grid.ipp_lat, grid.ipp_lon, ls.lat, ls.lon) > IPP_TOLERANCE_M:
         raise _invalid("Kartans origo är inte platsen där personen sågs senast.")
     p = decode_f32(body.p_z, grid.cells)
     pod = decode_f32(body.pod_z, grid.cells)

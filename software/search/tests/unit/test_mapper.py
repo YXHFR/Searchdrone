@@ -10,9 +10,16 @@ from fake_ground import FakeGround, utc  # pyright: ignore[reportMissingImports]
 from search_helpers import MISSION, at, profile  # pyright: ignore[reportMissingImports]
 
 from sd_schemas.base import new_id
-from sd_schemas.probmap import ProbabilityMapInputs, SearchArea, SearchStill
+from sd_schemas.probmap import (
+    ProbabilityMapInputs,
+    ProbabilityMapWrite,
+    ProbabilityMapWritten,
+    SearchArea,
+    SearchStill,
+)
 from sd_schemas.search import CandidateState
 from sd_search.app import SearchService
+from sd_search.client import GroundError
 from sd_search.mapper import SAVE_EVERY_S, MapService
 from sd_search.probmap.terrain import NoTerrain
 from sd_search.profile import GroundProfileSource
@@ -124,6 +131,43 @@ async def test_a_new_area_writes_at_once() -> None:
     clock.t += 3
     assert await m.step([MISSION]) == 1
     assert g.maps[-1].reason == "areas"
+
+
+async def test_a_failed_write_is_tried_again() -> None:
+    g = ground()
+    clock = Clock()
+    m = mapper(g, clock)
+    await m.step([MISSION])
+    area = SearchArea.model_validate(
+        {"annotation_id": str(new_id()), "poa_hint": "excluded", "polygon": poly(200, 200, 100)}
+    )
+    g.inputs = g.inputs.model_copy(update={"areas": [area]})
+    write = g.write_map
+    calls = 0
+
+    async def down_once(mission_id: str, body: ProbabilityMapWrite) -> ProbabilityMapWritten:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise GroundError("ground down", 503)
+        return await write(mission_id, body)
+
+    g.write_map = down_once
+    clock.t += 3
+    assert await m.step([MISSION]) == 0  # logged, not raised
+    clock.t += 3
+    assert await m.step([MISSION]) == 1
+    assert [v.reason for v in g.maps] == ["prior", "areas"]
+
+
+async def test_a_fault_in_the_map_never_stops_the_round() -> None:
+    g = ground()
+
+    async def broken(mission_id: str) -> ProbabilityMapInputs:
+        raise ValueError("bug")
+
+    g.map_inputs = broken
+    assert await mapper(g, Clock()).step([MISSION, MISSION]) == 0
 
 
 async def test_confirm_freezes_map() -> None:
