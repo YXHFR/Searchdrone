@@ -26,7 +26,7 @@ The detector interface, the class register and the detector sources.
   picture (`tile_grid`: 640 px tiles, 15 % overlap, 45 tiles for 4608×2592), moves its
   boxes back to the picture, joins a box cut by a tile edge with its other half in the
   next tile and removes doubles (per-class NMS). An optional `skip_mask` leaves tiles out
-  (for example the sky). The image bank (`tools/bench`) measures engines through it.
+  (for example the sky).
 
 A detection is only a hint for a person to look at: nothing here steers the vehicle or
 reaches the safety gate, and only a person confirms a find. No face recognition.

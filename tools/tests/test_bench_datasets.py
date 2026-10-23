@@ -60,6 +60,7 @@ def test_sim_farm_is_only_for_pre_training() -> None:
             "non-commercial",
         ),
         (_row(use=("pretrain", "measure")), "pre-training"),
+        (_row(licence_confirmed=False), "data licence is confirmed"),
         (_row(url="http://example.org/x.zip"), "https"),
         (_row(attribution=" "), "attribution"),
     ],

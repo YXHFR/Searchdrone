@@ -40,7 +40,7 @@ from bench.common import (
 )
 from bench.datasets import Image, image_root, index_path, load_register, read_index
 from bench.metrics import FP_PER_12MP, PictureResult, Summary, match_picture, summarise
-from bench.splits import load_mini, load_split
+from bench.splits import MINI_VERSION, load_mini, load_split
 
 from sd_detect.api import BBox, Detection, Detector, Frame
 from sd_detect.fake import NullDetector
@@ -74,8 +74,6 @@ class FacitDetector:
         ]
 
 
-MINI = "mini_v1"
-
 # model name -> factory; B2-12 adds the trained models
 DETECTORS: dict[str, Callable[[], Detector]] = {
     "null": NullDetector,
@@ -92,13 +90,13 @@ class Picture:
 def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
     """The pictures to measure on and the name of what they are (for the result)."""
     if flag(args, "mini"):
-        split_version, rows = load_mini(MINI)
+        split_version, rows = load_mini(MINI_VERSION)
         wanted = {r.image_id for r in rows}
         images = [i for i in read_index(data, "heridal", mini=True) if i.image_id in wanted]
         if len(images) != len(wanted):
             raise BenchError("Minibanken är ofullständig. Kör: just bench-fetch yes=1 mini=1")
         root = image_root(data, "heridal", mini=True)
-        source = f"{MINI} (splits/{split_version})"
+        source = f"{MINI_VERSION} (splits/{split_version})"
     else:
         part = args.get("part", "test")
         if part not in ("test", "val"):

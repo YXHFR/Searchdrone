@@ -141,7 +141,10 @@ class MiniImage:
     label_bytes: int | None
 
 
-def load_mini(version: str = "mini_v1", path: Path | None = None) -> tuple[str, list[MiniImage]]:
+MINI_VERSION = "mini_v1"
+
+
+def load_mini(version: str = MINI_VERSION, path: Path | None = None) -> tuple[str, list[MiniImage]]:
     """The split version the mini bank was drawn from, and its pictures."""
     path = path or SPLITS / f"{version}.json"
     body = json.loads(path.read_text(encoding="utf-8"))

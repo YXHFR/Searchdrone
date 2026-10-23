@@ -21,11 +21,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from bench.common import BENCH, BenchError, parse_args, say, warn
+from bench.metrics import SIZE_CLASSES
 
 PROFILES = BENCH / "profiles"
 START = PROFILES / "det_oracle_v0.json"
 KEYS = ("model", "version", "result", "out")
-SIZE_CLASSES = ("lt16", "16to32", "gt32")
 _NAME = re.compile(r"^[a-z0-9_]{1,40}$")
 
 

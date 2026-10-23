@@ -46,6 +46,7 @@ class Dataset:
     licence_note: str | None = None
     source_page: str | None = None
     checked: str | None = None
+    licence_confirmed: bool = True  # False: the licence text may not cover the data
 
     @property
     def archive_name(self) -> str:
@@ -61,6 +62,8 @@ def licence_problems(ds: Dataset) -> list[str]:
         problems.append(f"{ds.name}: licence {ds.licence!r} is not allowed")
     if is_nc and (set(ds.use) != {"measure"} or not ds.local_only or ds.publish_weights):
         problems.append(f"{ds.name}: a non-commercial set may only be measured on, locally")
+    if "train" in ds.use and not ds.licence_confirmed:
+        problems.append(f"{ds.name}: never trained on until the data licence is confirmed")
     if "pretrain" in ds.use and len(ds.use) > 1:
         problems.append(f"{ds.name}: synthetic pre-training data is never trained or measured on")
     if not ds.attribution.strip():
@@ -92,6 +95,7 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             licence_note=row.get("licence_note"),
             source_page=row.get("source_page"),
             checked=row.get("checked"),
+            licence_confirmed=bool(row.get("licence_confirmed", True)),
         )
     except (KeyError, TypeError) as exc:
         raise BenchError(f"datasets.toml: felaktig rad ({exc})", 2) from exc

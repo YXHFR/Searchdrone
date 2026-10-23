@@ -91,8 +91,11 @@ Run these from the repository folder in WSL (Ubuntu).
    just bench-fetch
    ```
 
-3. **Download the bank** (about 52 GB; needs about 95 GB free while unpacking, 45 GB
-   after). HERIDAL takes 15–45 minutes, WiSARD 1–4 hours, depending on your line:
+3. **Download the bank.** Today that is HERIDAL (about 8 GB; 15–45 minutes depending on
+   your line). WiSARD (about 44 GB more, 1–4 hours) is skipped until its archive's
+   SHA-256 is pinned in `datasets.toml` (Google Drive stopped serving it before the
+   whole file could be checked); a maintainer pins it by downloading it once in full
+   and recording `sha256sum` of the file:
 
    ```bash
    just bench-fetch yes=1

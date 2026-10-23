@@ -111,6 +111,18 @@ def test_nothing_is_fetched_without_yes(
     assert "CC-BY-3.0" in out
 
 
+def test_by_default_only_pinned_archives_are_fetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetched: list[str] = []
+    monkeypatch.setattr(fetch, "fetch_archive", lambda ds, data, keep: fetched.append(ds.name))
+    assert fetch.main(["yes=1", f"data={tmp_path}"]) == 0
+    register = load_register()
+    assert fetched == [n for n, ds in register.items() if ds.url and fetch.pinned(ds)]
+    assert "wisard" not in fetched  # its SHA-256 is not pinned yet
+    assert "wisard hoppas över" in capsys.readouterr().out
+
+
 def test_unknown_key_or_set_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
     assert fetch.main(["yes=1", "sets=visdrone"]) == 2
     assert fetch.main(["force=1"]) == 2
@@ -178,6 +190,21 @@ def test_download_refuses_a_range_it_did_not_ask_for(tmp_path: Path) -> None:
             len(body),
             _sha(body),
             opener=wrong_start,
+        )
+    (tmp_path / "a.zip.partial").unlink()
+
+    def no_header(req: urllib.request.Request) -> FakeResponse:
+        resp = FakeServer(body)(req)
+        del resp.headers["Content-Range"]
+        return resp
+
+    with pytest.raises(BenchError, match="begärda delen"):
+        download(
+            "https://example.test/a.zip",
+            tmp_path / "a.zip",
+            len(body),
+            _sha(body),
+            opener=no_header,
         )
 
 
@@ -350,6 +377,19 @@ def test_mini_fetch_checks_each_member(tmp_path: Path, monkeypatch: pytest.Monke
         fetch.fetch_mini(load_register(), tmp_path)
     assert not list((tmp_path / "datasets-mini").rglob("*.jpg"))
     write_mini(_sha(members[jpg]))
+    infolist = zipfile.ZipFile.infolist
+
+    def inflated(self: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+        infos = infolist(self)
+        for info in infos:
+            info.compress_size = fetch.MAX_MEMBER_BYTES + 1
+        return infos
+
+    with monkeypatch.context() as m:
+        m.setattr(zipfile.ZipFile, "infolist", inflated)
+        with pytest.raises(BenchError, match="fel storlek"):
+            fetch.fetch_mini(load_register(), tmp_path)
+    assert not list((tmp_path / "datasets-mini").rglob("*.jpg"))
     assert fetch.fetch_mini(load_register(), tmp_path) == 0
     (image,) = read_index(tmp_path, "heridal", mini=True)
     assert image.boxes == ((10.0, 10.0, 30.0, 40.0),)

@@ -1,6 +1,6 @@
 """``just bench-fetch``: download the image bank to ``<data_dir>/datasets/`` and index it.
 
-    just bench-fetch yes=1                 # every downloadable set (about 52 GB)
+    just bench-fetch yes=1                 # every set whose SHA-256 is pinned
     just bench-fetch yes=1 sets=heridal    # one set
     just bench-fetch yes=1 sets=simfarm    # index the sim farm's local pictures
     just bench-fetch yes=1 mini=1          # the small fixed test bank (about 300 MB)
@@ -133,9 +133,14 @@ def _progress(name: str):
     return show
 
 
+def pinned(ds: Dataset) -> bool:
+    """Whether the archive's SHA-256 is known (only then is it ever downloaded)."""
+    return bool(ds.sha256) and len(ds.sha256 or "") == 64
+
+
 def fetch_archive(ds: Dataset, data: Path, keep: bool) -> int:
     assert ds.url and ds.size_bytes  # noqa: S101 - checked by the caller
-    if not ds.sha256 or len(ds.sha256) != 64:
+    if not ds.sha256 or not pinned(ds):
         raise BenchError(
             f"{ds.name}: arkivets SHA-256 är inte fastställd än i datasets.toml, så det "
             "hämtas inte. Se tools/bench/README.md.",
@@ -266,7 +271,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 known = ", ".join(sorted(register))
                 raise BenchError(f"Okänd datamängd: {', '.join(unknown)}. Kända: {known}.", 2)
         else:
-            names = [n for n, ds in register.items() if ds.url]
+            names = [n for n, ds in register.items() if ds.url and pinned(ds)]
+            for n, ds in register.items():
+                if ds.url and not pinned(ds):
+                    say(f"{n} hoppas över: arkivets SHA-256 är inte fastställd än.")
         if not flag(args, "yes"):
             say(plan(register, names, mini))
             return 2

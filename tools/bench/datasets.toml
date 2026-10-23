@@ -47,6 +47,7 @@ size_bytes = 43526830098
 sha256 = "PENDING"
 layout = "wisard_vis"
 use = ["measure"]
+licence_confirmed = false
 ranges = true
 publish_weights = false
 local_only = false

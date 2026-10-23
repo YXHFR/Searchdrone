@@ -210,7 +210,8 @@ def download(
                 part.unlink()  # the server ignored the range: start over
                 have = before = 0
             got = getattr(resp, "headers", {}).get("Content-Range")
-            if have and got is not None and not got.startswith(f"bytes {have}-"):
+            status = getattr(resp, "status", 206)
+            if status == 206 and not (got or "").startswith(f"bytes {have}-"):
                 raise BenchError(f"Servern svarade inte med den begärda delen av filen: {url}")
             total = _content_range_total(got)
             if total is not None and total != size:
