@@ -24,6 +24,7 @@ from sd_brain.ground_client import GroundClient, GroundError
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop
 from sd_brain.runtime.base import Sampling
+from sd_brain.runtime.budget import BudgetContext, HttpBudgetClient
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.runtime.fallback import BestAvailableRuntime
 from sd_brain.secrets import Secrets
@@ -47,6 +48,7 @@ class Brain:
     health: HealthState
     http: httpx.AsyncClient
     cloud_http: httpx.AsyncClient | None
+    budget: HttpBudgetClient
 
 
 def sampling_of(cfg: BrainConfig) -> Sampling:
@@ -80,7 +82,16 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
         else None
     )
     ground = GroundClient(cfg.ground.commander_url, secrets.brain_token, http)
-    cloud = CloudModelRuntime(cfg.cloud, secrets.cloud_api_key, cloud_http)
+    loop_ref: list[CommanderLoop] = []
+    # Every cloud call of the commander is reserved with the ground's cloud budget first.
+    budget = HttpBudgetClient(cfg.ground.commander_url, secrets.brain_token)
+    cloud = CloudModelRuntime(
+        cfg.cloud,
+        secrets.cloud_api_key,
+        cloud_http,
+        budget=budget,
+        budget_context=lambda: BudgetContext("chat", loop_ref[0].mission_id if loop_ref else None),
+    )
     runtime = BestAvailableRuntime(
         cloud, retry_after_s=cfg.cloud.retry_after_s or CLOUD_RETRY_AFTER_S
     )
@@ -108,7 +119,6 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
             context_tokens=cfg.llm.context_tokens,
         )
     health = HealthState(time.monotonic)
-    loop_ref: list[CommanderLoop] = []
 
     async def on_answer(req: Any, outcomes: Any) -> None:
         if loop_ref:
@@ -132,7 +142,7 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
     loop_ref.append(loop)
     if cfg.backend.kind == "cloud" and not cloud.configured:
         log.warning("ingen molnnyckel (SD_CLOUD_API_KEY) eller modell: kommandoläget svarar")
-    return Brain(cfg, ground, loop, runtime, health, http, cloud_http)
+    return Brain(cfg, ground, loop, runtime, health, http, cloud_http, budget)
 
 
 def registry_mismatch(local: SkillRegistry, remote: list[SkillSpecPublic]) -> list[str]:
@@ -226,5 +236,6 @@ async def run(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REG
             task.cancel()
         await b.ground.bye()
         await b.http.aclose()
+        await b.budget.aclose()
         if b.cloud_http is not None:
             await b.cloud_http.aclose()

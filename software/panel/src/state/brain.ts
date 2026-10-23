@@ -30,9 +30,22 @@ export function useBrainEngine(): BrainEngine {
   });
 }
 
-/** The command mode answers the chat (no AI chat): the brain says so, or reports degraded. */
+export type CloudBudget = "ok" | "warning" | "exhausted" | null;
+
+/** The cloud budget: the live cloud_budget.state first, else the system status. */
+export function useCloudBudget(): CloudBudget {
+  return useLiveStore((s) => s.cloudBudget ?? s.system?.cloud_budget ?? null);
+}
+
+/**
+ * The command mode answers the chat (no AI chat): the brain says so, reports degraded,
+ * or the cloud budget is spent (the next cloud call is refused).
+ */
 export function useCommandMode(): boolean {
   const brain = useBrainState();
   const engine = useBrainEngine();
-  return brain !== "down" && (brain === "degraded" || engine === "command");
+  const budget = useCloudBudget();
+  return (
+    brain !== "down" && (brain === "degraded" || engine === "command" || budget === "exhausted")
+  );
 }

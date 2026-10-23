@@ -405,7 +405,7 @@ class CandidateRevision(SdModel):
     observations: list[SearchObservation] = Field(
         default_factory=list[SearchObservation], max_length=SEARCH_OBSERVATIONS_MAX
     )
-    assessment: CandidateAssessment | None = None  # the code's (engine "code") only
+    assessment: CandidateAssessment | None = None  # the code's, or an image model's
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -413,10 +413,8 @@ class CandidateRevision(SdModel):
             raise ValueError("merged_into is set exactly when the state is merged")
         if self.base_rev == 0 and self.state is None:
             raise ValueError("a new candidate needs a state")
-        if self.assessment is not None and (
-            self.assessment.engine != "code" or self.assessment.candidate_id != self.candidate_id
-        ):
-            raise ValueError("only the code's assessment of this candidate rides along")
+        if self.assessment is not None and self.assessment.candidate_id != self.candidate_id:
+            raise ValueError("only an assessment of this candidate rides along")
         return self
 
 
@@ -443,7 +441,8 @@ class SearchTrack(SdModel):
 
 
 class SearchHeartbeat(SdModel):
-    """``cloud``: ``off`` (not configured), ``ok`` or ``down`` (only the code assesses)."""
+    """``cloud``: ``off`` (not configured), ``ok`` or ``down`` (matching paused: the cloud
+    failed or the budget is spent; only the code assesses)."""
 
     cloud: Literal["off", "ok", "down"] = "off"
     missions: int = Field(default=0, ge=0)

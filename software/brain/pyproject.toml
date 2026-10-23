@@ -8,6 +8,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "httpx>=0.27",
     "pydantic>=2.9",
+    "pillow>=11",  # MIT-CMU, the cloud image policy decodes and cleans crops
     "pyyaml>=6.0",
     "sd-schemas",
     "shapely>=2.1",
