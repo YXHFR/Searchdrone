@@ -105,9 +105,10 @@ def inspect_geometry(
     puts the target ``INSPECT_AIM_DEG`` from straight down, within the band (so a drone
     a metre off the point still sees it within ``INSPECT_VIEW_DEG``). The point
     lies on the drone's side of the target; if a straight leg there would enter a
-    cylinder (the target's own circle included), or the point lies in one, the next direction around is tried (15 degrees
-    at a time, nearest first). The heading puts the target to the drone's right, along
-    the picture's long side (the camera's x axis is the drone's right)."""
+    cylinder (the target's own circle included), or the point lies in one, the next
+    direction around is tried (15 degrees at a time, nearest first). The heading puts
+    the target to the drone's right, along the picture's long side (the camera's x axis
+    is the drone's right)."""
     reach = target_radius_m
     t = (0.0, 0.0)
     near = [(local_xy(target_lat, target_lon, k.lat, k.lon), k.radius_m) for k in keepouts]
