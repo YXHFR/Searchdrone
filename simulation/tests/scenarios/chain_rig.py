@@ -475,10 +475,15 @@ async def search_run(
         measure(f"{world.scenario} take-off -> confirmed", metrics.time_to_confirmed_s, limit)
     assert not broken, broken
     assert metrics.false_confirms == 0, metrics.decisions
-    if require_found and world.target is not None:
-        assert metrics.confirmed_thing == world.target.thing_id, (
+    if (
+        require_found
+        and world.target is not None
+        and metrics.confirmed_thing != world.target.thing_id
+    ):
+        orders = [(c["skill"], c["status"], c.get("status_reason")) for c in await sc.commands()]
+        raise AssertionError(
             f"no confirmed find: {metrics.decisions}; queue {metrics.queue_end}; "
-            f"AI turns {sc.brain_turns()}"
+            f"AI turns {sc.brain_turns()}; orders {orders}"
         )
     return metrics
 
