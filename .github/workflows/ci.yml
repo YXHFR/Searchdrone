@@ -54,6 +54,18 @@ jobs:
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
       - run: just test
 
+  # The detector training (tools/train) on the CPU with a small synthetic bank: its own
+  # Python with PyTorch, so not part of `just test`. No real data, no download of weights.
+  train:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - run: just test-train
+
   contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -254,7 +266,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, typecheck, unit, contract, panel-e2e, panel-screens, reuse, secrets, build, rl]
+    needs: [lint, typecheck, unit, contract, panel-e2e, panel-screens, reuse, secrets, build, rl, train]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

@@ -46,7 +46,9 @@ class Dataset:
     licence_note: str | None = None
     source_page: str | None = None
     checked: str | None = None
-    licence_confirmed: bool = True  # False: the licence text may not cover the data
+    # True only when the licence is known to cover the pictures; a set is never trained
+    # on without it (a row that leaves it out is not confirmed)
+    licence_confirmed: bool = False
 
     @property
     def archive_name(self) -> str:
@@ -95,7 +97,7 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             licence_note=row.get("licence_note"),
             source_page=row.get("source_page"),
             checked=row.get("checked"),
-            licence_confirmed=bool(row.get("licence_confirmed", True)),
+            licence_confirmed=bool(row.get("licence_confirmed", False)),
         )
     except (KeyError, TypeError) as exc:
         raise BenchError(f"datasets.toml: felaktig rad ({exc})", 2) from exc

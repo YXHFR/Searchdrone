@@ -14,7 +14,10 @@ The detector interface, the class register and the detector sources.
   - `oracle` (`SimLabelDetector`): the simulator's own labelled boxes, marked
     `source = "oracle"`; runs only with `SD_SIM=1` and never stands for a real model.
     Used for `car`, `building` and `road`.
-  - `model`: a trained detector, not built yet (`person` is not reported until then).
+  - `model`: the trained person detector (`sd_detect.onnx`), built only when
+    `SD_DETECTOR_MODEL` names its manifest (`tools/train/README.md`). Unset: `person` is
+    not reported. Set but wrong (missing file, wrong SHA-256, unknown family): an error
+    at start, never a silent fallback.
 - `build_sources`, `detect_all` and `keep_plausible`: build the sources the register
   names, run them on a `Still` (keeping only each source's own classes) and drop
   detections whose size in metres does not fit their class (a red car is no red block).
@@ -27,6 +30,11 @@ The detector interface, the class register and the detector sources.
   boxes back to the picture, joins a box cut by a tile edge with its other half in the
   next tile and removes doubles (per-class NMS). An optional `skip_mask` leaves tiles out
   (for example the sky).
+- `OnnxDetector` and `load_model` (`sd_detect.onnx`): run a YOLOX or DAMO-YOLO ONNX file
+  with ONNX Runtime on the CPU (letterboxed BGR input, decoding, score floor, NMS),
+  after checking its size and SHA-256 against the manifest (`sd.detector-model/v1`).
+  The manifest names the file, family, input size, classes, licence and what the model
+  was trained on. ONNX Runtime is imported only when a model is chosen.
 
 A detection is only a hint for a person to look at: nothing here steers the vehicle or
 reaches the safety gate, and only a person confirms a find. No face recognition.

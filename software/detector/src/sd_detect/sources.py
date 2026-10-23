@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sd_detect.api import Detection
 from sd_detect.classes import ClassRegistry, RegistryError
@@ -20,6 +21,7 @@ from sd_detect.oracle import SimLabelDetector
 from sd_detect.still import Still, StillDetector
 
 __all__ = [
+    "MODEL_ENV",
     "SOURCES",
     "BuiltSources",
     "SourceFactory",
@@ -27,6 +29,8 @@ __all__ = [
     "detect_all",
     "keep_plausible",
 ]
+
+MODEL_ENV = "SD_DETECTOR_MODEL"
 
 SourceFactory = Callable[[ClassRegistry, Mapping[str, str]], StillDetector | None]
 """Builds a source from the register and the environment; ``None`` when the source is
@@ -42,15 +46,23 @@ def _oracle(registry: ClassRegistry, env: Mapping[str, str]) -> StillDetector:
     return SimLabelDetector.from_registry(registry, env)
 
 
-def _model_not_built(registry: ClassRegistry, env: Mapping[str, str]) -> StillDetector | None:
-    del registry, env  # no trained detector yet: its classes are simply not reported
-    return None
+def _model(registry: ClassRegistry, env: Mapping[str, str]) -> StillDetector | None:
+    """The trained detector named by ``SD_DETECTOR_MODEL`` (its manifest, see
+    ``sd_detect.onnx``). Unset: no model, its classes are simply not reported. Set but
+    wrong (missing file, wrong checksum): an error, never a silent fallback."""
+    del registry
+    manifest = env.get(MODEL_ENV, "").strip()
+    if not manifest:
+        return None
+    from sd_detect.onnx import load_model  # onnxruntime only when a model is chosen
+
+    return load_model(Path(manifest))
 
 
 SOURCES: Mapping[str, SourceFactory] = {
     "color": _color,
     "oracle": _oracle,
-    "model": _model_not_built,
+    "model": _model,
 }
 
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import shutil
 import sys
 import zipfile
@@ -135,12 +136,12 @@ def _progress(name: str):
 
 def pinned(ds: Dataset) -> bool:
     """Whether the archive's SHA-256 is known (only then is it ever downloaded)."""
-    return bool(ds.sha256) and len(ds.sha256 or "") == 64
+    return re.fullmatch(r"[0-9a-f]{64}", ds.sha256 or "") is not None
 
 
 def fetch_archive(ds: Dataset, data: Path, keep: bool) -> int:
     assert ds.url and ds.size_bytes  # noqa: S101 - checked by the caller
-    if not ds.sha256 or not pinned(ds):
+    if ds.sha256 is None or not pinned(ds):
         raise BenchError(
             f"{ds.name}: arkivets SHA-256 är inte fastställd än i datasets.toml, så det "
             "hämtas inte. Se tools/bench/README.md.",
@@ -273,7 +274,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             names = [n for n, ds in register.items() if ds.url and pinned(ds)]
             for n, ds in register.items():
-                if ds.url and not pinned(ds):
+                if ds.url and not pinned(ds) and not mini:
                     say(f"{n} hoppas över: arkivets SHA-256 är inte fastställd än.")
         if not flag(args, "yes"):
             say(plan(register, names, mini))

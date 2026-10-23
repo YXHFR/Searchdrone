@@ -25,7 +25,8 @@ measured on, on your own computer; nothing without a licence is allowed.
 **WiSARD's licence.** The project page carries the MIT licence text for "the Software"
 and says nothing else about the pictures. Until the lab confirms the data licence in
 writing, WiSARD is only measured on, never trained on (`use = ["measure"]`); once it
-is confirmed, add `"train"` to its `use` in `datasets.toml`. Weights trained on it
+is confirmed, add `"train"` to its `use` and set `licence_confirmed = true` in
+`datasets.toml`. Weights trained on it
 would still stay on your computer (`publish_weights = false`).
 
 **Credit.** Anything published from these measurements names HERIDAL (Božić-Štulić,
@@ -113,17 +114,21 @@ Run these from the repository folder in WSL (Ubuntu).
    just bench-fetch yes=1 sets=simfarm
    ```
 
-5. **Measure a detector** once one is trained:
+5. **Measure a detector** (training it: `tools/train/README.md`):
 
    ```bash
-   just bench-detector model=<name>
+   just bench-detector model=person_yolox_s part=val
    ```
 
-   The result is in `build/bench/det_<name>_test.json`.
+   `model=` is `selfcheck`, `null`, `facit`, or a model in
+   `<data_dir>/models/detector/` by name: `coco_yolox_s` (from `just detector-fetch`)
+   or `person_<model>` (from `just export-detector`). The model runs over 640 px tiles of
+   each whole picture, as on the drone. The result is in
+   `build/bench/det_<name>_<part>.json`.
 
 Keys of `just bench-fetch`: `yes=1` (required to download), `sets=heridal,wisard` (which
-sets; default all that download), `mini=1` (the mini bank), `keep=1` (keep the archive
-after unpacking), `data=<folder>` (another data folder).
+sets; default every set whose SHA-256 is pinned), `mini=1` (the mini bank), `keep=1`
+(keep the archive after unpacking), `data=<folder>` (another data folder).
 
 Keys of `just bench-detector`: `model=`, `part=test|val`, `sets=`, `mini=1`, `limit=N`
 (the first N pictures, for a quick look), `data=`, `out=`, `compare=<earlier result>`

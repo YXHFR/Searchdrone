@@ -148,8 +148,8 @@ def load_mini(version: str = MINI_VERSION, path: Path | None = None) -> tuple[st
     """The split version the mini bank was drawn from, and its pictures."""
     path = path or SPLITS / f"{version}.json"
     body = json.loads(path.read_text(encoding="utf-8"))
-    if body.get("schema") != MINI_SCHEMA:
-        raise BenchError(f"{path.name}: fel format", 2)
+    if body.get("schema") != MINI_SCHEMA or body.get("version", version) != version:
+        raise BenchError(f"{path.name}: fel format eller version", 2)
     images = [
         MiniImage(
             image_id=row["id"],
