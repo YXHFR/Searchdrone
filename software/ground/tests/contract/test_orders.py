@@ -181,10 +181,15 @@ async def test_pilot_takeoff_button_uses_the_active_charter_version(r: Rig) -> N
     assert out["gate"]["decision"] == "ALLOW", out
     cmd = out["command"]
     assert cmd["issuer_kind"] == "operator" and cmd["issuer_ref"] == "operator:ci-harness"
-    assert cmd["charter_version"] == 1 and cmd["based_on"] is None
+    snap, _ = r.flow.snapshot(VID)
+    assert snap is not None
+    # the state the pilot saw: the onboard computer's boot, never a later snapshot
+    assert cmd["charter_version"] == 1 and cmd["based_on"]["state_epoch"] == snap.state_epoch
+    assert cmd["based_on"]["state_seq"] <= snap.state_seq
     await r.until(lambda: r.onboard.orders, 5, "order onboard")
     sent = r.onboard.orders[-1]
     assert sent.skill == "takeoff" and sent.charter_version == 1
+    assert sent.based_on is not None and sent.based_on.state_epoch == snap.state_epoch
     assert (await r.mission(mid))["clearance"] is None  # the take-off used it up
     await r.wait_status(mid, "ACTIVE")
 

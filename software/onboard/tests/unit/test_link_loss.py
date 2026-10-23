@@ -529,3 +529,25 @@ async def test_keepout_install_highest_seq_wins() -> None:
         assert r.ex.keepouts == (a,)
         r.ex.on_keepouts(KeepoutInstall(install_seq=6, keepouts=[]), new_id())
         assert r.ex.keepouts == ()
+
+
+async def test_find_hover_from_a_hold_flies_to_the_point(tmp_path: Path) -> None:
+    """Hovering (here after a goto; a cylinder's hold is the same) 50 m from a confirmed
+    find when the link goes: the find hover still flies to its hover point (T26 from
+    HOLD), it does not count the hover it started from as arrived."""
+    find = keepout(east=0, north=110)
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        lat, lon = at(0, 60)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 8}))
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find]), new_id())
+        r.link = False
+        await r.until(lambda: r.ex.link_rule.phase in (P.FIND_MOVE, P.FIND_HOVER), 20)
+        await r.until(lambda: r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold", 30)
+        plan = r.ex.link_rule.plan
+        assert plan is not None
+        assert distance_m(r.fc.lat, r.fc.lon, plan.hover_lat, plan.hover_lon) <= 3.0
+        assert distance_m(r.fc.lat, r.fc.lon, find.lat, find.lon) >= find.radius_m

@@ -276,7 +276,14 @@ async def submit(
         row = await flow.active_charter_row(mission)
         if issuer_kind == "operator":
             charter_version = None if row is None else row.version
-            based_on = None
+            # The state the operator sees: the onboard computer refuses an order from
+            # before its last restart (ONB_STALE_ORDER).
+            snapshot, _ = flow.snapshot(mission.vehicle_id)
+            based_on = (
+                None
+                if snapshot is None
+                else StateRef(state_epoch=snapshot.state_epoch, state_seq=snapshot.state_seq)
+            )
         ctx = await flow.gate_context(mission)
         if skill == "inspect_detection":
             params = await _inspect_params(flow, mission_id, params)

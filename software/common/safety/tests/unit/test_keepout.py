@@ -339,3 +339,46 @@ def test_reroute_with_ends_inside_the_margin(sign: int) -> None:
     out = reroute(route, cyl, area=BOX)
     assert out is not None
     assert xy_route_violation(out, cyl) is None
+
+
+def test_reroute_out_of_overlapping_cylinders() -> None:
+    """Two cylinders either side of the drone (two stills of one person): the way out
+    goes deeper into neither, though straight out from the first centre would."""
+    cyl = [((-1.0, -1.0), 35.0), ((2.0, 1.5), 35.0)]
+    out = reroute([(0.0, 0.0), (300.0, 0.0)], cyl)
+    assert out is not None and len(out) >= 3
+    assert xy_route_violation(out, cyl) is None
+    assert all(math.dist(out[1], c) > r for c, r in cyl)
+    # A given direction that goes deeper into one of them is not taken.
+    out = reroute([(0.0, 0.0), (300.0, 0.0)], cyl, exit_dir=(1.0, 0.0))
+    assert out is not None and xy_route_violation(out, cyl) is None
+    # Ringed in: every way out of the one enters another, no route.
+    ring = [((0.0, 0.0), 40.0)] + [
+        ((90.0 * math.cos(a), 90.0 * math.sin(a)), 50.0)
+        for a in (k * math.pi / 4 for k in range(8))
+    ]
+    assert reroute([(0.0, 10.0), (0.0, -300.0)], ring) is None
+
+
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    route=st.lists(xy, min_size=2, max_size=6),
+    near=st.lists(
+        st.tuples(st.floats(-20, 20), st.floats(-20, 20), st.floats(30.5, 60.0)),
+        min_size=1,
+        max_size=3,
+    ),
+    cyl=st.lists(st.tuples(xy, st.floats(30.5, 60.0)), max_size=2),
+)
+def test_keepout_reroute_from_inside(
+    route: list[Xy], near: list[tuple[float, float, float]], cyl: list[tuple[Xy, float]]
+) -> None:
+    """Property: starting inside one or more cylinders, a rerouted route never enters or
+    goes deeper into any of them; or there is none (None)."""
+    here = route[0]
+    all_cyl = [((here[0] + dx, here[1] + dy), r) for dx, dy, r in near] + cyl
+    out = reroute(route, all_cyl)
+    if out is not None:
+        assert out[0] == here
+        if len(out) > 1:  # one point: nothing left to fly
+            assert xy_route_violation(out, all_cyl) is None

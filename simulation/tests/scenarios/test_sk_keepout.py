@@ -9,6 +9,10 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
 * ``test_a_new_cylinder_holds_a_goto_and_stop_still_works``: a find is confirmed on a
   ``goto``'s way. The drone hovers short of the cylinder (``KEEPOUT_VIOLATION``); STOP
   then brakes and holds as always, and FLY HOME brings it home.
+* ``test_own_detections_under_the_drone_during_a_search``: two of the drone's own
+  person detections land either side of it mid-survey (two stills of one person). The
+  drone leaves both cylinders without going deeper into either, never comes back in, and
+  the survey ends ``done``.
 * ``test_orbit_around_a_find``: an orbit around a confirmed find flies a ring outside
   its cylinder and hovers when done; STOP during a second orbit brakes and holds.
 """
@@ -36,13 +40,15 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 )
 from test_sc_emergency import stopped_and_holding  # pyright: ignore[reportMissingImports]
 from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
+    onboard_events,
     survey_box,
     surveying,
     until_event,
 )
+from test_sk_inspect import person  # pyright: ignore[reportMissingImports]
 
 from sd_safety.constants import PERSON_KEEPOUT_M
-from sd_safety.targets import distance_m
+from sd_safety.targets import Plane, distance_m
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -95,6 +101,40 @@ async def test_a_new_cylinder_reroutes_the_search(
         assert after["status"] == "done", after
         inside = _inside(sc, since, centre)
         assert not inside, inside[:3]
+        await _land(sc)
+
+
+@pytest.mark.budget_s(480)
+async def test_own_detections_under_the_drone_during_a_search(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.airborne()
+        res = await sc.operator_order("survey_sector", {"polygon": survey_box(sc)})
+        assert res["gate"]["decision"] == "ALLOW", res
+        survey = await sc.wait_command("survey_sector", "running", 60)
+        await sc.until(lambda: _executor(sc, "SURVEY"), 120, "in the box")
+        await surveying(sc)
+
+        # Two stills of a person right below: the centres a metre or two either side.
+        plane = Plane(*sc.r.home)
+        e, n = plane.xy(sc.tel.lat, sc.tel.lon)
+        centres = [plane.latlon(e - 1.0, n - 1.0), plane.latlon(e + 2.0, n + 1.5)]
+        since = time.monotonic()
+        sc.r.onboard.ex.on_detections([person(c) for c in centres])
+        await until_event(sc, "keepout_reroute")
+
+        await sc.wait_command("survey_sector", "done", 300)
+        after = await sc.command(survey["id"])
+        assert after["status"] == "done", after
+        assert not await onboard_events(sc, "keepout_reroute_refused")
+        assert not await onboard_events(sc, "keepout_hold")
+        # Out of both and never back in.
+        track = [s for s in sc.track if s.t >= since]
+        inside = [any(distance_m(s.lat, s.lon, *c) < RADIUS_M for c in centres) for s in track]
+        assert not inside[-1]
+        first_out = inside.index(False)
+        assert not any(inside[first_out:]), "back into a cylinder"
         await _land(sc)
 
 

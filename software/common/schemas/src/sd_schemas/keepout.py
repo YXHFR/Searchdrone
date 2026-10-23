@@ -45,6 +45,7 @@ INSPECT_VIEW_MAX_DEG: Final = 28.0  # beyond this at the highest allowed height:
 INSPECT_STANDOFF_MARGIN_M: Final = 10.0  # the inspection point keeps this off the cylinder
 INSPECT_SPEED_MS: Final = 5.0  # the most an inspection flies at
 _INSPECT_DIRECTIONS: Final = 24  # tried around the target, nearest the drone's side first
+_LEAVE_COS: Final = 1e-6  # leaving square to the centre: rounding is not "deeper"
 _ON_TARGET_M: Final = 1.0  # closer than this there is no "side": the point lies north
 
 
@@ -63,11 +64,12 @@ def leg_enters(a: Xy, b: Xy, c: Xy, r: float) -> bool:
     """Whether the straight leg ``a`` -> ``b`` comes inside the circle (``c``, ``r``).
 
     A leg that starts inside may leave, but never go deeper: it is refused when it heads
-    towards the centre at all. Touching the edge from outside is allowed."""
+    towards the centre at all (square to it, the distance still grows; a rounding error's
+    worth of angle is not counted). Touching the edge from outside is allowed."""
     ax, ay = a[0] - c[0], a[1] - c[1]
     dx, dy = b[0] - a[0], b[1] - a[1]
     if math.hypot(ax, ay) < r:
-        return dx * ax + dy * ay < 0.0
+        return dx * ax + dy * ay < -_LEAVE_COS * math.hypot(dx, dy) * math.hypot(ax, ay)
     seg2 = dx * dx + dy * dy
     t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / seg2))
     return math.hypot(ax + t * dx, ay + t * dy) < r

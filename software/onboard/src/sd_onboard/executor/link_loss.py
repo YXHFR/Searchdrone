@@ -137,8 +137,13 @@ class LinkLossRule:
             case P.HOLD if down_ms >= HOME_MS:
                 self.phase = P.HOME
                 return [LimitAction("L-LINK", "rtl", "link_loss", "link_loss_rtl", {})]
-            case P.FIND_MOVE if x.state == S.HOLD and x.active_skill != INTERNAL_FIND_GOTO:
-                # Arrived (T27), or another limit held it on the way (LL-T11).
+            case P.FIND_MOVE if (
+                x.state == S.HOLD
+                and x.active_skill != INTERNAL_FIND_GOTO
+                and x.now_ms != self.detected_ms
+            ):
+                # Arrived (T27), or another limit held it on the way (LL-T11). Not in the
+                # tick the find came: a drone already in HOLD then still flies to the point.
                 self._hover(x.now_ms)
                 return []
             case P.FIND_MOVE if down_ms >= FIND_MOVE_DEADLINE_MS:

@@ -9,8 +9,9 @@ around one at its centre).
 the two tangents to a circle ``KEEPOUT_ARC_MARGIN_M`` outside the cylinder and an arc of
 corners between them, on the side that stays inside the charter (the shorter if both
 do). Corners lie just outside that circle, so no straight leg between them comes
-closer. A route that starts inside a cylinder first leaves it, along the given direction
-(the leg being flown) or straight out from the centre. Pure functions in the plane of
+closer. A route that starts inside cylinders first leaves them along a straight leg that goes
+deeper into none of them and enters no other: the given direction (the leg being
+flown), away from their centres, or the nearest direction that works. Pure functions in the plane of
 ``sd_safety.targets.Plane``.
 """
 
@@ -42,6 +43,7 @@ ORBIT_KEEPOUT_MARGIN_M: Final = 10.0  # an orbit's ring keeps this from every cy
 _ARC_STEP: Final = math.radians(15.0)  # the most an arc turns between two corners
 _MAX_DETOURS: Final = 100  # more ways around than this: overlapping cylinders, give up
 _EXIT_EPS_M: Final = 0.5  # past the circle when leaving a cylinder
+_EXIT_STEP: Final = math.radians(5.0)  # the directions tried when leaving cylinders
 
 Circle = tuple[Xy, float]  # centre, radius
 
@@ -98,19 +100,20 @@ def reroute(
     a way around it, or None when there is none that stays inside ``area``.
 
     Corners inside a cylinder are dropped (the rest of the route never goes back in).
-    When the position is inside one and the first leg would go deeper, the route first
-    leaves it: along ``exit_dir`` when given (the leg being flown), else straight out
-    from the centre. Every leg after that is clear of the cylinders, and the whole route
-    must lie inside ``area``."""
+    When the position is inside cylinders and the first leg would go deeper, the route
+    first leaves them (``_exit``): along ``exit_dir`` when given (the leg being flown)
+    if that works, else away from their centres. Every leg after that is clear of the
+    cylinders, and the whole route must lie inside ``area``."""
     if not route:
         return []
     here = route[0]
     out = [here]
-    exit_point = _exit(here, route[1] if len(route) > 1 else None, cyl, exit_dir)
-    if exit_point is not None:
-        out.append(exit_point)
+    way_out = _exit(here, route[1] if len(route) > 1 else None, cyl, exit_dir)
+    if way_out is None:
+        return None
+    out += way_out
     out += [p for p in route[1:] if not any(math.dist(p, c) < r for c, r in cyl)]
-    start = 0 if exit_point is None else 1  # the leg out of a cylinder is not re-checked
+    start = len(way_out)  # the leg out of the cylinders is clear already (``_exit``)
     i, detours = start, 0
     while i < len(out) - 1:
         a, b = out[i], out[i + 1]
@@ -134,22 +137,51 @@ def reroute(
     return out
 
 
-def _exit(here: Xy, nxt: Xy | None, cyl: Sequence[Circle], exit_dir: Xy | None) -> Xy | None:
-    """Where to leave the cylinders ``here`` is in, or None if it is in none or the first
-    leg leaves without going deeper."""
+def _exit(here: Xy, nxt: Xy | None, cyl: Sequence[Circle], exit_dir: Xy | None) -> list[Xy] | None:
+    """The way out of the cylinders ``here`` is in: no corner when it is in none or the
+    first leg leaves without going deeper, else one corner past all of them; None when
+    no straight way out goes deeper into none of them and enters no other.
+
+    The direction is the first that works of: ``exit_dir``, away from the centres
+    together, straight out from each centre, square to each (nearest the next corner
+    first), then every ``_EXIT_STEP`` around, nearest the first of these first."""
     inside = [(c, r) for c, r in cyl if math.dist(here, c) < r]
     if not inside:
-        return None
+        return []
     if nxt is not None and not any(leg_enters(here, nxt, c, r) for c, r in inside):
-        return None
-    if exit_dir is not None and math.hypot(*exit_dir) > 1e-9:
-        n = math.hypot(*exit_dir)
-        u = (exit_dir[0] / n, exit_dir[1] / n)
-    else:
-        c0 = inside[0][0]
-        dx, dy = here[0] - c0[0], here[1] - c0[1]
-        n = math.hypot(dx, dy)
-        u = (0.0, 1.0) if n < 1e-9 else (dx / n, dy / n)
+        return []
+    away = [u for c, _ in inside if (u := _unit((here[0] - c[0], here[1] - c[1])))]
+    # Square to a centre the distance grows too: between two centres the only way out.
+    ahead = _unit((nxt[0] - here[0], nxt[1] - here[1])) if nxt is not None else None
+    square = [s for u in away for s in ((-u[1], u[0]), (u[1], -u[0]))]
+    if ahead is not None:
+        square.sort(key=lambda s: -(s[0] * ahead[0] + s[1] * ahead[1]))
+    preferred = [
+        _unit(exit_dir) if exit_dir is not None else None,
+        _unit((sum(u[0] for u in away), sum(u[1] for u in away))),
+        *away,
+        *square,
+    ]
+    candidates = [u for u in preferred if u is not None]
+    heading = math.atan2(candidates[0][1], candidates[0][0]) if candidates else 0.0
+    steps = round(2 * math.pi / _EXIT_STEP)
+    for k in sorted(range(steps), key=lambda k: min(k, steps - k)):
+        a = heading + k * _EXIT_STEP
+        candidates.append((math.cos(a), math.sin(a)))
+    for u in candidates:
+        p = _leave(here, u, inside)
+        if not any(leg_enters(here, p, c, r) for c, r in cyl):
+            return [p]
+    return None
+
+
+def _unit(v: Xy) -> Xy | None:
+    n = math.hypot(*v)
+    return None if n < 1e-9 else (v[0] / n, v[1] / n)
+
+
+def _leave(here: Xy, u: Xy, inside: Sequence[Circle]) -> Xy:
+    """The point along ``u`` from ``here`` just past every circle (c, r + margin)."""
     far = 0.0
     for c, r in inside:
         # here + t*u leaves the circle (c, r + margin) at the larger root of |p - c| = R.

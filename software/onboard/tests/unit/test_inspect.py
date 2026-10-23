@@ -404,6 +404,49 @@ async def test_inside_a_new_cylinder_the_search_leaves_it_first() -> None:
         assert xy_route_violation(later, circles([k], PLANE)) is None
 
 
+BRAKE_M = 2.0  # how far the drone goes on while the reflex stops it
+
+
+async def test_two_own_cylinders_under_the_drone_the_search_leaves_both() -> None:
+    """Two stills of a person right below: the centres either side of the drone. The way
+    out goes deeper into neither (straight out from the first would go into the second),
+    and the search goes on."""
+    box = square(60, east=0, north=120)
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        cmd = await r.send(
+            r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
+        )
+        await r.until(lambda: r.fc.mission_current >= 4, 120)  # on a search leg
+        here = xy(r)
+        ahead = r.fc.missions[MISSION][r.fc.mission_current]
+        to = PLANE.xy(ahead.x / 1e7, ahead.y / 1e7)
+        d = math.dist(here, to)
+        u = ((to[0] - here[0]) / d, (to[1] - here[1]) / d)
+        # One centre just behind, one just ahead: out from the first is into the second.
+        dets = [
+            detection(here[0] - u[0], here[1] - u[1], 0.9, 3.0),
+            detection(here[0] + 2 * u[0], here[1] + 2 * u[1], 0.9, 3.0),
+        ]
+        start = len(r.fc.track)
+        r.ex.on_detections(dets)
+        await r.run(0.5)
+        assert "executor.keepout_reroute" in r.up.kinds()
+        assert "executor.keepout_reroute_refused" not in r.up.kinds()
+        assert "executor.keepout_hold" not in r.up.kinds()
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        cyl = circles([k for k, _ in r.ex.local_keepouts.values()], PLANE)
+        assert len(cyl) == 2
+        track = track_xy(r, start)
+        # No closer to either centre than braking takes, then out and never back in.
+        for c, _ in cyl:
+            assert min(math.dist(p, c) for p in track) >= math.dist(track[0], c) - BRAKE_M
+        inside = [any(math.dist(p, c) < rad for c, rad in cyl) for p in track]
+        out = inside.index(False)
+        assert not any(inside[out:])
+
+
 async def test_no_way_around_inside_the_charter_hovers(monkeypatch: pytest.MonkeyPatch) -> None:
     box = square(60, east=0, north=120)
     monkeypatch.setattr(survey_sector, "reroute", lambda *_a, **_k: None)
