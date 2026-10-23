@@ -2,7 +2,7 @@
 // colour, a garment and a certainty on the card and approves it; an observer sees the
 // same card without the button. The safety bar stays visible over it all. The person is
 // fictional.
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { MISSION, observerSession } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
 import { expectSafetyVisible, showView } from "../helpers/safety";
@@ -25,6 +25,13 @@ const PROPOSAL = {
   free_text: "",
 };
 
+/** Pick an option in one of the card's choice lists. */
+async function pick(card: Locator, testId: string, value: string): Promise<void> {
+  await card.getByTestId(testId).click();
+  await card.getByTestId(`${testId}-${value}`).click();
+  await expect(card.getByTestId(testId)).toHaveAttribute("data-value", value);
+}
+
 async function openProfile(page: Page): Promise<void> {
   await showView(page, "map");
   const tab = page.getByTestId("profile-tab");
@@ -42,9 +49,9 @@ test("the pilot corrects the AI's profile and approves it", async ({ page, groun
   await expect(card.getByTestId("profile-status")).toHaveText("Förslag, inte godkänt");
   await expect(card.getByTestId("profile-free-warning")).toContainText("utan datainsamling");
 
-  await card.getByTestId("profile-garment-0-color").selectOption("green");
-  await card.getByTestId("profile-garment-1-part").selectOption("full_body");
-  await card.getByTestId("profile-garment-1-certainty").selectOption("likely");
+  await pick(card, "profile-garment-0-color", "green");
+  await pick(card, "profile-garment-1-part", "full_body");
+  await pick(card, "profile-garment-1-certainty", "likely");
   await expectSafetyVisible(page);
   await card.getByTestId("profile-approve").click();
 
@@ -86,7 +93,7 @@ test("a new proposal while the pilot edits keeps the edits", async ({ page, grou
   await ground.resynced();
   await openProfile(page);
   const card = page.getByTestId("profile-card");
-  await card.getByTestId("profile-garment-0-color").selectOption("green");
+  await pick(card, "profile-garment-0-color", "green");
   ground.profile = { ...ground.profile, proposal_id: "X2" };
   ground.pushLive("search_profile", "search_profile.proposed", {
     row_id: "X2",
@@ -94,9 +101,9 @@ test("a new proposal while the pilot edits keeps the edits", async ({ page, grou
     profile_version: 1,
   });
   await expect(card.getByTestId("profile-newer")).toBeVisible();
-  await expect(card.getByTestId("profile-garment-0-color")).toHaveValue("green");
+  await expect(card.getByTestId("profile-garment-0-color")).toHaveAttribute("data-value", "green");
   await card.getByTestId("profile-show-newer").click();
-  await expect(card.getByTestId("profile-garment-0-color")).toHaveValue("red");
+  await expect(card.getByTestId("profile-garment-0-color")).toHaveAttribute("data-value", "red");
   await expect(card.getByTestId("profile-newer")).toHaveCount(0);
 });
 
@@ -129,7 +136,12 @@ for (const [width, height] of [
       await ground.open();
       await ground.liveConnected();
       await ground.resynced();
+      const webgl2 = await page.evaluate(
+        () => document.createElement("canvas").getContext("webgl2") !== null,
+      );
+      test.skip(!webgl2, "WebGL2 saknas i denna webbläsare");
       await openProfile(page);
+      await expect(page.getByTestId("map-profile")).toBeVisible(); // the overlay, over the map
       await expectSafetyVisible(page);
     });
   });

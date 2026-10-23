@@ -11,6 +11,7 @@ import type { SearchProfile } from "../../api/types";
 import { useMissionStore } from "../../state/missionStore";
 import { useIsPilot } from "../../state/sessionStore";
 import { useUiStore } from "../../state/uiStore";
+import { Picker } from "./Picker";
 import {
   baseOf,
   CATEGORIES,
@@ -51,20 +52,15 @@ function Select<T extends string>({
 }) {
   const { t } = useTranslation();
   return (
-    <select
-      className="input"
-      aria-label={label}
-      data-testid={testId}
+    <Picker
       value={value}
+      options={options}
+      label={label}
+      labelOf={(o) => t(`${prefix}.${o}`)}
       disabled={disabled}
-      onChange={(e) => onChange(e.target.value as T)}
-    >
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {t(`${prefix}.${o}`)}
-        </option>
-      ))}
-    </select>
+      testId={testId}
+      onChange={onChange}
+    />
   );
 }
 
@@ -208,22 +204,15 @@ export function ProfileCard({ missionId }: { missionId: string }) {
           }}
         >
           <label htmlFor={`${baseId}-cat`}>{t("profile.category")}</label>
-          <select
+          <Picker
             id={`${baseId}-cat`}
-            className="input"
-            data-testid="profile-category"
+            testId="profile-category"
             value={draft.subject_category}
+            options={CATEGORIES}
+            labelOf={(c) => t(`profile.categories.${c}`)}
             disabled={readOnly}
-            onChange={(e) =>
-              patch({ subject_category: e.target.value as EditableDraft["subject_category"] })
-            }
-          >
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {t(`profile.categories.${c}`)}
-              </option>
-            ))}
-          </select>
+            onChange={(subject_category) => patch({ subject_category })}
+          />
 
           <fieldset data-testid="profile-garments">
             <legend>{t("profile.garments")}</legend>
@@ -379,26 +368,25 @@ export function ProfileCard({ missionId }: { missionId: string }) {
           {isPilot && pins.length > 0 ? (
             <>
               <label htmlFor={`${baseId}-seen`}>{t("profile.lastSeen")}</label>
-              <select
+              <Picker
                 id={`${baseId}-seen`}
-                className="input"
-                data-testid="profile-last-seen"
+                testId="profile-last-seen"
                 value={
                   pins.find((p) => p.lat === draft.last_seen.lat && p.lon === draft.last_seen.lon)
                     ?.id ?? ""
                 }
-                onChange={(e) => {
-                  const p = pins.find((x) => x.id === e.target.value);
+                options={["", ...pins.map((p) => p.id)]}
+                labelOf={(id) =>
+                  id === ""
+                    ? t("profile.lastSeenAsProposed")
+                    : (pins.find((p) => p.id === id)?.label ?? id)
+                }
+                disabled={false}
+                onChange={(id) => {
+                  const p = pins.find((x) => x.id === id);
                   if (p) patch({ last_seen: { ...draft.last_seen, lat: p.lat, lon: p.lon } });
                 }}
-              >
-                <option value="">{t("profile.lastSeenAsProposed")}</option>
-                {pins.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
+              />
             </>
           ) : null}
 

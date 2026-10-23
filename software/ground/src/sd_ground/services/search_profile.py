@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from sd_ground.db.flow import ProfileStaleError
 from sd_ground.logging import get_logger
 from sd_ground.services.missions import FlowError
 from sd_schemas.search import (
@@ -86,23 +87,22 @@ async def approve(
     mission = await flow.open_mission_of(mission_id)
     if not by.startswith("operator:"):
         raise FlowError(403, "FORBIDDEN_ROLE", "Bara piloten kan godkänna sökprofilen.")
-    current, proposal = await flow.repo.search_profile_rows(str(mission.id))
-    version = 0 if current is None else int(current["profile_version"])
-    pending = None if proposal is None else str(proposal["row_id"])
     shown = None if approval.proposal_id is None else str(approval.proposal_id)
-    if approval.base_version != version or pending not in (None, shown):
+    try:
+        row = await flow.repo.add_search_profile(
+            str(mission.id),
+            approval.profile.model_dump(mode="json"),
+            proposed_by=by,
+            approved_by=by,
+            approved_at=flow.now(),
+            based_on=(approval.base_version, shown),
+        )
+    except ProfileStaleError:
         raise FlowError(
             409,
             "PROFILE_STALE",
             "Sökprofilen har ändrats sedan du började. Granska den nya versionen först.",
-        )
-    row = await flow.repo.add_search_profile(
-        str(mission.id),
-        approval.profile.model_dump(mode="json"),
-        proposed_by=by,
-        approved_by=by,
-        approved_at=flow.now(),
-    )
+        ) from None
     profile = _profile(row)
     ids = _ids(row)
     log.info("search_profile.approved", mission_id=str(mission.id), **ids)
@@ -142,7 +142,7 @@ async def approved(flow: MissionFlow, mission_id: str) -> SearchProfile | None:
     if current is None:
         return None
     profile = _profile(current)
-    return profile if profile.approved else None
+    return profile if profile.approved else None  # defence in depth: the row is approved
 
 
 async def versions(flow: MissionFlow, mission_id: str) -> list[SearchProfile]:

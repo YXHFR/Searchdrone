@@ -110,11 +110,10 @@ describe("ProfileCard", () => {
   it("lets the pilot correct colour and certainty, then approve", async () => {
     act(() => useSessionStore.getState().set({ status: "ready", session: session("pilot") }));
     render(<ProfileCard missionId="mission-1" />);
-    const color = await screen.findByTestId("profile-garment-0-color");
-    fireEvent.change(color, { target: { value: "blue" } });
-    fireEvent.change(screen.getByTestId("profile-garment-0-certainty"), {
-      target: { value: "unsure" },
-    });
+    fireEvent.click(await screen.findByTestId("profile-garment-0-color"));
+    fireEvent.click(screen.getByTestId("profile-garment-0-color-blue"));
+    fireEvent.click(screen.getByTestId("profile-garment-0-certainty"));
+    fireEvent.click(screen.getByTestId("profile-garment-0-certainty-unsure"));
     expect(screen.getByTestId("profile-free-warning").textContent).toContain("molnmodellen");
     fireEvent.click(screen.getByTestId("profile-approve"));
     await waitFor(() => expect(posted).toHaveLength(1));
@@ -132,7 +131,7 @@ describe("ProfileCard", () => {
     act(() => useSessionStore.getState().set({ status: "ready", session: session("observer") }));
     render(<ProfileCard missionId="mission-1" />);
     const color = await screen.findByTestId("profile-garment-0-color");
-    expect((color as HTMLSelectElement).disabled).toBe(true);
+    expect((color as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByTestId("profile-approve")).toBeNull();
     expect(screen.queryByTestId("profile-add-garment")).toBeNull();
   });
@@ -140,8 +139,8 @@ describe("ProfileCard", () => {
   it("keeps the pilot's edits when a new proposal arrives", async () => {
     act(() => useSessionStore.getState().set({ status: "ready", session: session("pilot") }));
     render(<ProfileCard missionId="mission-1" />);
-    const color = await screen.findByTestId("profile-garment-0-color");
-    fireEvent.change(color, { target: { value: "blue" } });
+    fireEvent.click(await screen.findByTestId("profile-garment-0-color"));
+    fireEvent.click(screen.getByTestId("profile-garment-0-color-blue"));
     state = {
       approved: null,
       proposal: { ...PROPOSAL, garments: [] },
@@ -150,7 +149,7 @@ describe("ProfileCard", () => {
     };
     act(() => useMissionStore.getState().bumpProfile());
     await screen.findByTestId("profile-newer");
-    expect((screen.getByTestId("profile-garment-0-color") as HTMLSelectElement).value).toBe("blue");
+    expect(screen.getByTestId("profile-garment-0-color").dataset.value).toBe("blue");
     fireEvent.click(screen.getByTestId("profile-show-newer"));
     await waitFor(() => expect(screen.queryByTestId("profile-garment-0")).toBeNull());
   });

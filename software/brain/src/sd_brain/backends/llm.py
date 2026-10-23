@@ -91,6 +91,34 @@ def _logged_call(c: RawToolCall) -> dict[str, Any]:
     return {"name": c.name, "arguments": json.dumps({"redacted": keys})}
 
 
+def _logged_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The prompt as the decision log keeps it: a search profile call keeps its field
+    names only (the model itself got the whole call)."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        calls = m.get("tool_calls")
+        if m.get("role") == "assistant" and calls:
+            m = m | {
+                "tool_calls": [
+                    c
+                    if c["function"]["name"] != PROFILE_TOOL
+                    else c
+                    | {
+                        "function": _logged_call(
+                            RawToolCall(
+                                id=c["id"],
+                                name=PROFILE_TOOL,
+                                arguments_json=c["function"]["arguments"],
+                            )
+                        )
+                    }
+                    for c in calls
+                ]
+            }
+        out.append(m)
+    return out
+
+
 def _assistant_message(reply: ModelReply) -> dict[str, Any]:
     msg: dict[str, Any] = {"role": "assistant", "content": reply.content or ""}
     if reply.tool_calls:
@@ -206,7 +234,7 @@ class LlmCommander:
         messages = self.context.build(turn)
         offered = [t.openai for t in turn.tools]
         diag = TurnDiagnostics(
-            backend="llm", prompt_json={"messages": list(messages), "tools": offered}
+            backend="llm", prompt_json={"messages": _logged_messages(messages), "tools": offered}
         )
         self.partial = (turn.turn_id, diag)
         out = TurnOutput(diagnostics=diag)
@@ -220,7 +248,7 @@ class LlmCommander:
         seen: set[str] = set()  # the refused drafts' arguments in this turn
         refused_calls: set[str] = set()  # the refused orders' calls in this turn
         while True:
-            diag.prompt_json = {"messages": list(messages), "tools": offered}
+            diag.prompt_json = {"messages": _logged_messages(messages), "tools": offered}
             if rounds >= self.cfg.max_read_tool_rounds + repairs + 1:
                 diag.error = "round_limit"
                 break
@@ -357,7 +385,7 @@ class LlmCommander:
             out.failed_proposal = given_up
             out.messages = [m for m in out.messages if "turn_failed" not in m.refs]
         diag.latency_ms = int((self._clock() - start) * 1000)
-        diag.prompt_json = {"messages": messages, "tools": offered}
+        diag.prompt_json = {"messages": _logged_messages(messages), "tools": offered}
         out.messages = out.messages[:2]
         return out
 

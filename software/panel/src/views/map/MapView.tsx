@@ -560,7 +560,7 @@ export default function MapView({ isCompact }: ViewProps) {
               className="tool"
               data-testid="profile-tab"
               aria-pressed={profileOpen}
-              aria-controls="map-profile"
+              aria-controls={profileOpen ? "map-profile" : undefined}
               onClick={() => setProfileOpen(!profileOpen)}
             >
               <UserSearch aria-hidden="true" size={15} />

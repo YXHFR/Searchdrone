@@ -24,7 +24,7 @@ from sd_schemas.gate import GateDecision
 from sd_schemas.mission import OperatorLatch
 from sd_schemas.safety import SafetyLimits
 
-__all__ = ["FlowRepo", "MissionExistsError"]
+__all__ = ["FlowRepo", "MissionExistsError", "ProfileStaleError"]
 
 _MISSION_COLS = """m.id, m.vehicle_id, m.title, m.status, m.paused_by, m.returning_cause,
   m.state_seq, m.limits, m.active_charter_id, c.autonomy_mode, m.ai_enabled, m.created_by,
@@ -46,6 +46,10 @@ OPEN_STATUSES = ("pending_approval", "dispatched", "received", "accepted", "runn
 
 class MissionExistsError(Exception):
     """The vehicle already has an open mission."""
+
+
+class ProfileStaleError(Exception):
+    """An approval based on a profile version or proposal that is no longer the newest."""
 
 
 def _json(value: Any) -> Any:
@@ -1262,12 +1266,33 @@ class FlowRepo:
         proposed_by: str,
         approved_by: str | None,
         approved_at: dt.datetime | None,
+        based_on: tuple[int, str | None] | None = None,
     ) -> dict[str, Any]:
         """Store a profile row: a proposal (``approved_by`` None) or the pilot's approval,
         which becomes the next version. ``body`` is the draft; the row's own ids, version
-        and approval are filled in here. The rows are never changed afterwards."""
+        and approval are filled in here. The rows are never changed afterwards.
+
+        ``based_on`` is the approved version and the pending proposal the approval was made
+        from; under the mission's profile lock, anything newer raises ProfileStaleError.
+        ``created_at`` is taken after the lock, so the rows are ordered as they were stored.
+        """
         async with self.engine.begin() as conn:
             profile_id, version = await self._profile_ids(conn, mission_id)
+            if based_on is not None:
+                pending = (
+                    await conn.execute(
+                        text(
+                            "SELECT id::text FROM search_profiles WHERE mission_id = :m "
+                            "AND approved_by IS NULL AND created_at > COALESCE((SELECT "
+                            "max(created_at) FROM search_profiles WHERE mission_id = :m AND "
+                            "approved_by IS NOT NULL), '-infinity') "
+                            "ORDER BY created_at DESC, id DESC LIMIT 1"
+                        ),
+                        {"m": mission_id},
+                    )
+                ).scalar()
+                if based_on[0] != version - 1 or pending not in (None, based_on[1]):
+                    raise ProfileStaleError
             full = body | {
                 "profile_id": profile_id,
                 "profile_version": version,
@@ -1280,8 +1305,8 @@ class FlowRepo:
                     await conn.execute(
                         text(
                             "INSERT INTO search_profiles (mission_id, profile_id, profile_version, "  # noqa: S608
-                            "body, proposed_by, approved_by, approved_at) VALUES (:m, :p, :v, "
-                            "CAST(:body AS jsonb), :by, :ab, :at) "
+                            "body, proposed_by, approved_by, approved_at, created_at) VALUES "
+                            "(:m, :p, :v, CAST(:body AS jsonb), :by, :ab, :at, clock_timestamp()) "
                             f"RETURNING {self._PROFILE_COLS}"
                         ),
                         {

@@ -123,6 +123,7 @@ async def test_loop_proposes_and_logs_no_profile_text(caplog: pytest.LogCaptureF
     calls = [c for d in fg.decisions for c in d.tool_calls if c["name"] == PROFILE_TOOL]
     assert calls and "free_text" in calls[0]["arguments"]
     assert MARKER not in json.dumps([d.tool_calls for d in fg.decisions])
+    assert MARKER not in json.dumps([d.prompt_json for d in fg.decisions], ensure_ascii=False)
 
 
 async def test_one_proposal_per_turn() -> None:
