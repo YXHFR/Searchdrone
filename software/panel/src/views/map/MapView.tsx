@@ -47,6 +47,7 @@ import {
   targetData,
   trackData,
 } from "./mapData";
+import { Picker } from "./Picker";
 import { ProbabilityLegend } from "./ProbabilityLegend";
 import { ProfileCard } from "./ProfileCard";
 import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";
@@ -747,20 +748,18 @@ export default function MapView({ isCompact }: ViewProps) {
                   : t("draw.polygonHint", { n: points.length })}
           </span>
           {mode === "polygon" || mode === "rectangle" ? (
-            <label className="map-draw-hint">
-              {t("draw.hint")}
-              <select
-                data-testid="draw-hint"
+            <span className="map-draw-hint">
+              <label htmlFor="draw-hint">{t("draw.hint")}</label>
+              <Picker
+                id="draw-hint"
                 value={hint}
-                onChange={(e) => setHint(e.target.value as PoaHint | "none")}
-              >
-                {HINTS.map((h) => (
-                  <option key={h} value={h}>
-                    {t(`draw.hintChoice.${h}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={HINTS}
+                labelOf={(h) => t(`draw.hintChoice.${h}`)}
+                disabled={false}
+                testId="draw-hint"
+                onChange={setHint}
+              />
+            </span>
           ) : null}
           {mode !== "pin" ? (
             <button

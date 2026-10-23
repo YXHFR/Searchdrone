@@ -352,6 +352,11 @@
   font-weight: 600;
   background: var(--c-panel-3);
 }
+/* The drawing bar is the view's foot: its choice list opens upwards, over the map. */
+.map-draw .picker-list {
+  top: auto;
+  bottom: calc(100% + 2px);
+}
 .profile-form {
   display: flex;
   flex-direction: column;
