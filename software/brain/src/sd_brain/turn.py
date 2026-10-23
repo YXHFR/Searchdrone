@@ -30,9 +30,11 @@ __all__ = [
 Trigger = Literal[
     "operator_override",
     "operator_message",
+    "candidate_decided",
     "alert_critical",
     "skill_event",
     "detection",
+    "candidate",
     "approval_event",
     "charter_event",
     "takeoff_clearance",
@@ -47,9 +49,11 @@ Trigger = Literal[
 TRIGGER_PRIORITY: tuple[Trigger, ...] = (
     "operator_override",
     "operator_message",
+    "candidate_decided",
     "alert_critical",
     "skill_event",
     "detection",
+    "candidate",
     "approval_event",
     "charter_event",
     "takeoff_clearance",

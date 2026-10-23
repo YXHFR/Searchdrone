@@ -592,6 +592,43 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
                 "synthetic",
             )
         }
+    elif event.type in ("candidate.new", "candidate.updated"):
+        # Only a high candidate waiting for a person wakes the AI; it sees the rest in the
+        # situation's candidates line. It never decides one: only a person confirms.
+        if d.get("priority_class") != "high" or d.get("state") not in ("ready", "assessing"):
+            return None
+        kind = "event.candidate"
+        body = {
+            k: d.get(k)
+            for k in (
+                "candidate_id",
+                "seq",
+                "priority_class",
+                "priority",
+                "state",
+                "lat",
+                "lon",
+                "sigma95_m",
+                "n_seen",
+                "n_in_view",
+                "engine",
+            )
+        }
+        body["detection_id"] = d.get("thumb_detection_id")
+        body["multi_frame"] = int(d.get("n_seen") or 0) >= 2
+    elif event.type == "candidate.decided":
+        # A person's decision, without who made it or their note.
+        decision = d.get("decision") or {}
+        kind = "event.candidate_decided"
+        body = {
+            "candidate_id": d.get("candidate_id"),
+            "seq": d.get("seq"),
+            "decision": decision.get("decision"),
+            "after": decision.get("after"),
+            "lat": d.get("lat"),
+            "lon": d.get("lon"),
+            "sigma95_m": d.get("sigma95_m"),
+        }
     if kind is None:
         return None
     return {

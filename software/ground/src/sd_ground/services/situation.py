@@ -94,6 +94,8 @@ def build_situation(
     annotations: list[Annotation],
     recent_events: list[Event],
     probability_line: str | None = None,
+    candidates_line: str | None = None,
+    finds_line: str | None = None,
 ) -> Situation:
     body = None if charter is None else charter.body
     home = None if body is None else LatLon(lat=body.home.lat, lon=body.home.lon)
@@ -147,4 +149,6 @@ def build_situation(
         alerts=[],
         recent_events=recent_events,
         probability_line=probability_line,
+        candidates_line=candidates_line,
+        finds_line=finds_line,
     )

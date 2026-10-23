@@ -27,8 +27,10 @@ def test_not_built(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_built_recipe_only_checks_its_keys(capsys: pytest.CaptureFixture[str]) -> None:
     assert just_args.main(["e2e", "runs=3", "offline=1"]) == 0
+    assert just_args.main(["e2e-search", "runs=2"]) == 0
     assert just_args.main(["accept", "phase=pre"]) == 0
     assert just_args.main(["perf", "runs=2", "gui=false", "eval=0"]) == 0
     assert capsys.readouterr().out == ""
     assert just_args.main(["accept", "runs=1"]) == 2
     assert just_args.main(["perf", "foo=1"]) == 2
+    assert just_args.main(["e2e-search", "offline=1"]) == 2

@@ -60,6 +60,7 @@ from sd_schemas.base import LatLon, new_id
 from sd_schemas.keepout import INSPECT_VIEW_DEG
 from sd_schemas.link import BBox, CropData, DetectorInfo, GeoDetectionMsg, PerceptionReport, Pose
 from sd_schemas.skills import SKILL_REGISTRY
+from sd_sim.search_world import seed_offset
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -261,14 +262,19 @@ async def test_inspect_detection_geometry(sim: Any, migrated_db: Any, tmp_path: 
         await sc.check_invariants()
 
 
-@pytest.mark.e2e  # just e2e: the emergency buttons
+@pytest.mark.search
 @pytest.mark.budget_s(600)
+@pytest.mark.parametrize(
+    "seed",
+    [pytest.param(1, marks=pytest.mark.e2e), 2, 3],  # seed 1 in just e2e, too
+)
 async def test_sk08_stop_and_fly_home_during_an_inspection(
-    sim: Any, migrated_db: Any, tmp_path: Path
+    sim: Any, migrated_db: Any, tmp_path: Path, seed: int
 ) -> None:
+    de, dn = seed_offset(seed, 15.0, "SK08")  # the person moves with the seed
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await airborne_for_inspection(sc)
-        det = await a_detection(sc, sc.at(*TARGET_ENU))
+        det = await a_detection(sc, sc.at(TARGET_ENU[0] + de, TARGET_ENU[1] + dn))
         Camera(sc)
         link = sc.r.onboard.link
 

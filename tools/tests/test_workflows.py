@@ -156,21 +156,27 @@ def test_sitl_jobs_and_aggregate() -> None:
     assert set(jobs) == {
         "changes",
         "sitl",
+        "sitl-search",
         "sitl-ok",
         "sitl-nightly",
+        "sitl-search-nightly",
+        "search-nightly-report",
         "sitl-nightly-gz",
         "sitl-e2e",
         "video",
         "e2e",
         "e2e-offline",
+        "e2e-search",
         "e2e-nightly",
     }
     assert jobs["sitl-ok"]["if"] == "always()"
-    assert set(jobs["sitl-ok"]["needs"]) == {"changes", "sitl", "video", "e2e", "e2e-offline"}
+    pr_jobs = {"sitl", "sitl-search", "video", "e2e", "e2e-offline", "e2e-search"}
+    assert set(jobs["sitl-ok"]["needs"]) == {"changes"} | pr_jobs
     assert "ci_aggregate.jq" in jobs["sitl-ok"]["steps"][-1]["run"]
-    for name in ("sitl", "e2e", "e2e-offline"):
+    for name in pr_jobs:
         assert jobs[name]["if"] == "needs.changes.outputs.run == 'true'", name
-    for name in ("sitl-nightly", "sitl-nightly-gz", "e2e-nightly"):
+    nightly = ("sitl-nightly", "sitl-search-nightly", "search-nightly-report", "sitl-nightly-gz")
+    for name in (*nightly, "e2e-nightly"):
         assert "schedule" in jobs[name]["if"] and "nightly" in jobs[name]["if"], name
     runs = {
         name: " ".join(str(s.get("run", "")) for s in jobs[name]["steps"])
@@ -184,6 +190,45 @@ def test_sitl_jobs_and_aggregate() -> None:
     assert tests[0]["timeout-minutes"] <= 35
     run = tests[0]["run"]
     assert "physics=builtin" in run and "brain=scripted" in run
+
+
+def _run_of(job: dict[str, Any], needle: str) -> dict[str, Any]:
+    found = [s for s in job["steps"] if needle in str(s.get("run", ""))]
+    assert len(found) == 1, needle
+    return found[0]
+
+
+def test_search_jobs() -> None:
+    doc = load(ROOT / ".github" / "workflows" / "sitl.yml")
+    env, jobs = doc["env"], doc["jobs"]
+    for name, shards, mode in (
+        ("sitl-search", "SEARCH_SHARDS", "mode=search "),
+        ("sitl-search-nightly", "SEARCH_NIGHTLY_SHARDS", "mode=search-nightly "),
+    ):
+        job = jobs[name]
+        assert job["strategy"]["matrix"]["shard"] == list(range(1, int(env[shards]) + 1)), name
+        step = _run_of(job, "ci-sitl")
+        assert step["timeout-minutes"] <= 35
+        assert mode in step["run"] and f'"shards=${shards}"' in step["run"], name
+        assert "physics=builtin" in step["run"] and "brain=scripted" in step["run"], name
+    assert "seeds=1-50" in _run_of(jobs["sitl-search-nightly"], "ci-sitl")["run"]
+    e2e = jobs["e2e-search"]
+    _run_of(e2e, "just e2e-search runs=1")
+    assert "GITHUB_STEP_SUMMARY" in _run_of(e2e, "search_report.md")["run"]
+    uploads = [str(s.get("with", {}).get("path", "")) for s in e2e["steps"]]
+    assert any("search_report.md" in p and "search_metrics.json" in p for p in uploads)
+    report = jobs["search-nightly-report"]
+    assert report["needs"] == "sitl-search-nightly"
+    assert report["if"].startswith("always() && ")
+    assert report["permissions"] == {"contents": "read", "actions": "read"}
+    _run_of(report, "sd_sim.eval_search aggregate")
+    nightly_uploads = [
+        s["with"]
+        for name in ("sitl-search-nightly", "search-nightly-report")
+        for s in jobs[name]["steps"]
+        if str(s.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert all(w["retention-days"] == 14 for w in nightly_uploads)
 
 
 def test_sitl_change_filter_fails_closed() -> None:

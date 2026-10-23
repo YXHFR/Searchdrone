@@ -8556,6 +8556,17 @@
         "brain_may_takeoff": {
           "type": "boolean"
         },
+        "candidates_line": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "charter": {
           "anyOf": [
             {
@@ -8571,6 +8582,17 @@
         },
         "fence_verified": {
           "type": "boolean"
+        },
+        "finds_line": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "home": {
           "anyOf": [

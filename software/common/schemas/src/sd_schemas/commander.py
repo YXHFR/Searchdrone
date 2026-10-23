@@ -123,6 +123,11 @@ class Situation(SdModel):
     # The probability map's sector line (POA left / covered / mean POD / PSR), or None
     # before the first map. Only a ranking: orders still go through the gate.
     probability_line: str | None = None
+    # The open search candidates (best first, with field matches, distance and the
+    # review counts) and the confirmed finds. Built by the ground from enum-like values
+    # only, never from free text. Only a person confirms a find.
+    candidates_line: str | None = None
+    finds_line: str | None = None
 
 
 class BrainMessage(SdModel):

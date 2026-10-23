@@ -61,6 +61,7 @@ from sd_search.client import GroundClient
 from sd_search.match.cascade import Cascade
 from sd_search.match.engines import CloudMatchEngine
 from sd_sim.report import measure
+from sd_sim.search_world import seed_offset
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -119,10 +120,13 @@ async def booked(sc: Scenario) -> list[tuple[str, str, str, float | None]]:
     return [(str(a), str(b), str(c), None if d is None else float(d)) for a, b, c, d in rows]
 
 
+@pytest.mark.search
 @pytest.mark.budget_s(480)
+@pytest.mark.parametrize("seed", [1, 2, 3])
 async def test_sk11_the_budget_runs_out_mid_search(
-    sim: Any, migrated_db: Any, tmp_path: Path
+    sim: Any, migrated_db: Any, tmp_path: Path, seed: int
 ) -> None:
+    de, dn = seed_offset(seed, 10.0, "SK11")  # the person moves with the seed
     async with scenario(sim, migrated_db, tmp_path) as sc:
         g = sc.r.g
         g.cloud_budget = CloudBudget(g, load_prices(ROOT), CloudUsageRepo(sc.r.flow.repo.engine))
@@ -132,7 +136,7 @@ async def test_sk11_the_budget_runs_out_mid_search(
         )
         assert res.status_code == 200, res.text
 
-        red = Plane(*sc.r.home).latlon(0.0, 50.0)
+        red = Plane(*sc.r.home).latlon(de, 50.0 + dn)
         people = GrowingPeople(sc, {"red": (red, _crop(RED))})
         cloud = FakeCloud(cost_usd=COST_USD)
         sender = asyncio.ensure_future(people.run())

@@ -900,6 +900,7 @@ class MissionFlow:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
         from sd_ground.services import probability_map as map_service
+        from sd_ground.services.candidate_lines import candidate_lines
         from sd_ground.services.situation import build_situation
 
         mission = await self.mission(mission_id)
@@ -911,6 +912,8 @@ class MissionFlow:
         )
         snapshot, _ = self.snapshot(mission.vehicle_id)
         clearance = self.clearances.get(mission.vehicle_id)
+        mav = self.mav_snapshot(mission.vehicle_id)
+        candidates_line, finds_line = await candidate_lines(self, mission_id, mav)
         return build_situation(
             mission=mission,
             charter=row,
@@ -920,7 +923,7 @@ class MissionFlow:
             now=self.now(),
             now_ms=self.now_ms(),
             latch=self.latch(mission.vehicle_id),
-            mav=self.mav_snapshot(mission.vehicle_id),
+            mav=mav,
             snapshot=snapshot,
             sdlink_up=self.sdlink_up(mission.vehicle_id),
             active_command=await commands_service.active_command(self, mission),
@@ -928,4 +931,6 @@ class MissionFlow:
             annotations=annotations,
             recent_events=events[-20:],
             probability_line=await map_service.probability_line(self, mission_id),
+            candidates_line=candidates_line,
+            finds_line=finds_line,
         )

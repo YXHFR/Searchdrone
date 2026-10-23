@@ -16,11 +16,13 @@ Script format (``simulation/scenarios/scripts/SCxx.yaml``)::
 ``ai: true`` on an action sends the parameters in the model's form through the adapter
 (``{path: pa-1}`` becomes the drawn path's points). ``fixture:<pin>`` under ``at``
 becomes ``lat``/``lon`` (``at: here`` is the drone's position in the turn's situation,
-``at: "event:find"`` the find that started a ``detection`` turn; ``say`` may use the
-event's fields, e.g. ``{name_sv}``); ``fixture:<area>`` under ``polygon`` becomes a
-GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}`` sends that charter from the
-fixture. ``delay_s`` delays the turn and ``fail: timeout | crash`` simulates a broken
-backend. Unknown keys refuse to load.
+``at: "event:find"`` the find that started a ``detection`` turn, ``at: "event:candidate"``
+the candidate that started a ``candidate`` turn; ``say`` may use the event's fields, e.g.
+``{name_sv}``); ``"event:<field>"`` under any other key takes that field of the event
+that started the turn (``detection_id: "event:detection_id"``); ``fixture:<area>`` under
+``polygon`` becomes a GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}`` sends
+that charter from the fixture. ``delay_s`` delays the turn and ``fail: timeout | crash``
+simulates a broken backend. Unknown keys refuse to load.
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ WHEN_FIELDS: dict[str, frozenset[str]] = {
     "operator_override": frozenset({"action", "via"}),
     "skill_event": frozenset({"skill", "status", "status_reason", "issuer_kind"}),
     "detection": frozenset({"label", "kind", "source"}),
+    "candidate": frozenset({"priority_class", "state", "engine", "multi_frame"}),
+    "candidate_decided": frozenset({"decision", "after"}),
     "approval_event": frozenset({"kind", "decision"}),
     "charter_event": frozenset({"status", "install_status"}),
     "takeoff_clearance": frozenset(),
@@ -95,6 +99,8 @@ class ScriptTurn(_Strict):
         "operator_override",
         "skill_event",
         "detection",
+        "candidate",
+        "candidate_decided",
         "approval_event",
         "charter_event",
         "takeoff_clearance",
@@ -230,8 +236,9 @@ def _resolve(
     event: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``fixture:<name>`` takes a pin or an area from the fixture, ``at: here`` the drone's
-    position, and ``event:find`` (only for ``at``) the position of the event that started
-    the turn (a find)."""
+    position, ``at: event:find`` / ``at: event:candidate`` the position of the event that
+    started the turn (a find or a candidate), and ``event:<field>`` under any other key
+    that field of the event."""
     out: dict[str, Any] = {}
     for key, value in params.items():
         if key == "at" and value == "here":
@@ -240,10 +247,18 @@ def _resolve(
                 raise ScriptError("at: here, men drönarens position är okänd")
             out["lat"], out["lon"] = v.lat, v.lon
             continue
-        if isinstance(value, str) and value == "event:find":
-            if key != "at" or not event or "lat" not in event or "lon" not in event:
-                raise ScriptError("event:find går bara att använda för at i en detection-tur")
+        if key == "at" and value in ("event:find", "event:candidate"):
+            if not event or event.get("lat") is None or event.get("lon") is None:
+                raise ScriptError(f"at: {value}, men händelsen som startade turen har ingen plats")
             out["lat"], out["lon"] = float(event["lat"]), float(event["lon"])
+            continue
+        if isinstance(value, str) and value.startswith("event:"):
+            field = value.removeprefix("event:")
+            if not event or event.get(field) is None:
+                raise ScriptError(
+                    f"{key}: {value}, men händelsen som startade turen saknar {field}"
+                )
+            out[key] = event[field]
             continue
         if isinstance(value, str) and value.startswith("fixture:"):
             name = value.removeprefix("fixture:")

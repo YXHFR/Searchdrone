@@ -44,6 +44,8 @@ RECIPES = [
     "demo",
     "sim-headless",
     "e2e",
+    "e2e-search",
+    "demo-search",
     "sim-setup",
     "maps-fetch",
     "bench-fetch",
@@ -163,6 +165,13 @@ def test_unknown_key_rejected() -> None:
     res = just("e2e", "foo=1")
     assert res.returncode == 2
     assert "okänd nyckel 'foo'" in res.stderr
+
+
+def test_e2e_search_checks_its_keys() -> None:
+    assert just("e2e-search", "runs=2", "dry=1").returncode == 0
+    res = just("e2e-search", "offline=1")
+    assert res.returncode == 2
+    assert "okänd nyckel 'offline'" in res.stderr
 
 
 def test_no_dotenv_export() -> None:

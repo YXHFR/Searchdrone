@@ -8,6 +8,24 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- The search chain end to end in the simulator: synthetic stills of a seeded scenario
+  world (`sd_sim.search_world`, `simulation/scenarios/SK*.yaml`), the detector and
+  image-model oracles (`det_oracle_v0`, `vlm_oracle_v0`), the product's perception and
+  keep-out cylinders, `sd-search`, `sd-brain` with a search script, and a scripted
+  operator in the panel that views a picture before it confirms and only runs with
+  `SD_SIM=1` (`sd_sim.operator`). SK01, SK03, SK04 and SK09 fly the whole chain and SK08,
+  SK11 and SK12 their parts, each for three fixed seeds, in pull request CI
+  (`sitl-search`, three shards) and must break no invariant (also: nothing confirmed
+  without a person, no candidate vanishes or goes back, no cylinder entered again). The
+  nightly `sitl-search-nightly` flies SK01-SK04 and SK06 with and without the
+  probability map over seeds 1-50 and checks the campaign's requirements with `python
+  -m sd_sim.eval_search aggregate`; its numbers are labelled "modellerat, ej uppmätt".
+  `just e2e-search` runs the search demo (SK01: the confirmed find, home, landing) and
+  writes `search_report.md`; `just demo-search` runs it locally with Gazebo physics.
+- `sd-brain` hears about candidates: the situation lists the high ones and the operator's
+  decisions, and the commander API's events `candidate` and `candidate_decided` wake a
+  turn (once per candidate); the AI can only fly over a candidate or ask, never confirm
+  or reject one.
 - The image bank for the person detector (`tools/bench`, README there): `just bench-fetch
   yes=1` downloads HERIDAL (CC BY 3.0) to `<data_dir>/datasets/` (the visible-light part
   of WiSARD is registered for measuring, and fetched once its archive's SHA-256 is pinned), checks each archive's size and SHA-256, unpacks only pictures

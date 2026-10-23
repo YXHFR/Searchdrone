@@ -37,6 +37,10 @@ env:
   SD_SIM__REQUIRE_SITL: "1"
   SHARDS: "6"
   WORKERS: "4"
+  # The search chain's own shards: 7 scenarios x 3 seeds in the pull request set, and
+  # 6 scenarios x 50 seeds of budget_s 480 at night (12 per shard, 24 minutes a worker).
+  SEARCH_SHARDS: "3"
+  SEARCH_NIGHTLY_SHARDS: "30"
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
@@ -201,6 +205,40 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  sitl-search:
+    # The search chain's pull request set (SK01-SK12, three fixed seeds each) in shards of
+    # its own, so the sitl shards' budget is unchanged.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *db
+      - *image
+      - *versions
+      - name: Search chain tests (builtin physics, scripted commander)
+        timeout-minutes: 35
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          just ci-sitl physics=builtin brain=scripted mode=search "shard=$SHARD" \
+            "shards=$SEARCH_SHARDS" "workers=$WORKERS"
+      - *summary
+      - *scan
+      - *results
+      - *logs
+
   video:
     # Live video and recordings (B1-09): the synthetic camera with the time code strip
     # (the builtin-physics picture) through the simulated radio and video_relay into
@@ -306,9 +344,53 @@ jobs:
       - *results
       - *logs
 
+  e2e-search:
+    # The search demo end to end (`just e2e-search runs=1`): its report goes to the job
+    # summary and, with the numbers, to an artifact of its own.
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *image
+      - *versions
+      - name: End-to-end search run (database from compose.yaml, SITL image)
+        timeout-minutes: 30
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+        run: just e2e-search runs=1
+      - *summary
+      - name: Search report in the job summary
+        if: always()
+        run: |
+          for f in runs/*/search_report.md; do
+            [ -f "$f" ] || continue
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - *scan
+      - *results
+      - name: Upload the search report
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-search-report
+          path: |
+            runs/**/search_report.md
+            runs/**/search_metrics.json
+            !runs/**/secrets/**
+          if-no-files-found: warn
+          retention-days: 14
+      - *logs
+
   sitl-ok:
     if: always()
-    needs: [changes, sitl, video, e2e, e2e-offline]
+    needs: [changes, sitl, sitl-search, video, e2e, e2e-offline, e2e-search]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -346,6 +428,88 @@ jobs:
       - *scan
       - *results
       - *logs
+
+  sitl-search-nightly:
+    # The search chain's nightly campaign: six scenarios over seeds 1-50. The shard count
+    # keeps every worker within the plugin's SHARD_LIMIT_S (25 minutes).
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    steps:
+      - *checkout
+      - *check-ref
+      - *setup
+      - *db
+      - *image
+      - *versions
+      - name: Nightly search campaign (seeds 1-50)
+        timeout-minutes: 35
+        env:
+          SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          just ci-sitl physics=builtin brain=scripted mode=search-nightly seeds=1-50 \
+            "shard=$SHARD" "shards=$SEARCH_NIGHTLY_SHARDS" "workers=$WORKERS"
+      - *summary
+      - *scan
+      - name: Upload the search metrics
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: search-nightly-${{ strategy.job-index }}
+          path: |
+            runs/*/search_metrics.json
+            runs/*/result.json
+            !runs/**/secrets/**
+          if-no-files-found: warn
+          retention-days: 14
+      - *logs
+
+  search-nightly-report:
+    # The campaign's numbers from every shard against the search requirements. Runs when
+    # shards failed too, so the report shows what there is.
+    needs: sitl-search-nightly
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - *checkout
+      - *setup
+      - name: Download every shard's metrics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh run download "$RUN_ID" --pattern 'search-nightly-*' --dir "$RUNNER_TEMP/search-nightly"
+      - name: Search requirements over all seeds
+        run: |
+          uv run --no-sync --package sd-sim python -m sd_sim.eval_search aggregate \
+            "$RUNNER_TEMP/search-nightly" runs/search-nightly
+      - name: Requirements in the job summary
+        if: always()
+        run: |
+          f=runs/search-nightly/search_requirements.md
+          if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+      - *scan
+      - name: Upload the requirements report
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: search-nightly-report
+          path: runs/search-nightly
+          if-no-files-found: warn
+          retention-days: 14
 
   e2e-nightly:
     # Ten rounds of the end-to-end set on the same commit (F-01: 10 of 10 for a release).

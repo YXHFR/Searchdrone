@@ -162,5 +162,7 @@
       }
     }
   ],
-  "probability_line": null
+  "probability_line": null,
+  "candidates_line": null,
+  "finds_line": null
 }

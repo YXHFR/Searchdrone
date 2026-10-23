@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sd_sim import paths
+from sd_sim import paths, testrun
 from sd_sim.pytest_plugin import (
     MARKERS,
     MAX_NODE_S,
@@ -70,8 +70,9 @@ def test_first_instance_moves_the_workers_up() -> None:
         worker_instance({"PYTEST_XDIST_WORKER": "gw7", "SD_SIM__FIRST_INSTANCE": "1"})
 
 
-def collected_budgets() -> list[tuple[str, float]]:
-    """Collect the CI selection with the plugin and read each test's budget."""
+def collected_budgets(mode: str = "pr", seeds: str = "") -> list[tuple[str, float]]:
+    """Collect a CI job's selection with the plugin and read each test's budget."""
+    env = {**os.environ, testrun.SEEDS_ENV: seeds} if seeds else None
     out = subprocess.run(
         [
             sys.executable,
@@ -82,13 +83,14 @@ def collected_budgets() -> list[tuple[str, float]]:
             "--collect-only",
             "-q",
             "-m",
-            "sitl and not gz and not llm and not nightly and not panel",
+            testrun.selection(mode, "builtin"),
             "-p",
             "no:cacheprovider",
             "simulation/tests",
             "simulation/sd_sim/tests/sitl",
         ],
         cwd=paths.REPO,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -114,6 +116,31 @@ def test_sitl_budget() -> None:
     budgets = collected_budgets()
     assert budgets, "inga SITL-tester samlades in"
     assert budget_problems(budgets, shards, workers) == [], (SHARD_LIMIT_S, budgets)
+
+
+@pytest.mark.parametrize(
+    ("job", "mode", "shards", "seeds"),
+    [
+        ("sitl-search", "search", "SEARCH_SHARDS", ""),
+        ("sitl-search-nightly", "search-nightly", "SEARCH_NIGHTLY_SHARDS", "1-50"),
+    ],
+)
+def test_search_budget(job: str, mode: str, shards: str, seeds: str) -> None:
+    """The search chain's sets fit the shards and workers of their own sitl.yml jobs."""
+    doc = yaml.safe_load(SITL_YML.read_text(encoding="utf-8"))
+    count, workers = int(doc["env"][shards]), int(doc["env"]["WORKERS"])
+    assert doc["jobs"][job]["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
+    budgets = collected_budgets(mode, seeds)
+    assert budgets, f"inga tester samlades in för mode={mode}"
+    assert budget_problems(budgets, count, workers) == [], (SHARD_LIMIT_S, budgets)
+
+
+def test_search_nightly_campaign_needs_30_shards() -> None:
+    """6 runs x 50 seeds of budget_s 600 on 4 workers: 29 shards leave 11 tests (three
+    runs, 30 minutes, on some worker) in some shards, 30 give each 10 (25 minutes)."""
+    campaign = [(f"t{i}", 600.0) for i in range(6 * 50)]
+    assert budget_problems(campaign, 29, 4)
+    assert budget_problems(campaign, 30, 4) == []
 
 
 def test_missing_budget_is_a_usage_error(tmp_path: Path) -> None:
