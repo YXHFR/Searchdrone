@@ -10,9 +10,11 @@ loop keeps going. The detector sources (a trained model among them) are built in
 worker thread when the task starts, after the executor and link run; if that fails,
 perception is off, the reason is logged and sent to the ground (``off``), and flying
 goes on. Only a reason code and the error's class go to the ground, never the error's
-text (it may hold paths on the on-board computer). A detector that fails on
-``FAIL_REPORT`` stills in a row is reported the same way, once. Kept stills (for a run's
-record) are capped at ``KEEP_MAX``, the oldest removed first.
+text (it may hold paths on the on-board computer). ``FAIL_REPORT`` stills failing in a
+row (the detector, the still or the telemetry) are reported the same way, once, as
+``stills_failing``; when a still then goes through again, the ground is told it is back
+(``on``). Kept stills (for a run's record) are capped at ``KEEP_MAX``, the oldest
+removed first.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -130,6 +132,7 @@ class PerceptionLoop:
         keep_dir: Path | None = None,
         env: dict[str, str] | None = None,
         off: Callable[[str, str], None] | None = None,
+        on: Callable[[], None] | None = None,
     ) -> None:
         self.source = source
         self.telemetry = telemetry
@@ -141,6 +144,7 @@ class PerceptionLoop:
         self.keep_dir = keep_dir
         self.env = env
         self.off = off  # (reason code, error class) when perception cannot work
+        self.on = on  # perception works again after ``stills_failing``
         self._failing = 0
         self._built: BuiltSources | None = None
         self.stats = PerceptionStats()
@@ -237,13 +241,15 @@ class PerceptionLoop:
                     t, now_ms = self.telemetry(), self.clock.monotonic_ms()
                     rate = max(rate, self.rate.update(t))
                     out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
-                    self._failing = 0
                     if out is not None:
                         self.send(out)
+                    if self._failing >= FAIL_REPORT and self.on is not None:
+                        self.on()
+                    self._failing = 0
             except Exception as exc:
                 self.stats.failed += 1
                 self._failing += 1
                 log.exception("perception failed on a still")
                 if self._failing == FAIL_REPORT and self.off is not None:
-                    self.off("detection_failing", type(exc).__name__)
+                    self.off("stills_failing", type(exc).__name__)
             await self.clock.sleep(self.period_s)

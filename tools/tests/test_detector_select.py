@@ -221,6 +221,7 @@ def test_the_real_register_is_valid() -> None:
         ({"sha256": "Z" * 64}, "SHA-256"),
         ({"kind": "other"}, "kind"),
         ({}, "family"),  # a ready detector needs family and input_px
+        ({"family": "yolox", "input_px": 640, "file": "../m.onnx"}, "Otillåtet filnamn"),
     ],
 )
 def test_a_wrong_register_row_is_refused(tmp_path: Path, over: dict[str, str], why: str) -> None:

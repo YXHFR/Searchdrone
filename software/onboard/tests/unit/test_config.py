@@ -114,8 +114,11 @@ def test_a_wrong_detector_model_never_stops_the_start(
     made = app._perception(loaded, SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
     assert made is not None and made.off is not None
     made.off("sources_failed", "ModelError")
+    assert made.on is not None
+    made.on()
     assert events == [
-        ("executor.perception_off", "warning", {"reason": "sources_failed", "error": "ModelError"})
+        ("executor.perception_off", "warning", {"reason": "sources_failed", "error": "ModelError"}),
+        ("executor.perception_on", "info", {}),
     ]
 
 

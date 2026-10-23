@@ -20,7 +20,17 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from bench.common import BenchError, data_dir, download, flag, parse_args, say, warn
+from bench.common import (
+    BenchError,
+    data_dir,
+    download,
+    flag,
+    inside,
+    parse_args,
+    safe_relpath,
+    say,
+    warn,
+)
 from check_licenses import license_allowed
 
 from sd_detect.onnx import MANIFEST_SCHEMA, MODEL_LICENCE
@@ -45,6 +55,7 @@ def load_models(path: Path = REGISTER) -> list[dict[str, Any]]:
             raise BenchError(f"models.toml: {row['name']} har okänd kind", 2)
         if row["kind"] == "detector" and not {"family", "input_px"} <= row.keys():
             raise BenchError(f"models.toml: {row['name']} saknar family eller input_px", 2)
+        safe_relpath(row["file"])  # stays inside <data>/models
     return rows
 
 
@@ -85,7 +96,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             say("Kör med yes=1 för att hämta.")
             return 2
         for r in rows:
-            dest = data / "models" / r["file"]
+            dest = inside(data / "models", safe_relpath(r["file"]))
             say(f"{r['name']}: {dest}")
             download(r["url"], dest, r["size_bytes"], r["sha256"])
             if r["kind"] == "detector":

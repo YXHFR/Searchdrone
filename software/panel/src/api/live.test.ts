@@ -249,6 +249,16 @@ describe("startLive", () => {
     const ui = useUiStore.getState();
     expect(ui.toasts.map((x) => x.text.slice(0, 26))).toEqual(["Persondetekteringen är avs"]);
     expect(ui.eventLog.map((x) => x.message.slice(0, 26))).toEqual(["Persondetekteringen är avs"]);
+    send({
+      seq: null,
+      topic: "vehicle",
+      type: "executor.perception_on",
+      vehicle_id: "sim-01",
+      data: {},
+    });
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toContain(
+      "Persondetekteringen fungerar igen ombord.",
+    );
     stop();
   });
 });

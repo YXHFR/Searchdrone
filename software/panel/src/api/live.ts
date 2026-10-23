@@ -261,6 +261,12 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       useUiStore.getState().toast(text);
       break;
     }
+    case "executor.perception_on": {
+      const text = i18next.t("perception.on");
+      useUiStore.getState().log("info", text);
+      useUiStore.getState().toast(text);
+      break;
+    }
     case "vehicle.action":
       actionBus.publish(e.data as ActionOutcome);
       break;

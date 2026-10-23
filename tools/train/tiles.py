@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from bench.common import inside, safe_relpath
 from bench.datasets import Image, image_root, load_register, read_index
 from bench.splits import load_split
 from PIL import Image as PILImage
@@ -130,7 +131,7 @@ def build_cache(
     rng = random.Random(seed)  # noqa: S311 - which empty tiles to keep, not a secret
     tiles: list[Tile] = []
     for n, (im, root) in enumerate(items, 1):
-        with PILImage.open(root / im.file) as pic:
+        with PILImage.open(inside(root, safe_relpath(im.file))) as pic:
             rgb = pic.convert("RGB")
         for (x0, y0, x1, y1), kept in cut(im.width, im.height, im.boxes, tile):
             if not kept and rng.random() >= empty_share:

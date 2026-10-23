@@ -12,6 +12,7 @@ import asyncio
 import io
 import json
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -362,11 +363,15 @@ class _BrokenModel:
     license = "Apache-2.0"
     source = "model"
 
+    broken = True
+
     def detect_still(self, still: Any) -> list[Any]:
-        raise RuntimeError("inference failed")
+        if self.broken:
+            raise RuntimeError("inference failed")
+        return []
 
 
-async def test_a_failing_model_only_counts_a_failed_still(tmp_path: Path) -> None:
+async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> None:
     write_still(tmp_path, "block0_h30")
     clock = MonotonicClock()
     captured = DirStillSource(tmp_path, synthetic=True).poll()
@@ -380,20 +385,35 @@ async def test_a_failing_model_only_counts_a_failed_still(tmp_path: Path) -> Non
         period_s=0.01,
         env={},
     )
-    reasons: list[tuple[str, str]] = []
-    lp.off = lambda reason, error: reasons.append((reason, error))
-    lp.built.sources["model"] = _BrokenModel()  # type: ignore[assignment]
+    told: list[tuple[str, str] | str] = []
+    lp.off = lambda reason, error: told.append((reason, error))
+    lp.on = lambda: told.append("on")
+    model = _BrokenModel()
+    lp.built.sources["model"] = model  # type: ignore[assignment]
     stop = asyncio.Event()
     task = asyncio.ensure_future(lp.run(stop))
-    for _ in range(1000):
-        if lp.stats.failed > FAIL_REPORT:
-            break
-        await asyncio.sleep(0.01)
+
+    async def until(done: Callable[[], bool]) -> None:
+        for _ in range(1000):
+            if done():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(told)
+
+    await until(lambda: lp.stats.failed > FAIL_REPORT)
     assert not task.done()  # keeps trying: a passing fault may clear
+    assert told == [("stills_failing", "RuntimeError")]  # told once
+    model.broken = False
+    await until(lambda: "on" in told)  # back: the ground is told
+    model.broken = True
+    await until(lambda: len(told) == 3)  # a new streak is told again
     stop.set()
     await asyncio.wait_for(task, 2)
-    assert lp.stats.failed > FAIL_REPORT and lp.stats.reports == 0
-    assert reasons == [("detection_failing", "RuntimeError")]  # told once
+    assert told == [
+        ("stills_failing", "RuntimeError"),
+        "on",
+        ("stills_failing", "RuntimeError"),
+    ]
 
 
 class _TooLarge:

@@ -141,6 +141,7 @@ def _perception(
         off=lambda reason, error: link.event(
             "executor.perception_off", "warning", {"reason": reason, "error": error}
         ),
+        on=lambda: link.event("executor.perception_on", "info", {}),
     )
 
 

@@ -49,6 +49,8 @@ from sd_detect.tiling import TiledDetector
 
 __all__ = [
     "MANIFEST_SCHEMA",
+    "MAX_MODEL_BYTES",
+    "MODEL_LICENCE",
     "Family",
     "ModelError",
     "ModelSource",

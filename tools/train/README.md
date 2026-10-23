@@ -179,5 +179,8 @@ them in the `train` job:
 just test-train
 ```
 
+Pyright does not check `families.py`, `train_detector.py`, `export_onnx.py` or
+`tests/`, because they need PyTorch, which the main environment does not have.
+
 The on-board side is `sd_detect.onnx` (`software/detector`). It needs only ONNX Runtime,
 never PyTorch.

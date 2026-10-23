@@ -2,7 +2,8 @@
 
 Only a guide for picking the epoch: the measure that counts is ``just bench-detector``
 on whole pictures (``tools/bench/metrics.py``), with the same matching rule (greedy,
-highest score first, IoU >= 0.5).
+highest score first, IoU >= 0.5). IoU and NMS are written out here on purpose: the
+training environment has PyTorch but not ``sd_detect``.
 """
 
 from __future__ import annotations

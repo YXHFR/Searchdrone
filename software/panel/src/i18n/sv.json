@@ -298,7 +298,8 @@
     "safety": "STOPP och FLYG HEM fungerar."
   },
   "perception": {
-    "off": "Persondetekteringen är avstängd ombord. Drönaren flyger vidare, men den letar inte efter personer i bilderna nu."
+    "off": "Persondetekteringen är avstängd ombord. Drönaren flyger vidare, men den letar inte efter personer i bilderna nu.",
+    "on": "Persondetekteringen fungerar igen ombord."
   },
   "linkDown": {
     "SDLINK_LOST": "Datalänken till drönaren är borta sedan {{s}} s. Drönaren gör klart steget, svävar från {{hold}} och flyger hem {{home}}. STOPP och FLYG HEM fungerar via flygkontrollen.",
