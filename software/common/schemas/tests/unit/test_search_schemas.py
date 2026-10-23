@@ -229,7 +229,8 @@ def test_profile_schema_roundtrip() -> None:
 
 
 def test_cloud_payload_fields() -> None:
-    """The whole approved profile goes as text, no image, and never data collection."""
+    """The approved description goes as text (only what an image can show), no image, and
+    never data collection."""
     profile = EXAMPLES[search.SearchProfile]
     assert isinstance(profile, search.SearchProfile)
     marker = "PÅHITTAD-MARKÖR-7f3a"
@@ -249,10 +250,15 @@ def test_cloud_payload_fields() -> None:
     assert "image_url" not in blob and "base64" not in blob
     text = parts[0]["text"].removeprefix("SÖKPROFIL: ")
     sent = json.loads(text)
-    expected = profile.model_dump(
-        mode="json", exclude={"approved_by", "approved_at", "mission_id", "profile_id"}
-    )
+    ground_only = {"approved_by", "approved_at", "mission_id", "profile_id"}
+    ground_only |= {"last_seen", "age_band", "height_band"}
+    expected = profile.model_dump(mode="json", exclude=ground_only)
+    for entry in [*expected["garments"], *expected["items"]]:
+        entry.pop("source", None)
+    if expected.get("hair"):
+        expected["hair"].pop("source", None)
     assert {k: v for k, v in sent.items() if k != "field_keys"} == expected
+    assert "source" not in text and "last_seen" not in text
     assert sent["field_keys"] == ["garment:0", "hair", "state"]
     assert marker in text and "dementia" in text
     assert "operator:" not in blob and str(profile.mission_id) not in blob

@@ -7417,9 +7417,41 @@
       "title": "SearchProfile",
       "type": "object"
     },
+    "SearchProfileApproval": {
+      "additionalProperties": false,
+      "description": "The pilot's approval from the card: the profile as corrected, and what the card\nshowed when they began. A newer version or proposal than that is refused (409), so an\napproval never covers AI content the pilot has not seen.",
+      "properties": {
+        "base_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile": {
+          "$ref": "#/$defs/SearchProfileDraft"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "profile",
+        "base_version"
+      ],
+      "title": "SearchProfileApproval",
+      "type": "object"
+    },
     "SearchProfileDraft": {
       "additionalProperties": false,
-      "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands are for the people searching, never for the matching.",
+      "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands, the place last seen and the sources are for the people\nsearching, never for the cloud matching.",
       "properties": {
         "age_band": {
           "anyOf": [

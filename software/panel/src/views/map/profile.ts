@@ -6,6 +6,7 @@ import type {
   Hair,
   Item,
   SearchProfile,
+  SearchProfileApproval,
   SearchProfileDraft,
 } from "@searchdrone/schemas";
 
@@ -133,7 +134,23 @@ export function emptyDraft(pin: { lat: number; lon: number }, now: Date): Editab
   };
 }
 
-/** The body the pilot's approval sends (``SearchProfileDraft``). */
+/** What the card showed when the pilot began: the approval names it, and the ground
+ * refuses it (409) when a newer version or proposal has arrived since. */
+export interface ProfileBase {
+  base_version: number;
+  proposal_id: string | null;
+}
+
+export function baseOf(s: ProfileState): ProfileBase {
+  return { base_version: s.approved?.profile_version ?? 0, proposal_id: s.proposal_id };
+}
+
+/** The body the pilot's approval sends (``SearchProfileApproval``). */
+export function toApproval(d: EditableDraft, base: ProfileBase): SearchProfileApproval {
+  return { profile: toBody(d), ...base };
+}
+
+/** The profile part of the approval (``SearchProfileDraft``). */
 export function toBody(d: EditableDraft): SearchProfileDraft {
   return {
     ...d,

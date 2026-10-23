@@ -2402,7 +2402,7 @@
       },
       "SearchProfileDraft": {
         "additionalProperties": false,
-        "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands are for the people searching, never for the matching.",
+        "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands, the place last seen and the sources are for the people\nsearching, never for the cloud matching.",
         "properties": {
           "age_band": {
             "anyOf": [

@@ -2516,11 +2516,25 @@ export interface SearchProfile {
   visual_notes?: string;
 }
 /**
+ * The pilot's approval from the card: the profile as corrected, and what the card
+ * showed when they began. A newer version or proposal than that is refused (409), so an
+ * approval never covers AI content the pilot has not seen.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileApproval".
+ */
+export interface SearchProfileApproval {
+  base_version: number;
+  profile: SearchProfileDraft;
+  proposal_id?: string | null;
+}
+/**
  * A search profile before the ground station numbers and stores it: what the AI
  * proposes from the chat, and what the pilot's card sends when they approve.
  *
  * The ground station sets the mission, the profile id, the version and who approved
- * it. The age and height bands are for the people searching, never for the matching.
+ * it. The age and height bands, the place last seen and the sources are for the people
+ * searching, never for the cloud matching.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SearchProfileDraft".

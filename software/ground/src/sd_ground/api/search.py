@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Request
 
-from sd_ground.api.deps import ApiStatusError, ground, repo_of
+from sd_ground.api.deps import ApiStatusError, IdPath, ground, repo_of
 from sd_ground.context import Ground
 from sd_ground.services import search_profile as profile_service
 from sd_schemas.search import SearchProfile
@@ -35,8 +35,6 @@ def require_search(request: Request) -> None:
 
 Search = Annotated[None, Depends(require_search)]
 G = Annotated[Ground, Depends(ground)]
-_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-IdPath = Annotated[str, Path(pattern=_UUID)]
 
 
 @router.get("/health")

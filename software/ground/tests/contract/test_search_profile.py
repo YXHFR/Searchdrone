@@ -102,9 +102,27 @@ async def propose(r: Rig, mid: str, body: dict[str, Any]) -> httpx.Response:
     )
 
 
-async def approve(r: Rig, mid: str, body: dict[str, Any], **headers: str) -> httpx.Response:
+async def seen(r: Rig, mid: str) -> tuple[int, str | None]:
+    """What the card shows: the approved version (0 for none) and the pending proposal."""
+    state = (await r.panel.get(f"/api/v1/missions/{mid}/search-profile")).json()
+    version = 0 if state["approved"] is None else state["approved"]["profile_version"]
+    return version, state["proposal_id"]
+
+
+async def approve(
+    r: Rig,
+    mid: str,
+    body: dict[str, Any],
+    *,
+    base: tuple[int, str | None] | None = None,
+    **headers: str,
+) -> httpx.Response:
+    """The card's approval, based on what it shows now unless ``base`` says otherwise."""
+    version, proposal_id = base if base is not None else await seen(r, mid)
     return await r.panel.post(
-        f"/api/v1/missions/{mid}/search-profile", json=body, headers=H | headers
+        f"/api/v1/missions/{mid}/search-profile",
+        json={"profile": body, "base_version": version, "proposal_id": proposal_id},
+        headers=H | headers,
     )
 
 
@@ -232,6 +250,27 @@ async def test_unapproved_profile_not_used(r: Rig) -> None:
             f"/search/v1/missions/{mid}/search-profile", headers={"Authorization": ""}
         )
         assert res.status_code == 401
+
+
+async def test_stale_approval_is_refused(r: Rig) -> None:
+    """An approval covers only what the card showed: a newer proposal or version is 409."""
+    mid = await r.open_mission()
+    assert (await propose(r, mid, draft(r, color="orange"))).status_code == 201
+    shown = await seen(r, mid)
+    # The operator adds a detail while the pilot edits: the AI proposes again.
+    assert (await propose(r, mid, draft(r, color="green"))).status_code == 201
+    res = await approve(r, mid, draft(r), base=shown)
+    assert res.status_code == 409 and res.json()["code"] == "PROFILE_STALE"
+    # A new profile of the pilot's own does not skip a pending proposal either.
+    res = await approve(r, mid, draft(r), base=(0, None))
+    assert res.status_code == 409
+    assert (await approve(r, mid, draft(r))).status_code == 201
+    # Another approval in between: the old base is stale.
+    res = await approve(r, mid, draft(r), base=(0, None))
+    assert res.status_code == 409
+    assert (await approve(r, mid, draft(r), base=(1, None))).status_code == 201
+    state = (await r.panel.get(f"/api/v1/missions/{mid}/search-profile")).json()
+    assert state["approved"]["profile_version"] == 2
 
 
 async def test_closed_mission_takes_no_profile(r: Rig) -> None:

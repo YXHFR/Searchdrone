@@ -48,8 +48,10 @@ def test_pin_and_hours_become_last_seen() -> None:
 
 def test_operator_coordinates_are_kept() -> None:
     s = situation("draft_p1.json")
-    prop = profile_proposal(_args(last_seen={"lat": 59.1, "lon": 17.2, "hours_ago": 0.5}), s, NOW)
-    assert (prop.profile.last_seen.lat, prop.profile.last_seen.lon) == (59.1, 17.2)
+    prop = profile_proposal(
+        _args(last_seen={"lat": -35.36, "lon": 149.16, "hours_ago": 0.5}), s, NOW
+    )
+    assert (prop.profile.last_seen.lat, prop.profile.last_seen.lon) == (-35.36, 149.16)
 
 
 @pytest.mark.parametrize(
@@ -117,6 +119,10 @@ async def test_loop_proposes_and_logs_no_profile_text(caplog: pytest.LogCaptureF
     tool_result = rt.calls[1]["messages"][-1]
     assert tool_result["role"] == "tool" and "proposal_id" in tool_result["content"]
     assert MARKER not in caplog.text
+    # The decision log keeps the profile call's field names, never its values.
+    calls = [c for d in fg.decisions for c in d.tool_calls if c["name"] == PROFILE_TOOL]
+    assert calls and "free_text" in calls[0]["arguments"]
+    assert MARKER not in json.dumps([d.tool_calls for d in fg.decisions])
 
 
 async def test_one_proposal_per_turn() -> None:

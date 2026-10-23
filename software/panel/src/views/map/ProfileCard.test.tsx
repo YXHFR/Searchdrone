@@ -3,7 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SearchProfile, Session } from "../../api/types";
 import { useMissionStore } from "../../state/missionStore";
 import { useSessionStore } from "../../state/sessionStore";
-import { emptyDraft, type ProfileState, shown, toBody, toEditable } from "./profile";
+import {
+  baseOf,
+  emptyDraft,
+  type ProfileState,
+  shown,
+  toApproval,
+  toBody,
+  toEditable,
+} from "./profile";
 
 const PROPOSAL: SearchProfile = {
   profile_id: "p1",
@@ -14,7 +22,7 @@ const PROPOSAL: SearchProfile = {
   subject_category: "dementia",
   garments: [{ part: "outer", colors: ["red"], certainty: "certain" }],
   items: [],
-  last_seen: { lat: 59.1, lon: 17.1, at_utc: "2026-01-01T10:00:00Z" },
+  last_seen: { lat: -35.36, lon: 149.16, at_utc: "2026-01-01T10:00:00Z" },
   free_text: "",
 };
 
@@ -78,6 +86,19 @@ describe("profile data", () => {
     expect(body.garments).toEqual(PROPOSAL.garments);
   });
 
+  it("the approval names what the card showed", () => {
+    const s: ProfileState = {
+      approved: null,
+      proposal: PROPOSAL,
+      proposal_id: "x",
+      proposed_by: "ai",
+    };
+    expect(toApproval(toEditable(PROPOSAL), baseOf(s))).toMatchObject({
+      base_version: 0,
+      proposal_id: "x",
+    });
+  });
+
   it("a new profile starts empty at the pin", () => {
     const d = emptyDraft({ lat: 1, lon: 2 }, new Date("2026-01-01T00:00:00Z"));
     expect(d.garments).toEqual([]);
@@ -97,8 +118,13 @@ describe("ProfileCard", () => {
     expect(screen.getByTestId("profile-free-warning").textContent).toContain("molnmodellen");
     fireEvent.click(screen.getByTestId("profile-approve"));
     await waitFor(() => expect(posted).toHaveLength(1));
-    const body = posted[0]?.body as { garments: { colors: string[]; certainty: string }[] };
-    expect(body.garments[0]).toMatchObject({ colors: ["blue"], certainty: "unsure" });
+    const body = posted[0]?.body as {
+      profile: { garments: { colors: string[]; certainty: string }[] };
+      base_version: number;
+      proposal_id: string | null;
+    };
+    expect(body.profile.garments[0]).toMatchObject({ colors: ["blue"], certainty: "unsure" });
+    expect(body).toMatchObject({ base_version: 0, proposal_id: "x" });
     expect(posted[0]?.path).toBe("/api/v1/missions/mission-1/search-profile");
   });
 
@@ -109,6 +135,24 @@ describe("ProfileCard", () => {
     expect((color as HTMLSelectElement).disabled).toBe(true);
     expect(screen.queryByTestId("profile-approve")).toBeNull();
     expect(screen.queryByTestId("profile-add-garment")).toBeNull();
+  });
+
+  it("keeps the pilot's edits when a new proposal arrives", async () => {
+    act(() => useSessionStore.getState().set({ status: "ready", session: session("pilot") }));
+    render(<ProfileCard missionId="mission-1" />);
+    const color = await screen.findByTestId("profile-garment-0-color");
+    fireEvent.change(color, { target: { value: "blue" } });
+    state = {
+      approved: null,
+      proposal: { ...PROPOSAL, garments: [] },
+      proposal_id: "y",
+      proposed_by: "ai",
+    };
+    act(() => useMissionStore.getState().bumpProfile());
+    await screen.findByTestId("profile-newer");
+    expect((screen.getByTestId("profile-garment-0-color") as HTMLSelectElement).value).toBe("blue");
+    fireEvent.click(screen.getByTestId("profile-show-newer"));
+    await waitFor(() => expect(screen.queryByTestId("profile-garment-0")).toBeNull());
   });
 
   it("fetches again on a search_profile event", async () => {

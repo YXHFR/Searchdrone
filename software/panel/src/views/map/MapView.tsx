@@ -24,7 +24,6 @@ import { useIsPilot, useSessionStore } from "../../state/sessionStore";
 import { useShellStore } from "../../state/shellStore";
 import { useUiStore } from "../../state/uiStore";
 import { useTheme } from "../../theme/theme";
-import { ProfileCard } from "../chat/ProfileCard";
 import type { ViewProps } from "../registry";
 import { FindCard } from "./FindCard";
 import {
@@ -48,6 +47,7 @@ import {
   targetData,
   trackData,
 } from "./mapData";
+import { ProfileCard } from "./ProfileCard";
 import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";
 import { usePathOverlay } from "./pathOverlay";
 

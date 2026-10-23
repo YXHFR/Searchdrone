@@ -3601,9 +3601,42 @@
         "title": "SearchProfile",
         "type": "object"
       },
+      "SearchProfileApproval": {
+        "additionalProperties": false,
+        "description": "The pilot's approval from the card: the profile as corrected, and what the card\nshowed when they began. A newer version or proposal than that is refused (409), so an\napproval never covers AI content the pilot has not seen.",
+        "properties": {
+          "base_version": {
+            "minimum": 0.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/SearchProfileDraft"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal Id"
+          }
+        },
+        "required": [
+          "profile",
+          "base_version"
+        ],
+        "title": "SearchProfileApproval",
+        "type": "object"
+      },
       "SearchProfileDraft": {
         "additionalProperties": false,
-        "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands are for the people searching, never for the matching.",
+        "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands, the place last seen and the sources are for the people\nsearching, never for the cloud matching.",
         "properties": {
           "age_band": {
             "anyOf": [
@@ -6356,7 +6389,7 @@
         "summary": "Get Search Profile"
       },
       "post": {
-        "description": "Approve profile: only a pilot's click. The profile as sent becomes the next version.",
+        "description": "Approve profile: only a pilot's click in the panel. The profile as sent becomes the\nnext version; 409 when a newer version or proposal arrived since the card showed it.",
         "operationId": "post_search_profile_api_v1_missions__mission_id__search_profile_post",
         "parameters": [
           {
@@ -6374,7 +6407,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchProfileDraft"
+                "$ref": "#/components/schemas/SearchProfileApproval"
               }
             }
           },

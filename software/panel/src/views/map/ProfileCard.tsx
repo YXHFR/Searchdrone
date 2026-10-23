@@ -12,6 +12,7 @@ import { useMissionStore } from "../../state/missionStore";
 import { useIsPilot } from "../../state/sessionStore";
 import { useUiStore } from "../../state/uiStore";
 import {
+  baseOf,
   CATEGORIES,
   CERTAINTIES,
   COLORS,
@@ -22,10 +23,11 @@ import {
   MAX_GARMENTS,
   MAX_ITEMS,
   PARTS,
+  type ProfileBase,
   type ProfileState,
   pinPoint,
   shown,
-  toBody,
+  toApproval,
   toEditable,
   VISUAL_NOTES_MAX,
 } from "./profile";
@@ -82,24 +84,41 @@ export function ProfileCard({ missionId }: { missionId: string }) {
   );
   const [state, setState] = useState<ProfileState | null>(null);
   const [draft, setDraft] = useState<EditableDraft | null>(null);
+  // What the draft was built from: the approval names it, so the ground refuses it when
+  // something newer arrived. While the pilot edits, a new event never replaces the draft.
+  const [base, setBase] = useState<ProfileBase>({ base_version: 0, proposal_id: null });
+  const [dirty, setDirty] = useState(false);
+  const [newer, setNewer] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const s = await api<ProfileState>(paths.searchProfile(missionId));
-      setState(s);
-      const { profile } = shown(s);
-      setDraft(profile ? toEditable(profile) : null);
-    } catch {
-      setError(t("profile.loadFailed"));
-    }
-  }, [missionId, t]);
+  const apply = useCallback((s: ProfileState) => {
+    setState(s);
+    setBase(baseOf(s));
+    const { profile } = shown(s);
+    setDraft(profile ? toEditable(profile) : null);
+    setDirty(false);
+    setNewer(false);
+  }, []);
 
-  // On open, and on every search_profile event (a new proposal or approval).
+  const load = useCallback(
+    async (keepEdits: boolean) => {
+      try {
+        const s = await api<ProfileState>(paths.searchProfile(missionId));
+        if (keepEdits) setNewer(true);
+        else apply(s);
+      } catch {
+        setError(t("profile.loadFailed"));
+      }
+    },
+    [missionId, t, apply],
+  );
+
+  // On open, and on every search_profile event (a new proposal or approval). The
+  // pilot's unsaved corrections stay; the card says something newer is waiting.
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev is the refetch signal
   useEffect(() => {
-    void load();
+    void load(dirty);
   }, [load, rev]);
 
   const { profile, pending } = shown(state);
@@ -112,11 +131,12 @@ export function ProfileCard({ missionId }: { missionId: string }) {
     try {
       await api<SearchProfile>(paths.searchProfile(missionId), {
         method: "POST",
-        body: toBody(draft),
+        body: toApproval(draft, base),
       });
       useUiStore.getState().toast(t("profile.approvedToast"));
-      await load();
+      await load(false);
     } catch (e) {
+      if (e instanceof HttpError && e.code === "PROFILE_STALE") setNewer(true);
       setError(e instanceof HttpError ? e.message : t("profile.failed"));
     } finally {
       setBusy(false);
@@ -124,7 +144,9 @@ export function ProfileCard({ missionId }: { missionId: string }) {
   }
 
   function patch(p: Partial<EditableDraft>): void {
-    if (draft) setDraft({ ...draft, ...p });
+    if (!draft) return;
+    setDraft({ ...draft, ...p });
+    setDirty(true);
   }
 
   const status = !profile
@@ -141,6 +163,22 @@ export function ProfileCard({ missionId }: { missionId: string }) {
           {status}
         </span>
       </header>
+      {newer ? (
+        <div className="profile-newer" role="status" data-testid="profile-newer">
+          <p className="warn">{t("profile.newer")}</p>
+          <button
+            type="button"
+            className="btn btn-small btn-outline"
+            data-testid="profile-show-newer"
+            onClick={() => {
+              setError(null);
+              void load(false);
+            }}
+          >
+            {t("profile.showNewer")}
+          </button>
+        </div>
+      ) : null}
       {!draft ? (
         isPilot && pins.length > 0 ? (
           <button
@@ -149,7 +187,10 @@ export function ProfileCard({ missionId }: { missionId: string }) {
             data-testid="profile-new"
             onClick={() => {
               const pin = pins[0];
-              if (pin) setDraft(emptyDraft(pin, new Date()));
+              if (pin) {
+                setDraft(emptyDraft(pin, new Date()));
+                setDirty(true);
+              }
             }}
           >
             <Plus aria-hidden="true" size={16} />

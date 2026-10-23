@@ -257,6 +257,12 @@
 .profile-card .warn {
   color: var(--c-warn);
 }
+.profile-newer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
 .profile-form {
   display: flex;
   flex-direction: column;

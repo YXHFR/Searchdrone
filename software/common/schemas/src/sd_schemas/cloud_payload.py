@@ -3,9 +3,10 @@
 Only an approved profile is ever sent: a proposal the pilot has not approved matches
 nothing. With a network and the cloud in use, the whole description goes as text, free
 text and health details included, because they say where and how to search; nothing
-names who the person is, since the profile has no such field. Who approved it and the
-mission's id stay on the ground. Every request asks the provider not to collect data
-(``provider.data_collection = "deny"``).
+names who the person is, since the profile has no such field. What the image cannot
+show stays on the ground: who approved it, the mission's id, where and when the person
+was last seen, who said each detail (``source``) and the age and height bands. Every
+request asks the provider not to collect data (``provider.data_collection = "deny"``).
 
 This module holds the profile part and the request's fixed fields. The matching service
 adds the image crops (at most three, through its own image policy) and the answer
@@ -15,7 +16,7 @@ format; until then the request carries no image at all.
 from __future__ import annotations
 
 import json
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from sd_schemas.search import SearchProfile
 
@@ -23,8 +24,31 @@ __all__ = ["DATA_COLLECTION", "UnapprovedProfileError", "build_cloud_payload", "
 
 DATA_COLLECTION: Final = "deny"
 
-# Kept on the ground: who approved it, and ids that say nothing about what to look for.
-_GROUND_ONLY: Final = frozenset({"approved_by", "approved_at", "mission_id", "profile_id"})
+# Kept on the ground: who approved it, ids, the place last seen (often a home) and the
+# bands; none of it is visible in an image crop.
+_GROUND_ONLY: Final = frozenset(
+    {
+        "approved_by",
+        "approved_at",
+        "mission_id",
+        "profile_id",
+        "last_seen",
+        "age_band",
+        "height_band",
+    }
+)
+# Who said a detail may name a relative or a witness: never sent.
+_SOURCE: Final = "source"
+
+
+def _without_sources(value: Any) -> Any:
+    if isinstance(value, dict):
+        d = cast("dict[str, Any]", value)
+        return {k: _without_sources(v) for k, v in d.items() if k != _SOURCE}
+    if isinstance(value, list):
+        return [_without_sources(v) for v in cast("list[Any]", value)]
+    return value
+
 
 _SYSTEM: Final = (
     "You compare a cropped aerial image of a possible person with a search profile. "
@@ -42,7 +66,7 @@ def profile_text(profile: SearchProfile) -> str:
     """The whole profile as JSON text, with the field key of every assessable field."""
     if not profile.approved:
         raise UnapprovedProfileError("only an approved profile is sent to the cloud model")
-    body = profile.model_dump(mode="json", exclude=set(_GROUND_ONLY))
+    body = _without_sources(profile.model_dump(mode="json", exclude=set(_GROUND_ONLY)))
     body["field_keys"] = profile.field_keys
     return json.dumps(body, ensure_ascii=False, sort_keys=True)
 

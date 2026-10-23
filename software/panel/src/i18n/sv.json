@@ -683,6 +683,8 @@
     "pilotApproves": "Bara piloten kan ändra och godkänna sökprofilen.",
     "failed": "Sökprofilen kunde inte sparas.",
     "loadFailed": "Sökprofilen kunde inte hämtas.",
+    "newer": "Ett nyare förslag eller en ny version har kommit. Dina ändringar är inte sparade.",
+    "showNewer": "Visa det nya",
     "categories": {
       "dementia": "Demens",
       "hiker": "Vandrare",

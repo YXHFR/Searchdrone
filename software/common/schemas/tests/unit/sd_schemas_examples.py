@@ -426,6 +426,15 @@ def _search_examples() -> list[BaseModel]:
             ),
         ),
         s.SearchProfileProposalResult(proposal_id=OTHER),
+        s.SearchProfileApproval(
+            profile=s.SearchProfileDraft(
+                subject_category="hiker",
+                garments=[garment],
+                last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            ),
+            base_version=1,
+            proposal_id=OTHER,
+        ),
         s.SearchProfileState(
             proposal=s.SearchProfile(
                 profile_id=PROFILE,

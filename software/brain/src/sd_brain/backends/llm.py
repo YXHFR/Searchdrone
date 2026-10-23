@@ -41,6 +41,7 @@ from sd_brain.runtime.base import (
     ModelReply,
     ModelRuntime,
     ModelTimeoutError,
+    RawToolCall,
     Sampling,
 )
 from sd_brain.state_view import current_limits
@@ -52,6 +53,7 @@ from sd_brain.toolcall_parse import (
     strip_think,
     truncate,
 )
+from sd_brain.tools import PROFILE_TOOL
 from sd_brain.turn import (
     AiAction,
     FailedProposal,
@@ -74,6 +76,19 @@ REPEAT_FAIL_TEXT = (
 # Faults that come from the request itself (more than the mission allows): the model may
 # answer them with a text that explains the limit instead of another draft.
 REQUEST_LIMIT_CODES = frozenset({"CHARTER_EXCEEDS_LIMITS", "AREA_BEYOND_RANGE"})
+
+
+def _logged_call(c: RawToolCall) -> dict[str, Any]:
+    """A tool call as the decision log keeps it. A search profile's values may hold health
+    details, so only its field names are kept."""
+    if c.name != PROFILE_TOOL:
+        return {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
+    try:
+        args = json.loads(c.arguments_json)
+    except ValueError:
+        args = None
+    keys = sorted(args) if isinstance(args, dict) else []
+    return {"name": c.name, "arguments": json.dumps({"redacted": keys})}
 
 
 def _assistant_message(reply: ModelReply) -> dict[str, Any]:
@@ -238,10 +253,7 @@ class LlmCommander:
                 diag.backend = "cloud"
             text = strip_think(reply.content)
             calls, err = parse_tool_calls(reply, turn.tools, self.reg, turn.situation, lim, said)
-            diag.tool_calls.extend(
-                {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
-                for c in reply.tool_calls
-            )
+            diag.tool_calls.extend(_logged_call(c) for c in reply.tool_calls)
             draft_err = err if err is not None and err.kind == "proposal" else None
             kinds = {t.name: t.kind for t in turn.tools}
             if (

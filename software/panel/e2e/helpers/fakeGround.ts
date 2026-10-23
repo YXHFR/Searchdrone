@@ -486,10 +486,20 @@ export class FakeGround {
     if (k === `POST ${ms}/search-profile`) {
       if (this.session?.role !== "pilot")
         return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
+      const body = req.body as { profile: object; base_version: number; proposal_id: unknown };
+      const current = Number(this.profile.approved?.profile_version ?? 0);
+      if (
+        body.base_version !== current ||
+        (this.profile.proposal_id ?? null) !== (body.proposal_id ?? null)
+      )
+        return {
+          status: 409,
+          body: { code: "PROFILE_STALE", detail_sv: "Sökprofilen har ändrats." },
+        };
       const before = this.profile.approved ?? this.profile.proposal;
-      const version = Number(this.profile.approved?.profile_version ?? 0) + 1;
+      const version = current + 1;
       const approved = {
-        ...(req.body as object),
+        ...body.profile,
         profile_id: String(before?.profile_id ?? "PR1"),
         profile_version: version,
         mission_id: MISSION,

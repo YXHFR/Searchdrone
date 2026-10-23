@@ -36,6 +36,7 @@ __all__ = [
     "LastSeen",
     "PriorityClass",
     "SearchProfile",
+    "SearchProfileApproval",
     "SearchProfileDraft",
     "SearchProfileProposal",
     "SearchProfileProposalResult",
@@ -108,7 +109,8 @@ class SearchProfileDraft(SdModel):
     proposes from the chat, and what the pilot's card sends when they approve.
 
     The ground station sets the mission, the profile id, the version and who approved
-    it. The age and height bands are for the people searching, never for the matching.
+    it. The age and height bands, the place last seen and the sources are for the people
+    searching, never for the cloud matching.
     """
 
     subject_category: SubjectCategory
@@ -169,6 +171,16 @@ class SearchProfileProposal(SdModel):
     """The AI's proposal from the chat. It changes nothing until a pilot approves it."""
 
     profile: SearchProfileDraft
+
+
+class SearchProfileApproval(SdModel):
+    """The pilot's approval from the card: the profile as corrected, and what the card
+    showed when they began. A newer version or proposal than that is refused (409), so an
+    approval never covers AI content the pilot has not seen."""
+
+    profile: SearchProfileDraft
+    base_version: int = Field(ge=0)  # the approved version the card showed, 0 for none
+    proposal_id: Id | None = None  # the proposal the card showed, if any
 
 
 class SearchProfileProposalResult(SdModel):

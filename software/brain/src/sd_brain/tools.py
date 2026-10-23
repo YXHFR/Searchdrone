@@ -329,6 +329,8 @@ def profile_tool(s: Situation | None = None) -> ToolSpec:
     params.pop("title", None)
     return ToolSpec(
         name=PROFILE_TOOL,
+        # "read": it runs inside the turn and its result goes back to the model. It only
+        # stores a proposal; nothing is used until the pilot approves it.
         kind="read",
         openai={
             "type": "function",

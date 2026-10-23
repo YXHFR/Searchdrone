@@ -67,7 +67,7 @@ from sd_brain.memory import (
     to_update,
     with_changes,
 )
-from sd_brain.profile_draft import ProfileArgsError, profile_proposal
+from sd_brain.profile_draft import profile_proposal
 from sd_brain.runtime.fallback import EngineName
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.sv import height_m
@@ -1392,9 +1392,7 @@ class _ReadTools:
                     "proposal_id": pid,
                     "status": "proposed: the pilot corrects and approves it on the profile card",
                 }
-        except ProfileArgsError as exc:
-            return {"error": truncate(str(exc), TOOL_RESULT_MAX_CHARS)}
-        except (GroundError, AdaptError, ValueError, KeyError) as exc:
+        except (GroundError, AdaptError, ValueError, KeyError) as exc:  # ProfileArgsError too
             return {"error": truncate(str(exc), TOOL_RESULT_MAX_CHARS)}
         return {"error": f"unknown tool {name}"}
 

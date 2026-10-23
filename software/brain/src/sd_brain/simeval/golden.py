@@ -73,7 +73,8 @@ def _clean_reply(raw: Mapping[str, Any]) -> dict[str, Any]:
     return {"content": raw.get("content"), "tool_calls": calls}
 
 
-def _refuse_secrets(replies: list[dict[str, Any]], env: Mapping[str, str]) -> None:
+def refuse_secrets(replies: list[dict[str, Any]], env: Mapping[str, str]) -> None:
+    """Raise :class:`GoldenError` when recorded answers hold a key or personal data."""
     text = json.dumps(replies, ensure_ascii=False)
     for name in SECRET_ENV:
         value = env.get(name, "").strip()
@@ -82,11 +83,6 @@ def _refuse_secrets(replies: list[dict[str, Any]], env: Mapping[str, str]) -> No
     for pat in _LOOKS_SECRET:
         if pat.search(text):
             raise GoldenError("svaren innehåller något som liknar en nyckel eller personuppgift")
-
-
-def refuse_secrets(replies: list[dict[str, Any]], env: Mapping[str, str]) -> None:
-    """Raise :class:`GoldenError` when recorded answers hold a key or personal data."""
-    _refuse_secrets(replies, env)
 
 
 def export_golden(record: Mapping[str, Any], name: str, env: Mapping[str, str]) -> dict[str, Any]:
@@ -100,7 +96,7 @@ def export_golden(record: Mapping[str, Any], name: str, env: Mapping[str, str]) 
     if not raw:
         raise GoldenError("flygningen saknar modellens svar")
     replies = [_clean_reply(r) for r in raw]
-    _refuse_secrets(replies, env)
+    refuse_secrets(replies, env)
     return {
         "schema": GOLDEN_SCHEMA,
         "id": name,

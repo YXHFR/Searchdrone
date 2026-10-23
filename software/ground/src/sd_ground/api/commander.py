@@ -25,11 +25,10 @@ from fastapi import (
     Response,
     WebSocket,
 )
-from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
-from sd_ground.api.deps import ApiStatusError, ground, repo_of
+from sd_ground.api.deps import ApiStatusError, IdPath, ground, repo_of
 from sd_ground.api.tasks import until_first_done
 from sd_ground.bus import BusEvent
 from sd_ground.context import Ground
@@ -83,10 +82,6 @@ BRAIN_ISSUER = "brain:ground"
 log = get_logger("sd_ground.commander")
 
 router = APIRouter(prefix="/commander/v1")
-
-_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-IdPath = Annotated[str, PathParam(pattern=_UUID)]
-VehiclePath = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9-]{2,31}$")]
 
 
 def _uuid_or_none(value: object) -> str | None:
