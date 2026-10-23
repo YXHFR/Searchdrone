@@ -4,14 +4,14 @@
 .cand-review {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
   max-width: 760px;
   min-width: 0;
 }
 /* On a phone the sheet's peek covers the stage's foot: the last button scrolls above it. */
 .shell[data-vp="phone"] .cand-view,
 .shell[data-vp="phone"] .cand-review {
-  padding-bottom: calc(var(--sheet-peek) + 12px);
+  padding-bottom: calc(var(--sheet-peek) + var(--sp-3));
 }
 .cand-view p,
 .cand-review p {
@@ -31,19 +31,19 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 .cand-open {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-3);
   width: 100%;
-  padding: 8px;
+  padding: var(--sp-2);
   text-align: left;
   font: inherit;
   color: var(--c-text);
   background: var(--c-panel-2);
   border: 1px solid var(--c-line);
-  border-radius: var(--r-3);
+  border-radius: var(--r);
   cursor: pointer;
 }
 .cand-open:hover,
@@ -73,7 +73,7 @@
   width: 72px;
   height: 72px;
   object-fit: cover;
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   background: var(--c-media);
 }
 .cand-nothumb {
@@ -85,17 +85,17 @@
 .cand-main {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 .cand-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 .cand-k {
-  font-size: var(--fs-hud);
+  font-size: var(--fs-title);
 }
 .cand-prio {
   font-size: var(--fs-small);
@@ -112,7 +112,7 @@
 .cand-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--sp-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -134,7 +134,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .cand-review-head h2,
 .cand-review h3 {
@@ -142,28 +142,28 @@
 }
 .cand-review h3 {
   font-size: var(--fs-body);
-  margin-bottom: 6px;
+  margin-bottom: var(--sp-2);
 }
 .cand-pics {
   list-style: none;
-  margin: 0 0 6px;
+  margin: 0 0 var(--sp-2);
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .cand-pics li {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--sp-1);
   font-size: var(--fs-small);
 }
 .cand-pics img {
   width: 128px;
   height: 128px;
   object-fit: cover;
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   background: var(--c-media);
 }
 .cand-large-img {
@@ -171,27 +171,27 @@
   width: 100%;
   max-height: 60dvh;
   object-fit: contain;
-  margin-bottom: 10px;
+  margin-bottom: var(--sp-3);
   background: var(--c-media);
 }
 .cand-ai {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 .cand-ai-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
   border: 1px solid var(--c-line);
-  border-radius: var(--r-3);
+  border-radius: var(--r);
 }
 .cand-note {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
   font-size: var(--fs-small);
   color: var(--c-mute);
 }
@@ -200,19 +200,19 @@
   color: var(--c-text);
   background: var(--c-input);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
-  padding: 6px;
+  border-radius: var(--r);
+  padding: 6px var(--sp-2);
   resize: vertical;
 }
 .cand-decide {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .cand-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 /* Bekräfta and Inte hen weigh the same: same size, same frame. */
 .cand-decide .btn-hold,
@@ -226,20 +226,21 @@
 .cand-found {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
   border: 1px solid var(--c-ok);
-  border-radius: var(--r-3);
+  background: var(--c-ok-soft);
+  border-radius: var(--r);
 }
 .cand-coords {
   margin: 0;
   display: grid;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 .cand-coords div {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: var(--sp-1) var(--sp-3);
 }
 .cand-coords dt {
   min-width: 170px;
@@ -250,23 +251,27 @@
   font-variant-numeric: tabular-nums;
   user-select: all;
 }
+/* Candidates waiting for a human: an accent chip next to the drone's state. */
 .review-badge {
   display: inline-flex;
   align-items: center;
-  height: 28px;
-  padding: 0 10px;
+  height: var(--ctl);
+  padding: 0 var(--sp-3);
   font: inherit;
+  font-weight: 600;
   color: var(--c-text);
-  background: transparent;
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  background: var(--c-acc-soft);
+  border: 1px solid var(--c-acc);
+  border-radius: var(--r);
   cursor: pointer;
   white-space: nowrap;
 }
 .review-badge[data-backlog="true"] {
   border-color: var(--c-warn);
   color: var(--c-warn);
+  background: var(--c-warn-soft);
 }
+
 .lc-find {
   margin: 0;
   font-weight: 600;

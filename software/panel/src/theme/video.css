@@ -32,7 +32,7 @@
   display: flex;
   gap: 8px;
   padding: 2px 8px;
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   background: rgb(15 16 17 / 0.72);
   color: #fff;
   font-size: var(--fs-small);
@@ -162,7 +162,7 @@
 .hud-note {
   padding: 3px 10px;
   border: 1px solid var(--hud);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   background: rgb(0 0 0 / 0.45);
 }
 .hud-box {
@@ -183,7 +183,7 @@
   grid-column: 1 / -1;
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
 }
 .hud-box b {

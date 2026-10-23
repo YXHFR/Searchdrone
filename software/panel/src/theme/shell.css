@@ -57,8 +57,8 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
 }
 .shell[data-vp="desktop"] .brand-block {
   width: var(--left-w);
@@ -66,9 +66,9 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 650;
+  gap: var(--sp-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
   white-space: nowrap;
 }
 .brand-mark {
@@ -89,20 +89,30 @@
 }
 .topbar > .seg {
   align-self: center;
-  margin: 0 10px;
+  margin: 0 var(--sp-2);
 }
+/* What the drone is doing is the first thing to read: a filled chip in its state's colour. */
 .state-chip {
   align-self: center;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 28px;
-  padding: 0 10px;
-  margin-right: 4px;
+  gap: 6px;
+  height: var(--ctl);
+  padding: 0 var(--sp-3);
+  margin-right: var(--sp-1);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
-  font-weight: 600;
+  border-radius: var(--r);
+  background: var(--c-panel-2);
+  font-weight: 650;
   white-space: nowrap;
+}
+.state-chip[data-tone="green"] {
+  border-color: var(--c-ok);
+  background: var(--c-ok-soft);
+}
+.state-chip[data-tone="blue"] {
+  border-color: var(--c-acc);
+  background: var(--c-acc-soft);
 }
 .state-chip[data-tone="green"] .dot,
 .ai-status[data-tone="ok"] .dot {
@@ -115,6 +125,7 @@
 .state-chip[data-tone="orange"] {
   border-color: var(--c-warn);
   color: var(--c-warn);
+  background: var(--c-warn-soft);
 }
 .state-chip[data-tone="yellow"] .dot,
 .state-chip[data-tone="orange"] .dot,
@@ -124,6 +135,7 @@
 .state-chip[data-tone="red"] {
   border-color: var(--c-bad);
   color: var(--c-bad);
+  background: var(--c-bad-soft);
 }
 .state-chip[data-tone="red"] .dot,
 .ai-status[data-tone="bad"] .dot {
@@ -141,7 +153,7 @@
   flex-direction: column;
   justify-content: center;
   gap: 1px;
-  padding: 0 9px;
+  padding: 0 var(--sp-2);
   border-left: 1px solid var(--c-line);
   white-space: nowrap;
 }
@@ -149,7 +161,7 @@
   font-size: var(--fs-label);
   line-height: 1.1;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
 }
@@ -160,6 +172,18 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+/* The flight's own numbers (battery, time left, height, link) lead; the rest are context and
+   step back a shade until they warn. */
+.cell:is(
+  [data-cell="speed"],
+  [data-cell="heading"],
+  [data-cell="fromYou"],
+  [data-cell="gps"],
+  [data-cell="clock"]
+) .cell-value {
+  font-weight: 500;
+  color: var(--c-mute);
 }
 .cell[data-tone="warn"] .cell-value {
   color: var(--c-warn);
@@ -231,29 +255,26 @@
   .cell[data-cell="clock"] {
     display: none;
   }
-  .cell {
-    padding: 0 8px;
-  }
 }
 .topbar-tools {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 12px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
 }
 .pending-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
+  height: var(--ctl);
+  padding: 0 var(--sp-3);
   font: inherit;
   font-weight: 600;
   color: var(--c-warn);
-  background: transparent;
+  background: var(--c-warn-soft);
   border: 1px solid var(--c-warn);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -262,9 +283,9 @@
 }
 .budget-notice {
   font-size: var(--fs-small);
-  padding: 2px 8px;
+  padding: 2px var(--sp-2);
   border: 1px solid var(--c-warn);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -296,7 +317,7 @@
 .phone-strip .cell {
   min-width: 0;
   height: 36px;
-  padding: 0 8px;
+  padding: 0 var(--sp-2);
   border-top: 1px solid var(--c-line);
 }
 .phone-strip .cell:nth-child(-n + 4) {
@@ -323,29 +344,31 @@
 }
 .shell[data-vp="phone"] .topbar-tools {
   margin-left: 0;
-  padding-left: 4px;
+  padding-left: var(--sp-1);
 }
 
 /* --- left column ---------------------------------------------------------------------- */
 .lc-sec {
-  padding: 0 14px 14px;
+  padding: 0 var(--sp-3) var(--sp-3);
   border-bottom: 1px solid var(--c-line);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
 }
+/* Pane headers: the same height and label everywhere (left column, side column, overlays). */
 .lc-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
-  margin: 0 -14px;
-  padding: 0 14px;
+  height: var(--head-h);
+  margin: 0 calc(-1 * var(--sp-3)) var(--sp-1);
+  padding: 0 var(--sp-3);
   border-bottom: 1px solid var(--c-line);
 }
-.lc-head h2 {
+.lc-head h2,
+.overlay-head h2 {
   font-size: var(--fs-label);
-  letter-spacing: 0.07em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-mute);
 }
@@ -398,12 +421,12 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   border: 1px solid var(--c-line);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
 }
 .readouts > div {
   display: flex;
   flex-direction: column;
-  padding: 8px 10px;
+  padding: var(--sp-2);
 }
 .readouts > div + div {
   border-left: 1px solid var(--c-line);
@@ -424,15 +447,15 @@
   list-style: none;
   padding: 0;
   border: 1px solid var(--c-line);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
 }
 .sectors li {
   display: grid;
   grid-template-columns: 34px 1fr 46px 52px;
   align-items: center;
-  gap: 8px;
-  height: 31px;
-  padding: 0 10px;
+  gap: var(--sp-2);
+  height: 32px;
+  padding: 0 var(--sp-2);
 }
 .sectors li + li {
   border-top: 1px solid var(--c-line);
@@ -462,8 +485,8 @@
 }
 .sectors li:has(.sec-score) {
   height: auto;
-  min-height: 31px;
-  padding-block: 4px;
+  min-height: 32px;
+  padding-block: var(--sp-1);
 }
 /* The probability map's figures: a line of their own under the sector's row. */
 .sec-score {
@@ -489,9 +512,9 @@
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px 0 4px;
+  gap: var(--sp-2);
+  height: var(--head-h);
+  padding: 0 var(--sp-3) 0 var(--sp-1);
   border-bottom: 1px solid var(--c-line);
 }
 .side-tabs {
@@ -503,11 +526,11 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
   font: inherit;
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
   background: transparent;
@@ -521,8 +544,8 @@
 .side-tabs > button[aria-selected="true"]::after {
   content: "";
   position: absolute;
-  left: 10px;
-  right: 10px;
+  left: var(--sp-2);
+  right: var(--sp-2);
   bottom: -1px;
   height: 2px;
   background: var(--c-acc);
@@ -535,7 +558,7 @@
   place-items: center;
   border: 1px solid var(--c-line-strong);
   border-radius: var(--r-1);
-  font-size: 10.5px;
+  font-size: var(--fs-label);
   letter-spacing: 0;
   color: var(--c-mute);
 }
@@ -562,19 +585,19 @@
   overflow-y: auto;
 }
 .side-empty {
-  padding: 16px 14px;
+  padding: var(--sp-3);
   color: var(--c-mute);
 }
 .events {
   list-style: none;
-  padding: 4px 0;
+  padding: var(--sp-1) 0;
   overflow-y: auto;
 }
 .events li {
   display: grid;
   grid-template-columns: 64px 1fr;
-  gap: 8px;
-  padding: 5px 14px;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3) var(--sp-1) 10px;
   border-left: 2px solid transparent;
 }
 .events time {
@@ -584,6 +607,7 @@
 }
 .events li[data-level="critical"] {
   border-left-color: var(--c-bad);
+  background: var(--c-bad-soft);
 }
 .events li[data-level="critical"] span {
   color: var(--c-bad);
@@ -604,13 +628,13 @@
   inset: 0;
 }
 .surface.is-pip {
-  left: 12px;
-  bottom: 12px;
+  left: var(--sp-3);
+  bottom: var(--sp-3);
   width: 288px;
   height: 162px;
   z-index: var(--z-pip);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
 }
 /* The drawing bar sits at the map's foot; while it is open the small window moves to the top. */
 .stage:has(.is-main .map-draw) :is(.surface.is-pip, .no-camera) {
@@ -637,24 +661,24 @@
   color: #fff;
   background: rgb(15 16 17 / 0.78);
   border: 1px solid rgb(255 255 255 / 0.18);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   cursor: pointer;
 }
 .no-camera {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
+  left: var(--sp-3);
+  bottom: var(--sp-3);
   z-index: var(--z-pip);
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 10px;
+  height: var(--ctl);
+  padding: 0 var(--sp-2);
   font-size: var(--fs-small);
   color: var(--c-mute);
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
 }
 /* Keep the scale bar next to the picture-in-picture, never under it. */
 .stage[data-main="map"] .surface.is-main .maplibregl-ctrl-bottom-left {
@@ -679,22 +703,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 40px;
-  padding: 0 8px 0 14px;
+  min-height: var(--head-h);
+  padding: 0 var(--sp-1) 0 var(--sp-3);
   background: var(--c-panel);
   border-bottom: 1px solid var(--c-line);
 }
-.overlay-head h2 {
-  font-size: var(--fs-label);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--c-mute);
+.overlay-head .btn {
+  min-height: var(--ctl);
 }
 .overlay-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
+/* An alarm over the stage: tinted in its colour, so it reads before anything else on the map. */
 .stage-banner {
   position: absolute;
   top: 46px;
@@ -702,17 +724,19 @@
   transform: translateX(-50%);
   z-index: calc(var(--z-pip) + 60);
   max-width: calc(100% - 24px);
-  padding: 6px 12px;
-  background: var(--c-panel);
+  padding: var(--sp-2) var(--sp-3);
+  background: linear-gradient(var(--c-bad-soft), var(--c-bad-soft)), var(--c-panel);
   border: 1px solid var(--c-bad);
-  border-left-width: 3px;
-  border-radius: var(--r-2);
-  font-weight: 500;
+  border-left-width: 4px;
+  border-radius: var(--r);
+  font-weight: 600;
 }
 .stage-banner[data-tone="yellow"],
 .stage-banner[data-tone="orange"] {
   border-color: var(--c-warn);
+  background: linear-gradient(var(--c-warn-soft), var(--c-warn-soft)), var(--c-panel);
 }
+
 .stage-banner-next {
   display: block;
   font-weight: 400;
@@ -729,7 +753,7 @@
   flex-direction: column;
   background: var(--c-panel);
   border-top: 1px solid var(--c-line-strong);
-  border-radius: var(--r-3) var(--r-3) 0 0;
+  border-radius: var(--r) var(--r) 0 0;
 }
 .sheet[data-size="peek"] {
   height: var(--sheet-peek);
@@ -753,7 +777,7 @@
 .sheet-handle i {
   width: 36px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--r-1);
   background: var(--c-line-strong);
 }
 .shell[data-vp="phone"] .surface.is-pip,

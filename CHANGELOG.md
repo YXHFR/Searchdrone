@@ -80,6 +80,13 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The panel's look is one design system (`software/panel/src/theme/tokens.css`): spacing on
+  a 4 px grid, one type scale, one corner radius, one height for inline controls and one
+  for pane headers. The drone's state, the pending-approval badge, the candidates badge
+  and alarm banners are filled in their colour so they read first; speed, heading,
+  distance, GPS and the clock in the top bar step back a shade until they warn. Layout,
+  texts and behaviour are unchanged; the STOP / RETURN HOME bar only takes the shared
+  radius and title size.
 - The nightly Gazebo job caches only the CC0 tree pictures (`build/tree_models`). The
   real trees (`build/trees`, derived from Skogsstyrelsen's tree height raster, which may
   not be redistributed) are fetched again on every run and never stored in the GitHub
