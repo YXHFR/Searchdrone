@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { useNow } from "../lib/useNow";
 import { useBrainEngine, useBrainState, useCommandMode } from "../state/brain";
-import { useCandidateStore } from "../state/candidateStore";
+import { openReview, useCandidateStore } from "../state/candidateStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
@@ -200,7 +200,7 @@ function ReviewBadge() {
       data-testid="review-badge"
       data-backlog={backlog}
       title={backlog ? t("candidates.backlog") : undefined}
-      onClick={() => useShellStore.getState().setMode("review")}
+      onClick={openReview}
     >
       {t("candidates.count", { n })}
       {backlog ? <span className="sr-only">{t("candidates.backlog")}</span> : null}

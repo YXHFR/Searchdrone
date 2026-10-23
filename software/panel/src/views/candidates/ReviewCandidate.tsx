@@ -18,12 +18,11 @@ import { useCandidateStore } from "../../state/candidateStore";
 import { useIsPilot, useSessionStore } from "../../state/sessionStore";
 import { Dialog } from "../../ui/Dialog";
 import { HoldButton } from "../../ui/HoldButton";
-import { crops, fieldLabel } from "./queue";
+import { crops, fieldLabel, isOpen } from "./queue";
 
 const pct = new Intl.NumberFormat("sv-SE", { style: "percent", maximumFractionDigits: 0 });
 const hhmm = new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" });
 const NOTE_MAX = 300;
-const OPEN = new Set<CandidateCard["state"]>(["new", "assessing", "ready", "inspecting"]);
 
 function latest(list: StoredAssessment[]): StoredAssessment | null {
   return [...list].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0] ?? null;
@@ -105,7 +104,7 @@ export function ReviewCandidate({
 
   const pictures = detail ? crops(detail.observations) : [];
   const ai = detail ? latest(detail.assessments) : null;
-  const open = OPEN.has(card.state);
+  const open = isOpen(card);
 
   return (
     <div className="view-body cand-review" data-testid="cand-review" data-seq={card.seq}>

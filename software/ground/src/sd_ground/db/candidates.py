@@ -482,15 +482,22 @@ class CandidateRepo:
             )
 
     async def add_view(
-        self, mission_id: str, detection_id: str, operator_ref: str, session_id: str
+        self,
+        mission_id: str,
+        detection_id: str,
+        operator_ref: str,
+        session_id: str,
+        now: dt.datetime,
     ) -> str:
         rows = await self._insert(
-            "INSERT INTO candidate_views (mission_id, detection_id, operator_ref, session_id) "
-            "VALUES (:m, :d, :op, :sid) RETURNING id::text",
+            "INSERT INTO candidate_views "
+            "(mission_id, detection_id, operator_ref, session_id, created_at) "
+            "VALUES (:m, :d, :op, :sid, :t) RETURNING id::text",
             m=mission_id,
             d=detection_id,
             op=operator_ref,
             sid=session_id,
+            t=now,
         )
         return str(rows[0]["id"])
 

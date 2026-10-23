@@ -3,10 +3,11 @@
 // picture has been opened large; a flagged claim is marked unverified; the confirmation is a
 // hold and a question, then the position in three forms, the find number and the toast.
 // On a phone nothing scrolls sideways. The candidates sit at the public simulator site.
+import type { Page } from "@playwright/test";
 import type { CandidateCard, CandidateDetail } from "@searchdrone/schemas";
 import { panelConfig } from "../fixtures";
 import { expect, test } from "../helpers/fakeGround";
-import { expectSafetyVisible, showView } from "../helpers/safety";
+import { expectSafetyVisible, holdClick, showView } from "../helpers/safety";
 
 const AT = { lat: 59.28842, lon: 18.15953 };
 
@@ -71,9 +72,20 @@ function extra(seq: number): Pick<CandidateDetail, "observations" | "assessments
   };
 }
 
-test.describe("desktop", () => {
-  test.use({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false });
+/** Neither the page nor the review stage scrolls sideways. */
+async function noSideScroll(page: Page, label: string): Promise<void> {
+  const over = await page.evaluate(() => {
+    const out: string[] = [];
+    for (const el of [document.documentElement, ...document.querySelectorAll(".review-stage")])
+      if (el.scrollWidth > el.clientWidth + 1) out.push(el.className || el.tagName);
+    return out;
+  });
+  expect(over, label).toEqual([]);
+}
 
+// These run in every project (1280×720 desktop, tablet, the 360 and 375 px phones), so
+// STOP and FLY HOME are checked with each new overlay open at every mandated size.
+test.describe("every size", () => {
   test("a person confirms a find only after looking at the picture", async ({ page, ground }) => {
     ground.setConfig({ features: { ...panelConfig.features, candidates: true } });
     ground.candidates = [card(2, { priority: 0.1, priority_class: "low" })];
@@ -91,6 +103,9 @@ test.describe("desktop", () => {
     await expect(k3).toContainText("Moln stark");
     await expect(k3).toContainText("sedd i 2 av 3 bilder");
     await expect(page.getByTestId("review-badge")).toHaveText("Att granska: 1");
+    await expect(page.getByTestId("main-menu")).toBeVisible();
+    await expectSafetyVisible(page, "queue with badge");
+    await noSideScroll(page, "queue");
     await expect(page.locator('[data-testid="candidate-card"][data-seq="2"]')).toHaveCount(0);
     await expect(page.getByTestId("cand-low-toggle")).toHaveText("Låg prioritet (1)");
     await page.getByTestId("cand-low-toggle").click();
@@ -105,26 +120,25 @@ test.describe("desktop", () => {
     await expect(page.getByTestId("cand-inspect")).toBeDisabled();
     await expect(review).not.toContainText("röd jacka");
     await expectSafetyVisible(page, "review");
+    await noSideScroll(page, "review");
 
     // A large picture opens both.
     await page.getByTestId("cand-larger").click();
     await expect(page.getByTestId("cand-large")).toBeVisible();
+    await expectSafetyVisible(page, "large picture open");
     await page.getByTestId("cand-large").getByRole("button").click();
     await page.getByTestId("cand-ai-toggle").click();
     await expect(review).toContainText("En person i röd jacka sitter vid stenen.");
     await expect(page.getByTestId("cand-ai-flag")).toContainText("AI-påstående, ej verifierat");
     await expect(page.getByTestId("cand-confirm")).toBeEnabled();
 
-    // Hold, then answer the question.
-    const box = await page.getByTestId("cand-confirm").boundingBox();
-    if (!box) throw new Error("no confirm button");
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await expect(page.getByTestId("cand-confirm-dialog")).toBeVisible();
-    await page.mouse.up();
+    // Hold, then answer the question. Centred, so a phone's sheet is not over it.
+    await page.getByTestId("cand-confirm").evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await holdClick(page, "cand-confirm");
     await expect(page.getByTestId("cand-confirm-dialog")).toContainText(
       "Bekräfta K3 som personen ni söker?",
     );
+    await expectSafetyVisible(page, "confirm dialog open");
     await page.getByTestId("cand-confirm-yes").click();
 
     const post = ground.calls(/^POST \/api\/v1\/candidates\/[^/]+\/decision$/);
@@ -142,10 +156,22 @@ test.describe("desktop", () => {
     );
     await expect(page.getByText("Fynd bekräftat: K3")).toBeVisible();
     await expect(page.getByTestId("review-badge")).toHaveCount(0);
+    await expectSafetyVisible(page, "find confirmed");
+
+    // The pilot's Ångra asks for a reason first; cancelling it leaves the find.
+    await page.getByTestId("cand-undo").click();
+    await expect(page.getByTestId("cand-undo-yes")).toBeDisabled();
+    await expectSafetyVisible(page, "undo dialog open");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("cand-undo-dialog")).toHaveCount(0);
 
     // Back in Flyg the mission column names the find.
     await page.getByTestId("cand-back").click();
-    await page.getByTestId("mode-fly").click();
+    if ((await page.getByTestId("mode-fly").count()) > 0)
+      await page.getByTestId("mode-fly").click();
+    else await page.getByTestId("review-back").click();
+    const missionTab = page.getByTestId("side-tab-mission");
+    if ((await missionTab.count()) > 0) await missionTab.click();
     await expect(page.getByTestId("finds-confirmed")).toHaveText("Bekräftat: F1 (K3)");
 
     // And the map marks it F1 (where this browser has WebGL2 for the map).
@@ -196,7 +222,8 @@ test.describe("desktop", () => {
   });
 });
 
-test.describe("phone", () => {
+// The size the panel is designed for on a phone, in addition to the projects' sizes.
+test.describe("390×844", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("the queue and the review fit a phone without sideways scrolling", async ({
@@ -211,21 +238,12 @@ test.describe("phone", () => {
     await ground.resynced();
     await page.getByTestId("review-badge").click();
     await expect(page.getByTestId("view-candidates")).toBeVisible();
-    const noSideScroll = async (label: string): Promise<void> => {
-      const over = await page.evaluate(() => {
-        const out: string[] = [];
-        for (const el of [document.documentElement, ...document.querySelectorAll(".review-stage")])
-          if (el.scrollWidth > el.clientWidth + 1) out.push(el.className || el.tagName);
-        return out;
-      });
-      expect(over, label).toEqual([]);
-    };
-    await noSideScroll("queue");
+    await noSideScroll(page, "queue");
     await page.getByTestId("cand-low-toggle").click();
-    await noSideScroll("low list");
+    await noSideScroll(page, "low list");
     await page.locator('[data-testid="candidate-card"][data-seq="5"] button').click();
     await expect(page.getByTestId("cand-review")).toBeVisible();
-    await noSideScroll("review");
+    await noSideScroll(page, "review");
     await expectSafetyVisible(page, "phone review");
   });
 });

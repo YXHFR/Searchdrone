@@ -3,6 +3,7 @@
 // Which cards are new since the queue was opened, and which candidate is open for review.
 import { create } from "zustand";
 import type { CandidateCard } from "../api/types";
+import { useShellStore } from "./shellStore";
 
 interface CandidateState {
   missionId: string | null;
@@ -58,3 +59,10 @@ export const useCandidateStore = create<CandidateState>((set) => ({
   open: (openId) => set({ openId }),
   markViewed: (id) => set((s) => ({ viewed: { ...s.viewed, [id]: true } })),
 }));
+
+/** Granska fills the stage; on a phone the sheet goes down so the review is not under it. */
+export function openReview(): void {
+  const shell = useShellStore.getState();
+  shell.setMode("review");
+  if (shell.vp === "phone") shell.setSheet("peek");
+}

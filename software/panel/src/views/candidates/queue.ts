@@ -6,6 +6,11 @@ export type Tab = "review" | "confirmed" | "rejected";
 
 const OPEN = new Set<CandidateCard["state"]>(["new", "assessing", "ready", "inspecting"]);
 
+/** Still waiting for a person's decision. */
+export function isOpen(c: CandidateCard): boolean {
+  return OPEN.has(c.state);
+}
+
 /** More cards than this waiting means the team should get help reviewing. */
 export const BACKLOG_AT = 15;
 
@@ -24,7 +29,7 @@ const byPriority = (a: CandidateCard, b: CandidateCard): number =>
 export function groupQueue(cards: CandidateCard[]): Queue {
   const q: Queue = { review: [], low: [], confirmed: [], rejected: [] };
   for (const c of cards) {
-    if (OPEN.has(c.state)) (c.priority_class === "low" ? q.low : q.review).push(c);
+    if (isOpen(c)) (c.priority_class === "low" ? q.low : q.review).push(c);
     else if (c.state === "confirmed") q.confirmed.push(c);
     else if (c.state === "rejected") q.rejected.push(c);
   }

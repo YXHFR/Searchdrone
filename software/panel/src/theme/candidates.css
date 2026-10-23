@@ -8,6 +8,11 @@
   max-width: 760px;
   min-width: 0;
 }
+/* On a phone the sheet's peek covers the stage's foot: the last button scrolls above it. */
+.shell[data-vp="phone"] .cand-view,
+.shell[data-vp="phone"] .cand-review {
+  padding-bottom: calc(var(--sheet-peek) + 12px);
+}
 .cand-view p,
 .cand-review p {
   margin: 0;

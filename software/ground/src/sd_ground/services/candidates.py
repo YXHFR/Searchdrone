@@ -18,7 +18,7 @@ request, and a low priority only puts a candidate further down.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
 from xml.sax.saxutils import escape
@@ -311,10 +311,13 @@ def _person(who: Principal, test_rig: bool) -> str:
         raise ApiStatusError(
             403, "INTERACTIVE_SESSION_REQUIRED", "Det här måste göras av en människa i panelen."
         )
+    if not who.interactive:
+        # Only the test rig's scripted operator gets here; say so where it shows.
+        log.warning("candidate.decision_by_script", issuer_ref=who.issuer_ref)
     return who.session_id
 
 
-def _next_state(body: CandidateDecision) -> Any:
+def _next_state(body: CandidateDecision) -> Callable[[str], str | None]:
     allowed = CANDIDATE_TRANSITIONS[body.decision]
 
     def step(state: str) -> str | None:
@@ -331,7 +334,9 @@ def _next_state(body: CandidateDecision) -> Any:
     return step
 
 
-def _chat_text(d: Decided, decision: DecisionKind, by: str, note: str) -> str:
+def _chat_text(d: Decided, decision: DecisionKind, by: str) -> str:
+    """The ground's own words only: a person's note goes in the message refs and the event
+    log, never into a system line the commander reads as the ground's."""
     k = f"K{d.seq}"
     if decision == "confirm":
         return f"Fynd bekräftat: {k} (av {by})."
@@ -340,7 +345,7 @@ def _chat_text(d: Decided, decision: DecisionKind, by: str, note: str) -> str:
     if decision == "unsure":
         return f"{k} markerad som osäker av {by}."
     if d.before == _S.CONFIRMED.value:
-        return f"Bekräftelsen av {k} ångrad av {by}: {note.strip()}"
+        return f"Bekräftelsen av {k} ångrad av {by}. Anteckningen finns i händelseloggen."
     return f"{k} öppnad igen av {by}."
 
 
@@ -420,9 +425,9 @@ async def decide(
         role="system",
         author_ref="system:ground",
         kind="status",
-        text=_chat_text(d, body.decision, who.display_name or who.issuer_ref, body.note),
+        text=_chat_text(d, body.decision, who.display_name or who.issuer_ref),
         in_reply_to=None,
-        refs={"candidate_id": candidate_id, "decision": body.decision},
+        refs={"candidate_id": candidate_id, "decision": body.decision, "note": body.note},
     )
     return out
 
@@ -441,7 +446,7 @@ async def open_view(flow: MissionFlow, detection_id: str, who: Principal) -> Can
         raise ApiStatusError(404, "CROP_NOT_FOUND", "Bilden finns inte.")
     mission_id, _ = found
     await flow.mission(mission_id)
-    view_id = await r.add_view(mission_id, detection_id, who.issuer_ref, session_id)
+    view_id = await r.add_view(mission_id, detection_id, who.issuer_ref, session_id, flow.now())
     return CandidateView.model_validate({"view_id": view_id, "detection_id": detection_id})
 
 

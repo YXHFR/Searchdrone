@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { STALE_MS } from "../header/pills";
 import { useNow } from "../lib/useNow";
-import { useCandidateStore } from "../state/candidateStore";
+import { openReview, useCandidateStore } from "../state/candidateStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useShellStore } from "../state/shellStore";
@@ -133,7 +133,7 @@ export function FindsPanel() {
         type="button"
         className="btn btn-quiet btn-block"
         data-testid="finds-open"
-        onClick={() => useShellStore.getState().setMode("review")}
+        onClick={openReview}
       >
         {t("finds.open")}
       </button>
