@@ -6,13 +6,15 @@ cannot give out the same display number or the same revision. The search service
 never write ``confirmed`` or ``rejected``, never change the state of a candidate a person
 or the pilot holds (``inspecting``; new sightings and scores still come in, the state
 stays) and never merge one; the checks are here, next to the write, not only in the API.
+A person's decision is written under the same lock (``decide``), with the large views
+the person opened before it (``add_view``).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from sd_schemas.search import CandidateRevision, CandidateState
 
-__all__ = ["CandidateRepo", "CandidateWriteError", "Written"]
+__all__ = ["CandidateRepo", "CandidateWriteError", "Decided", "Written"]
 
 # A candidate in these states takes no revision from the search service.
 CLOSED = frozenset({"confirmed", "rejected", "merged"})
@@ -57,6 +59,16 @@ class Written:
     state: str
     created: bool
     assessment_id: str | None
+
+
+@dataclass(frozen=True)
+class Decided:
+    decision_id: str
+    mission_id: str
+    seq: int
+    before: str  # the state the person decided on
+    after: str  # the state now (the same for "unsure")
+    rev: int  # the candidate's rev now
 
 
 def _json(value: Any) -> Any:
@@ -378,3 +390,148 @@ class CandidateRepo:
             c=candidate_id,
         )
         return None if not rows else str(rows[0]["m"])
+
+    # --- a person's decision and the large views before it ----------------------------
+
+    async def decide(
+        self,
+        candidate_id: str,
+        *,
+        decision: str,
+        note: str,
+        subject_rev: int,
+        operator_ref: str,
+        session_id: str,
+        now: dt.datetime,
+        next_state: Callable[[str], str | None],
+    ) -> Decided:
+        """A decision row and, when the state changes, the candidate's next revision, in
+        one transaction under the mission's lock. ``next_state`` gets the state in force
+        and returns the new one (``None``: unchanged) or raises ``CandidateWriteError``.
+        The rev the person saw must still be in force (``SUPERSEDED`` otherwise). A
+        confirmation sets ``missions.found_candidate_id``; undoing it clears it again."""
+        mission_id = await self.candidate_mission(candidate_id)
+        if mission_id is None:
+            raise CandidateWriteError("CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext('sd_candidates:' || :m))"),
+                {"m": mission_id},
+            )
+            prev = await self._latest_one(conn, candidate_id)
+            if prev is None:
+                raise CandidateWriteError("CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
+            if int(prev["rev"]) != subject_rev:
+                raise CandidateWriteError(
+                    "SUPERSEDED", "Kandidaten har ändrats sedan du såg den. Titta igen."
+                )
+            before = str(prev["state"])
+            after = next_state(before)
+            rev = int(prev["rev"])
+            if after is not None:
+                rev += 1
+                await conn.execute(
+                    text(
+                        "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, "
+                        "sigma95_m, n_seen, n_in_view, best_detector_score, refined_person_score, "
+                        "priority, merged_into, latest_assessment_id, first_seen_utc, "
+                        "last_seen_utc, created_at) SELECT candidate_id, :rev, mission_id, seq, "
+                        ":state, geom, sigma95_m, n_seen, n_in_view, best_detector_score, "
+                        "refined_person_score, priority, merged_into, latest_assessment_id, "
+                        "first_seen_utc, last_seen_utc, :now FROM candidates "
+                        "WHERE candidate_id = :c AND rev = :prev"
+                    ),
+                    {"c": candidate_id, "rev": rev, "state": after, "now": now, "prev": rev - 1},
+                )
+                if after == "confirmed":
+                    await conn.execute(
+                        text("UPDATE missions SET found_candidate_id = :c WHERE id = :m"),
+                        {"c": candidate_id, "m": mission_id},
+                    )
+                elif before == "confirmed":
+                    await conn.execute(
+                        text(
+                            "UPDATE missions SET found_candidate_id = NULL "
+                            "WHERE id = :m AND found_candidate_id = :c"
+                        ),
+                        {"c": candidate_id, "m": mission_id},
+                    )
+            res = await conn.execute(
+                text(
+                    "INSERT INTO candidate_decisions (candidate_id, decision, note, subject_rev, "
+                    "operator_ref, session_id, created_at) VALUES (:c, :d, :note, :rev, :op, "
+                    ":sid, :now) RETURNING id::text"
+                ),
+                {
+                    "c": candidate_id,
+                    "d": decision,
+                    "note": note,
+                    "rev": subject_rev,
+                    "op": operator_ref,
+                    "sid": session_id,
+                    "now": now,
+                },
+            )
+            return Decided(
+                str(res.scalar_one()),
+                mission_id,
+                int(prev["seq"]),
+                before,
+                before if after is None else after,
+                rev,
+            )
+
+    async def add_view(
+        self,
+        mission_id: str,
+        detection_id: str,
+        operator_ref: str,
+        session_id: str,
+        now: dt.datetime,
+    ) -> str:
+        """One row per session and picture (a unique index): opening it again returns the
+        same view, so the append-only table grows with the pictures, not with the clicks."""
+        rows = await self._insert(
+            "INSERT INTO candidate_views "
+            "(mission_id, detection_id, operator_ref, session_id, created_at) "
+            "VALUES (:m, :d, :op, :sid, :t) "
+            "ON CONFLICT (session_id, detection_id) DO NOTHING RETURNING id::text",
+            m=mission_id,
+            d=detection_id,
+            op=operator_ref,
+            sid=session_id,
+            t=now,
+        )
+        if rows:
+            return str(rows[0]["id"])
+        have = await self._all(
+            "SELECT id::text AS id FROM candidate_views "
+            "WHERE detection_id = :d AND session_id = :sid",
+            d=detection_id,
+            sid=session_id,
+        )
+        return str(have[0]["id"])
+
+    async def view(self, view_id: str) -> tuple[str, str] | None:
+        """(mission id, detection id) of a large view, if it was logged."""
+        rows = await self._all(
+            "SELECT mission_id::text AS m, detection_id::text AS d FROM candidate_views "
+            "WHERE id = :v",
+            v=view_id,
+        )
+        return None if not rows else (str(rows[0]["m"]), str(rows[0]["d"]))
+
+    async def viewed(self, candidate_id: str, session_id: str) -> bool:
+        """Whether this session opened a large view of one of the candidate's detections."""
+        rows = await self._all(
+            "SELECT 1 FROM candidate_views v JOIN candidate_observations o "
+            "ON o.detection_id = v.detection_id WHERE o.candidate_id = :c "
+            "AND v.session_id = :sid LIMIT 1",
+            c=candidate_id,
+            sid=session_id,
+        )
+        return bool(rows)
+
+    async def _insert(self, sql: str, **params: Any) -> Sequence[RowMapping]:
+        async with self.engine.begin() as conn:
+            return (await conn.execute(text(sql), params)).mappings().all()

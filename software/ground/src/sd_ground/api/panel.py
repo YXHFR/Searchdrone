@@ -51,6 +51,7 @@ from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
 from sd_ground.services import health
 from sd_ground.services import perception as perception_service
+from sd_ground.services import probability_map as map_service
 from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
@@ -95,11 +96,14 @@ from sd_schemas.api import (
 )
 from sd_schemas.charter import CharterProposal
 from sd_schemas.gate import GateDecision
+from sd_schemas.probmap import ProbabilityMapView, SectorScore, suggest_sector_order
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.search import (
+    CandidateDecision,
     CandidateDetail,
     CandidateQueue,
     CandidateState,
+    CandidateView,
     SearchProfile,
     SearchProfileApproval,
     SearchProfileState,
@@ -164,7 +168,7 @@ async def get_panel_config(g: G, _: Observer) -> PanelConfig:
         limits_absolute=AbsoluteLimits(
             **caps.model_dump(), max_area_km2=g.config.charter.max_area_km2
         ),
-        features=Features(),
+        features=Features(candidates=True),
         remote=False,
     )
 
@@ -507,6 +511,35 @@ async def get_sectors(mission_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
     return await _flow(g).sectors_geojson(mission_id)
 
 
+@router.get("/missions/{mission_id}/probability-map", response_model=ProbabilityMapView)
+async def get_probability_map(mission_id: IdPath, g: G, _: Observer) -> ProbabilityMapView:
+    """The newest version of the probability map (404 before the first). ``p_b64`` and
+    ``pod_b64``: base64 float16, row-major, row 0 the southernmost."""
+    return await map_service.view(_flow(g), mission_id)
+
+
+@router.get("/missions/{mission_id}/probability-map.png")
+async def get_probability_map_png(
+    mission_id: IdPath, g: G, _: Observer, layer: Literal["poa", "pod"] = "poa"
+) -> Response:
+    """The map as an image, one pixel per cell, north up: ``poa`` transparent to red,
+    ``pod`` transparent to blue. ``Sd-Bounds``: west,south,east,north."""
+    body, grid, version = await map_service.png(_flow(g), mission_id, layer)
+    bounds = ",".join(f"{v:.7f}" for v in (grid.west, grid.south, grid.east, grid.north))
+    return Response(
+        body,
+        media_type="image/png",
+        headers={"Sd-Bounds": bounds, "Sd-Version": str(version), "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/missions/{mission_id}/sectors/poa", response_model=list[SectorScore])
+async def get_sector_poa(mission_id: IdPath, g: G, _: Observer) -> list[SectorScore]:
+    """Each sector on the newest map: POA left, share covered, mean POD and PSR, in the
+    suggested order (highest PSR first). Empty before the first map."""
+    return suggest_sector_order(await map_service.sector_scores(_flow(g), mission_id))
+
+
 @router.get("/missions/{mission_id}/search-profile", response_model=SearchProfileState)
 async def get_search_profile(mission_id: IdPath, g: G, _: Observer) -> SearchProfileState:
     """The approved profile in force and a newer proposal from the AI, if any."""
@@ -732,6 +765,43 @@ async def get_candidate(candidate_id: IdPath, g: G, _: Observer) -> dict[str, An
     """One candidate: its card, the detections it observed, every assessment and every
     person's decision."""
     return jsonable_encoder(await candidates_service.detail(_flow(g), candidate_id))
+
+
+@router.post("/candidates/{candidate_id}/decision", response_model=CandidateDetail)
+async def post_candidate_decision(
+    candidate_id: IdPath, body: CandidateDecision, g: G, who: Observer
+) -> dict[str, Any]:
+    """Only a person in the panel decides (never the AI, the search service or a script
+    outside the test rig). Observers confirm, reject and mark unsure; inspect and reopen
+    are the pilot's. Confirming needs a large view from the same session first (409
+    ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``."""
+    return jsonable_encoder(await candidates_service.decide(_flow(g), candidate_id, body, who))
+
+
+@router.get("/candidates/{candidate_id}/export.gpx")
+async def get_candidate_gpx(candidate_id: IdPath, g: G, _: Observer) -> Response:
+    """A confirmed find as a GPX 1.1 waypoint for the ground team."""
+    body = await candidates_service.gpx(_flow(g), candidate_id)
+    return Response(
+        body,
+        media_type="application/gpx+xml",
+        headers={"Content-Disposition": 'attachment; filename="fynd.gpx"'},
+    )
+
+
+@router.post("/detections/{detection_id}/view", status_code=201, response_model=CandidateView)
+async def post_detection_view(detection_id: IdPath, g: G, who: Observer) -> CandidateView:
+    """Open a detection's picture in large size. The server logs it for the session: a
+    confirmation needs it. The picture is at ``GET /api/v1/views/{view_id}`` and is never
+    sent to the cloud."""
+    return await candidates_service.open_view(_flow(g), detection_id, who)
+
+
+@router.get("/views/{view_id}")
+async def get_view(view_id: IdPath, g: G, _: Observer) -> Response:
+    """The picture of a logged large view (JPEG)."""
+    path = await candidates_service.view_file(_flow(g), view_id)
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.get("/missions/{mission_id}/detections", response_model=list[DetectionRow])

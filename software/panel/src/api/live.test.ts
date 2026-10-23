@@ -213,6 +213,27 @@ describe("startLive", () => {
     stop();
   });
 
+  it("a new probability-map version makes the map layers fetch again", async () => {
+    const stop = startLive("sim-01");
+    hello("e1");
+    await settle();
+    const before = useMissionStore.getState().mapRev;
+    send({
+      seq: 5,
+      topic: "probability_map",
+      type: "probability_map.updated",
+      mission_id: "M1",
+      data: { version: 2 },
+    });
+    await settle();
+    expect(useMissionStore.getState().mapRev).toBe(before + 1);
+    const subs = (sockets.at(-1)?.sent ?? []).map((m) => JSON.parse(m));
+    expect(subs.some((m) => m.op === "subscribe" && m.topics.includes("probability_map"))).toBe(
+      true,
+    );
+    stop();
+  });
+
   it("words alerts from sv.json; red ones stay until acknowledged; else message_sv", async () => {
     useUiStore.setState({ toasts: [], eventLog: [] });
     const stop = startLive("sim-01");
@@ -232,6 +253,33 @@ describe("startLive", () => {
       "GPS är borta.",
     ]);
     expect(ui.eventLog[2]?.level).toBe("critical");
+    stop();
+  });
+
+  it("tells the pilot when person detection is off on board", async () => {
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    const stop = startLive("sim-01");
+    await settle();
+    send({
+      seq: null,
+      topic: "vehicle",
+      type: "executor.perception_off",
+      vehicle_id: "sim-01",
+      data: { reason: "sources_failed", error: "ModelError" },
+    });
+    const ui = useUiStore.getState();
+    expect(ui.toasts.map((x) => x.text.slice(0, 26))).toEqual(["Persondetekteringen är avs"]);
+    expect(ui.eventLog.map((x) => x.message.slice(0, 26))).toEqual(["Persondetekteringen är avs"]);
+    send({
+      seq: null,
+      topic: "vehicle",
+      type: "executor.perception_on",
+      vehicle_id: "sim-01",
+      data: {},
+    });
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toContain(
+      "Persondetekteringen fungerar igen ombord.",
+    );
     stop();
   });
 });

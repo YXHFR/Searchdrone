@@ -35,6 +35,8 @@ export const TOPICS = [
   "detections",
   "system",
   "search_profile",
+  "candidates",
+  "probability_map",
 ] as const;
 
 export interface LiveSocketHandlers {

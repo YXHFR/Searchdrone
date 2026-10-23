@@ -22,8 +22,10 @@ from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
 from sd_search.config import SearchConfig, SearchConfigError, cloud_key, load
+from sd_search.mapper import MapService
 from sd_search.match.cascade import Cascade
 from sd_search.match.engines import CloudMatchEngine
+from sd_search.probmap.terrain import NoTerrain, SimTerrainSource, TerrainSource
 from sd_search.profile import FileProfileSource, GroundProfileSource, ProfileSource
 
 __all__ = ["main"]
@@ -50,6 +52,12 @@ def _parser() -> argparse.ArgumentParser:
         "--profile-file",
         default=os.environ.get("SD_SEARCH__PROFILE_FILE") or None,
         help="en godkänd sökprofil från fil (bara simulatorn, SD_SIM=1)",
+    )
+    run.add_argument(
+        "--terrain-file",
+        default=os.environ.get("SD_SEARCH__TERRAIN_FILE") or None,
+        help="terräng för sannolikhetskartan (GeoJSON som simulatorns världar); utan den "
+        "bara avståndsringar",
     )
     run.add_argument("--poll-s", type=float, default=0.25)
     run.add_argument("--root", default=".", help="repots rot (config/search.toml, .env)")
@@ -84,7 +92,12 @@ async def _run(args: argparse.Namespace, token: str, cfg: SearchConfig, key: str
         if args.profile_file
         else GroundProfileSource(client)
     )
-    service = SearchService(client, profiles, cascade=cascade)
+    terrain: TerrainSource = (
+        SimTerrainSource.from_file(Path(args.terrain_file)) if args.terrain_file else NoTerrain()
+    )
+    service = SearchService(
+        client, profiles, mapper=MapService(client, profiles, terrain), cascade=cascade
+    )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

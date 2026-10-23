@@ -107,6 +107,7 @@ def test_ci_ok_needs_every_ci_job() -> None:
         "secrets",
         "build",
         "rl",
+        "train",
     }
     assert set(jobs) == expected | {"ci-ok"}
     assert set(jobs["ci-ok"]["needs"]) == expected
@@ -246,6 +247,27 @@ def test_brain_nightly_runs_only_from_main_with_the_secret() -> None:
     assert all(p.endswith(".json") for p in upload["with"]["path"].split())  # no images
     exam = next(s for s in job["steps"] if s.get("name") == "Short cloud exam")
     assert "--max-cost-sek" in exam["run"]
+
+
+def test_bench_mini_runs_only_from_main_and_uploads_json() -> None:
+    """The one job that fetches real aerial pictures keeps them on the runner."""
+    doc = load(ROOT / ".github" / "workflows" / "bench-mini.yml")
+    assert set(triggers(doc)) == {"schedule", "workflow_dispatch"}  # never pull requests
+    assert doc["permissions"] == {}
+    job = doc["jobs"]["bench-mini"]
+    assert "github.ref == 'refs/heads/main'" in job["if"]
+    assert job["permissions"] == {"contents": "read"}
+    steps = job["steps"]
+    for step in steps:
+        assert "cache" not in str(step.get("uses", ""))
+    check = next(i for i, s in enumerate(steps) if "check_no_orthophotos" in str(s.get("run")))
+    upload = next(i for i, s in enumerate(steps) if "upload-artifact" in str(s.get("uses")))
+    assert check < upload
+    assert "steps.numbers.outcome == 'success'" in steps[upload]["if"]
+    assert steps[upload]["with"]["path"].strip().endswith("/*.json")
+    for step in steps:
+        if "bench-fetch" in str(step.get("run")) or "bench-detector" in str(step.get("run")):
+            assert "$RUNNER_TEMP" in step["run"]  # pictures and results off the checkout
 
 
 # Folders a workflow may cache or upload from. Under build/ only the listed subfolders:

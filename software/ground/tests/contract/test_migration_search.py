@@ -23,6 +23,7 @@ SEARCH_TABLES = (
     "candidate_decisions",
     "probability_maps",
     "cloud_usage",
+    "candidate_views",  # 0006_candidate_views
 )
 
 # Public CMAC test field (ArduPilot's default SITL home), never a private place.
@@ -103,6 +104,13 @@ def _seed(db: Db) -> str:
         "INSERT INTO candidate_decisions (candidate_id, decision, subject_rev, operator_ref, "
         "session_id) VALUES ($1::uuid, 'unsure', 1, 'operator:demo', 's1')",
         candidate,
+        **app,
+    )
+    db.run(
+        "INSERT INTO candidate_views (mission_id, detection_id, operator_ref, session_id) "
+        "VALUES ($1::uuid, $2::uuid, 'operator:demo', 's1')",
+        mission,
+        detection,
         **app,
     )
     db.run(

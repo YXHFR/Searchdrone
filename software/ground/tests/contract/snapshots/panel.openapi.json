@@ -367,6 +367,22 @@
             "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
             "title": "Mission Id",
             "type": "string"
+          },
+          "poa_hint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "high",
+                  "low",
+                  "excluded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poa Hint"
           }
         },
         "required": [
@@ -404,6 +420,22 @@
             "minLength": 1,
             "title": "Label",
             "type": "string"
+          },
+          "poa_hint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "high",
+                  "low",
+                  "excluded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poa Hint"
           }
         },
         "required": [
@@ -964,6 +996,40 @@
         "title": "CandidateCounts",
         "type": "object"
       },
+      "CandidateDecision": {
+        "additionalProperties": false,
+        "description": "A person's decision on a candidate. Only a logged-in person's session may send it.",
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirm",
+              "reject",
+              "inspect",
+              "unsure",
+              "reopen"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Note",
+            "type": "string"
+          },
+          "subject_rev": {
+            "minimum": 1.0,
+            "title": "Subject Rev",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision",
+          "subject_rev"
+        ],
+        "title": "CandidateDecision",
+        "type": "object"
+      },
       "CandidateDetail": {
         "additionalProperties": false,
         "properties": {
@@ -1112,6 +1178,30 @@
         ],
         "title": "CandidateState",
         "type": "string"
+      },
+      "CandidateView": {
+        "additionalProperties": false,
+        "description": "A detection's picture in large size, logged for the session that asked for it (a\nconfirmation needs one). The JPEG is at ``GET /api/v1/views/{view_id}``.",
+        "properties": {
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "view_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "View Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "view_id",
+          "detection_id"
+        ],
+        "title": "CandidateView",
+        "type": "object"
       },
       "Charter": {
         "additionalProperties": false,
@@ -3895,6 +3985,195 @@
         "title": "PartStatus",
         "type": "object"
       },
+      "ProbabilityGrid": {
+        "additionalProperties": false,
+        "properties": {
+          "cell_m": {
+            "maximum": 200.0,
+            "minimum": 5.0,
+            "title": "Cell M",
+            "type": "number"
+          },
+          "east": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "East",
+            "type": "number"
+          },
+          "ipp_lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Ipp Lat",
+            "type": "number"
+          },
+          "ipp_lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Ipp Lon",
+            "type": "number"
+          },
+          "north": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "North",
+            "type": "number"
+          },
+          "nx": {
+            "maximum": 160.0,
+            "minimum": 1.0,
+            "title": "Nx",
+            "type": "integer"
+          },
+          "ny": {
+            "maximum": 160.0,
+            "minimum": 1.0,
+            "title": "Ny",
+            "type": "integer"
+          },
+          "south": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "South",
+            "type": "number"
+          },
+          "west": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "West",
+            "type": "number"
+          },
+          "x0_m": {
+            "maximum": 50000.0,
+            "minimum": -50000.0,
+            "title": "X0 M",
+            "type": "number"
+          },
+          "y0_m": {
+            "maximum": 50000.0,
+            "minimum": -50000.0,
+            "title": "Y0 M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ipp_lat",
+          "ipp_lon",
+          "x0_m",
+          "y0_m",
+          "nx",
+          "ny",
+          "cell_m",
+          "west",
+          "south",
+          "east",
+          "north"
+        ],
+        "title": "ProbabilityGrid",
+        "type": "object"
+      },
+      "ProbabilityMapView": {
+        "additionalProperties": false,
+        "description": "The panel's view of the latest version. ``p_b64`` and ``pod_b64`` are base64 of\nlittle-endian float16 arrays (row-major, row 0 the southernmost).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_seq": {
+            "minimum": 0.0,
+            "title": "Event Seq",
+            "type": "integer"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "grid": {
+            "$ref": "#/components/schemas/ProbabilityGrid"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "enum": [
+                "no_terrain",
+                "child_statistics",
+                "uncertain_statistics",
+                "no_charter"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Notes",
+            "type": "array"
+          },
+          "p_b64": {
+            "title": "P B64",
+            "type": "string"
+          },
+          "pod_b64": {
+            "title": "Pod B64",
+            "type": "string"
+          },
+          "profile_version": {
+            "minimum": 0.0,
+            "title": "Profile Version",
+            "type": "integer"
+          },
+          "reason": {
+            "enum": [
+              "prior",
+              "search",
+              "candidate",
+              "profile",
+              "areas",
+              "charter",
+              "confirmed"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Row",
+            "type": "number"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/SectorScore"
+            },
+            "maxItems": 64,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "reason",
+          "grid",
+          "row",
+          "event_seq",
+          "profile_version",
+          "mission_id",
+          "p_b64",
+          "pod_b64",
+          "created_at"
+        ],
+        "title": "ProbabilityMapView",
+        "type": "object"
+      },
       "SafetyLimits": {
         "additionalProperties": false,
         "description": "Per-mission limits (outer layer). Heights are metres above the home point.",
@@ -4360,6 +4639,70 @@
           "order_idx"
         ],
         "title": "Sector",
+        "type": "object"
+      },
+      "SectorScore": {
+        "additionalProperties": false,
+        "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+        "properties": {
+          "covered_pct": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Covered Pct",
+            "type": "number"
+          },
+          "est_min": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Est Min",
+            "type": "number"
+          },
+          "mean_pod": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Mean Pod",
+            "type": "number"
+          },
+          "poa": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Poa",
+            "type": "number"
+          },
+          "pos_plan": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pos Plan",
+            "type": "number"
+          },
+          "psr": {
+            "minimum": 0.0,
+            "title": "Psr",
+            "type": "number"
+          },
+          "sector_id": {
+            "pattern": "^[A-Z]{1,2}$",
+            "title": "Sector Id",
+            "type": "string"
+          },
+          "spacing_m": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
+            "title": "Spacing M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "sector_id",
+          "poa",
+          "covered_pct",
+          "mean_pod",
+          "pos_plan",
+          "est_min",
+          "psr",
+          "spacing_m"
+        ],
+        "title": "SectorScore",
         "type": "object"
       },
       "Session": {
@@ -5648,6 +5991,96 @@
         "summary": "Get Candidate"
       }
     },
+    "/api/v1/candidates/{candidate_id}/decision": {
+      "post": {
+        "description": "Only a person in the panel decides (never the AI, the search service or a script\noutside the test rig). Observers confirm, reject and mark unsure; inspect and reopen\nare the pilot's. Confirming needs a large view from the same session first (409\n``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.",
+        "operationId": "post_candidate_decision_api_v1_candidates__candidate_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Candidate Decision"
+      }
+    },
+    "/api/v1/candidates/{candidate_id}/export.gpx": {
+      "get": {
+        "description": "A confirmed find as a GPX 1.1 waypoint for the ground team.",
+        "operationId": "get_candidate_gpx_api_v1_candidates__candidate_id__export_gpx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Candidate Gpx"
+      }
+    },
     "/api/v1/cloud-budget": {
       "get": {
         "description": "Spent and caps today and for the mission (the latest one with a call, unless one\nis named).",
@@ -5752,6 +6185,47 @@
           }
         },
         "summary": "Post Cancel"
+      }
+    },
+    "/api/v1/detections/{detection_id}/view": {
+      "post": {
+        "description": "Open a detection's picture in large size. The server logs it for the session: a\nconfirmation needs it. The picture is at ``GET /api/v1/views/{view_id}`` and is never\nsent to the cloud.",
+        "operationId": "post_detection_view_api_v1_detections__detection_id__view_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "detection_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Detection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Detection View"
       }
     },
     "/api/v1/health": {
@@ -7259,6 +7733,100 @@
         "summary": "Put Limits"
       }
     },
+    "/api/v1/missions/{mission_id}/probability-map": {
+      "get": {
+        "description": "The newest version of the probability map (404 before the first). ``p_b64`` and\n``pod_b64``: base64 float16, row-major, row 0 the southernmost.",
+        "operationId": "get_probability_map_api_v1_missions__mission_id__probability_map_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbabilityMapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Probability Map"
+      }
+    },
+    "/api/v1/missions/{mission_id}/probability-map.png": {
+      "get": {
+        "description": "The map as an image, one pixel per cell, north up: ``poa`` transparent to red,\n``pod`` transparent to blue. ``Sd-Bounds``: west,south,east,north.",
+        "operationId": "get_probability_map_png_api_v1_missions__mission_id__probability_map_png_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "layer",
+            "required": false,
+            "schema": {
+              "default": "poa",
+              "enum": [
+                "poa",
+                "pod"
+              ],
+              "title": "Layer",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Probability Map Png"
+      }
+    },
     "/api/v1/missions/{mission_id}/search-profile": {
       "get": {
         "description": "The approved profile in force and a newer proposal from the AI, if any.",
@@ -7433,6 +8001,51 @@
           }
         },
         "summary": "Get Sectors"
+      }
+    },
+    "/api/v1/missions/{mission_id}/sectors/poa": {
+      "get": {
+        "description": "Each sector on the newest map: POA left, share covered, mean POD and PSR, in the\nsuggested order (highest PSR first). Empty before the first map.",
+        "operationId": "get_sector_poa_api_v1_missions__mission_id__sectors_poa_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SectorScore"
+                  },
+                  "title": "Response Get Sector Poa Api V1 Missions  Mission Id  Sectors Poa Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Sector Poa"
       }
     },
     "/api/v1/missions/{mission_id}/track": {
@@ -8208,6 +8821,45 @@
           }
         },
         "summary": "Whep Patch"
+      }
+    },
+    "/api/v1/views/{view_id}": {
+      "get": {
+        "description": "The picture of a logged large view (JPEG).",
+        "operationId": "get_view_api_v1_views__view_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "view_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "View Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get View"
       }
     },
     "/tiles/{file}": {

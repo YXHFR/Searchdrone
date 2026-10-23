@@ -6,8 +6,16 @@ flight controller and never touches the executor. Reports go to the link's
 lowest-priority queue (``OnboardLink.perception``), each report followed by its crops.
 Reading the still and the detector work run in a worker thread so a slow picture never
 blocks the event loop the executor ticks on. A failing still is logged and skipped; the
-loop keeps going. Kept stills (for a run's record) are capped at ``KEEP_MAX``, the oldest
-removed first.
+loop keeps going. The detector sources (a trained model among them) are built in a
+worker thread when the task starts, after the executor and link run; if that fails,
+perception is off, the reason is logged and sent to the ground (``off``), and flying
+goes on. Only a reason code and the error's class go to the ground, never the error's
+text (it may hold paths on the on-board computer). ``FAIL_REPORT`` stills failing in a
+row (the detector, the still or the telemetry) are reported the same way, once, as
+``stills_failing``; when the detector then runs on a still again, the ground is told it
+is back (``on``). A still skipped before detection (no pose, on the ground, turning)
+neither ends nor adds to a streak. Kept stills (for a run's record) are capped at
+``KEEP_MAX``, the oldest removed first.
 
 An order can ask for a still of its own (``capture``: ``capture_stills`` and
 ``inspect_detection``): the next still from the source, reported with the order's
@@ -31,6 +39,7 @@ from pathlib import Path
 from uuid import UUID
 
 from sd_detect import ClassRegistry, Still, build_sources, default_registry, detect_all
+from sd_detect.sources import BuiltSources
 from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
 from sd_obs.clock import Clock
@@ -41,6 +50,7 @@ from sd_schemas.link import GeoDetectionMsg
 
 __all__ = [
     "CAPTURE_WAIT_S",
+    "FAIL_REPORT",
     "KEEP_MAX",
     "MAX_POSE_AGE_MS",
     "MAX_TURN_RATE_DPS",
@@ -56,6 +66,7 @@ KEEP_MAX = 200  # kept stills (JPEG + JSON pairs) in ``keep_dir``
 MAX_TURN_RATE_DPS = 10.0  # faster attitude change: the still is skipped
 CAPTURE_WAIT_S = 3.0  # an order's still: no still from the source this long -> none
 _CAPTURE_POLL_S = 0.1
+FAIL_REPORT = 10  # stills failing in a row before the ground is told
 
 
 @dataclass
@@ -132,6 +143,8 @@ class PerceptionLoop:
         keep_dir: Path | None = None,
         env: dict[str, str] | None = None,
         on_targets: Callable[[list[GeoDetectionMsg]], None] | None = None,
+        off: Callable[[str, str], None] | None = None,
+        on: Callable[[], None] | None = None,
     ) -> None:
         self.source = source
         self.telemetry = telemetry
@@ -141,12 +154,24 @@ class PerceptionLoop:
         self.registry = registry or default_registry()
         self.period_s = period_s
         self.keep_dir = keep_dir
-        self.built = build_sources(self.registry, env=env)
+        self.env = env
+        self.off = off  # (reason code, error class) when perception cannot work
+        self.on = on  # perception works again after ``stills_failing``
+        self._failing = 0
+        self._built: BuiltSources | None = None
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
         self._last_still_ms: int | None = None
         self.on_targets = on_targets
         self._lock = asyncio.Lock()  # one still at a time: the loop's or an order's
+
+    @property
+    def built(self) -> BuiltSources:
+        """The detector sources, built on first use (``run`` builds them off the event
+        loop)."""
+        if self._built is None:
+            self._built = build_sources(self.registry, env=self.env)
+        return self._built
 
     def handle(
         self,
@@ -239,9 +264,12 @@ class PerceptionLoop:
             return None
         t, now_ms = self.telemetry(), self.clock.monotonic_ms()
         rate = max(rate, self.rate.update(t))
+        ran = self._detected()
         out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate, command_id)
         if out is not None:
             self._deliver(out)
+        if self._detected() > ran:  # a skipped still says nothing either way
+            self._back(recovered=self._failing >= FAIL_REPORT)
         return out
 
     async def capture(self, command_id: UUID) -> UUID | None:
@@ -271,7 +299,26 @@ class PerceptionLoop:
         finally:
             self._lock.release()
 
+    def _detected(self) -> int:
+        """Stills the detector ran on (a report, or a view that misses the ground)."""
+        return self.stats.reports + self.stats.skipped_no_footprint
+
+    def _back(self, *, recovered: bool) -> None:
+        self._failing = 0
+        if recovered and self.on is not None:
+            try:  # telling the ground never counts against the still
+                self.on()
+            except Exception:
+                log.exception("perception: could not tell the ground detection is back")
+
     async def run(self, stop: asyncio.Event) -> None:
+        try:
+            await asyncio.to_thread(lambda: self.built)
+        except Exception as exc:
+            log.exception("perception off: the detector sources could not be built")
+            if self.off is not None:
+                self.off("sources_failed", type(exc).__name__)
+            return
         log.info(
             "perception on: sources %s, skipped %s", sorted(self.built.sources), self.built.skipped
         )
@@ -279,7 +326,13 @@ class PerceptionLoop:
             try:  # one bad still must not end perception
                 async with self._lock:
                     await self._one()
-            except Exception:
+            except Exception as exc:
                 self.stats.failed += 1
+                self._failing += 1
                 log.exception("perception failed on a still")
+                if self._failing == FAIL_REPORT and self.off is not None:
+                    try:  # telling the ground never ends perception
+                        self.off("stills_failing", type(exc).__name__)
+                    except Exception:
+                        log.exception("perception: could not tell the ground detection is off")
             await self.clock.sleep(self.period_s)

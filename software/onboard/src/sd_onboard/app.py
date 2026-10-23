@@ -140,6 +140,11 @@ def _perception(
         PinholeCamera(p.width_px, p.height_px, p.hfov_deg),
         period_s=p.period_s,
         keep_dir=loaded.state_dir / "stills" if p.keep_stills else None,
+        env=loaded.env,
+        off=lambda reason, error: link.event(
+            "executor.perception_off", "warning", {"reason": reason, "error": error}
+        ),
+        on=lambda: link.event("executor.perception_on", "info", {}),
     )
 
 

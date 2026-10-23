@@ -55,6 +55,8 @@ dev = [
   "pmtiles>=3.8.1", "mapbox-vector-tile>=2.2.0", "shapely>=2.1",
   # tools/terrain/fetch_trees.py: the county tree height archive is Deflate64
   "inflate64>=1.0.4",
+  # B2-12: tiny synthetic ONNX graphs for the OnnxDetector tests
+  "onnx>=1.23,<1.24",
 ]
 # Test-only workspace packages. Production packages never import these.
 test = ["sd-link-testing", "sd-testing"]
@@ -65,7 +67,8 @@ cad = ["cadquery==2.8.0", "matplotlib==3.11.2"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["**/generated/**"]
+# tools/train/vendor: the model code as published by its authors (NOTICE.md there).
+extend-exclude = ["**/generated/**", "tools/train/vendor/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S", "PTH", "TID", "N", "C4", "DTZ", "T20"]
@@ -90,7 +93,13 @@ pythonVersion = "3.12"
 typeCheckingMode = "standard"
 strict = ["software/common/schemas/src", "software/common/safety/src"]
 include = ["software", "simulation", "tools"]
-exclude = ["**/node_modules", "**/.venv", "**/generated", "**/__pycache__"]
+# The PyTorch scripts in tools/train run in its own Python (tools/train/pyproject.toml);
+# the rest of tools/train (fetch_weights, tiles, evaluate) runs here and is checked.
+exclude = [
+  "**/node_modules", "**/.venv", "**/generated", "**/__pycache__",
+  "tools/train/vendor", "tools/train/tests", "tools/train/families.py",
+  "tools/train/train_detector.py", "tools/train/export_onnx.py",
+]
 executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,68 @@
+# The image bank's datasets: real pictures from the air with person boxes, for training
+# and measuring the person detector. Nothing here is committed or uploaded: `just
+# bench-fetch yes=1` downloads each archive to <data_dir>/datasets/<name>/, checks its
+# size and SHA-256 and stops on any difference.
+#
+#   name          short id, also the prefix of every image id ("heridal:test_TRS_0001")
+#   licence       SPDX id of the data's licence, as read at the source on `checked`
+#   use           what the data may be used for here: "train", "measure" (the locked
+#                 test split) and "pretrain" (synthetic pictures, never measured on)
+#   layout        how the archive is read (tools/bench/layouts.py)
+#   url, size_bytes, sha256   the archive
+#   ranges        the host serves byte ranges (single files can be read without the
+#                 whole archive; the CI mini bank needs it)
+#   publish_weights  whether weights trained on it may be published (false until the
+#                 rights holder confirms it in writing)
+#
+# tools/tests/test_bench_datasets.py holds the licence rule: only open licences
+# (CC0, CC BY, MIT, Apache) may be trained on; a non-commercial licence may only ever be
+# "measure" with local_only = true, and nothing without a licence is allowed at all.
+
+[[dataset]]
+name = "heridal"
+title = "HERIDAL (wilderness search and rescue, Croatia)"
+licence = "CC-BY-3.0"
+checked = "2026-10-23"
+attribution = "HERIDAL database, Božić-Štulić, Marušić and Gotovac, \"Deep Learning Approach in Aerial Imagery for Supporting Land Search and Rescue Missions\", IJCV 2019, University of Split (FESB); Zenodo record 5662351, CC BY 3.0"
+source_page = "https://zenodo.org/records/5662351"
+url = "https://zenodo.org/api/records/5662351/files/heridal_keras_retinanet_voc.zip/content"
+size_bytes = 8311735812
+sha256 = "63ea51b29d67f9b95cc600674c6ccfa719688594404b5311a9164fb41a0448a3"
+layout = "heridal_voc"
+use = ["train", "measure"]
+licence_confirmed = true  # the Zenodo record licenses the dataset itself
+ranges = true
+publish_weights = true
+local_only = false
+
+[[dataset]]
+name = "wisard"
+title = "WiSARD v1, visible-light part (wilderness search and rescue, Washington)"
+licence = "MIT"
+checked = "2026-10-23"
+licence_note = "The project page carries the MIT licence text for \"the Software\" and says nothing else about the data; until the lab confirms the data licence in writing, it is only measured on, never trained on (add \"train\" to use then)."
+attribution = "WiSARD, Broyles, Hayner and Leung, \"WiSARD: A Labeled Visual and Thermal Image Dataset for Wilderness Search and Rescue\", IROS 2022, University of Washington"
+source_page = "https://sites.google.com/uw.edu/wisard/"
+url = "https://drive.usercontent.google.com/download?id=1PKjGCqUszHH1nMbXUBTwPSDqRabAt_ht&export=download&confirm=t"
+size_bytes = 43526830098
+sha256 = "PENDING"
+layout = "wisard_vis"
+use = ["measure"]
+licence_confirmed = false
+ranges = true
+publish_weights = false
+local_only = false
+
+[[dataset]]
+name = "simfarm"
+title = "Sim farm pictures (Gazebo renders with facit, `just sim-farm`)"
+licence = "Apache-2.0"
+checked = "2026-10-23"
+licence_note = "Our own renders; the person models are CC0 or CC BY 4.0 (credits in each round's round.json)."
+attribution = "Searchdrone sim farm"
+layout = "simfarm"
+local_path = "build/simfarm/rounds"
+use = ["pretrain"]
+ranges = false
+publish_weights = true
+local_only = true

@@ -423,6 +423,22 @@
           "format": "uuid",
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
+        },
+        "poa_hint": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "low",
+                "excluded"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -457,6 +473,22 @@
           "maxLength": 40,
           "minLength": 1,
           "type": "string"
+        },
+        "poa_hint": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "low",
+                "excluded"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1822,6 +1854,28 @@
       ],
       "title": "CandidateState",
       "type": "string"
+    },
+    "CandidateView": {
+      "additionalProperties": false,
+      "description": "A detection's picture in large size, logged for the session that asked for it (a\nconfirmation needs one). The JPEG is at ``GET /api/v1/views/{view_id}``.",
+      "properties": {
+        "detection_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "view_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "view_id",
+        "detection_id"
+      ],
+      "title": "CandidateView",
+      "type": "object"
     },
     "CaptureStillsParams": {
       "additionalProperties": false,
@@ -7460,6 +7514,172 @@
       "title": "Pose",
       "type": "object"
     },
+    "ProbabilityGrid": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_m": {
+          "maximum": 200,
+          "minimum": 5,
+          "type": "number"
+        },
+        "east": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "ipp_lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "ipp_lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "north": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "nx": {
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ny": {
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "south": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "west": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "x0_m": {
+          "maximum": 50000,
+          "minimum": -50000,
+          "type": "number"
+        },
+        "y0_m": {
+          "maximum": 50000,
+          "minimum": -50000,
+          "type": "number"
+        }
+      },
+      "required": [
+        "ipp_lat",
+        "ipp_lon",
+        "x0_m",
+        "y0_m",
+        "nx",
+        "ny",
+        "cell_m",
+        "west",
+        "south",
+        "east",
+        "north"
+      ],
+      "title": "ProbabilityGrid",
+      "type": "object"
+    },
+    "ProbabilityMapView": {
+      "additionalProperties": false,
+      "description": "The panel's view of the latest version. ``p_b64`` and ``pod_b64`` are base64 of\nlittle-endian float16 arrays (row-major, row 0 the southernmost).",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "event_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frozen": {
+          "default": false,
+          "type": "boolean"
+        },
+        "grid": {
+          "$ref": "#/$defs/ProbabilityGrid"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "notes": {
+          "items": {
+            "enum": [
+              "no_terrain",
+              "child_statistics",
+              "uncertain_statistics",
+              "no_charter"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "p_b64": {
+          "type": "string"
+        },
+        "pod_b64": {
+          "type": "string"
+        },
+        "profile_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "enum": [
+            "prior",
+            "search",
+            "candidate",
+            "profile",
+            "areas",
+            "charter",
+            "confirmed"
+          ],
+          "type": "string"
+        },
+        "row": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "sectors": {
+          "items": {
+            "$ref": "#/$defs/SectorScore"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "version": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "reason",
+        "grid",
+        "row",
+        "event_seq",
+        "profile_version",
+        "mission_id",
+        "p_b64",
+        "pod_b64",
+        "created_at"
+      ],
+      "title": "ProbabilityMapView",
+      "type": "object"
+    },
     "ProposeCharterChangeParams": {
       "additionalProperties": false,
       "description": "Validated as a charter proposal by the ground station, never by the gate.",
@@ -8178,6 +8398,62 @@
       "title": "Sector",
       "type": "object"
     },
+    "SectorScore": {
+      "additionalProperties": false,
+      "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+      "properties": {
+        "covered_pct": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "est_min": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "mean_pod": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "poa": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "pos_plan": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "psr": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "sector_id": {
+          "pattern": "^[A-Z]{1,2}$",
+          "type": "string"
+        },
+        "spacing_m": {
+          "exclusiveMinimum": 0,
+          "maximum": 500,
+          "type": "number"
+        }
+      },
+      "required": [
+        "sector_id",
+        "poa",
+        "covered_pct",
+        "mean_pod",
+        "pos_plan",
+        "est_min",
+        "psr",
+        "spacing_m"
+      ],
+      "title": "SectorScore",
+      "type": "object"
+    },
     "Session": {
       "additionalProperties": false,
       "properties": {
@@ -8379,6 +8655,17 @@
             "$ref": "#/$defs/MapPin"
           },
           "type": "array"
+        },
+        "probability_line": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "recent_events": {
           "items": {

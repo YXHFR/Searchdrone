@@ -3,6 +3,7 @@
 import type {
   Annotation,
   Approval,
+  CandidateCard,
   Charter,
   Command,
   Find,
@@ -35,6 +36,7 @@ export const SOURCE_IDS = [
   "areas",
   "pins",
   "finds",
+  "candidates",
   "find-hover",
   "draw",
   "drone",
@@ -201,6 +203,29 @@ export function findsData(finds: Find[]): FC {
       }),
     ),
   );
+}
+
+/** Candidates still open and confirmed finds: a pin with its uncertainty circle (95 %).
+ * A confirmed one is labelled F<n> (its find number), the rest K<seq>. */
+export function candidatesData(cards: CandidateCard[], finds: Map<string, number>): FC {
+  const out: Feature[] = [];
+  for (const c of cards) {
+    if (c.state === "rejected" || c.state === "merged") continue;
+    if (!Number.isFinite(c.lat) || !Number.isFinite(c.lon)) continue;
+    const n = finds.get(c.candidate_id);
+    const props = {
+      id: c.candidate_id,
+      found: n !== undefined,
+      label: n !== undefined ? `F${n}` : `K${c.seq}`,
+    };
+    out.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [circleRing(c, Math.max(1, c.sigma95_m))] },
+      properties: props,
+    });
+    out.push(point(c.lon, c.lat, props));
+  }
+  return fc(out);
 }
 
 /** Where the drone hovers beside a find while the link is down (find mode of the plan). */

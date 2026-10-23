@@ -42,3 +42,31 @@ path = "simulation/gazebo/sites/*/dem.asc"
 precedence = "override"
 SPDX-FileCopyrightText = "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30."
 SPDX-License-Identifier = "LicenseRef-Copernicus-WorldDEM-30"
+
+# The model code of YOLOX and DAMO-YOLO, as published by their authors under Apache-2.0
+# (tools/train/vendor/NOTICE.md says what was taken and what was changed).
+[[annotations]]
+path = "tools/train/vendor/yolox/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Megvii Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tools/train/vendor/damoyolo/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["Alibaba Group Holding Limited", "OpenMMLab"]
+SPDX-License-Identifier = "Apache-2.0"
+
+# Written for this project from the upstream code (NOTICE.md): both hold copyright.
+[[annotations]]
+path = [
+  "tools/train/vendor/yolox/__init__.py",
+  "tools/train/vendor/damoyolo/__init__.py",
+  "tools/train/vendor/damoyolo/model.py",
+  "tools/train/vendor/damoyolo/zero_head.py",
+]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Searchdrone contributors", "Megvii Inc.", "Alibaba Group Holding Limited",
+]
+SPDX-License-Identifier = "Apache-2.0"

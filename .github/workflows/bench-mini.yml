@@ -1,0 +1,53 @@
+# Nightly run of the person detector's measure on the mini image bank: 64 pictures of
+# the locked HERIDAL test part (CC BY 3.0), read straight out of the archive on Zenodo
+# with byte ranges and checked one by one against tools/bench/splits/mini_v1.json. The
+# pictures live only in the runner's temporary folder for the length of the job: they
+# are never cached, committed or uploaded. Only the numbers (JSON) become an artifact.
+# Runs only from main (the schedule, or a manual start on main), never for pull requests.
+name: bench-mini
+
+on:
+  schedule:
+    - cron: "41 3 * * *" # 03:41 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: bench-mini
+  cancel-in-progress: false
+
+jobs:
+  bench-mini:
+    if: github.ref == 'refs/heads/main' && github.repository == 'YXHFR/Searchdrone'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: Fetch the mini bank (checked picture by picture)
+        run: just bench-fetch yes=1 mini=1 "data=$RUNNER_TEMP/bench-data"
+      - name: Self-check (nothing finds 0, the answer key finds all)
+        run: >-
+          just bench-detector model=selfcheck mini=1 "data=$RUNNER_TEMP/bench-data"
+          "out=$RUNNER_TEMP/bench-results/selfcheck_mini.json"
+      - name: Only numbers in the upload
+        id: numbers
+        if: always()
+        run: |
+          python3 tools/check_no_orthophotos.py "$RUNNER_TEMP/bench-results"
+          if find "$RUNNER_TEMP/bench-results" -type f ! -name '*.json' | grep -q .; then
+            echo "resultatmappen innehåller annat än JSON"; exit 1
+          fi
+      - name: Upload the numbers (JSON only)
+        if: always() && steps.numbers.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-mini
+          path: ${{ runner.temp }}/bench-results/*.json
+          if-no-files-found: ignore
+          retention-days: 90

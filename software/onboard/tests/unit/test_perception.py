@@ -12,8 +12,10 @@ import asyncio
 import io
 import json
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +27,7 @@ from sd_obs.clock import MonotonicClock
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.perception import loop as loop_module
 from sd_onboard.perception.loop import (
+    FAIL_REPORT,
     MAX_POSE_AGE_MS,
     MAX_TURN_RATE_DPS,
     AttitudeRate,
@@ -339,6 +342,104 @@ async def test_run_skips_a_failing_still_sends_reports_and_stops(tmp_path: Path)
     assert lp.stats.failed == 1
     assert len(sent) == 1 and sent[0].report.detections[0].label == "red_block"
     assert threading.current_thread().name not in source.threads  # never on the event loop
+
+
+async def test_a_model_that_cannot_be_built_only_turns_perception_off(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    lp = loop(tmp_path, FakeClock(), {"SD_DETECTOR_MODEL": str(tmp_path / "gone.json")})
+    reasons: list[tuple[str, str]] = []
+    lp.off = lambda reason, error: reasons.append((reason, error))
+    # built in the task, never when sd-onboard starts the executor and link
+    assert lp._built is None  # pyright: ignore[reportPrivateUsage]
+    with caplog.at_level("ERROR", logger="sd_onboard.perception"):
+        await asyncio.wait_for(lp.run(asyncio.Event()), 5)  # ends, never raises
+    assert "perception off" in caplog.text
+    # the ground is told why, by code and class only: no paths from the on-board computer
+    assert reasons == [("sources_failed", "ModelError")]
+
+
+class _BrokenModel:
+    name = "model"
+    license = "Apache-2.0"
+    source = "model"
+
+    broken = True
+
+    def detect_still(self, still: Any) -> list[Any]:
+        if self.broken:
+            raise RuntimeError("inference failed")
+        return []
+
+
+async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> None:
+    write_still(tmp_path, "block0_h30")
+    clock = MonotonicClock()
+    landed = False
+
+    def fresh() -> FcTelemetry:
+        return telemetry("block0_h30", clock.monotonic_ms())
+
+    captured = DirStillSource(tmp_path, synthetic=True).poll()
+    assert captured is not None
+    lp = PerceptionLoop(
+        SimpleNamespace(poll=lambda: captured),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        lambda: replace(fresh(), alt_rel_home_m=0.5) if landed else fresh(),
+        lambda _r: None,
+        clock,
+        CAM,
+        period_s=0.01,
+        env={},
+    )
+    told: list[tuple[str, str] | str] = []
+    lp.off = lambda reason, error: told.append((reason, error))
+    lp.on = lambda: told.append("on")
+    model = _BrokenModel()
+    lp.built.sources["model"] = model  # type: ignore[assignment]
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(lp.run(stop))
+
+    async def until(done: Callable[[], bool]) -> None:
+        for _ in range(1000):
+            if done():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(told)
+
+    await until(lambda: lp.stats.failed > FAIL_REPORT)
+    assert not task.done()  # keeps trying: a passing fault may clear
+    assert told == [("stills_failing", "RuntimeError")]  # told once
+    landed = True  # stills skipped before detection say nothing about the detector
+    skipped = lp.stats.skipped_on_ground
+    await until(lambda: lp.stats.skipped_on_ground > skipped)
+    model.broken = False  # only now: no still in flight can reach the detector
+    failed, skipped = lp.stats.failed, lp.stats.skipped_on_ground
+    await until(lambda: lp.stats.skipped_on_ground > skipped + 3)
+    assert told == [("stills_failing", "RuntimeError")]  # no "on" for skipped stills
+    assert lp.stats.failed == failed  # and they add nothing to the streak
+    landed = False
+    await until(lambda: "on" in told)  # the detector ran again: the ground is told
+    model.broken = True
+    await until(lambda: len(told) == 3)  # a new streak is told again
+    stop.set()
+    await asyncio.wait_for(task, 2)
+    assert told == [
+        ("stills_failing", "RuntimeError"),
+        "on",
+        ("stills_failing", "RuntimeError"),
+    ]
+
+
+def test_a_failing_on_only_logs_and_the_streak_still_ends(tmp_path: Path) -> None:
+    lp = loop(tmp_path, FakeClock(), {})
+    lp._failing = FAIL_REPORT  # pyright: ignore[reportPrivateUsage]
+
+    def on() -> None:
+        raise RuntimeError("link down")
+
+    lp.on = on
+    lp._back(recovered=True)  # pyright: ignore[reportPrivateUsage]
+    assert lp._failing == 0 and lp.stats.failed == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class _TooLarge:

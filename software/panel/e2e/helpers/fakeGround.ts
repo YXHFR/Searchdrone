@@ -16,6 +16,8 @@ import {
 import type {
   Annotation,
   Approval,
+  CandidateCard,
+  CandidateDetail,
   Charter,
   Clearance,
   Command,
@@ -112,6 +114,11 @@ export class FakeGround {
   commands: Command[] = [];
   annotations: Annotation[] = [];
   finds: Find[] = [];
+  /** Candidate cards and, per candidate, what its detail adds (pictures, assessments). */
+  candidates: CandidateCard[] = [];
+  candidateDetail: Record<string, Pick<CandidateDetail, "observations" | "assessments">> = {};
+  /** Detections opened in large size (a confirmation needs one of the candidate's). */
+  readonly viewed = new Set<string>();
   /** The search profile: the version in force and a newer proposal (the AI's). */
   profile: {
     approved: Record<string, unknown> | null;
@@ -121,6 +128,34 @@ export class FakeGround {
   } = { approved: null, proposal: null, proposal_id: null, proposed_by: null };
   clearance: Clearance | null = null;
   sectors: unknown = { type: "FeatureCollection", features: [] };
+  /** The newest probability map (null: none yet, 404 like the ground). */
+  probabilityMap: Record<string, unknown> | null = {
+    mission_id: MISSION,
+    version: 1,
+    reason: "prior",
+    grid: {
+      ipp_lat: -35.363261,
+      ipp_lon: 149.16523,
+      x0_m: -50,
+      y0_m: -50,
+      nx: 4,
+      ny: 4,
+      cell_m: 25,
+      west: 149.1646788,
+      south: -35.3637118,
+      east: 149.1657812,
+      north: -35.3628102,
+    },
+    row: 0.1,
+    frozen: false,
+    event_seq: 0,
+    profile_version: 1,
+    sectors: [],
+    notes: [],
+    p_b64: `${"A".repeat(43)}=`,
+    pod_b64: `${"A".repeat(43)}=`,
+    created_at: "2026-10-15T12:30:00Z",
+  };
   track: number[][] = [];
   /** Messages the panel sent on its live sockets (subscribe, ping, manual). */
   readonly wsSent: Record<string, unknown>[] = [];
@@ -260,7 +295,57 @@ export class FakeGround {
       const f = data as Find;
       this.finds = [...this.finds.filter((x) => x.find_id !== f.find_id), f];
     }
+    if (type.startsWith("candidate.")) {
+      const c = data as CandidateCard;
+      this.candidates = [...this.candidates.filter((x) => x.candidate_id !== c.candidate_id), c];
+    }
     if (type === "mission.updated") this.mission = data as Mission;
+  }
+
+  private candidateDetailOf(c: CandidateCard): CandidateDetail {
+    const extra = this.candidateDetail[c.candidate_id] ?? { observations: [], assessments: [] };
+    return {
+      mission_id: MISSION,
+      card: c,
+      decisions: this.decisions[c.candidate_id] ?? [],
+      ...extra,
+    };
+  }
+
+  private decisions: Record<string, CandidateDetail["decisions"]> = {};
+
+  /** Like the real ground: the person's decision moves the state, then candidate.decided. */
+  private decide(id: string, body: { decision: string; note?: string; subject_rev: number }) {
+    const c = this.candidates.find((x) => x.candidate_id === id);
+    if (!c) return { status: 404, body: { code: "CANDIDATE_NOT_FOUND" } };
+    if (body.subject_rev !== c.rev)
+      return { status: 409, body: { code: "SUPERSEDED", detail_sv: "Kandidaten har ändrats." } };
+    const pics = this.candidateDetail[id]?.observations ?? [];
+    if (body.decision === "confirm" && !pics.some((o) => this.viewed.has(o.detection_id)))
+      return { status: 409, body: { code: "NOT_VIEWED", detail_sv: "Titta på bilden först." } };
+    const to: Record<string, CandidateCard["state"]> = {
+      confirm: "confirmed",
+      reject: "rejected",
+      reopen: "ready",
+    };
+    const next = to[body.decision];
+    const card = next ? { ...c, state: next, rev: c.rev + 1 } : c;
+    this.decisions[id] = [
+      ...(this.decisions[id] ?? []),
+      {
+        id: `dec-${(this.decisions[id]?.length ?? 0) + 1}`,
+        decision: body.decision as CandidateDetail["decisions"][number]["decision"],
+        note: body.note ?? "",
+        operator_ref: this.session?.issuer_ref ?? "operator:demo",
+        subject_rev: body.subject_rev,
+        created_at: new Date().toISOString(),
+      },
+    ];
+    this.pushLive("candidates", "candidate.decided", {
+      ...card,
+      decision: { decision: body.decision, candidate_id: id, seq: c.seq },
+    });
+    return { status: 200, body: this.candidateDetailOf(card) };
   }
 
   async dropSocket(): Promise<void> {
@@ -480,9 +565,58 @@ export class FakeGround {
     }
     if (k === `GET ${ms}/commands`) return { status: 200, body: this.commands };
     if (k === `GET ${ms}/sectors`) return { status: 200, body: this.sectors };
+    if (k === `GET ${ms}/sectors/poa`)
+      return { status: 200, body: this.probabilityMap?.sectors ?? [] };
+    if (k === `GET ${ms}/probability-map`)
+      return this.probabilityMap
+        ? { status: 200, body: this.probabilityMap }
+        : {
+            status: 404,
+            body: { code: "MAP_NOT_FOUND", detail_sv: "Ingen sannolikhetskarta ännu." },
+          };
+    if (k === `GET ${ms}/probability-map.png`)
+      return { status: 200, raw: PNG_1PX, headers: { "content-type": "image/png" } };
     if (k === `GET ${ms}/annotations`) return { status: 200, body: this.annotations };
     if (k === `GET ${ms}/finds`) return { status: 200, body: this.finds };
     if (k === `GET ${ms}/search-profile`) return { status: 200, body: this.profile };
+    if (k === `GET ${ms}/candidates`) {
+      const open = (c: CandidateCard) => !["confirmed", "rejected", "merged"].includes(c.state);
+      return {
+        status: 200,
+        body: {
+          items: this.candidates.filter((c) => c.state !== "merged"),
+          counts: {
+            review: this.candidates.filter((c) => open(c) && c.priority_class !== "low").length,
+            low: this.candidates.filter((c) => open(c) && c.priority_class === "low").length,
+            confirmed: this.candidates.filter((c) => c.state === "confirmed").length,
+            rejected: this.candidates.filter((c) => c.state === "rejected").length,
+          },
+        },
+      };
+    }
+    const cand = /^(GET|POST) \/api\/v1\/candidates\/([^/]+)(\/decision|\/export\.gpx)?$/.exec(k);
+    if (cand) {
+      const id = cand[2] as string;
+      const c = this.candidates.find((x) => x.candidate_id === id);
+      if (cand[1] === "POST" && cand[3] === "/decision")
+        return this.decide(id, req.body as { decision: string; subject_rev: number });
+      if (!c) return { status: 404, body: { code: "CANDIDATE_NOT_FOUND" } };
+      if (cand[3] === "/export.gpx")
+        return {
+          status: 200,
+          raw: Buffer.from(`<gpx version="1.1"><wpt lat="${c.lat}" lon="${c.lon}"/></gpx>`),
+          headers: { "content-type": "application/gpx+xml" },
+        };
+      return { status: 200, body: this.candidateDetailOf(c) };
+    }
+    const view = /^POST \/api\/v1\/detections\/([^/]+)\/view$/.exec(k);
+    if (view) {
+      const detection = view[1] as string;
+      this.viewed.add(detection);
+      return { status: 201, body: { view_id: `view-${detection}`, detection_id: detection } };
+    }
+    if (/^GET \/api\/v1\/views\/[^/]+$/.test(k))
+      return { status: 200, raw: THUMB_JPEG, headers: { "content-type": "image/jpeg" } };
     if (k === `POST ${ms}/search-profile`) {
       if (this.session?.role !== "pilot")
         return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };

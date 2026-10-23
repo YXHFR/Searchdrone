@@ -142,6 +142,7 @@ from sd_schemas.link import (
     StickAxes,
 )
 from sd_schemas.mission import MissionState, OperatorLatch, Trigger
+from sd_schemas.probmap import ProbabilityGrid, ProbabilityMapView, SectorScore
 from sd_schemas.safety import LimitCaps, SafetyLimits
 from sd_schemas.search import (
     Candidate,
@@ -153,6 +154,7 @@ from sd_schemas.search import (
     CandidateObservationRow,
     CandidateQueue,
     CandidateState,
+    CandidateView,
     Garment,
     Hair,
     Item,
@@ -238,6 +240,7 @@ __all__ = [
     "CandidateObservationRow",
     "CandidateQueue",
     "CandidateState",
+    "CandidateView",
     "CaptureStillsParams",
     "Charter",
     "CharterAck",
@@ -342,6 +345,8 @@ __all__ = [
     "PerceptionReport",
     "PilotPosition",
     "Pose",
+    "ProbabilityGrid",
+    "ProbabilityMapView",
     "ProposeCharterChangeParams",
     "ReportParams",
     "ResumeParams",
@@ -356,6 +361,7 @@ __all__ = [
     "SearchProfileProposalResult",
     "SearchProfileState",
     "Sector",
+    "SectorScore",
     "Session",
     "SetCameraTiltParams",
     "Situation",
