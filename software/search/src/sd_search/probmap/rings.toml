@@ -1,0 +1,51 @@
+# The probability map's starting values per subject category: how far from the place last
+# seen (straight-line km) 25 / 50 / 75 / 95 % of lost people of that kind were found, and
+# how much more likely a cell near a track, water or a building is. Every number is a
+# starting value, not truth: local data can differ, and the weights are to be calibrated.
+#
+# Sources (published summaries, read 2026-10-17):
+# - Norske Redningshunder, Lie & Skår, ICAR 2016 (Norway 2009-2015, about 400 searches
+#   with a find): distances per category, and the share found on or within 100 m of a
+#   road, path or track.
+# - Koester, "Lost Person Behavior" (2008) and ISRID summaries (ICAR 2025): the dementia
+#   find locations (building 20 %, water 7 %).
+
+[default]                 # categories without their own numbers below
+rings_km = [0.40, 1.20, 3.00, 10.00]
+uncertain = true
+source = "Own default between the categories (no published numbers)"
+
+[default.weights]
+track = 0.5
+water = 0.2
+building = 0.0
+
+[category.dementia]
+rings_km = [0.27, 0.80, 3.15, 9.05]
+uncertain = false
+source = "Norske Redningshunder (n = 103), close to ISRID"
+weights = { track = 3.0, water = 0.5, building = 0.5 }  # 64 % on a road or path, 94 % within 100 m
+
+[category.hiker]
+rings_km = [0.64, 1.71, 3.35, 14.85]
+uncertain = false
+source = "Norske Redningshunder (n = 49)"
+weights = { track = 1.5, water = 0.3, building = 0.0 }  # 33 % / 69 %
+
+[category.despondent]
+rings_km = [0.37, 0.98, 2.50, 8.54]
+uncertain = false
+source = "Norske Redningshunder (n = 197)"
+weights = { track = 2.0, water = 0.5, building = 0.0 }  # 42 % / 86 %
+
+[category.gatherer]
+rings_km = [1.26, 1.69, 2.78, 12.29]
+uncertain = true            # n = 13
+source = "Norske Redningshunder (n = 13)"
+weights = { track = 0.5, water = 0.2, building = 0.0 }  # 15 % / 46 %
+
+[category.hunter]
+rings_km = [1.72, 2.65, 4.14, 4.55]
+uncertain = true            # n = 8
+source = "Norske Redningshunder (n = 8)"
+weights = { track = 0.5, water = 0.2, building = 0.0 }

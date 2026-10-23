@@ -348,6 +348,9 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
           useUiStore.getState().toast("Ny sökprofil föreslagen: granska den under Sökprofil.");
       }
       break;
+    case "probability_map.updated":
+      if (forMission) m.bumpMap();
+      break;
     case "annotation.deleted":
       m.removeAnnotation((e.data as { id: string }).id);
       break;

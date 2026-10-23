@@ -415,7 +415,7 @@ class Repo:
         rows = await self._all(
             "SELECT id, mission_id, kind, label, ST_AsGeoJSON(geom) AS geometry, created_by, "
             "created_at, CASE WHEN kind = 'area' THEN ST_Area(geom::geography) END AS area_m2, "
-            "CASE WHEN kind = 'path' THEN ST_Length(geom::geography) END AS length_m "
+            "CASE WHEN kind = 'path' THEN ST_Length(geom::geography) END AS length_m, poa_hint "
             "FROM map_annotations WHERE mission_id = :m AND deleted_at IS NULL ORDER BY created_at",
             m=mission_id,
         )

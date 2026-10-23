@@ -50,6 +50,7 @@ TOPICS = frozenset(
         "detections",
         "candidates",
         "search_profile",
+        "probability_map",
     }
 )
 

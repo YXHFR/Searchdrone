@@ -3,7 +3,8 @@
 It lives on the commander's loopback-only listener but has its own token and role. The
 search service reads the open missions, their approved search profile and their target
 detections and crops, writes candidates with the code's assessment, reads its candidates
-back after a restart and sends a heartbeat. It has no route for orders, approvals, STOP /
+back after a restart and sends a heartbeat. For the probability map it reads the map's
+inputs and the stills and writes new versions. It has no route for orders, approvals, STOP /
 RETURN HOME, chat as a person or a decision on a candidate (it can never set ``confirmed``
 or ``rejected``), and its token is refused on the commander API and on the panel listeners
 (403).
@@ -20,8 +21,15 @@ from sd_ground.api.deps import ApiStatusError, IdPath, ground, repo_of
 from sd_ground.context import Ground
 from sd_ground.services import candidates as candidates_service
 from sd_ground.services import files as files_service
+from sd_ground.services import probability_map as map_service
 from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
+from sd_schemas.probmap import (
+    ProbabilityMapInputs,
+    ProbabilityMapWrite,
+    ProbabilityMapWritten,
+    SearchStill,
+)
 from sd_schemas.search import (
     CandidateBatch,
     CandidateWritten,
@@ -128,3 +136,36 @@ async def write_candidates(
     """New candidates and new revisions, all or none. 409 for a stale ``base_rev``, an
     observation already written, or a candidate a person or the pilot holds."""
     return await candidates_service.write(_flow(g), mission_id, body)
+
+
+@router.get("/missions/{mission_id}/probability-map/inputs", response_model=ProbabilityMapInputs)
+async def probability_map_inputs(mission_id: IdPath, _: Search, g: G) -> ProbabilityMapInputs:
+    """What the map depends on besides the profile and the candidates: the approved
+    charter's area and sectors, the operator's areas with a POA hint, the newest version."""
+    return await map_service.inputs(_flow(g), mission_id)
+
+
+@router.get("/missions/{mission_id}/stills", response_model=list[SearchStill])
+async def stills(
+    mission_id: IdPath,
+    _: Search,
+    g: G,
+    after_seq: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=map_service.STILLS_MAX)] = 200,
+) -> list[SearchStill]:
+    """The mission's stills after ``after_seq`` (where the camera looked), oldest first."""
+    return await map_service.stills(_flow(g), mission_id, after_seq, limit)
+
+
+@router.post(
+    "/missions/{mission_id}/probability-maps",
+    status_code=201,
+    response_model=ProbabilityMapWritten,
+)
+async def write_probability_map(
+    mission_id: IdPath, body: ProbabilityMapWrite, _: Search, g: G
+) -> ProbabilityMapWritten:
+    """A new version of the map. 409 for a stale version, a version after a frozen one,
+    a profile that is no longer in force or a freeze without a find a person confirmed;
+    422 for arrays that do not fit the grid or a sector that is not in the charter."""
+    return await map_service.write(_flow(g), mission_id, body)

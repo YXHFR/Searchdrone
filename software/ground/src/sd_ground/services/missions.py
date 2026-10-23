@@ -896,6 +896,7 @@ class MissionFlow:
         """``GET /commander/v1/missions/{id}/situation``."""
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import probability_map as map_service
         from sd_ground.services.situation import build_situation
 
         mission = await self.mission(mission_id)
@@ -923,4 +924,5 @@ class MissionFlow:
             sectors=await self.repo.sectors(mission_id),
             annotations=annotations,
             recent_events=events[-20:],
+            probability_line=await map_service.probability_line(self, mission_id),
         )

@@ -16,6 +16,12 @@ from typing import Any, Protocol
 import httpx
 from pydantic import TypeAdapter
 
+from sd_schemas.probmap import (
+    ProbabilityMapInputs,
+    ProbabilityMapWrite,
+    ProbabilityMapWritten,
+    SearchStill,
+)
 from sd_schemas.search import (
     CandidateBatch,
     CandidateWritten,
@@ -32,6 +38,7 @@ PREFIX = "/search/v1"
 _DETECTIONS = TypeAdapter(list[SearchDetection])
 _TRACKS = TypeAdapter(list[SearchTrack])
 _WRITTEN = TypeAdapter(list[CandidateWritten])
+_STILLS = TypeAdapter(list[SearchStill])
 
 
 class GroundError(RuntimeError):
@@ -54,6 +61,11 @@ class SearchApi(Protocol):
     async def tracks(self, mission_id: str) -> list[SearchTrack]: ...
     async def write(self, mission_id: str, batch: CandidateBatch) -> list[CandidateWritten]: ...
     async def profile(self, mission_id: str) -> SearchProfile | None: ...
+    async def map_inputs(self, mission_id: str) -> ProbabilityMapInputs: ...
+    async def stills(self, mission_id: str, after_seq: int, limit: int) -> list[SearchStill]: ...
+    async def write_map(
+        self, mission_id: str, body: ProbabilityMapWrite
+    ) -> ProbabilityMapWritten: ...
 
 
 class GroundClient:
@@ -152,3 +164,32 @@ class GroundClient:
         with self._body(res):
             body = res.json()
             return None if body is None else SearchProfile.model_validate(body)
+
+    async def map_inputs(self, mission_id: str) -> ProbabilityMapInputs:
+        """The charter's area and sectors, the operator's areas and the latest map version."""
+        res = self._ok(await self._request("GET", f"/missions/{mission_id}/probability-map/inputs"))
+        with self._body(res):
+            return ProbabilityMapInputs.model_validate(res.json())
+
+    async def stills(self, mission_id: str, after_seq: int, limit: int) -> list[SearchStill]:
+        res = self._ok(
+            await self._request(
+                "GET",
+                f"/missions/{mission_id}/stills",
+                params={"after_seq": after_seq, "limit": limit},
+            )
+        )
+        with self._body(res):
+            return _STILLS.validate_python(res.json())
+
+    async def write_map(self, mission_id: str, body: ProbabilityMapWrite) -> ProbabilityMapWritten:
+        """A new map version. 409 when another version came first or the map is frozen."""
+        res = self._ok(
+            await self._request(
+                "POST",
+                f"/missions/{mission_id}/probability-maps",
+                json=body.model_dump(mode="json"),
+            )
+        )
+        with self._body(res):
+            return ProbabilityMapWritten.model_validate(res.json())

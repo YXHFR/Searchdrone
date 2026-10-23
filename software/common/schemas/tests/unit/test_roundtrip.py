@@ -55,6 +55,7 @@ LABEL_IDS = {
     ("Vehicle", "id"),  # the vehicle id "sim-01"
     ("Sector", "sector_id"),
     ("SurveySectorParams", "sector_id"),
+    ("SectorScore", "sector_id"),
     ("PanelConfig", "default_vehicle_id"),
     ("DetectorInfo", "profile_id"),  # the detector profile "det_<model>_vN"
 }

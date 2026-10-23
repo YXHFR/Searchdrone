@@ -785,6 +785,361 @@
         "title": "LastSeen",
         "type": "object"
       },
+      "LatLon": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "LatLon",
+        "type": "object"
+      },
+      "ProbabilityGrid": {
+        "additionalProperties": false,
+        "properties": {
+          "cell_m": {
+            "maximum": 200.0,
+            "minimum": 5.0,
+            "title": "Cell M",
+            "type": "number"
+          },
+          "east": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "East",
+            "type": "number"
+          },
+          "ipp_lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Ipp Lat",
+            "type": "number"
+          },
+          "ipp_lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Ipp Lon",
+            "type": "number"
+          },
+          "north": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "North",
+            "type": "number"
+          },
+          "nx": {
+            "maximum": 160.0,
+            "minimum": 1.0,
+            "title": "Nx",
+            "type": "integer"
+          },
+          "ny": {
+            "maximum": 160.0,
+            "minimum": 1.0,
+            "title": "Ny",
+            "type": "integer"
+          },
+          "south": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "South",
+            "type": "number"
+          },
+          "west": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "West",
+            "type": "number"
+          },
+          "x0_m": {
+            "maximum": 50000.0,
+            "minimum": -50000.0,
+            "title": "X0 M",
+            "type": "number"
+          },
+          "y0_m": {
+            "maximum": 50000.0,
+            "minimum": -50000.0,
+            "title": "Y0 M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ipp_lat",
+          "ipp_lon",
+          "x0_m",
+          "y0_m",
+          "nx",
+          "ny",
+          "cell_m",
+          "west",
+          "south",
+          "east",
+          "north"
+        ],
+        "title": "ProbabilityGrid",
+        "type": "object"
+      },
+      "ProbabilityMapInputs": {
+        "additionalProperties": false,
+        "description": "What the map is computed from besides the profile and the stills: the charter's\narea and sectors, the operator's areas, and the latest stored version.",
+        "properties": {
+          "alt_m": {
+            "default": 40,
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
+            "title": "Alt M",
+            "type": "number"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "areas": {
+            "items": {
+              "$ref": "#/components/schemas/SearchArea"
+            },
+            "maxItems": 200,
+            "title": "Areas",
+            "type": "array"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbabilityMapLatest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sectors": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 64,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "speed_ms": {
+            "default": 5,
+            "exclusiveMinimum": 0.0,
+            "maximum": 50.0,
+            "title": "Speed Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "area"
+        ],
+        "title": "ProbabilityMapInputs",
+        "type": "object"
+      },
+      "ProbabilityMapLatest": {
+        "additionalProperties": false,
+        "properties": {
+          "event_seq": {
+            "minimum": 0.0,
+            "title": "Event Seq",
+            "type": "integer"
+          },
+          "frozen": {
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "frozen",
+          "event_seq"
+        ],
+        "title": "ProbabilityMapLatest",
+        "type": "object"
+      },
+      "ProbabilityMapWrite": {
+        "additionalProperties": false,
+        "description": "``sd-search`` -> ground: a new version. ``p_z`` and ``pod_z`` are base64 of\nzlib-compressed little-endian float32 arrays of ``grid.nx * grid.ny`` values; the\nground checks the sizes, that every value is finite and in [0, 1], and the sum.",
+        "properties": {
+          "event_seq": {
+            "minimum": 0.0,
+            "title": "Event Seq",
+            "type": "integer"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "grid": {
+            "$ref": "#/components/schemas/ProbabilityGrid"
+          },
+          "notes": {
+            "items": {
+              "enum": [
+                "no_terrain",
+                "child_statistics",
+                "uncertain_statistics",
+                "no_charter"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Notes",
+            "type": "array"
+          },
+          "p_z": {
+            "maxLength": 140000,
+            "minLength": 4,
+            "title": "P Z",
+            "type": "string"
+          },
+          "pod_z": {
+            "maxLength": 140000,
+            "minLength": 4,
+            "title": "Pod Z",
+            "type": "string"
+          },
+          "profile_version": {
+            "minimum": 0.0,
+            "title": "Profile Version",
+            "type": "integer"
+          },
+          "reason": {
+            "enum": [
+              "prior",
+              "search",
+              "candidate",
+              "profile",
+              "areas",
+              "charter",
+              "confirmed"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Row",
+            "type": "number"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/SectorScore"
+            },
+            "maxItems": 64,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "reason",
+          "grid",
+          "row",
+          "event_seq",
+          "profile_version",
+          "p_z",
+          "pod_z"
+        ],
+        "title": "ProbabilityMapWrite",
+        "type": "object"
+      },
+      "ProbabilityMapWritten": {
+        "additionalProperties": false,
+        "properties": {
+          "frozen": {
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "frozen"
+        ],
+        "title": "ProbabilityMapWritten",
+        "type": "object"
+      },
+      "SearchArea": {
+        "additionalProperties": false,
+        "description": "An area the operator drew with a hint for the map.",
+        "properties": {
+          "annotation_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Annotation Id",
+            "type": "string"
+          },
+          "poa_hint": {
+            "enum": [
+              "high",
+              "low",
+              "excluded"
+            ],
+            "title": "Poa Hint",
+            "type": "string"
+          },
+          "polygon": {
+            "additionalProperties": true,
+            "title": "Polygon",
+            "type": "object"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "poa_hint",
+          "polygon"
+        ],
+        "title": "SearchArea",
+        "type": "object"
+      },
       "SearchDetection": {
         "additionalProperties": false,
         "description": "A stored detection of a target class, as the search service reads it.",
@@ -1106,6 +1461,70 @@
         "title": "SearchProfile",
         "type": "object"
       },
+      "SearchStill": {
+        "additionalProperties": false,
+        "description": "A still the drone took, as the map needs it: where it looked and how well.",
+        "properties": {
+          "captured_utc": {
+            "format": "date-time",
+            "title": "Captured Utc",
+            "type": "string"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Id"
+          },
+          "detector_ok": {
+            "title": "Detector Ok",
+            "type": "boolean"
+          },
+          "footprint": {
+            "items": {
+              "$ref": "#/components/schemas/LatLon"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Footprint",
+            "type": "array"
+          },
+          "px_per_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Px Per M",
+            "type": "number"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "still_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Still Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "still_id",
+          "seq",
+          "command_id",
+          "captured_utc",
+          "footprint",
+          "px_per_m",
+          "detector_ok"
+        ],
+        "title": "SearchStill",
+        "type": "object"
+      },
       "SearchTrack": {
         "additionalProperties": false,
         "description": "A candidate in force with everything fusion needs to resume after a restart.",
@@ -1136,6 +1555,70 @@
           "sightings"
         ],
         "title": "SearchTrack",
+        "type": "object"
+      },
+      "SectorScore": {
+        "additionalProperties": false,
+        "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+        "properties": {
+          "covered_pct": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Covered Pct",
+            "type": "number"
+          },
+          "est_min": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Est Min",
+            "type": "number"
+          },
+          "mean_pod": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Mean Pod",
+            "type": "number"
+          },
+          "poa": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Poa",
+            "type": "number"
+          },
+          "pos_plan": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pos Plan",
+            "type": "number"
+          },
+          "psr": {
+            "minimum": 0.0,
+            "title": "Psr",
+            "type": "number"
+          },
+          "sector_id": {
+            "pattern": "^[A-Z]{1,2}$",
+            "title": "Sector Id",
+            "type": "string"
+          },
+          "spacing_m": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
+            "title": "Spacing M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "sector_id",
+          "poa",
+          "covered_pct",
+          "mean_pod",
+          "pos_plan",
+          "est_min",
+          "psr",
+          "spacing_m"
+        ],
+        "title": "SectorScore",
         "type": "object"
       },
       "ValidationError": {
@@ -1468,6 +1951,98 @@
         "summary": "Detections"
       }
     },
+    "/search/v1/missions/{mission_id}/probability-map/inputs": {
+      "get": {
+        "description": "What the map depends on besides the profile and the candidates: the approved\ncharter's area and sectors, the operator's areas with a POA hint, the newest version.",
+        "operationId": "probability_map_inputs_search_v1_missions__mission_id__probability_map_inputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbabilityMapInputs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probability Map Inputs"
+      }
+    },
+    "/search/v1/missions/{mission_id}/probability-maps": {
+      "post": {
+        "description": "A new version of the map. 409 for a stale version, a version after a frozen one,\na profile that is no longer in force or a freeze without a find a person confirmed;\n422 for arrays that do not fit the grid or a sector that is not in the charter.",
+        "operationId": "write_probability_map_search_v1_missions__mission_id__probability_maps_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbabilityMapWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbabilityMapWritten"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Probability Map"
+      }
+    },
     "/search/v1/missions/{mission_id}/search-profile": {
       "get": {
         "description": "The approved version in force, or ``null``: a proposal from the AI is never\nreturned here, so the matching cannot use one (E10).",
@@ -1515,6 +2090,74 @@
           }
         },
         "summary": "Get Search Profile"
+      }
+    },
+    "/search/v1/missions/{mission_id}/stills": {
+      "get": {
+        "description": "The mission's stills after ``after_seq`` (where the camera looked), oldest first.",
+        "operationId": "stills_search_v1_missions__mission_id__stills_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchStill"
+                  },
+                  "title": "Response Stills Search V1 Missions  Mission Id  Stills Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stills"
       }
     }
   }
