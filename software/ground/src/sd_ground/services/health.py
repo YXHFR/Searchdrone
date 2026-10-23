@@ -65,6 +65,7 @@ def system_status(g: Ground) -> SystemStatus:
         internet=internet,
         operator_present=g.pilot_ws > 0,
         brain_engine=g.brain_engine,
+        cloud_budget=None if g.cloud_budget is None else g.cloud_budget.state(),
         version=g.version,
         profile=g.config.profile,
     )

@@ -66,5 +66,14 @@ dataflash_dir = ""                      # set by the simulator (where SITL write
 [wind]
 stage = "first_flights"                 # wind warning limit: first_flights 4 m/s; until_calibrated 8/12 m/s
 
+[cloud_budget]
+# What cloud calls may cost, the AI chat and the image matching together. At 80 % the
+# panel warns; at 100 % the matching pauses and the chat drops to command mode. Neither
+# cap may be above the outer cap of 1000 kr per day (the server refuses to start). Model
+# prices: config/cloud_prices.example.toml.
+mission_cap_sek = 50                    # per mission; the pilot can raise it in the panel
+day_cap_sek = 150                       # per day (Swedish date)
+reservation_ttl_s = 120                 # a reservation not booked in time counts at its estimate
+
 [remote]
 enabled = false                         # reserved; true is refused in v0.1.0

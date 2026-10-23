@@ -1,0 +1,24 @@
+# Cloud model prices for the budget guard (sd-ground). Copy to config/cloud_prices.toml to
+# change a price; that file is merged over this one. A model that is not listed here is
+# never called (the budget refuses it with UNKNOWN_PRICE).
+#
+# USD per million tokens, read from OpenRouter's model pages on 2026-10-18. Where the
+# provider has a higher EU-routing price, that one is used, so the estimate stays high.
+# When OpenRouter states the call's own cost (usage.cost), that cost is booked instead.
+
+usd_to_sek = 10.5
+
+[models."anthropic/claude-haiku-5.5"]   # fast matching, the chat's fallback
+in_usd_per_mtok = 0.11
+out_usd_per_mtok = 0.55
+image_tokens_per_crop = 400             # a 512 x 512 crop, counted high
+
+[models."anthropic/claude-sonnet-5.5"]
+in_usd_per_mtok = 2.20
+out_usd_per_mtok = 11.0
+image_tokens_per_crop = 400
+
+[models."z-ai/glm-5.3-flash"]           # the chat model
+in_usd_per_mtok = 0.15
+out_usd_per_mtok = 0.50
+image_tokens_per_crop = 400

@@ -725,5 +725,7 @@ class SystemStatus(SdModel):
     internet: Literal["up", "down", "unknown"]
     operator_present: bool
     brain_engine: Literal["cloud", "command"] | None = None  # cloud model or command mode now
+    # The worst cloud budget state of the day and the open missions (None: not known)
+    cloud_budget: Literal["ok", "warning", "exhausted"] | None = None
     version: str
     profile: str

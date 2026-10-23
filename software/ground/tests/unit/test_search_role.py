@@ -75,6 +75,8 @@ def test_search_role(searching: Ground, loopback: TestClient, panel: TestClient)
 
 def test_search_token_reaches_no_commander_route(loopback: TestClient) -> None:
     for method, path in _routes(openapi_documents()["commander"]):
+        if path.startswith("/internal/v1/cloud-budget/"):
+            continue  # the shared books: each process books its own calls (B2-06)
         res = loopback.request(method, _fill(path), json={}, headers=AS_SEARCH)
         assert res.status_code == 403, (method, path, res.status_code)
 
