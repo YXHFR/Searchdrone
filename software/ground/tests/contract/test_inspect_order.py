@@ -16,7 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flow_rig import Rig, rig  # pyright: ignore[reportMissingImports]
 from test_candidates import person, send  # pyright: ignore[reportMissingImports]
-from test_orders import driver, order, take_off  # pyright: ignore[reportMissingImports]
+from test_orders import (  # pyright: ignore[reportMissingImports]
+    driver,
+    no_rate_limit,
+    order,
+    take_off,
+)
 
 from sd_ground.services import commands
 from sd_safety.constants import PERSON_KEEPOUT_M
@@ -66,6 +71,26 @@ async def test_a_target_no_height_sees_steeply_is_refused(r: Rig) -> None:
     out = await order(r, d, "inspect_detection", look(vague), want="REJECT")
     assert out["reason_codes"] == ["ONB_INSPECT_GEOMETRY"], out
     assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+    # The estimate resolves the target the same way as the order.
+    no_rate_limit(r)
+    situation = await d.situation()
+    body = {
+        "command_id": str(new_id()),
+        "skill": "inspect_detection",
+        "params": look(vague),
+        "rationale_sv": "Går det?",
+        "in_reply_to": None,
+        "backend": "scripted",
+        "ai_config_hash": "script-driver",
+        "based_on": {
+            "state_epoch": situation["snapshot_state_epoch"],
+            "state_seq": situation["snapshot_state_seq"],
+        },
+        "charter_version": situation["charter"]["version"],
+    }
+    res = await r.commander.post(f"/commander/v1/missions/{d.mission_id}/estimate", json=body)
+    assert res.status_code == 200, res.text
+    assert res.json()["gate"]["reason_codes"] == ["ONB_INSPECT_GEOMETRY"], res.text
 
 
 async def test_an_unknown_detection_or_a_bad_order_is_refused_as_such(r: Rig) -> None:

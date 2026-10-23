@@ -248,7 +248,12 @@ class PerceptionLoop:
         """One still for an order: its ``still_id``, or ``None`` when none came in
         ``CAPTURE_WAIT_S`` or it could not be placed on the ground."""
         deadline = self.clock.monotonic() + CAPTURE_WAIT_S
-        async with self._lock:
+        try:  # a still stuck in the loop must not hold the order past its wait
+            await asyncio.wait_for(self._lock.acquire(), CAPTURE_WAIT_S)
+        except TimeoutError:
+            log.warning("perception busy: no still for the order")
+            return None
+        try:
             while True:
                 try:
                     out = await self._one(command_id)
@@ -261,6 +266,8 @@ class PerceptionLoop:
                 if self.clock.monotonic() >= deadline:
                     return None
                 await self.clock.sleep(_CAPTURE_POLL_S)
+        finally:
+            self._lock.release()
 
     async def run(self, stop: asyncio.Event) -> None:
         log.info(

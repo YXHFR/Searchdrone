@@ -129,13 +129,9 @@ def reroute(
         return out  # nothing left to fly
     # Every leg from ``start`` on is now clear of the cylinders (the loop above); the
     # area is checked for the legs kept as they were too.
-    if area is not None and any(area.leg_outside_by(a, b) > 0.0 for a, b in _legs(out[start:])):
+    if area is not None and any(area.leg_outside_by(a, b) > 0.0 for a, b in pairwise(out[start:])):
         return None
     return out
-
-
-def _legs(points: Sequence[Xy]) -> list[tuple[Xy, Xy]]:
-    return list(pairwise(points))
 
 
 def _exit(here: Xy, nxt: Xy | None, cyl: Sequence[Circle], exit_dir: Xy | None) -> Xy | None:
@@ -185,8 +181,8 @@ def _around(a: Xy, b: Xy, circle: Circle, area: Polygon | None) -> list[Xy] | No
     for sign in (1.0, -1.0):
         corners = _arc(a, b, circle, sign)
         path = [a, *corners, b]
-        inside = area is None or all(area.leg_outside_by(p, q) <= 0.0 for p, q in _legs(path))
-        length = sum(math.dist(p, q) for p, q in _legs(path))
+        inside = area is None or all(area.leg_outside_by(p, q) <= 0.0 for p, q in pairwise(path))
+        length = sum(math.dist(p, q) for p, q in pairwise(path))
         options.append((inside, length, corners))
     options.sort(key=lambda o: (not o[0], o[1]))
     inside, _, corners = options[0]

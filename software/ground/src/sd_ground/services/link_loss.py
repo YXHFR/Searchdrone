@@ -23,6 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final
 
+from sd_ground.logging import get_logger
 from sd_safety.constants import KEEPOUT_SCORE_MIN, PERSON_KEEPOUT_M
 from sd_safety.link_loss import DETECT_MS, FindPlan, choose_mode, plan_times
 from sd_schemas.api import AlertCode, LinkLossPlan
@@ -33,6 +34,8 @@ from sd_schemas.link import KEEPOUTS_MAX, Keepout, KeepoutInstall
 if TYPE_CHECKING:
     from sd_ground.services.missions import MissionFlow
     from sd_schemas.api import Mission
+
+log = get_logger("sd_ground.link_loss")
 
 __all__ = ["KEEPOUT_POLL_S", "LinkWatch", "on_connected", "plan_of", "tick"]
 
@@ -101,7 +104,9 @@ async def on_connected(flow: MissionFlow, vehicle_id: str) -> None:
 
 
 async def _load(flow: MissionFlow, mission: Mission, w: LinkWatch) -> None:
-    rows = await flow.repo.keepout_candidates(str(mission.id), KEEPOUT_SCORE_MIN)
+    rows = await flow.repo.keepout_candidates(str(mission.id), KEEPOUT_SCORE_MIN, KEEPOUTS_MAX + 1)
+    if len(rows) > KEEPOUTS_MAX:  # confirmed finds come first and are always kept
+        log.warning("link_loss.keepouts_truncated", mission_id=str(mission.id), kept=KEEPOUTS_MAX)
     keepouts: list[Keepout] = []
     seqs: dict[str, int] = {}
     for row in rows[:KEEPOUTS_MAX]:

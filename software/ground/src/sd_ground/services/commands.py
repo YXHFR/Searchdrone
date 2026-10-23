@@ -291,9 +291,7 @@ async def submit(
             based_on=based_on,
             phase="submit",
         )
-        gate = evaluate(req, ctx)
-        if skill == "inspect_detection" and gate.reason_codes == ["SCHEMA_INVALID"]:
-            gate = _inspect_geometry_check(params, ctx) or gate  # say why there is no target
+        gate = _explained(skill, params, ctx, evaluate(req, ctx))
         if issuer_kind == "brain" and skill == "follow_path" and gate.decision != "REJECT":
             gate = await _drawn_path_check(flow, mission_id, params) or gate
         now = flow.now()
@@ -428,7 +426,8 @@ async def _inspect_params(
     try:
         asked = InspectDetectionParams.model_validate(params)
     except ValidationError:
-        return params  # the gate refuses malformed parameters
+        # The gate refuses malformed parameters; a target is never the caller's.
+        return {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
     found = await flow.repo.inspect_target(mission_id, str(asked.detection_id))
     if found is None:
         return {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
@@ -442,6 +441,16 @@ async def _inspect_params(
 
 
 _INSPECT_TARGET: Final = ("lat", "lon", "target_radius_m")
+
+
+def _explained(
+    skill: str, params: dict[str, Any], ctx: GateContext, gate: GateDecision
+) -> GateDecision:
+    """An ``inspect_detection`` refused only for its missing target says why there is
+    none, when the target is known (``_inspect_geometry_check``)."""
+    if skill == "inspect_detection" and gate.reason_codes == ["SCHEMA_INVALID"]:
+        return _inspect_geometry_check(params, ctx) or gate
+    return gate
 
 
 def _inspect_geometry_check(params: dict[str, Any], ctx: GateContext) -> GateDecision | None:
@@ -604,6 +613,8 @@ async def estimate(
     """The gate in phase ``estimate`` (no order is created) plus a rough time and battery."""
     mission = await flow.open_mission_of(mission_id)
     ctx = await flow.gate_context(mission)
+    if skill == "inspect_detection":
+        params = await _inspect_params(flow, mission_id, params)
     req = _gate_request(
         mission,
         command_id=str(new_id()),
@@ -615,7 +626,7 @@ async def estimate(
         based_on=based_on,
         phase="estimate",
     )
-    gate = evaluate(req, ctx)
+    gate = _explained(skill, params, ctx, evaluate(req, ctx))
     duration = None
     v = ctx.vehicle
     lat, lon = params.get("lat"), params.get("lon")

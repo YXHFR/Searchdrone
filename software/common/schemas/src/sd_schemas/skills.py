@@ -24,12 +24,11 @@ from sd_schemas.base import (
 )
 from sd_schemas.charter import CharterProposal, MissionCharter
 from sd_schemas.executor import ExecutorState, GotoResumePoint, ResumePoint
-from sd_schemas.geo import plane_offset
+from sd_schemas.geo import local_xy, plane_offset
 from sd_schemas.keepout import (
     INSPECT_SPEED_MS,
     Keepout,
     inspect_geometry,
-    local_xy,
 )
 from sd_schemas.safety import MIN_ALT_AGL_M
 

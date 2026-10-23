@@ -35,7 +35,7 @@ class ResumeHandler:
 
     def __init__(self) -> None:
         self._goto: GotoHandler | None = None
-        self._run: SurveyRun | None = None
+        self.run: SurveyRun | None = None
         self._home: Any = None
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
@@ -48,7 +48,7 @@ class ResumeHandler:
             goto.command_id = rp.command_id
             self._goto = goto
             return goto_plan(ctx, rp.lat, rp.lon, rp.alt_m, rp.speed_ms)
-        self._run = SurveyRun(
+        self.run = SurveyRun(
             rp.command_id,
             rp.waypoints,
             rp.alt_m,
@@ -58,30 +58,28 @@ class ResumeHandler:
             target_state=ExecutorState.TRANSIT if rp.path else ExecutorState.SURVEY,
         )
         self._home = ctx.charter.home
-        return self._run.plan(ctx)
+        return self.run.plan(ctx)
 
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None:
         if self._goto is not None:
             await self._goto.start(plan, io)
         else:
-            if self._run is None:
+            if self.run is None:
                 raise RuntimeError("planned before running")
-            await self._run.fly(plan, io, self._home)
+            await self.run.fly(plan, io, self._home)
 
     def on_tick(self, ctx: TickContext) -> SkillStatus:
         if self._goto is not None:
             return self._goto.on_tick(ctx)
-        return SkillStatus(
-            stage="running", progress_pct=self._run.progress() if self._run else None
-        )
+        return SkillStatus(stage="running", progress_pct=self.run.progress() if self.run else None)
 
     async def cancel(self, io: ExecutorIO) -> None:
         if self._goto is not None:
             await self._goto.cancel(io)
-        elif self._run is not None:
+        elif self.run is not None:
             await io.set_mode(CopterMode.LOITER)
 
     def resume_point(self, vehicle: VehicleState) -> ResumePoint | None:
         if self._goto is not None:
             return self._goto.resume_point(vehicle)
-        return self._run.resume_point(vehicle) if self._run else None
+        return self.run.resume_point(vehicle) if self.run else None

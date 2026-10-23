@@ -1225,7 +1225,9 @@ class FlowRepo:
         )
         return [dict(r) for r in rows]
 
-    async def keepout_candidates(self, mission_id: str, score_min: float) -> list[dict[str, Any]]:
+    async def keepout_candidates(
+        self, mission_id: str, score_min: float, limit: int
+    ) -> list[dict[str, Any]]:
         """The mission's candidates that get a keep-out cylinder, confirmed finds first,
         then by display number: the newest revision is ``confirmed`` (a person confirmed
         the find and has not reopened it), or it is still open (not rejected or merged)
@@ -1238,9 +1240,10 @@ class FlowRepo:
             "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
             "WHERE state = 'confirmed' OR (state NOT IN ('rejected', 'merged') AND "
             "(best_detector_score >= :s OR refined_person_score >= :s)) "
-            "ORDER BY state <> 'confirmed', seq, candidate_id",
+            "ORDER BY state <> 'confirmed', seq, candidate_id LIMIT :n",
             m=mission_id,
             s=score_min,
+            n=limit,
         )
         return [dict(r) for r in rows]
 
@@ -1386,14 +1389,18 @@ class FlowRepo:
         return out
 
     async def inspect_target(self, mission_id: str, detection_id: str) -> dict[str, Any] | None:
-        """Where a closer look at a detection aims: the newest position of the candidate
-        that observed it, else the detection's own (``lat``, ``lon``, ``sigma95_m``)."""
+        """Where a closer look at a detection aims: the newest position of a candidate
+        that observed it and is neither rejected nor merged, else the detection's own
+        (``lat``, ``lon``, ``sigma95_m``)."""
         row = await self._one(
             "SELECT COALESCE(c.lat, ST_Y(d.geom)) AS lat, COALESCE(c.lon, ST_X(d.geom)) AS lon, "
             "COALESCE(c.sigma95_m, d.sigma95_m) AS sigma95_m FROM detections d "
-            "LEFT JOIN LATERAL (SELECT ST_Y(k.geom) AS lat, ST_X(k.geom) AS lon, k.sigma95_m "
-            "FROM candidate_observations o JOIN candidates k ON k.candidate_id = o.candidate_id "
-            "WHERE o.detection_id = d.detection_id ORDER BY k.rev DESC LIMIT 1) c ON TRUE "
+            "LEFT JOIN LATERAL (SELECT lat, lon, sigma95_m FROM ("
+            "SELECT DISTINCT ON (k.candidate_id) k.rev, k.state, ST_Y(k.geom) AS lat, "
+            "ST_X(k.geom) AS lon, k.sigma95_m FROM candidate_observations o "
+            "JOIN candidates k ON k.candidate_id = o.candidate_id "
+            "WHERE o.detection_id = d.detection_id ORDER BY k.candidate_id, k.rev DESC) newest "
+            "WHERE state NOT IN ('rejected', 'merged') ORDER BY rev DESC LIMIT 1) c ON TRUE "
             "WHERE d.mission_id = :m AND d.detection_id = :d",
             m=mission_id,
             d=detection_id,

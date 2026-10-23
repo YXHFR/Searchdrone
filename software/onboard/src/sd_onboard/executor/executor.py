@@ -123,7 +123,7 @@ from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState, LinkLossPhase, ResumePoint
-from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest
+from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest, StateRef
 from sd_schemas.link import (
     SCHEMA_MAJOR,
     AckStage,
@@ -278,6 +278,7 @@ class _Active:
 
 
 _PARAM_TOLERANCE: Final = 1e-3
+_CAPTURE_LIMIT_S: Final = 10.0  # the most an order waits for one still (wall clock)
 # The fence and LOITER speed may be raised with the mission limits (by the ground, by
 # the pilot's click); PF6 then checks them against the hard floor instead of the file.
 _RAISABLE: Final = ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS")
@@ -332,7 +333,13 @@ class _IO:
 
     async def capture_still(self, command_id: UUID) -> UUID | None:
         camera = self._ex.camera
-        return None if camera is None else await camera(command_id)
+        if camera is None:
+            return None
+        try:  # whatever the camera does, the order goes on without the still
+            return await asyncio.wait_for(camera(command_id), _CAPTURE_LIMIT_S)
+        except TimeoutError:
+            self._ex.emit("capture_timeout", {"command_id": str(command_id)})
+            return None
 
 
 class Executor:
@@ -1277,9 +1284,15 @@ class Executor:
             return
         self.keepout_seq = install.install_seq
         self.keepouts = tuple(install.keepouts)
-        # The ground has had time to include our own cylinders (as candidates) by now.
+        # Our own cylinders give way to the ground's once one of those covers them (the
+        # ground has had time to include them as candidates). One it never covers stays.
         handed = self.now_ms() - LOCAL_KEEPOUT_HANDOVER_MS
-        self.local_keepouts = {k: v for k, v in self.local_keepouts.items() if v[1] > handed}
+        plane = self.plane()
+        self.local_keepouts = {
+            d: (k, t)
+            for d, (k, t) in self.local_keepouts.items()
+            if t > handed or plane is None or not contained(k, self.keepouts, plane)
+        }
         self._keepouts_changed = True
         self._save()
         self._ack(ref_id, "done")
@@ -1309,7 +1322,9 @@ class Executor:
             if contained(k, self.keepouts_in_force(), plane):
                 continue
             if len(self.local_keepouts) >= LOCAL_KEEPOUTS_MAX:
+                # No room to keep this person out of the route: a search or a move stops.
                 self.emit("keepouts_full", {"detection_id": str(d.detection_id)})
+                self._keepout_hold()
                 continue
             self.local_keepouts[d.detection_id] = (k, now)
             self._keepouts_changed = True
@@ -1567,6 +1582,19 @@ class Executor:
         run = survey_run(active.handler)
         if active.skill in REROUTABLE and run is not None and self._reroute(active, run):
             return
+        self._keepout_hold()
+
+    def _keepout_hold(self) -> None:
+        """Stop a moving order in a hover (``KEEPOUT_VIOLATION``). Internal orders, return
+        home and take-off go on."""
+        active = self.active
+        if (
+            active is None
+            or not active.ack_done
+            or active.skill in KEEPOUT_EXEMPT
+            or self.state not in (S.TRANSIT, S.SURVEY)
+        ):
+            return
         action = LimitAction(
             limit="KEEPOUT_VIOLATION",
             kind="hold",
@@ -1591,7 +1619,18 @@ class Executor:
         except PlanError:
             return False
         route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
-        if not route_clear(route, ctx.keepouts, ctx.plane, self.charter):
+        if active.cmd is None or not route_clear(route, ctx.keepouts, ctx.plane, self.charter):
+            return False
+        # The whole gate on the new route (battery and return reserve included). The order
+        # was accepted already: the new route is judged on the state it is flown from.
+        now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
+        cmd = active.cmd.model_copy(update={"based_on": now})
+        decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
+        if decision.decision != "ALLOW":
+            self.emit(
+                "keepout_reroute_refused",
+                {"command_id": str(active.command_id), "codes": decision.reason_codes},
+            )
             return False
         handler = SurveyHandler.rerouted(new, self.charter.home)
         self._drop_active(stage=None, save_resume=False)

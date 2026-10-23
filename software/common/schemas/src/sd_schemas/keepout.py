@@ -23,7 +23,7 @@ from typing import Final, Literal
 from pydantic import Field
 
 from sd_schemas.base import Id, SdModel
-from sd_schemas.geo import plane_offset, tangent_radii, wrap_lon
+from sd_schemas.geo import local_xy, plane_offset
 
 __all__ = [
     "INSPECT_AIM_DEG",
@@ -35,7 +35,6 @@ __all__ = [
     "Keepout",
     "inspect_geometry",
     "leg_enters",
-    "local_xy",
 ]
 
 Xy = tuple[float, float]
@@ -58,15 +57,6 @@ class Keepout(SdModel):
     radius_m: float = Field(gt=0, le=500)  # person_keepout_m + sigma95_m
     source: Literal["detection", "candidate", "confirmed"]
     source_id: Id  # the detection_id or candidate_id
-
-
-def local_xy(lat0: float, lon0: float, lat: float, lon: float) -> Xy:
-    """(east, north) metres of (lat, lon) in the tangent plane at (lat0, lon0)."""
-    east_r, north_r = tangent_radii(lat0)
-    return (
-        math.radians(wrap_lon(lon - lon0)) * east_r,
-        math.radians(lat - lat0) * north_r,
-    )
 
 
 def leg_enters(a: Xy, b: Xy, c: Xy, r: float) -> bool:

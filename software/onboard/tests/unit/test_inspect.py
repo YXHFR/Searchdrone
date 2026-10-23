@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from itertools import pairwise
 from typing import Any
@@ -11,10 +12,14 @@ import pytest
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
+from sd_onboard.executor import executor as executor_module
+from sd_onboard.executor.keepout_reflex import LOCAL_KEEPOUTS_MAX
 from sd_onboard.skills import survey_sector
+from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
+from sd_schemas.gate import GateContext, GateDecision, GateRequest
 from sd_schemas.keepout import INSPECT_AIM_DEG, INSPECT_VIEW_DEG, Keepout
 from sd_schemas.link import BBox, GeoDetectionMsg, KeepoutInstall
 
@@ -97,6 +102,26 @@ async def test_capture_stills_without_a_camera_fails_and_stays() -> None:
         camera(r, works=False)
         again = await r.send(r.order("capture_stills", {}), 1)
         assert r.up.codes(again.command_id) == ("ONB_CAMERA_UNAVAILABLE",)
+
+
+async def test_a_camera_that_hangs_does_not_hold_the_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(executor_module, "_CAPTURE_LIMIT_S", 0.05)
+
+    async def stuck(_command_id: UUID) -> UUID | None:
+        await asyncio.Event().wait()
+        return None
+
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        r.ex.camera = stuck
+        cmd = await r.send(r.order("capture_stills", {"count": 1}), 0)
+        await r.until(lambda: "failed" in r.up.stages(cmd.command_id), 60)
+        assert "executor.capture_timeout" in r.up.kinds()
+        assert r.up.codes(cmd.command_id) == ("ONB_CAMERA_UNAVAILABLE",)
+        assert r.ex.state == S.HOLD
 
 
 async def test_capture_stills_only_while_hovering() -> None:
@@ -312,12 +337,36 @@ async def test_own_detections_make_cylinders_until_the_ground_takes_over() -> No
         lat, lon = at(150, 150)
         cmd = await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}))
         assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
-        # A ground install soon after keeps it; one a minute later replaces it.
-        install(r)
-        assert len(r.ex.keepouts_in_force()) == 1
+        # A ground install soon after keeps it, as does one a minute later without it; one
+        # a minute later that covers it replaces it.
+        install(r, keepout(100, 100, 40, source="candidate"))
+        assert len(r.ex.keepouts_in_force()) == 2
         await r.run(61)
         install(r)
-        assert r.ex.keepouts_in_force() == ()
+        assert r.ex.keepouts_in_force() == (k,)
+        ground = keepout(100, 100, 40, source="candidate")
+        install(r, ground)
+        assert r.ex.keepouts_in_force() == (ground,)
+
+
+async def test_a_full_list_of_own_cylinders_stops_a_search() -> None:
+    box = square(60, east=0, north=120)
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        cmd = await r.send(
+            r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
+        )
+        assert r.ex.state == S.SURVEY
+        # Behind the drone, a few metres apart: none holds another, none is on the route.
+        r.ex.on_detections(
+            [detection(-140 + 2.8 * i, -90, 0.9, sigma=1.0) for i in range(LOCAL_KEEPOUTS_MAX)]
+        )
+        assert r.ex.state == S.SURVEY
+        r.ex.on_detections([detection(140, -90, 0.9)])
+        assert "executor.keepouts_full" in r.up.kinds()
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"
 
 
 async def test_inside_a_new_cylinder_the_search_leaves_it_first() -> None:
@@ -362,3 +411,29 @@ async def test_no_way_around_inside_the_charter_hovers(monkeypatch: pytest.Monke
         assert r.ex.state == S.HOLD and "executor.keepout_hold" in r.up.kinds()
         assert r.up.stages(cmd.command_id)[-1] == "superseded"
         assert r.ex.resume_point is not None  # the search can go on later
+
+
+async def test_a_detour_the_gate_refuses_hovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The new route goes through the whole gate: refused (here as if the detour ate the
+    return reserve), the search stops in a hover instead."""
+    box = square(60, east=0, north=120)
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        cmd = await r.send(
+            r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
+        )
+        assert r.ex.state == S.SURVEY
+
+        def refused(req: GateRequest, ctx: GateContext) -> GateDecision:
+            return evaluate(req, ctx).model_copy(
+                update={"decision": "REJECT", "reason_codes": ["ROUTE_BATTERY"]}
+            )
+
+        monkeypatch.setattr(executor_module, "evaluate", refused)
+        install(r, keepout(0, 120, 20, source="candidate"))
+        await r.run(0.5)
+        assert "executor.keepout_reroute_refused" in r.up.kinds(), r.up.kinds()
+        assert "executor.keepout_reroute" not in r.up.kinds()
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"

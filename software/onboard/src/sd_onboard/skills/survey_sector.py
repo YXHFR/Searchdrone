@@ -85,7 +85,6 @@ class SurveyRun:
         self.next_index = base_index
         self.mission_hash: str | None = None
         self.target_state = target_state
-        self.rerouted = False
 
     @property
     def flown_points(self) -> list[LatLon]:
@@ -114,7 +113,6 @@ class SurveyRun:
         points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]
         self.waypoints, self.base_index, self.next_index = points, 0, 0
         self.interrupted_at, self.seq_offset = None, 0
-        self.rerouted = True
 
     def plan(self, ctx: PlanContext) -> SkillPlan:
         self.around_keepouts(ctx)

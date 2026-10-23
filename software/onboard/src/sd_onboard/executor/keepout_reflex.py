@@ -10,15 +10,17 @@ around, hovers (``KEEPOUT_VIOLATION``). A drone inside a cylinder whose leg alre
 leads out of it flies on; one whose leg leads deeper first leaves straight away from the
 centre (``sd_safety.keepout.reroute``).
 
-Local cylinders (from the drone's own detections) are kept until the ground's install
-has had ``LOCAL_KEEPOUT_HANDOVER_MS`` to include them; while the link is down they stay.
+Local cylinders (from the drone's own detections) give way once a ground install at
+least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
+and while the link is down, they stay. With ``LOCAL_KEEPOUTS_MAX`` of them a further
+detection stops a moving order in a hover.
 """
 
 from __future__ import annotations
 
 import math
 from itertools import pairwise
-from typing import Final
+from typing import Final, Protocol, runtime_checkable
 
 from sd_onboard.skills.base import SkillHandler, SkillPlan
 from sd_onboard.skills.survey_sector import SurveyRun
@@ -31,6 +33,7 @@ __all__ = [
     "LOCAL_KEEPOUTS_MAX",
     "LOCAL_KEEPOUT_HANDOVER_MS",
     "REROUTABLE",
+    "FliesSurveyRun",
     "contained",
     "remaining",
     "route_clear",
@@ -43,9 +46,15 @@ LOCAL_KEEPOUTS_MAX: Final = 100
 _NOTHING_LEFT_M: Final = 2.0  # closer to the end than this: hovering, not flying
 
 
+@runtime_checkable
+class FliesSurveyRun(Protocol):
+    """A handler that flies its order as a ``SurveyRun`` (an AUTO mission)."""
+
+    run: SurveyRun | None
+
+
 def survey_run(handler: SkillHandler) -> SurveyRun | None:
-    run = getattr(handler, "run", None) or getattr(handler, "_run", None)
-    return run if isinstance(run, SurveyRun) else None
+    return handler.run if isinstance(handler, FliesSurveyRun) else None
 
 
 def remaining(handler: SkillHandler, plan: SkillPlan, here: Xy, plane: Plane) -> list[Xy]:
