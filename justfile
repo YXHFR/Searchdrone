@@ -94,7 +94,7 @@ test-contract:
     {{_just}} _step db-up
     {{_just}} _step migrate
     uv run pytest -m "not sitl" \
-      --cov=sd_safety --cov=sd_ground --cov=sd_onboard --cov=sd_brain \
+      --cov=sd_safety --cov=sd_ground --cov=sd_onboard --cov=sd_brain --cov=sd_search \
       --cov-branch --cov-report=json:coverage.json --cov-report=term
     uv run lint-imports
     for step in check_coverage check_safety_manifest; do
@@ -202,6 +202,10 @@ brain-token:
 search-token:
     uv run --no-sync python tools/search_token.py
 
+# Start the search service: candidates from the detections (reads secrets/search_token)
+search:
+    uv run --package sd-search sd-search run
+
 # --- AI commander (sd-brain) -----------------------------------------------------------
 
 # Start the AI commander (reads config/brain.toml; keys from .env)
@@ -215,6 +219,14 @@ brain-eval:
 # Evaluation against the cloud model, 3 runs (the owner's key in .env; costs a few cents)
 brain-eval-cloud:
     uv run --package sd-brain sd-brain eval --backend cloud --repeat 3
+
+# The search-profile evaluation: 20 fictional descriptions, recorded answers (no network)
+brain-eval-profiles:
+    uv run --package sd-brain sd-brain eval-profiles --backend replay
+
+# The same against the cloud model (the owner's key in .env; costs a cent or two)
+brain-eval-profiles-cloud:
+    uv run --package sd-brain sd-brain eval-profiles --backend cloud
 
 # Simulator exam: random searches with an answer key, the cloud model decides (keys:
 # flights, seed, model). Hard cap 30 kr per day on real usage, then the script flies.

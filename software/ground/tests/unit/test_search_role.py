@@ -75,6 +75,8 @@ def test_search_role(searching: Ground, loopback: TestClient, panel: TestClient)
 
 def test_search_token_reaches_no_commander_route(loopback: TestClient) -> None:
     for method, path in _routes(openapi_documents()["commander"]):
+        if path.startswith("/internal/v1/cloud-budget/"):
+            continue  # the shared books: each process books its own calls (B2-06)
         res = loopback.request(method, _fill(path), json={}, headers=AS_SEARCH)
         assert res.status_code == 403, (method, path, res.status_code)
 
@@ -116,7 +118,44 @@ def test_search_health_is_off_without_a_token_file(ground: Ground) -> None:
         ).status_code == (401)
 
 
+SEARCH_ROUTES = [
+    ("GET", "/search/v1/health"),
+    ("POST", "/search/v1/heartbeat"),
+    ("GET", "/search/v1/missions"),
+    ("GET", "/search/v1/missions/{mission_id}/detections"),
+    ("GET", "/search/v1/detections/{detection_id}/crop"),
+    ("GET", "/search/v1/missions/{mission_id}/search-profile"),
+    ("GET", "/search/v1/missions/{mission_id}/candidates"),
+    ("POST", "/search/v1/missions/{mission_id}/candidates"),
+    ("GET", "/search/v1/missions/{mission_id}/probability-map/inputs"),
+    ("GET", "/search/v1/missions/{mission_id}/stills"),
+    ("POST", "/search/v1/missions/{mission_id}/probability-maps"),
+]
+
+
 def test_search_api_has_only_its_own_routes() -> None:
     """E7: the search service has no route that gives orders, approves or decides."""
-    assert _routes(openapi_documents()["search"]) == [("GET", "/search/v1/health")]
-    assert "/search/v1/health" not in openapi_documents()["commander"]["paths"]
+    routes = _routes(openapi_documents()["search"])
+    assert sorted(routes) == sorted(SEARCH_ROUTES)
+    for _, path in routes:
+        for word in ("command", "approval", "decision", "action", "skill", "chat", "stop"):
+            assert word not in path, path
+    for path in openapi_documents()["search"]["paths"]:
+        assert path not in openapi_documents()["commander"]["paths"]
+        assert path not in openapi_documents()["panel"]["paths"]
+
+
+def test_search_routes_need_the_search_token(loopback: TestClient) -> None:
+    for method, path in SEARCH_ROUTES:
+        url = _fill(path)
+        assert loopback.request(method, url, json={}).status_code == 401, path
+        res = loopback.request(method, url, json={}, headers={"Authorization": f"Bearer {BRAIN}"})
+        assert res.status_code == 403 and res.json()["code"] == "COMMANDER_FORBIDDEN", path
+
+
+def test_search_heartbeat_sets_the_health_part(searching: Ground, loopback: TestClient) -> None:
+    res = loopback.post("/search/v1/heartbeat", json={"cloud": "off"}, headers=AS_SEARCH)
+    assert res.status_code == 204, res.text
+    assert searching.search_seen_mono is not None and searching.search_cloud == "off"
+    res = loopback.post("/search/v1/heartbeat", json={"cloud": "maybe"}, headers=AS_SEARCH)
+    assert res.status_code == 422

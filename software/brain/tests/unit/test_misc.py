@@ -81,7 +81,15 @@ async def test_build_wires_everything() -> None:
     assert b.runtime.engine() == "cloud"
     assert b.loop.heartbeat() == {"status": "idle", "backend": "cloud", "engine": "cloud"}
     assert b.loop.decide is not None and b.loop.decide.available() == []
+    # E6: the commander's cloud calls are reserved with the ground's budget, per mission
+    cloud = b.runtime.cloud
+    assert cloud is not None and cloud.budget is b.budget
+    assert cloud._budget_context().mission_id is None  # pyright: ignore[reportPrivateUsage]
+    b.loop.mission_id = "0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a21"
+    ctx = cloud._budget_context()  # pyright: ignore[reportPrivateUsage]
+    assert (ctx.purpose, ctx.mission_id) == ("chat", b.loop.mission_id)
     await b.http.aclose()
+    await b.budget.aclose()
     assert b.cloud_http is not None
     await b.cloud_http.aclose()
     offline = build(BrainConfig(), Secrets(brain_token="t" * 40))

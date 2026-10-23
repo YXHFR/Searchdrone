@@ -120,6 +120,9 @@ class Situation(SdModel):
     pilot: LatLon | None
     alerts: list[dict[str, Any]]
     recent_events: list[Event]  # the latest 20
+    # The probability map's sector line (POA left / covered / mean POD / PSR), or None
+    # before the first map. Only a ranking: orders still go through the gate.
+    probability_line: str | None = None
 
 
 class BrainMessage(SdModel):

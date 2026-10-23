@@ -40,6 +40,7 @@ __all__ = [
     "onboard_env",
     "read_health",
     "recreate_database",
+    "search_env",
     "tcp_open",
 ]
 
@@ -152,6 +153,15 @@ def brain_env(
             raise InfraError("brain=scripted kräver ett manus (script=...).")
         env["SD_BRAIN__BACKEND__SCRIPTED_FILE"] = str(script)
     return env
+
+
+def search_env(ports: dict[str, int], paths: StackPaths) -> dict[str, str]:
+    """``sd-search`` against this instance's search API (the commander's listener)."""
+    return {
+        "SD_SEARCH__GROUND_URL": f"http://127.0.0.1:{ports['ground_commander']}",
+        "SD_SEARCH__TOKEN_FILE": str(paths.search_token),
+        "SD_SIM": "1",
+    }
 
 
 def tcp_open(port: int, host: str = DB_HOST, timeout: float = 1.0) -> bool:

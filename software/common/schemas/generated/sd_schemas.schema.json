@@ -423,6 +423,22 @@
           "format": "uuid",
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
+        },
+        "poa_hint": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "low",
+                "excluded"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -457,6 +473,22 @@
           "maxLength": 40,
           "minLength": 1,
           "type": "string"
+        },
+        "poa_hint": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "low",
+                "excluded"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -977,6 +1009,186 @@
       "title": "BrainMessage",
       "type": "object"
     },
+    "BudgetCommit": {
+      "additionalProperties": false,
+      "description": "The real use of a granted call. ``cost_usd`` is the provider's own price, when it\nstates one; otherwise the ground prices the tokens.",
+      "properties": {
+        "completion_tokens": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_tokens": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reservation_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservation_id",
+        "prompt_tokens",
+        "completion_tokens"
+      ],
+      "title": "BudgetCommit",
+      "type": "object"
+    },
+    "BudgetCommitted": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_sek": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "actual_sek"
+      ],
+      "title": "BudgetCommitted",
+      "type": "object"
+    },
+    "BudgetGrant": {
+      "additionalProperties": false,
+      "description": "``granted`` false: no call. ``reservation_id`` is set exactly when granted.",
+      "properties": {
+        "est_sek": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number"
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "MISSION_CAP",
+                "DAY_CAP",
+                "UNKNOWN_PRICE",
+                "NO_LEDGER"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "remaining_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "reservation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "granted",
+        "remaining_sek"
+      ],
+      "title": "BudgetGrant",
+      "type": "object"
+    },
+    "BudgetRelease": {
+      "additionalProperties": false,
+      "description": "Nothing was sent (the call failed before reaching the provider).",
+      "properties": {
+        "reservation_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservation_id"
+      ],
+      "title": "BudgetRelease",
+      "type": "object"
+    },
+    "BudgetReserve": {
+      "additionalProperties": false,
+      "description": "A cloud call about to be made: what it is for and how large it may get.",
+      "properties": {
+        "est_completion_tokens": {
+          "maximum": 100000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "est_prompt_tokens": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "image_count": {
+          "default": 0,
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "chat",
+            "match"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "purpose",
+        "model_id",
+        "est_prompt_tokens",
+        "est_completion_tokens"
+      ],
+      "title": "BudgetReserve",
+      "type": "object"
+    },
     "Candidate": {
       "additionalProperties": false,
       "description": "A place where something that may be a person was seen. One row per revision.",
@@ -1449,6 +1661,35 @@
       "title": "CandidateCard",
       "type": "object"
     },
+    "CandidateCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "low": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "review",
+        "low",
+        "confirmed",
+        "rejected"
+      ],
+      "title": "CandidateCounts",
+      "type": "object"
+    },
     "CandidateDecision": {
       "additionalProperties": false,
       "description": "A person's decision on a candidate. Only a logged-in person's session may send it.",
@@ -1478,6 +1719,127 @@
         "subject_rev"
       ],
       "title": "CandidateDecision",
+      "type": "object"
+    },
+    "CandidateDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "assessments": {
+          "items": {
+            "$ref": "#/$defs/StoredAssessment"
+          },
+          "type": "array"
+        },
+        "card": {
+          "$ref": "#/$defs/CandidateCard"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/StoredDecision"
+          },
+          "type": "array"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/CandidateObservationRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "card",
+        "mission_id",
+        "observations",
+        "assessments",
+        "decisions"
+      ],
+      "title": "CandidateDetail",
+      "type": "object"
+    },
+    "CandidateObservationRow": {
+      "additionalProperties": false,
+      "properties": {
+        "captured_utc": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "detection_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "distance_m": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "has_crop": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "px_size": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "sigma95_m": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "detection_id",
+        "distance_m",
+        "label",
+        "score",
+        "px_size",
+        "lat",
+        "lon",
+        "sigma95_m",
+        "has_crop",
+        "captured_utc"
+      ],
+      "title": "CandidateObservationRow",
+      "type": "object"
+    },
+    "CandidateQueue": {
+      "additionalProperties": false,
+      "properties": {
+        "counts": {
+          "$ref": "#/$defs/CandidateCounts"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CandidateCard"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items",
+        "counts"
+      ],
+      "title": "CandidateQueue",
       "type": "object"
     },
     "CandidateState": {
@@ -2385,6 +2747,58 @@
         "consumed"
       ],
       "title": "ClearanceState",
+      "type": "object"
+    },
+    "CloudBudgetStatus": {
+      "additionalProperties": false,
+      "description": "What the panel shows: spent and caps for the mission (when one is given) and the\nday (Swedish date). ``exhausted``: no cloud calls; ``warning`` from 80 %.",
+      "properties": {
+        "day_cap_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "day_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "mission_cap_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "state": {
+          "enum": [
+            "ok",
+            "warning",
+            "exhausted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_sek",
+        "mission_cap_sek",
+        "day_sek",
+        "day_cap_sek",
+        "state"
+      ],
+      "title": "CloudBudgetStatus",
       "type": "object"
     },
     "ColorName": {
@@ -5902,6 +6316,22 @@
       "title": "Mission",
       "type": "object"
     },
+    "MissionBudgetCap": {
+      "additionalProperties": false,
+      "description": "The pilot raises (or lowers) the mission's cap, never above the outer cap.",
+      "properties": {
+        "cap_sek": {
+          "maximum": 1000.0,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "cap_sek"
+      ],
+      "title": "MissionBudgetCap",
+      "type": "object"
+    },
     "MissionCharter": {
       "additionalProperties": false,
       "description": "An approved (or proposed) charter. Fields marked *server* are set by the ground station.",
@@ -6973,6 +7403,172 @@
       "title": "Pose",
       "type": "object"
     },
+    "ProbabilityGrid": {
+      "additionalProperties": false,
+      "properties": {
+        "cell_m": {
+          "maximum": 200,
+          "minimum": 5,
+          "type": "number"
+        },
+        "east": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "ipp_lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "ipp_lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "north": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "nx": {
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ny": {
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "south": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "west": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "x0_m": {
+          "maximum": 50000,
+          "minimum": -50000,
+          "type": "number"
+        },
+        "y0_m": {
+          "maximum": 50000,
+          "minimum": -50000,
+          "type": "number"
+        }
+      },
+      "required": [
+        "ipp_lat",
+        "ipp_lon",
+        "x0_m",
+        "y0_m",
+        "nx",
+        "ny",
+        "cell_m",
+        "west",
+        "south",
+        "east",
+        "north"
+      ],
+      "title": "ProbabilityGrid",
+      "type": "object"
+    },
+    "ProbabilityMapView": {
+      "additionalProperties": false,
+      "description": "The panel's view of the latest version. ``p_b64`` and ``pod_b64`` are base64 of\nlittle-endian float16 arrays (row-major, row 0 the southernmost).",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "event_seq": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frozen": {
+          "default": false,
+          "type": "boolean"
+        },
+        "grid": {
+          "$ref": "#/$defs/ProbabilityGrid"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "notes": {
+          "items": {
+            "enum": [
+              "no_terrain",
+              "child_statistics",
+              "uncertain_statistics",
+              "no_charter"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "p_b64": {
+          "type": "string"
+        },
+        "pod_b64": {
+          "type": "string"
+        },
+        "profile_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "enum": [
+            "prior",
+            "search",
+            "candidate",
+            "profile",
+            "areas",
+            "charter",
+            "confirmed"
+          ],
+          "type": "string"
+        },
+        "row": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "sectors": {
+          "items": {
+            "$ref": "#/$defs/SectorScore"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "version": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "reason",
+        "grid",
+        "row",
+        "event_seq",
+        "profile_version",
+        "mission_id",
+        "p_b64",
+        "pod_b64",
+        "created_at"
+      ],
+      "title": "ProbabilityMapView",
+      "type": "object"
+    },
     "ProposeCharterChangeParams": {
       "additionalProperties": false,
       "description": "Validated as a charter proposal by the ground station, never by the gate.",
@@ -7250,7 +7846,7 @@
     },
     "SearchProfile": {
       "additionalProperties": false,
-      "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.\nThe age and height bands are for the people searching, never for the matching.",
+      "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.",
       "properties": {
         "age_band": {
           "anyOf": [
@@ -7408,13 +8004,257 @@
         }
       },
       "required": [
+        "subject_category",
+        "last_seen",
         "profile_id",
         "profile_version",
-        "mission_id",
+        "mission_id"
+      ],
+      "title": "SearchProfile",
+      "type": "object"
+    },
+    "SearchProfileApproval": {
+      "additionalProperties": false,
+      "description": "The pilot's approval from the card: the profile as corrected, and what the card\nshowed when they began. A newer version or proposal than that is refused (409), so an\napproval never covers AI content the pilot has not seen.",
+      "properties": {
+        "base_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile": {
+          "$ref": "#/$defs/SearchProfileDraft"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "profile",
+        "base_version"
+      ],
+      "title": "SearchProfileApproval",
+      "type": "object"
+    },
+    "SearchProfileDraft": {
+      "additionalProperties": false,
+      "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands, the place last seen and the sources are for the people\nsearching, never for the cloud matching.",
+      "properties": {
+        "age_band": {
+          "anyOf": [
+            {
+              "enum": [
+                "child",
+                "youth",
+                "adult",
+                "senior"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "excluded": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "type": "array"
+        },
+        "free_text": {
+          "default": "",
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "garments": {
+          "items": {
+            "$ref": "#/$defs/Garment"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "hair": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hair"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "height_band": {
+          "anyOf": [
+            {
+              "enum": [
+                "short",
+                "medium",
+                "tall"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
+        "last_seen": {
+          "$ref": "#/$defs/LastSeen"
+        },
+        "likely_state": {
+          "items": {
+            "enum": [
+              "walking",
+              "sitting",
+              "lying",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "type": "array"
+        },
+        "mobility": {
+          "default": "unknown",
+          "enum": [
+            "good",
+            "reduced",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "subject_category": {
+          "enum": [
+            "dementia",
+            "hiker",
+            "despondent",
+            "gatherer",
+            "hunter",
+            "child_1_6",
+            "child_7_12",
+            "child_13_15",
+            "autism",
+            "other"
+          ],
+          "type": "string"
+        },
+        "visual_notes": {
+          "default": "",
+          "maxLength": 300,
+          "type": "string"
+        }
+      },
+      "required": [
         "subject_category",
         "last_seen"
       ],
-      "title": "SearchProfile",
+      "title": "SearchProfileDraft",
+      "type": "object"
+    },
+    "SearchProfileProposal": {
+      "additionalProperties": false,
+      "description": "The AI's proposal from the chat. It changes nothing until a pilot approves it.",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/SearchProfileDraft"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "title": "SearchProfileProposal",
+      "type": "object"
+    },
+    "SearchProfileProposalResult": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id"
+      ],
+      "title": "SearchProfileProposalResult",
+      "type": "object"
+    },
+    "SearchProfileState": {
+      "additionalProperties": false,
+      "description": "The profile in force (highest approved version) and a newer proposal, if any.",
+      "properties": {
+        "approved": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SearchProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SearchProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposed_by": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SearchProfileState",
       "type": "object"
     },
     "Sector": {
@@ -7445,6 +8285,62 @@
         "order_idx"
       ],
       "title": "Sector",
+      "type": "object"
+    },
+    "SectorScore": {
+      "additionalProperties": false,
+      "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+      "properties": {
+        "covered_pct": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "est_min": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "mean_pod": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "poa": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "pos_plan": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "psr": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "sector_id": {
+          "pattern": "^[A-Z]{1,2}$",
+          "type": "string"
+        },
+        "spacing_m": {
+          "exclusiveMinimum": 0,
+          "maximum": 500,
+          "type": "number"
+        }
+      },
+      "required": [
+        "sector_id",
+        "poa",
+        "covered_pct",
+        "mean_pod",
+        "pos_plan",
+        "est_min",
+        "psr",
+        "spacing_m"
+      ],
+      "title": "SectorScore",
       "type": "object"
     },
     "Session": {
@@ -7648,6 +8544,17 @@
             "$ref": "#/$defs/MapPin"
           },
           "type": "array"
+        },
+        "probability_line": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "recent_events": {
           "items": {
@@ -8417,6 +9324,174 @@
       "title": "StopFollowParams",
       "type": "object"
     },
+    "StoredAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "cost_sek": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "crops_used": {
+          "items": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "engine": {
+          "enum": [
+            "code",
+            "fast",
+            "strong",
+            "oracle"
+          ],
+          "type": "string"
+        },
+        "evidence": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "maxProperties": 32,
+          "type": "object"
+        },
+        "explanation_sv": {
+          "maxLength": 300,
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "enum": [
+              "match",
+              "conflict",
+              "not_visible"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "flags": {
+          "items": {
+            "enum": [
+              "motion_claim",
+              "identity_claim",
+              "format_repaired"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "overall": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "person": {
+          "enum": [
+            "yes",
+            "no",
+            "unsure"
+          ],
+          "type": "string"
+        },
+        "person_p": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "profile_version": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "profile_version",
+        "engine",
+        "model_id",
+        "person",
+        "person_p",
+        "overall",
+        "explanation_sv",
+        "latency_ms",
+        "id",
+        "created_at"
+      ],
+      "title": "StoredAssessment",
+      "type": "object"
+    },
+    "StoredDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "confirm",
+            "reject",
+            "inspect",
+            "unsure",
+            "reopen"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "note": {
+          "maxLength": 300,
+          "type": "string"
+        },
+        "operator_ref": {
+          "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
+          "type": "string"
+        },
+        "subject_rev": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "decision",
+        "note",
+        "subject_rev",
+        "operator_ref",
+        "created_at"
+      ],
+      "title": "StoredDecision",
+      "type": "object"
+    },
     "SurveyResumePoint": {
       "additionalProperties": false,
       "properties": {
@@ -8625,6 +9700,22 @@
               "enum": [
                 "cloud",
                 "command"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cloud_budget": {
+          "anyOf": [
+            {
+              "enum": [
+                "ok",
+                "warning",
+                "exhausted"
               ],
               "type": "string"
             },

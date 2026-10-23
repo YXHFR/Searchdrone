@@ -278,6 +278,7 @@ export interface Annotation {
   label: string;
   length_m?: number | null;
   mission_id: string;
+  poa_hint?: ("high" | "low" | "excluded") | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -289,6 +290,7 @@ export interface AnnotationCreate {
   };
   kind: "pin" | "area" | "path";
   label: string;
+  poa_hint?: ("high" | "low" | "excluded") | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -429,6 +431,62 @@ export interface BrainMessage {
   text: string;
 }
 /**
+ * The real use of a granted call. ``cost_usd`` is the provider's own price, when it
+ * states one; otherwise the ground prices the tokens.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetCommit".
+ */
+export interface BudgetCommit {
+  completion_tokens: number;
+  cost_usd?: number | null;
+  prompt_tokens: number;
+  reservation_id: string;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetCommitted".
+ */
+export interface BudgetCommitted {
+  actual_sek: number;
+}
+/**
+ * ``granted`` false: no call. ``reservation_id`` is set exactly when granted.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetGrant".
+ */
+export interface BudgetGrant {
+  est_sek?: number;
+  granted: boolean;
+  reason?: ("MISSION_CAP" | "DAY_CAP" | "UNKNOWN_PRICE" | "NO_LEDGER") | null;
+  remaining_sek: number;
+  reservation_id?: string | null;
+}
+/**
+ * Nothing was sent (the call failed before reaching the provider).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetRelease".
+ */
+export interface BudgetRelease {
+  reservation_id: string;
+}
+/**
+ * A cloud call about to be made: what it is for and how large it may get.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetReserve".
+ */
+export interface BudgetReserve {
+  est_completion_tokens: number;
+  est_prompt_tokens: number;
+  image_count?: number;
+  mission_id?: string | null;
+  model_id: string;
+  purpose: "chat" | "match";
+}
+/**
  * A place where something that may be a person was seen. One row per revision.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -545,6 +603,16 @@ export interface CandidateCard {
   thumb_detection_id?: string | null;
 }
 /**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateCounts".
+ */
+export interface CandidateCounts {
+  confirmed: number;
+  low: number;
+  rejected: number;
+  review: number;
+}
+/**
  * A person's decision on a candidate. Only a logged-in person's session may send it.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -554,6 +622,93 @@ export interface CandidateDecision {
   decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
   note?: string;
   subject_rev: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateDetail".
+ */
+export interface CandidateDetail {
+  assessments: StoredAssessment[];
+  card: CandidateCard;
+  decisions: StoredDecision[];
+  mission_id: string;
+  observations: CandidateObservationRow[];
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "StoredAssessment".
+ */
+export interface StoredAssessment {
+  candidate_id: string;
+  cost_sek?: number;
+  created_at: string;
+  /**
+   * @maxItems 3
+   */
+  crops_used?: [] | [string] | [string, string] | [string, string, string];
+  engine: "code" | "fast" | "strong" | "oracle";
+  evidence?: {
+    [k: string]: number;
+  };
+  explanation_sv: string;
+  fields?: {
+    [k: string]: "match" | "conflict" | "not_visible";
+  };
+  /**
+   * @maxItems 3
+   */
+  flags?:
+    | []
+    | ["motion_claim" | "identity_claim" | "format_repaired"]
+    | ["motion_claim" | "identity_claim" | "format_repaired", "motion_claim" | "identity_claim" | "format_repaired"]
+    | [
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired"
+      ];
+  id: string;
+  latency_ms: number;
+  model_id: string;
+  overall: number;
+  person: "yes" | "no" | "unsure";
+  person_p: number;
+  profile_version: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "StoredDecision".
+ */
+export interface StoredDecision {
+  created_at: string;
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  id: string;
+  note: string;
+  operator_ref: string;
+  subject_rev: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateObservationRow".
+ */
+export interface CandidateObservationRow {
+  captured_utc: string;
+  detection_id: string;
+  distance_m: number;
+  has_crop: boolean;
+  label: string;
+  lat: number;
+  lon: number;
+  px_size: number;
+  score: number;
+  sigma95_m: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateQueue".
+ */
+export interface CandidateQueue {
+  counts: CandidateCounts;
+  items: CandidateCard[];
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -980,6 +1135,21 @@ export interface ClearanceState {
   received_mono_ms: number;
   valid_for_ms: number;
   vehicle_id: string;
+}
+/**
+ * What the panel shows: spent and caps for the mission (when one is given) and the
+ * day (Swedish date). ``exhausted``: no cloud calls; ``warning`` from 80 %.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CloudBudgetStatus".
+ */
+export interface CloudBudgetStatus {
+  day_cap_sek: number;
+  day_sek: number;
+  mission_cap_sek: number;
+  mission_id?: string | null;
+  mission_sek: number;
+  state: "ok" | "warning" | "exhausted";
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1906,6 +2076,15 @@ export interface SafetyLimits {
   max_speed_ms?: number;
 }
 /**
+ * The pilot raises (or lowers) the mission's cap, never above the outer cap.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "MissionBudgetCap".
+ */
+export interface MissionBudgetCap {
+  cap_sek: number;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "MissionDetail".
  */
@@ -2384,6 +2563,90 @@ export interface PilotPosition {
   source: "charter" | "phone";
 }
 /**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "ProbabilityGrid".
+ */
+export interface ProbabilityGrid {
+  cell_m: number;
+  east: number;
+  ipp_lat: number;
+  ipp_lon: number;
+  north: number;
+  nx: number;
+  ny: number;
+  south: number;
+  west: number;
+  x0_m: number;
+  y0_m: number;
+}
+/**
+ * The panel's view of the latest version. ``p_b64`` and ``pod_b64`` are base64 of
+ * little-endian float16 arrays (row-major, row 0 the southernmost).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "ProbabilityMapView".
+ */
+export interface ProbabilityMapView {
+  created_at: string;
+  event_seq: number;
+  frozen?: boolean;
+  grid: ProbabilityGrid;
+  mission_id: string;
+  /**
+   * @maxItems 4
+   */
+  notes?:
+    | []
+    | ["no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"]
+    | [
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"
+      ]
+    | [
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"
+      ]
+    | [
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"
+      ];
+  p_b64: string;
+  pod_b64: string;
+  profile_version: number;
+  reason: "prior" | "search" | "candidate" | "profile" | "areas" | "charter" | "confirmed";
+  row: number;
+  /**
+   * @maxItems 64
+   */
+  sectors?: SectorScore[];
+  version: number;
+}
+/**
+ * One sector of the charter on the current map.
+ *
+ * ``poa``: the chance the person is in the sector now (cells whose centre lies in it).
+ * ``covered_pct``: the share of its cells seen with a POD of at least 0.1.
+ * ``mean_pod``: the mean cumulative POD over its cells.
+ * ``pos_plan``: the chance of finding the person if the sector is surveyed once more as
+ * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SectorScore".
+ */
+export interface SectorScore {
+  covered_pct: number;
+  est_min: number;
+  mean_pod: number;
+  poa: number;
+  pos_plan: number;
+  psr: number;
+  sector_id: string;
+  spacing_m: number;
+}
+/**
  * Validated as a charter proposal by the ground station, never by the gate.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2434,7 +2697,6 @@ export interface ReturnHomeParams {
  * What the person looked like, as the operator approved it.
  *
  * A proposal from the AI has ``approved_by = None`` and is never used for matching.
- * The age and height bands are for the people searching, never for the matching.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SearchProfile".
@@ -2517,6 +2779,130 @@ export interface SearchProfile {
   visual_notes?: string;
 }
 /**
+ * The pilot's approval from the card: the profile as corrected, and what the card
+ * showed when they began. A newer version or proposal than that is refused (409), so an
+ * approval never covers AI content the pilot has not seen.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileApproval".
+ */
+export interface SearchProfileApproval {
+  base_version: number;
+  profile: SearchProfileDraft;
+  proposal_id?: string | null;
+}
+/**
+ * A search profile before the ground station numbers and stores it: what the AI
+ * proposes from the chat, and what the pilot's card sends when they approve.
+ *
+ * The ground station sets the mission, the profile id, the version and who approved
+ * it. The age and height bands, the place last seen and the sources are for the people
+ * searching, never for the cloud matching.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileDraft".
+ */
+export interface SearchProfileDraft {
+  age_band?: ("child" | "youth" | "adult" | "senior") | null;
+  /**
+   * @maxItems 5
+   */
+  excluded?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string];
+  free_text?: string;
+  /**
+   * @maxItems 8
+   */
+  garments?:
+    | []
+    | [Garment]
+    | [Garment, Garment]
+    | [Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment, Garment, Garment];
+  hair?: Hair | null;
+  height_band?: ("short" | "medium" | "tall") | null;
+  /**
+   * @maxItems 6
+   */
+  items?:
+    | []
+    | [Item]
+    | [Item, Item]
+    | [Item, Item, Item]
+    | [Item, Item, Item, Item]
+    | [Item, Item, Item, Item, Item]
+    | [Item, Item, Item, Item, Item, Item];
+  last_seen: LastSeen;
+  /**
+   * @minItems 1
+   * @maxItems 4
+   */
+  likely_state?:
+    | ["walking" | "sitting" | "lying" | "unknown"]
+    | ["walking" | "sitting" | "lying" | "unknown", "walking" | "sitting" | "lying" | "unknown"]
+    | [
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown"
+      ]
+    | [
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown"
+      ];
+  mobility?: "good" | "reduced" | "unknown";
+  subject_category:
+    | "dementia"
+    | "hiker"
+    | "despondent"
+    | "gatherer"
+    | "hunter"
+    | "child_1_6"
+    | "child_7_12"
+    | "child_13_15"
+    | "autism"
+    | "other";
+  visual_notes?: string;
+}
+/**
+ * The AI's proposal from the chat. It changes nothing until a pilot approves it.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileProposal".
+ */
+export interface SearchProfileProposal {
+  profile: SearchProfileDraft;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileProposalResult".
+ */
+export interface SearchProfileProposalResult {
+  proposal_id: string;
+}
+/**
+ * The profile in force (highest approved version) and a newer proposal, if any.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileState".
+ */
+export interface SearchProfileState {
+  approved?: SearchProfile | null;
+  proposal?: SearchProfile | null;
+  proposal_id?: string | null;
+  proposed_by?: string | null;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "Session".
  */
@@ -2561,6 +2947,7 @@ export interface Situation {
   pending_proposal: Charter | null;
   pilot: LatLon | null;
   pins: MapPin[];
+  probability_line?: string | null;
   recent_events: Event[];
   returning_cause: ("brain" | "operator" | "battery" | "failsafe" | "system") | null;
   sectors: {
@@ -2819,6 +3206,7 @@ export interface SurveySectorParams {
  */
 export interface SystemStatus {
   brain_engine?: ("cloud" | "command") | null;
+  cloud_budget?: ("ok" | "warning" | "exhausted") | null;
   internet: "up" | "down" | "unknown";
   operator_present: boolean;
   parts: {

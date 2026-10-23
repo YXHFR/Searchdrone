@@ -25,6 +25,10 @@ export const paths = {
   missionEnd: (missionId: string) => `${API}/missions/${enc(missionId)}/end`,
   missionCharters: (missionId: string) => `${API}/missions/${enc(missionId)}/charters`,
   missionSectors: (missionId: string) => `${API}/missions/${enc(missionId)}/sectors`,
+  probabilityMap: (missionId: string) => `${API}/missions/${enc(missionId)}/probability-map`,
+  probabilityPng: (missionId: string, layer: "poa" | "pod") =>
+    `${API}/missions/${enc(missionId)}/probability-map.png?layer=${layer}`,
+  sectorPoa: (missionId: string) => `${API}/missions/${enc(missionId)}/sectors/poa`,
   missionApprovals: (missionId: string, status?: "pending") =>
     `${API}/missions/${enc(missionId)}/approvals${status ? `?status=${status}` : ""}`,
   missionCommands: (missionId: string, status?: string) =>
@@ -47,5 +51,8 @@ export const paths = {
     `${API}/missions/${enc(missionId)}/detections/${enc(detectionId)}/crop`,
   annotation: (annotationId: string) => `${API}/annotations/${enc(annotationId)}`,
   missionTrack: (missionId: string) => `${API}/missions/${enc(missionId)}/track?max_points=5000`,
+  searchProfile: (missionId: string) => `${API}/missions/${enc(missionId)}/search-profile`,
+  searchProfileVersions: (missionId: string) =>
+    `${API}/missions/${enc(missionId)}/search-profile/versions`,
   liveSocket: () => "/ws/v1/live",
 } as const;

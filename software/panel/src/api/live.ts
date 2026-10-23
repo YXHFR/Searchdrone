@@ -279,6 +279,7 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       const s = e.data as SystemStatus;
       live.patch({
         system: s,
+        cloudBudget: null, // the fresh status says it from here
         aiDisconnected: s.parts.brain?.state === "ok" ? false : live.aiDisconnected,
       });
       break;
@@ -353,6 +354,17 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
     case "find.updated":
       if (forMission) m.upsertFind(e.data as Find);
       break;
+    case "search_profile.proposed":
+    case "search_profile.approved":
+      if (forMission) {
+        m.bumpProfile();
+        if (e.type === "search_profile.proposed")
+          useUiStore.getState().toast("Ny sökprofil föreslagen: granska den under Sökprofil.");
+      }
+      break;
+    case "probability_map.updated":
+      if (forMission) m.bumpMap();
+      break;
     case "annotation.deleted":
       m.removeAnnotation((e.data as { id: string }).id);
       break;
@@ -372,6 +384,14 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
         brainBusySince: busy ? (live.brainBusySince ?? Date.now()) : null,
         aiDisconnected: state === "ready" || busy ? false : live.aiDisconnected,
       });
+      break;
+    }
+    case "cloud_budget.state": {
+      // Another mission's budget is not this panel's; the day's shows in the system status.
+      if (!forMission) break;
+      const { state } = e.data as { state?: string };
+      if (state === "ok" || state === "warning" || state === "exhausted")
+        live.patch({ cloudBudget: state });
       break;
     }
     case "gate.decision": {

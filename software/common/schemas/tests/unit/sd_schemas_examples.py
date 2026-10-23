@@ -411,6 +411,41 @@ def _search_examples() -> list[BaseModel]:
             approved_by="operator:demo",
             approved_at=T,
         ),
+        s.SearchProfileDraft(
+            subject_category="hiker",
+            garments=[garment],
+            last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            free_text="Påhittad beskrivning för test.",
+        ),
+        s.SearchProfileProposal(
+            profile=s.SearchProfileDraft(
+                subject_category="hiker",
+                garments=[garment],
+                last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+                free_text="Påhittad beskrivning för test.",
+            ),
+        ),
+        s.SearchProfileProposalResult(proposal_id=OTHER),
+        s.SearchProfileApproval(
+            profile=s.SearchProfileDraft(
+                subject_category="hiker",
+                garments=[garment],
+                last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            ),
+            base_version=1,
+            proposal_id=OTHER,
+        ),
+        s.SearchProfileState(
+            proposal=s.SearchProfile(
+                profile_id=PROFILE,
+                profile_version=1,
+                mission_id=MISSION,
+                subject_category="hiker",
+                last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            ),
+            proposal_id=OTHER,
+            proposed_by="brain:ground",
+        ),
         s.Candidate(
             candidate_id=CANDIDATE,
             rev=2,
@@ -463,6 +498,51 @@ def _search_examples() -> list[BaseModel]:
             current_profile_version=1,
             first_seen_utc=T,
             last_seen_utc=T,
+        ),
+    ]
+
+
+def _candidate_panel_examples(search: list[BaseModel]) -> list[BaseModel]:
+    """The panel's candidate queue and detail, built from the search examples."""
+    assessment = next(m for m in search if type(m) is s.CandidateAssessment)
+    card = next(m for m in search if isinstance(m, s.CandidateCard))
+    assert isinstance(card, s.CandidateCard)
+    counts = s.CandidateCounts(review=1, low=0, confirmed=0, rejected=0)
+    row = s.CandidateObservationRow(
+        detection_id=DETECTION,
+        distance_m=1.2,
+        label="person",
+        score=0.62,
+        px_size=32.0,
+        lat=-35.36146,
+        lon=149.16523,
+        sigma95_m=3.0,
+        has_crop=True,
+        captured_utc=T,
+    )
+    stored = s.StoredAssessment.model_validate(
+        assessment.model_dump() | {"id": OTHER, "created_at": T}
+    )
+    decision = s.StoredDecision(
+        id=OTHER,
+        decision="unsure",
+        note="oklart",
+        subject_rev=2,
+        operator_ref="operator:demo",
+        created_at=T,
+    )
+    return [
+        counts,
+        s.CandidateQueue(items=[card], counts=counts),
+        row,
+        stored,
+        decision,
+        s.CandidateDetail(
+            card=card,
+            mission_id=MISSION,
+            observations=[row],
+            assessments=[stored],
+            decisions=[decision],
         ),
     ]
 
@@ -962,9 +1042,76 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             latency_ms=180,
         ),
     ]
-    items += _search_examples()
+    grid = s.ProbabilityGrid(
+        ipp_lat=HOME_LAT,
+        ipp_lon=HOME_LON,
+        x0_m=-50,
+        y0_m=-50,
+        nx=4,
+        ny=4,
+        cell_m=25,
+        west=HOME_LON - 0.0006,
+        south=HOME_LAT - 0.0005,
+        east=HOME_LON + 0.0006,
+        north=HOME_LAT + 0.0005,
+    )
+    score = s.SectorScore(
+        sector_id="A",
+        poa=0.4,
+        covered_pct=20,
+        mean_pod=0.3,
+        pos_plan=0.2,
+        est_min=12,
+        psr=0.017,
+        spacing_m=40,
+    )
+    items += [
+        grid,
+        score,
+        s.ProbabilityMapView(
+            version=1,
+            reason="prior",
+            grid=grid,
+            row=0.1,
+            event_seq=0,
+            profile_version=1,
+            sectors=[score],
+            mission_id=MISSION,
+            p_b64="A" * 43 + "=",  # 16 float16 zeros
+            pod_b64="A" * 43 + "=",
+            created_at=T,
+        ),
+    ]
+    search = _search_examples()
+    items += search + _candidate_panel_examples(search) + _cloud_budget_examples()
     out: dict[type[BaseModel], BaseModel] = {}
     for item in items:
         assert type(item) not in out, f"two examples for {type(item).__name__}"
         out[type(item)] = item
     return out
+
+
+def _cloud_budget_examples() -> list[BaseModel]:
+    return [
+        s.BudgetReserve(
+            purpose="match",
+            mission_id=OTHER,
+            model_id="anthropic/claude-haiku-5.5",
+            est_prompt_tokens=1400,
+            est_completion_tokens=300,
+            image_count=2,
+        ),
+        s.BudgetGrant(granted=True, reservation_id=OTHER, est_sek=0.003, remaining_sek=49.9),
+        s.BudgetCommit(reservation_id=OTHER, prompt_tokens=1350, completion_tokens=120),
+        s.BudgetCommitted(actual_sek=0.002),
+        s.BudgetRelease(reservation_id=OTHER),
+        s.CloudBudgetStatus(
+            mission_id=OTHER,
+            mission_sek=12.5,
+            mission_cap_sek=50.0,
+            day_sek=40.0,
+            day_cap_sek=150.0,
+            state="ok",
+        ),
+        s.MissionBudgetCap(cap_sek=80.0),
+    ]

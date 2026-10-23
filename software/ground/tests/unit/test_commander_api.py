@@ -35,11 +35,17 @@ COMMANDER_WHITELIST = frozenset(
         ("POST", "/commander/v1/missions/{mission_id}/estimate"),
         ("POST", "/commander/v1/missions/{mission_id}/commands/{command_id}/cancel"),
         ("POST", "/commander/v1/missions/{mission_id}/charter-proposals"),
+        # A search-profile proposal: stored for the pilot's card, used only once approved.
+        ("POST", "/commander/v1/missions/{mission_id}/profile-proposals"),
         # The AI's stop check: a pilot's own recent line only, never a release.
         ("POST", "/commander/v1/missions/{mission_id}/chat-intents"),
         ("GET", "/commander/v1/missions/{mission_id}/memory"),
         ("PUT", "/commander/v1/missions/{mission_id}/memory"),
         ("POST", "/commander/v1/missions/{mission_id}/decisions"),
+        # The cloud budget's books (B2-06): the commander books its own cloud calls only.
+        ("POST", "/internal/v1/cloud-budget/reserve"),
+        ("POST", "/internal/v1/cloud-budget/commit"),
+        ("POST", "/internal/v1/cloud-budget/release"),
     }
 )
 # Operator actions: must not exist on :7700 at all.

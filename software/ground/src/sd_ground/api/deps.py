@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Path, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -112,6 +112,12 @@ def ground(conn: HTTPConnection) -> Ground:
     if not isinstance(g, Ground):
         raise TypeError("app.state.ground is not set")
     return g
+
+
+# Path parameters every router takes: a UUID and a vehicle id.
+_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+IdPath = Annotated[str, Path(pattern=_UUID)]
+VehiclePath = Annotated[str, Path(pattern=r"^[a-z0-9][a-z0-9-]{2,31}$")]
 
 
 def repo_of(g: Ground) -> Repo:

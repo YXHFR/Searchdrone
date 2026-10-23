@@ -1,10 +1,1713 @@
 {
+  "components": {
+    "schemas": {
+      "BBox": {
+        "additionalProperties": false,
+        "description": "A box in image pixels: top-left corner, width and height (also ``sd_detect.BBox``).",
+        "properties": {
+          "h": {
+            "exclusiveMinimum": 0.0,
+            "title": "H",
+            "type": "number"
+          },
+          "w": {
+            "exclusiveMinimum": 0.0,
+            "title": "W",
+            "type": "number"
+          },
+          "x": {
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "title": "BBox",
+        "type": "object"
+      },
+      "Candidate": {
+        "additionalProperties": false,
+        "description": "A place where something that may be a person was seen. One row per revision.",
+        "properties": {
+          "best_detector_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Best Detector Score",
+            "type": "number"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "first_seen_utc": {
+            "format": "date-time",
+            "title": "First Seen Utc",
+            "type": "string"
+          },
+          "last_seen_utc": {
+            "format": "date-time",
+            "title": "Last Seen Utc",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "latest_assessment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Assessment Id"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "n_in_view": {
+            "minimum": 0.0,
+            "title": "N In View",
+            "type": "integer"
+          },
+          "n_seen": {
+            "minimum": 0.0,
+            "title": "N Seen",
+            "type": "integer"
+          },
+          "priority": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "number"
+          },
+          "refined_person_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refined Person Score"
+          },
+          "rev": {
+            "minimum": 1.0,
+            "title": "Rev",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CandidateState"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "rev",
+          "mission_id",
+          "seq",
+          "state",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "n_seen",
+          "n_in_view",
+          "best_detector_score",
+          "priority",
+          "first_seen_utc",
+          "last_seen_utc"
+        ],
+        "title": "Candidate",
+        "type": "object"
+      },
+      "CandidateAssessment": {
+        "additionalProperties": false,
+        "description": "One engine's view of a candidate against one profile version.\n\nThe model fills only ``person``, ``person_p``, ``fields``, ``overall`` and\n``explanation_sv``; the code fills the rest. Field keys follow ``FIELD_KEY_PATTERN``;\nunknown keys are dropped. ``flags`` mark claims nobody can check from a still (that\nsomeone moves, or who they are): the panel shows them as unverified.",
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "cost_sek": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Cost Sek",
+            "type": "number"
+          },
+          "crops_used": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Crops Used",
+            "type": "array"
+          },
+          "engine": {
+            "enum": [
+              "code",
+              "fast",
+              "strong",
+              "oracle"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "evidence": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "maxProperties": 32,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "explanation_sv": {
+            "maxLength": 300,
+            "title": "Explanation Sv",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "enum": [
+                "match",
+                "conflict",
+                "not_visible"
+              ],
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "flags": {
+            "items": {
+              "enum": [
+                "motion_claim",
+                "identity_claim",
+                "format_repaired"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Flags",
+            "type": "array"
+          },
+          "latency_ms": {
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "overall": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overall",
+            "type": "number"
+          },
+          "person": {
+            "enum": [
+              "yes",
+              "no",
+              "unsure"
+            ],
+            "title": "Person",
+            "type": "string"
+          },
+          "person_p": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Person P",
+            "type": "number"
+          },
+          "profile_version": {
+            "minimum": 0.0,
+            "title": "Profile Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "profile_version",
+          "engine",
+          "model_id",
+          "person",
+          "person_p",
+          "overall",
+          "explanation_sv",
+          "latency_ms"
+        ],
+        "title": "CandidateAssessment",
+        "type": "object"
+      },
+      "CandidateBatch": {
+        "additionalProperties": false,
+        "description": "Revisions written in one transaction: all or none.",
+        "properties": {
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateRevision"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Revisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revisions"
+        ],
+        "title": "CandidateBatch",
+        "type": "object"
+      },
+      "CandidateRevision": {
+        "additionalProperties": false,
+        "description": "A new candidate (``base_rev`` 0) or the next revision of one, from the search\nservice. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps\nthe state in force (a candidate a person or the pilot holds). Confirmed and rejected\nare a person's and are refused here (E1).",
+        "properties": {
+          "assessment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateAssessment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "base_rev": {
+            "minimum": 0.0,
+            "title": "Base Rev",
+            "type": "integer"
+          },
+          "best_detector_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Best Detector Score",
+            "type": "number"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "first_seen_utc": {
+            "format": "date-time",
+            "title": "First Seen Utc",
+            "type": "string"
+          },
+          "last_seen_utc": {
+            "format": "date-time",
+            "title": "Last Seen Utc",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "n_seen": {
+            "minimum": 1.0,
+            "title": "N Seen",
+            "type": "integer"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/SearchObservation"
+            },
+            "maxItems": 200,
+            "title": "Observations",
+            "type": "array"
+          },
+          "priority": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "number"
+          },
+          "refined_person_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refined Person Score"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "new",
+                  "assessing",
+                  "ready",
+                  "merged"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "base_rev",
+          "state",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "n_seen",
+          "best_detector_score",
+          "priority",
+          "first_seen_utc",
+          "last_seen_utc"
+        ],
+        "title": "CandidateRevision",
+        "type": "object"
+      },
+      "CandidateState": {
+        "enum": [
+          "new",
+          "assessing",
+          "ready",
+          "inspecting",
+          "confirmed",
+          "rejected",
+          "merged"
+        ],
+        "title": "CandidateState",
+        "type": "string"
+      },
+      "CandidateWritten": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "rev": {
+            "minimum": 1.0,
+            "title": "Rev",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CandidateState"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "rev",
+          "seq",
+          "state"
+        ],
+        "title": "CandidateWritten",
+        "type": "object"
+      },
+      "ColorName": {
+        "enum": [
+          "black",
+          "white",
+          "gray",
+          "red",
+          "orange",
+          "yellow",
+          "green",
+          "blue",
+          "purple",
+          "pink",
+          "brown",
+          "beige",
+          "unknown"
+        ],
+        "title": "ColorName",
+        "type": "string"
+      },
+      "Garment": {
+        "additionalProperties": false,
+        "properties": {
+          "certainty": {
+            "enum": [
+              "certain",
+              "likely",
+              "unsure"
+            ],
+            "title": "Certainty",
+            "type": "string"
+          },
+          "colors": {
+            "items": {
+              "$ref": "#/components/schemas/ColorName"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Colors",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "part": {
+            "enum": [
+              "outer",
+              "upper",
+              "lower",
+              "headwear",
+              "footwear",
+              "full_body"
+            ],
+            "title": "Part",
+            "type": "string"
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "enum": [
+                  "solid",
+                  "striped",
+                  "checked",
+                  "patterned",
+                  "reflective"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pattern"
+          },
+          "shade": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "dark"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shade"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "required": [
+          "part",
+          "colors",
+          "certainty"
+        ],
+        "title": "Garment",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Hair": {
+        "additionalProperties": false,
+        "properties": {
+          "certainty": {
+            "enum": [
+              "certain",
+              "likely",
+              "unsure"
+            ],
+            "title": "Certainty",
+            "type": "string"
+          },
+          "color": {
+            "$ref": "#/components/schemas/ColorName"
+          },
+          "length": {
+            "enum": [
+              "short",
+              "long",
+              "bald",
+              "unknown"
+            ],
+            "title": "Length",
+            "type": "string"
+          }
+        },
+        "required": [
+          "color",
+          "length",
+          "certainty"
+        ],
+        "title": "Hair",
+        "type": "object"
+      },
+      "Item": {
+        "additionalProperties": false,
+        "properties": {
+          "certainty": {
+            "enum": [
+              "certain",
+              "likely",
+              "unsure"
+            ],
+            "title": "Certainty",
+            "type": "string"
+          },
+          "colors": {
+            "items": {
+              "$ref": "#/components/schemas/ColorName"
+            },
+            "maxItems": 3,
+            "title": "Colors",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "backpack",
+              "bag",
+              "cane",
+              "walker",
+              "umbrella",
+              "bicycle",
+              "dog",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "kind",
+          "certainty"
+        ],
+        "title": "Item",
+        "type": "object"
+      },
+      "LastSeen": {
+        "additionalProperties": false,
+        "description": "The initial planning point (IPP): where and when the person was last seen.",
+        "properties": {
+          "at_utc": {
+            "format": "date-time",
+            "title": "At Utc",
+            "type": "string"
+          },
+          "heading_deg": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 360.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading Deg"
+          },
+          "kind": {
+            "default": "point_last_seen",
+            "enum": [
+              "point_last_seen",
+              "last_known_position"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "at_utc"
+        ],
+        "title": "LastSeen",
+        "type": "object"
+      },
+      "LatLon": {
+        "additionalProperties": false,
+        "properties": {
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "LatLon",
+        "type": "object"
+      },
+      "ProbabilityGrid": {
+        "additionalProperties": false,
+        "properties": {
+          "cell_m": {
+            "maximum": 200.0,
+            "minimum": 5.0,
+            "title": "Cell M",
+            "type": "number"
+          },
+          "east": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "East",
+            "type": "number"
+          },
+          "ipp_lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Ipp Lat",
+            "type": "number"
+          },
+          "ipp_lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Ipp Lon",
+            "type": "number"
+          },
+          "north": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "North",
+            "type": "number"
+          },
+          "nx": {
+            "maximum": 160.0,
+            "minimum": 1.0,
+            "title": "Nx",
+            "type": "integer"
+          },
+          "ny": {
+            "maximum": 160.0,
+            "minimum": 1.0,
+            "title": "Ny",
+            "type": "integer"
+          },
+          "south": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "South",
+            "type": "number"
+          },
+          "west": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "West",
+            "type": "number"
+          },
+          "x0_m": {
+            "maximum": 50000.0,
+            "minimum": -50000.0,
+            "title": "X0 M",
+            "type": "number"
+          },
+          "y0_m": {
+            "maximum": 50000.0,
+            "minimum": -50000.0,
+            "title": "Y0 M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ipp_lat",
+          "ipp_lon",
+          "x0_m",
+          "y0_m",
+          "nx",
+          "ny",
+          "cell_m",
+          "west",
+          "south",
+          "east",
+          "north"
+        ],
+        "title": "ProbabilityGrid",
+        "type": "object"
+      },
+      "ProbabilityMapInputs": {
+        "additionalProperties": false,
+        "description": "What the map is computed from besides the profile and the stills: the charter's\narea and sectors, the operator's areas, and the latest stored version.",
+        "properties": {
+          "alt_m": {
+            "default": 40,
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
+            "title": "Alt M",
+            "type": "number"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "areas": {
+            "items": {
+              "$ref": "#/components/schemas/SearchArea"
+            },
+            "maxItems": 200,
+            "title": "Areas",
+            "type": "array"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbabilityMapLatest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sectors": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 64,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "speed_ms": {
+            "default": 5,
+            "exclusiveMinimum": 0.0,
+            "maximum": 50.0,
+            "title": "Speed Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "area"
+        ],
+        "title": "ProbabilityMapInputs",
+        "type": "object"
+      },
+      "ProbabilityMapLatest": {
+        "additionalProperties": false,
+        "properties": {
+          "event_seq": {
+            "minimum": 0.0,
+            "title": "Event Seq",
+            "type": "integer"
+          },
+          "frozen": {
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "frozen",
+          "event_seq"
+        ],
+        "title": "ProbabilityMapLatest",
+        "type": "object"
+      },
+      "ProbabilityMapWrite": {
+        "additionalProperties": false,
+        "description": "``sd-search`` -> ground: a new version. ``p_z`` and ``pod_z`` are base64 of\nzlib-compressed little-endian float32 arrays of ``grid.nx * grid.ny`` values; the\nground checks the sizes, that every value is finite and in [0, 1], and the sum.",
+        "properties": {
+          "event_seq": {
+            "minimum": 0.0,
+            "title": "Event Seq",
+            "type": "integer"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "grid": {
+            "$ref": "#/components/schemas/ProbabilityGrid"
+          },
+          "notes": {
+            "items": {
+              "enum": [
+                "no_terrain",
+                "child_statistics",
+                "uncertain_statistics",
+                "no_charter"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Notes",
+            "type": "array"
+          },
+          "p_z": {
+            "maxLength": 140000,
+            "minLength": 4,
+            "title": "P Z",
+            "type": "string"
+          },
+          "pod_z": {
+            "maxLength": 140000,
+            "minLength": 4,
+            "title": "Pod Z",
+            "type": "string"
+          },
+          "profile_version": {
+            "minimum": 0.0,
+            "title": "Profile Version",
+            "type": "integer"
+          },
+          "reason": {
+            "enum": [
+              "prior",
+              "search",
+              "candidate",
+              "profile",
+              "areas",
+              "charter",
+              "confirmed"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Row",
+            "type": "number"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/SectorScore"
+            },
+            "maxItems": 64,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "reason",
+          "grid",
+          "row",
+          "event_seq",
+          "profile_version",
+          "p_z",
+          "pod_z"
+        ],
+        "title": "ProbabilityMapWrite",
+        "type": "object"
+      },
+      "ProbabilityMapWritten": {
+        "additionalProperties": false,
+        "properties": {
+          "frozen": {
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "frozen"
+        ],
+        "title": "ProbabilityMapWritten",
+        "type": "object"
+      },
+      "SearchArea": {
+        "additionalProperties": false,
+        "description": "An area the operator drew with a hint for the map.",
+        "properties": {
+          "annotation_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Annotation Id",
+            "type": "string"
+          },
+          "poa_hint": {
+            "enum": [
+              "high",
+              "low",
+              "excluded"
+            ],
+            "title": "Poa Hint",
+            "type": "string"
+          },
+          "polygon": {
+            "additionalProperties": true,
+            "title": "Polygon",
+            "type": "object"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "poa_hint",
+          "polygon"
+        ],
+        "title": "SearchArea",
+        "type": "object"
+      },
+      "SearchDetection": {
+        "additionalProperties": false,
+        "description": "A stored detection of a target class, as the search service reads it.",
+        "properties": {
+          "bbox": {
+            "$ref": "#/components/schemas/BBox"
+          },
+          "captured_utc": {
+            "format": "date-time",
+            "title": "Captured Utc",
+            "type": "string"
+          },
+          "crop_box": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BBox"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "has_crop": {
+            "title": "Has Crop",
+            "type": "boolean"
+          },
+          "label": {
+            "pattern": "^[a-z][a-z0-9_]{1,31}$",
+            "title": "Label",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "px_size": {
+            "exclusiveMinimum": 0.0,
+            "title": "Px Size",
+            "type": "number"
+          },
+          "score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "still_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Still Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detection_id",
+          "seq",
+          "still_id",
+          "label",
+          "score",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "px_size",
+          "bbox",
+          "has_crop",
+          "captured_utc"
+        ],
+        "title": "SearchDetection",
+        "type": "object"
+      },
+      "SearchHeartbeat": {
+        "additionalProperties": false,
+        "description": "``cloud``: ``off`` (not configured), ``ok`` or ``down`` (matching paused: the cloud\nfailed or the budget is spent; only the code assesses).",
+        "properties": {
+          "cloud": {
+            "default": "off",
+            "enum": [
+              "off",
+              "ok",
+              "down"
+            ],
+            "title": "Cloud",
+            "type": "string"
+          },
+          "missions": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Missions",
+            "type": "integer"
+          }
+        },
+        "title": "SearchHeartbeat",
+        "type": "object"
+      },
+      "SearchObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "distance_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Distance M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "detection_id",
+          "distance_m"
+        ],
+        "title": "SearchObservation",
+        "type": "object"
+      },
+      "SearchProfile": {
+        "additionalProperties": false,
+        "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.",
+        "properties": {
+          "age_band": {
+            "anyOf": [
+              {
+                "enum": [
+                  "child",
+                  "youth",
+                  "adult",
+                  "senior"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Band"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Excluded",
+            "type": "array"
+          },
+          "free_text": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Free Text",
+            "type": "string"
+          },
+          "garments": {
+            "items": {
+              "$ref": "#/components/schemas/Garment"
+            },
+            "maxItems": 8,
+            "title": "Garments",
+            "type": "array"
+          },
+          "hair": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Hair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "height_band": {
+            "anyOf": [
+              {
+                "enum": [
+                  "short",
+                  "medium",
+                  "tall"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Band"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            },
+            "maxItems": 6,
+            "title": "Items",
+            "type": "array"
+          },
+          "last_seen": {
+            "$ref": "#/components/schemas/LastSeen"
+          },
+          "likely_state": {
+            "items": {
+              "enum": [
+                "walking",
+                "sitting",
+                "lying",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Likely State",
+            "type": "array"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "mobility": {
+            "default": "unknown",
+            "enum": [
+              "good",
+              "reduced",
+              "unknown"
+            ],
+            "title": "Mobility",
+            "type": "string"
+          },
+          "profile_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "profile_version": {
+            "minimum": 1.0,
+            "title": "Profile Version",
+            "type": "integer"
+          },
+          "subject_category": {
+            "enum": [
+              "dementia",
+              "hiker",
+              "despondent",
+              "gatherer",
+              "hunter",
+              "child_1_6",
+              "child_7_12",
+              "child_13_15",
+              "autism",
+              "other"
+            ],
+            "title": "Subject Category",
+            "type": "string"
+          },
+          "visual_notes": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Visual Notes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_category",
+          "last_seen",
+          "profile_id",
+          "profile_version",
+          "mission_id"
+        ],
+        "title": "SearchProfile",
+        "type": "object"
+      },
+      "SearchStill": {
+        "additionalProperties": false,
+        "description": "A still the drone took, as the map needs it: where it looked and how well.",
+        "properties": {
+          "captured_utc": {
+            "format": "date-time",
+            "title": "Captured Utc",
+            "type": "string"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Id"
+          },
+          "detector_ok": {
+            "title": "Detector Ok",
+            "type": "boolean"
+          },
+          "footprint": {
+            "items": {
+              "$ref": "#/components/schemas/LatLon"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Footprint",
+            "type": "array"
+          },
+          "px_per_m": {
+            "exclusiveMinimum": 0.0,
+            "title": "Px Per M",
+            "type": "number"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "still_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Still Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "still_id",
+          "seq",
+          "command_id",
+          "captured_utc",
+          "footprint",
+          "px_per_m",
+          "detector_ok"
+        ],
+        "title": "SearchStill",
+        "type": "object"
+      },
+      "SearchTrack": {
+        "additionalProperties": false,
+        "description": "A candidate in force with everything fusion needs to resume after a restart.",
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/Candidate"
+          },
+          "decided": {
+            "title": "Decided",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "sightings": {
+            "items": {
+              "$ref": "#/components/schemas/SearchDetection"
+            },
+            "title": "Sightings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate",
+          "label",
+          "decided",
+          "sightings"
+        ],
+        "title": "SearchTrack",
+        "type": "object"
+      },
+      "SectorScore": {
+        "additionalProperties": false,
+        "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+        "properties": {
+          "covered_pct": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Covered Pct",
+            "type": "number"
+          },
+          "est_min": {
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Est Min",
+            "type": "number"
+          },
+          "mean_pod": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Mean Pod",
+            "type": "number"
+          },
+          "poa": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Poa",
+            "type": "number"
+          },
+          "pos_plan": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Pos Plan",
+            "type": "number"
+          },
+          "psr": {
+            "minimum": 0.0,
+            "title": "Psr",
+            "type": "number"
+          },
+          "sector_id": {
+            "pattern": "^[A-Z]{1,2}$",
+            "title": "Sector Id",
+            "type": "string"
+          },
+          "spacing_m": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
+            "title": "Spacing M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "sector_id",
+          "poa",
+          "covered_pct",
+          "mean_pod",
+          "pos_plan",
+          "est_min",
+          "psr",
+          "spacing_m"
+        ],
+        "title": "SectorScore",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
   "info": {
     "title": "Searchdrone search API",
     "version": "1"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/search/v1/detections/{detection_id}/crop": {
+      "get": {
+        "description": "A target detection's crop (JPEG), only from inside its mission's folder.",
+        "operationId": "crop_search_v1_detections__detection_id__crop_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "detection_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Detection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Crop"
+      }
+    },
     "/search/v1/health": {
       "get": {
         "description": "The search service's view of the ground station: up, and whether the database is.",
@@ -24,6 +1727,437 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/search/v1/heartbeat": {
+      "post": {
+        "description": "The search service is alive (``parts.search`` in the health).",
+        "operationId": "heartbeat_search_v1_heartbeat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat"
+      }
+    },
+    "/search/v1/missions": {
+      "get": {
+        "description": "The open missions (the ones that may get detections).",
+        "operationId": "missions_search_v1_missions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Missions Search V1 Missions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Missions"
+      }
+    },
+    "/search/v1/missions/{mission_id}/candidates": {
+      "get": {
+        "description": "Every candidate in force with the detections it observed (to resume after a\nrestart).",
+        "operationId": "candidates_search_v1_missions__mission_id__candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchTrack"
+                  },
+                  "title": "Response Candidates Search V1 Missions  Mission Id  Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Candidates"
+      },
+      "post": {
+        "description": "New candidates and new revisions, all or none. 409 for a stale ``base_rev``, an\nobservation already written, or a candidate a person or the pilot holds.",
+        "operationId": "write_candidates_search_v1_missions__mission_id__candidates_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateWritten"
+                  },
+                  "title": "Response Write Candidates Search V1 Missions  Mission Id  Candidates Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Candidates"
+      }
+    },
+    "/search/v1/missions/{mission_id}/detections": {
+      "get": {
+        "description": "The mission's target detections after ``after_seq``, oldest first.",
+        "operationId": "detections_search_v1_missions__mission_id__detections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchDetection"
+                  },
+                  "title": "Response Detections Search V1 Missions  Mission Id  Detections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Detections"
+      }
+    },
+    "/search/v1/missions/{mission_id}/probability-map/inputs": {
+      "get": {
+        "description": "What the map depends on besides the profile and the candidates: the approved\ncharter's area and sectors, the operator's areas with a POA hint, the newest version.",
+        "operationId": "probability_map_inputs_search_v1_missions__mission_id__probability_map_inputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbabilityMapInputs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probability Map Inputs"
+      }
+    },
+    "/search/v1/missions/{mission_id}/probability-maps": {
+      "post": {
+        "description": "A new version of the map. 409 for a stale version, a version after a frozen one,\na profile that is no longer in force or a freeze without a find a person confirmed;\n422 for arrays that do not fit the grid or a sector that is not in the charter.",
+        "operationId": "write_probability_map_search_v1_missions__mission_id__probability_maps_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbabilityMapWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbabilityMapWritten"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Probability Map"
+      }
+    },
+    "/search/v1/missions/{mission_id}/search-profile": {
+      "get": {
+        "description": "The approved version in force, or ``null``: a proposal from the AI is never\nreturned here, so the matching cannot use one (E10).",
+        "operationId": "get_search_profile_search_v1_missions__mission_id__search_profile_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SearchProfile"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Search Profile Search V1 Missions  Mission Id  Search Profile Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Search Profile"
+      }
+    },
+    "/search/v1/missions/{mission_id}/stills": {
+      "get": {
+        "description": "The mission's stills after ``after_seq`` (where the camera looked), oldest first.",
+        "operationId": "stills_search_v1_missions__mission_id__stills_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchStill"
+                  },
+                  "title": "Response Stills Search V1 Missions  Mission Id  Stills Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stills"
       }
     }
   }

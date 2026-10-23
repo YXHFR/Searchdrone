@@ -12,6 +12,7 @@ root_packages =
     sd_onboard
     sd_ground
     sd_brain
+    sd_search
     sd_hwcalc
     sd_sim
     sd_searchsim
@@ -31,6 +32,7 @@ forbidden_modules =
     sd_onboard
     sd_ground
     sd_brain
+    sd_search
     sd_hwcalc
     sd_sim
 
@@ -119,7 +121,39 @@ source_modules = sd_ground
 forbidden_modules =
     sd_onboard
     sd_brain
+    sd_search
     sd_sim
+
+[importlinter:contract:search-no-command-path]
+name = the search service cannot steer, approve or reach the database (E7)
+type = forbidden
+source_modules = sd_search
+forbidden_modules =
+    sd_ground
+    sd_safety
+    sd_mav
+    sd_link
+    sd_onboard
+    sd_sim
+    sd_hwcalc
+    sd_searchsim
+    sd_brain.backends
+    sd_brain.loop
+    sd_brain.tools
+    sd_brain.ground_client
+    pymavlink
+    serial
+    mavsdk
+    dronekit
+    MAVProxy
+    asyncpg
+    sqlalchemy
+    psycopg
+    sqlite3
+    aiosqlite
+    subprocess
+    multiprocessing
+    websockets
 
 [importlinter:contract:brain-no-flight-link]
 name = the AI cannot talk to the flight controller
@@ -167,6 +201,7 @@ source_modules =
     sd_onboard
     sd_ground
     sd_brain
+    sd_search
     sd_hwcalc
 forbidden_modules =
     sd_link_testing
@@ -267,5 +302,6 @@ source_modules =
     sd_onboard
     sd_ground
     sd_brain
+    sd_search
 forbidden_modules =
     sd_searchsim

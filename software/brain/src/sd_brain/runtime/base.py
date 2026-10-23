@@ -63,6 +63,7 @@ class ModelReply(BaseModel):
     engine: Engine | None = None
     model_id: str | None = None
     cost_usd: float | None = None  # the provider's own price for the call (OpenRouter usage)
+    cost_sek: float | None = None  # what the ground's cloud budget booked for the call
 
 
 class ModelRuntime(Protocol):

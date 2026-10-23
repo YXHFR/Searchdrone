@@ -50,6 +50,7 @@ def test_no_secret_values_in_any_environment(tmp_path: Path) -> None:
         services.ground_env(p, sp, 1, video=False, lan=False, test_rig=True),
         services.onboard_env(p, sp),
         services.brain_env(p, sp, "scripted", tmp_path / "SC01.yaml"),
+        services.search_env(p, sp),
     ]
     for env in envs:
         for key in env:
@@ -114,3 +115,12 @@ def test_every_launcher_starts_sd_ground_without_login_codes() -> None:
         and '"sd_ground", "serve"' in p.read_text(encoding="utf-8")
     ]
     assert starts == []
+
+
+def test_search_talks_to_its_own_instance_with_its_own_token(tmp_path: Path) -> None:
+    p = ports.for_instance(2)
+    sp = _paths(tmp_path)
+    env = services.search_env(p, sp)
+    assert env["SD_SEARCH__GROUND_URL"] == f"http://127.0.0.1:{p['ground_commander']}"
+    assert Path(env["SD_SEARCH__TOKEN_FILE"]) == sp.search_token
+    assert env["SD_SIM"] == "1"

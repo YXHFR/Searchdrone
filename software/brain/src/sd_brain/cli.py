@@ -207,6 +207,58 @@ async def _replay_sim(
     return {"sim_replays": len(fixtures), "sim_failed": sim_failed}
 
 
+def cmd_eval_profiles(args: argparse.Namespace) -> int:
+    """The search-profile evaluation (fictional descriptions; scores only, no text)."""
+    from sd_brain.evals.profiles import (
+        RecordingRuntime,
+        load_cases,
+        load_profile_golden,
+        replay_for,
+        run_profiles,
+    )
+
+    folder = Path(args.cases)
+    cases = load_cases(folder / "cases.yaml")
+    if args.only:
+        cases = [c for c in cases if c["id"] in args.only.split(",")]
+    golden_path = folder / "golden.jsonl"
+    recorder: RecordingRuntime | None = None
+    if args.backend == "replay":
+        report = asyncio.run(run_profiles(cases, replay_for(load_profile_golden(golden_path))))
+    else:
+        cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+        report, recorder = asyncio.run(_eval_profiles_cloud(cfg, _cloud_key(), cases))
+    if recorder is not None and args.record:
+        from sd_brain.simeval.golden import refuse_secrets
+
+        refuse_secrets([r["reply"] for r in recorder.rows], os.environ)
+        lines = [json.dumps(r, ensure_ascii=False, sort_keys=True) for r in recorder.rows]
+        golden_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        _out(f"Golden: {golden_path}")
+    _out(json.dumps(report, ensure_ascii=False, indent=1))
+    return 0 if report["passed"] else 1
+
+
+async def _eval_profiles_cloud(cfg: BrainConfig, key: str, cases: list[dict[str, Any]]) -> Any:
+    import httpx
+
+    from sd_brain.evals.profiles import RecordingRuntime, run_profiles
+    from sd_brain.runtime.cloud import CloudModelRuntime
+
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
+    install_log_masking(Secrets(brain_token="", cloud_api_key=key))
+    async with httpx.AsyncClient() as client:
+        recorder = RecordingRuntime(CloudModelRuntime(cfg.cloud, key, client))
+
+        def make(case_id: str) -> Any:
+            recorder.case = case_id
+            return recorder
+
+        report = await run_profiles(cases, make)
+    report.update(backend="cloud", model=cfg.cloud.model)
+    return report, recorder
+
+
 def cmd_eval_grade(args: argparse.Namespace) -> int:
     """Grade one simulator-farm round; writes ``grade.json`` in the round folder."""
     from sd_brain.simeval.farm import RoundError, grade_round
@@ -481,6 +533,12 @@ def parser() -> argparse.ArgumentParser:
     fl = bsub.add_parser("failures")
     fl.add_argument("--scores-dir", default="data/brain-scores")
     fl.add_argument("--json", action="store_true")
+    ep = sub.add_parser("eval-profiles")
+    ep.add_argument("--backend", choices=["replay", "cloud"], default="replay")
+    ep.add_argument("--cases", default="software/brain/tests/eval/profiles")
+    ep.add_argument("--config", default="config/brain.toml")
+    ep.add_argument("--only", default="")
+    ep.add_argument("--record", action="store_true", help="cloud: write golden.jsonl")
     pc = sub.add_parser("perf-cloud")
     pc.add_argument("--runs", type=int, default=10)
     pc.add_argument("--report-dir", default="data/reports")
@@ -494,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
         "run": cmd_run,
         "config-check": cmd_config_check,
         "eval": cmd_eval,
+        "eval-profiles": cmd_eval_profiles,
         "perf-cloud": cmd_perf_cloud,
         "scores": cmd_scores,
         "bank": cmd_bank,

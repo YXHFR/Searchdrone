@@ -9,7 +9,15 @@ from __future__ import annotations
 import math
 from typing import Final
 
-__all__ = ["WGS84_A", "WGS84_E2", "WGS84_F", "plane_offset", "tangent_radii", "wrap_lon"]
+__all__ = [
+    "WGS84_A",
+    "WGS84_E2",
+    "WGS84_F",
+    "plane_distance_m",
+    "plane_offset",
+    "tangent_radii",
+    "wrap_lon",
+]
 
 WGS84_A: Final = 6_378_137.0
 WGS84_F: Final = 1 / 298.257223563
@@ -36,3 +44,12 @@ def plane_offset(lat0: float, lon0: float, east: float, north: float) -> tuple[f
     lat = lat0 + math.degrees(north / north_r)
     lon = wrap_lon(lon0 + math.degrees(east / east_r))
     return lat, lon
+
+
+def plane_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """The distance in the plane at the two points' mean latitude: exact enough for the
+    tens of metres that candidate fusion works with."""
+    east_r, north_r = tangent_radii((lat1 + lat2) / 2)
+    east = math.radians(wrap_lon(lon2 - lon1)) * east_r
+    north = math.radians(lat2 - lat1) * north_r
+    return math.hypot(east, north)

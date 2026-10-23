@@ -112,8 +112,43 @@ export class FakeGround {
   commands: Command[] = [];
   annotations: Annotation[] = [];
   finds: Find[] = [];
+  /** The search profile: the version in force and a newer proposal (the AI's). */
+  profile: {
+    approved: Record<string, unknown> | null;
+    proposal: Record<string, unknown> | null;
+    proposal_id: string | null;
+    proposed_by: string | null;
+  } = { approved: null, proposal: null, proposal_id: null, proposed_by: null };
   clearance: Clearance | null = null;
   sectors: unknown = { type: "FeatureCollection", features: [] };
+  /** The newest probability map (null: none yet, 404 like the ground). */
+  probabilityMap: Record<string, unknown> | null = {
+    mission_id: MISSION,
+    version: 1,
+    reason: "prior",
+    grid: {
+      ipp_lat: -35.363261,
+      ipp_lon: 149.16523,
+      x0_m: -50,
+      y0_m: -50,
+      nx: 4,
+      ny: 4,
+      cell_m: 25,
+      west: 149.1646788,
+      south: -35.3637118,
+      east: 149.1657812,
+      north: -35.3628102,
+    },
+    row: 0.1,
+    frozen: false,
+    event_seq: 0,
+    profile_version: 1,
+    sectors: [],
+    notes: [],
+    p_b64: `${"A".repeat(43)}=`,
+    pod_b64: `${"A".repeat(43)}=`,
+    created_at: "2026-10-15T12:30:00Z",
+  };
   track: number[][] = [];
   /** Messages the panel sent on its live sockets (subscribe, ping, manual). */
   readonly wsSent: Record<string, unknown>[] = [];
@@ -473,8 +508,46 @@ export class FakeGround {
     }
     if (k === `GET ${ms}/commands`) return { status: 200, body: this.commands };
     if (k === `GET ${ms}/sectors`) return { status: 200, body: this.sectors };
+    if (k === `GET ${ms}/sectors/poa`)
+      return { status: 200, body: this.probabilityMap?.sectors ?? [] };
+    if (k === `GET ${ms}/probability-map`)
+      return this.probabilityMap
+        ? { status: 200, body: this.probabilityMap }
+        : {
+            status: 404,
+            body: { code: "MAP_NOT_FOUND", detail_sv: "Ingen sannolikhetskarta ännu." },
+          };
+    if (k === `GET ${ms}/probability-map.png`)
+      return { status: 200, raw: PNG_1PX, headers: { "content-type": "image/png" } };
     if (k === `GET ${ms}/annotations`) return { status: 200, body: this.annotations };
     if (k === `GET ${ms}/finds`) return { status: 200, body: this.finds };
+    if (k === `GET ${ms}/search-profile`) return { status: 200, body: this.profile };
+    if (k === `POST ${ms}/search-profile`) {
+      if (this.session?.role !== "pilot")
+        return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
+      const body = req.body as { profile: object; base_version: number; proposal_id: unknown };
+      const current = Number(this.profile.approved?.profile_version ?? 0);
+      if (
+        body.base_version !== current ||
+        (this.profile.proposal_id ?? null) !== (body.proposal_id ?? null)
+      )
+        return {
+          status: 409,
+          body: { code: "PROFILE_STALE", detail_sv: "Sökprofilen har ändrats." },
+        };
+      const before = this.profile.approved ?? this.profile.proposal;
+      const version = current + 1;
+      const approved = {
+        ...body.profile,
+        profile_id: String(before?.profile_id ?? "PR1"),
+        profile_version: version,
+        mission_id: MISSION,
+        approved_by: "operator:demo",
+        approved_at: new Date().toISOString(),
+      };
+      this.profile = { approved, proposal: null, proposal_id: null, proposed_by: null };
+      return { status: 201, body: approved };
+    }
     if (/^GET \/api\/v1\/missions\/[^/]+\/detections\/[^/]+\/crop$/.test(k))
       return { status: 200, raw: THUMB_JPEG, headers: { "content-type": "image/jpeg" } };
     if (k === `GET ${ms}/chat`) return { status: 200, body: { items: [], next_before: null } };

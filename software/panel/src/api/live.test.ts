@@ -213,6 +213,27 @@ describe("startLive", () => {
     stop();
   });
 
+  it("a new probability-map version makes the map layers fetch again", async () => {
+    const stop = startLive("sim-01");
+    hello("e1");
+    await settle();
+    const before = useMissionStore.getState().mapRev;
+    send({
+      seq: 5,
+      topic: "probability_map",
+      type: "probability_map.updated",
+      mission_id: "M1",
+      data: { version: 2 },
+    });
+    await settle();
+    expect(useMissionStore.getState().mapRev).toBe(before + 1);
+    const subs = (sockets.at(-1)?.sent ?? []).map((m) => JSON.parse(m));
+    expect(subs.some((m) => m.op === "subscribe" && m.topics.includes("probability_map"))).toBe(
+      true,
+    );
+    stop();
+  });
+
   it("words alerts from sv.json; red ones stay until acknowledged; else message_sv", async () => {
     useUiStore.setState({ toasts: [], eventLog: [] });
     const stop = startLive("sim-01");

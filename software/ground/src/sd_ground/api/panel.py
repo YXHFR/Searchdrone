@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 
@@ -26,6 +26,8 @@ from sd_ground.api import tiles
 from sd_ground.api.deps import (
     COOKIE,
     ApiStatusError,
+    IdPath,
+    VehiclePath,
     ground,
     not_built,
     repo_of,
@@ -41,6 +43,7 @@ from sd_ground.emergency import EmergencyRefusedError
 from sd_ground.logging import get_logger
 from sd_ground.services import annotations as annotations_service
 from sd_ground.services import approvals as approvals_service
+from sd_ground.services import candidates as candidates_service
 from sd_ground.services import charters as charter_rules
 from sd_ground.services import chat as chat_service
 from sd_ground.services import clearance as clearance_service
@@ -48,6 +51,8 @@ from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
 from sd_ground.services import health
 from sd_ground.services import perception as perception_service
+from sd_ground.services import probability_map as map_service
+from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_ground.sources import EmergencyUnavailableError
@@ -91,7 +96,16 @@ from sd_schemas.api import (
 )
 from sd_schemas.charter import CharterProposal
 from sd_schemas.gate import GateDecision
+from sd_schemas.probmap import ProbabilityMapView, SectorScore, suggest_sector_order
 from sd_schemas.safety import SafetyLimits
+from sd_schemas.search import (
+    CandidateDetail,
+    CandidateQueue,
+    CandidateState,
+    SearchProfile,
+    SearchProfileApproval,
+    SearchProfileState,
+)
 
 __all__ = ["OPERATOR_ALIAS", "dispatch_emergency", "router"]
 
@@ -100,9 +114,6 @@ OPERATOR_ALIAS = "demo"  # the single operator of v0.1.0 (sim: operator:demo)
 
 router = APIRouter(prefix="/api/v1")
 
-_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-IdPath = Annotated[str, Path(pattern=_UUID)]
-VehiclePath = Annotated[str, Path(pattern=r"^[a-z0-9][a-z0-9-]{2,31}$")]
 Observer = Annotated[Principal, Depends(require("observer"))]
 Pilot = Annotated[Principal, Depends(require("pilot"))]
 Interactive = Annotated[Principal, Depends(require_interactive)]
@@ -498,6 +509,55 @@ async def get_sectors(mission_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
     return await _flow(g).sectors_geojson(mission_id)
 
 
+@router.get("/missions/{mission_id}/probability-map", response_model=ProbabilityMapView)
+async def get_probability_map(mission_id: IdPath, g: G, _: Observer) -> ProbabilityMapView:
+    """The newest version of the probability map (404 before the first). ``p_b64`` and
+    ``pod_b64``: base64 float16, row-major, row 0 the southernmost."""
+    return await map_service.view(_flow(g), mission_id)
+
+
+@router.get("/missions/{mission_id}/probability-map.png")
+async def get_probability_map_png(
+    mission_id: IdPath, g: G, _: Observer, layer: Literal["poa", "pod"] = "poa"
+) -> Response:
+    """The map as an image, one pixel per cell, north up: ``poa`` transparent to red,
+    ``pod`` transparent to blue. ``Sd-Bounds``: west,south,east,north."""
+    body, grid, version = await map_service.png(_flow(g), mission_id, layer)
+    bounds = ",".join(f"{v:.7f}" for v in (grid.west, grid.south, grid.east, grid.north))
+    return Response(
+        body,
+        media_type="image/png",
+        headers={"Sd-Bounds": bounds, "Sd-Version": str(version), "Cache-Control": "no-store"},
+    )
+
+
+@router.get("/missions/{mission_id}/sectors/poa", response_model=list[SectorScore])
+async def get_sector_poa(mission_id: IdPath, g: G, _: Observer) -> list[SectorScore]:
+    """Each sector on the newest map: POA left, share covered, mean POD and PSR, in the
+    suggested order (highest PSR first). Empty before the first map."""
+    return suggest_sector_order(await map_service.sector_scores(_flow(g), mission_id))
+
+
+@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfileState)
+async def get_search_profile(mission_id: IdPath, g: G, _: Observer) -> SearchProfileState:
+    """The approved profile in force and a newer proposal from the AI, if any."""
+    return await profile_service.state(_flow(g), mission_id)
+
+
+@router.post("/missions/{mission_id}/search-profile", status_code=201, response_model=SearchProfile)
+async def post_search_profile(
+    mission_id: IdPath, body: SearchProfileApproval, g: G, who: Interactive
+) -> SearchProfile:
+    """Approve profile: only a pilot's click in the panel. The profile as sent becomes the
+    next version; 409 when a newer version or proposal arrived since the card showed it."""
+    return await profile_service.approve(_flow(g), mission_id, body, who.issuer_ref)
+
+
+@router.get("/missions/{mission_id}/search-profile/versions", response_model=list[SearchProfile])
+async def get_search_profile_versions(mission_id: IdPath, g: G, _: Observer) -> list[SearchProfile]:
+    return await profile_service.versions(_flow(g), mission_id)
+
+
 @router.get("/missions/{mission_id}/approvals", response_model=list[Approval])
 async def get_approvals(
     mission_id: IdPath, g: G, _: Observer, status: Annotated[str | None, Query()] = None
@@ -673,12 +733,36 @@ async def get_file(mission_id: IdPath, file_id: IdPath, g: G, _: Observer) -> Re
     return FileResponse(path, filename=path.name)
 
 
-@router.get("/missions/{mission_id}/candidates")
+@router.get("/missions/{mission_id}/candidates", response_model=CandidateQueue)
 async def get_candidates(
-    mission_id: IdPath, _: Observer, response: Response
-) -> dict[str, list[Any]]:
-    response.headers[STAGE2_HEADER] = STAGE2_VALUE
-    return {"items": []}
+    mission_id: IdPath,
+    g: G,
+    _: Observer,
+    state: CandidateState | None = None,
+    min_priority: Annotated[float | None, Query(ge=0, le=1)] = None,
+    before_seq: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=candidates_service.CARDS_MAX)] = 100,
+) -> dict[str, Any]:
+    """The review queue: candidates by priority, highest first. Every candidate is
+    listed (a low priority only puts it further down); merged ones only with
+    ``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected.
+    Paging: ``before_seq`` = the ``seq`` of the previous page's last card; the next page
+    holds the cards after it in queue order (not "seq lower than")."""
+    return await candidates_service.cards(
+        _flow(g),
+        mission_id,
+        state=state,
+        min_priority=min_priority,
+        before_seq=before_seq,
+        limit=limit,
+    )
+
+
+@router.get("/candidates/{candidate_id}", response_model=CandidateDetail)
+async def get_candidate(candidate_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
+    """One candidate: its card, the detections it observed, every assessment and every
+    person's decision."""
+    return jsonable_encoder(await candidates_service.detail(_flow(g), candidate_id))
 
 
 @router.get("/missions/{mission_id}/detections", response_model=list[DetectionRow])

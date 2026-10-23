@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 
 import pytest
@@ -172,3 +173,55 @@ def test_no_local_model_and_no_thermal_camera() -> None:
     report = EXAMPLES[link.PerceptionReport].model_dump(mode="json")
     with pytest.raises(ValidationError):
         link.PerceptionReport.model_validate({**report, "sensor": "thermal"})
+
+
+# --- B2-05: the search profile -------------------------------------------------------
+
+_IDENTITY = re.compile(r"face|photo|ethnic|religion|identity|person_id|name", re.IGNORECASE)
+_PROFILE_MODELS = (
+    search.SearchProfileDraft,
+    search.SearchProfile,
+    search.SearchProfileProposal,
+    search.SearchProfileState,
+    search.Garment,
+    search.Item,
+    search.Hair,
+    search.LastSeen,
+)
+
+
+def test_profile_no_identity_fields() -> None:
+    """E5: nothing in a profile, its proposal or its state says who someone is."""
+    found = [
+        f"{m.__name__}.{f}" for m in _PROFILE_MODELS for f in m.model_fields if _IDENTITY.search(f)
+    ]
+    assert found == []
+    for m in _PROFILE_MODELS:
+        text = json.dumps(m.model_json_schema())
+        assert not re.search(r'"(face|photo|ethnic\w*|religion|identity|person_id)"', text)
+
+
+def test_profile_schema_roundtrip() -> None:
+    profile = EXAMPLES[search.SearchProfile]
+    assert isinstance(profile, search.SearchProfile)
+    draft = search.SearchProfileDraft.model_validate(
+        profile.model_dump(
+            mode="json",
+            exclude={"profile_id", "profile_version", "mission_id", "approved_by", "approved_at"},
+        )
+    )
+    again = search.SearchProfile.model_validate(
+        draft.model_dump(mode="json")
+        | {
+            "profile_id": str(profile.profile_id),
+            "profile_version": 1,
+            "mission_id": str(profile.mission_id),
+            "approved_by": profile.approved_by,
+            "approved_at": profile.approved_at,
+        }
+    )
+    assert again == profile
+    assert draft.field_keys == profile.field_keys
+    for extra in ("profile_id", "approved_by", "mission_id"):  # the ground sets these
+        with pytest.raises(ValidationError):
+            search.SearchProfileDraft.model_validate(draft.model_dump(mode="json") | {extra: "x"})

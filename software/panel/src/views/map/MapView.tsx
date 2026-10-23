@@ -8,8 +8,9 @@ import {
   Pentagon,
   Route,
   Square,
+  UserSearch,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, HttpError } from "../../api/http";
 import { paths } from "../../api/paths";
@@ -46,8 +47,12 @@ import {
   targetData,
   trackData,
 } from "./mapData";
+import { Picker } from "./Picker";
+import { ProbabilityLegend } from "./ProbabilityLegend";
+import { ProfileCard } from "./ProfileCard";
 import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";
 import { usePathOverlay } from "./pathOverlay";
+import { useProbabilityLayers } from "./probability";
 
 export function hasWebGL2(): boolean {
   try {
@@ -78,11 +83,17 @@ type MapLike = import("maplibre-gl").Map;
 type MapMod = typeof import("./createMap");
 type Basemap = import("./mapStyle").Basemap;
 type DrawMode = "none" | "polygon" | "rectangle" | "path" | "pin";
-type ToggleId = SourceId | "paths";
+type PoaHint = NonNullable<Annotation["poa_hint"]>;
+const HINTS: (PoaHint | "none")[] = ["none", "high", "low", "excluded"];
+type ToggleId = SourceId | "paths" | "probability" | "pod";
+/** Toggles that are not GeoJSON sources of the overlay. */
+const OWN_TOGGLES: ToggleId[] = ["paths", "probability", "pod"];
 async function noPin(_p: [number, number]): Promise<void> {}
 
 const LAYERS_KEY = "sd.panel.map.layers.v1";
 const TOGGLES: ToggleId[] = [
+  "probability",
+  "pod",
   "charter-preview",
   "sectors",
   "swept",
@@ -108,12 +119,15 @@ function loadBasemap(): Basemap {
 
 function loadHidden(): ToggleId[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(LAYERS_KEY) ?? "[]") as unknown;
+    const stored = localStorage.getItem(LAYERS_KEY);
+    // The heat layer is on by default during a search; the sought layer is off.
+    if (stored === null) return ["pod"];
+    const raw = JSON.parse(stored) as unknown;
     return Array.isArray(raw)
       ? (raw.filter((x) => TOGGLES.includes(x as ToggleId)) as ToggleId[])
       : [];
   } catch {
-    return [];
+    return ["pod"];
   }
 }
 
@@ -188,7 +202,10 @@ export default function MapView({ isCompact }: ViewProps) {
   basemapRef.current = basemap;
   const [cursor, setCursor] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
+  // The operator's hint for the probability map on a drawn area (none: a plain area).
+  const [hint, setHint] = useState<PoaHint | "none">("none");
   const [findId, setFindId] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   const find = useMissionStore((s) => (findId ? (s.finds[findId] ?? null) : null));
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -318,7 +335,8 @@ export default function MapView({ isCompact }: ViewProps) {
   useEffect(() => {
     const h = handle.current;
     if (!ready || !h) return;
-    for (const id of TOGGLES) if (id !== "paths") h.mod.setVisible(h.map, id, !hidden.includes(id));
+    for (const id of TOGGLES)
+      if (!OWN_TOGGLES.includes(id)) h.mod.setVisible(h.map, id as SourceId, !hidden.includes(id));
     try {
       localStorage.setItem(LAYERS_KEY, JSON.stringify(hidden));
     } catch {
@@ -338,6 +356,11 @@ export default function MapView({ isCompact }: ViewProps) {
   }, [basemap, ready, theme]);
 
   const shownPath = usePathOverlay(ready, handle, !hidden.includes("paths"));
+  const shownProb = useMemo(
+    () => ({ poa: !hidden.includes("probability"), pod: !hidden.includes("pod") }),
+    [hidden],
+  );
+  const prob = useProbabilityLayers(ready, handle, missionId, shownProb);
 
   // The drawing in progress.
   useEffect(() => {
@@ -383,11 +406,14 @@ export default function MapView({ isCompact }: ViewProps) {
   async function postAnnotation(
     kind: "pin" | "area" | "path",
     geometry: unknown,
+    poaHint: PoaHint | null = null,
   ): Promise<Annotation | null> {
     if (!missionId) return null;
     const attempt = (anns: Annotation[]): Promise<Annotation> => {
       const label = kind === "path" ? nextPathLabel(anns) : nextLabel(anns, kind);
-      const body = { kind, label, geometry };
+      const body = poaHint
+        ? { kind, label, geometry, poa_hint: poaHint }
+        : { kind, label, geometry };
       return api<Annotation>(paths.missionAnnotations(missionId), { method: "POST", body });
     };
     try {
@@ -439,7 +465,7 @@ export default function MapView({ isCompact }: ViewProps) {
       return;
     }
     try {
-      const a = await postAnnotation("area", polygon);
+      const a = await postAnnotation("area", polygon, hint === "none" ? null : hint);
       if (!a) return;
       useMissionStore.getState().upsertAnnotation(a);
       useUiStore.getState().toast(
@@ -489,6 +515,7 @@ export default function MapView({ isCompact }: ViewProps) {
     setMode("none");
     setPoints([]);
     setDrawError(null);
+    setHint("none");
   }
 
   function centre(to: "drone" | "home" | "charter"): void {
@@ -522,6 +549,7 @@ export default function MapView({ isCompact }: ViewProps) {
       <div className="view-body view-empty">
         <p>{t(webgl ? "views.map.failed" : "views.map.noWebgl")}</p>
         <DroneText />
+        {missionId ? <ProfileCard missionId={missionId} /> : null}
       </div>
     );
   }
@@ -550,6 +578,19 @@ export default function MapView({ isCompact }: ViewProps) {
             <Maximize2 aria-hidden="true" size={15} />
             {t("views.map.showCharter")}
           </button>
+          {missionId ? (
+            <button
+              type="button"
+              className="tool"
+              data-testid="profile-tab"
+              aria-pressed={profileOpen}
+              aria-controls={profileOpen ? "map-profile" : undefined}
+              onClick={() => setProfileOpen(!profileOpen)}
+            >
+              <UserSearch aria-hidden="true" size={15} />
+              {t("profile.tab")}
+            </button>
+          ) : null}
           <Menu
             tool
             label={t("views.map.layers")}
@@ -672,7 +713,22 @@ export default function MapView({ isCompact }: ViewProps) {
             )}
           </p>
         ) : null}
+        {prob && (shownProb.poa || shownProb.pod) ? (
+          <ProbabilityLegend meta={prob} poa={shownProb.poa} pod={shownProb.pod} />
+        ) : null}
         {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
+        {profileOpen && missionId ? (
+          <div className="map-profile" id="map-profile" data-testid="map-profile">
+            <button
+              type="button"
+              className="btn btn-small btn-outline map-profile-close"
+              onClick={() => setProfileOpen(false)}
+            >
+              {t("profile.close")}
+            </button>
+            <ProfileCard missionId={missionId} />
+          </div>
+        ) : null}
         {find && missionId && !isCompact ? (
           <FindCard find={find} missionId={missionId} onClose={() => setFindId(null)} />
         ) : null}
@@ -691,6 +747,20 @@ export default function MapView({ isCompact }: ViewProps) {
                     })
                   : t("draw.polygonHint", { n: points.length })}
           </span>
+          {mode === "polygon" || mode === "rectangle" ? (
+            <span className="map-draw-hint">
+              <label htmlFor="draw-hint">{t("draw.hint")}</label>
+              <Picker
+                id="draw-hint"
+                value={hint}
+                options={HINTS}
+                labelOf={(h) => t(`draw.hintChoice.${h}`)}
+                disabled={false}
+                testId="draw-hint"
+                onChange={setHint}
+              />
+            </span>
+          ) : null}
           {mode !== "pin" ? (
             <button
               type="button"

@@ -1,0 +1,23 @@
+[project]
+name = "sd-search"
+version = "0.0.0"
+description = "The search service sd-search: fusion of detections into candidates, the colour score and the probability map."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx>=0.27",
+    "numpy>=2.0",  # BSD-3-Clause, the colour score's pixel arithmetic
+    "pillow>=11",  # MIT-CMU, decoding the crops
+    "pydantic>=2.9",
+    "sd-brain",  # the cloud runtime: image policy and budget hook (sd_brain.runtime, .config)
+    "sd-schemas",
+    "shapely>=2.1",  # BSD-3-Clause, the probability map's footprints, areas and terrain
+]
+
+[project.scripts]
+sd-search = "sd_search.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13"]
+build-backend = "uv_build"
