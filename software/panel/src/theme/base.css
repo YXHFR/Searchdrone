@@ -51,7 +51,7 @@ time {
 .lbl {
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
 }
@@ -73,8 +73,8 @@ time {
   z-index: calc(var(--z-dialog) + 1); /* below the safety bar */
   background: var(--c-acc-fill);
   color: var(--c-acc-text);
-  padding: 8px 12px;
-  border-radius: var(--r-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r);
 }
 .skip-link:focus {
   top: 8px;
@@ -94,7 +94,7 @@ time {
   border-radius: var(--r-1);
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-mute);
 }
@@ -118,7 +118,7 @@ time {
   color: var(--c-text);
   background: var(--c-panel-2);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   min-height: var(--hit);
   cursor: pointer;
 }
@@ -127,7 +127,7 @@ time {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 4px 12px;
+  padding: var(--sp-1) var(--sp-3);
   font-weight: 500;
 }
 .btn:hover:not(:disabled),
@@ -154,7 +154,7 @@ time {
   background: transparent;
 }
 .btn-small {
-  padding: 2px 10px;
+  padding: 2px var(--sp-2);
   font-size: var(--fs-small);
 }
 .btn-block {
@@ -174,8 +174,8 @@ time {
   color: var(--c-text);
   background: var(--c-input);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
-  padding: 6px 10px;
+  border-radius: var(--r);
+  padding: 6px var(--sp-2);
   min-height: var(--hit);
 }
 .input::placeholder {
@@ -191,7 +191,7 @@ textarea.input {
   overflow: hidden;
   flex-direction: column;
   gap: 0;
-  padding: 4px 12px;
+  padding: var(--sp-1) var(--sp-3);
   background: var(--c-panel-2);
   border-color: var(--c-acc);
   color: var(--c-text);
@@ -231,9 +231,9 @@ textarea.input {
   padding: 0;
   min-width: 0;
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   overflow: hidden;
-  height: 28px;
+  height: var(--ctl);
 }
 .seg > button {
   font: inherit;
@@ -241,7 +241,7 @@ textarea.input {
   color: var(--c-mute);
   background: transparent;
   border: 0;
-  padding: 0 12px;
+  padding: 0 var(--sp-3);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -257,37 +257,38 @@ textarea.input {
   font-weight: 600;
 }
 .seg-icons > button {
-  padding: 0 8px;
+  padding: 0 var(--sp-2);
 }
 
 /* --- cards, key-value rows ---------------------------------------------------------- */
+/* Every pane and card title has the same quiet label style: the content is what stands out. */
 .card {
   background: var(--c-panel);
   border: 1px solid var(--c-line);
-  border-radius: var(--r-3);
-  padding: 12px 14px;
+  border-radius: var(--r);
+  padding: var(--sp-3);
 }
 .card h3 {
-  margin-bottom: 8px;
+  margin-bottom: var(--sp-2);
   font-size: var(--fs-label);
-  letter-spacing: 0.07em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: var(--c-faint);
+  color: var(--c-mute);
 }
 .kv {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
   padding: 2px 0;
 }
 dl.kv {
   display: grid;
-  gap: 2px;
+  gap: var(--sp-1);
 }
 dl.kv > div {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 dt {
   color: var(--c-mute);
@@ -309,39 +310,39 @@ dd {
   min-width: 220px;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: var(--sp-1);
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-3);
+  border-radius: var(--r);
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
 }
 .menu-item {
   text-align: left;
   border: 0;
   background: transparent;
-  padding: 0 10px;
+  padding: 0 var(--sp-2);
 }
 .menu-row {
-  padding: 6px 10px;
+  padding: 6px var(--sp-2);
   border-bottom: 1px solid var(--c-line);
-  margin-bottom: 4px;
+  margin-bottom: var(--sp-1);
 }
 .toasts {
   position: fixed;
-  right: 12px;
-  bottom: calc(var(--safety-h) + 12px);
+  right: var(--sp-3);
+  bottom: calc(var(--safety-h) + var(--sp-3));
   z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   max-width: min(400px, calc(100vw - 24px));
 }
 .toast {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 6px 6px 12px;
-  border-radius: var(--r-3);
+  gap: var(--sp-2);
+  padding: 6px 6px 6px var(--sp-3);
+  border-radius: var(--r);
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
   border-left: 3px solid var(--c-acc);
@@ -353,6 +354,7 @@ dd {
 .toast[data-tone="red"] {
   border-color: var(--c-bad);
   border-left-width: 4px;
+  background: linear-gradient(var(--c-bad-soft), var(--c-bad-soft)), var(--c-panel);
 }
 .dialog-backdrop {
   position: fixed;
@@ -361,7 +363,7 @@ dd {
   background: var(--c-scrim);
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: var(--sp-4);
 }
 .dialog {
   width: min(460px, 100%);
@@ -369,13 +371,13 @@ dd {
   overflow: auto;
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-3);
-  padding: 16px;
+  border-radius: var(--r);
+  padding: var(--sp-4);
 }
 .dialog-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
 }
 
@@ -384,7 +386,7 @@ dd {
   min-height: calc(100dvh - var(--safety-h));
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: var(--sp-4);
 }
 .login-card {
   width: min(400px, 100%);
@@ -392,20 +394,20 @@ dd {
 .pin-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .pin-input {
   width: 100%;
-  font-size: 22px;
+  font-size: var(--fs-big);
   letter-spacing: 0.3em;
 }
 .view-body {
-  padding: 12px;
+  padding: var(--sp-3);
 }
 .view-empty {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--sp-2);
   color: var(--c-mute);
 }
