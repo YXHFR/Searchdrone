@@ -38,7 +38,9 @@ search:
       - { kind: backpack, colors: [blue], certainty: certain }
     likely_state: [lying, sitting]
   people:
-    - { id: wrong-person, at_enu: [210, 210], jitter_m: 30, pose: lying, upper: red, lower: gray }
+    # Deep in sector A: the person's keep-out cylinder (30 m plus the position's spread)
+    # stays out of sector B for every seed, so the search of B is never blocked.
+    - { id: wrong-person, at_enu: [225, 210], jitter_m: 15, pose: lying, upper: red, lower: gray }
     - { id: target, target: true, at_enu: [90, 210], jitter_m: 30, pose: lying,
         upper: red, lower: black, backpack: blue }
   decoys:
