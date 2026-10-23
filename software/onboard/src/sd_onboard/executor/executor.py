@@ -2137,11 +2137,13 @@ class Executor:
         leg, the flight home after it and the reserve. None when the drone is in no
         cylinder, a limit monitor is active or holds it (its hold is never left for the
         find), the find move's deadline has passed or there is no such way: it hovers
-        where it is."""
+        where it is. L-AI does not count: with the link down the AI on the ground is
+        always silent, and the find move already goes past its hold."""
         find, charter, plane = self.link_rule.plan, self.charter, self.plane()
         if find is None or charter is None or plane is None:
             return None
-        if self.limits.active() or self.hold_reason == "limit" or self._find_move_late():
+        limits = [name for name in self.limits.active() if name != "L-AI"]
+        if limits or self.hold_reason == "limit" or self._find_move_late():
             return None
         v = self.vehicle_state()
         here = plane.xy(v.lat, v.lon)

@@ -773,6 +773,21 @@ async def test_no_way_out_of_the_cylinder_hovers_where_it_is(
         assert distance_m(r.fc.lat, r.fc.lon, *PLANE.latlon(e, n)) < 10.0
 
 
+async def test_a_silent_ai_does_not_stop_the_way_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L-AI may still be active when the find move starts (it is reset once the link
+    counts as down): the AI on the ground is always silent then, so a person seen under
+    the drone still sends it out of their cylinder."""
+    find = keepout(east=0, north=110, radius_m=30.0)
+    async with rig() as r:
+        await _find_move(r, tmp_path, find, 45.0)
+        monkeypatch.setattr(r.ex.limits, "active", lambda: ["L-AI"])
+        e, n = _xy(r)
+        r.ex.on_detections([person_at(e, n + 6.0)])
+        await r.until(lambda: "executor.find_move_keepout_exit" in r.up.kinds(), 5)
+
+
 async def test_a_way_out_from_the_find_hover_still_ends_at_the_find_move_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
