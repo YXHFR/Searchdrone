@@ -450,6 +450,29 @@ async def test_one_person_twice_in_one_batch_holds_a_goto_outside() -> None:
         assert min(dists) >= dists[0] - 3.0  # the brake, no nearer
 
 
+async def test_one_person_twice_in_one_batch_over_the_drone_lets_it_leave() -> None:
+    """Two detections of one person in one batch, the first cylinder already round the
+    drone: as with one such cylinder, the drone leaves along its leg instead of hovering
+    over the person."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        lat, lon = at(0, 180)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 5}), 1)
+        await r.until(lambda: xy(r)[1] >= 60.0, 120)
+        assert r.ex.state == S.TRANSIT
+        r.ex.on_detections([detection(0, 70, 0.9, sigma=10.0), detection(0, 80, 0.9, sigma=25.0)])
+        ((grown, _),) = r.ex.local_keepouts.values()
+        assert "executor.keepout_merged" in r.up.kinds()
+        centre = PLANE.xy(grown.lat, grown.lon)
+        assert math.dist(xy(r), centre) < grown.radius_m
+        start = len(r.fc.track)
+        await r.until(lambda: math.dist(xy(r), centre) > grown.radius_m, 60)
+        assert "executor.keepout_hold" not in r.up.kinds()
+        assert r.ex.state == S.TRANSIT
+        assert all(p[1] >= 59.0 for p in track_xy(r, start))  # on along its leg
+
+
 def test_merge_local_geometry() -> None:
     old = keepout(0, 0, 31.0, source="detection")
     # Too far apart, or one would grow past the largest radius: no merge.
