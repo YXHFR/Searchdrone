@@ -70,6 +70,8 @@ Targets (to be tightened after the first measurement): recall ≥ 0.85 over 32 p
 `profiles.py` turns a result into `profiles/det_<model>_v<N>.json`, the file the
 simulator's detector stand-in reads. `profiles/det_oracle_v0.json` is the start profile
 until a real measurement exists: anything built on it is modelled, not measured.
+Run `just fmt` before committing a new profile or split file: the repository formats
+JSON with Biome, and `just lint` checks it.
 
 The result files hold numbers only: no picture, no file name, no box.
 

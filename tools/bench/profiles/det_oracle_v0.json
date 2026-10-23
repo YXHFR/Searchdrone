@@ -1,11 +1,11 @@
 {
- "profile_id": "det_oracle_v0",
- "source": "start profile, modelled, not measured: recall over 32 px from the published HERIDAL result (Bozic-Stulic et al., IJCV 2019: recall 0.889, precision 0.348); the smaller classes and the score distributions are assumptions",
- "recall": {"lt16": 0.21, "16to32": 0.63, "gt32": 0.889},
- "occlusion_factor": {"0-30": 1.0, "30-60": 0.7, "60-90": 0.35},
- "fp_per_12mp": 0.5,
- "score_hit": {"a": 6.5, "b": 3.5},
- "score_fp": {"a": 3.5, "b": 6.5},
- "latency_ms": {"p50": 900, "p95": 1300},
- "not_measured": ["recall", "occlusion_factor", "score_hit", "score_fp", "latency_ms"]
+  "profile_id": "det_oracle_v0",
+  "source": "start profile, modelled, not measured: recall over 32 px from the published HERIDAL result (Bozic-Stulic et al., IJCV 2019: recall 0.889, precision 0.348); the smaller classes and the score distributions are assumptions",
+  "recall": { "lt16": 0.21, "16to32": 0.63, "gt32": 0.889 },
+  "occlusion_factor": { "0-30": 1.0, "30-60": 0.7, "60-90": 0.35 },
+  "fp_per_12mp": 0.5,
+  "score_hit": { "a": 6.5, "b": 3.5 },
+  "score_fp": { "a": 3.5, "b": 6.5 },
+  "latency_ms": { "p50": 900, "p95": 1300 },
+  "not_measured": ["recall", "occlusion_factor", "score_hit", "score_fp", "latency_ms"]
 }
