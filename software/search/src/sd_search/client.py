@@ -146,11 +146,9 @@ class GroundClient:
             return _WRITTEN.validate_python(res.json())
 
     async def profile(self, mission_id: str) -> SearchProfile | None:
-        """The approved profile in force, or ``None`` (no profile yet, or the ground has
-        no profile route): matching then only asks "is it a person"."""
-        res = await self._request("GET", f"/missions/{mission_id}/search-profile")
-        if res.status_code in (204, 404):
-            return None
-        with self._body(self._ok(res)):
+        """The approved profile in force, or ``None`` when none is approved yet: matching
+        then only asks "is it a person"."""
+        res = self._ok(await self._request("GET", f"/missions/{mission_id}/search-profile"))
+        with self._body(res):
             body = res.json()
             return None if body is None else SearchProfile.model_validate(body)

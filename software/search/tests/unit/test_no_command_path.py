@@ -50,7 +50,7 @@ async def test_search_has_no_command_path() -> None:
         assert request.headers["authorization"] == "Bearer t"
         body: object = []
         if request.url.path.endswith("/search-profile"):
-            return httpx.Response(404, json={"code": "NOT_FOUND"})
+            return httpx.Response(200, content=b"null")
         if request.url.path.endswith("/crop"):
             return httpx.Response(404)
         if request.method == "POST" and request.url.path.endswith("/candidates"):

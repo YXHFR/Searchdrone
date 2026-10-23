@@ -109,10 +109,9 @@ async def crop(detection_id: IdPath, _: Search, g: G) -> FileResponse:
 async def get_search_profile(mission_id: IdPath, _: Search, g: G) -> SearchProfile | None:
     """The approved version in force, or ``null``: a proposal from the AI is never
     returned here, so the matching cannot use one (E10)."""
-    repo_of(g)
-    if g.flow is None:
-        raise ApiStatusError(503, "DB_DOWN", "Uppdragsflödet är inte igång just nu.")
-    return await profile_service.approved(g.flow, mission_id)
+    flow = _flow(g)
+    await flow.open_mission_of(mission_id)  # search reads open missions only (409)
+    return await profile_service.approved(flow, mission_id)
 
 
 @router.get("/missions/{mission_id}/candidates", response_model=list[SearchTrack])

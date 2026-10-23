@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -12,12 +14,13 @@ from sd_search.client import ConflictError, GroundClient, GroundError
 
 def client(body: object, status: int = 200) -> GroundClient:
     def answer(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, json=body)
+        content = body if isinstance(body, bytes) else json.dumps(body).encode()
+        return httpx.Response(status, content=content)
 
     return GroundClient("http://127.0.0.1:7700", "t", transport=httpx.MockTransport(answer))
 
 
-@pytest.mark.parametrize("body", [{"bogus": 1}, [{"seq": "x"}], None])
+@pytest.mark.parametrize("body", [{"bogus": 1}, [{"seq": "x"}], None, b"not json"])
 async def test_a_bad_body_is_a_ground_error(body: object) -> None:
     c = client(body)
     try:
@@ -45,9 +48,15 @@ async def test_status_codes() -> None:
             await c.tracks("m")
     finally:
         await c.aclose()
-    c = client({"code": "PROFILE_NOT_FOUND"}, 404)
+    c = client(None)  # no approved profile yet
     try:
         assert await c.profile("m") is None
+    finally:
+        await c.aclose()
+    c = client({"code": "MISSION_NOT_FOUND"}, 404)
+    try:
+        with pytest.raises(GroundError):
+            await c.profile("m")
     finally:
         await c.aclose()
 

@@ -137,7 +137,8 @@ async def card_list(
     shown = [c for c in latest if only is None or c["candidate_id"] in only]
     assessed = await r.assessments([c["candidate_id"] for c in shown])
     thumbs = await r.thumbs(mission_id)
-    profile = await r.profile_version(mission_id)
+    approved, _ = await flow.repo.search_profile_rows(mission_id)
+    profile = None if approved is None else int(approved["profile_version"])
     decided = [c for c in latest if c["state"] in _DECIDED]
     out: list[CandidateCard] = []
     for c in shown:

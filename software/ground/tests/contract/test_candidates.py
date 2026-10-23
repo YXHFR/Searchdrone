@@ -367,6 +367,7 @@ async def test_closed_missions_and_unknown_candidates(r: Rig) -> None:
     for url in (  # search reads only the open missions
         f"/search/v1/missions/{mid}/detections",
         f"/search/v1/missions/{mid}/candidates",
+        f"/search/v1/missions/{mid}/search-profile",
         f"/search/v1/detections/{det['detection_id']}/crop",
     ):
         res = await r.search.get(url)
