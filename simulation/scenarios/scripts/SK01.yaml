@@ -41,11 +41,12 @@ turns:
     when: {decision: reject}
     once: false
     say: ["Uppfattat, inte personen. Söker vidare."]
-  # A cylinder with no way around stops the search in a hover: search sector B instead.
+  # The drone turns down a resume whose way is blocked (a cylinder with no way around):
+  # search sector B instead, planned anew around the cylinders.
   - on: skill_event
-    when: {skill: [survey_sector, resume], status_reason: KEEPOUT_VIOLATION}
+    when: {skill: resume, status: [rejected_onboard, failed]}
     once: false
-    say: ["En spärrzon ligger i vägen. Söker av sektor B."]
+    say: ["Vägen tillbaka är spärrad. Söker av sektor B."]
     action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   - on: skill_event
     when: {skill: [survey_sector, resume], status: done}
