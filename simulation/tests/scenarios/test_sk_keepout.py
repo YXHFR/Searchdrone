@@ -255,9 +255,16 @@ async def test_a_person_seen_during_the_find_move(
             since = time.monotonic()
             ex.on_detections([person(centre)])
             ((k, _),) = ex.local_keepouts.values()
-            await sc.until(lambda: sc.fc_mode() == "LOITER", FIND_LOITER_BY_S, "find hover")
+            await sc.until(
+                lambda: (
+                    sc.fc_mode() == "LOITER"
+                    and str(ex.state) == "HOLD"
+                    and ex.hold_reason == "find_hold"
+                ),
+                FIND_LOITER_BY_S,
+                "find hover",
+            )
             assert time.monotonic() - down <= FIND_LOITER_BY_S
-            assert str(ex.state) == "HOLD" and ex.hold_reason == "find_hold"
             await sc.until(lambda: st.ground_speed_ms < 0.5, 15, "still")
             await sc.hold_for(10.0, lambda: sc.fc_mode() == "LOITER", "the find hover holds")
             track = [s for s in sc.track if s.t >= since and s.armed]
