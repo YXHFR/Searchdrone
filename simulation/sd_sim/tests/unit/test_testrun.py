@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import subprocess
@@ -11,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from sd_sim import paths, testrun
+from sd_sim import paths, testrun, util
 
 
 def test_pr_selection_matches_ci() -> None:
@@ -177,3 +178,20 @@ def test_runs_repeats_every_round(
     monkeypatch.setattr(testrun, "run_round", lambda _values: next(rounds))
     assert testrun.main(["mode=pr", f"runs={len(codes)}"]) == want
     assert f"{codes.count(0)} av {len(codes)} omgångar gröna." in capsys.readouterr().out
+
+
+def test_run_dirs_in_the_same_second_differ(tmp_path: Path) -> None:
+    class Frozen(dt.datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return dt.datetime(2026, 10, 22, 7, 55, 1, tzinfo=tz)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(util, "datetime", Frozen)
+        runs = [util.new_run_dir(2, "onboard", tmp_path) for _ in range(3)]
+    assert [r.name for r in runs] == [
+        "20261022T075501Z-onboard-i2",
+        "20261022T075501Z-onboard-i2-2",
+        "20261022T075501Z-onboard-i2-3",
+    ]
+    assert all(r.is_dir() and not any(r.iterdir()) for r in runs)

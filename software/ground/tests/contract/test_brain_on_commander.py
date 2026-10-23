@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 
 from brain_rig import (  # pyright: ignore[reportMissingImports]
     SaysStop,
-    free_port,
+    loopback_listener,
     run_brain,
     serve_commander,
 )
@@ -39,7 +39,8 @@ pytestmark = [pytest.mark.contract, pytest.mark.db]
 
 @pytest.fixture
 async def stack(migrated_db: Db, tmp_path: Path) -> AsyncIterator[tuple[Rig, int]]:
-    port = free_port()
+    sock = loopback_listener()
+    port = sock.getsockname()[1]
     async with (
         rig(
             migrated_db.name,
@@ -47,7 +48,7 @@ async def stack(migrated_db: Db, tmp_path: Path) -> AsyncIterator[tuple[Rig, int
             tmp_path,
             http={"commander_bind": f"127.0.0.1:{port}"},
         ) as r,
-        serve_commander(r, port),
+        serve_commander(r, sock),
     ):
         yield r, port
 

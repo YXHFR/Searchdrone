@@ -26,13 +26,19 @@ from sd_ground.app import commander_asgi, create_commander_app
 from sd_schemas.decide import ChoiceAnswer, DecideRequest, DecisionEngine
 from sd_schemas.skills import SKILL_REGISTRY
 
-__all__ = ["SaysStop", "free_port", "run_brain", "serve_commander"]
+__all__ = ["SaysStop", "loopback_listener", "run_brain", "serve_commander"]
 
 
-def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+def loopback_listener() -> socket.socket:
+    """A listening socket on a free loopback port, held until uvicorn serves on it.
+
+    Closing a probed port before the server binds it leaves a gap in which an outgoing
+    connection (the rig's own link, database or MAVLink sockets) can get the same port
+    from the ephemeral range, and the server then fails with "address already in use"."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    return sock
 
 
 class SaysStop:
@@ -50,19 +56,17 @@ class SaysStop:
 
 
 @contextlib.asynccontextmanager
-async def serve_commander(r: Rig, port: int) -> AsyncIterator[None]:
+async def serve_commander(r: Rig, sock: socket.socket) -> AsyncIterator[None]:
     app = commander_asgi(r.g, create_commander_app(r.g))
     server = uvicorn.Server(
         uvicorn.Config(
             app,
-            host="127.0.0.1",
-            port=port,
             lifespan="off",
             log_level="warning",
             timeout_graceful_shutdown=2,
         )
     )
-    task = asyncio.ensure_future(server.serve())
+    task = asyncio.ensure_future(server.serve(sockets=[sock]))
     try:
         await r.until(lambda: server.started, 10, "commander API up")
         yield

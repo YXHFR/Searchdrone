@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "software/ground/te
 import flow_rig  # pyright: ignore[reportMissingImports]
 import test_mission_flow_sitl  # pyright: ignore[reportMissingImports]
 import test_onboard_sitl  # pyright: ignore[reportMissingImports]
-from brain_rig import free_port, serve_commander  # pyright: ignore[reportMissingImports]
+from brain_rig import loopback_listener, serve_commander  # pyright: ignore[reportMissingImports]
 from flow_rig import BRAIN, Rig, WallClock, ground_stack  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim, _vehicle  # pyright: ignore[reportMissingImports]
@@ -466,6 +466,7 @@ class Scenario:
             seen = [(c["skill"], c["status"], c["status_reason"]) for c in await self.commands()]
             raise AssertionError(
                 f"{exc}; orders {seen}; modes {self.modes()}; AI turns {self.brain_turns()}"
+                f"{self.brain_failures()}"
             ) from None
         return found
 
@@ -482,6 +483,17 @@ class Scenario:
             )
             for r in self.brain.loop.records
         ]
+
+    def brain_failures(self) -> str:
+        """The AI's tasks that ended with an error (stream, turn loop, idle ticker), for
+        failure messages: a task that dies here leaves the AI silent without a trace."""
+        names = ("event stream", "turn loop", "idle ticker")
+        dead = [
+            f"{name}: {t.exception()!r}"
+            for name, t in zip(names, self.brain_tasks, strict=False)
+            if t.done() and not t.cancelled() and t.exception() is not None
+        ]
+        return f"; AI tasks ended: {dead}" if dead else ""
 
     def actions(self, action: str) -> list[dict[str, Any]]:
         """STOP / FLY HOME / Resume outcomes the ground station published, by action."""
@@ -709,7 +721,8 @@ async def scenario(
         Role.GROUND,
         on_event=lambda k, d: sink[0](k, d) if sink else None,
     )
-    port = free_port()
+    sock = loopback_listener()
+    port = sock.getsockname()[1]
 
     def onboard(_clock: WallClock, url: str, token: str) -> Any:
         if onboard_factory is not None:
@@ -728,7 +741,7 @@ async def scenario(
             onboard=onboard,
             http={"commander_bind": f"127.0.0.1:{port}"},
         ) as r,
-        serve_commander(r, port),
+        serve_commander(r, sock),
     ):
         r.commander.base_url = httpx.URL(f"http://127.0.0.1:{port}")  # the bound port
         sink.append(vehicle_events(r.actions.on_event))

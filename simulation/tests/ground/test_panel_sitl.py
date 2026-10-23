@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -39,7 +40,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "onboard"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "software/ground/tests/helpers"))
 
-from brain_rig import free_port, run_brain, serve_commander  # pyright: ignore[reportMissingImports]
+from brain_rig import (  # pyright: ignore[reportMissingImports]
+    loopback_listener,
+    run_brain,
+    serve_commander,
+)
 from flow_rig import VID, Rig, WallClock, ground_stack  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import (  # pyright: ignore[reportMissingImports]
     SitlOnboard,
@@ -66,7 +71,9 @@ BROWSER_LIMIT_S = 900.0
 
 
 @contextlib.asynccontextmanager
-async def serve_panel(r: Rig, port: int, *, tls: Path | None = None) -> AsyncIterator[None]:
+async def serve_panel(
+    r: Rig, sock: socket.socket, *, tls: Path | None = None
+) -> AsyncIterator[None]:
     """A panel listener (guard, ingress, API, live socket, static test build): plain HTTP
     on loopback, or with ``tls`` the LAN listener with the ground's self-signed certificate."""
     import uvicorn
@@ -77,8 +84,6 @@ async def serve_panel(r: Rig, port: int, *, tls: Path | None = None) -> AsyncIte
     server = uvicorn.Server(
         uvicorn.Config(
             panel_asgi(r.g, create_panel_app(r.g), listener="local" if tls is None else "lan"),
-            host="127.0.0.1",
-            port=port,
             lifespan="off",
             log_level="warning",
             ws_ping_interval=None,
@@ -86,7 +91,7 @@ async def serve_panel(r: Rig, port: int, *, tls: Path | None = None) -> AsyncIte
             **extra,
         )
     )
-    task = asyncio.ensure_future(server.serve())
+    task = asyncio.ensure_future(server.serve(sockets=[sock]))
     try:
         await r.until(lambda: server.started, 10, "panel listener up")
         yield
@@ -183,7 +188,8 @@ async def test_panel_in_a_browser_on_sitl(sim: Sim, migrated_db: Any, tmp_path: 
     for name in ("stack.json", "stop-brain", "done.json"):
         (EXCHANGE / name).unlink(missing_ok=True)
     ground = _vehicle(f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}", Role.GROUND)
-    panel_port, commander_port, lan_port = free_port(), free_port(), free_port()
+    panel, commander, lan = loopback_listener(), loopback_listener(), loopback_listener()
+    panel_port, commander_port, lan_port = (s.getsockname()[1] for s in (panel, commander, lan))
     tls = tmp_path / "tls"
     make_lan_cert(tls)  # the same self-signed certificate `sd-ground init` makes for LAN mode
 
@@ -205,9 +211,9 @@ async def test_panel_in_a_browser_on_sitl(sim: Sim, migrated_db: Any, tmp_path: 
             },
             lan={"enabled": True, "bind": f"127.0.0.1:{lan_port}", "tls_dir": str(tls)},
         ) as r,
-        serve_commander(r, commander_port),
-        serve_panel(r, panel_port),
-        serve_panel(r, lan_port, tls=tls),
+        serve_commander(r, commander),
+        serve_panel(r, panel),
+        serve_panel(r, lan, tls=tls),
     ):
         r.g.lan_hosts = ["127.0.0.1"]
         tasks = [
