@@ -35,7 +35,7 @@ class _Section(BaseModel):
 class MatchProvider(_Section):
     data_collection: Literal["deny"] = "deny"
     require_parameters: bool = True
-    zdr: bool | None = None  # None: on outside the simulator
+    zdr: bool = True  # off only when the config says so, never from the environment
 
 
 class CloudMatchConfig(_Section):
@@ -50,9 +50,6 @@ class CloudMatchConfig(_Section):
 
     def runtime_config(self) -> CloudConfig:
         """The brain runtime's settings for the fast tier: no reasoning, no fallback."""
-        zdr = self.provider.zdr
-        if zdr is None:
-            zdr = os.environ.get("SD_SIM") != "1"
         return CloudConfig(
             base_url=self.base_url,
             model=self.fast_model,
@@ -61,7 +58,7 @@ class CloudMatchConfig(_Section):
             provider=ProviderConfig(
                 data_collection=self.provider.data_collection,
                 require_parameters=self.provider.require_parameters,
-                zdr=zdr,
+                zdr=self.provider.zdr,
             ),
             call_timeout_s=self.timeout_s,
             retry_after_s=self.retry_after_s,

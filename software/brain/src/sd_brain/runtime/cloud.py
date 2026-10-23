@@ -196,7 +196,7 @@ class CloudModelRuntime:
         key, client = self._key, self._client
         if not self.configured or key is None or client is None:
             raise NotConfiguredError("molnmodellen är inte konfigurerad (nyckel eller modell)")
-        check_messages(messages)  # before any reservation or network use
+        messages = check_messages(messages)  # before any reservation or network use
         ctx = budget_context or self._budget_context()
         limit = min(timeout_s, self.cfg.call_timeout_s)
         start = self._mono()

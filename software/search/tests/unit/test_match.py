@@ -412,6 +412,7 @@ def test_example_config_loads() -> None:
     assert cfg.cloud.provider.data_collection == "deny"
     rt = cfg.cloud.runtime_config()
     assert rt.reasoning_effort == "" and rt.fallback_model == "" and rt.call_timeout_s == 8
+    assert rt.provider.zdr is True  # whatever SD_SIM says
 
 
 def test_data_collection_cannot_be_allowed(tmp_path: Path) -> None:

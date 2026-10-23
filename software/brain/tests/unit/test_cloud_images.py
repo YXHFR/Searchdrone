@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 
 import httpx
 import pytest
@@ -129,3 +130,46 @@ async def test_runtime_refuses_a_fourth_crop_unsent() -> None:
 
 def test_text_only_messages_pass() -> None:
     check_messages([{"role": "system", "content": "regler"}, {"role": "user", "content": []}])
+
+
+def _app0(payload: bytes) -> bytes:
+    """A JPEG whose APP0 segment is followed by a second, free-form APP0."""
+    data = _jpeg(64, 64)
+    seg = b"\xff\xe0" + (len(payload) + 2).to_bytes(2, "big") + payload
+    return data[:2] + seg + data[2:]
+
+
+def _progressive_with_comment() -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", (64, 64), (200, 30, 30)).save(out, format="JPEG", progressive=True)
+    data = out.getvalue()
+    second_scan = data.index(b"\xff\xda", data.index(b"\xff\xda") + 2)
+    note = b"GPSLat=59.1"
+    com = b"\xff\xfe" + (len(note) + 2).to_bytes(2, "big") + note
+    return data[:second_scan] + com + data[second_scan:]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _jpeg(64, 64) + b"GPSLat=59.1;" + _jpeg(500, 400),  # after the end marker
+        _app0(b"GPSLat=59.1;camera=SN123"),
+        _progressive_with_comment(),
+    ],
+    ids=["trailing", "app0-text", "comment-between-scans"],
+)
+async def test_runtime_sends_only_its_own_copy(data: bytes) -> None:
+    """Whatever hides in the caller's bytes, what leaves is the copy encoded here."""
+    calls: list[httpx.Request] = []
+    url = "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
+    part = {"type": "image_url", "image_url": {"url": url}}
+    try:
+        await _runtime(calls).chat(_msgs([part]), [], 5, Sampling())
+    except CloudImageRejected:
+        assert calls == []
+        return
+    (req,) = calls
+    sent = json.loads(req.content)["messages"][0]["content"][1]["image_url"]["url"]
+    image = base64.b64decode(sent.removeprefix("data:image/jpeg;base64,"))
+    assert image != data and b"GPSLat" not in image
+    assert b"GPSLat" not in req.content

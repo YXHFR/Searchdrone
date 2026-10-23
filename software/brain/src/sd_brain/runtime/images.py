@@ -143,24 +143,31 @@ def _image_url(part: dict[str, Any]) -> str:
     return raw if isinstance(raw, str) else ""
 
 
-def check_messages(messages: Sequence[dict[str, Any]]) -> None:
-    """Refuse a request whose images are not all clean crops (at most three in all).
+def check_messages(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The request as it may leave: refused unless its images are all crops (at most
+    three in all), and every image replaced by its re-encoded copy.
 
     Only ``text`` and ``image_url`` content parts are allowed; an image must be an inline
     JPEG (never a URL the provider would fetch), at most 512 x 512 decoded, with no
-    metadata segment (as :meth:`CloudImagePolicy.check` produces it).
+    metadata segment (as :meth:`CloudImagePolicy.check` produces it). What is sent is
+    always the copy encoded here, never the caller's bytes, so nothing hidden in them
+    (after the image's end, in a segment the scan does not read) can leave.
     """
     images = 0
+    out: list[dict[str, Any]] = []
     for msg in messages:
         content = msg.get("content")
         if not isinstance(content, list):
+            out.append(msg)
             continue
+        parts: list[Any] = []
         for raw in cast("list[Any]", content):
             if not isinstance(raw, dict):
                 raise _reject("okänd del i meddelandet")
             part = cast("dict[str, Any]", raw)
             kind = part.get("type")
             if kind == "text":
+                parts.append(part)
                 continue
             if kind != "image_url":
                 raise _reject(f"bara text och utsnitt, inte {kind}")
@@ -176,4 +183,8 @@ def check_messages(messages: Sequence[dict[str, Any]]) -> None:
                 raise _reject("utsnittet är inte giltig base64") from None
             if not _metadata_free(data):
                 raise _reject("utsnittet har metadata (EXIF, kommentar)")
-            _clean_jpeg(data)  # decodes and checks the size; the copy is not needed
+            clean = _clean_jpeg(data)  # decodes, checks the size, encodes again
+            url = _DATA_URL + base64.b64encode(clean).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+        out.append({**msg, "content": parts})
+    return out
