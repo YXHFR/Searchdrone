@@ -22,13 +22,17 @@ config/mediamtx.yml
 
 compose.offline.yaml (an overlay in the root, for the offline end-to-end run) is held to
 the compose.yaml rules too. A missing file is skipped (the database and video tickets
-add them); any other compose file is an error.
+add them); any other compose file is an error. Only files git would take count (tracked
+or new, ``git ls-files``): a generated file in an ignored folder such as ``build/`` is
+no stray.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import re
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -171,6 +175,17 @@ def check_mediamtx(text: str, compose_text: str | None) -> list[str]:
     return errors
 
 
+def repo_files(root: Path) -> list[Path]:
+    """The files git would take in ``root``: tracked or new, never ignored ones."""
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],  # noqa: S607
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    return [root / name for name in out.decode().split("\0") if name]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Keep compose.yaml and MediaMTX on localhost.")
     ap.add_argument("--root", type=Path, default=Path())
@@ -181,9 +196,10 @@ def main(argv: list[str] | None = None) -> int:
     # escape this check (and the CI database step), so it is an error.
     strays = sorted(
         str(f.relative_to(args.root))
-        for pattern in ("*compose*.yaml", "*compose*.yml")
-        for f in args.root.rglob(pattern)
-        if f != compose
+        for f in repo_files(args.root)
+        if any(fnmatch.fnmatch(f.name, p) for p in ("*compose*.yaml", "*compose*.yml"))
+        and f.is_file()  # a tracked file deleted in the work tree is gone
+        and f != compose
         and f not in {args.root / name for name in OVERLAYS}
         and not {"node_modules", ".venv", ".git"} & set(f.parts)
     )

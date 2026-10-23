@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import check_compose_ports as ccp
@@ -13,6 +14,13 @@ DB_OK = """services:
     ports:
       - "127.0.0.1:5433:5432"
 """
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """An empty git repository: the check looks only at the files git would take."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    return tmp_path
 
 
 @pytest.mark.parametrize(
@@ -125,42 +133,61 @@ def test_mediamtx_rtmp_and_srt_must_be_off(key: str) -> None:
     assert any(f"{key} ska vara no" in e for e in ccp.check_mediamtx(text, COMPOSE_WITH_PASS))
 
 
-def test_main_without_files_passes(tmp_path: Path) -> None:
-    assert ccp.main(["--root", str(tmp_path)]) == 0
+def test_main_without_files_passes(repo: Path) -> None:
+    assert ccp.main(["--root", str(repo)]) == 0
 
 
-def test_main_reports_findings(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    (tmp_path / "compose.yaml").write_text(
+def test_main_reports_findings(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (repo / "compose.yaml").write_text(
         "services:\n  db:\n    ports: ['5433:5432']\n", encoding="utf-8"
     )
-    assert ccp.main(["--root", str(tmp_path)]) == 1
+    assert ccp.main(["--root", str(repo)]) == 1
     assert "compose.yaml: port:" in capsys.readouterr().out
 
 
 def test_compose_file_outside_the_root_fails(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_path / "database").mkdir()
-    (tmp_path / "database" / "compose.yaml").write_text(DB_OK, encoding="utf-8")
-    assert ccp.main(["--root", str(tmp_path)]) == 1
+    (repo / "database").mkdir()
+    (repo / "database" / "compose.yaml").write_text(DB_OK, encoding="utf-8")
+    assert ccp.main(["--root", str(repo)]) == 1
     assert "database/compose.yaml: location:" in capsys.readouterr().out
 
 
 def test_offline_overlay_is_allowed_and_checked(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_path / "compose.offline.yaml").write_text(
+    (repo / "compose.offline.yaml").write_text(
         "services:\n  db:\n    networks: [sd-offline]\n", encoding="utf-8"
     )
-    assert ccp.main(["--root", str(tmp_path)]) == 0
-    (tmp_path / "compose.offline.yaml").write_text(
+    assert ccp.main(["--root", str(repo)]) == 0
+    (repo / "compose.offline.yaml").write_text(
         "services:\n  db:\n    ports: ['5433:5432']\n", encoding="utf-8"
     )
-    assert ccp.main(["--root", str(tmp_path)]) == 1
+    assert ccp.main(["--root", str(repo)]) == 1
     assert "compose.offline.yaml:" in capsys.readouterr().out
-    (tmp_path / "sub").mkdir()
-    (tmp_path / "sub" / "compose.offline.yaml").write_text(DB_OK, encoding="utf-8")
-    assert ccp.main(["--root", str(tmp_path)]) == 1
+    (repo / "sub").mkdir()
+    (repo / "sub" / "compose.offline.yaml").write_text(DB_OK, encoding="utf-8")
+    assert ccp.main(["--root", str(repo)]) == 1
+
+
+def test_compose_files_git_ignores_are_no_strays(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A generated compose file in an ignored folder (``just sim-farm`` writes
+    build/simfarm/<name>/compose.yaml) is not the repository's: only a file git would
+    take counts, tracked or new."""
+    (repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (repo / "build" / "simfarm" / "main").mkdir(parents=True)
+    (repo / "build" / "simfarm" / "main" / "compose.yaml").write_text(
+        "services:\n  db:\n    ports: ['5433:5432']\n", encoding="utf-8"
+    )
+    assert ccp.main(["--root", str(repo)]) == 0
+    (repo / "sim").mkdir()
+    (repo / "sim" / "compose.yaml").write_text(DB_OK, encoding="utf-8")  # new, not ignored
+    assert ccp.main(["--root", str(repo)]) == 1
+    out = capsys.readouterr().out
+    assert "sim/compose.yaml: location:" in out and "build/" not in out
 
 
 def test_mediamtx_moq_missing_fails() -> None:
