@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Iterator
 from typing import Any, Protocol
 
 import httpx
@@ -85,6 +86,16 @@ class GroundClient:
         return res
 
     @staticmethod
+    @contextlib.contextmanager
+    def _body(res: httpx.Response) -> Iterator[None]:
+        """A body the ground should never send (not JSON, the wrong shape) is a ground error,
+        never a crash of the service."""
+        try:
+            yield
+        except (ValueError, KeyError, TypeError) as exc:  # ValidationError is a ValueError
+            raise GroundError(f"{res.request.url.path}: bad body ({type(exc).__name__})") from exc
+
+    @staticmethod
     def _ok(res: httpx.Response) -> httpx.Response:
         if res.status_code >= 400:
             code = ""
@@ -98,7 +109,8 @@ class GroundClient:
 
     async def missions(self) -> list[str]:
         res = self._ok(await self._request("GET", "/missions"))
-        return [str(m["mission_id"]) for m in res.json()]
+        with self._body(res):
+            return [str(m["mission_id"]) for m in res.json()]
 
     async def detections(
         self, mission_id: str, after_seq: int, limit: int
@@ -110,7 +122,8 @@ class GroundClient:
                 params={"after_seq": after_seq, "limit": limit},
             )
         )
-        return _DETECTIONS.validate_python(res.json())
+        with self._body(res):
+            return _DETECTIONS.validate_python(res.json())
 
     async def crop(self, detection_id: str) -> bytes | None:
         res = await self._request("GET", f"/detections/{detection_id}/crop")
@@ -120,7 +133,8 @@ class GroundClient:
 
     async def tracks(self, mission_id: str) -> list[SearchTrack]:
         res = self._ok(await self._request("GET", f"/missions/{mission_id}/candidates"))
-        return _TRACKS.validate_python(res.json())
+        with self._body(res):
+            return _TRACKS.validate_python(res.json())
 
     async def write(self, mission_id: str, batch: CandidateBatch) -> list[CandidateWritten]:
         res = self._ok(
@@ -128,7 +142,8 @@ class GroundClient:
                 "POST", f"/missions/{mission_id}/candidates", json=batch.model_dump(mode="json")
             )
         )
-        return _WRITTEN.validate_python(res.json())
+        with self._body(res):
+            return _WRITTEN.validate_python(res.json())
 
     async def profile(self, mission_id: str) -> SearchProfile | None:
         """The approved profile in force, or ``None`` (no profile yet, or the ground has
@@ -136,5 +151,6 @@ class GroundClient:
         res = await self._request("GET", f"/missions/{mission_id}/search-profile")
         if res.status_code in (204, 404):
             return None
-        body = self._ok(res).json()
-        return None if body is None else SearchProfile.model_validate(body)
+        with self._body(self._ok(res)):
+            body = res.json()
+            return None if body is None else SearchProfile.model_validate(body)

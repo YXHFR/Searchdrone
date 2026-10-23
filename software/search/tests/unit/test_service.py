@@ -19,6 +19,7 @@ from sd_schemas.base import new_id
 from sd_schemas.link import BBox
 from sd_schemas.search import CandidateState
 from sd_search.app import SearchService
+from sd_search.client import GroundError
 from sd_search.profile import FileProfileSource, GroundProfileSource
 
 
@@ -179,3 +180,20 @@ def test_file_profile_only_in_the_simulator(
     path.write_text(profile(approved_by=None, approved_at=None).model_dump_json(), encoding="utf-8")
     with pytest.raises(ValueError, match="godkänd"):
         FileProfileSource(path)
+
+
+async def test_one_failing_mission_does_not_stop_the_others() -> None:
+    class Broken(FakeGround):
+        async def missions(self) -> list[str]:
+            return ["broken", self.mission_id]
+
+        async def detections(self, mission_id: str, after_seq: int, limit: int):  # pyright: ignore[reportIncompatibleMethodOverride]
+            if mission_id == "broken":
+                raise GroundError("broken: 500", 500)
+            return await super().detections(mission_id, after_seq, limit)
+
+    g = Broken(MISSION, profile_body=profile())
+    s = service(g)
+    detect(g, 0, 0, 0, crop=crop_jpeg(RED))
+    assert await s.step() == 1
+    assert len(g.revs) == 1 and "broken" not in s.missions

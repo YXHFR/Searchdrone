@@ -405,7 +405,7 @@ class CandidateRepo:
         """The approved profile version in force, if any."""
         rows = await self._all(
             "SELECT MAX(profile_version) AS v FROM search_profiles "
-            "WHERE mission_id = :m AND approved_by IS NOT NULL",
+            "WHERE mission_id = :m AND approved_by IS NOT NULL AND approved_at IS NOT NULL",
             m=mission_id,
         )
         v = rows[0]["v"] if rows else None

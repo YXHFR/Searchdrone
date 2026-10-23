@@ -152,9 +152,10 @@ class SearchService:
             except ConflictError:
                 log.info("kandidaterna ändrades på marken: läser om uppdraget")
                 self.missions.pop(mid, None)
-            except GroundError:
-                self.missions.pop(mid, None)  # fused but maybe not written: read it back
-                raise
+            except GroundError as exc:
+                # fused but maybe not written: read it back; the other missions go on
+                log.warning("uppdraget %s: %s", mid, exc)
+                self.missions.pop(mid, None)
         return fused
 
     async def _load(self, mission_id: str) -> _Mission:
