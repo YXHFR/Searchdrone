@@ -121,6 +121,34 @@ export class FakeGround {
   } = { approved: null, proposal: null, proposal_id: null, proposed_by: null };
   clearance: Clearance | null = null;
   sectors: unknown = { type: "FeatureCollection", features: [] };
+  /** The newest probability map (null: none yet, 404 like the ground). */
+  probabilityMap: Record<string, unknown> | null = {
+    mission_id: MISSION,
+    version: 1,
+    reason: "prior",
+    grid: {
+      ipp_lat: -35.363261,
+      ipp_lon: 149.16523,
+      x0_m: -50,
+      y0_m: -50,
+      nx: 4,
+      ny: 4,
+      cell_m: 25,
+      west: 149.1646788,
+      south: -35.3637118,
+      east: 149.1657812,
+      north: -35.3628102,
+    },
+    row: 0.1,
+    frozen: false,
+    event_seq: 0,
+    profile_version: 1,
+    sectors: [],
+    notes: [],
+    p_b64: `${"A".repeat(43)}=`,
+    pod_b64: `${"A".repeat(43)}=`,
+    created_at: "2026-10-15T12:30:00Z",
+  };
   track: number[][] = [];
   /** Messages the panel sent on its live sockets (subscribe, ping, manual). */
   readonly wsSent: Record<string, unknown>[] = [];
@@ -480,6 +508,17 @@ export class FakeGround {
     }
     if (k === `GET ${ms}/commands`) return { status: 200, body: this.commands };
     if (k === `GET ${ms}/sectors`) return { status: 200, body: this.sectors };
+    if (k === `GET ${ms}/sectors/poa`)
+      return { status: 200, body: this.probabilityMap?.sectors ?? [] };
+    if (k === `GET ${ms}/probability-map`)
+      return this.probabilityMap
+        ? { status: 200, body: this.probabilityMap }
+        : {
+            status: 404,
+            body: { code: "MAP_NOT_FOUND", detail_sv: "Ingen sannolikhetskarta ännu." },
+          };
+    if (k === `GET ${ms}/probability-map.png`)
+      return { status: 200, raw: PNG_1PX, headers: { "content-type": "image/png" } };
     if (k === `GET ${ms}/annotations`) return { status: 200, body: this.annotations };
     if (k === `GET ${ms}/finds`) return { status: 200, body: this.finds };
     if (k === `GET ${ms}/search-profile`) return { status: 200, body: this.profile };

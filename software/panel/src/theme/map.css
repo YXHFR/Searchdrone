@@ -144,11 +144,14 @@
   border-color: var(--c-warn);
   font-weight: 600;
 }
+/* Bottom right, above the cursor readout: the tools row wraps on a phone and the legend
+   must never cover a control or take a tap meant for the map. */
 .map-prob {
   position: absolute;
-  top: 48px;
+  bottom: 56px;
   right: 8px;
-  max-width: 260px;
+  max-width: min(260px, calc(100% - 16px));
+  pointer-events: none;
   margin: 0;
   padding: 6px 8px;
   border-radius: var(--r-2);
