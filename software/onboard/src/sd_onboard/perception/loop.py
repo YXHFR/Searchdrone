@@ -264,5 +264,8 @@ class PerceptionLoop:
                 self._failing += 1
                 log.exception("perception failed on a still")
                 if self._failing == FAIL_REPORT and self.off is not None:
-                    self.off("stills_failing", type(exc).__name__)
+                    try:  # telling the ground never ends perception
+                        self.off("stills_failing", type(exc).__name__)
+                    except Exception:
+                        log.exception("perception: could not tell the ground detection is off")
             await self.clock.sleep(self.period_s)

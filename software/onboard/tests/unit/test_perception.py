@@ -408,11 +408,14 @@ async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> No
     await until(lambda: lp.stats.failed > FAIL_REPORT)
     assert not task.done()  # keeps trying: a passing fault may clear
     assert told == [("stills_failing", "RuntimeError")]  # told once
-    model.broken = False
     landed = True  # stills skipped before detection say nothing about the detector
     skipped = lp.stats.skipped_on_ground
+    await until(lambda: lp.stats.skipped_on_ground > skipped)
+    model.broken = False  # only now: no still in flight can reach the detector
+    failed, skipped = lp.stats.failed, lp.stats.skipped_on_ground
     await until(lambda: lp.stats.skipped_on_ground > skipped + 3)
-    assert told == [("stills_failing", "RuntimeError")]
+    assert told == [("stills_failing", "RuntimeError")]  # no "on" for skipped stills
+    assert lp.stats.failed == failed  # and they add nothing to the streak
     landed = False
     await until(lambda: "on" in told)  # the detector ran again: the ground is told
     model.broken = True
@@ -424,6 +427,18 @@ async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> No
         "on",
         ("stills_failing", "RuntimeError"),
     ]
+
+
+def test_a_failing_on_only_logs_and_the_streak_still_ends(tmp_path: Path) -> None:
+    lp = loop(tmp_path, FakeClock(), {})
+    lp._failing = FAIL_REPORT  # pyright: ignore[reportPrivateUsage]
+
+    def on() -> None:
+        raise RuntimeError("link down")
+
+    lp.on = on
+    lp._back(recovered=True)  # pyright: ignore[reportPrivateUsage]
+    assert lp._failing == 0 and lp.stats.failed == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class _TooLarge:
