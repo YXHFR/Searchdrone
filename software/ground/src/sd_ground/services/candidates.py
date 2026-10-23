@@ -314,6 +314,10 @@ def _person(who: Principal, test_rig: bool) -> str:
         raise ApiStatusError(
             403, "INTERACTIVE_SESSION_REQUIRED", "Det här måste göras av en människa i panelen."
         )
+    if not who.issuer_ref.startswith("operator:"):
+        # A decision and a view name the operator who made them (the tables check it); an
+        # observer token from the CLI has no operator to name.
+        raise ApiStatusError(403, "OPERATOR_REQUIRED", "Bara en operatör kan bedöma kandidater.")
     if not who.interactive:
         # Only the test rig's scripted operator gets here; say so where it shows.
         log.warning("candidate.decision_by_script", issuer_ref=who.issuer_ref)

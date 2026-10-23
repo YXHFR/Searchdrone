@@ -489,27 +489,28 @@ class CandidateRepo:
         session_id: str,
         now: dt.datetime,
     ) -> str:
-        """One row per session and picture: opening it again returns the same view, so the
-        append-only table grows with the pictures, not with the clicks."""
-        have = await self._all(
-            "SELECT id::text AS id FROM candidate_views "
-            "WHERE detection_id = :d AND session_id = :sid ORDER BY created_at LIMIT 1",
-            d=detection_id,
-            sid=session_id,
-        )
-        if have:
-            return str(have[0]["id"])
+        """One row per session and picture (a unique index): opening it again returns the
+        same view, so the append-only table grows with the pictures, not with the clicks."""
         rows = await self._insert(
             "INSERT INTO candidate_views "
             "(mission_id, detection_id, operator_ref, session_id, created_at) "
-            "VALUES (:m, :d, :op, :sid, :t) RETURNING id::text",
+            "VALUES (:m, :d, :op, :sid, :t) "
+            "ON CONFLICT (session_id, detection_id) DO NOTHING RETURNING id::text",
             m=mission_id,
             d=detection_id,
             op=operator_ref,
             sid=session_id,
             t=now,
         )
-        return str(rows[0]["id"])
+        if rows:
+            return str(rows[0]["id"])
+        have = await self._all(
+            "SELECT id::text AS id FROM candidate_views "
+            "WHERE detection_id = :d AND session_id = :sid",
+            d=detection_id,
+            sid=session_id,
+        )
+        return str(have[0]["id"])
 
     async def view(self, view_id: str) -> tuple[str, str] | None:
         """(mission id, detection id) of a large view, if it was logged."""

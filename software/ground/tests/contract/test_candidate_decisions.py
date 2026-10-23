@@ -160,11 +160,15 @@ async def candidate(r: Rig, mid: str, state: str = "ready") -> tuple[str, str]:
 
 @asynccontextmanager
 async def person(
-    r: Rig, role: Literal["pilot", "observer"], name: str, auth_mode: AuthMode = "local"
+    r: Rig,
+    role: Literal["pilot", "observer"],
+    name: str,
+    auth_mode: AuthMode = "local",
+    ref: str = "operator",
 ) -> AsyncIterator[httpx.AsyncClient]:
     """A logged-in person's panel session (the cookie, as the browser sends it)."""
     token, _ = r.g.sessions.create_session(
-        role=role, issuer_ref=f"operator:{name}", auth_mode=auth_mode
+        role=role, issuer_ref=f"{ref}:{name}", auth_mode=auth_mode
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=panel_asgi(r.g, create_panel_app(r.g))),  # pyright: ignore[reportArgumentType]
@@ -318,6 +322,12 @@ async def test_only_humans_decide(migrated_db: Db, tmp_path: Path) -> None:
             assert res.json()["code"] == "INTERACTIVE_SESSION_REQUIRED"
         res = await r.panel.post(f"/api/v1/detections/{det}/view", headers=H)
         assert res.status_code == 403
+        # An observer without an operator to name (a CLI observer token) gets a clean 403.
+        async with person(r, "observer", "nils", ref="observer") as nameless:
+            res = await nameless.post(f"/api/v1/detections/{det}/view", headers=H)
+            assert res.status_code == 403 and res.json()["code"] == "OPERATOR_REQUIRED"
+            res = await decide(nameless, cid, "unsure")
+            assert res.status_code == 403 and res.json()["code"] == "OPERATOR_REQUIRED"
         # An observer confirms (after a view), but never inspects or reopens.
         async with person(r, "observer", "lisa") as observer:
             for d in ("inspect", "reopen"):

@@ -30,7 +30,8 @@ STATEMENTS = (
     "  session_id    text NOT NULL,"
     "  created_at    timestamptz NOT NULL DEFAULT now()"
     ")",
-    "CREATE INDEX candidate_views_session_idx ON candidate_views(session_id, detection_id)",
+    # One row per session and picture: opening it again is not a new view.
+    "CREATE UNIQUE INDEX candidate_views_session_idx ON candidate_views(session_id, detection_id)",
     "CREATE TRIGGER candidate_views_no_update_delete BEFORE UPDATE OR DELETE ON candidate_views "
     "FOR EACH ROW EXECUTE FUNCTION sd_forbid_change()",
     "CREATE TRIGGER candidate_views_no_truncate BEFORE TRUNCATE ON candidate_views "
