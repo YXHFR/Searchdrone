@@ -357,10 +357,20 @@ async def test_closed_missions_and_unknown_candidates(r: Rig) -> None:
     mid = await r.open_mission()
     missions = (await r.search.get("/search/v1/missions")).json()
     assert [m["mission_id"] for m in missions] == [mid]
+    await send(r, person(r, 0, 100))
+    (det,) = (await r.search.get(f"/search/v1/missions/{mid}/detections")).json()
     res = await r.panel.post(f"/api/v1/missions/{mid}/end", json={"reason": "test"}, headers=H)
     assert res.status_code == 200, res.text
     late = await post(r, mid, revision(r))
     assert late.status_code == 409 and late.json()["code"] == "MISSION_CLOSED"
+    for url in (  # search reads only the open missions
+        f"/search/v1/missions/{mid}/detections",
+        f"/search/v1/missions/{mid}/candidates",
+        f"/search/v1/missions/{mid}/search-profile",
+        f"/search/v1/detections/{det['detection_id']}/crop",
+    ):
+        res = await r.search.get(url)
+        assert res.status_code == 409 and res.json()["code"] == "MISSION_CLOSED", url
     assert (await r.search.get("/search/v1/missions")).json() == []
     assert (await queue(r, mid))["items"] == []  # a closed mission's queue still answers
 
@@ -447,3 +457,18 @@ async def test_a_merge_needs_another_known_candidate(r: Rig) -> None:
         merged = a | {"base_rev": 1, "state": "merged", "merged_into": target}
         res = await post(r, mid, merged)
         assert res.status_code == 409 and res.json()["code"] == "MERGE_TARGET_INVALID", target
+
+
+async def test_paging_follows_the_queue_order(r: Rig) -> None:
+    mid = await r.open_mission()
+    priorities = [0.2, 0.9, 0.05, 0.9, 0.5, 0.3]
+    assert (await post(r, mid, *[revision(r, priority=p) for p in priorities])).status_code == 200
+    whole = [c["seq"] for c in (await queue(r, mid))["items"]]
+    paged: list[int] = []
+    page = (await queue(r, mid, limit=2))["items"]
+    while page:
+        paged += [c["seq"] for c in page]
+        page = (await queue(r, mid, limit=2, before_seq=paged[-1]))["items"]
+    assert paged == whole and len(whole) == len(priorities)
+    res = await r.panel.get(f"/api/v1/missions/{mid}/candidates", params={"before_seq": 999})
+    assert res.status_code == 404 and res.json()["code"] == "CANDIDATE_NOT_FOUND"

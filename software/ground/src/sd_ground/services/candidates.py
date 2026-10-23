@@ -56,14 +56,14 @@ def repo(flow: MissionFlow) -> CandidateRepo:
 async def feed(
     flow: MissionFlow, mission_id: str, after_seq: int, limit: int
 ) -> list[SearchDetection]:
-    await flow.mission(mission_id)
+    await flow.open_mission_of(mission_id)
     rows = await repo(flow).feed(mission_id, after_seq, min(limit, FEED_MAX))
     return [SearchDetection.model_validate(r) for r in rows]
 
 
 async def profile(flow: MissionFlow, mission_id: str) -> SearchProfile:
     """The approved search profile in force; 404 when the mission has none yet."""
-    await flow.mission(mission_id)
+    await flow.open_mission_of(mission_id)
     found = await repo(flow).approved_profile(mission_id)
     if found is None:
         raise ApiStatusError(404, "PROFILE_NOT_FOUND", "Uppdraget har ingen godkänd sökprofil.")
@@ -71,7 +71,7 @@ async def profile(flow: MissionFlow, mission_id: str) -> SearchProfile:
 
 
 async def tracks(flow: MissionFlow, mission_id: str) -> list[SearchTrack]:
-    await flow.mission(mission_id)
+    await flow.open_mission_of(mission_id)
     r = repo(flow)
     latest = await r.latest(mission_id)
     seen = await r.sightings(mission_id)
@@ -100,7 +100,8 @@ async def write(
         written = await repo(flow).write(mission_id, batch.revisions, flow.now())
     except CandidateWriteError as exc:
         raise ApiStatusError(409, exc.code, exc.detail_sv) from exc
-    by_id = {str(c.candidate_id): c for c in await card_list(flow, mission_id)}
+    touched = {w.candidate_id for w in written}
+    by_id = {str(c.candidate_id): c for c in await card_list(flow, mission_id, only=touched)}
     for w in written:
         card = by_id.get(w.candidate_id)
         if card is None:
@@ -138,17 +139,19 @@ def _near(c: dict[str, Any], decided: list[dict[str, Any]]) -> dict[str, Any] | 
     return found
 
 
-async def card_list(flow: MissionFlow, mission_id: str) -> list[CandidateCard]:
-    """Every candidate of the mission as a card, by display number."""
+async def card_list(
+    flow: MissionFlow, mission_id: str, *, only: set[str] | None = None
+) -> list[CandidateCard]:
+    """Every candidate of the mission as a card, by display number (or only those named)."""
     r = repo(flow)
     latest = await r.latest(mission_id)
-    ids = [c["candidate_id"] for c in latest]
-    assessed = await r.assessments(ids)
+    shown = [c for c in latest if only is None or c["candidate_id"] in only]
+    assessed = await r.assessments([c["candidate_id"] for c in shown])
     thumbs = await r.thumbs(mission_id)
     profile = await r.profile_version(mission_id)
     decided = [c for c in latest if c["state"] in _DECIDED]
     out: list[CandidateCard] = []
-    for c in latest:
+    for c in shown:
         a = next(
             (
                 x["body"]
@@ -206,7 +209,10 @@ async def cards(
     before_seq: int | None,
     limit: int,
 ) -> dict[str, Any]:
-    """The queue: by priority (highest first), merged candidates only when asked for."""
+    """The queue: by priority (highest first, then display number), merged candidates only
+    when asked for. ``before_seq`` is the paging cursor: the ``seq`` of the last card of
+    the previous page, and the next page holds the cards after it in the same order (so a
+    later page never skips a card with a higher seq and a lower priority)."""
     await flow.mission(mission_id)
     every = await card_list(flow, mission_id)
     counts = {"review": 0, "low": 0, "confirmed": 0, "rejected": 0}
@@ -215,14 +221,24 @@ async def cards(
             counts[c.state.value] += 1
         elif c.state is not CandidateState.MERGED:
             counts["review" if c.priority >= PRIORITY_MEDIUM else "low"] += 1
+
+    def order(c: CandidateCard) -> tuple[float, int]:
+        return (-c.priority, c.seq)
+
+    after: tuple[float, int] | None = None
+    if before_seq is not None:
+        cursor = next((c for c in every if c.seq == before_seq), None)
+        if cursor is None:
+            raise ApiStatusError(404, "CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
+        after = order(cursor)
     items = [
         c
         for c in every
         if (c.state is state if state is not None else c.state is not CandidateState.MERGED)
         and (min_priority is None or c.priority >= min_priority)
-        and (before_seq is None or c.seq < before_seq)
+        and (after is None or order(c) > after)
     ]
-    items.sort(key=lambda c: (-c.priority, c.seq))
+    items.sort(key=order)
     return {
         "items": [c.model_dump(mode="json") for c in items[: min(limit, CARDS_MAX)]],
         "counts": counts,

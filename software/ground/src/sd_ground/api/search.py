@@ -100,6 +100,7 @@ async def crop(detection_id: IdPath, _: Search, g: G) -> FileResponse:
     found = await candidates_service.repo(flow).crop_path(detection_id)
     path = None
     if found is not None:
+        await flow.open_mission_of(found[0])  # search reads open missions only (409)
         path = files_service.resolve_file(flow.mission_dir(found[0]), found[1])
     if path is None or not path.is_file():
         raise ApiStatusError(404, "CROP_NOT_FOUND", "Bilden finns inte.")

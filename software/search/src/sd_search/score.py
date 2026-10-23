@@ -3,10 +3,8 @@
 ``match = sum(w * c * s) / sum(w * c)`` over the fields that are not ``not_visible``
 (``s`` is 1 for ``match`` and 0 for ``conflict``), with ``w`` the field's weight and ``c``
 the factor of the operator's certainty. ``None`` when nothing could be seen: no evidence is
-not evidence against (a field that is not visible never lowers the score).
-
-The image model's verdicts win over the code's, except that the code's ``match`` stays
-when the model says ``not_visible`` (the colours were there in the pixels).
+not evidence against (a field that is not visible never lowers the score). The verdicts
+are the code's own colour verdicts.
 """
 
 from __future__ import annotations

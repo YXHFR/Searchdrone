@@ -687,7 +687,8 @@ async def get_candidates(
 ) -> dict[str, Any]:
     """The review queue: candidates by priority, highest first. Every candidate is
     listed (a low priority only puts it further down); merged ones only with
-    ``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected."""
+    ``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected.
+    Paging: ``before_seq`` = the ``seq`` of the previous page's last card."""
     return await candidates_service.cards(
         _flow(g),
         mission_id,

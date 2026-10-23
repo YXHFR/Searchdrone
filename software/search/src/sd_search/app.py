@@ -304,5 +304,5 @@ def _jpeg_size(data: bytes) -> tuple[int, int]:
     try:
         with Image.open(io.BytesIO(data)) as img:
             return img.size
-    except (OSError, ValueError):
+    except (OSError, ValueError, Image.DecompressionBombError):
         return (0, 0)

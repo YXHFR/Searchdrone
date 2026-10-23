@@ -385,7 +385,8 @@ class CandidateRepo:
         rows = await self._all(
             "SELECT body, mission_id::text AS mission_id, profile_version, approved_by, "
             "approved_at FROM search_profiles WHERE mission_id = :m "
-            "AND approved_by IS NOT NULL ORDER BY profile_version DESC LIMIT 1",
+            "AND approved_by IS NOT NULL AND approved_at IS NOT NULL "
+            "ORDER BY profile_version DESC LIMIT 1",
             m=mission_id,
         )
         if not rows:

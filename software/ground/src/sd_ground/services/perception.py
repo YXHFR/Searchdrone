@@ -32,14 +32,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import math
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from sd_detect.classes import default_registry
 from sd_ground.logging import get_logger
-from sd_schemas.geo import tangent_radii
+from sd_schemas.geo import plane_distance_m
 from sd_schemas.link import CropData, PerceptionReport
 
 if TYPE_CHECKING:
@@ -103,11 +102,6 @@ class Find:
         }
 
 
-def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    east_r, north_r = tangent_radii((lat1 + lat2) / 2)
-    return math.hypot(math.radians(lon2 - lon1) * east_r, math.radians(lat2 - lat1) * north_r)
-
-
 @dataclass
 class Finds:
     """The finds of one mission (kept in memory, rebuilt from the table after a restart)."""
@@ -122,7 +116,7 @@ class Finds:
         for f in self.items:
             if f.label != row["label"]:
                 continue
-            d = _distance_m(f.lat, f.lon, row["lat"], row["lon"])
+            d = plane_distance_m(f.lat, f.lon, row["lat"], row["lon"])
             if d <= best_d:
                 best, best_d = f, d
         has_thumb = bool(row.get("crop_path"))
