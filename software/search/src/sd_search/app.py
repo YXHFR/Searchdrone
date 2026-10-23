@@ -50,6 +50,7 @@ from sd_schemas.search import (
 from sd_search.client import ConflictError, GroundError, SearchApi
 from sd_search.color import CROPS_MAX, CropView, assess_colors, box_in_crop
 from sd_search.fusion import Fusion, Sighting, Track
+from sd_search.mapper import MapService
 from sd_search.match.cascade import Cascade, skip_cloud
 from sd_search.match.engines import CROPS_FAST, Crop, MatchRequest
 from sd_search.priority import priority
@@ -144,11 +145,13 @@ class SearchService:
         api: SearchApi,
         profiles: ProfileSource,
         *,
+        mapper: MapService | None = None,
         cascade: Cascade | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.api = api
         self.profiles = profiles
+        self.mapper = mapper
         self.cascade = cascade or Cascade(None)
         self.monotonic = monotonic
         self.missions: dict[str, _Mission] = {}
@@ -199,6 +202,8 @@ class SearchService:
                 # fused but maybe not written: read it back; the other missions go on
                 log.warning("uppdraget %s: %s", mid, exc)
                 self.missions.pop(mid, None)
+        if self.mapper is not None:
+            await self.mapper.step(open_ids)  # handles its own ground errors
         return fused
 
     async def _load(self, mission_id: str) -> _Mission:

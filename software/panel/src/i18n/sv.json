@@ -121,6 +121,8 @@
       "showCharter": "Hela området",
       "layers": "Lager",
       "layer": {
+        "probability": "Sannolikhet",
+        "pod": "Sökt (POD)",
         "charter-preview": "Väntande ram",
         "sectors": "Sektorer",
         "pilot-range": "Pilotens räckvidd",
@@ -145,6 +147,18 @@
         "model": "Detektor",
         "unconfirmed": "Inte bekräftat. Bara du kan bekräfta ett fynd.",
         "noThumb": "Ingen bild"
+      },
+      "prob": {
+        "scale": "låg → hög",
+        "podScale": "osökt → väl sökt",
+        "row": "Utanför kartan: {{pct}}",
+        "frozen": "Kartan är låst: en kandidat är bekräftad som funnen.",
+        "note": {
+          "no_terrain": "Ingen terrängdata, bara avståndsringar.",
+          "child_statistics": "Statistik för barn saknas, allmän fördelning används.",
+          "uncertain_statistics": "Osäker statistik för den här kategorin.",
+          "no_charter": "Ingen ram ännu: kartan täcker 2 km runt platsen där personen sågs senast."
+        }
       }
     },
     "video": {
@@ -547,7 +561,14 @@
     "pathSaved": "Väg {{label}} sparad ({{n}} punkter, {{length}}). Skriv t.ex. \"flyg vägen {{label}}\".",
     "pathPlanned": "Föreslagen väg {{label}}: väntar på ditt godkännande",
     "pathProgress": "Väg {{label}}: {{pct}} % flugen",
-    "menu": "Rita"
+    "menu": "Rita",
+    "hint": "Sannolikhet i området",
+    "hintChoice": {
+      "none": "Som kartan säger",
+      "high": "Hög (×3)",
+      "low": "Låg (×0,3)",
+      "excluded": "Utesluten"
+    }
   },
   "mission": {
     "title": "Uppdrag",
@@ -583,7 +604,9 @@
     },
     "sweptLead": "Avsökt",
     "sweptOf": "av {{total}} ha i sökområdet",
-    "column": "Uppdrag och fynd"
+    "column": "Uppdrag och fynd",
+    "sectorScore": "POA {{poa}} · PSR {{psr}}",
+    "sectorScoreHint": "Sannolikheten kvar i sektorn och hur mycket en ny sökning ger per minut. Bara en rangordning."
   },
   "finds": {
     "title": "Fynd",

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import type { SectorScore } from "../api/types";
 import { STALE_MS } from "../header/pills";
 import { useNow } from "../lib/useNow";
 import { openReview, useCandidateStore } from "../state/candidateStore";
@@ -7,6 +8,7 @@ import { useMissionStore } from "../state/missionStore";
 import { useShellStore } from "../state/shellStore";
 import { findNumbers, groupQueue } from "../views/candidates/queue";
 import { coverage, doneCount, sectorRows } from "./mission";
+import { scoreText, useSectorScores } from "./sectorScores";
 
 const hm = new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit" });
 const ha = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
@@ -26,6 +28,7 @@ export function MissionPanel() {
   const sectors = useMissionStore((s) => s.sectors);
   const rows = sectorRows(sectors);
   const cov = coverage(sectors);
+  const scores = useSectorScores(mission?.id ?? null);
   const stale = at === null || now - at > STALE_MS;
   const started = mission?.activated_at ?? null;
   return (
@@ -96,6 +99,15 @@ export function MissionPanel() {
               </span>
               <span className="sec-pct num">{r.pct} %</span>
               <span className="sec-st">{t(`mission.sector.${r.status}`)}</span>
+              {scores[r.id] ? (
+                <span
+                  className="sec-score num muted"
+                  data-testid={`sector-score-${r.id}`}
+                  title={t("mission.sectorScoreHint")}
+                >
+                  {t("mission.sectorScore", scoreText(scores[r.id] as SectorScore))}
+                </span>
+              ) : null}
             </li>
           ))}
         </ol>

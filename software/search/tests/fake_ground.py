@@ -9,6 +9,13 @@ from typing import Any
 from uuid import UUID
 
 from sd_schemas.link import BBox
+from sd_schemas.probmap import (
+    ProbabilityMapInputs,
+    ProbabilityMapLatest,
+    ProbabilityMapWrite,
+    ProbabilityMapWritten,
+    SearchStill,
+)
 from sd_schemas.search import (
     Candidate,
     CandidateBatch,
@@ -36,6 +43,9 @@ class FakeGround:
     profile_body: SearchProfile | None = None
     beats: list[SearchHeartbeat] = field(default_factory=list[SearchHeartbeat])
     writes: int = 0
+    inputs: ProbabilityMapInputs = field(default_factory=lambda: ProbabilityMapInputs(area=None))
+    still_rows: list[SearchStill] = field(default_factory=list[SearchStill])
+    maps: list[ProbabilityMapWrite] = field(default_factory=list[ProbabilityMapWrite])
 
     def add_detection(self, **kw: Any) -> SearchDetection:
         d = SearchDetection.model_validate(
@@ -136,6 +146,24 @@ class FakeGround:
 
     async def profile(self, mission_id: str) -> SearchProfile | None:
         return self.profile_body
+
+    async def map_inputs(self, mission_id: str) -> ProbabilityMapInputs:
+        latest = None
+        if self.maps:
+            m = self.maps[-1]
+            latest = ProbabilityMapLatest(version=m.version, frozen=m.frozen, event_seq=m.event_seq)
+        return self.inputs.model_copy(update={"latest": latest})
+
+    async def stills(self, mission_id: str, after_seq: int, limit: int) -> list[SearchStill]:
+        return [s for s in self.still_rows if s.seq > after_seq][:limit]
+
+    async def write_map(self, mission_id: str, body: ProbabilityMapWrite) -> ProbabilityMapWritten:
+        if self.maps and (self.maps[-1].frozen or body.version != self.maps[-1].version + 1):
+            raise ConflictError("frozen or stale", 409)
+        if not self.maps and body.version != 1:
+            raise ConflictError("stale", 409)
+        self.maps.append(body)
+        return ProbabilityMapWritten(version=body.version, frozen=body.frozen)
 
 
 def utc(seconds: float) -> dt.datetime:

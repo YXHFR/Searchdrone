@@ -47,6 +47,10 @@ interface MissionState {
    * text never travels on the live stream). */
   profileRev: number;
   bumpProfile(): void;
+  /** Grows on every new probability-map version: the map layers and the sector list
+   * fetch again (the event carries only the version). */
+  mapRev: number;
+  bumpMap(): void;
   reset(missionId: string | null): void;
   upsertCharter(c: Charter): void;
   setCharters(list: Charter[]): void;
@@ -86,6 +90,8 @@ export const useMissionStore = create<MissionState>((set) => ({
   subjectFetched: {},
   profileRev: 0,
   bumpProfile: () => set((s) => ({ profileRev: s.profileRev + 1 })),
+  mapRev: 0,
+  bumpMap: () => set((s) => ({ mapRev: s.mapRev + 1 })),
   reset: (missionId) =>
     set({
       missionId,

@@ -1064,9 +1064,11 @@ class FlowRepo:
         geometry: dict[str, Any],
         created_by: str,
         now: dt.datetime,
+        poa_hint: str | None = None,
     ) -> str | None:
-        """A pin, area or path. ``label = None`` gives the next free ``M<n>`` (pins the AI
-        marks). ``None`` when the label is taken."""
+        """A pin, area or path (an area may carry the operator's hint for the map).
+        ``label = None`` gives the next free ``M<n>`` (pins the AI marks). ``None`` when the
+        label is taken."""
         async with self.engine.begin() as conn:
             if label is None:
                 n = (
@@ -1084,8 +1086,8 @@ class FlowRepo:
                     await self._x(
                         conn,
                         "INSERT INTO map_annotations (id, mission_id, vehicle_id, kind, label, "
-                        "geom, created_by, created_at) VALUES (:id, :m, :v, :k, :l, "
-                        "ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326), :by, :t)",
+                        "geom, created_by, created_at, poa_hint) VALUES (:id, :m, :v, :k, :l, "
+                        "ST_SetSRID(ST_GeomFromGeoJSON(:g), 4326), :by, :t, :hint)",
                         id=new,
                         m=mission_id,
                         v=vehicle_id,
@@ -1094,6 +1096,7 @@ class FlowRepo:
                         g=json.dumps(geometry),
                         by=created_by,
                         t=now,
+                        hint=poa_hint,
                     )
             except IntegrityError:
                 return None
@@ -1104,7 +1107,7 @@ class FlowRepo:
             "SELECT id, mission_id, vehicle_id, kind, label, ST_AsGeoJSON(geom) AS geometry, "
             "created_by, created_at, CASE WHEN kind = 'area' THEN ST_Area(geom::geography) END "
             "AS area_m2, CASE WHEN kind = 'path' THEN ST_Length(geom::geography) END AS length_m, "
-            "deleted_at FROM map_annotations WHERE id = :id",
+            "poa_hint, deleted_at FROM map_annotations WHERE id = :id",
             id=annotation_id,
         )
         return None if row is None else {**dict(row), "geometry": _json(row["geometry"])}

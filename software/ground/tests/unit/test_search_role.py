@@ -127,6 +127,9 @@ SEARCH_ROUTES = [
     ("GET", "/search/v1/missions/{mission_id}/search-profile"),
     ("GET", "/search/v1/missions/{mission_id}/candidates"),
     ("POST", "/search/v1/missions/{mission_id}/candidates"),
+    ("GET", "/search/v1/missions/{mission_id}/probability-map/inputs"),
+    ("GET", "/search/v1/missions/{mission_id}/stills"),
+    ("POST", "/search/v1/missions/{mission_id}/probability-maps"),
 ]
 
 
