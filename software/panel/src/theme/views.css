@@ -42,7 +42,6 @@
   gap: var(--sp-4);
   padding: var(--sp-2) 0;
 }
-
 .stick-wrap {
   display: flex;
   flex-direction: column;

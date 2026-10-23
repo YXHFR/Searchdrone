@@ -143,7 +143,6 @@
   gap: var(--sp-1);
   white-space: normal;
 }
-
 .approval:has(.approval-need) {
   border-color: var(--c-warn);
   border-left-width: 4px;

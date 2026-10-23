@@ -708,9 +708,6 @@
   background: var(--c-panel);
   border-bottom: 1px solid var(--c-line);
 }
-.overlay-head .btn {
-  min-height: var(--ctl);
-}
 .overlay-body {
   flex: 1;
   min-height: 0;
@@ -736,7 +733,6 @@
   border-color: var(--c-warn);
   background: linear-gradient(var(--c-warn-soft), var(--c-warn-soft)), var(--c-panel);
 }
-
 .stage-banner-next {
   display: block;
   font-weight: 400;

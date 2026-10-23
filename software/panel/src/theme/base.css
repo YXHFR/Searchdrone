@@ -154,7 +154,6 @@ time {
   background: transparent;
 }
 .btn-small {
-  min-height: var(--ctl);
   padding: 2px var(--sp-2);
   font-size: var(--fs-small);
 }

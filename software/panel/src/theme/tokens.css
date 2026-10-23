@@ -2,7 +2,9 @@
    is hairlines, never shadows (floating menus are the one exception).
    One system for every pane: spacing on a 4 px grid (--sp-*), one type scale (--fs-*), one
    corner radius (--r; --r-1 only for tiny marks), one height for inline controls (--ctl) and
-   one for pane headers (--head-h). Colour is for meaning: accent, ok, warn, bad. */
+   one for pane headers (--head-h). Colour is for meaning: accent, ok, warn, bad.
+   Deliberate exceptions to the grid: 2 px and 6 px vertical padding in dense rows (a half
+   step), and 10 px left padding beside a 2 px coloured edge, so the text still sits 12 px in. */
 @font-face {
   font-family: "Inter Variable";
   font-style: normal;
