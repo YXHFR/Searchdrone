@@ -248,7 +248,9 @@ class PerceptionLoop:
         """One still for an order: its ``still_id``, or ``None`` when none came in
         ``CAPTURE_WAIT_S`` or it could not be placed on the ground."""
         deadline = self.clock.monotonic() + CAPTURE_WAIT_S
-        try:  # a still stuck in the loop must not hold the order past its wait
+        # A still stuck in the loop must not hold the order past its wait: a watchdog, so on
+        # the event loop's (wall) clock, which runs even when the stuck still holds the lock.
+        try:
             await asyncio.wait_for(self._lock.acquire(), CAPTURE_WAIT_S)
         except TimeoutError:
             log.warning("perception busy: no still for the order")

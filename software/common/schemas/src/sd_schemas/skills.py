@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import Field, model_validator
 
@@ -68,7 +68,6 @@ __all__ = [
     "SurveySectorParams",
     "TakeoffParams",
     "TargetContext",
-    "circle_polygon",
     "orbit_ring",
 ]
 
@@ -386,7 +385,7 @@ class OrbitParams(SkillParams):
         )
 
 
-ORBIT_RING_CORNERS = 24  # 15 degrees apart
+ORBIT_RING_CORNERS: Final = 24  # 15 degrees apart
 
 
 def orbit_ring(centre: LatLon, radius_m: float, start: LatLon) -> list[LatLon]:
@@ -404,23 +403,6 @@ def orbit_ring(centre: LatLon, radius_m: float, start: LatLon) -> list[LatLon]:
         lat, lon = plane_offset(centre.lat, centre.lon, outer * math.sin(a), outer * math.cos(a))
         out.append(LatLon(lat=lat, lon=lon))
     return out
-
-
-_CIRCLE_CORNERS = 16
-
-
-def circle_polygon(centre: LatLon, radius_m: float) -> dict[str, Any]:
-    """A GeoJSON polygon with ``_CIRCLE_CORNERS`` corners that contains the circle around
-    ``centre`` (its edges touch the circle from outside), in the gate's own tangent plane
-    (``sd_schemas.geo``)."""
-    outer = radius_m / math.cos(math.pi / _CIRCLE_CORNERS)
-    ring: list[list[float]] = []
-    for i in range(_CIRCLE_CORNERS):
-        a = 2 * math.pi * i / _CIRCLE_CORNERS
-        lat, lon = plane_offset(centre.lat, centre.lon, outer * math.sin(a), outer * math.cos(a))
-        ring.append([lon, lat])
-    ring.append(ring[0])
-    return {"type": "Polygon", "coordinates": [ring[::-1]]}  # counter-clockwise
 
 
 class InspectDetectionParams(SkillParams):

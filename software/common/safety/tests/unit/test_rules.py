@@ -6,14 +6,11 @@ names the owner's standard values (120 m, 15 m/s, 500 m, 15 %).
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import pytest
 from gate_fixtures import (
     CHARTER,
-    HOME_LAT,
-    HOME_LON,
     IMPLEMENTED,
     L_AREA,
     NOW,
@@ -388,22 +385,6 @@ def test_orbit_checks_the_whole_circle_not_only_its_centre() -> None:
     lat, lon = latlon(-200, -150)  # centre 250 m from the pilot, the circle up to 300+
     reach = {"lat": lat, "lon": lon, "radius_m": 60, "alt_m": 40}
     assert "PILOT_DISTANCE" in codes(req("orbit", reach), far)
-
-
-def test_circle_polygon_holds_the_circle() -> None:
-    from sd_safety.targets import Plane, polygon_from_geojson
-    from sd_schemas.skills import circle_polygon
-
-    centre = point(30, -20)
-    area = circle_polygon(centre, 100.0)
-    plane = Plane(HOME_LAT, HOME_LON)
-    poly = polygon_from_geojson(area, plane)
-    assert poly.is_simple()
-    cx, cy = plane.point(centre)
-    for i in range(72):
-        a = math.radians(i * 5)
-        assert poly.contains((cx + 99.9 * math.cos(a), cy + 99.9 * math.sin(a)))
-    assert not poly.contains((cx + 104.0, cy))  # and not much more than the circle
 
 
 @pytest.mark.parametrize("name", ["set_param", "arm", "disable_fence", "no_such_skill"])

@@ -23,9 +23,10 @@ from test_orders import (  # pyright: ignore[reportMissingImports]
     take_off,
 )
 
-from sd_ground.services import commands
+from sd_ground.services import charters, commands
 from sd_safety.constants import PERSON_KEEPOUT_M
 from sd_schemas.base import new_id
+from sd_schemas.skills import SKILL_REGISTRY
 
 if TYPE_CHECKING:
     from conftest import Db
@@ -44,7 +45,8 @@ def look(det: Any) -> dict[str, Any]:
 
 
 async def flying_with(r: Rig, *dets: Any) -> tuple[str, Any]:
-    mid = await r.ready_mission()
+    skills = [*charters.default_skills(SKILL_REGISTRY), "inspect_detection"]
+    mid = await r.ready_mission(allowed_skills=skills)
     d = driver(r, mid)
     await take_off(r, mid, d)
     await send(r, *dets)

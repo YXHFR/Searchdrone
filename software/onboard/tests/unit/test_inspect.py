@@ -13,7 +13,7 @@ from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
 from sd_onboard.executor import executor as executor_module
-from sd_onboard.executor.keepout_reflex import LOCAL_KEEPOUTS_MAX
+from sd_onboard.executor.keepout_reflex import LOCAL_KEEPOUTS_MAX, entry_m, stop_m
 from sd_onboard.skills import survey_sector
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
@@ -268,11 +268,18 @@ async def test_a_new_cylinder_on_a_goto_hovers() -> None:
         lat, lon = at(0, 180)
         cmd = await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}), 1)
         assert r.ex.state == S.TRANSIT
-        install(r, keepout(0, 120, 30, source="candidate"))
+        k = keepout(0, 120, 30, source="candidate")
+        install(r, k)
         await r.run(0.5)
-        assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
+        assert r.ex.state == S.TRANSIT  # far off yet: it flies on
+        start = len(r.fc.track)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert r.ex.hold_reason == "limit"
         assert ("KEEPOUT_VIOLATION",) in [c for ref, _, c in r.up.acks if ref == cmd.command_id]
         assert "executor.keepout_hold" in r.up.kinds()
+        await r.run(10)
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+        assert xy(r)[1] < 90.0
 
 
 async def test_a_cylinder_off_the_route_changes_nothing() -> None:
@@ -437,3 +444,34 @@ async def test_a_detour_the_gate_refuses_hovers(monkeypatch: pytest.MonkeyPatch)
         assert "executor.keepout_reroute" not in r.up.kinds()
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
         assert r.up.stages(cmd.command_id)[-1] == "superseded"
+
+
+def test_entry_and_stop_distances() -> None:
+    cyl = [((0.0, 100.0), 30.0)]
+    assert entry_m([(0.0, 0.0), (0.0, 200.0)], cyl) == pytest.approx(70.0)
+    assert entry_m([(0.0, 0.0), (50.0, 0.0), (50.0, 200.0)], cyl) is None
+    assert entry_m([(0.0, 0.0), (0.0, 50.0), (0.0, 200.0)], cyl) == pytest.approx(70.0)
+    assert entry_m([(0.0, 90.0), (0.0, 200.0)], cyl) == 0.0  # inside and deeper
+    assert entry_m([(0.0, 90.0), (0.0, 0.0)], cyl) is None  # inside, leaving
+    # Through a cylinder it was inside when it came: the first leg only.
+    assert entry_m([(0.0, 90.0), (0.0, 200.0)], cyl, through=frozenset({0})) is None
+    back = [(0.0, 90.0), (0.0, 200.0), (0.0, 0.0)]
+    assert entry_m(back, cyl, through=frozenset({0})) == pytest.approx(110.0 + 70.0)
+    assert stop_m(0.0) < stop_m(4.0) < stop_m(15.0)
+    assert stop_m(-1.0) == stop_m(0.0)
+
+
+async def test_a_goto_over_a_new_own_detection_flies_on_out() -> None:
+    """A person seen under the drone: the cylinder comes with the drone inside it, and the
+    goto leaves it along its leg rather than hover over the person."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        lat, lon = at(0, 180)
+        cmd = await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}), 1)
+        await r.until(lambda: xy(r)[1] >= 60.0, 120)
+        e, n = xy(r)
+        r.ex.on_detections([detection(e, n + 5.0, 0.9)])
+        await r.run(1)
+        assert r.ex.state == S.TRANSIT and "executor.keepout_hold" not in r.up.kinds()
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 300)

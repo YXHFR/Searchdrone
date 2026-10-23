@@ -141,7 +141,7 @@ async def _install(
     if flow.link is None or vid is None:
         return
     mid = None if mission is None else str(mission.id)
-    key = (mid, tuple((str(k.source_id), k.lat, k.lon, k.radius_m) for k in w.keepouts))
+    key = (mid, tuple((str(k.source_id), k.source, k.lat, k.lon, k.radius_m) for k in w.keepouts))
     if key == w.sent and not resend:
         return
     seq = w.install_seq

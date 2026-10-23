@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
@@ -49,8 +50,10 @@ from sd_onboard.executor.keepout_reflex import (
     LOCAL_KEEPOUTS_MAX,
     REROUTABLE,
     contained,
+    entry_m,
     remaining,
     route_clear,
+    stop_m,
     survey_run,
 )
 from sd_onboard.executor.limits import (
@@ -106,7 +109,7 @@ from sd_safety.constants import (
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
-from sd_safety.keepout import circles, xy_route_violation
+from sd_safety.keepout import circles
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -278,7 +281,9 @@ class _Active:
 
 
 _PARAM_TOLERANCE: Final = 1e-3
-_CAPTURE_LIMIT_S: Final = 10.0  # the most an order waits for one still (wall clock)
+# The most an order waits for one still. A watchdog against a camera that hangs, so it
+# runs on the event loop's own (wall) clock, not the injected one a hung call never advances.
+_CAPTURE_LIMIT_S: Final = 10.0
 # The fence and LOITER speed may be raised with the mission limits (by the ground, by
 # the pilot's click); PF6 then checks them against the hard floor instead of the file.
 _RAISABLE: Final = ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS")
@@ -383,6 +388,9 @@ class Executor:
         # Cylinders from the drone's own detections: detection_id -> (cylinder, created).
         self.local_keepouts: dict[UUID, tuple[Keepout, int]] = {}
         self._keepouts_changed = False  # the reflex runs on the next tick
+        self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
+        self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
+        self._keepouts_through: set[UUID] = set()  # came with the drone inside: left on the leg
         # Takes one still for an order (perception, ``PerceptionLoop.capture``).
         self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
@@ -1524,7 +1532,7 @@ class Executor:
         self._last_tick_ms = now
         t = self.vehicle.telemetry
         self._finish_active()
-        if self._keepouts_changed:
+        if self._keepouts_changed or self._keepout_watch:
             self._keepouts_changed = False
             self._keepout_reflex()
         if self.state in AIRBORNE_CONTROLLED and not t.fc_connected:
@@ -1561,8 +1569,10 @@ class Executor:
         del self._tick_ms[:-100]
 
     def _keepout_reflex(self) -> None:
-        """A cylinder came: plan the rest of a search around it, or hover (see
-        ``executor.keepout_reflex``). Internal orders, return home and take-off go on."""
+        """A cylinder came: plan the rest of a search around it, or hover short of the
+        cylinder (see ``executor.keepout_reflex``). Internal orders, return home and
+        take-off go on."""
+        self._keepout_watch = False
         active, plane, charter = self.active, self.plane(), self.charter
         if (
             active is None
@@ -1577,10 +1587,30 @@ class Executor:
         here = plane.xy(v.lat, v.lon)
         rest = remaining(active.handler, active.plan, here, plane)
         keepouts = self.keepouts_in_force()
-        if not rest or xy_route_violation([here, *rest], circles(keepouts, plane)) is None:
-            return
+        cyl = circles(keepouts, plane)
+        # The cylinders that held the drone when they came: it may leave them along its leg.
+        inside = {
+            k.keepout_id for k, (c, r) in zip(keepouts, cyl, strict=True) if math.dist(here, c) < r
+        }
+        new = {k.keepout_id for k in keepouts} - self._keepouts_seen
+        self._keepouts_through = inside & (self._keepouts_through | new)
+        self._keepouts_seen = {k.keepout_id for k in keepouts}
         run = survey_run(active.handler)
-        if active.skill in REROUTABLE and run is not None and self._reroute(active, run):
+        if active.skill in REROUTABLE and run is not None:
+            if entry_m([here, *rest], cyl) is not None and not self._reroute(active, run, charter):
+                self._keepout_hold()
+            return
+        # Any other order leaves a new cylinder it is inside along its current leg (rather
+        # than hover over the person) and flies on until it is its stop short of the next
+        # cylinder ahead (a find's link-loss hover still finds it on the way), then hovers.
+        through = frozenset(
+            i for i, k in enumerate(keepouts) if k.keepout_id in self._keepouts_through
+        )
+        entry = entry_m([here, *rest], cyl, through=through)
+        if entry is None:
+            return
+        if entry > stop_m(v.groundspeed_ms):
+            self._keepout_watch = True
             return
         self._keepout_hold()
 
@@ -1605,10 +1635,8 @@ class Executor:
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
 
-    def _reroute(self, active: _Active, run: SurveyRun) -> bool:
+    def _reroute(self, active: _Active, run: SurveyRun, charter: MissionCharter) -> bool:
         """The rest of a search around the cylinders, as a new mission for the same order."""
-        if self.charter is None:
-            raise RuntimeError("no charter installed")
         rest = run.waypoints[run.next_index :]
         new = SurveyRun(
             active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
@@ -1619,7 +1647,7 @@ class Executor:
         except PlanError:
             return False
         route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
-        if active.cmd is None or not route_clear(route, ctx.keepouts, ctx.plane, self.charter):
+        if active.cmd is None or not route_clear(route, ctx.keepouts, ctx.plane, charter):
             return False
         # The whole gate on the new route (battery and return reserve included). The order
         # was accepted already: the new route is judged on the state it is flown from.
@@ -1632,7 +1660,7 @@ class Executor:
                 {"command_id": str(active.command_id), "codes": decision.reason_codes},
             )
             return False
-        handler = SurveyHandler.rerouted(new, self.charter.home)
+        handler = SurveyHandler.rerouted(new, charter.home)
         self._drop_active(stage=None, save_resume=False)
         self.emit(
             "keepout_reroute",

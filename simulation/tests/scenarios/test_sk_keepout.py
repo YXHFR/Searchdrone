@@ -77,7 +77,7 @@ async def test_a_new_cylinder_reroutes_the_search(
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await sc.airborne()
         res = await sc.operator_order("survey_sector", {"polygon": survey_box(sc)})
-        assert res.get("decision") == "ALLOW", res
+        assert res["gate"]["decision"] == "ALLOW", res
         survey = await sc.wait_command("survey_sector", "running", 60)
         await sc.until(lambda: _executor(sc, "SURVEY"), 120, "in the box")
         await surveying(sc)
@@ -107,7 +107,7 @@ async def test_a_new_cylinder_holds_a_goto_and_stop_still_works(
         p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
         target = sc.at(float(p1["east_m"]), float(p1["north_m"]))
         res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": 40})
-        assert res.get("decision") == "ALLOW", res
+        assert res["gate"]["decision"] == "ALLOW", res
         goto = await sc.wait_command("goto", "running", 30)
         await sc.until(lambda: sc.from_home_m() >= 30.0, 60, "on the way")
 
@@ -115,7 +115,7 @@ async def test_a_new_cylinder_holds_a_goto_and_stop_still_works(
         ahead = sc.at(0.0, 170.0)
         since = time.monotonic()
         await sc.confirm_find(*ahead, sigma95_m=SIGMA_M)
-        await until_event(sc, "keepout_hold")
+        await until_event(sc, "keepout_hold", 60.0)
         await sc.until(lambda: _executor(sc, "HOLD"), 10, "the drone hovers")
         live = await sc.onboard_state()
         assert live["hold_reason"] == "limit", live
@@ -143,7 +143,7 @@ async def test_orbit_around_a_find(sim: Any, migrated_db: Any, tmp_path: Path) -
 
         since = time.monotonic()
         res = await sc.operator_order("orbit", ring)
-        assert res.get("decision") == "ALLOW", res
+        assert res["gate"]["decision"] == "ALLOW", res
         await sc.wait_command("orbit", "running", 30)
         await sc.until(
             lambda: abs(distance_m(sc.tel.lat, sc.tel.lon, *centre) - ORBIT_M) <= RING_SLACK_M,
@@ -167,7 +167,7 @@ async def test_orbit_around_a_find(sim: Any, migrated_db: Any, tmp_path: Path) -
 
         # STOP during an orbit.
         res = await sc.operator_order("orbit", ring)
-        assert res.get("decision") == "ALLOW", res
+        assert res["gate"]["decision"] == "ALLOW", res
         await sc.wait_command("orbit", "running", 30)
         await sc.until(lambda: sc.tel.groundspeed_ms > 2.0, 30, "orbiting")
         t0 = time.monotonic()

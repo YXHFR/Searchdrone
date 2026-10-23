@@ -213,7 +213,7 @@ async def inspecting(sc: Scenario, det: GeoDetectionMsg) -> dict[str, Any]:
     res = await sc.operator_order(
         "inspect_detection", {"detection_id": str(det.detection_id), "standoff_m": 20}
     )
-    assert res.get("decision") == "ALLOW", res
+    assert res["gate"]["decision"] == "ALLOW", res
     return await sc.wait_command("inspect_detection", "running", 30)
 
 
