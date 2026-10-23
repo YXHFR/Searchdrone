@@ -8,6 +8,23 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- The image bank for the person detector (`tools/bench`, README there): `just bench-fetch
+  yes=1` downloads HERIDAL (CC BY 3.0) and the visible-light part of WiSARD to
+  `<data_dir>/datasets/`, checks each archive's size and SHA-256, unpacks only pictures
+  and labels under checked names and indexes them; it downloads nothing without `yes=1`,
+  resumes a stopped download and sets a wrong file aside unused. `sets=simfarm` indexes
+  the sim farm's renders for pre-training only. The split `tools/bench/splits/v1.json`
+  (70/10/20) is by sequence (place or flight), so no near-copy of a test picture is
+  trained on; the test part is locked. `just bench-detector` measures a detector on it:
+  recall per person size (under 16, 16-32 and over 32 px) at 0.5 false alarms per 12 MP,
+  AP50, precision at score 0.25 and time per picture, numbers only, to `build/bench/`;
+  `tools/bench/profiles.py` turns a result into the simulator's detector profile
+  (`det_oracle_v0` is the unmeasured start). A nightly job, `bench-mini`, reads 64 checked
+  test pictures straight out of the archive with byte ranges, runs the self-check (nothing
+  finds 0, the answer key finds all) and uploads only the numbers.
+- `sd_detect.TiledDetector`: runs any detector over overlapping tiles of a large picture
+  (640 px, 15 % overlap: 45 tiles for 12 MP), moves the boxes back, joins a person cut
+  by a tile edge into one box and removes doubles.
 - Photo mode for the simulator: `just ortho-fetch site=hellasgarden` fetches
   Lantmäteriet's newest colour orthophoto over the site (0.16 m per pixel, all tiles of the
   newest flight year, colour only) with the owner's own Geotorget login from a gitignored

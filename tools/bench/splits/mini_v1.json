@@ -1,0 +1,841 @@
+{
+  "schema": "bench.mini/v1",
+  "version": "mini_v1",
+  "split": "v1",
+  "dataset": "heridal",
+  "rule": "test-part pictures spread evenly over the sequences",
+  "images": [
+    {
+      "id": "heridal:test_ZRI_0001",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/test_ZRI_0001.jpg",
+        "sha256": "b153628c0cacddc75460c6b788c10858550af4b1da7cdf08818cd9884fbd6ae3",
+        "bytes": 4961358
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/test_ZRI_0001.xml",
+        "sha256": "0270018dc51ac326018eea1376b73e68c05e8164b23a3b8511068a287b26d463",
+        "bytes": 3385
+      }
+    },
+    {
+      "id": "heridal:test_ZRI_0006",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/test_ZRI_0006.jpg",
+        "sha256": "a0e29e92a1259838b2dc3b72149a3d9878cd6ef3cbf9f8360db7bf77a57f3c53",
+        "bytes": 3306276
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/test_ZRI_0006.xml",
+        "sha256": "3195b094f66689afb5fafc5bc6c75708c1e795b60c14c46fa83f4c870389a562",
+        "bytes": 1139
+      }
+    },
+    {
+      "id": "heridal:train_BLA_0001",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_BLA_0001.jpg",
+        "sha256": "f4558a9ba59d7744108817fe6fe62f2b98b2ffe41f87af0a767d935e436c4f57",
+        "bytes": 5337257
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_BLA_0001.xml",
+        "sha256": "3e2da17e0488b9f014410a973dc4ab64e31545fde67575b1bb3ce0ef9206d6cc",
+        "bytes": 1137
+      }
+    },
+    {
+      "id": "heridal:train_BLA_0005",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_BLA_0005.jpg",
+        "sha256": "811bdfbc61927ff71ca43ef965081501613d6625fb7e81a4a49bebfbfe418a13",
+        "bytes": 5382779
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_BLA_0005.xml",
+        "sha256": "3c3dca9cfbd4e520f5ee9c55d462f5caa70fe40c7bd8628d4528f60b2bf692f0",
+        "bytes": 1137
+      }
+    },
+    {
+      "id": "heridal:train_BLA_0009",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_BLA_0009.jpg",
+        "sha256": "17837dfda5db35c8a1b949c744a871cce5297ffb649d3ef22c8762d6f2d0c6e7",
+        "bytes": 5341344
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_BLA_0009.xml",
+        "sha256": "adf0280d4ef22abf09f1ee99dc9fde46fbc3fde26baf750c5c2d25e3a44cee44",
+        "bytes": 1137
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0001",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0001.jpg",
+        "sha256": "8408fb3ef136ddf7dd84cdae7faa7b7cdb62e664ac73e58eba2e17ed23765ff5",
+        "bytes": 5303548
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0001.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0006",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0006.jpg",
+        "sha256": "db43a62f58143d1ca46ae64211e7e63c86ea544529a599e01aa0ca4fbef19ab0",
+        "bytes": 5183683
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0006.xml",
+        "sha256": "16d73e4ebee8e7ac84e46aa3d4a65c9b65e00b9dbd6c3cd9093ca58f6ffd33fb",
+        "bytes": 571
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0011",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0011.jpg",
+        "sha256": "85c8d79738027711a911c9d1d1d445baccb0f2a517140a80c282c72b86fa7209",
+        "bytes": 5006719
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0011.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0016",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0016.jpg",
+        "sha256": "b0ba37876cf4419c453e5a3ddfae4ba77cd0300a5b797df5fa9521994c01ab3b",
+        "bytes": 5273610
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0016.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0021",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0021.jpg",
+        "sha256": "6afcc6c298263f18b2c0aa6415d381fc1a2079cf451fbda751562fb4cb83bbd5",
+        "bytes": 5167931
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0021.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0026",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0026.jpg",
+        "sha256": "a1185189834373a9a10adb617b4676405246bbf582a9eb37bc5a73a6a09b1650",
+        "bytes": 5174343
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0026.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0032",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0032.jpg",
+        "sha256": "5a300dd0d6e6198088017a608342e3f398f7be88d190de56d7491571d1a4b1ec",
+        "bytes": 5078431
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0032.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0037",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0037.jpg",
+        "sha256": "656eb6fe1eb74aab7afa8ff656f50c940afccc3f00686bd98938f93cc3686ea5",
+        "bytes": 5085775
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0037.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0042",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0042.jpg",
+        "sha256": "7bbe11f59f3fd8a16704ef00f530deaffb39e051025d587919a5fcf11fb06a17",
+        "bytes": 4976738
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0042.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0047",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0047.jpg",
+        "sha256": "50975bc0d69607f837bd9bf26c2e44fc7f92de39a2a3a40b48bced0582a03908",
+        "bytes": 5178848
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0047.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0052",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0052.jpg",
+        "sha256": "49ca2a890a1e3cade5ec150cba30234e61bf027ec9c70cfc2f9e04568bdac710",
+        "bytes": 5087584
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0052.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0057",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0057.jpg",
+        "sha256": "8f1a3412737fd78409002b8a26ac4dbdb70b2cd2667d365262885c728d03dc92",
+        "bytes": 5241832
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0057.xml",
+        "sha256": "39e5614a2b3c209aab398420011e2d1f9ea21f659e3f6a3548f5747fe4413ace",
+        "bytes": 567
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0063",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0063.jpg",
+        "sha256": "98715f18f31f50733ff3c37addd11e98abecc09eed39140e0bdfd06622ffc1df",
+        "bytes": 5086748
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0063.xml",
+        "sha256": "a35070997cdbe734a14e139ae32bcc80f76513059951a69caa0fc121c518e0c9",
+        "bytes": 571
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0068",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0068.jpg",
+        "sha256": "b33d8d76f7bcc63251b62a250e4cb24da118dda06b729b5fb24a0161f80d2a16",
+        "bytes": 5113324
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0068.xml",
+        "sha256": "2afd26fb4b8be85195346e3d1a1d6ca00e6070c6661f608e7a09dad6e850dcac",
+        "bytes": 572
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0073",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0073.jpg",
+        "sha256": "e7fcc2a04dd4f7a3556c7c71d738d2bb00397adede5df4194a18708c9debf5b6",
+        "bytes": 5097478
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0073.xml",
+        "sha256": "a8bca5457cdddf5a9c8b5a2cb181549acb0fdcde0f2111c99bb945b00066c0f3",
+        "bytes": 569
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0078",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0078.jpg",
+        "sha256": "65e609fa56e0a2a13c4a78f0aee85366fba77df1c93a5f9ac7d6c33928e6fd7b",
+        "bytes": 5072048
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0078.xml",
+        "sha256": "1308bb8428859279374219b2f41b0ab211611c293bda49bc8f4cb2f86ff677d6",
+        "bytes": 572
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0083",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0083.jpg",
+        "sha256": "a7e0efc25eee3416ddf804f8f0623aa082e0e17dddf0ca80249b976fcb104ac0",
+        "bytes": 5063685
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0083.xml",
+        "sha256": "e6422d4c7fce42f2905bdd37b01cda68259d06a3ddc6a7f0129448d5e6ae01cb",
+        "bytes": 571
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0088",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0088.jpg",
+        "sha256": "7df8974620a27a2492dc037b9ac1a22a771d750b4b47d7b2fe32e9f99f97a907",
+        "bytes": 5182228
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0088.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0094",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0094.jpg",
+        "sha256": "071556fcc87f5f8c721cf4ba8a52083a2df0335966a97e736858a16ee8c8f930",
+        "bytes": 5147405
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0094.xml",
+        "sha256": "ab7401e25ea6a9217771788bf5f9cd7083b809f6771366f5cde40e30b24b12b8",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0099",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0099.jpg",
+        "sha256": "8477e9e3e3a1039af1079154171061a702c9ac373ba4c03ddb5707271441b681",
+        "bytes": 5118726
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0099.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0104",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0104.jpg",
+        "sha256": "fc378f46f4e618a83d26d6115864c9f27dba5d1f9347c4c187732ee9385163c7",
+        "bytes": 5136214
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0104.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0109",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0109.jpg",
+        "sha256": "dcf5e0af17e7cff02105f0cdd23d2fb2d7cad8be89c45df953f69dc49c6bc6f6",
+        "bytes": 5220858
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0109.xml",
+        "sha256": "cecd3461040cc3b3e12cfff9795d9f03339eaecb72a2d1d946356e2a901ea43e",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0114",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0114.jpg",
+        "sha256": "2613cf28c40efe7e4c42df1ff61be11f5b0532995c8a93548d15a9b47587d755",
+        "bytes": 5198508
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0114.xml",
+        "sha256": "1af9c4903c1e441775be9039fe9d98e798f0353cbd2b1f266c5c2145c0e59a12",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0119",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0119.jpg",
+        "sha256": "2e0ecd807abfdf30987e69eef62b2e80440b5e9d02457f38d566518d8d83bdae",
+        "bytes": 5234169
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0119.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0125",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0125.jpg",
+        "sha256": "0357b905ccbe0293d51271f21a0451d1507d5deaa7798ca19f9da8fe852a615c",
+        "bytes": 5158676
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0125.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0130",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0130.jpg",
+        "sha256": "b6b8e49cc8bf8f72d55011dd4cb4452f797af4b082e446ac1289996e049028d8",
+        "bytes": 5029421
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0130.xml",
+        "sha256": "ed9b80c5e4ade3f6b94f91a2a9ed69253a3e9c07f5f27fb7347cc29f6ac0fa7b",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0135",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0135.jpg",
+        "sha256": "fda5e52ec9f1c66d9a73712719b088108cab5e85b9b74e1e954337b8fc42c31c",
+        "bytes": 5098679
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0135.xml",
+        "sha256": "0d2663aeb4ca9a18323304e83adf91d1a453713990fad7d6b1839a4c855bd38f",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0140",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0140.jpg",
+        "sha256": "a72042d474befc7bff6666d826d6478a87e97e132938ccb1ee6e90b12a2d6ebf",
+        "bytes": 5223921
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0140.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0145",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0145.jpg",
+        "sha256": "00a6afa96d2f7a7a52a2ff1a171cf0b5aca6c14d0bcaad522949e332be20b4fa",
+        "bytes": 5137020
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0145.xml",
+        "sha256": "b4fad94df2010f1ea96b6eb3b0e51e61288122061e8886c61786138f835e39dd",
+        "bytes": 569
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0150",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0150.jpg",
+        "sha256": "7bf8b96968a31b4d22c44d644033f8677ee18407a1377a19fc99da9ffc651770",
+        "bytes": 5150993
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0150.xml",
+        "sha256": "923fcc06564078d8189782e6d66ef5fb8d8dabe46e8067120013f4d7c53dd218",
+        "bytes": 854
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0156",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0156.jpg",
+        "sha256": "77ba55b1bd34f590781359ab01b7f8ff7784436be56f572016238d44877e9e21",
+        "bytes": 5200818
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0156.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0161",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0161.jpg",
+        "sha256": "12bab61a51ff5b3b7be729c369da51f7c3c66cc2b5a4631e0550eefe4d0c22a9",
+        "bytes": 5213016
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0161.xml",
+        "sha256": "26438b39cbd472e74e603b982d805f078ac93cf30f50bdddeae79ec6a134310b",
+        "bytes": 856
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0166",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0166.jpg",
+        "sha256": "51da149fb8937af8a8d63c1438181e4fb44caf18e9d29bc72399e30a7b66599e",
+        "bytes": 5138075
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0166.xml",
+        "sha256": "c0a3212bf59001094dc898e5f0b57225916ebf0ebb97d9e006c4400a9f382a1a",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0171",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0171.jpg",
+        "sha256": "e02e34cbcae357a5ba39e6b2f73927345250003eac8dddcc5b5a0672dc477380",
+        "bytes": 5229004
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0171.xml",
+        "sha256": "a026c2b0de9739f5540232f061769f203e6678da05fdcb43eb65779a79ad7f86",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0176",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0176.jpg",
+        "sha256": "0ba899bd984d863cdbfddce57174d647122171c14f7e75aff0e15cc3b29aecd6",
+        "bytes": 5094066
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0176.xml",
+        "sha256": "a0ebbb1779cd6bb88a65d32ce5aa925286ae114aa6d519b2b97bebb7c1502797",
+        "bytes": 573
+      }
+    },
+    {
+      "id": "heridal:train_JAS_0181",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_JAS_0181.jpg",
+        "sha256": "be5a78ab16c140a5052347b8f16cbaa6a7f5ca4b2281fe317fe101f28c09a275",
+        "bytes": 5145398
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_JAS_0181.xml",
+        "sha256": "d178ba682c3147828692b77cf5393fc55a95f553aa05d8912b8f8175989fc3b5",
+        "bytes": 571
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2007",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2007.jpg",
+        "sha256": "6f813dc7b5934439281359fd4cc924032e4fb77ff16bcf5d64e5cc62b1d2a268",
+        "bytes": 3855167
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2007.xml",
+        "sha256": "3197b66069a7926a932fd8b9f994954690583c4a8263ee9f3a4b0506ed34da74",
+        "bytes": 2528
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2012",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2012.jpg",
+        "sha256": "82a5f5799f1d3f9990d17e5b55624821f040fe1d2b53059724fd599ed43d1e08",
+        "bytes": 3631000
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2012.xml",
+        "sha256": "2c7dc80dbde73e521c6219089607d648f1898fb41522604f046f9f401ee32f14",
+        "bytes": 5636
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2017",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2017.jpg",
+        "sha256": "8bec2a00088a02cd56ae17b729078dd75d864a1afcba2e6f92f25a08f9640593",
+        "bytes": 3389600
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2017.xml",
+        "sha256": "6fcbeb74bee5ac60650b0c95b20b7b437465dd22360ac1a4346bfbbbe1f96bb7",
+        "bytes": 1137
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2022",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2022.jpg",
+        "sha256": "654e7850aedba238339f15cab3b393dc425d01943ef0ff4ff2ef462f97014e42",
+        "bytes": 4911646
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2022.xml",
+        "sha256": "458bb74bbfc0e10d930810524b3b919e646b6ef4e4c8e6cc001a4d43e486c144",
+        "bytes": 2550
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2027",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2027.jpg",
+        "sha256": "8d8d521558f248ba66be6390d61c2ac2627b770efce8619996be80c39891f867",
+        "bytes": 3780000
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2027.xml",
+        "sha256": "d83f74d81b5e74465caf419a9509494820a3a33688d0291de53338fef877e3ab",
+        "bytes": 1416
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2032",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2032.jpg",
+        "sha256": "86f6cc569d08c96b8faa077ea31d323a0214fd4b9782b7b345b2823adc0e951e",
+        "bytes": 3521301
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2032.xml",
+        "sha256": "70d030f6e89062058629a9bdd03f15640f2755485fa52afb9c43ea28974e2ba1",
+        "bytes": 3114
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2037",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2037.jpg",
+        "sha256": "8b9fa85606f2fbbdb75bd182b66004736a007f90a0ce25f4ef74d6e552e05f24",
+        "bytes": 3425073
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2037.xml",
+        "sha256": "c10d5c051233a3e78935aeb95677cffe87318a56013db7bcbbf5f80a97e39606",
+        "bytes": 4814
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2043",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2043.jpg",
+        "sha256": "b6ff14eb558c92208dcf7f6677bdbf9c596382920481ce372914dc29bf4c7dd0",
+        "bytes": 3068652
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2043.xml",
+        "sha256": "63473e44ccc2625963aeb6585edc3ffa8540f8af757092e56ae93c98f9bdc02c",
+        "bytes": 856
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2048",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2048.jpg",
+        "sha256": "63b90a443165789504aa956667e6837b1fe7e9aa3932a146ecc0fbdd5a437101",
+        "bytes": 4093056
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2048.xml",
+        "sha256": "9683a3cbcde6641f75115191d8234389eb5691da4e6085febc1dc2727e14e0ba",
+        "bytes": 3099
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2053",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2053.jpg",
+        "sha256": "63c290a6cd5c7be10485e3b76db3ac24f1811acba79584752a416e35fd81e56a",
+        "bytes": 3402790
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2053.xml",
+        "sha256": "09c9699a0d7f0838b009ae5b49d192d65d5cb637c6935cf05e8e879bbac02011",
+        "bytes": 1702
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2059",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2059.jpg",
+        "sha256": "54963346b8e5b2be2e1345e693cc3a0d94ec64455a3745511bd21e21d7bdf15b",
+        "bytes": 3210625
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2059.xml",
+        "sha256": "4bc822ff3e06755bec3605a4a0a0c8e728fd016e0dd9d1d97b7c3da6fa90ec3d",
+        "bytes": 10155
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2064",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2064.jpg",
+        "sha256": "faa24e3d5bf5ee55bd23b8aaabf1b7e583af1e361d6e4359ab1e2e25c5e8af18",
+        "bytes": 3425694
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2064.xml",
+        "sha256": "231e6e293190e00567a4cf497f05258adee2ceb60006224809e644e3a089a615",
+        "bytes": 2254
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2069",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2069.jpg",
+        "sha256": "23a658b172344582abc02297acd12a0fb4dddab862579bea3359bf53c9bab1ca",
+        "bytes": 3168935
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2069.xml",
+        "sha256": "805fdac6f7c1dd273f4b25219f21037158d7872f948be9117573de4ff6a4bcad",
+        "bytes": 3680
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2074",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2074.jpg",
+        "sha256": "3bc03c80a07259c5bebb590e42f7bb43d245bb62b4419681a19b86c4b0d8db00",
+        "bytes": 3331481
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2074.xml",
+        "sha256": "dd0ec03d85c046f8b108c9921204078ab0cd63ca99ebd3e759e4144105d714b2",
+        "bytes": 1416
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2079",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2079.jpg",
+        "sha256": "a2f22e25a3b38e7232bdfd809df248bc12f8de62b9700fd6929725a6651fb9f4",
+        "bytes": 2870237
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2079.xml",
+        "sha256": "e4ae5839f8e87d62c9e4ae2476afa191f27c55b1db5b3530c56f95e2e70e4c34",
+        "bytes": 4525
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2085",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2085.jpg",
+        "sha256": "2d0a454ac9079220bd145f6494be5ace00d30edceb90dd788270a71ac07000c7",
+        "bytes": 3124386
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2085.xml",
+        "sha256": "373a3f148edd22f92946d93fca48f74305b56d3b3dd0305e01264edbdadde493",
+        "bytes": 53
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_2090",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_2090.jpg",
+        "sha256": "2e07a51ff1cc1af307333690a6f66dfdbde6455ef4337a070dc3034893871d0a",
+        "bytes": 3410381
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_2090.xml",
+        "sha256": "eed490ea7f038ddf6850b13261f9cd85caa429dac3d4f4a6d44a4e6b714b9f4e",
+        "bytes": 1697
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_3005",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_3005.jpg",
+        "sha256": "8ccd8486db76d7dcafb29f4585205aa97ec47f01d8af3421b766c605c70b4383",
+        "bytes": 4515783
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_3005.xml",
+        "sha256": "e42c78e914b6e0e9e335188af545066dd6f36146f398429fb54ff544dc5a1d91",
+        "bytes": 4508
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_3010",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_3010.jpg",
+        "sha256": "014f4151cc833de69dfb54d45c2113dba60fb565a61436a3fd0b07da56b49a18",
+        "bytes": 3982063
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_3010.xml",
+        "sha256": "d8bd0c9ed5c10a4d5bc893f9d07e45a00118c2128847c79f0ce8acfdb15c795d",
+        "bytes": 2271
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_3015",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_3015.jpg",
+        "sha256": "589338a1aa3e4cfab38ab5ae3d62845f419e72df776f42ead19fb0f6fd92cf72",
+        "bytes": 4178800
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_3015.xml",
+        "sha256": "e2b351cd7b59d954fb07c93e2e57e12d853b802815d6fc0d15735a782353ca31",
+        "bytes": 4248
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_3020",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_3020.jpg",
+        "sha256": "e39a737fecdbb0676ea9b30e1bab779c0c02d99fe1f4061cd2ef58abecb4ecfc",
+        "bytes": 4153836
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_3020.xml",
+        "sha256": "ff5dca6dc92617f2f188d02e5c72592ae2d77de0a4694958359ce5fc568a5190",
+        "bytes": 6217
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_3025",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_3025.jpg",
+        "sha256": "351ee4bde4adfbc9691448044c5dd873517c01b926cffe3b35de70eee94d5c5a",
+        "bytes": 4263337
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_3025.xml",
+        "sha256": "f724c9b9bb78feaec563a2c2ab43197ca391708eb33629ea41fde0cd9888023c",
+        "bytes": 4812
+      }
+    },
+    {
+      "id": "heridal:train_ZRI_3030",
+      "image": {
+        "member": "heridal_keras_retinanet_voc/JPEGImages/train_ZRI_3030.jpg",
+        "sha256": "c523c3ceb1f7245a814b731c89dc4217e169fda167e7e8ee836281f4f352db74",
+        "bytes": 4455064
+      },
+      "label": {
+        "member": "heridal_keras_retinanet_voc/Annotations/train_ZRI_3030.xml",
+        "sha256": "2dc34e63c65f4c8ef9b520d655db9164e549d37fdf1f9fbc2043f3f51dae5549",
+        "bytes": 3106
+      }
+    }
+  ]
+}

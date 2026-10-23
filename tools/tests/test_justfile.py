@@ -46,6 +46,8 @@ RECIPES = [
     "e2e",
     "sim-setup",
     "maps-fetch",
+    "bench-fetch",
+    "bench-detector",
     "world-fetch",
     "world-snapshot",
     "sim-farm",
