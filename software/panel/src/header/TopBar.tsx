@@ -3,12 +3,14 @@ import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { useNow } from "../lib/useNow";
 import { useBrainEngine, useBrainState, useCommandMode } from "../state/brain";
+import { useCandidateStore } from "../state/candidateStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
 import { useShellStore } from "../state/shellStore";
 import { useUiStore } from "../state/uiStore";
 import { THEME_PREFS, type ThemePref } from "../theme/theme";
+import { BACKLOG_AT, groupQueue } from "../views/candidates/queue";
 import { type Cell, instrumentCells, isStale } from "./instruments";
 import { Menu } from "./Menu";
 import { type Tone, vehiclePill } from "./pills";
@@ -184,6 +186,28 @@ function PendingBadge() {
   );
 }
 
+/** "Att granska: n" while candidates wait; more than BACKLOG_AT says to get help. */
+function ReviewBadge() {
+  const { t } = useTranslation();
+  const cards = useCandidateStore((s) => s.cards);
+  const n = groupQueue(Object.values(cards)).review.length;
+  if (n === 0) return null;
+  const backlog = n > BACKLOG_AT;
+  return (
+    <button
+      type="button"
+      className="review-badge"
+      data-testid="review-badge"
+      data-backlog={backlog}
+      title={backlog ? t("candidates.backlog") : undefined}
+      onClick={() => useShellStore.getState().setMode("review")}
+    >
+      {t("candidates.count", { n })}
+      {backlog ? <span className="sr-only">{t("candidates.backlog")}</span> : null}
+    </button>
+  );
+}
+
 const THEME_ICON: Record<ThemePref, typeof Sun> = { auto: Monitor, dark: Moon, light: Sun };
 
 /** Auto, dark and daylight, each one press away. */
@@ -258,6 +282,7 @@ export function TopBar() {
       {vp === "desktop" ? <ModeCell /> : null}
       {vp === "desktop" ? <Clock /> : null}
       <div className="topbar-tools">
+        <ReviewBadge />
         <PendingBadge />
         {vp !== "phone" ? <ThemeSwitch /> : null}
         <Menu

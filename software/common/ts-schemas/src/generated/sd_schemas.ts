@@ -653,6 +653,17 @@ export interface CandidateQueue {
   items: CandidateCard[];
 }
 /**
+ * A detection's picture in large size, logged for the session that asked for it (a
+ * confirmation needs one). The JPEG is at ``GET /api/v1/views/{view_id}``.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateView".
+ */
+export interface CandidateView {
+  detection_id: string;
+  view_id: string;
+}
+/**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "CaptureStillsParams".
  */

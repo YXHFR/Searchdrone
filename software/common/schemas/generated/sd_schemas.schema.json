@@ -1643,6 +1643,28 @@
       "title": "CandidateState",
       "type": "string"
     },
+    "CandidateView": {
+      "additionalProperties": false,
+      "description": "A detection's picture in large size, logged for the session that asked for it (a\nconfirmation needs one). The JPEG is at ``GET /api/v1/views/{view_id}``.",
+      "properties": {
+        "detection_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "view_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "view_id",
+        "detection_id"
+      ],
+      "title": "CandidateView",
+      "type": "object"
+    },
     "CaptureStillsParams": {
       "additionalProperties": false,
       "properties": {

@@ -127,7 +127,8 @@
         "pins": "Nålar",
         "swept": "Avsökt yta",
         "paths": "Ritade vägar",
-        "finds": "Fynd"
+        "finds": "Fynd",
+        "candidates": "Kandidater"
       },
       "find": {
         "title": "Fynd",
@@ -154,7 +155,6 @@
     },
     "candidates": {
       "title": "Kandidater",
-      "stub": "Kandidatkön kommer i etapp 2.",
       "onlyYou": "Bara du kan bekräfta att ett fynd är rätt person."
     },
     "status": {
@@ -583,7 +583,9 @@
   },
   "finds": {
     "title": "Fynd",
-    "later": "Fynd från kamerans sökning visas här när kandidatkön finns (etapp 2).",
+    "none": "Inga bekräftade fynd ännu.",
+    "toReview": "Att granska: {{n}}",
+    "confirmed": "Bekräftat: F{{n}} (K{{seq}})",
     "open": "Öppna Granska"
   },
   "minimap": {
@@ -735,5 +737,127 @@
       "beige": "Beige",
       "unknown": "Okänd"
     }
+  },
+  "candidates": {
+    "label": "Kandidatkön",
+    "tabs": {
+      "review": "Att granska",
+      "confirmed": "Bekräftade",
+      "rejected": "Avvisade"
+    },
+    "low": "Låg prioritet ({{n}})",
+    "empty": {
+      "review": "Inget att granska just nu.",
+      "confirmed": "Inga bekräftade fynd.",
+      "rejected": "Inga avvisade kandidater."
+    },
+    "count": "Att granska: {{n}}",
+    "backlog": "Många kandidater väntar. Be fler i teamet granska.",
+    "keys": "J/K eller pilarna flyttar, Enter öppnar.",
+    "seen": "sedd i {{n}} av {{m}} bilder",
+    "ageNow": "nyss",
+    "age": "{{n}} min sedan",
+    "near": {
+      "rejected": "nära avvisad K{{seq}}",
+      "confirmed": "nära bekräftad K{{seq}}"
+    },
+    "profile": "bedömd mot profil v{{v}}",
+    "profileOld": "bedömd mot profil v{{v}}, nu gäller v{{now}}",
+    "noThumb": "Ingen bild",
+    "prio": {
+      "high": "Hög prioritet",
+      "medium": "Medelprioritet",
+      "low": "Låg prioritet"
+    },
+    "person": {
+      "yes": "AI: troligen en person",
+      "no": "AI: troligen inte en person",
+      "unsure": "AI: osäker"
+    },
+    "engine": {
+      "code": "Kod",
+      "fast": "Moln snabb",
+      "strong": "Moln stark",
+      "oracle": "Orakel"
+    },
+    "field": {
+      "garment": "Plagg {{n}}",
+      "item": "Föremål {{n}}",
+      "hair": "Hår",
+      "state": "Tillstånd"
+    },
+    "fieldValue": {
+      "match": "stämmer",
+      "conflict": "stämmer inte",
+      "not_visible": "syns inte"
+    },
+    "flag": {
+      "motion_claim": "säger att personen rör sig",
+      "identity_claim": "säger vem personen är",
+      "format_repaired": "svaret fick lagas"
+    },
+    "flagNote": "AI-påstående, ej verifierat",
+    "state": {
+      "new": "Ny",
+      "assessing": "Bedöms",
+      "ready": "Klar att granska",
+      "inspecting": "Tittas närmare på",
+      "confirmed": "Bekräftad",
+      "rejected": "Avvisad",
+      "merged": "Sammanslagen"
+    },
+    "review": {
+      "back": "Tillbaka till kön",
+      "loading": "Hämtar kandidaten…",
+      "failed": "Kunde inte hämta kandidaten.",
+      "pictures": "Bilder, äldst först",
+      "noPictures": "Inga bilder sparade för kandidaten.",
+      "showLarger": "Visa större",
+      "large": "Bild från {{time}} i större format",
+      "closeLarge": "Stäng bilden",
+      "showAi": "Visa AI:ns bedömning",
+      "hideAi": "Dölj AI:ns bedömning",
+      "aiLocked": "Titta på en bild i större format först. Sedan kan du läsa AI:ns bedömning.",
+      "aiNone": "Ingen AI-bedömning ännu.",
+      "aiPerson": "Person: {{p}}",
+      "aiOverall": "Stämmer med profilen: {{p}}",
+      "where": "Ungefärlig plats ±{{sigma}} m",
+      "note": "Anteckning (valfri)",
+      "confirm": "Bekräfta",
+      "confirmHint": "håll in 0,8 s",
+      "confirmLocked": "Visa en bild större innan du kan bekräfta.",
+      "reject": "Inte hen",
+      "inspect": "Titta närmare",
+      "inspectLater": "Kommer i en senare version.",
+      "unsure": "Osäker",
+      "decided": "Beslutet är sparat.",
+      "superseded": "Kandidaten ändrades medan du tittade. Den nya versionen visas nu.",
+      "error": "Beslutet gick inte igenom: {{msg}}"
+    },
+    "dialog": {
+      "title": "Bekräfta K{{seq}} som personen ni söker?",
+      "body": "Positionen visas för markteamet.",
+      "yes": "Ja, bekräfta",
+      "cancel": "Avbryt"
+    },
+    "found": {
+      "title": "Fynd F{{n}}: K{{seq}}",
+      "byYou": "Bekräftad av dig {{time}}",
+      "by": "Bekräftad av {{who}} {{time}}",
+      "decimal": "Decimalgrader",
+      "dms": "Grader, minuter, sekunder",
+      "sweref": "SWEREF 99 TM",
+      "notSweden": "gäller bara i Sverige",
+      "copy": "Kopiera",
+      "copied": "Kopierat",
+      "copyFailed": "Kunde inte kopiera. Markera texten och kopiera själv.",
+      "gpx": "Ladda ner GPX",
+      "undo": "Ångra",
+      "undoNote": "Varför ångras bekräftelsen? (krävs)",
+      "undoConfirm": "Ångra bekräftelsen",
+      "cancel": "Avbryt",
+      "reopen": "Öppna igen"
+    },
+    "toastConfirmed": "Fynd bekräftat: K{{seq}}"
   }
 }

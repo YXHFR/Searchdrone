@@ -76,6 +76,7 @@ export function addOverlay(map: maplibregl.Map, labels: boolean, flavor: MapFlav
       id,
       type: "symbol",
       source,
+      ...(extra.filter ? { filter: extra.filter } : {}),
       layout: {
         "text-field": ["get", field],
         "text-size": 12,
@@ -235,6 +236,32 @@ export function addOverlay(map: maplibregl.Map, labels: boolean, flavor: MapFlav
     },
   });
   text("finds-label", "finds", "label");
+  add({
+    id: "candidates-circle",
+    type: "fill",
+    source: "candidates",
+    filter: ["==", ["geometry-type"], "Polygon"],
+    paint: {
+      "fill-color": ["case", ["get", "found"], C.ok, C.warn],
+      "fill-opacity": 0.12,
+      "fill-outline-color": ["case", ["get", "found"], C.ok, C.warn],
+    },
+  });
+  add({
+    id: "candidates-point",
+    type: "circle",
+    source: "candidates",
+    filter: ["==", ["geometry-type"], "Point"],
+    paint: {
+      "circle-radius": ["case", ["get", "found"], 9, 6],
+      "circle-color": ["case", ["get", "found"], C.ok, C.warn],
+      "circle-stroke-color": C.halo,
+      "circle-stroke-width": 2,
+    },
+  });
+  text("candidates-label", "candidates", "label", {
+    filter: ["==", ["geometry-type"], "Point"],
+  });
   add({
     id: "find-hover-point",
     type: "circle",
