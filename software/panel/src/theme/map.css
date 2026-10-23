@@ -159,6 +159,11 @@
   border: 1px solid var(--c-line);
   font-size: var(--fs-small);
 }
+/* On a phone the sheet covers the map's foot and the camera button sits above it on the
+   right: the legend stacks above both. */
+.shell[data-vp="phone"] .map-prob {
+  bottom: calc(var(--sheet-peek) + 92px);
+}
 .map-prob p {
   margin: 0 0 2px;
 }
