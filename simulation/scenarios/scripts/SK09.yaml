@@ -1,6 +1,6 @@
-# SK09: the wrong person in sector A, the right one in sector B. After a closer look
-# the AI searches sector B (the operator rejects the wrong person meanwhile). Test data
-# for the scripted commander.
+# SK09: the wrong person in sector A, the right one in sector B. After each closer look
+# the AI resumes the search where it broke off, sector A and then sector B (the operator
+# rejects the wrong person meanwhile). Test data for the scripted commander.
 scenario: SK09
 timeout_s: 900
 expected_runtime_s: 540
@@ -28,8 +28,8 @@ turns:
   - on: skill_event
     when: {skill: inspect_detection, status: done}
     once: false
-    say: ["Bilderna är tagna. Söker vidare i sektor B."]
-    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+    say: ["Bilderna är tagna. Söker vidare där jag var."]
+    action: {skill: resume, params: {}}
   # Only a person confirms: after a confirmation the drone holds and the AI asks.
   - on: candidate_decided
     when: {decision: confirm}
@@ -40,11 +40,11 @@ turns:
     once: false
     say: ["Uppfattat, inte personen. Söker vidare."]
   - on: skill_event
-    when: {skill: survey_sector, status: done}
+    when: {skill: [survey_sector, resume], status: done}
     say: ["Sektorn är sökt. Söker av sektor B."]
     action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   - on: skill_event
-    when: {skill: survey_sector, status: done}
+    when: {skill: [survey_sector, resume], status: done}
     say: ["Sektorerna är sökta. Flyger hem och landar."]
     action: {skill: return_home, params: {reason: "Sökningen klar."}}
   - on: operator_message
