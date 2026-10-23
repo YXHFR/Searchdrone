@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Protocol
 
 from sd_schemas.search import SearchProfile
-from sd_search.client import GroundError, SearchApi
+from sd_search.client import SearchApi
 
 __all__ = ["FileProfileSource", "GroundProfileSource", "ProfileSource", "approved_only"]
 
@@ -38,11 +38,10 @@ class GroundProfileSource:
         self.api = api
 
     async def current(self, mission_id: str) -> SearchProfile | None:
-        try:
-            profile = await self.api.profile(mission_id)
-        except GroundError as exc:
-            log.warning("sökprofilen gick inte att läsa: %s", exc)
-            return None
+        """``None`` only when the ground says there is no approved profile. A read that
+        fails raises ``GroundError``: the mission waits a round instead of being scored
+        without its profile (and then scored again when the profile is back)."""
+        profile = await self.api.profile(mission_id)
         if profile is not None and str(profile.mission_id) != mission_id:
             return None
         return approved_only(profile)

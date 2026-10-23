@@ -212,7 +212,9 @@ async def cards(
     """The queue: by priority (highest first, then display number), merged candidates only
     when asked for. ``before_seq`` is the paging cursor: the ``seq`` of the last card of
     the previous page, and the next page holds the cards after it in the same order (so a
-    later page never skips a card with a higher seq and a lower priority)."""
+    later page never skips a card with a higher seq and a lower priority). The cursor is
+    that card's priority now: if it changes between two pages, the next page can skip or
+    repeat cards; the live topic ``candidates`` keeps the panel's list current."""
     await flow.mission(mission_id)
     every = await card_list(flow, mission_id)
     counts = {"review": 0, "low": 0, "confirmed": 0, "rejected": 0}
@@ -250,7 +252,7 @@ async def detail(flow: MissionFlow, candidate_id: str) -> dict[str, Any]:
     mission_id = await r.candidate_mission(candidate_id)
     if mission_id is None:
         raise ApiStatusError(404, "CANDIDATE_NOT_FOUND", "Kandidaten finns inte.")
-    card = next(c for c in await card_list(flow, mission_id) if str(c.candidate_id) == candidate_id)
+    (card,) = await card_list(flow, mission_id, only={candidate_id})
     assessed = await r.assessments([candidate_id])
     return {
         "card": card.model_dump(mode="json"),

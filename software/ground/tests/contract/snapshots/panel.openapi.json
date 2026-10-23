@@ -5418,7 +5418,7 @@
     },
     "/api/v1/missions/{mission_id}/candidates": {
       "get": {
-        "description": "The review queue: candidates by priority, highest first. Every candidate is\nlisted (a low priority only puts it further down); merged ones only with\n``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected.\nPaging: ``before_seq`` = the ``seq`` of the previous page's last card.",
+        "description": "The review queue: candidates by priority, highest first. Every candidate is\nlisted (a low priority only puts it further down); merged ones only with\n``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected.\nPaging: ``before_seq`` = the ``seq`` of the previous page's last card; the next page\nholds the cards after it in queue order (not \"seq lower than\").",
         "operationId": "get_candidates_api_v1_missions__mission_id__candidates_get",
         "parameters": [
           {
