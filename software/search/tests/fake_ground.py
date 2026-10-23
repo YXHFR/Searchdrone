@@ -158,8 +158,11 @@ class FakeGround:
         return [s for s in self.still_rows if s.seq > after_seq][:limit]
 
     async def write_map(self, mission_id: str, body: ProbabilityMapWrite) -> ProbabilityMapWritten:
-        if self.maps and (self.maps[-1].frozen or body.version != self.maps[-1].version + 1):
-            raise ConflictError("frozen or stale", 409)
+        found = any(r[-1].state == CandidateState.CONFIRMED for r in self.revs.values())
+        if self.maps and self.maps[-1].frozen and found:
+            raise ConflictError("frozen", 409)  # unlocked once the pilot reopens the find
+        if self.maps and body.version != self.maps[-1].version + 1:
+            raise ConflictError("stale", 409)
         if not self.maps and body.version != 1:
             raise ConflictError("stale", 409)
         self.maps.append(body)

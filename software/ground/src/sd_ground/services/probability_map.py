@@ -3,9 +3,10 @@
 The search service reads the map's inputs (``inputs``: the approved charter's area and
 sectors, the search height and speed, the operator's areas with a POA hint and the newest
 version) and the stills (``stills``), and writes each new version (``write``). The ground
-checks a version before it stores it: the next number, nothing after a frozen version,
-the approved profile's place last seen as the grid's origin, the array sizes, finite
-values in [0, 1] and ``sum(p) + row == 1``. The grid's bounds are computed here, not
+checks a version before it stores it: the next number, nothing after a frozen version
+while a find is still confirmed (the pilot's reopen unlocks the map), the approved
+profile's place last seen as the grid's origin, the array sizes, finite values in [0, 1]
+and ``sum(p) + row == 1``. The grid's bounds are computed here, not
 taken from the writer. The panel reads the newest version (``view``), an image of it
 (``png``) and the sector scores (``sector_scores``); the AI gets the situation line.
 
@@ -188,7 +189,7 @@ async def write(
     stored = body.model_dump(mode="json", exclude={"p_z", "pod_z", "version", "reason", "row"})
     stored["grid"] = grid.model_dump(mode="json")
     try:
-        await repo(flow).insert(
+        unlocked = await repo(flow).insert(
             mission_id,
             version=body.version,
             reason=body.reason,
@@ -210,6 +211,14 @@ async def write(
         vehicle_id=mission.vehicle_id,
         mission_id=mission_id,
     )
+    if unlocked:
+        flow.g.add_event(
+            "probability_map.unfrozen",
+            severity="info",
+            mission_id=mission_id,
+            vehicle_id=mission.vehicle_id,
+            payload=data,
+        )
     if body.frozen:
         flow.g.add_event(
             "probability_map.frozen",

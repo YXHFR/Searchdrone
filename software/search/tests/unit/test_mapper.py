@@ -199,6 +199,39 @@ async def test_confirm_freezes_map() -> None:
     assert g.maps[-1].version == last.version  # the version stands still
 
 
+async def test_reopen_unlocks_map() -> None:
+    g = ground()
+    clock = Clock()
+    m = mapper(g, clock)
+    s = SearchService(g, GroundProfileSource(g), mapper=m)
+    lat, lon = at(-300, 0)
+    still = add_still(g, -300, 0, str(new_id()))
+    g.add_detection(
+        detection_id=str(new_id()),
+        still_id=str(still.still_id),
+        lat=lat,
+        lon=lon,
+        captured_utc=utc(0),
+    )
+    await s.step()
+    (cid,) = g.revs
+    g.decide(cid, CandidateState.CONFIRMED)
+    clock.t += 3
+    await s.step()
+    frozen = g.maps[-1]
+    assert frozen.frozen
+    g.decide(cid, CandidateState.READY)  # the pilot reopens the find
+    clock.t += 3
+    await s.step()
+    after = g.maps[-1]
+    assert after.version == frozen.version + 1 and not after.frozen
+    assert after.reason == "candidate"
+    add_still(g, 0, 0, str(new_id()))
+    clock.t += SAVE_EVERY_S + 1
+    await s.step()
+    assert g.maps[-1].version == after.version + 1  # versions come in again
+
+
 async def test_a_pending_candidate_keeps_its_cell_until_rejected() -> None:
     g = ground()
     clock = Clock()
