@@ -112,19 +112,36 @@ async def still(r: Rig, east: float, north: float, half: float = 30.0) -> None:
     await r.until(done, 10, "report handled")
 
 
-async def confirmed_candidate(r: Rig, mid: str) -> None:
+async def confirmed_candidate(r: Rig, mid: str) -> str:
     """A candidate a person confirmed, written as the ground stores the decision."""
     lat, lon = r.at(0, 0)
     async with r.flow.repo.engine.begin() as conn:
-        await conn.execute(
+        res = await conn.execute(
             text(
                 "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, "
                 "sigma95_m, n_seen, n_in_view, best_detector_score, priority, "
                 "first_seen_utc, last_seen_utc) VALUES (uuidv7(), 1, CAST(:m AS uuid), 1, "
                 "'confirmed', ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 5, 3, 3, 0.8, 0.9, "
-                "now(), now())"
+                "now(), now()) RETURNING candidate_id::text"
             ),
             {"m": mid, "lon": lon, "lat": lat},
+        )
+        return str(res.scalar_one())
+
+
+async def reopened(r: Rig, cid: str) -> None:
+    """The pilot's reopen of a confirmed find: a new revision back in ``ready``."""
+    async with r.flow.repo.engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, "
+                "sigma95_m, n_seen, n_in_view, best_detector_score, priority, "
+                "first_seen_utc, last_seen_utc) SELECT candidate_id, rev + 1, mission_id, seq, "
+                "'ready', geom, sigma95_m, n_seen, n_in_view, best_detector_score, priority, "
+                "first_seen_utc, last_seen_utc FROM candidates WHERE candidate_id = "
+                "CAST(:c AS uuid) ORDER BY rev DESC LIMIT 1"
+            ),
+            {"c": cid},
         )
 
 
@@ -265,11 +282,23 @@ async def test_the_ground_checks_every_version(r: Rig) -> None:
     fake = await post(version=3, reason="confirmed", frozen=True)
     assert fake.status_code == 409 and fake.json()["code"] == "MAP_NOT_CONFIRMED"
     assert (await post(version=3, frozen=True)).status_code == 409
-    await confirmed_candidate(r, mid)
+    cid = await confirmed_candidate(r, mid)
     frozen = await post(version=3, reason="confirmed", frozen=True)
     assert frozen.status_code == 201 and frozen.json() == {"version": 3, "frozen": True}
     after = await post(version=4)
     assert after.status_code == 409 and after.json()["code"] == "MAP_FROZEN"
+
+    # The pilot reopens the find: the map takes versions again, and says it was unlocked.
+    await reopened(r, cid)
+    assert (await post(version=4, frozen=True)).status_code == 409  # nothing to lock on now
+    unlocked = await post(version=4, reason="candidate")
+    assert unlocked.status_code == 201 and unlocked.json() == {"version": 4, "frozen": False}
+    got = (await r.panel.get(f"/api/v1/missions/{mid}/probability-map")).json()
+    assert got["version"] == 4 and not got["frozen"]
+    await r.g.flush_events()
+    rows = await r.panel.get(f"/api/v1/missions/{mid}/events?type=probability_map.unfrozen")
+    assert rows.json() and rows.json()[0]["payload"]["version"] == 4
+    assert (await post(version=5)).status_code == 201
 
     # Only the search token writes; the panel and the AI cannot.
     assert (await r.panel.post(url, json=base | {"version": 4}, headers=H)).status_code in (

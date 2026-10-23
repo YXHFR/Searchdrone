@@ -11,7 +11,9 @@ version when the map changed:
 * otherwise at most every ``SAVE_EVERY_S`` while stills come in.
 
 A confirmed candidate writes one last version with ``frozen = True``; the ground refuses
-anything after it. The map only ranks where to look: nothing here can give an order.
+anything after it while the find stands. When the pilot reopens the find, the map is built
+again from every still and the next version (reason ``candidate``) unlocks it. The map
+only ranks where to look: nothing here can give an order.
 A failed read or a 409 makes the mission wait a round, the candidate loop goes on.
 """
 
@@ -25,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Final, cast
 
 from sd_schemas.probmap import MapReason, ProbabilityMapInputs, ProbabilityMapWrite, SearchStill
-from sd_schemas.search import SearchProfile, SearchTrack
+from sd_schemas.search import CandidateState, SearchProfile, SearchTrack
 from sd_search.client import ConflictError, GroundError, SearchApi
 from sd_search.probmap.build import Built, MapBuilder, MapCandidate, MapInputs, encode_f32
 from sd_search.probmap.pod import Still
@@ -73,7 +75,7 @@ class _Mission:
     written_at: float | None = None
     last_key: tuple[object, ...] | None = None
     passes: frozenset[str] = frozenset()
-    frozen: bool = False
+    reopened: bool = False  # built again after a reopened find: the first version says so
 
 
 class MapService:
@@ -116,15 +118,16 @@ class MapService:
 
     async def _mission_step(self, mission_id: str) -> int:
         m = self.missions.setdefault(mission_id, _Mission(MapBuilder(self.terrain)))
-        if m.frozen:
-            return 0
         profile = await self.profiles.current(mission_id)
         if profile is None:
             return 0  # no approved profile: no map (the matching waits the same way)
         inputs = await self.api.map_inputs(mission_id)
         if inputs.latest is not None and inputs.latest.frozen:
-            m.frozen = True
-            return 0
+            tracks = await self.api.tracks(mission_id)
+            if any(t.candidate.state is CandidateState.CONFIRMED for t in tracks):
+                return 0  # the find stands: the map stays as it was
+            # The pilot reopened the find: build again from every still, the map unlocks.
+            m = self.missions[mission_id] = _Mission(MapBuilder(self.terrain), reopened=True)
         while True:
             page = await self.api.stills(mission_id, m.cursor, STILLS_PAGE)
             for s in page:
@@ -160,12 +163,11 @@ class MapService:
             pod_z=encode_f32(state.pod_cum),
         )
         try:
-            written = await self.api.write_map(mission_id, body)
+            await self.api.write_map(mission_id, body)
         except BaseException:
             m.last_key, m.passes = seen  # not on the ground: the next round tries again
             raise
         m.written_at = self.monotonic()
-        m.frozen = written.frozen
         return 1
 
     def _reason(
@@ -190,6 +192,8 @@ class MapService:
         if built.confirmed:
             return "confirmed"
         if before is None:
+            if m.reopened:
+                return "candidate"
             return "prior" if inputs.latest is None else "search"
         if before == key:
             return None
