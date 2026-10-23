@@ -27,8 +27,8 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import APIRouter, Path, Request, Response
 
-from sd_ground.api.deps import ApiStatusError
-from sd_ground.api.panel import G, Observer, VehiclePath
+from sd_ground.api.deps import ApiStatusError, VehiclePath
+from sd_ground.api.panel import G, Observer
 from sd_ground.logging import get_logger
 from sd_ground.services.video import stream_path
 

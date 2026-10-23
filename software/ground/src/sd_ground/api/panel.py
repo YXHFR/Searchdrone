@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 
@@ -26,6 +26,8 @@ from sd_ground.api import tiles
 from sd_ground.api.deps import (
     COOKIE,
     ApiStatusError,
+    IdPath,
+    VehiclePath,
     ground,
     not_built,
     repo_of,
@@ -49,6 +51,7 @@ from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
 from sd_ground.services import health
 from sd_ground.services import perception as perception_service
+from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_ground.sources import EmergencyUnavailableError
@@ -93,7 +96,14 @@ from sd_schemas.api import (
 from sd_schemas.charter import CharterProposal
 from sd_schemas.gate import GateDecision
 from sd_schemas.safety import SafetyLimits
-from sd_schemas.search import CandidateDetail, CandidateQueue, CandidateState
+from sd_schemas.search import (
+    CandidateDetail,
+    CandidateQueue,
+    CandidateState,
+    SearchProfile,
+    SearchProfileApproval,
+    SearchProfileState,
+)
 
 __all__ = ["OPERATOR_ALIAS", "dispatch_emergency", "router"]
 
@@ -102,9 +112,6 @@ OPERATOR_ALIAS = "demo"  # the single operator of v0.1.0 (sim: operator:demo)
 
 router = APIRouter(prefix="/api/v1")
 
-_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-IdPath = Annotated[str, Path(pattern=_UUID)]
-VehiclePath = Annotated[str, Path(pattern=r"^[a-z0-9][a-z0-9-]{2,31}$")]
 Observer = Annotated[Principal, Depends(require("observer"))]
 Pilot = Annotated[Principal, Depends(require("pilot"))]
 Interactive = Annotated[Principal, Depends(require_interactive)]
@@ -498,6 +505,26 @@ async def post_charter(mission_id: IdPath, body: CharterProposal, g: G, who: Pil
 async def get_sectors(mission_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
     await _flow(g).mission(mission_id)
     return await _flow(g).sectors_geojson(mission_id)
+
+
+@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfileState)
+async def get_search_profile(mission_id: IdPath, g: G, _: Observer) -> SearchProfileState:
+    """The approved profile in force and a newer proposal from the AI, if any."""
+    return await profile_service.state(_flow(g), mission_id)
+
+
+@router.post("/missions/{mission_id}/search-profile", status_code=201, response_model=SearchProfile)
+async def post_search_profile(
+    mission_id: IdPath, body: SearchProfileApproval, g: G, who: Interactive
+) -> SearchProfile:
+    """Approve profile: only a pilot's click in the panel. The profile as sent becomes the
+    next version; 409 when a newer version or proposal arrived since the card showed it."""
+    return await profile_service.approve(_flow(g), mission_id, body, who.issuer_ref)
+
+
+@router.get("/missions/{mission_id}/search-profile/versions", response_model=list[SearchProfile])
+async def get_search_profile_versions(mission_id: IdPath, g: G, _: Observer) -> list[SearchProfile]:
+    return await profile_service.versions(_flow(g), mission_id)
 
 
 @router.get("/missions/{mission_id}/approvals", response_model=list[Approval])

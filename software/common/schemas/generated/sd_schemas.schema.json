@@ -7400,7 +7400,7 @@
     },
     "SearchProfile": {
       "additionalProperties": false,
-      "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.\nThe age and height bands are for the people searching, never for the matching.",
+      "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.",
       "properties": {
         "age_band": {
           "anyOf": [
@@ -7558,13 +7558,257 @@
         }
       },
       "required": [
+        "subject_category",
+        "last_seen",
         "profile_id",
         "profile_version",
-        "mission_id",
+        "mission_id"
+      ],
+      "title": "SearchProfile",
+      "type": "object"
+    },
+    "SearchProfileApproval": {
+      "additionalProperties": false,
+      "description": "The pilot's approval from the card: the profile as corrected, and what the card\nshowed when they began. A newer version or proposal than that is refused (409), so an\napproval never covers AI content the pilot has not seen.",
+      "properties": {
+        "base_version": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profile": {
+          "$ref": "#/$defs/SearchProfileDraft"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "profile",
+        "base_version"
+      ],
+      "title": "SearchProfileApproval",
+      "type": "object"
+    },
+    "SearchProfileDraft": {
+      "additionalProperties": false,
+      "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands, the place last seen and the sources are for the people\nsearching, never for the cloud matching.",
+      "properties": {
+        "age_band": {
+          "anyOf": [
+            {
+              "enum": [
+                "child",
+                "youth",
+                "adult",
+                "senior"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "excluded": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "type": "array"
+        },
+        "free_text": {
+          "default": "",
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "garments": {
+          "items": {
+            "$ref": "#/$defs/Garment"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "hair": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hair"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "height_band": {
+          "anyOf": [
+            {
+              "enum": [
+                "short",
+                "medium",
+                "tall"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Item"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
+        "last_seen": {
+          "$ref": "#/$defs/LastSeen"
+        },
+        "likely_state": {
+          "items": {
+            "enum": [
+              "walking",
+              "sitting",
+              "lying",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "type": "array"
+        },
+        "mobility": {
+          "default": "unknown",
+          "enum": [
+            "good",
+            "reduced",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "subject_category": {
+          "enum": [
+            "dementia",
+            "hiker",
+            "despondent",
+            "gatherer",
+            "hunter",
+            "child_1_6",
+            "child_7_12",
+            "child_13_15",
+            "autism",
+            "other"
+          ],
+          "type": "string"
+        },
+        "visual_notes": {
+          "default": "",
+          "maxLength": 300,
+          "type": "string"
+        }
+      },
+      "required": [
         "subject_category",
         "last_seen"
       ],
-      "title": "SearchProfile",
+      "title": "SearchProfileDraft",
+      "type": "object"
+    },
+    "SearchProfileProposal": {
+      "additionalProperties": false,
+      "description": "The AI's proposal from the chat. It changes nothing until a pilot approves it.",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/SearchProfileDraft"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "title": "SearchProfileProposal",
+      "type": "object"
+    },
+    "SearchProfileProposalResult": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id"
+      ],
+      "title": "SearchProfileProposalResult",
+      "type": "object"
+    },
+    "SearchProfileState": {
+      "additionalProperties": false,
+      "description": "The profile in force (highest approved version) and a newer proposal, if any.",
+      "properties": {
+        "approved": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SearchProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SearchProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposed_by": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "SearchProfileState",
       "type": "object"
     },
     "Sector": {

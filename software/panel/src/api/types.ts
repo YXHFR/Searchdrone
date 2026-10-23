@@ -24,6 +24,8 @@ export type {
   OperatorLatch,
   PanelConfig,
   SafetyLimits,
+  SearchProfile,
+  SearchProfileDraft,
   Session,
   StateSnapshot,
   SystemStatus,

@@ -49,6 +49,7 @@ TOPICS = frozenset(
         "alerts",
         "detections",
         "candidates",
+        "search_profile",
     }
 )
 

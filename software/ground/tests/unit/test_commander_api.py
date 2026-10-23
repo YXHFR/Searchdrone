@@ -35,6 +35,8 @@ COMMANDER_WHITELIST = frozenset(
         ("POST", "/commander/v1/missions/{mission_id}/estimate"),
         ("POST", "/commander/v1/missions/{mission_id}/commands/{command_id}/cancel"),
         ("POST", "/commander/v1/missions/{mission_id}/charter-proposals"),
+        # A search-profile proposal: stored for the pilot's card, used only once approved.
+        ("POST", "/commander/v1/missions/{mission_id}/profile-proposals"),
         # The AI's stop check: a pilot's own recent line only, never a release.
         ("POST", "/commander/v1/missions/{mission_id}/chat-intents"),
         ("GET", "/commander/v1/missions/{mission_id}/memory"),

@@ -47,5 +47,8 @@ export const paths = {
     `${API}/missions/${enc(missionId)}/detections/${enc(detectionId)}/crop`,
   annotation: (annotationId: string) => `${API}/annotations/${enc(annotationId)}`,
   missionTrack: (missionId: string) => `${API}/missions/${enc(missionId)}/track?max_points=5000`,
+  searchProfile: (missionId: string) => `${API}/missions/${enc(missionId)}/search-profile`,
+  searchProfileVersions: (missionId: string) =>
+    `${API}/missions/${enc(missionId)}/search-profile/versions`,
   liveSocket: () => "/ws/v1/live",
 } as const;

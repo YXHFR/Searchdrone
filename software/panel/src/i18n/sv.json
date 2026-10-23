@@ -652,5 +652,88 @@
       "weak": "Svag",
       "lost": "Borta"
     }
+  },
+  "profile": {
+    "title": "Sökprofil",
+    "tab": "Sökprofil",
+    "close": "Stäng sökprofilen",
+    "none": "Ingen profil",
+    "noneYet": "Ingen sökprofil ännu.",
+    "needPin": "Sätt en nål där personen sågs senast, så kan du skapa en sökprofil.",
+    "new": "Skapa sökprofil",
+    "pending": "Förslag, inte godkänt",
+    "approved": "Godkänd, version {{version}}",
+    "category": "Kategori",
+    "garments": "Kläder",
+    "items": "Med sig",
+    "part": "Plagg",
+    "color": "Färg",
+    "certaintyLabel": "Säkerhet",
+    "itemKind": "Sak",
+    "addGarment": "Lägg till plagg",
+    "addItem": "Lägg till sak",
+    "remove": "Ta bort",
+    "lastSeen": "Senast sedd",
+    "lastSeenAsProposed": "Som i förslaget",
+    "visualNotes": "Synliga detaljer",
+    "freeText": "Övrigt",
+    "freeTextWarning": "Skriv bara det som behövs för sökningen. Med nät skickas hela beskrivningen som text till molnmodellen (utan datainsamling).",
+    "approve": "Godkänn sökprofilen",
+    "approvedToast": "Sökprofilen är godkänd.",
+    "pilotApproves": "Bara piloten kan ändra och godkänna sökprofilen.",
+    "failed": "Sökprofilen kunde inte sparas.",
+    "loadFailed": "Sökprofilen kunde inte hämtas.",
+    "newer": "Ett nyare förslag eller en ny version har kommit. Dina ändringar är inte sparade.",
+    "showNewer": "Visa det nya",
+    "categories": {
+      "dementia": "Demens",
+      "hiker": "Vandrare",
+      "despondent": "Nedstämd",
+      "gatherer": "Bär-/svampplockare",
+      "hunter": "Jägare",
+      "child_1_6": "Barn 1–6 år",
+      "child_7_12": "Barn 7–12 år",
+      "child_13_15": "Barn 13–15 år",
+      "autism": "Autism",
+      "other": "Annat"
+    },
+    "parts": {
+      "outer": "Ytterplagg",
+      "upper": "Överdel",
+      "lower": "Underdel",
+      "headwear": "Huvudbonad",
+      "footwear": "Skor",
+      "full_body": "Helkropp"
+    },
+    "itemKinds": {
+      "backpack": "Ryggsäck",
+      "bag": "Väska",
+      "cane": "Käpp",
+      "walker": "Rollator",
+      "umbrella": "Paraply",
+      "bicycle": "Cykel",
+      "dog": "Hund",
+      "other": "Annat"
+    },
+    "certainty": {
+      "certain": "Säker",
+      "likely": "Trolig",
+      "unsure": "Osäker"
+    },
+    "colors": {
+      "black": "Svart",
+      "white": "Vit",
+      "gray": "Grå",
+      "red": "Röd",
+      "orange": "Orange",
+      "yellow": "Gul",
+      "green": "Grön",
+      "blue": "Blå",
+      "purple": "Lila",
+      "pink": "Rosa",
+      "brown": "Brun",
+      "beige": "Beige",
+      "unknown": "Okänd"
+    }
   }
 }

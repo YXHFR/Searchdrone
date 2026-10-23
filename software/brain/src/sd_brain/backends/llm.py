@@ -41,6 +41,7 @@ from sd_brain.runtime.base import (
     ModelReply,
     ModelRuntime,
     ModelTimeoutError,
+    RawToolCall,
     Sampling,
 )
 from sd_brain.state_view import current_limits
@@ -52,6 +53,7 @@ from sd_brain.toolcall_parse import (
     strip_think,
     truncate,
 )
+from sd_brain.tools import PROFILE_TOOL
 from sd_brain.turn import (
     AiAction,
     FailedProposal,
@@ -74,6 +76,47 @@ REPEAT_FAIL_TEXT = (
 # Faults that come from the request itself (more than the mission allows): the model may
 # answer them with a text that explains the limit instead of another draft.
 REQUEST_LIMIT_CODES = frozenset({"CHARTER_EXCEEDS_LIMITS", "AREA_BEYOND_RANGE"})
+
+
+def _logged_call(c: RawToolCall) -> dict[str, Any]:
+    """A tool call as the decision log keeps it. A search profile's values may hold health
+    details, so only its field names are kept."""
+    if c.name != PROFILE_TOOL:
+        return {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
+    try:
+        args = json.loads(c.arguments_json)
+    except ValueError:
+        args = None
+    keys = sorted(args) if isinstance(args, dict) else []
+    return {"name": c.name, "arguments": json.dumps({"redacted": keys})}
+
+
+def _logged_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The prompt as the decision log keeps it: a search profile call keeps its field
+    names only (the model itself got the whole call)."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        calls = m.get("tool_calls")
+        if m.get("role") == "assistant" and calls:
+            m = m | {
+                "tool_calls": [
+                    c
+                    if c["function"]["name"] != PROFILE_TOOL
+                    else c
+                    | {
+                        "function": _logged_call(
+                            RawToolCall(
+                                id=c["id"],
+                                name=PROFILE_TOOL,
+                                arguments_json=c["function"]["arguments"],
+                            )
+                        )
+                    }
+                    for c in calls
+                ]
+            }
+        out.append(m)
+    return out
 
 
 def _assistant_message(reply: ModelReply) -> dict[str, Any]:
@@ -191,7 +234,7 @@ class LlmCommander:
         messages = self.context.build(turn)
         offered = [t.openai for t in turn.tools]
         diag = TurnDiagnostics(
-            backend="llm", prompt_json={"messages": list(messages), "tools": offered}
+            backend="llm", prompt_json={"messages": _logged_messages(messages), "tools": offered}
         )
         self.partial = (turn.turn_id, diag)
         out = TurnOutput(diagnostics=diag)
@@ -205,7 +248,7 @@ class LlmCommander:
         seen: set[str] = set()  # the refused drafts' arguments in this turn
         refused_calls: set[str] = set()  # the refused orders' calls in this turn
         while True:
-            diag.prompt_json = {"messages": list(messages), "tools": offered}
+            diag.prompt_json = {"messages": _logged_messages(messages), "tools": offered}
             if rounds >= self.cfg.max_read_tool_rounds + repairs + 1:
                 diag.error = "round_limit"
                 break
@@ -238,10 +281,7 @@ class LlmCommander:
                 diag.backend = "cloud"
             text = strip_think(reply.content)
             calls, err = parse_tool_calls(reply, turn.tools, self.reg, turn.situation, lim, said)
-            diag.tool_calls.extend(
-                {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
-                for c in reply.tool_calls
-            )
+            diag.tool_calls.extend(_logged_call(c) for c in reply.tool_calls)
             draft_err = err if err is not None and err.kind == "proposal" else None
             kinds = {t.name: t.kind for t in turn.tools}
             if (
@@ -345,7 +385,7 @@ class LlmCommander:
             out.failed_proposal = given_up
             out.messages = [m for m in out.messages if "turn_failed" not in m.refs]
         diag.latency_ms = int((self._clock() - start) * 1000)
-        diag.prompt_json = {"messages": messages, "tools": offered}
+        diag.prompt_json = {"messages": _logged_messages(messages), "tools": offered}
         out.messages = out.messages[:2]
         return out
 

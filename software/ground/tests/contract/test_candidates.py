@@ -9,7 +9,6 @@ in the queue. E7 (no command path) is checked here on the API and in sd_search's
 from __future__ import annotations
 
 import io
-import json
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -22,7 +21,7 @@ from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 
-from flow_rig import SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
+from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMissingImports]
 
 from sd_ground.app import commander_asgi, create_commander_app
 from sd_schemas.base import LatLon, new_id
@@ -368,7 +367,6 @@ async def test_closed_missions_and_unknown_candidates(r: Rig) -> None:
     for url in (  # search reads only the open missions
         f"/search/v1/missions/{mid}/detections",
         f"/search/v1/missions/{mid}/candidates",
-        f"/search/v1/missions/{mid}/search-profile",
         f"/search/v1/detections/{det['detection_id']}/crop",
     ):
         res = await r.search.get(url)
@@ -401,42 +399,47 @@ async def test_a_held_candidate_keeps_its_state(r: Rig) -> None:
     assert (card["state"], card["n_seen"], card["rev"]) == ("inspecting", 2, 3)
 
 
-async def _store_profile(r: Rig, mid: str, version: int, *, approved: bool) -> None:
-    body = red_profile(r).model_dump(mode="json") | {"profile_version": version}
-    if not approved:
-        body |= {"approved_by": None, "approved_at": None}
-    async with r.flow.repo.engine.begin() as conn:
-        await conn.execute(
-            text(
-                "INSERT INTO search_profiles (mission_id, profile_id, profile_version, body, "
-                "proposed_by, approved_by, approved_at) VALUES (CAST(:m AS uuid), "
-                "CAST(:p AS uuid), :v, CAST(:b AS jsonb), 'brain', :by, :at)"
-            ),
-            {
-                "m": mid,
-                "p": body["profile_id"],
-                "v": version,
-                "b": json.dumps(body),
-                "by": "operator:demo" if approved else None,
-                "at": r.clock.utc_now() if approved else None,
-            },
-        )
+def _draft(r: Rig, color: str) -> dict[str, Any]:
+    lat, lon = r.home
+    return {
+        "subject_category": "hiker",
+        "garments": [{"part": "upper", "kind": "jacka", "colors": [color], "certainty": "certain"}],
+        "last_seen": {"lat": lat, "lon": lon, "at_utc": r.clock.utc_now().isoformat()},
+    }
+
+
+async def _propose(r: Rig, mid: str, color: str) -> str:
+    res = await r.commander.post(
+        f"/commander/v1/missions/{mid}/profile-proposals",
+        json={"profile": _draft(r, color)},
+        headers={"Authorization": f"Bearer {BRAIN}"},
+    )
+    assert res.status_code == 201, res.text
+    return res.json()["proposal_id"]
 
 
 async def test_the_search_profile_is_the_approved_one(r: Rig) -> None:
+    """The real B2-05 path: the AI proposes, a pilot approves, sd-search reads only the
+    approved version."""
     assert r.search is not None
     mid = await r.open_mission()
     url = f"/search/v1/missions/{mid}/search-profile"
-    assert (await r.search.get(url)).status_code == 404
-    await _store_profile(r, mid, 1, approved=False)  # an AI proposal is never used
     res = await r.search.get(url)
-    assert res.status_code == 404 and res.json()["code"] == "PROFILE_NOT_FOUND"
-    await _store_profile(r, mid, 2, approved=True)
-    await _store_profile(r, mid, 3, approved=False)
+    assert res.status_code == 200 and res.json() is None
+    proposal_id = await _propose(r, mid, "red")  # an AI proposal is never used
+    res = await r.search.get(url)
+    assert res.status_code == 200 and res.json() is None
+    res = await r.panel.post(
+        f"/api/v1/missions/{mid}/search-profile",
+        json={"profile": _draft(r, "red"), "base_version": 0, "proposal_id": proposal_id},
+        headers=H,
+    )
+    assert res.status_code == 201, res.text
+    await _propose(r, mid, "green")  # a newer proposal does not replace it
     res = await r.search.get(url)
     assert res.status_code == 200, res.text
     got = SearchProfile.model_validate(res.json())
-    assert (str(got.mission_id), got.profile_version, got.approved) == (mid, 2, True)
+    assert (str(got.mission_id), got.profile_version, got.approved) == (mid, 1, True)
 
     # sd-search reads it from the ground and matches the red jacket with it.
     transport = httpx.ASGITransport(app=commander_asgi(r.g, create_commander_app(r.g)))  # pyright: ignore[reportArgumentType]
@@ -448,7 +451,7 @@ async def test_the_search_profile_is_the_approved_one(r: Rig) -> None:
     finally:
         await client.aclose()
     (card,) = (await queue(r, mid))["items"]
-    assert card["fields"]["garment:0"] == "match" and card["assessed_profile_version"] == 2
+    assert card["fields"]["garment:0"] == "match" and card["assessed_profile_version"] == 1
 
 
 async def test_a_merge_needs_another_known_candidate(r: Rig) -> None:

@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse
 
-from sd_ground.api.deps import ApiStatusError, ground, repo_of
+from sd_ground.api.deps import ApiStatusError, IdPath, ground, repo_of
 from sd_ground.context import Ground
 from sd_ground.services import candidates as candidates_service
 from sd_ground.services import files as files_service
+from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_schemas.search import (
     CandidateBatch,
@@ -33,9 +34,6 @@ from sd_schemas.search import (
 __all__ = ["require_search", "router"]
 
 router = APIRouter(prefix="/search/v1")
-
-_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-IdPath = Annotated[str, Path(pattern=_UUID)]
 
 
 def require_search(request: Request) -> None:
@@ -107,10 +105,14 @@ async def crop(detection_id: IdPath, _: Search, g: G) -> FileResponse:
     return FileResponse(path, media_type="image/jpeg")
 
 
-@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfile)
-async def search_profile(mission_id: IdPath, _: Search, g: G) -> SearchProfile:
-    """The approved search profile in force (never a proposal); 404 when there is none."""
-    return await candidates_service.profile(_flow(g), mission_id)
+@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfile | None)
+async def get_search_profile(mission_id: IdPath, _: Search, g: G) -> SearchProfile | None:
+    """The approved version in force, or ``null``: a proposal from the AI is never
+    returned here, so the matching cannot use one (E10)."""
+    repo_of(g)
+    if g.flow is None:
+        raise ApiStatusError(503, "DB_DOWN", "Uppdragsflödet är inte igång just nu.")
+    return await profile_service.approved(g.flow, mission_id)
 
 
 @router.get("/missions/{mission_id}/candidates", response_model=list[SearchTrack])

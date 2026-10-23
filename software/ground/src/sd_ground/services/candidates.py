@@ -25,7 +25,6 @@ from sd_schemas.search import (
     CandidateState,
     CandidateWritten,
     SearchDetection,
-    SearchProfile,
     SearchTrack,
     fusion_radius_m,
     priority_class,
@@ -38,7 +37,6 @@ __all__ = [
     "cards",
     "detail",
     "feed",
-    "profile",
     "repo",
     "tracks",
     "write",
@@ -59,15 +57,6 @@ async def feed(
     await flow.open_mission_of(mission_id)
     rows = await repo(flow).feed(mission_id, after_seq, min(limit, FEED_MAX))
     return [SearchDetection.model_validate(r) for r in rows]
-
-
-async def profile(flow: MissionFlow, mission_id: str) -> SearchProfile:
-    """The approved search profile in force; 404 when the mission has none yet."""
-    await flow.open_mission_of(mission_id)
-    found = await repo(flow).approved_profile(mission_id)
-    if found is None:
-        raise ApiStatusError(404, "PROFILE_NOT_FOUND", "Uppdraget har ingen godkänd sökprofil.")
-    return SearchProfile.model_validate(found)
 
 
 async def tracks(flow: MissionFlow, mission_id: str) -> list[SearchTrack]:

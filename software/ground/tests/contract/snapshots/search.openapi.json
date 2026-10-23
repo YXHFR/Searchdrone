@@ -929,7 +929,7 @@
       },
       "SearchProfile": {
         "additionalProperties": false,
-        "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.\nThe age and height bands are for the people searching, never for the matching.",
+        "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.",
         "properties": {
           "age_band": {
             "anyOf": [
@@ -1097,11 +1097,11 @@
           }
         },
         "required": [
+          "subject_category",
+          "last_seen",
           "profile_id",
           "profile_version",
-          "mission_id",
-          "subject_category",
-          "last_seen"
+          "mission_id"
         ],
         "title": "SearchProfile",
         "type": "object"
@@ -1470,8 +1470,8 @@
     },
     "/search/v1/missions/{mission_id}/search-profile": {
       "get": {
-        "description": "The approved search profile in force (never a proposal); 404 when there is none.",
-        "operationId": "search_profile_search_v1_missions__mission_id__search_profile_get",
+        "description": "The approved version in force, or ``null``: a proposal from the AI is never\nreturned here, so the matching cannot use one (E10).",
+        "operationId": "get_search_profile_search_v1_missions__mission_id__search_profile_get",
         "parameters": [
           {
             "in": "path",
@@ -1489,7 +1489,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SearchProfile"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SearchProfile"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Search Profile Search V1 Missions  Mission Id  Search Profile Get"
                 }
               }
             },
@@ -1506,7 +1514,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Search Profile"
+        "summary": "Get Search Profile"
       }
     }
   }
