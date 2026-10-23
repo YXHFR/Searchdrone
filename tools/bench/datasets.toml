@@ -30,6 +30,7 @@ size_bytes = 8311735812
 sha256 = "63ea51b29d67f9b95cc600674c6ccfa719688594404b5311a9164fb41a0448a3"
 layout = "heridal_voc"
 use = ["train", "measure"]
+licence_confirmed = true  # the Zenodo record licenses the dataset itself
 ranges = true
 publish_weights = true
 local_only = false

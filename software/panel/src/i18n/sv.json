@@ -315,6 +315,10 @@
     "return_home": "Drönaren flyger hem efter {{s}} s.",
     "safety": "STOPP och FLYG HEM fungerar."
   },
+  "perception": {
+    "off": "Persondetekteringen är avstängd ombord. Drönaren flyger vidare, men den letar inte efter personer i bilderna nu.",
+    "on": "Persondetekteringen fungerar igen ombord."
+  },
   "linkDown": {
     "SDLINK_LOST": "Datalänken till drönaren är borta sedan {{s}} s. Drönaren gör klart steget, svävar från {{hold}} och flyger hem {{home}}. STOPP och FLYG HEM fungerar via flygkontrollen.",
     "LINK_LOST_ALL": "Ingen kontakt med drönaren sedan {{s}} s. Väntat: den flyger hem senast {{home}}. Ta över med RC om det behövs.",

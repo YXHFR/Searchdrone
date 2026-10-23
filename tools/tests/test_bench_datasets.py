@@ -23,6 +23,7 @@ def _row(**kw: object) -> Dataset:
         url="https://example.org/x.zip",
         size_bytes=1,
         sha256="0" * 64,
+        licence_confirmed=True,
     )
     return dataclasses.replace(base, **kw)  # type: ignore[arg-type]
 

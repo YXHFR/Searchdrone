@@ -4,7 +4,8 @@
 [files]
 extend-exclude = ["uv.lock", "pnpm-lock.yaml", "**/generated/**", "LICENSES/**", "LICENSE",
   "simulation/sitl/params/known_params_*.txt",  # ArduPilot's own parameter names
-  "software/brain/tests/eval/profiles/*"]  # Swedish descriptions and the model's Swedish answers
+  "software/brain/tests/eval/profiles/*",  # Swedish descriptions and the model's Swedish answers
+  "tools/train/vendor/**"]  # model code as published by its authors
 
 [default.extend-words]
 # Domain

@@ -94,6 +94,34 @@ def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> Non
     assert off is None
 
 
+def test_a_wrong_detector_model_never_stops_the_start(
+    root: Path, env: dict[str, str], tmp_path: Path
+) -> None:
+    """sd-onboard may restart in the air: a missing or changed model only turns perception
+    off (in its own task, which tells the ground), never the executor and link."""
+    on = {
+        "SD_ONBOARD__PERCEPTION__ENABLED": "true",
+        "SD_ONBOARD__PERCEPTION__STILL_DIR": "${SD_DATA_DIR}/stills",
+        "SD_DETECTOR_MODEL": str(tmp_path / "gone.json"),
+    }
+    loaded = load(root, {**env, **on})
+    assert check(loaded) == []
+    events: list[tuple[str, str, dict[str, str]]] = []
+    link = SimpleNamespace(
+        perception=lambda _r: None,
+        event=lambda *a: events.append(a),  # pyright: ignore[reportUnknownLambdaType]
+    )
+    made = app._perception(loaded, SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert made is not None and made.off is not None
+    made.off("sources_failed", "ModelError")
+    assert made.on is not None
+    made.on()
+    assert events == [
+        ("executor.perception_off", "warning", {"reason": "sources_failed", "error": "ModelError"}),
+        ("executor.perception_on", "info", {}),
+    ]
+
+
 def test_test_hooks_rejected_outside_test(root: Path, env: dict[str, str]) -> None:
     hook = {"SD_ONBOARD__TEST_HOOKS__TAKEOFF_DELAY_AFTER_ARM_S": "5"}
     assert check(load(root, {**env, **hook}))

@@ -5,9 +5,11 @@
     just bench-detector model=selfcheck mini=1     # both, fails unless 0 and 1
     just bench-detector model=<name> part=test     # the locked test part (see README)
 
-Keys: ``model`` (which detector), ``part`` (``test``, default, or ``val``), ``sets``
-(datasets, comma separated; default every measured set that is fetched), ``mini=1``
-(the small CI bank instead), ``limit`` (first N pictures, for a quick look), ``data``,
+Keys: ``model`` (``null``, ``facit``, ``selfcheck``, or a trained model by name such as
+``person_yolox_s`` or ``coco_yolox_s``, read from ``<data>/models/detector/<name>.json``),
+``part`` (``test``, default, or ``val``), ``sets`` (datasets, comma separated; default
+every measured set that is fetched), ``mini=1`` (the small CI bank instead), ``limit``
+(first N pictures, for a quick look), ``data``,
 ``out`` (result file; default ``build/bench/det_<model>_<part>.json``), ``compare``
 (an earlier result: fails when recall over 32 px drops more than 2 points).
 
@@ -18,6 +20,7 @@ result file holds only numbers (no picture, no file name, no box).
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -74,7 +77,9 @@ class FacitDetector:
         ]
 
 
-# model name -> factory; B2-12 adds the trained models
+_MODEL_NAME = re.compile(r"^[a-z0-9_]{1,40}$")
+
+# model name -> factory; trained models are found by name in <data>/models/detector
 DETECTORS: dict[str, Callable[[], Detector]] = {
     "null": NullDetector,
     "facit": FacitDetector,
@@ -120,6 +125,8 @@ def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
             split.check(name, [(i.local_id, i.seq) for i in index])
             images += [i for i in index if split.part_of(name, i.seq) == part]
         source = f"splits/v1 {part} ({', '.join(names)})"
+        if args.get("limit"):
+            source += f" limit={int(args['limit'])}"  # never compared with a full run
         out = [Picture(i, inside(roots[i.dataset], safe_relpath(i.file))) for i in images]
         return source, _limit(out, args)
     return source, _limit([Picture(i, inside(root, safe_relpath(i.file))) for i in images], args)
@@ -162,10 +169,34 @@ def run(
             say(f"  {n}/{len(items)} bilder")
 
 
-def measure(model: str, items: Sequence[Picture]) -> Summary:
-    if model not in DETECTORS:
+def model_detector(model: str, data: Path) -> Detector:
+    """A built-in detector, or a trained one: ``<data>/models/detector/<model>.json``
+    (written by ``just export-detector`` or ``just detector-fetch``), run in tiles as on
+    the drone."""
+    if model in DETECTORS:
+        return DETECTORS[model]()
+    if not _MODEL_NAME.match(model):
+        raise BenchError("model= ska vara små bokstäver, siffror och _", 2)
+    manifest = data / "models" / "detector" / f"{model}.json"
+    if not manifest.is_file():
+        raise BenchError(
+            f"Okänd modell {model!r}: varken inbyggd ({', '.join(sorted(DETECTORS))}) eller "
+            f"tränad ({manifest} finns inte; kör just export-detector eller just detector-fetch).",
+            2,
+        )
+    from sd_detect.onnx import ModelError, load_model
+
+    try:
+        return load_model(manifest).tiled
+    except ModelError as exc:
+        raise BenchError(str(exc), 1) from exc
+
+
+def measure(model: str, items: Sequence[Picture], data: Path | None = None) -> Summary:
+    if model not in DETECTORS and data is None:
         raise BenchError(f"Okänd modell {model!r}. Kända: {', '.join(sorted(DETECTORS))}.", 2)
-    return summarise(list(run(DETECTORS[model](), items)))
+    detector = model_detector(model, data) if data is not None else DETECTORS[model]()
+    return summarise(list(run(detector, items)))
 
 
 def result_body(model: str, source: str, summary: Summary) -> dict[str, object]:
@@ -209,7 +240,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         model = args.get("model", "")
         if not model:
             raise BenchError("Ange model=. Kända: selfcheck, " + ", ".join(sorted(DETECTORS)), 2)
-        source, items = pictures(args, data_dir(args))
+        data = data_dir(args)
+        source, items = pictures(args, data)
         if not items:
             raise BenchError("Inga bilder att mäta på.", 2)
         say(f"Mäter {model} på {len(items)} bilder ({source})")
@@ -224,7 +256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for e in errors:
                 warn(e)
             return 1 if errors else 0
-        body = result_body(model, source, measure(model, items))
+        body = result_body(model, source, measure(model, items, data))
         out.write_text(json.dumps(body, indent=1) + "\n", encoding="utf-8")
         rec = body["recall"]
         assert isinstance(rec, dict)  # noqa: S101 - built just above

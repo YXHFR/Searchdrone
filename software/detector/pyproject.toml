@@ -9,6 +9,8 @@ dependencies = [
   "sd-schemas",
   "pydantic>=2.9",
   "numpy>=2.0",  # BSD-3-Clause, the colour detector's pixel arithmetic
+  "onnxruntime>=1.30,<1.31",  # MIT, the trained person detector (OnnxDetector)
+  "pillow>=11",  # MIT-CMU, resizing a picture to the detector's input
 ]
 
 [build-system]

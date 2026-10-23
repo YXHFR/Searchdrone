@@ -1,0 +1,36 @@
+# The published weights the person detector starts from, fetched by `just detector-fetch`
+# into <data_dir>/models/. Never in git. Each file is checked against its size and SHA-256.
+
+[[model]]
+name = "yolox_s"
+kind = "pretrained"  # COCO weights that train-detector starts from
+file = "pretrained/yolox_s.pth"
+url = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth"
+size_bytes = 72089125
+sha256 = "f55ded7181e1b0c13285c56e7790b8f0e8f8db590fe4edb37f0b7f345c913a30"
+licence = "Apache-2.0"
+attribution = "YOLOX, Megvii Inc. (Ge et al. 2021), trained on COCO"
+
+[[model]]
+name = "damoyolo_s"
+kind = "pretrained"
+file = "pretrained/damoyolo_tinynasL25_S.pt"
+# The release links on GitHub point at a bucket that no longer serves the file; the
+# same weights are published on ModelScope by the authors.
+url = "https://www.modelscope.cn/api/v1/models/damo/cv_tinynas_object-detection_damoyolo/repo?Revision=master&FilePath=damoyolo_tinynasL25_S.pt"
+size_bytes = 138815295
+sha256 = "70ccc4b45efd4ebb5e180c77040ca26714aaa9559c2b609b69c1bb6199b4be63"
+licence = "Apache-2.0"
+attribution = "DAMO-YOLO, Alibaba Group (Xu et al. 2022), trained on COCO"
+
+[[model]]
+name = "coco_yolox_s"
+kind = "detector"  # usable as is: the COCO person class, not trained for the air
+file = "detector/coco_yolox_s.onnx"
+url = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.onnx"
+size_bytes = 35858002
+sha256 = "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063"
+licence = "Apache-2.0"
+attribution = "YOLOX, Megvii Inc. (Ge et al. 2021), trained on COCO"
+family = "yolox"
+input_px = 640

@@ -453,6 +453,39 @@ bench-fetch *args:
 bench-detector *args:
     PYTHONPATH=tools uv run --no-sync python -m bench.eval_detector "$@"
 
+# Fetch the published detector weights to <data_dir>/models/ (keys: yes, only, data)
+detector-fetch *args:
+    PYTHONPATH=tools uv run --no-sync python tools/train/fetch_weights.py "$@"
+
+# Train the person detector on this computer's graphics card (keys: model, epochs, batch, simfarm, ...; see tools/train/README.md)
+train-detector *args:
+    @just _train train_detector.py "$@"
+
+# Make the ONNX file and its manifest from the best training epoch (keys: model, name, out, data)
+export-detector *args:
+    @just _train export_onnx.py "$@"
+
+# The detector training's tests, on the CPU with a small synthetic bank (no data, no weights)
+test-train:
+    cd tools/train && uv sync --frozen --quiet --extra cpu
+    cd tools/train && PYTHONPATH="$PWD/..:$PWD" uv run --no-sync pytest
+
+# Pick the detector to use from measured results on the val part (keys: results, data)
+pick-detector *args:
+    PYTHONPATH=tools uv run --no-sync python -m bench.pick_detector "$@"
+
+# Runs a script in tools/train with its own Python (PyTorch). SD_TORCH=cpu for no graphics card.
+[private]
+_train script *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data=$(PYTHONPATH=tools uv run --no-sync python -m bench.datadir "${@:2}")
+    rest=()
+    for arg in "${@:2}"; do [[ "$arg" == data=* ]] || rest+=("$arg"); done
+    cd tools/train
+    uv sync --frozen --quiet --extra "${SD_TORCH:-cu126}"
+    PYTHONPATH="$PWD/..:$PWD" uv run --no-sync python "$1" "data=$data" "${rest[@]}"
+
 # Download the offline map pack to <data_dir>/tiles/ (keys: site, bbox, maxzoom, name, dry)
 maps-fetch *args:
     uv run --no-sync python tools/maps/fetch.py "$@"

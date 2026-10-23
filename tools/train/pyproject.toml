@@ -1,0 +1,49 @@
+[project]
+name = "sd-train"
+version = "0.0.0"
+description = "Fine-tunes the person detector (YOLOX-s, DAMO-YOLO-S) on the image bank; the owner's computer only"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = [
+  "numpy>=2.1,<2.5.4",
+  "pillow>=13.0.0",  # 13.0.0 fixes the advisories published for 12.x (as the workspace)
+  "onnx==1.23.2",  # Apache-2.0
+  "onnxruntime==1.30.0",  # MIT
+]
+
+[project.optional-dependencies]
+cpu = ["torch==2.14.1"]
+cu126 = ["torch==2.14.1"]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-socket>=0.7"]
+
+[tool.pytest.ini_options]
+# As the workspace: tests never reach the internet.
+addopts = "-ra --strict-markers --disable-socket --allow-unix-socket"
+testpaths = ["tests"]
+
+[tool.uv]
+required-version = ">=0.11,<0.12"
+package = false
+# Only versions at least two weeks old when locked (the repository's rule).
+exclude-newer = "2026-10-09T00:00:00Z"
+# Security fixes may be newer.
+exclude-newer-package = { pillow = false }
+conflicts = [[{ extra = "cpu" }, { extra = "cu126" }]]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu126", extra = "cu126" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
