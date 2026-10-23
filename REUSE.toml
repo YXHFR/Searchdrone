@@ -56,3 +56,17 @@ path = "tools/train/vendor/damoyolo/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["Alibaba Group Holding Limited", "OpenMMLab"]
 SPDX-License-Identifier = "Apache-2.0"
+
+# Written for this project from the upstream code (NOTICE.md): both hold copyright.
+[[annotations]]
+path = [
+  "tools/train/vendor/yolox/__init__.py",
+  "tools/train/vendor/damoyolo/__init__.py",
+  "tools/train/vendor/damoyolo/model.py",
+  "tools/train/vendor/damoyolo/zero_head.py",
+]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Searchdrone contributors", "Megvii Inc.", "Alibaba Group Holding Limited",
+]
+SPDX-License-Identifier = "Apache-2.0"

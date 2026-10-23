@@ -115,9 +115,11 @@ home internet line.
 
 9. **Use it.** The on-board computer (`sd_onboard`) loads the model when
    `SD_DETECTOR_MODEL` in its environment points at the `.json` file that
-   `pick-detector` printed. It checks the ONNX file's SHA-256 before loading it, and it
-   refuses to start if the file is missing or changed. When the variable is not set, no
-   model is loaded. The simulator keeps its stand-in detector.
+   `pick-detector` printed. Before it connects to the flight controller it checks the
+   manifest and the ONNX file's SHA-256, and it refuses to start, with a message, if the
+   file is missing or changed. If the model still cannot be loaded later, only the
+   detector is turned off: flying goes on. When the variable is not set, no model is
+   loaded. The simulator keeps its stand-in detector.
 
 ## If something goes wrong
 
@@ -169,10 +171,12 @@ publishing the weights. `software/detector/MODEL_CARD.md` has the details.
 
 The folder has its own Python environment with PyTorch (`pyproject.toml`, `uv.lock`), so
 the rest of the repository never installs it. The tests run on the CPU with a small
-synthetic bank:
+synthetic bank. `just check` does not run them, because the first run installs PyTorch
+(about 1 GB for the CPU build); run them by hand after changing anything here. CI runs
+them in the `train` job:
 
 ```bash
-cd tools/train && uv sync --extra cpu --frozen && PYTHONPATH="$PWD/..:$PWD" uv run --no-sync pytest
+just test-train
 ```
 
 The on-board side is `sd_detect.onnx` (`software/detector`). It needs only ONNX Runtime,

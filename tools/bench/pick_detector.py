@@ -11,7 +11,9 @@ The rule, in order: the highest recall on people over 32 px wins; a model within
 percentage points of it is as good on that, and among those the higher recall at
 16-32 px wins; within 2 points there too, the faster one (median time per picture)
 wins. Picked on the val part, never on test: the test part is only measured once, on
-the chosen model. Prints the setting that makes the on-board computer use it.
+the chosen model. Every result must come from the same pictures (the same ``source``
+and picture count); a quick look with ``limit=`` is never ranked against a full run.
+Prints the setting that makes the on-board computer use it.
 """
 
 from __future__ import annotations
@@ -61,6 +63,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 warn(f"hoppar över {f.name}: inte mätt på val-delen")
                 continue
             bodies.append(body)
+        same = {(str(b.get("source")), b.get("n_pictures")) for b in bodies}
+        if len(same) > 1:
+            listed = "; ".join(
+                f"{b['model']}: {b.get('source')}, {b.get('n_pictures')} bilder" for b in bodies
+            )
+            raise BenchError(f"Resultaten är mätta på olika bilder och jämförs inte: {listed}", 2)
         chosen = pick(bodies)
         for b in sorted(bodies, key=lambda b: b["model"]):
             say(

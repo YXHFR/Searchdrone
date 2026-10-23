@@ -16,12 +16,17 @@ DAMO-YOLO with black, as they were trained. What comes out differs:
   (corners in input pixels).
 
 Boxes below ``score_min`` are dropped, the rest go through non-maximum suppression and
-back to the picture's pixels. The model file is checked against its SHA-256 before it
-is opened; a file that does not match is never run.
+back to the picture's pixels. The model file is read once, its bytes are checked
+against the SHA-256 in the manifest, and those same bytes are what ONNX Runtime runs; a
+file that does not match is never run. The check is for integrity (a damaged or swapped
+file), not authenticity: whoever can write the model folder can write the manifest too.
+ONNX Runtime gets at most ``THREADS`` threads, without busy-waiting, so the detector
+never takes the whole CPU from the flight executor on the companion computer.
 
 ``load_model`` reads a model's manifest (``<name>.json`` next to ``<name>.onnx``, written
 by ``tools/train/export_onnx.py``) and gives the ``model`` source: the engine behind a
-``TiledDetector``. Like every detector it gives hints, never decisions.
+``TiledDetector``. ``check_model`` does the same checks without ONNX Runtime, for a
+start check. Like every detector it gives hints, never decisions.
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ __all__ = [
     "ModelError",
     "ModelSource",
     "OnnxDetector",
+    "check_model",
     "load_model",
     "sha256_of",
 ]
@@ -57,6 +63,8 @@ PAD_VALUE: dict[Family, int] = {"yolox": 114, "damoyolo": 0}
 SCORE_MIN = 0.05
 NMS_IOU = 0.5
 MANIFEST_SCHEMA = "sd.detector-model/v1"
+MODEL_LICENCE = "Apache-2.0"  # what ``ModelSource.license`` reports; a manifest must agree
+THREADS = 2
 MAX_MODEL_BYTES = 512 << 20
 
 
@@ -95,6 +103,7 @@ class OnnxDetector:
         score_min: float = SCORE_MIN,
         nms_iou: float = NMS_IOU,
         label: str = "person",
+        threads: int = THREADS,
     ) -> None:
         if family not in FAMILIES:
             raise ModelError(f"okänd modellfamilj {family!r}")
@@ -105,7 +114,8 @@ class OnnxDetector:
             raise ModelError(f"Modellfilen finns inte: {model_path}")
         if model_path.stat().st_size > MAX_MODEL_BYTES:
             raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
-        got = sha256_of(model_path)
+        data = model_path.read_bytes()
+        got = hashlib.sha256(data).hexdigest()
         if got != sha256.lower():
             raise ModelError(
                 f"Modellfilens kontrollsumma stämmer inte ({model_path.name}: {got}); "
@@ -115,8 +125,11 @@ class OnnxDetector:
 
         options = ort.SessionOptions()
         options.log_severity_level = 3
+        options.intra_op_num_threads = threads
+        options.inter_op_num_threads = 1
+        options.add_session_config_entry("session.intra_op.allow_spinning", "0")
         self.session: Any = ort.InferenceSession(
-            str(model_path), sess_options=options, providers=list(providers)
+            data, sess_options=options, providers=list(providers)
         )
         self.input_name: str = self.session.get_inputs()[0].name
         self.family: Family = family
@@ -205,7 +218,7 @@ class ModelSource:
     """The register's ``model`` source: a trained detector over the still's tiles."""
 
     name: ClassVar[str] = "model"
-    license: ClassVar[str] = "Apache-2.0"
+    license: ClassVar[str] = MODEL_LICENCE
     source: ClassVar[SourceKind] = "model"
 
     def __init__(self, tiled: TiledDetector, manifest: dict[str, Any]) -> None:
@@ -216,23 +229,49 @@ class ModelSource:
         return self.tiled.detect(still.frame)
 
 
+def _read_manifest(manifest_path: Path) -> dict[str, Any]:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ModelError(f"Kan inte läsa modellens manifest {manifest_path}: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("schema") != MANIFEST_SCHEMA:
+        raise ModelError(f"{manifest_path.name} är inget modellmanifest ({MANIFEST_SCHEMA})")
+    onnx_name = str(manifest.get("onnx", ""))
+    if not onnx_name or Path(onnx_name).name != onnx_name:
+        raise ModelError("Manifestets onnx ska vara ett filnamn i samma mapp")
+    if "person" not in manifest.get("classes", []):
+        raise ModelError("Modellen hittar inte klassen person")
+    if manifest.get("family") not in FAMILIES:
+        raise ModelError(f"okänd modellfamilj {manifest.get('family')!r}")
+    if manifest.get("licence") != MODEL_LICENCE:
+        raise ModelError(
+            f"Modellens licens ska vara {MODEL_LICENCE}, inte {manifest.get('licence')!r}"
+        )
+    return dict(manifest)
+
+
+def check_model(manifest_path: Path) -> None:
+    """The checks ``load_model`` makes (manifest, file, size, SHA-256), without ONNX
+    Runtime: for a start check before anything else runs. Any doubt is a ``ModelError``."""
+    manifest_path = Path(manifest_path)
+    manifest = _read_manifest(manifest_path)
+    model_path = manifest_path.with_name(str(manifest["onnx"]))
+    if not model_path.is_file():
+        raise ModelError(f"Modellfilen finns inte: {model_path}")
+    if model_path.stat().st_size > MAX_MODEL_BYTES:
+        raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
+    if sha256_of(model_path) != str(manifest.get("sha256", "")).lower():
+        raise ModelError(f"Modellfilens kontrollsumma stämmer inte ({model_path.name})")
+
+
 def load_model(
     manifest_path: Path, providers: Sequence[str] = ("CPUExecutionProvider",)
 ) -> ModelSource:
     """The ``model`` source from a manifest (module doc). Any doubt is a ``ModelError``."""
     manifest_path = Path(manifest_path)
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ModelError(f"Kan inte läsa modellens manifest {manifest_path}: {exc}") from exc
-    if manifest.get("schema") != MANIFEST_SCHEMA:
-        raise ModelError(f"{manifest_path.name} är inget modellmanifest ({MANIFEST_SCHEMA})")
-    onnx_name = str(manifest.get("onnx", ""))
-    if not onnx_name or Path(onnx_name).name != onnx_name:
-        raise ModelError("Manifestets onnx ska vara ett filnamn i samma mapp")
-    classes = manifest.get("classes", [])
-    if "person" not in classes:
-        raise ModelError("Modellen hittar inte klassen person")
+    manifest = _read_manifest(manifest_path)
+    onnx_name = str(manifest["onnx"])
+    classes = list(manifest["classes"])
     engine = OnnxDetector(
         manifest_path.with_name(onnx_name),
         family=manifest["family"],

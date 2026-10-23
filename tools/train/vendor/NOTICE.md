@@ -22,8 +22,10 @@ From <https://github.com/Megvii-BaseDetection/YOLOX>, commit
 
 From <https://github.com/tinyvision/DAMO-YOLO>, commit
 `319572eef367340267ab6ab8ae253527a71d7c3a` (`damo/base_models/`). Copyright (C)
-Alibaba Group Holding Limited; `core_utils.py` carries OpenMMLab's copyright (Apache-2.0)
-as in the original.
+Alibaba Group Holding Limited. `core_utils.py`, `bbox_calculator.py`, `ota_assigner.py`
+and `weight_init.py` carry OpenMMLab's copyright (Apache-2.0) as in the original;
+`gfocal_loss.py` mainly comes from GFocalV2 (<https://github.com/implus/GFocalV2>,
+Apache-2.0), as its own header says.
 
 - All files sit in one folder, so the relative imports name `.ops`, `.ota_assigner` and
   so on instead of `..core.ops`.
@@ -32,11 +34,17 @@ as in the original.
   `(boxes, classes)` pairs instead of DAMO-YOLO's `BoxList`; returns the raw scores and
   boxes without its own NMS (the ONNX consumer, `sd_detect.onnx`, does the NMS).
 - `core_utils.py`: `damo/base_models/core/utils.py`, unchanged.
-- `tinynas_res.py`, `giraffe_fpn_btn.py`, `gfocal_loss.py`, `bbox_calculator.py`,
-  `ota_assigner.py`, `weight_init.py`: unchanged apart from the imports.
+- `tinynas_res.py`, `giraffe_fpn_btn.py`, `gfocal_loss.py`, `ota_assigner.py`,
+  `weight_init.py`: unchanged apart from the imports.
+- `bbox_calculator.py`: unchanged apart from the imports, except that `batched_nms` and
+  `multiclass_nms` are removed: nothing calls them, and `batched_nms` ran `eval` on a
+  config string.
 - `tinynas_L25_k1kx.txt`: the S backbone's structure, from
   `damo/base_models/backbones/nas_backbones/`, unchanged.
 - `model.py`: new; builds DAMO-YOLO-S as `damo/detectors/detector.py` and
   `configs/damoyolo_tinynasL25_S.py` do, without the config system, distillation or
   distributed training.
 - `__init__.py`: new.
+
+The new files (`model.py`, both `__init__.py`) and the much changed `zero_head.py` are
+also Searchdrone's (REUSE.toml lists both copyrights).

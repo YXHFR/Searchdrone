@@ -125,6 +125,8 @@ def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
             split.check(name, [(i.local_id, i.seq) for i in index])
             images += [i for i in index if split.part_of(name, i.seq) == part]
         source = f"splits/v1 {part} ({', '.join(names)})"
+        if args.get("limit"):
+            source += f" limit={int(args['limit'])}"  # never compared with a full run
         out = [Picture(i, inside(roots[i.dataset], safe_relpath(i.file))) for i in images]
         return source, _limit(out, args)
     return source, _limit([Picture(i, inside(root, safe_relpath(i.file))) for i in images], args)

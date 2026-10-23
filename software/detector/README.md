@@ -16,8 +16,11 @@ The detector interface, the class register and the detector sources.
     Used for `car`, `building` and `road`.
   - `model`: the trained person detector (`sd_detect.onnx`), built only when
     `SD_DETECTOR_MODEL` names its manifest (`tools/train/README.md`). Unset: `person` is
-    not reported. Set but wrong (missing file, wrong SHA-256, unknown family): an error
-    at start, never a silent fallback. What it is and is not for:
+    not reported. Set but wrong (missing file, wrong SHA-256, unknown family or
+    licence): `sd_onboard`'s start check refuses it before the flight controller is
+    connected (`check_model`), never a silent fallback. A model that still fails later
+    only turns perception off. The SHA-256 guards against a damaged or swapped file, not
+    against someone who can write the model folder. What it is and is not for:
     [`MODEL_CARD.md`](MODEL_CARD.md).
 - `build_sources`, `detect_all` and `keep_plausible`: build the sources the register
   names, run them on a `Still` (keeping only each source's own classes) and drop

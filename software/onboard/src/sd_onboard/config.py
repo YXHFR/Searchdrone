@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from sd_detect.sources import MODEL_ENV
 from sd_link.client import is_safe_url
 from sd_mav.connection import BROADCAST_SYSID, GCS_COMPID
 from sd_onboard.io.params import effective_params
@@ -205,6 +206,7 @@ def check(loaded: Loaded) -> list[str]:
         errors.append("[test_hooks] gäller bara i tester (SD_TEST=1) / test hooks need SD_TEST=1.")
     if cfg.perception.enabled and not cfg.perception.still_dir:
         errors.append("[perception] still_dir saknas / still_dir is required when enabled.")
+    errors += _model_problems(loaded)
     files = loaded.param_files()
     if not files:
         errors.append("expected_param_files får inte vara tom / no parameter file given.")
@@ -234,6 +236,21 @@ def _rc_param_problems(params: dict[str, float]) -> list[str]:
     if params.get("FS_THR_ENABLE") != FIELD_RC_FAILSAFE:
         out.append("FS_THR_ENABLE ska vara 4 (hem vid tappad RC) / the RC failsafe must fly home.")
     return out
+
+
+def _model_problems(loaded: Loaded) -> list[str]:
+    """A chosen detector model (``SD_DETECTOR_MODEL``) is checked before the flight
+    controller is connected, so a wrong one stops the start here, never later."""
+    manifest = loaded.env.get(MODEL_ENV, "").strip()
+    if not loaded.config.perception.enabled or not manifest:
+        return []
+    from sd_detect.onnx import ModelError, check_model  # numpy only, no ONNX Runtime
+
+    try:
+        check_model(Path(manifest))
+    except ModelError as exc:
+        return [f"{MODEL_ENV}: modellen kan inte användas / the model cannot be used: {exc}"]
+    return []
 
 
 def _token_problems(loaded: Loaded) -> list[str]:

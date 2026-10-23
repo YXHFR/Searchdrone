@@ -340,6 +340,51 @@ async def test_run_skips_a_failing_still_sends_reports_and_stops(tmp_path: Path)
     assert threading.current_thread().name not in source.threads  # never on the event loop
 
 
+async def test_a_model_that_cannot_be_built_only_turns_perception_off(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    lp = loop(tmp_path, FakeClock(), {"SD_DETECTOR_MODEL": str(tmp_path / "gone.json")})
+    # built in the task, never when sd-onboard starts the executor and link
+    assert lp._built is None  # pyright: ignore[reportPrivateUsage]
+    with caplog.at_level("ERROR", logger="sd_onboard.perception"):
+        await asyncio.wait_for(lp.run(asyncio.Event()), 5)  # ends, never raises
+    assert "perception off" in caplog.text
+
+
+class _BrokenModel:
+    name = "model"
+    license = "Apache-2.0"
+    source = "model"
+
+    def detect_still(self, still: Any) -> list[Any]:
+        raise RuntimeError("inference failed")
+
+
+async def test_a_failing_model_only_counts_a_failed_still(tmp_path: Path) -> None:
+    write_still(tmp_path, "block0_h30")
+    clock = MonotonicClock()
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        lambda _r: None,
+        clock,
+        CAM,
+        period_s=0.01,
+        env={},
+    )
+    lp.built.sources["model"] = _BrokenModel()  # type: ignore[assignment]
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(lp.run(stop))
+    for _ in range(500):
+        if lp.stats.failed:
+            break
+        await asyncio.sleep(0.01)
+    assert not task.done()
+    stop.set()
+    await asyncio.wait_for(task, 2)
+    assert lp.stats.failed >= 1 and lp.stats.reports == 0
+
+
 class _TooLarge:
     def __init__(self) -> None:
         self.sent: list[str] = []

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,14 @@ from onnx import TensorProto, helper, numpy_helper
 from sd_detect.api import Frame
 from sd_detect.boxes import from_bbox, iou_matrix
 from sd_detect.classes import ClassRegistry
-from sd_detect.onnx import MANIFEST_SCHEMA, ModelError, OnnxDetector, load_model, sha256_of
+from sd_detect.onnx import (
+    MANIFEST_SCHEMA,
+    ModelError,
+    OnnxDetector,
+    check_model,
+    load_model,
+    sha256_of,
+)
 from sd_detect.sources import MODEL_ENV, build_sources
 from sd_detect.still import Still
 
@@ -118,6 +126,7 @@ def _manifest(tmp_path: Path, **over: object) -> Path:
         "sha256": sha256_of(path),
         "input_px": INPUT_PX,
         "classes": ["person"],
+        "licence": "Apache-2.0",
     } | over
     manifest = tmp_path / "person.json"
     manifest.write_text(json.dumps(body), encoding="utf-8")
@@ -140,11 +149,29 @@ def test_the_model_source_tiles_a_still(tmp_path: Path) -> None:
         ({"schema": "other"}, "manifest"),
         ({"classes": ["car"]}, "person"),
         ({"sha256": "1" * 64}, "kontrollsumma"),
+        ({"family": "yolo9"}, "modellfamilj"),
+        ({"licence": "CC-BY-NC-4.0"}, "licens"),
+        ({"onnx": "gone.onnx"}, "finns inte"),
     ],
 )
-def test_a_wrong_manifest_is_refused(tmp_path: Path, over: dict[str, object], why: str) -> None:
+@pytest.mark.parametrize("check", [load_model, check_model])
+def test_a_wrong_manifest_is_refused(
+    tmp_path: Path, over: dict[str, object], why: str, check: Callable[[Path], object]
+) -> None:
     with pytest.raises(ModelError, match=why):
-        load_model(_manifest(tmp_path, **over))
+        check(_manifest(tmp_path, **over))
+
+
+def test_the_start_check_passes_a_good_model(tmp_path: Path) -> None:
+    check_model(_manifest(tmp_path))  # no error
+
+
+def test_onnx_runtime_gets_few_threads_and_no_busy_wait(tmp_path: Path) -> None:
+    path = _save(tmp_path, _graph({"output": _yolox_raw()}))
+    det = OnnxDetector(path, "yolox", sha256_of(path), input_px=INPUT_PX)
+    options = det.session.get_session_options()
+    assert options.intra_op_num_threads == 2 and options.inter_op_num_threads == 1
+    assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
 
 
 def test_the_register_builds_the_model_only_when_one_is_chosen(tmp_path: Path) -> None:

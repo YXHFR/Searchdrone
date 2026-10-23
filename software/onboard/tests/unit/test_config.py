@@ -94,6 +94,38 @@ def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> Non
     assert off is None
 
 
+def test_a_wrong_detector_model_stops_the_start(
+    root: Path, env: dict[str, str], tmp_path: Path
+) -> None:
+    import hashlib
+    import json
+
+    on = {
+        "SD_ONBOARD__PERCEPTION__ENABLED": "true",
+        "SD_ONBOARD__PERCEPTION__STILL_DIR": "${SD_DATA_DIR}/stills",
+    }
+    missing = {**on, "SD_DETECTOR_MODEL": str(tmp_path / "gone.json")}
+    assert any("SD_DETECTOR_MODEL" in e for e in check(load(root, {**env, **missing})))
+    onnx = tmp_path / "person.onnx"
+    onnx.write_bytes(b"not checked here, only hashed")
+    manifest = tmp_path / "person.json"
+    body = {
+        "schema": "sd.detector-model/v1",
+        "onnx": onnx.name,
+        "family": "yolox",
+        "sha256": hashlib.sha256(onnx.read_bytes()).hexdigest(),
+        "classes": ["person"],
+        "licence": "Apache-2.0",
+    }
+    manifest.write_text(json.dumps(body), encoding="utf-8")
+    good = {**on, "SD_DETECTOR_MODEL": str(manifest)}
+    assert check(load(root, {**env, **good})) == []
+    onnx.write_bytes(b"changed after export")
+    assert any("kontrollsumma" in e for e in check(load(root, {**env, **good})))
+    # perception off: the model is never used, so it is not checked
+    assert check(load(root, {**env, "SD_DETECTOR_MODEL": str(tmp_path / "gone.json")})) == []
+
+
 def test_test_hooks_rejected_outside_test(root: Path, env: dict[str, str]) -> None:
     hook = {"SD_ONBOARD__TEST_HOOKS__TAKEOFF_DELAY_AFTER_ARM_S": "5"}
     assert check(load(root, {**env, **hook}))

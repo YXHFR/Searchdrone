@@ -92,8 +92,13 @@ pythonVersion = "3.12"
 typeCheckingMode = "standard"
 strict = ["software/common/schemas/src", "software/common/safety/src"]
 include = ["software", "simulation", "tools"]
-# tools/train has its own Python with PyTorch (tools/train/pyproject.toml).
-exclude = ["**/node_modules", "**/.venv", "**/generated", "**/__pycache__", "tools/train"]
+# The PyTorch scripts in tools/train run in its own Python (tools/train/pyproject.toml);
+# the rest of tools/train (fetch_weights, tiles, evaluate) runs here and is checked.
+exclude = [
+  "**/node_modules", "**/.venv", "**/generated", "**/__pycache__",
+  "tools/train/vendor", "tools/train/tests", "tools/train/families.py",
+  "tools/train/train_detector.py", "tools/train/export_onnx.py",
+]
 executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
 
 [tool.pytest.ini_options]

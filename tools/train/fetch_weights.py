@@ -20,18 +20,21 @@ from pathlib import Path
 from typing import Any
 
 from bench.common import BenchError, data_dir, download, flag, parse_args, say, warn
+from check_licenses import license_allowed
+
+from sd_detect.onnx import MANIFEST_SCHEMA, MODEL_LICENCE
 
 REGISTER = Path(__file__).with_name("models.toml")
 KEYS = ("yes", "only", "data")
-MANIFEST_SCHEMA = "sd.detector-model/v1"
-ALLOWED_LICENCES = frozenset({"Apache-2.0", "MIT", "BSD-3-Clause"})
 
 
 def load_models(path: Path = REGISTER) -> list[dict[str, Any]]:
     rows = tomllib.loads(path.read_text(encoding="utf-8")).get("model", [])
     for row in rows:
-        if row["licence"] not in ALLOWED_LICENCES:
+        if not license_allowed(row["licence"]):
             raise BenchError(f"models.toml: {row['name']} har licensen {row['licence']}", 2)
+        if row["kind"] == "detector" and row["licence"] != MODEL_LICENCE:
+            raise BenchError(f"models.toml: {row['name']} ska ha licensen {MODEL_LICENCE}", 2)
         if not row["url"].startswith("https://") or len(row["sha256"]) != 64:
             raise BenchError(f"models.toml: {row['name']} saknar https eller SHA-256", 2)
         if row["kind"] not in ("pretrained", "detector"):

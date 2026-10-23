@@ -6,8 +6,10 @@ flight controller and never touches the executor. Reports go to the link's
 lowest-priority queue (``OnboardLink.perception``), each report followed by its crops.
 Reading the still and the detector work run in a worker thread so a slow picture never
 blocks the event loop the executor ticks on. A failing still is logged and skipped; the
-loop keeps going. Kept stills (for a run's record) are capped at ``KEEP_MAX``, the oldest
-removed first.
+loop keeps going. The detector sources (a trained model among them) are built in a
+worker thread when the task starts, after the executor and link run; if that fails,
+perception is off and the reason is logged, and flying goes on. Kept stills (for a
+run's record) are capped at ``KEEP_MAX``, the oldest removed first.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -25,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sd_detect import ClassRegistry, Still, build_sources, default_registry, detect_all
+from sd_detect.sources import BuiltSources
 from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
 from sd_obs.clock import Clock
@@ -130,10 +133,19 @@ class PerceptionLoop:
         self.registry = registry or default_registry()
         self.period_s = period_s
         self.keep_dir = keep_dir
-        self.built = build_sources(self.registry, env=env)
+        self.env = env
+        self._built: BuiltSources | None = None
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
         self._last_still_ms: int | None = None
+
+    @property
+    def built(self) -> BuiltSources:
+        """The detector sources, built on first use (``run`` builds them off the event
+        loop)."""
+        if self._built is None:
+            self._built = build_sources(self.registry, env=self.env)
+        return self._built
 
     def handle(
         self, captured: CapturedStill, t: FcTelemetry, now_ms: int, turn_rate_dps: float = 0.0
@@ -199,6 +211,11 @@ class PerceptionLoop:
             old.unlink(missing_ok=True)
 
     async def run(self, stop: asyncio.Event) -> None:
+        try:
+            await asyncio.to_thread(lambda: self.built)
+        except Exception:
+            log.exception("perception off: the detector sources could not be built")
+            return
         log.info(
             "perception on: sources %s, skipped %s", sorted(self.built.sources), self.built.skipped
         )
