@@ -168,10 +168,9 @@ def merge_local(
     ``k``'s radius (a person who moves on gets a new cylinder instead of dragging one
     along) or larger than a Keepout may be."""
     c = plane.xy(k.lat, k.lon)
+    dists = [(math.dist(c, plane.xy(o.lat, o.lon)), i) for i, o in enumerate(local)]
     near = sorted(
-        (math.dist(c, plane.xy(o.lat, o.lon)), i)
-        for i, o in enumerate(local)
-        if math.dist(c, plane.xy(o.lat, o.lon)) <= _MERGE_SHARE * min(k.radius_m, o.radius_m)
+        (d, i) for d, i in dists if d <= _MERGE_SHARE * min(k.radius_m, local[i].radius_m)
     )
     if not near:
         return None

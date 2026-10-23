@@ -1346,14 +1346,18 @@ class Executor:
             merged = merge_local(k, [o for o, _ in self.local_keepouts.values()], plane)
             if merged is not None:
                 # The same person again: one cylinder that covers both, as a new one, its
-                # hand-over counted from now. The reflex treats it as the old one: a drone
-                # that came outside the old one is not let through the grown one.
+                # hand-over counted from now. The reflex never takes it as new: the drone
+                # may leave it along its leg only if the old one let it (through, or not
+                # yet seen with the drone inside it), never when it came outside the old.
                 old, grown = merged
                 self.local_keepouts[mine[old.keepout_id]] = (grown, now)
-                if old.keepout_id in self._keepouts_seen:
-                    self._keepouts_seen.add(grown.keepout_id)
-                if old.keepout_id in self._keepouts_through:
+                seen = old.keepout_id in self._keepouts_seen
+                v = self.vehicle_state()
+                here, centre = plane.xy(v.lat, v.lon), plane.xy(old.lat, old.lon)
+                inside = math.dist(here, centre) < old.radius_m
+                if old.keepout_id in self._keepouts_through or (not seen and inside):
                     self._keepouts_through.add(grown.keepout_id)
+                self._keepouts_seen.add(grown.keepout_id)
                 self._keepouts_changed = True
                 self.emit(
                     "keepout_merged",
