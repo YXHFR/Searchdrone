@@ -355,9 +355,9 @@ def test_skill_outside_allowed_skills() -> None:
 
 
 def test_stub_is_not_implemented_even_after_approval() -> None:
-    orbit = {"lat": latlon(0, 0)[0], "lon": latlon(0, 0)[1], "radius_m": 50, "alt_m": 40}
-    assert "SKILL_NOT_IMPLEMENTED" in codes(req("orbit", orbit), ctx())
-    approved = req("orbit", orbit, phase="approve")
+    land = {"lat": latlon(0, 0)[0], "lon": latlon(0, 0)[1]}
+    assert "SKILL_NOT_IMPLEMENTED" in codes(req("land_at", land), ctx())
+    approved = req("land_at", land, phase="approve")
     assert "SKILL_NOT_IMPLEMENTED" in codes(approved, ctx())
 
 

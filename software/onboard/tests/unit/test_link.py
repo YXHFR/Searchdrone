@@ -59,7 +59,7 @@ async def test_link_roundtrip() -> None:
             assert event.body.type.startswith("executor.")  # type: ignore[attr-defined]
             cmd = SkillCommand(
                 command_id=new_id(),
-                skill="orbit",
+                skill="land_at",
                 params={},
                 issuer="operator:pilot",
                 rationale=None,

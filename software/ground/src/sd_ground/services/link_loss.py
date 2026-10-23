@@ -1,12 +1,14 @@
-"""Link loss on the ground: the confirmed finds' keep-out cylinders for the onboard
-computer, and what the panel should expect while SD-link is down.
+"""Link loss on the ground: the keep-out cylinders for the onboard computer, and what the
+panel should expect while SD-link is down.
 
 * **Keep-outs:** every confirmed find of the open mission (the newest revision of a
   candidate is ``confirmed``) becomes a ``Keepout`` (``source = "confirmed"``, radius
-  ``PERSON_KEEPOUT_M + sigma95_m``). The whole list goes out as ``KeepoutInstall`` when it
-  changes and at every ``Hello``. ``install_seq`` is at least the wall clock in
-  milliseconds, so a restarted ground station still sends a higher one than the onboard
-  computer kept.
+  ``PERSON_KEEPOUT_M + sigma95_m``), and so does every open candidate the detector or the
+  image model is at least ``KEEPOUT_SCORE_MIN`` sure of (``source = "candidate"``; gone
+  when a person rejects it). Only the confirmed ones count for the link-loss rule. The
+  whole list goes out as ``KeepoutInstall`` when it changes and at every ``Hello``.
+  ``install_seq`` is at least the wall clock in milliseconds, so a restarted ground
+  station still sends a higher one than the onboard computer kept.
 * **Forecast:** once nothing has come from the onboard computer for
   ``LINK_LOSS_DETECT_S``, the same ``sd_safety.link_loss.choose_mode`` as onboard runs on
   the last snapshot and the same list (``VehicleLive.link_loss_plan``), and the panel is
@@ -21,7 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final
 
-from sd_safety.constants import PERSON_KEEPOUT_M
+from sd_safety.constants import KEEPOUT_SCORE_MIN, PERSON_KEEPOUT_M
 from sd_safety.link_loss import DETECT_MS, FindPlan, choose_mode, plan_times
 from sd_schemas.api import AlertCode, LinkLossPlan
 from sd_schemas.base import new_id
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = ["KEEPOUT_POLL_S", "LinkWatch", "on_connected", "plan_of", "tick"]
 
-KEEPOUT_POLL_S: Final = 2.0  # how often the confirmed finds are read from the database
+KEEPOUT_POLL_S: Final = 2.0  # how often the cylinders' candidates are read from the database
 KEEPOUT_TTL_MS: Final = 10_000  # how late a KeepoutInstall may still be delivered
 BACK_WAIT_MS: Final = 10_000  # after the link is back: wait this long for a fresh snapshot
 _S = ExecutorState
@@ -99,7 +101,7 @@ async def on_connected(flow: MissionFlow, vehicle_id: str) -> None:
 
 
 async def _load(flow: MissionFlow, mission: Mission, w: LinkWatch) -> None:
-    rows = await flow.repo.confirmed_candidates(str(mission.id))
+    rows = await flow.repo.keepout_candidates(str(mission.id), KEEPOUT_SCORE_MIN)
     keepouts: list[Keepout] = []
     seqs: dict[str, int] = {}
     for row in rows[:KEEPOUTS_MAX]:
@@ -108,13 +110,14 @@ async def _load(flow: MissionFlow, mission: Mission, w: LinkWatch) -> None:
         if kid is None:
             kid = w.ids[cid] = new_id()
         seqs[cid] = int(row["seq"])
+        confirmed = row["state"] == "confirmed"
         keepouts.append(
             Keepout(
                 keepout_id=kid,
                 lat=float(row["lat"]),
                 lon=float(row["lon"]),
                 radius_m=min(500.0, PERSON_KEEPOUT_M + float(row["sigma95_m"])),
-                source="confirmed",
+                source="confirmed" if confirmed else "candidate",
                 source_id=uuid.UUID(cid),
             )
         )

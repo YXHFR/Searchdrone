@@ -37,6 +37,7 @@ from sd_schemas.base import (
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState, HeldBy, HoldReason, LinkLossPhase
 from sd_schemas.gate import CLEARANCE_VALID_MS, GateDecision, StateRef
+from sd_schemas.keepout import Keepout
 from sd_schemas.mission import LatchAction
 
 __all__ = [
@@ -477,17 +478,6 @@ class CropRequest(SdModel):
     center_px: tuple[Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)]]
     side_px: int = Field(ge=1, le=VIEW_SIDE_MAX_PX)
     max_px: int = Field(ge=1, le=CROP_MAX_PX)
-
-
-class Keepout(SdModel):
-    """A no-fly cylinder around a possible person."""
-
-    keepout_id: Id
-    lat: float = Field(ge=-90, le=90)
-    lon: float = Field(ge=-180, le=180)
-    radius_m: float = Field(gt=0, le=500)  # person_keepout_m + sigma95_m
-    source: Literal["detection", "candidate", "confirmed"]
-    source_id: Id  # the detection_id or candidate_id
 
 
 class KeepoutInstall(SdModel):

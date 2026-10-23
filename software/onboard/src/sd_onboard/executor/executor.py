@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
@@ -44,6 +44,15 @@ from sd_mav.vehicle import (
 from sd_obs.clock import Clock
 from sd_onboard.executor.authority import Authority
 from sd_onboard.executor.guards import GuardInput, Refusal, is_airborne, run_guard
+from sd_onboard.executor.keepout_reflex import (
+    LOCAL_KEEPOUT_HANDOVER_MS,
+    LOCAL_KEEPOUTS_MAX,
+    REROUTABLE,
+    contained,
+    remaining,
+    route_clear,
+    survey_run,
+)
 from sd_onboard.executor.limits import (
     INTERNAL_ALT_GOTO,
     LimitAction,
@@ -77,6 +86,7 @@ from sd_onboard.skills.base import (
 )
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.return_home import ReturnHomeHandler
+from sd_onboard.skills.survey_sector import SurveyHandler, SurveyRun
 from sd_safety import evaluate
 from sd_safety.constants import (
     CLEARANCE_VALID_S,
@@ -89,11 +99,14 @@ from sd_safety.constants import (
     FIND_MOVE_SPEED_MS,
     GCS_SEEN_FOR_RELEASE_S,
     HOME_MATCH_M,
+    KEEPOUT_SCORE_MIN,
     LINK_LOSS_DETECT_S,
     MODE_CONFIRM_TIMEOUT_S,
+    PERSON_KEEPOUT_M,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
+from sd_safety.keepout import circles, xy_route_violation
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -104,7 +117,7 @@ from sd_safety.limits import (
     charter_violations,
     fc_area_max_from_home_m,
 )
-from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, MODE_A_EXEMPT
+from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, KEEPOUT_EXEMPT, MODE_A_EXEMPT
 from sd_safety.targets import Plane, distance_m, polygon_from_geojson
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
@@ -118,6 +131,7 @@ from sd_schemas.link import (
     CharterInstall,
     ClearanceConfirmation,
     CommanderStatus,
+    GeoDetectionMsg,
     Hello,
     HelloAck,
     Keepout,
@@ -260,6 +274,7 @@ class _Active:
     origin: SendOrigin
     task: asyncio.Task[None] | None = None
     ack_done: bool = True  # Ack(done)/(failed) for this order (False for internal orders)
+    cmd: SkillCommand | None = None  # the order (None for internal orders)
 
 
 _PARAM_TOLERANCE: Final = 1e-3
@@ -315,6 +330,10 @@ class _IO:
     def emit_event(self, type: str, data: dict[str, Any]) -> None:
         self._ex.emit(type, data)
 
+    async def capture_still(self, command_id: UUID) -> UUID | None:
+        camera = self._ex.camera
+        return None if camera is None else await camera(command_id)
+
 
 class Executor:
     def __init__(
@@ -354,6 +373,11 @@ class Executor:
         self.gps_health = GpsHealth()
         self.keepouts: tuple[Keepout, ...] = ()
         self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
+        # Cylinders from the drone's own detections: detection_id -> (cylinder, created).
+        self.local_keepouts: dict[UUID, tuple[Keepout, int]] = {}
+        self._keepouts_changed = False  # the reflex runs on the next tick
+        # Takes one still for an order (perception, ``PerceptionLoop.capture``).
+        self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way
@@ -697,6 +721,9 @@ class Executor:
         self.active = None
         if self.state == S.RTL:
             return  # return home is done at LANDED
+        if self.state == S.HOLD and active.skill == "capture_stills":
+            self._ack(active.command_id, "done")  # taken while hovering: no transition
+            return
         target = self.target_of(Trigger.SKILL_DONE)
         if isinstance(target, Refusal):
             return
@@ -890,8 +917,10 @@ class Executor:
             self.flown = False
         origin = SendOrigin.SKILL
         reason = "ai_hold" if spec.name == "hold" else None
+        if spec.name == "capture_stills":
+            reason = self.hold_reason  # stills while hovering: the hover stays what it was
         self._enter(target, hold_reason=reason, cause=f"skill:{spec.name}")
-        self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin))
+        self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin, cmd=cmd))
         self._ack(cmd.command_id, "running")
 
     def _onboard_checks(
@@ -993,6 +1022,7 @@ class Executor:
             plane=plane,
             resume_point=self.resume_point,
             clock=self.clock,
+            keepouts=self.keepouts_in_force(),
         )
 
     def _gate_request(self, cmd: SkillCommand, plan: SkillPlan) -> GateRequest:
@@ -1047,6 +1077,7 @@ class Executor:
             recent_brain_reports_mono_ms=(),
             brain_pending_approvals=0,
             operator_present=True,
+            keepouts=self.keepouts_in_force(),
         )
 
     def on_cancel(self, command_id: UUID) -> None:
@@ -1246,8 +1277,43 @@ class Executor:
             return
         self.keepout_seq = install.install_seq
         self.keepouts = tuple(install.keepouts)
+        # The ground has had time to include our own cylinders (as candidates) by now.
+        handed = self.now_ms() - LOCAL_KEEPOUT_HANDOVER_MS
+        self.local_keepouts = {k: v for k, v in self.local_keepouts.items() if v[1] > handed}
+        self._keepouts_changed = True
         self._save()
         self._ack(ref_id, "done")
+
+    def keepouts_in_force(self) -> tuple[Keepout, ...]:
+        """The ground's cylinders and the drone's own: what the gate and the plans use."""
+        return (*self.keepouts, *(k for k, _ in self.local_keepouts.values()))
+
+    def on_detections(self, detections: Sequence[GeoDetectionMsg]) -> None:
+        """Target detections from perception: one cylinder for each at least
+        ``KEEPOUT_SCORE_MIN`` sure, unless one in force already holds it."""
+        plane = self.plane()
+        if plane is None:
+            return
+        now = self.now_ms()
+        for d in detections:
+            if d.score < KEEPOUT_SCORE_MIN or d.detection_id in self.local_keepouts:
+                continue
+            k = Keepout(
+                keepout_id=new_id(),
+                lat=d.lat,
+                lon=d.lon,
+                radius_m=min(500.0, PERSON_KEEPOUT_M + d.sigma95_m),
+                source="detection",
+                source_id=d.detection_id,
+            )
+            if contained(k, self.keepouts_in_force(), plane):
+                continue
+            if len(self.local_keepouts) >= LOCAL_KEEPOUTS_MAX:
+                self.emit("keepouts_full", {"detection_id": str(d.detection_id)})
+                continue
+            self.local_keepouts[d.detection_id] = (k, now)
+            self._keepouts_changed = True
+            self.emit("keepout_created", k.model_dump(mode="json"))
 
     def on_pilot_position(self, p: PilotPosition) -> None:
         self.pilot.update(p.lat, p.lon, self.now_ms())
@@ -1443,6 +1509,9 @@ class Executor:
         self._last_tick_ms = now
         t = self.vehicle.telemetry
         self._finish_active()
+        if self._keepouts_changed:
+            self._keepouts_changed = False
+            self._keepout_reflex()
         if self.state in AIRBORNE_CONTROLLED and not t.fc_connected:
             self._take(Trigger.FC_SILENT, held_by="fc_silent", event="fc_silent")
         if t.fc_connected:
@@ -1475,6 +1544,65 @@ class Executor:
             self._save()
         self._tick_ms.append((self.clock.monotonic() - started) * 1000)
         del self._tick_ms[:-100]
+
+    def _keepout_reflex(self) -> None:
+        """A cylinder came: plan the rest of a search around it, or hover (see
+        ``executor.keepout_reflex``). Internal orders, return home and take-off go on."""
+        active, plane, charter = self.active, self.plane(), self.charter
+        if (
+            active is None
+            or not active.ack_done
+            or active.skill in KEEPOUT_EXEMPT
+            or self.state not in (S.TRANSIT, S.SURVEY)
+            or plane is None
+            or charter is None
+        ):
+            return
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        rest = remaining(active.handler, active.plan, here, plane)
+        keepouts = self.keepouts_in_force()
+        if not rest or xy_route_violation([here, *rest], circles(keepouts, plane)) is None:
+            return
+        run = survey_run(active.handler)
+        if active.skill in REROUTABLE and run is not None and self._reroute(active, run):
+            return
+        action = LimitAction(
+            limit="KEEPOUT_VIOLATION",
+            kind="hold",
+            hold_reason="limit",
+            event="keepout_hold",
+            data={"command_id": str(active.command_id), "skill": active.skill},
+        )
+        self.emit(action.event, dict(action.data))
+        self._apply_limit(action)
+
+    def _reroute(self, active: _Active, run: SurveyRun) -> bool:
+        """The rest of a search around the cylinders, as a new mission for the same order."""
+        if self.charter is None:
+            raise RuntimeError("no charter installed")
+        rest = run.waypoints[run.next_index :]
+        new = SurveyRun(
+            active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
+        )
+        ctx = self._plan_context(active.command_id)
+        try:
+            plan = new.plan(ctx)
+        except PlanError:
+            return False
+        route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
+        if not route_clear(route, ctx.keepouts, ctx.plane, self.charter):
+            return False
+        handler = SurveyHandler.rerouted(new, self.charter.home)
+        self._drop_active(stage=None, save_resume=False)
+        self.emit(
+            "keepout_reroute",
+            {"command_id": str(active.command_id), "skill": active.skill, "points": len(route) - 1},
+        )
+        self._start_active(
+            _Active(active.command_id, active.skill, handler, plan, active.origin, cmd=active.cmd)
+        )
+        return True
 
     def _flying_home(self) -> bool:
         t = self.vehicle.telemetry

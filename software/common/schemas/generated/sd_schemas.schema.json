@@ -4486,6 +4486,17 @@
           "default": true,
           "type": "boolean"
         },
+        "ring": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrbitRing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "route_energy": {
           "default": false,
           "type": "boolean"
@@ -4936,26 +4947,72 @@
     },
     "InspectDetectionParams": {
       "additionalProperties": false,
-      "description": "Stage 2. The detection's position exists only onboard: always unresolved here.",
+      "description": "A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).\n\nThe ground fills in where the target is (``lat``, ``lon``: the candidate's position\nwhen the detection belongs to one) and its cylinder's radius from its own records;\nwithout them the order is unresolved. ``alt_m`` is the highest the drone may go for it\n(the charter's ceiling when left out).",
       "properties": {
         "alt_m": {
-          "exclusiveMinimum": 0,
-          "type": "number"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "detection_id": {
           "format": "uuid",
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
         },
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "standoff_m": {
           "maximum": 200,
           "minimum": 15,
           "type": "number"
+        },
+        "target_radius_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 500,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
         "detection_id",
-        "alt_m",
         "standoff_m"
       ],
       "title": "InspectDetectionParams",
@@ -6846,6 +6903,38 @@
         "alt_m"
       ],
       "title": "OrbitParams",
+      "type": "object"
+    },
+    "OrbitRing": {
+      "additionalProperties": false,
+      "description": "An orbit's flown ring: every point of it lies between ``inner_m`` and ``outer_m``\nfrom the centre (the gate keeps the whole band away from every cylinder).",
+      "properties": {
+        "inner_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "outer_m": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "inner_m",
+        "outer_m"
+      ],
+      "title": "OrbitRing",
       "type": "object"
     },
     "PanelConfig": {
@@ -9271,6 +9360,12 @@
               "type": "null"
             }
           ]
+        },
+        "keepouts": {
+          "items": {
+            "$ref": "#/$defs/Keepout"
+          },
+          "type": "array"
         },
         "position": {
           "anyOf": [

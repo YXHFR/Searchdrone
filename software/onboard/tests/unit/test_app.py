@@ -25,6 +25,9 @@ class _Stub:
     async def close(self) -> None:
         return None
 
+    def on_detections(self, detections: Any) -> None:
+        return None
+
 
 class _DyingExecutor(_Stub):
     async def run(self, stop: asyncio.Event) -> None:
@@ -72,6 +75,10 @@ class _TickingExecutor(_Stub):
 
 class _DyingPerception:
     ran = False
+    on_targets: Any = None
+
+    async def capture(self, command_id: Any) -> None:
+        return None
 
     async def run(self, stop: asyncio.Event) -> None:
         type(self).ran = True

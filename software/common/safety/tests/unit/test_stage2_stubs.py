@@ -1,8 +1,8 @@
 """B1-14: a skill that is not built never passes the gate: any issuer, phase or side.
 
-The stage 2 skills (detections, following, follow me / find me) exist in the registry only
-as stubs. However an order for them is phrased and whoever sends it, the gate refuses it
-with ``SKILL_NOT_IMPLEMENTED``.
+The stage 2 skills not built yet (following, follow me / find me) exist in the registry
+only as stubs. However an order for them is phrased and whoever sends it, the gate
+refuses it with ``SKILL_NOT_IMPLEMENTED``.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from gate_fixtures import REGISTRY, ctx, req
 
 from sd_safety import evaluate
 
-STAGE2 = ("inspect_detection", "follow_track", "stop_follow", "follow_me", "find_me")
+STAGE2 = ("follow_track", "stop_follow", "follow_me", "find_me")
 STUBS = sorted(s.name for s in REGISTRY.as_mapping().values() if s.status == "stub")
 ISSUERS = {"brain": "brain:ground", "operator": "operator:demo"}
 

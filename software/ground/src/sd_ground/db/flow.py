@@ -1225,16 +1225,22 @@ class FlowRepo:
         )
         return [dict(r) for r in rows]
 
-    async def confirmed_candidates(self, mission_id: str) -> list[dict[str, Any]]:
-        """The mission's candidates whose newest revision is ``confirmed`` (a person
-        confirmed the find and has not reopened it), by display number."""
+    async def keepout_candidates(self, mission_id: str, score_min: float) -> list[dict[str, Any]]:
+        """The mission's candidates that get a keep-out cylinder, confirmed finds first,
+        then by display number: the newest revision is ``confirmed`` (a person confirmed
+        the find and has not reopened it), or it is still open (not rejected or merged)
+        and the detector or the image model is at least ``score_min`` sure."""
         rows = await self._all(
-            "SELECT candidate_id::text AS candidate_id, seq, lat, lon, sigma95_m FROM ("
+            "SELECT candidate_id::text AS candidate_id, seq, state, lat, lon, sigma95_m FROM ("
             "SELECT DISTINCT ON (candidate_id) candidate_id, seq, state, "
-            "ST_Y(geom) AS lat, ST_X(geom) AS lon, sigma95_m FROM candidates "
+            "ST_Y(geom) AS lat, ST_X(geom) AS lon, sigma95_m, best_detector_score, "
+            "refined_person_score FROM candidates "
             "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
-            "WHERE state = 'confirmed' ORDER BY seq, candidate_id",
+            "WHERE state = 'confirmed' OR (state NOT IN ('rejected', 'merged') AND "
+            "(best_detector_score >= :s OR refined_person_score >= :s)) "
+            "ORDER BY state <> 'confirmed', seq, candidate_id",
             m=mission_id,
+            s=score_min,
         )
         return [dict(r) for r in rows]
 
@@ -1378,6 +1384,21 @@ class FlowRepo:
             b = _json(r["bbox"])
             out.append({**dict(r), "bbox": [b["x"], b["y"], b["w"], b["h"]]})
         return out
+
+    async def inspect_target(self, mission_id: str, detection_id: str) -> dict[str, Any] | None:
+        """Where a closer look at a detection aims: the newest position of the candidate
+        that observed it, else the detection's own (``lat``, ``lon``, ``sigma95_m``)."""
+        row = await self._one(
+            "SELECT COALESCE(c.lat, ST_Y(d.geom)) AS lat, COALESCE(c.lon, ST_X(d.geom)) AS lon, "
+            "COALESCE(c.sigma95_m, d.sigma95_m) AS sigma95_m FROM detections d "
+            "LEFT JOIN LATERAL (SELECT ST_Y(k.geom) AS lat, ST_X(k.geom) AS lon, k.sigma95_m "
+            "FROM candidate_observations o JOIN candidates k ON k.candidate_id = o.candidate_id "
+            "WHERE o.detection_id = d.detection_id ORDER BY k.rev DESC LIMIT 1) c ON TRUE "
+            "WHERE d.mission_id = :m AND d.detection_id = :d",
+            m=mission_id,
+            d=detection_id,
+        )
+        return None if row is None else dict(row)
 
     async def detection_crop(self, mission_id: str, detection_id: str) -> str | None:
         row = await self._one(

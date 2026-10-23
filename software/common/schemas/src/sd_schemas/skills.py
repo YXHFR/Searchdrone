@@ -25,6 +25,12 @@ from sd_schemas.base import (
 from sd_schemas.charter import CharterProposal, MissionCharter
 from sd_schemas.executor import ExecutorState, GotoResumePoint, ResumePoint
 from sd_schemas.geo import plane_offset
+from sd_schemas.keepout import (
+    INSPECT_SPEED_MS,
+    Keepout,
+    inspect_geometry,
+    local_xy,
+)
 from sd_schemas.safety import MIN_ALT_AGL_M
 
 __all__ = [
@@ -48,6 +54,7 @@ __all__ = [
     "MarkLocationAiParams",
     "MarkLocationParams",
     "OrbitParams",
+    "OrbitRing",
     "ProposeCharterChangeParams",
     "ReportParams",
     "ResumeParams",
@@ -63,6 +70,7 @@ __all__ = [
     "TakeoffParams",
     "TargetContext",
     "circle_polygon",
+    "orbit_ring",
 ]
 
 # Fixed lower bound in the AI-facing schemas. The upper bounds come per turn from the
@@ -108,6 +116,17 @@ class TargetContext(SdModel):
     position: LatLonAlt | None  # the vehicle's current position
     home: LatLonAlt | None
     resume_point: ResumePoint | None = None  # what `resume` would continue
+    keepouts: list[Keepout] = Field(default_factory=list[Keepout])  # the active cylinders
+
+
+class OrbitRing(SdModel):
+    """An orbit's flown ring: every point of it lies between ``inner_m`` and ``outer_m``
+    from the centre (the gate keeps the whole band away from every cylinder)."""
+
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    inner_m: float = Field(gt=0)
+    outer_m: float = Field(gt=0)
 
 
 class GateTargets(SdModel):
@@ -130,6 +149,7 @@ class GateTargets(SdModel):
     # The gate also checks that the battery lasts for ``path`` plus the flight home from
     # its end, with the reserve left (follow_path).
     route_energy: bool = False
+    ring: OrbitRing | None = None  # orbit: the circle flown, checked against the cylinders
 
 
 UNRESOLVED = GateTargets(resolved=False)
@@ -346,11 +366,45 @@ class OrbitParams(SkillParams):
     turns: int = Field(default=1, ge=1, le=3)
 
     def gate_targets(self, ctx: TargetContext) -> GateTargets:
-        # The whole circle is checked, not only its centre: the gate gets a polygon that
-        # holds the circle (corners on the outside), so area and pilot distance see it.
+        # The flown ring itself is the route: the gate checks every leg of it against the
+        # charter and the cylinders, and the band it lies in against the cylinders.
+        here = _here(ctx)
+        if here is None:
+            return UNRESOLVED
         centre = LatLon(lat=self.lat, lon=self.lon)
-        circle = circle_polygon(centre, self.radius_m)
-        return _route(ctx, centre, areas=[circle], alt_m=self.alt_m, speed_ms=None)
+        ring = orbit_ring(centre, self.radius_m, here)
+        return GateTargets(
+            points=[ring[0]],
+            path=[here, *ring],
+            alts_m=[self.alt_m],
+            speed_ms=None,
+            ring=OrbitRing(
+                lat=self.lat,
+                lon=self.lon,
+                inner_m=self.radius_m,
+                outer_m=self.radius_m / math.cos(math.pi / ORBIT_RING_CORNERS),
+            ),
+        )
+
+
+ORBIT_RING_CORNERS = 24  # 15 degrees apart
+
+
+def orbit_ring(centre: LatLon, radius_m: float, start: LatLon) -> list[LatLon]:
+    """One turn of an orbit as ``ORBIT_RING_CORNERS`` + 1 corners, clockwise seen from
+    above, starting and ending at the corner nearest ``start``. The corners lie just
+    outside the circle so that no straight leg between them comes closer to the centre
+    than ``radius_m``."""
+    outer = radius_m / math.cos(math.pi / ORBIT_RING_CORNERS)
+    sx, sy = local_xy(centre.lat, centre.lon, start.lat, start.lon)
+    step = 2 * math.pi / ORBIT_RING_CORNERS
+    first = round(math.atan2(sx, sy) / step) if (sx, sy) != (0.0, 0.0) else 0
+    out: list[LatLon] = []
+    for i in range(ORBIT_RING_CORNERS + 1):
+        a = (first + i) * step
+        lat, lon = plane_offset(centre.lat, centre.lon, outer * math.sin(a), outer * math.cos(a))
+        out.append(LatLon(lat=lat, lon=lon))
+    return out
 
 
 _CIRCLE_CORNERS = 16
@@ -371,11 +425,56 @@ def circle_polygon(centre: LatLon, radius_m: float) -> dict[str, Any]:
 
 
 class InspectDetectionParams(SkillParams):
-    """Stage 2. The detection's position exists only onboard: always unresolved here."""
+    """A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).
+
+    The ground fills in where the target is (``lat``, ``lon``: the candidate's position
+    when the detection belongs to one) and its cylinder's radius from its own records;
+    without them the order is unresolved. ``alt_m`` is the highest the drone may go for it
+    (the charter's ceiling when left out)."""
 
     detection_id: Id
-    alt_m: float = _Alt
+    alt_m: float | None = Field(default=None, gt=0)
     standoff_m: float = Field(ge=15, le=200)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    target_radius_m: float | None = Field(default=None, gt=0, le=500)
+
+    def geometry(self, ctx: TargetContext) -> tuple[LatLon, float, float, float] | None:
+        """(point, height above home, heading, speed), or None when it cannot be worked out."""
+        here, charter = _here(ctx), ctx.charter
+        if (
+            here is None
+            or charter is None
+            or self.lat is None
+            or self.lon is None
+            or self.target_radius_m is None
+        ):
+            return None
+        top = (
+            charter.alt_max_agl_m if self.alt_m is None else min(self.alt_m, charter.alt_max_agl_m)
+        )
+        g = inspect_geometry(
+            target_lat=self.lat,
+            target_lon=self.lon,
+            target_radius_m=self.target_radius_m,
+            standoff_m=self.standoff_m,
+            here_lat=here.lat,
+            here_lon=here.lon,
+            alt_min_m=charter.alt_min_agl_m,
+            alt_max_m=top,
+            keepouts=ctx.keepouts,
+        )
+        if g is None:
+            return None
+        speed = min(INSPECT_SPEED_MS, charter.max_speed_ms)
+        return LatLon(lat=g.lat, lon=g.lon), g.alt_m, g.yaw_deg, speed
+
+    def gate_targets(self, ctx: TargetContext) -> GateTargets:
+        found = self.geometry(ctx)
+        if found is None:
+            return UNRESOLVED
+        point, alt, _, speed = found
+        return _route(ctx, point, alt_m=alt, speed_ms=speed)
 
 
 class CaptureStillsParams(_NoTargets):
@@ -752,13 +851,17 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="orbit",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=OrbitParams,
         moves_vehicle=True,
         allowed_when="airborne",
         rate_class="action",
-        description_en="Circle a point. Not available in v1.",
+        description_en=(
+            "Circle a point at radius_m (1-3 turns), then hover. The whole circle must lie "
+            "inside the charter and keep 10 m outside every keep-out cylinder."
+        ),
         synonyms_sv=["cirkla", "flyg runt"],
         title_sv="Cirkla",
     ),
@@ -779,14 +882,18 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="capture_stills",
         stage=1,
-        status="stub",
+        status="implemented",
+        allowed_from=frozenset({ExecutorState.HOLD}),
         runs_on="onboard",
         params_model=CaptureStillsParams,
         moves_vehicle=False,
         allowed_when="any",
         exempt_from_battery_rule=True,
         rate_class="action",
-        description_en="Take still photos. Not available in v1.",
+        description_en=(
+            "While hovering: take count stills, interval_s apart, and run them through "
+            "detection as usual. Does not move the drone."
+        ),
         synonyms_sv=["ta bilder", "fotografera"],
         title_sv="Ta bilder",
     ),
@@ -809,13 +916,18 @@ _SPECS: tuple[SkillSpec, ...] = (
     SkillSpec(
         name="inspect_detection",
         stage=2,
-        status="stub",
+        status="implemented",
+        allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=InspectDetectionParams,
         moves_vehicle=True,
         allowed_when="airborne",
         rate_class="action",
-        description_en="Fly closer to a detection to look at it. Stage 2.",
+        description_en=(
+            "Look closer at a detection: fly to the edge of its keep-out cylinder on the "
+            "drone's side, at a height that sees it nearly straight down, take 5 stills, "
+            "then hover. Never enters a keep-out cylinder."
+        ),
         synonyms_sv=["titta närmare", "inspektera"],
         title_sv="Titta närmare",
     ),
@@ -879,4 +991,5 @@ _SPECS: tuple[SkillSpec, ...] = (
 
 SKILL_REGISTRY = SkillRegistry(_SPECS)
 """All 19 skills. A skill stays a stub until its executor and tests exist; the seven
-onboard skills of the foundation are implemented by ``sd_onboard``."""
+onboard skills of the foundation, ``orbit``, ``capture_stills`` and
+``inspect_detection`` are implemented by ``sd_onboard``."""

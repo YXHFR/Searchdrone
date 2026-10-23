@@ -30,12 +30,15 @@ from sd_safety.constants import (
     STATE_MAX_AGE_MS,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
+from sd_safety.keepout import ring_violation, route_violation
 from sd_safety.limits import area_reach_from_home_m, fc_area_max_from_home_m
 from sd_safety.policy import (
     ALLOWED_OUTSIDE_CHARTER_SKILLS,
     ALWAYS_REQUIRE_APPROVAL,
     CLEARANCE_EXEMPT,
     GROUND_UNCHECKED_TARGETS,
+    KEEPOUT_EXEMPT,
+    KEEPOUT_TARGET_SKILLS,
     MODE_A_EXEMPT,
     OPERATOR_ALLOWED_UNDER_LATCH,
     UNDER_OVERRIDE_ALLOWED,
@@ -580,6 +583,36 @@ def _outside_charter(f: Facts) -> list[Finding]:
     return []
 
 
+def _keepout(f: Facts) -> list[Finding]:
+    """No route enters a keep-out cylinder; an orbit's ring keeps 10 m from every one.
+
+    The targets of ``KEEPOUT_TARGET_SKILLS`` are checked on both sides; onboard, the
+    handler's path is checked for every other move as well (``KEEPOUT_EXEMPT`` aside)."""
+    keepouts, plane = f.ctx.keepouts, f.plane
+    if not keepouts or plane is None or not f.moves or f.req.skill in KEEPOUT_EXEMPT:
+        return []
+    t = f.targets
+    routes: list[list[LatLon]] = []
+    if t is not None and f.req.skill in KEEPOUT_TARGET_SKILLS and t.path:
+        routes.append(list(t.path))
+    if f.req.planned_path:
+        routes.append([LatLon(lat=p.lat, lon=p.lon) for p in f.req.planned_path])
+    for route in routes:
+        hit = route_violation(route, keepouts, plane)
+        if hit is not None:
+            return _keepout_finding(hit.keepout_id, "route")
+    ring = t.ring if t is not None and f.req.skill in KEEPOUT_TARGET_SKILLS else None
+    if ring is not None:
+        hit = ring_violation(ring, keepouts, plane)
+        if hit is not None:
+            return _keepout_finding(hit.keepout_id, "orbit_ring")
+    return []
+
+
+def _keepout_finding(keepout_id: object, where: str) -> list[Finding]:
+    return [Finding("KEEPOUT_VIOLATION", {"keepout_id": str(keepout_id), "keepout_at": where})]
+
+
 def _outside(by: float) -> list[Finding]:
     return [Finding("OUTSIDE_CHARTER", {"outside_by_m": round(by, 1)})]
 
@@ -725,6 +758,7 @@ RULES: Final[tuple[Rule, ...]] = (
     Rule("R-BATT-ROUTE", _ALL, False, _route_battery),
     Rule("R-ALT", _ALL, False, _altitude),
     Rule("R-AREA", _ALL, False, _outside_charter),
+    Rule("R-KEEPOUT", _ALL, False, _keepout),
     Rule("R-PILOT", _ALL, False, _pilot_distance),
     Rule("R-SPEED", _ALL, False, _speed),
     Rule("R-ABSENT", _BRAIN, True, _absent),

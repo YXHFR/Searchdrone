@@ -14,6 +14,8 @@ __all__ = [
     "CLEARANCE_EXEMPT",
     "FORBIDDEN_SKILL_NAMES",
     "GROUND_UNCHECKED_TARGETS",
+    "KEEPOUT_EXEMPT",
+    "KEEPOUT_TARGET_SKILLS",
     "MODE_A_EXEMPT",
     "OPERATOR_ALLOWED_UNDER_LATCH",
     "UNDER_OVERRIDE_ALLOWED",
@@ -74,3 +76,11 @@ OPERATOR_ALLOWED_UNDER_LATCH: Final = frozenset({"return_home", "report", "mark_
 
 # Their route exists only onboard; the onboard gate checks it from the handler's path.
 GROUND_UNCHECKED_TARGETS: Final = frozenset({"resume"})
+
+# R-KEEPOUT: these skills' own targets (point, route, orbit ring) are checked against the
+# keep-out cylinders on both sides. Every other move is checked onboard only, on the
+# handler's path, which already goes around the cylinders (an AUTO mission is rerouted).
+KEEPOUT_TARGET_SKILLS: Final = frozenset({"goto", "orbit", "inspect_detection"})
+
+# Never refused for a cylinder: going home and the climb straight up.
+KEEPOUT_EXEMPT: Final = frozenset({"return_home", "takeoff"})

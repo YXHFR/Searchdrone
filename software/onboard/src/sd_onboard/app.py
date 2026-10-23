@@ -81,6 +81,9 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
     )
     link.executor = executor
     perception = _perception(loaded, vehicle, link, clock)
+    if perception is not None:
+        perception.on_targets = executor.on_detections  # E8: cylinders from our own finds
+        executor.camera = perception.capture  # capture_stills and inspect_detection
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, RuntimeError):
