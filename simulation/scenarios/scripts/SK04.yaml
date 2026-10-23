@@ -38,6 +38,12 @@ turns:
     when: {decision: reject}
     once: false
     say: ["Uppfattat, inte personen. Söker vidare."]
+  # A cylinder with no way around stops the search in a hover: search sector B instead.
+  - on: skill_event
+    when: {skill: [survey_sector, resume], status_reason: KEEPOUT_VIOLATION}
+    once: false
+    say: ["En spärrzon ligger i vägen. Söker av sektor B."]
+    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   - on: skill_event
     when: {skill: [survey_sector, resume], status: done}
     say: ["Sektorn är sökt. Söker av sektor B."]
