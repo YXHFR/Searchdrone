@@ -34,6 +34,7 @@ __all__ = [
     "LOCAL_KEEPOUT_HANDOVER_MS",
     "REROUTABLE",
     "FliesSurveyRun",
+    "blocks_find_move",
     "contained",
     "entry_m",
     "remaining",

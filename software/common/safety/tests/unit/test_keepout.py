@@ -340,23 +340,28 @@ def test_reroute_checks_the_way_out_against_the_area() -> None:
 
 
 def test_inspect_way_there_keeps_out_of_the_target_without_its_cylinder() -> None:
-    """Other cylinders block the near side and the target has no cylinder in force: the
-    way round to a point never cuts the target's own circle (here no way is left)."""
+    """Other cylinders block the near side and the target has no cylinder in force: a
+    way round that cuts the target's own circle is no way; here none is left."""
     t = (0.0, 150.0)
     here = (0.0, t[1] + 62.2)
     others = [cylinder(-11.9, t[1] + 49.7, 13.5), cylinder(15.3, t[1] + 49.1, 11.3)]
-    g = inspect_geometry(
-        target_lat=latlon(*t)[0],
-        target_lon=latlon(*t)[1],
-        target_radius_m=30.0,
-        standoff_m=20.0,
-        here_lat=latlon(*here)[0],
-        here_lon=latlon(*here)[1],
-        alt_min_m=10.0,
-        alt_max_m=120.0,
-        keepouts=others,
-    )
-    assert g is None or not leg_enters(here, PLANE.xy(g.lat, g.lon), t, 30.0)
+
+    def geometry(keepouts: list[Keepout]) -> Any:
+        return inspect_geometry(
+            target_lat=latlon(*t)[0],
+            target_lon=latlon(*t)[1],
+            target_radius_m=30.0,
+            standoff_m=20.0,
+            here_lat=latlon(*here)[0],
+            here_lon=latlon(*here)[1],
+            alt_min_m=10.0,
+            alt_max_m=120.0,
+            keepouts=keepouts,
+        )
+
+    free = geometry([])
+    assert free is not None and not leg_enters(here, PLANE.xy(free.lat, free.lon), t, 30.0)
+    assert geometry(others) is None
 
 
 def test_reroute_gives_up_on_cylinders_it_cannot_pass() -> None:

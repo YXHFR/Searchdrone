@@ -209,6 +209,7 @@ _WARNING: Final = frozenset(
         "link_loss_hold",
         "find_hold_started",
         "find_move_deadline",
+        "find_move_keepout",
         "find_hold_ended",
         "gcs_lost_ignored_find",
         "gnss_degraded",
@@ -1575,6 +1576,9 @@ class Executor:
         take-off go on."""
         self._keepout_watch = False
         active, plane, charter = self.active, self.plane(), self.charter
+        if active is not None and active.skill == INTERNAL_FIND_GOTO:
+            self._find_move_reflex()
+            return
         if (
             active is None
             or not active.ack_done
@@ -1615,10 +1619,37 @@ class Executor:
             return
         self._keepout_hold()
 
+    def _find_move_reflex(self) -> None:
+        """The link-loss find move meets a cylinder that came on the way (a person the
+        drone sees as it flies): it ends its stop short of it, in the find hover there."""
+        find, plane = self.link_rule.plan, self.plane()
+        if find is None or plane is None or self.state != S.TRANSIT:
+            return
+        v = self.vehicle_state()
+        others = [k for k in self.keepouts_in_force() if k.keepout_id != find.keepout_id]
+        route = [plane.xy(v.lat, v.lon), plane.xy(find.hover_lat, find.hover_lon)]
+        entry = entry_m(route, circles(others, plane))
+        if entry is None:
+            return
+        if entry > stop_m(v.groundspeed_ms):
+            self._keepout_watch = True
+            return
+        self._find_hover_here()
+
+    def _find_hover_here(self) -> None:
+        """End the link-loss find move where the drone is: the find hover starts there."""
+        action = LimitAction("L-FIND", "hold", "find_hold", "find_move_keepout", {})
+        self.emit(action.event, dict(action.data))
+        self._apply_limit(action)
+
     def _keepout_hold(self) -> None:
         """Stop a moving order in a hover (``KEEPOUT_VIOLATION``). Internal orders, return
-        home and take-off go on."""
+        home and take-off go on; the link-loss find move ends in its hover here."""
         active = self.active
+        if active is not None and active.skill == INTERNAL_FIND_GOTO:
+            if self.state == S.TRANSIT:
+                self._find_hover_here()
+            return
         if (
             active is None
             or not active.ack_done

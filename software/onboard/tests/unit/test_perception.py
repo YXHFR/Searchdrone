@@ -357,6 +357,9 @@ async def test_a_model_that_cannot_be_built_only_turns_perception_off(
     assert "perception off" in caplog.text
     # the ground is told why, by code and class only: no paths from the on-board computer
     assert reasons == [("sources_failed", "ModelError")]
+    # An order's still then gets none at once, without building the sources again.
+    assert await lp.capture(new_id()) is None
+    assert lp._built is None  # pyright: ignore[reportPrivateUsage]
 
 
 class _BrokenModel:

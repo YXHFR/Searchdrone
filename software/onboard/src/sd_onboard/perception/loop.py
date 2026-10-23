@@ -159,6 +159,7 @@ class PerceptionLoop:
         self.on = on  # perception works again after ``stills_failing``
         self._failing = 0
         self._built: BuiltSources | None = None
+        self._build_failed = False  # ``run`` could not build the sources: no stills at all
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
         self._last_still_ms: int | None = None
@@ -275,6 +276,8 @@ class PerceptionLoop:
     async def capture(self, command_id: UUID) -> UUID | None:
         """One still for an order: its ``still_id``, or ``None`` when none came in
         ``CAPTURE_WAIT_S`` or it could not be placed on the ground."""
+        if self._build_failed:
+            return None
         deadline = self.clock.monotonic() + CAPTURE_WAIT_S
         # A still stuck in the loop must not hold the order past its wait: a watchdog, so on
         # the event loop's (wall) clock, which runs even when the stuck still holds the lock.
@@ -316,6 +319,7 @@ class PerceptionLoop:
             await asyncio.to_thread(lambda: self.built)
         except Exception as exc:
             log.exception("perception off: the detector sources could not be built")
+            self._build_failed = True
             if self.off is not None:
                 self.off("sources_failed", type(exc).__name__)
             return
