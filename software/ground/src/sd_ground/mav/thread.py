@@ -444,7 +444,7 @@ class GroundMav:
         hand-back, another take-over) or a move of the RC mode switch drops it."""
         pending = _PendingTakeover(takeover_id, action_seq, self.vehicle.telemetry.rc_mode_pwm)
         self._pending = pending
-        self._publish()  # the picture shows it before the notice can reach the drone
+        self._publish()  # the picture shows it now, not at the next tick
         if wait_s <= 0:
             self._start_takeover(pending)
             return
