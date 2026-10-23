@@ -17,12 +17,12 @@ from typing import Final
 import shapely
 from shapely.geometry import Polygon
 
-from sd_schemas.probmap import SectorScore, situation_line, suggest_sector_order
+from sd_schemas.probmap import SectorScore
 from sd_search.probmap.bayes import MapState
 from sd_search.probmap.grid import Floats
 from sd_search.probmap.pod import PLAN_CAMERA, SIDELAP, Camera, DetectorProfile, plan_pod
 
-__all__ = ["COVERED_POD", "PlanSector", "sector_scores", "situation_line", "suggest_sector_order"]
+__all__ = ["COVERED_POD", "PlanSector", "sector_scores", "spacing_m"]
 
 COVERED_POD: Final = 0.1  # a cell counts as covered from this cumulative POD
 

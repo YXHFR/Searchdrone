@@ -10,17 +10,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from search_helpers import HOME, at, profile  # pyright: ignore[reportMissingImports]
 
+from sd_schemas.probmap import situation_line, suggest_sector_order
 from sd_schemas.search import SubjectCategory
 from sd_search.probmap.bayes import HeadingPrior, OperatorArea, RingTerrainMap
 from sd_search.probmap.build import MapBuilder, MapCandidate, MapInputs
 from sd_search.probmap.grid import Grid, grid_around
 from sd_search.probmap.pod import DETECTORS, Still, pass_pod, still_pod, total_pod
 from sd_search.probmap.rings import ring_mass, rings_for
-from sd_search.probmap.sectors import (
-    situation_line,
-    spacing_m,
-    suggest_sector_order,
-)
+from sd_search.probmap.sectors import spacing_m
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
 
 CATEGORIES: list[SubjectCategory] = [

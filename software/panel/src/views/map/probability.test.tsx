@@ -153,6 +153,9 @@ describe("the layers follow the newest version", () => {
     );
     version = 2;
     act(() => useMissionStore.getState().bumpMap());
+    // The old version stays drawn while the new one loads: no blink.
+    expect(result.current?.version).toBe(1);
+    expect(f.layers["prob-poa"]?.visibility).toBe("visible");
     await waitFor(() => expect(result.current?.version).toBe(2));
     expect(f.sources["prob-poa"]?.url).toContain("&v=2");
   });

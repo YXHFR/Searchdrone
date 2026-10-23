@@ -87,9 +87,14 @@ export function useProbabilityLayers(
   const rev = useMissionStore((s) => s.mapRev);
   const [meta, setMeta] = useState<ProbMeta | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rev is the refetch signal
+  // A new mission starts without layers; a new version keeps the old ones until it arrives.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: missionId is the reset signal
   useEffect(() => {
     setMeta(null);
+  }, [missionId]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rev is the refetch signal
+  useEffect(() => {
     if (!missionId) return;
     let stale = false;
     api<ProbabilityMapView>(paths.probabilityMap(missionId))

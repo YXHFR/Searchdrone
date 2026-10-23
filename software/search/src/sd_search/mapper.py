@@ -134,7 +134,7 @@ class MapService:
                 break
         tracks = await self.api.tracks(mission_id)
         candidates = [map_candidate(t) for t in tracks]
-        # The numbers run in a worker thread: the candidate loop never waits for them.
+        # The numbers run in a worker thread, so the event loop stays free while they run.
         built = await asyncio.to_thread(
             m.builder.build, _inputs(profile, inputs, m.stills, candidates)
         )
