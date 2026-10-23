@@ -111,8 +111,8 @@ class ProbabilityMapRepo:
             await conn.execute(text(_LOCK), {"m": mission_id})
             head = (await conn.execute(text(_HEAD), {"m": mission_id})).mappings().first()
             newest = 0 if head is None else int(head["version"])
-            unlocks = head is not None and bool(head["frozen"])
-            if unlocks and (await conn.execute(text(_CONFIRMED), {"m": mission_id})).scalar():
+            after_frozen = head is not None and bool(head["frozen"])
+            if after_frozen and (await conn.execute(text(_CONFIRMED), {"m": mission_id})).scalar():
                 raise MapWriteError(
                     "MAP_FROZEN", "Kartan är låst: en kandidat är bekräftad som funnen."
                 )
@@ -139,4 +139,4 @@ class ProbabilityMapRepo:
                     "seq": event_seq,
                 },
             )
-        return unlocks
+        return after_frozen

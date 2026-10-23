@@ -295,6 +295,7 @@ async def test_the_ground_checks_every_version(r: Rig) -> None:
     assert unlocked.status_code == 201 and unlocked.json() == {"version": 4, "frozen": False}
     got = (await r.panel.get(f"/api/v1/missions/{mid}/probability-map")).json()
     assert got["version"] == 4 and not got["frozen"]
+    await r.g.flush_events()
     rows = await r.panel.get(f"/api/v1/missions/{mid}/events?type=probability_map.unfrozen")
     assert rows.json() and rows.json()[0]["payload"]["version"] == 4
     assert (await post(version=5)).status_code == 201

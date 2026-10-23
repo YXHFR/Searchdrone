@@ -14,6 +14,8 @@ The map only ranks where to look. Nothing here starts a flight or changes an ord
 AI proposes, and the gate and a person approve as before.
 
 Events on the bus (topic ``probability_map``): ``probability_map.updated {version}``.
+Audit events: ``probability_map.frozen`` when a confirmed find locks the map and
+``probability_map.unfrozen`` when the first version after a reopen unlocks it.
 """
 
 from __future__ import annotations
