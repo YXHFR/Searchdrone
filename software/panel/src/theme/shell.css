@@ -260,6 +260,21 @@
 .pending-badge .dot {
   background: var(--c-warn);
 }
+.budget-notice {
+  font-size: var(--fs-small);
+  padding: 2px 8px;
+  border: 1px solid var(--c-warn);
+  border-radius: var(--r-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40ch;
+  min-width: 0;
+  flex: 0 1 auto; /* gives way to the menu on a phone */
+}
+.budget-notice[data-tone="bad"] {
+  border-color: var(--c-bad);
+}
 .ai-status {
   display: inline-flex;
   align-items: center;

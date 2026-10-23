@@ -31,6 +31,7 @@ __all__ = [
     "GroundConfig",
     "Loaded",
     "check",
+    "cloud_budget_errors",
     "load",
     "parse_bind",
     "read_env_file",
@@ -135,6 +136,15 @@ class WindConfig(_Section):
     stage: Literal["first_flights", "until_calibrated"] = "first_flights"
 
 
+class CloudBudgetConfig(_Section):
+    # What cloud calls (chat and image matching together) may cost. Neither cap may be
+    # above the outer cap in code (sd_schemas.cloud_budget); a higher value stops the
+    # server at start.
+    mission_cap_sek: float = Field(default=50.0, ge=0)
+    day_cap_sek: float = Field(default=150.0, ge=0)
+    reservation_ttl_s: float = Field(default=120.0, ge=10, le=600)
+
+
 class RemoteConfig(_Section):
     enabled: bool = False  # reserved; true is refused in v0.1.0
 
@@ -156,6 +166,7 @@ class GroundConfig(_Section):
     health: HealthConfig = HealthConfig()
     sim: SimConfig = SimConfig()
     wind: WindConfig = WindConfig()
+    cloud_budget: CloudBudgetConfig = CloudBudgetConfig()
     remote: RemoteConfig = RemoteConfig()
 
 
@@ -318,6 +329,7 @@ def check(loaded: Loaded) -> list[str]:
         errors.append(f"profile = {cfg.profile!r}: bara profilen sim finns i v0.1.0.")
     if cfg.remote.enabled:
         errors.append("Fjärråtkomst finns inte i v0.1.0 (remote.enabled = true).")
+    errors += cloud_budget_errors(cfg)
     tls = loaded.path(cfg.lan.tls_dir)
     if cfg.lan.enabled and not ((tls / "server.crt").is_file() and (tls / "server.key").is_file()):
         errors.append("LAN-läget saknar certifikat. Kör: sd-ground init --lan")
@@ -360,6 +372,12 @@ def check(loaded: Loaded) -> list[str]:
         limit_caps(loaded)
     except ConfigError as exc:
         errors += exc.errors
+    from sd_ground.services.cloud_budget import load_prices  # it imports this module
+
+    try:
+        load_prices(loaded.root)
+    except ConfigError as exc:
+        errors += exc.errors
     index = loaded.path(cfg.http.static_dir) / "index.html"
     if (
         cfg.profile != "sim"
@@ -368,6 +386,23 @@ def check(loaded: Loaded) -> list[str]:
     ):
         errors.append("Panelen är en testbygge (sd-build=test) och får bara köras i profilen sim.")
     return errors
+
+
+def cloud_budget_errors(cfg: GroundConfig) -> list[str]:
+    """A cap above the outer cap in code stops the server (it is never silently lowered)."""
+    from sd_schemas.cloud_budget import CLOUD_BUDGET_CEILING_SEK_PER_DAY
+
+    ceiling = CLOUD_BUDGET_CEILING_SEK_PER_DAY
+
+    return [
+        f"cloud_budget.{name} = {value:g} kr är över det yttre taket {ceiling:g} kr per dygn. "
+        "Sänk värdet i config/ground.toml."
+        for name, value in (
+            ("mission_cap_sek", cfg.cloud_budget.mission_cap_sek),
+            ("day_cap_sek", cfg.cloud_budget.day_cap_sek),
+        )
+        if value > ceiling
+    ]
 
 
 def _check_private_dir(directory: Path, pattern: str) -> list[str]:

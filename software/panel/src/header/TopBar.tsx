@@ -2,7 +2,7 @@ import { Monitor, Moon, MoreVertical, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { logout } from "../auth/bootstrap";
 import { useNow } from "../lib/useNow";
-import { useBrainEngine, useBrainState, useCommandMode } from "../state/brain";
+import { useBrainEngine, useBrainState, useCloudBudget, useCommandMode } from "../state/brain";
 import { openReview, useCandidateStore } from "../state/candidateStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
@@ -162,6 +162,23 @@ export function AiStatus() {
   );
 }
 
+/** The cloud budget at 80 % and when it is spent (matching paused, no AI chat). */
+export function BudgetNotice() {
+  const { t } = useTranslation();
+  const budget = useCloudBudget();
+  if (budget !== "warning" && budget !== "exhausted") return null;
+  return (
+    <span
+      className="budget-notice"
+      data-tone={budget === "exhausted" ? "bad" : "warn"}
+      data-testid="budget-notice"
+      role="status"
+    >
+      {t(`budget.${budget}`)}
+    </span>
+  );
+}
+
 /** Pending approval cards, also when the chat is folded away; pressing it shows the card. */
 function PendingBadge() {
   const { t } = useTranslation();
@@ -282,6 +299,7 @@ export function TopBar() {
       {vp === "desktop" ? <ModeCell /> : null}
       {vp === "desktop" ? <Clock /> : null}
       <div className="topbar-tools">
+        <BudgetNotice />
         <ReviewBadge />
         <PendingBadge />
         {vp !== "phone" ? <ThemeSwitch /> : null}

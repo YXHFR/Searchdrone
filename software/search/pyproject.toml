@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=2.0",  # BSD-3-Clause, the colour score's pixel arithmetic
     "pillow>=11",  # MIT-CMU, decoding the crops
     "pydantic>=2.9",
+    "sd-brain",  # the cloud runtime: image policy and budget hook (sd_brain.runtime, .config)
     "sd-schemas",
 ]
 

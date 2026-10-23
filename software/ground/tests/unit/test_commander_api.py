@@ -42,6 +42,10 @@ COMMANDER_WHITELIST = frozenset(
         ("GET", "/commander/v1/missions/{mission_id}/memory"),
         ("PUT", "/commander/v1/missions/{mission_id}/memory"),
         ("POST", "/commander/v1/missions/{mission_id}/decisions"),
+        # The cloud budget's books (B2-06): the commander books its own cloud calls only.
+        ("POST", "/internal/v1/cloud-budget/reserve"),
+        ("POST", "/internal/v1/cloud-budget/commit"),
+        ("POST", "/internal/v1/cloud-budget/release"),
     }
 )
 # Operator actions: must not exist on :7700 at all.

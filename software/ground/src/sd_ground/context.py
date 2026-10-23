@@ -27,6 +27,7 @@ from sd_ground.sources import (
 from sd_obs.clock import Clock
 
 if TYPE_CHECKING:
+    from sd_ground.services.cloud_budget import CloudBudget
     from sd_ground.services.missions import MissionFlow
 
 __all__ = ["EVENT_QUEUE_MAX", "Ground", "lan_addresses"]
@@ -62,6 +63,7 @@ class Ground:
     emergency: EmergencyPath = field(default_factory=NoEmergencyPath)
     vehicle_actions: VehicleActions | None = None  # the emergency path once wired
     flow: MissionFlow | None = None  # the mission flow (needs the database)
+    cloud_budget: CloudBudget | None = None  # the books for cloud calls (needs the database)
     bus: EventBus = field(default_factory=EventBus)
     lan_hosts: list[str] = field(default_factory=list[str])
     version: str = field(default_factory=lambda: version("sd-ground"))

@@ -1044,9 +1044,35 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         ),
     ]
     search = _search_examples()
-    items += search + _candidate_panel_examples(search)
+    items += search + _candidate_panel_examples(search) + _cloud_budget_examples()
     out: dict[type[BaseModel], BaseModel] = {}
     for item in items:
         assert type(item) not in out, f"two examples for {type(item).__name__}"
         out[type(item)] = item
     return out
+
+
+def _cloud_budget_examples() -> list[BaseModel]:
+    return [
+        s.BudgetReserve(
+            purpose="match",
+            mission_id=OTHER,
+            model_id="anthropic/claude-haiku-5.5",
+            est_prompt_tokens=1400,
+            est_completion_tokens=300,
+            image_count=2,
+        ),
+        s.BudgetGrant(granted=True, reservation_id=OTHER, est_sek=0.003, remaining_sek=49.9),
+        s.BudgetCommit(reservation_id=OTHER, prompt_tokens=1350, completion_tokens=120),
+        s.BudgetCommitted(actual_sek=0.002),
+        s.BudgetRelease(reservation_id=OTHER),
+        s.CloudBudgetStatus(
+            mission_id=OTHER,
+            mission_sek=12.5,
+            mission_cap_sek=50.0,
+            day_sek=40.0,
+            day_cap_sek=150.0,
+            state="ok",
+        ),
+        s.MissionBudgetCap(cap_sek=80.0),
+    ]

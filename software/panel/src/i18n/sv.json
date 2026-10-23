@@ -55,6 +55,10 @@
     "onboardSilent": "Ombordsdatorn svarar inte – använd RC eller FLYG HEM",
     "nothing": "Inget att fortsätta"
   },
+  "budget": {
+    "warning": "Molnbudgeten är till 80 % använd",
+    "exhausted": "Molnbudget slut – matchning pausad, ingen AI-chatt"
+  },
   "pills": {
     "vehicle": {
       "unknown": "Drönare: okänt",
