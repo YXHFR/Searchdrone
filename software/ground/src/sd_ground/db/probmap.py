@@ -3,7 +3,8 @@
 Part of the database layer. ``probability_maps`` is append-only: every version is a new
 row, numbered from 1 per mission (``UNIQUE (mission_id, version)``), written under a
 per-mission advisory lock so the check against the newest version and the insert are one
-step. A version after a frozen one is refused here, next to the write.
+step. A version after a frozen one is refused here, next to the write, while a find is
+still confirmed; once the pilot has reopened it the map takes versions again.
 """
 
 from __future__ import annotations
@@ -21,6 +22,10 @@ _LOCK = "SELECT pg_advisory_xact_lock(hashtext('probability_maps:' || :m))"
 _HEAD = (
     'SELECT version, reason, grid, "row", frozen, event_seq, created_at '
     "FROM probability_maps WHERE mission_id = :m ORDER BY version DESC LIMIT 1"
+)
+_CONFIRMED = (
+    "SELECT EXISTS (SELECT 1 FROM (SELECT DISTINCT ON (candidate_id) state FROM candidates "
+    "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest WHERE state = 'confirmed')"
 )
 
 
@@ -98,14 +103,16 @@ class ProbabilityMapRepo:
         row: float,
         frozen: bool,
         event_seq: int,
-    ) -> None:
+    ) -> bool:
         """Store the next version: ``version`` must be the newest + 1, and nothing comes
-        after a frozen version."""
+        after a frozen version while a candidate is still confirmed. True when this version
+        follows a frozen one (the find was reopened and the map is unlocked)."""
         async with self.engine.begin() as conn:
             await conn.execute(text(_LOCK), {"m": mission_id})
             head = (await conn.execute(text(_HEAD), {"m": mission_id})).mappings().first()
             newest = 0 if head is None else int(head["version"])
-            if head is not None and head["frozen"]:
+            after_frozen = head is not None and bool(head["frozen"])
+            if after_frozen and (await conn.execute(text(_CONFIRMED), {"m": mission_id})).scalar():
                 raise MapWriteError(
                     "MAP_FROZEN", "Kartan är låst: en kandidat är bekräftad som funnen."
                 )
@@ -132,3 +139,4 @@ class ProbabilityMapRepo:
                     "seq": event_seq,
                 },
             )
+        return after_frozen
