@@ -410,9 +410,20 @@ def test_merge_local_geometry() -> None:
     assert _covers(found[1], wide) and _covers(found[1], old)
     assert found[1].radius_m == pytest.approx(50.1)
     # The old one holds the new one: the old one, a little larger.
-    small = keepout(2, 0, 10.0, source="detection")
-    found = merge_local(small, [old], PLANE)
+    smaller = keepout(2, 0, 20.0, source="detection")
+    found = merge_local(smaller, [old], PLANE)
     assert found is not None and found[1].radius_m == pytest.approx(31.1)
+    # More than twice the new one's radius: no merge (one that small inside is already
+    # kept out, the executor drops it before merging).
+    assert merge_local(keepout(2, 0, 10.0, source="detection"), [old], PLANE) is None
+    # A person who moves on gets a new cylinder instead of dragging one along.
+    grown = old
+    for step in range(1, 20):
+        found = merge_local(keepout(15 * step, 0, 31.0, source="detection"), [grown], PLANE)
+        if found is None:
+            break
+        grown = found[1]
+    assert found is None and grown.radius_m <= 62.0
     # The nearest of several.
     near = keepout(10, 0, 31.0, source="detection")
     found = merge_local(keepout(12, 0, 31.0, source="detection"), [old, near], PLANE)

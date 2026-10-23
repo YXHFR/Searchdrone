@@ -32,7 +32,7 @@ from sd_safety.keepout import Circle, circles, reroute, xy_route_violation
 from sd_safety.targets import Plane, Polygon, Xy, polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.charter import MissionCharter
-from sd_schemas.keepout import Keepout, leg_enters
+from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M, Keepout, leg_enters
 
 __all__ = [
     "LOCAL_KEEPOUTS_MAX",
@@ -61,7 +61,7 @@ _STOP_REACT_S: Final = 1.5  # the reflex's tick, the link to the flight controll
 _STOP_DECEL_MS2: Final = 2.0  # LOITER's braking, well under ArduCopter's default
 _MERGE_SHARE: Final = 0.5  # centres at most this share of the smaller radius apart: merged
 _MERGE_EPS_M: Final = 0.1  # a merged cylinder grows this much more: rounding never shrinks it
-_KEEPOUT_MAX_M: Final = 500.0  # the largest radius a Keepout may have
+_MERGE_GROW_MAX: Final = 2.0  # a merged cylinder: at most this many new detection radii
 
 
 @runtime_checkable
@@ -164,7 +164,9 @@ def merge_local(
     """The local cylinder ``k`` mostly overlaps (the centres at most ``_MERGE_SHARE`` of
     the smaller radius apart, the nearest first) and one new cylinder that covers both, or
     None. The new one is the smallest circle around both (never smaller than either)
-    plus ``_MERGE_EPS_M``; none when that would be larger than a Keepout may be."""
+    plus ``_MERGE_EPS_M``; none when that would be more than ``_MERGE_GROW_MAX`` times
+    ``k``'s radius (a person who moves on gets a new cylinder instead of dragging one
+    along) or larger than a Keepout may be."""
     c = plane.xy(k.lat, k.lon)
     near = sorted(
         (math.dist(c, plane.xy(o.lat, o.lon)), i)
@@ -176,7 +178,7 @@ def merge_local(
     old = local[near[0][1]]
     centre, radius = _enclose((plane.xy(old.lat, old.lon), old.radius_m), (c, k.radius_m))
     radius += _MERGE_EPS_M
-    if radius > _KEEPOUT_MAX_M:
+    if radius > min(_MERGE_GROW_MAX * k.radius_m, KEEPOUT_RADIUS_MAX_M):
         return None
     lat, lon = plane.latlon(*centre)
     grown = old.model_copy(

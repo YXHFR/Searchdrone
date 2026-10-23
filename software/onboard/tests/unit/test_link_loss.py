@@ -18,7 +18,7 @@ from sd_mav.vehicle import SendOrigin
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO, LinkLossInput, LinkLossRule
 from sd_onboard.io.persistence import StateStore
 from sd_safety.constants import FIND_HOVER_EDGE_MARGIN_M, FIND_HOVER_S, LINK_LOSS_DETECT_S
-from sd_safety.link_loss import hover_point
+from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS, hover_point
 from sd_safety.targets import distance_m
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
@@ -747,7 +747,7 @@ async def test_no_way_out_of_the_cylinder_hovers_where_it_is(
             r.fc.battery_pct = 15.5  # above the return-home limit, short of the way out
             await r.run(0.5)
         if why == "limit":
-            monkeypatch.setattr(r.ex.limits, "active", lambda: ["L-AI", "L-RANGE"])
+            monkeypatch.setattr(r.ex.limits, "active", lambda: ["L-RANGE"])
         e, n = _xy(r)
         r.ex.on_detections([person_at(e, n + 6.0)])
         await r.run(0.3)
@@ -758,3 +758,56 @@ async def test_no_way_out_of_the_cylinder_hovers_where_it_is(
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
         await r.run(3)
         assert distance_m(r.fc.lat, r.fc.lon, *PLANE.latlon(e, n)) < 10.0
+
+
+async def test_a_way_out_from_the_find_hover_still_ends_at_the_find_move_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The find rule starts with the drone hovering inside a cylinder, so the rule is in
+    its find hover at once and no longer bounds the move itself. A way out longer than
+    the find move's deadline allows still ends at that deadline, in LOITER where the
+    drone is."""
+    far = (-180.0, 40.0)  # 180 m out at 8 m/s: longer than the deadline
+    monkeypatch.setattr("sd_onboard.executor.executor.way_out", lambda *_a: far)
+    find = keepout(east=0, north=110, radius_m=30.0)
+    cand = keepout(east=0, north=40, radius_m=30.0, source="candidate")
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        lat, lon = at(0, 30)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 8}))
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find, cand]), new_id())
+        lost = r.ex.link_last_inbound_ms
+        assert lost is not None
+        r.link = False
+        await r.until(lambda: "executor.find_move_keepout_exit" in r.up.kinds(), 20)
+        assert r.ex.state == S.TRANSIT and r.ex.link_rule.phase == P.FIND_HOVER
+        await r.until(lambda: r.ex.state == S.HOLD, 30)
+        assert r.ex.now_ms() - lost <= FIND_MOVE_DEADLINE_MS + 500
+        assert r.ex.hold_reason == "find_hold"
+        assert "executor.find_move_deadline" in r.up.kinds()
+        assert math.dist(_xy(r), far) > 20.0
+        assert r.fc.mode == CopterMode.LOITER
+
+
+async def test_a_full_list_during_the_find_move_hovers_without_a_way_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A person seen with no room for a cylinder: the find move hovers where it is. It
+    takes no way out (that would not know the person who got no cylinder)."""
+    monkeypatch.setattr("sd_onboard.executor.executor.LOCAL_KEEPOUTS_MAX", 0)
+    find = keepout(east=0, north=110, radius_m=30.0)
+    async with rig() as r:
+        await _find_move(r, tmp_path, find, 30.0)
+        out = at(-40, 30)
+        monkeypatch.setattr(r.ex, "_find_way_out", lambda: out)
+        e, n = _xy(r)
+        r.ex.on_detections([person_at(e, n + 6.0)])
+        await r.run(0.3)
+        assert "executor.keepouts_full" in r.up.kinds()
+        assert "executor.find_move_keepout_exit" not in r.up.kinds()
+        assert "executor.find_move_keepout" in r.up.kinds()
+        await r.until(lambda: r.ex.state == S.HOLD, 20)
+        assert r.ex.hold_reason == "find_hold"

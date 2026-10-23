@@ -123,6 +123,7 @@ from sd_safety.limits import (
     charter_violations,
     fc_area_max_from_home_m,
 )
+from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS
 from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, KEEPOUT_EXEMPT, MODE_A_EXEMPT
 from sd_safety.rules import route_battery_pct
 from sd_safety.targets import Plane, distance_m, polygon_from_geojson
@@ -131,6 +132,7 @@ from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState, LinkLossPhase, ResumePoint
 from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest, StateRef
+from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M
 from sd_schemas.link import (
     SCHEMA_MAJOR,
     AckStage,
@@ -1334,7 +1336,7 @@ class Executor:
                 keepout_id=new_id(),
                 lat=d.lat,
                 lon=d.lon,
-                radius_m=min(500.0, PERSON_KEEPOUT_M + d.sigma95_m),
+                radius_m=min(KEEPOUT_RADIUS_MAX_M, PERSON_KEEPOUT_M + d.sigma95_m),
                 source="detection",
                 source_id=d.detection_id,
             )
@@ -1665,10 +1667,11 @@ class Executor:
             return
         self._find_hover_here()
 
-    def _find_hover_here(self) -> None:
+    def _find_hover_here(self, *, leave: bool = True) -> None:
         """End the link-loss find move where the drone is: the find hover starts there.
-        Inside a cylinder with a way out, the move leaves it first and hovers there."""
-        out = self._find_way_out()
+        Inside a cylinder with a way out, the move leaves it first and hovers there
+        (not with ``leave=False``)."""
+        out = self._find_way_out() if leave else None
         if out is not None:
             self.emit("find_move_keepout_exit", {"lat": out[0], "lon": out[1]})
             self._drop_active(stage=None, save_resume=False)
@@ -1684,7 +1687,8 @@ class Executor:
         active = self.active
         if active is not None and active.skill == INTERNAL_FIND_GOTO:
             if self.state == S.TRANSIT:
-                self._find_hover_here()
+                # A person with no cylinder of their own: a way out would not know them.
+                self._find_hover_here(leave=False)
             return
         if (
             active is None
@@ -1912,6 +1916,7 @@ class Executor:
             elif action.event == "find_hold_ended":
                 self._find_hold_ended(action.data)
             self._apply_limit(action)
+        self._end_late_find_move()
 
     def _find_hold_started(self, data: Mapping[str, Any]) -> None:
         """ "The position is saved": one record when the hover starts, the full one when it
@@ -2112,6 +2117,7 @@ class Executor:
         ctx = self._plan_context(new_id())
         goto.prepare(ctx, goal[0], goal[1], find.alt_m, speed, yaw_deg=yaw)
         plan = goto_plan(ctx, goal[0], goal[1], find.alt_m, speed)
+        # Read only while this goto is the active order; the next find goto sets them.
         self._find_goal, self._find_leaving = goal, leaving
         self._internal(INTERNAL_FIND_GOTO, goto, plan, SendOrigin.LIMIT)
 
@@ -2125,7 +2131,7 @@ class Executor:
         find, charter, plane = self.link_rule.plan, self.charter, self.plane()
         if find is None or charter is None or plane is None:
             return None
-        if any(name != "L-AI" for name in self.limits.active()):
+        if self.limits.active() or self._find_move_late():
             return None
         v = self.vehicle_state()
         here = plane.xy(v.lat, v.lon)
@@ -2144,6 +2150,29 @@ class Executor:
             self.emit("find_move_exit_refused", {"battery_pct": v.battery_pct, "needed_pct": need})
             return None
         return lat, lon
+
+    def _find_move_late(self) -> bool:
+        """The find move's deadline has passed (counted from the last inbound, as the
+        link-loss rule counts it)."""
+        last = self.link_last_inbound_ms
+        return last is None or self.now_ms() - last >= FIND_MOVE_DEADLINE_MS
+
+    def _end_late_find_move(self) -> None:
+        """No find move flies past its deadline, also not a way out of a cylinder that
+        started in the find hover (the rule bounds only its own phase FIND_MOVE): it
+        hovers where it is."""
+        active = self.active
+        if (
+            active is None
+            or active.skill != INTERNAL_FIND_GOTO
+            or self.state != S.TRANSIT
+            or not self.link_rule.find_active
+            or not self._find_move_late()
+        ):
+            return
+        action = LimitAction("L-FIND", "hold", "find_hold", "find_move_deadline", {})
+        self.emit(action.event, dict(action.data))
+        self._apply_limit(action)
 
     def _find_move_blocked(self) -> bool:
         find, plane = self.link_rule.plan, self.plane()

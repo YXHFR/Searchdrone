@@ -31,6 +31,7 @@ __all__ = [
     "INSPECT_STANDOFF_MARGIN_M",
     "INSPECT_VIEW_DEG",
     "INSPECT_VIEW_MAX_DEG",
+    "KEEPOUT_RADIUS_MAX_M",
     "InspectGeometry",
     "Keepout",
     "inspect_geometry",
@@ -39,6 +40,7 @@ __all__ = [
 
 Xy = tuple[float, float]
 
+KEEPOUT_RADIUS_MAX_M: Final = 500.0  # the largest radius a Keepout may have
 INSPECT_VIEW_DEG: Final = 25.0  # the target at most this far from straight down
 INSPECT_AIM_DEG: Final = 24.0  # the height aims a degree steeper: the hover's error fits
 INSPECT_VIEW_MAX_DEG: Final = 28.0  # beyond this at the highest allowed height: refused
@@ -55,7 +57,7 @@ class Keepout(SdModel):
     keepout_id: Id
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
-    radius_m: float = Field(gt=0, le=500)  # person_keepout_m + sigma95_m
+    radius_m: float = Field(gt=0, le=KEEPOUT_RADIUS_MAX_M)  # person_keepout_m + sigma95_m
     source: Literal["detection", "candidate", "confirmed"]
     source_id: Id  # the detection_id or candidate_id
 
