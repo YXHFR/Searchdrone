@@ -8,6 +8,7 @@ import "./theme/chat.css";
 import "./theme/map.css";
 import "./theme/video.css";
 import "./theme/views.css";
+import "./theme/candidates.css";
 import "./i18n";
 import { App } from "./app/App";
 import { installTestHooks } from "./lib/testHooks";

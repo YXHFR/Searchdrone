@@ -49,6 +49,13 @@ export const paths = {
   missionFinds: (missionId: string) => `${API}/missions/${enc(missionId)}/finds`,
   detectionCrop: (missionId: string, detectionId: string) =>
     `${API}/missions/${enc(missionId)}/detections/${enc(detectionId)}/crop`,
+  missionCandidates: (missionId: string) =>
+    `${API}/missions/${enc(missionId)}/candidates?limit=200`,
+  candidate: (candidateId: string) => `${API}/candidates/${enc(candidateId)}`,
+  candidateDecision: (candidateId: string) => `${API}/candidates/${enc(candidateId)}/decision`,
+  candidateGpx: (candidateId: string) => `${API}/candidates/${enc(candidateId)}/export.gpx`,
+  detectionView: (detectionId: string) => `${API}/detections/${enc(detectionId)}/view`,
+  view: (viewId: string) => `${API}/views/${enc(viewId)}`,
   annotation: (annotationId: string) => `${API}/annotations/${enc(annotationId)}`,
   missionTrack: (missionId: string) => `${API}/missions/${enc(missionId)}/track?max_points=5000`,
   searchProfile: (missionId: string) => `${API}/missions/${enc(missionId)}/search-profile`,

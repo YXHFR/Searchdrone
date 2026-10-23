@@ -490,6 +490,14 @@ class StoredDecision(SdModel):
     created_at: AwareDatetime
 
 
+class CandidateView(SdModel):
+    """A detection's picture in large size, logged for the session that asked for it (a
+    confirmation needs one). The JPEG is at ``GET /api/v1/views/{view_id}``."""
+
+    view_id: Id
+    detection_id: Id
+
+
 class CandidateDetail(SdModel):
     card: CandidateCard
     mission_id: Id

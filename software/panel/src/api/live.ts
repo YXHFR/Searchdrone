@@ -5,6 +5,7 @@ import i18next from "i18next";
 import { noteLive } from "../lib/testHooks";
 import { alertView, findHoldEndedView, isSticky, LINK_DOWN_CODES } from "../safety/gnss";
 import { actionBus } from "../state/actionBus";
+import { useCandidateStore } from "../state/candidateStore";
 import { lastChatSeq, useChatStore } from "../state/chatStore";
 import { useLiveStore } from "../state/liveStore";
 import { type ClearanceView, type SectorFeature, useMissionStore } from "../state/missionStore";
@@ -16,6 +17,8 @@ import type {
   ActionOutcome,
   Annotation,
   Approval,
+  CandidateCard,
+  CandidateQueue,
   Charter,
   ChatMessage,
   Command,
@@ -78,13 +81,15 @@ function setMission(mission: Mission | null): void {
   live.patch({ mission });
   if (changed) {
     useMissionStore.getState().reset(mission?.id ?? null);
+    useCandidateStore.getState().reset(mission?.id ?? null);
     useChatStore.getState().clear();
     socket?.resubscribe();
   }
 }
 
 /** Everything that belongs to the mission: detail, charters, pending approvals, sectors,
- * annotations, the finds, the latest chat page and the track, in that order. */
+ * annotations, the finds, the candidate queue, the latest chat page and the track, in that
+ * order. */
 async function loadMissionData(missionId: string): Promise<void> {
   const m = useMissionStore.getState();
   const detail = await quietly(api<MissionDetail>(paths.mission(missionId)));
@@ -108,6 +113,11 @@ async function loadMissionData(missionId: string): Promise<void> {
   if (anns) m.setAnnotations(anns);
   const finds = await quietly(api<Find[]>(paths.missionFinds(missionId)));
   if (finds) m.setFinds(finds);
+  if (useSessionStore.getState().config?.features?.candidates) {
+    const queue = await quietly(api<CandidateQueue>(paths.missionCandidates(missionId)));
+    if (queue && useCandidateStore.getState().missionId === missionId)
+      useCandidateStore.getState().setCards(queue.items);
+  }
   await loadChat(missionId);
   const track = await quietly(api<TrackFeature>(paths.missionTrack(missionId)));
   const coords = track?.geometry?.coordinates;
@@ -340,6 +350,19 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
     case "find.updated":
       if (forMission) m.upsertFind(e.data as Find);
       break;
+    case "candidate.new":
+    case "candidate.updated":
+    case "candidate.assessed":
+      if (forMission) useCandidateStore.getState().upsert(e.data as CandidateCard, true);
+      break;
+    case "candidate.decided": {
+      const card = e.data as CandidateCard & { decision?: { decision?: string } };
+      if (!forMission) break;
+      useCandidateStore.getState().upsert(card);
+      if (card.decision?.decision === "confirm")
+        useUiStore.getState().toast(i18next.t("candidates.toastConfirmed", { seq: card.seq }));
+      break;
+    }
     case "search_profile.proposed":
     case "search_profile.approved":
       if (forMission) {
@@ -452,6 +475,7 @@ export function startLive(vehicleId: string): () => void {
         // A new epoch or resync_required: what we hold may be stale; start from nothing.
         useLiveStore.getState().reset();
         useMissionStore.getState().reset(null);
+        useCandidateStore.getState().reset(null);
         useChatStore.getState().clear();
         void resync(vehicleId);
       },

@@ -996,6 +996,40 @@
         "title": "CandidateCounts",
         "type": "object"
       },
+      "CandidateDecision": {
+        "additionalProperties": false,
+        "description": "A person's decision on a candidate. Only a logged-in person's session may send it.",
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirm",
+              "reject",
+              "inspect",
+              "unsure",
+              "reopen"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Note",
+            "type": "string"
+          },
+          "subject_rev": {
+            "minimum": 1.0,
+            "title": "Subject Rev",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision",
+          "subject_rev"
+        ],
+        "title": "CandidateDecision",
+        "type": "object"
+      },
       "CandidateDetail": {
         "additionalProperties": false,
         "properties": {
@@ -1144,6 +1178,30 @@
         ],
         "title": "CandidateState",
         "type": "string"
+      },
+      "CandidateView": {
+        "additionalProperties": false,
+        "description": "A detection's picture in large size, logged for the session that asked for it (a\nconfirmation needs one). The JPEG is at ``GET /api/v1/views/{view_id}``.",
+        "properties": {
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "view_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "View Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "view_id",
+          "detection_id"
+        ],
+        "title": "CandidateView",
+        "type": "object"
       },
       "Charter": {
         "additionalProperties": false,
@@ -5933,6 +5991,96 @@
         "summary": "Get Candidate"
       }
     },
+    "/api/v1/candidates/{candidate_id}/decision": {
+      "post": {
+        "description": "Only a person in the panel decides (never the AI, the search service or a script\noutside the test rig). Observers confirm, reject and mark unsure; inspect and reopen\nare the pilot's. Confirming needs a large view from the same session first (409\n``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.",
+        "operationId": "post_candidate_decision_api_v1_candidates__candidate_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Candidate Decision"
+      }
+    },
+    "/api/v1/candidates/{candidate_id}/export.gpx": {
+      "get": {
+        "description": "A confirmed find as a GPX 1.1 waypoint for the ground team.",
+        "operationId": "get_candidate_gpx_api_v1_candidates__candidate_id__export_gpx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Candidate Gpx"
+      }
+    },
     "/api/v1/cloud-budget": {
       "get": {
         "description": "Spent and caps today and for the mission (the latest one with a call, unless one\nis named).",
@@ -6037,6 +6185,47 @@
           }
         },
         "summary": "Post Cancel"
+      }
+    },
+    "/api/v1/detections/{detection_id}/view": {
+      "post": {
+        "description": "Open a detection's picture in large size. The server logs it for the session: a\nconfirmation needs it. The picture is at ``GET /api/v1/views/{view_id}`` and is never\nsent to the cloud.",
+        "operationId": "post_detection_view_api_v1_detections__detection_id__view_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "detection_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Detection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Detection View"
       }
     },
     "/api/v1/health": {
@@ -8632,6 +8821,45 @@
           }
         },
         "summary": "Whep Patch"
+      }
+    },
+    "/api/v1/views/{view_id}": {
+      "get": {
+        "description": "The picture of a logged large view (JPEG).",
+        "operationId": "get_view_api_v1_views__view_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "view_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "View Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get View"
       }
     },
     "/tiles/{file}": {

@@ -18,17 +18,20 @@ import type { Annotation, VehicleLive } from "../../api/types";
 import { Menu } from "../../header/Menu";
 import { areaM2, selfIntersects } from "../../lib/geo";
 import { exposeMap } from "../../lib/testHooks";
+import { useCandidateStore } from "../../state/candidateStore";
 import { useLiveStore } from "../../state/liveStore";
 import { activeCharter, useMissionStore } from "../../state/missionStore";
 import { useIsPilot, useSessionStore } from "../../state/sessionStore";
 import { useShellStore } from "../../state/shellStore";
 import { useUiStore } from "../../state/uiStore";
 import { useTheme } from "../../theme/theme";
+import { findNumbers } from "../candidates/queue";
 import type { ViewProps } from "../registry";
 import { FindCard } from "./FindCard";
 import {
   areasData,
   bounds,
+  candidatesData,
   charterAreaData,
   charterPreviewData,
   drawData,
@@ -104,6 +107,7 @@ const TOGGLES: ToggleId[] = [
   "areas",
   "pins",
   "finds",
+  "candidates",
   "paths",
 ];
 const TRACK_EVERY_MS = 500;
@@ -149,6 +153,11 @@ const hoverKey = (v: VehicleLive | null): string => {
   return plan?.mode === "find" ? `${plan.hover_lat},${plan.hover_lon},${plan.candidate_seq}` : "";
 };
 
+function candidatesFC(): FC {
+  const cards = Object.values(useCandidateStore.getState().cards);
+  return candidatesData(cards, findNumbers(cards));
+}
+
 /** Everything the overlay shows, computed from the stores. */
 function overlayData(): Partial<Record<SourceId, FC>> {
   const m = useMissionStore.getState();
@@ -174,6 +183,7 @@ function overlayData(): Partial<Record<SourceId, FC>> {
     areas: areasData(anns),
     pins: pinsData(anns),
     finds: findsData(Object.values(m.finds)),
+    candidates: candidatesFC(),
     "find-hover": findHoverData(useLiveStore.getState().vehicle?.link_loss_plan),
   };
 }
@@ -297,6 +307,9 @@ export default function MapView({ isCompact }: ViewProps) {
           s.finds !== p.finds
         )
           push();
+      }),
+      useCandidateStore.subscribe((s, p) => {
+        if (s.cards !== p.cards) h.mod.setData(h.map, "candidates", candidatesFC());
       }),
       useLiveStore.subscribe((s, p) => {
         if (s.telemetry !== p.telemetry) drone();

@@ -537,6 +537,7 @@ def _candidate_panel_examples(search: list[BaseModel]) -> list[BaseModel]:
         row,
         stored,
         decision,
+        s.CandidateView(view_id=OTHER, detection_id=DETECTION),
         s.CandidateDetail(
             card=card,
             mission_id=MISSION,

@@ -2,9 +2,11 @@ import { useTranslation } from "react-i18next";
 import type { SectorScore } from "../api/types";
 import { STALE_MS } from "../header/pills";
 import { useNow } from "../lib/useNow";
+import { openReview, useCandidateStore } from "../state/candidateStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useShellStore } from "../state/shellStore";
+import { findNumbers, groupQueue } from "../views/candidates/queue";
 import { coverage, doneCount, sectorRows } from "./mission";
 import { scoreText, useSectorScores } from "./sectorScores";
 
@@ -123,17 +125,27 @@ export function MissionPanel() {
 /** Finds arrive with the candidate queue; until then the column says so plainly. */
 export function FindsPanel() {
   const { t } = useTranslation();
+  const cards = useCandidateStore((s) => s.cards);
+  const all = Object.values(cards);
+  const q = groupQueue(all);
+  const finds = findNumbers(all);
   return (
     <section className="lc-sec" data-testid="finds-panel">
       <header className="lc-head">
         <h2 id="lc-finds">{t("finds.title")}</h2>
       </header>
-      <p className="lc-empty">{t("finds.later")}</p>
+      {q.confirmed.length === 0 ? <p className="lc-empty">{t("finds.none")}</p> : null}
+      {q.confirmed.map((c) => (
+        <p key={c.candidate_id} className="lc-find" data-testid="finds-confirmed">
+          {t("finds.confirmed", { n: finds.get(c.candidate_id), seq: c.seq })}
+        </p>
+      ))}
+      <p className="muted">{t("finds.toReview", { n: q.review.length })}</p>
       <button
         type="button"
         className="btn btn-quiet btn-block"
         data-testid="finds-open"
-        onClick={() => useShellStore.getState().setMode("review")}
+        onClick={openReview}
       >
         {t("finds.open")}
       </button>

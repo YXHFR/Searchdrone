@@ -1,0 +1,274 @@
+/* Granska: the candidate queue and the review of one candidate. Calm: one accent, the warn
+   colour only for unverified AI claims and the backlog. */
+.cand-view,
+.cand-review {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+  min-width: 0;
+}
+/* On a phone the sheet's peek covers the stage's foot: the last button scrolls above it. */
+.shell[data-vp="phone"] .cand-view,
+.shell[data-vp="phone"] .cand-review {
+  padding-bottom: calc(var(--sheet-peek) + 12px);
+}
+.cand-view p,
+.cand-review p {
+  margin: 0;
+}
+.cand-tabs {
+  align-self: flex-start;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+.cand-keys {
+  font-size: var(--fs-small);
+}
+.cand-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cand-open {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-panel-2);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-3);
+  cursor: pointer;
+}
+.cand-open:hover,
+.cand-card[data-selected="true"] .cand-open {
+  border-color: var(--c-acc);
+}
+.cand-card[data-fresh="true"] .cand-open {
+  animation: cand-blink 1.2s ease-out 1;
+}
+@keyframes cand-blink {
+  0% {
+    background: var(--c-acc-soft);
+    border-color: var(--c-acc);
+  }
+  100% {
+    background: var(--c-panel-2);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cand-card[data-fresh="true"] .cand-open {
+    animation: none;
+    border-color: var(--c-acc);
+  }
+}
+.cand-thumb {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: var(--r-2);
+  background: var(--c-media);
+}
+.cand-nothumb {
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-label);
+  color: var(--c-faint);
+}
+.cand-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.cand-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.cand-k {
+  font-size: var(--fs-hud);
+}
+.cand-prio {
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+}
+.cand-prio-high {
+  color: var(--c-text);
+  font-weight: 600;
+}
+.cand-line {
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+.cand-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chip-match {
+  border-color: var(--c-ok);
+}
+.chip-conflict {
+  border-color: var(--c-bad);
+}
+.chip-not_visible {
+  color: var(--c-mute);
+}
+.cand-view .warn,
+.cand-review .warn {
+  color: var(--c-warn);
+}
+.cand-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cand-review-head h2,
+.cand-review h3 {
+  margin: 0;
+}
+.cand-review h3 {
+  font-size: var(--fs-body);
+  margin-bottom: 6px;
+}
+.cand-pics {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cand-pics li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: var(--fs-small);
+}
+.cand-pics img {
+  width: 128px;
+  height: 128px;
+  object-fit: cover;
+  border-radius: var(--r-2);
+  background: var(--c-media);
+}
+.cand-large-img {
+  display: block;
+  width: 100%;
+  max-height: 60dvh;
+  object-fit: contain;
+  margin-bottom: 10px;
+  background: var(--c-media);
+}
+.cand-ai {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.cand-ai-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-3);
+}
+.cand-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-small);
+  color: var(--c-mute);
+}
+.cand-note textarea {
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-input);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  padding: 6px;
+  resize: vertical;
+}
+.cand-decide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cand-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Bekräfta and Inte hen weigh the same: same size, same frame. */
+.cand-decide .btn-hold,
+.cand-reject {
+  min-width: 132px;
+  min-height: 44px;
+  background: var(--c-panel-2);
+  border: 1px solid var(--c-acc);
+  color: var(--c-text);
+}
+.cand-found {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--c-ok);
+  border-radius: var(--r-3);
+}
+.cand-coords {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+.cand-coords div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.cand-coords dt {
+  min-width: 170px;
+  color: var(--c-mute);
+}
+.cand-coords dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+}
+.review-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  font: inherit;
+  color: var(--c-text);
+  background: transparent;
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.review-badge[data-backlog="true"] {
+  border-color: var(--c-warn);
+  color: var(--c-warn);
+}
+.lc-find {
+  margin: 0;
+  font-weight: 600;
+  color: var(--c-ok);
+}
