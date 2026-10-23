@@ -21,8 +21,8 @@
 }
 .map-tools {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: var(--sp-2);
+  left: var(--sp-2);
   right: 48px;
   display: flex;
   flex-wrap: wrap;
@@ -36,7 +36,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
+  height: var(--ctl);
   padding: 0 10px;
   font: inherit;
   font-size: var(--fs-small);
@@ -44,7 +44,7 @@
   color: var(--c-text);
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
   cursor: pointer;
   white-space: nowrap;
@@ -75,7 +75,7 @@
 .tool-pop .menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .tool-pop .menu-item[aria-pressed="true"] {
   color: var(--c-acc);
@@ -91,7 +91,7 @@
 }
 .map-layers label {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
   min-height: var(--hit);
   cursor: pointer;
@@ -104,9 +104,9 @@
   flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-3);
   background: var(--c-panel);
   border-top: 2px solid var(--c-acc);
 }
@@ -121,8 +121,8 @@
 .map-path-progress {
   position: absolute;
   margin: 0;
-  padding: 3px 8px;
-  border-radius: var(--r-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r);
   background: var(--c-panel);
   border: 1px solid var(--c-line);
   font-size: var(--fs-small);
@@ -153,8 +153,8 @@
   max-width: min(260px, calc(100% - 16px));
   pointer-events: none;
   margin: 0;
-  padding: 6px 8px;
-  border-radius: var(--r-2);
+  padding: 6px var(--sp-2);
+  border-radius: var(--r);
   background: var(--c-panel);
   border: 1px solid var(--c-line);
   font-size: var(--fs-small);
@@ -178,7 +178,7 @@
   width: 56px;
   height: 8px;
   border: 1px solid var(--c-line);
-  border-radius: 2px;
+  border-radius: var(--r-1);
 }
 .map-prob-poa {
   background: linear-gradient(90deg, rgb(220 38 38 / 0), rgb(220 38 38 / 0.8));
@@ -200,7 +200,7 @@
 .map-box .maplibregl-ctrl-group:not(:empty) {
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   box-shadow: none;
 }
 .map-box .maplibregl-ctrl-scale {
@@ -216,7 +216,7 @@
   padding: 6px 0 0;
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
 }
@@ -237,12 +237,12 @@
   width: 168px;
   max-height: calc(100% - 96px);
   overflow: auto;
-  padding: 8px 10px;
+  padding: var(--sp-2);
   background: var(--c-panel);
   border: 1px solid var(--c-line);
-  border-left: 3px solid var(--c-warn);
-  border-radius: 10px;
-  font-size: 13px;
+  border-left: 4px solid var(--c-warn);
+  border-radius: var(--r);
+  font-size: var(--fs-small);
 }
 .map-find header {
   display: flex;
@@ -255,8 +255,8 @@
   width: 128px;
   height: 128px;
   object-fit: cover;
-  margin: 6px 0;
-  border-radius: 6px;
+  margin: var(--sp-2) 0;
+  border-radius: var(--r);
 }
 .map-find p {
   margin: 2px 0;
@@ -285,10 +285,10 @@
   inset: 48px 8px 8px 8px;
   overflow: auto;
   z-index: 3;
-  padding: 8px 10px;
+  padding: var(--sp-2) var(--sp-3);
   background: var(--c-panel);
   border: 1px solid var(--c-line);
-  border-radius: 10px;
+  border-radius: var(--r);
 }
 .shell[data-vp="phone"] .map-profile {
   bottom: calc(var(--sheet-peek) + 8px);
@@ -300,8 +300,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
 }
 .profile-card .warn {
   color: var(--c-warn);
@@ -333,20 +333,20 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: var(--sp-1);
   background: var(--c-panel);
   border: 1px solid var(--c-line-strong);
-  border-radius: 6px;
+  border-radius: var(--r);
 }
 .picker-list button {
   font: inherit;
   min-height: var(--hit);
-  padding: 4px 8px;
+  padding: var(--sp-1) var(--sp-2);
   text-align: left;
   background: none;
   border: 0;
   color: inherit;
-  border-radius: 4px;
+  border-radius: var(--r-1);
 }
 .picker-list button[aria-selected="true"] {
   font-weight: 600;
@@ -360,22 +360,22 @@
 .profile-form {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 14px;
+  gap: var(--sp-2);
+  font-size: var(--fs-body);
 }
 .profile-form fieldset {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 0;
-  padding: 6px 8px;
+  padding: var(--sp-2);
   border: 1px solid var(--c-line);
-  border-radius: 8px;
+  border-radius: var(--r);
 }
 .profile-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
-  gap: 4px;
+  gap: var(--sp-1);
   align-items: center;
 }
 .profile-row .input {
