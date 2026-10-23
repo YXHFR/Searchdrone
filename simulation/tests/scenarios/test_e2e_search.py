@@ -38,7 +38,7 @@ SEED = 1
 LIMIT_S = 480.0
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 async def test_e2e_search_sk01(sim: Sim, migrated_db: Any, tmp_path: Path) -> None:
     world = search_world.load("SK01", SEED)
     made: list[ChainOnboard] = []

@@ -60,14 +60,14 @@ async def _run(sim: Sim, db: Any, tmp_path: Path, name: str, seed: int, **kw: An
         )
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_sk01_chain(sim: Sim, migrated_db: Any, tmp_path: Path, seed: int) -> None:
     m = await _run(sim, migrated_db, tmp_path, "SK01", seed)
     assert m.found or m.time_to_confirmed_s is not None
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_sk03_chain_no_person(sim: Sim, migrated_db: Any, tmp_path: Path, seed: int) -> None:
     m = await _run(sim, migrated_db, tmp_path, "SK03", seed)
@@ -75,7 +75,7 @@ async def test_sk03_chain_no_person(sim: Sim, migrated_db: Any, tmp_path: Path, 
     assert all(d["decision"] == "reject" for d in m.decisions), m.decisions
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_sk04_chain_right_person(
     sim: Sim, migrated_db: Any, tmp_path: Path, seed: int
@@ -87,7 +87,7 @@ async def test_sk04_chain_right_person(
         assert hiker["garment:0"] == "conflict", hiker
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_sk09_chain_wrong_person_first(
     sim: Sim, migrated_db: Any, tmp_path: Path, seed: int

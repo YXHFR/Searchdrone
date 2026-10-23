@@ -78,7 +78,7 @@ __all__ = ["ChainOnboard", "SearchRun", "search_run", "search_service"]
 SIM_ENV = {"SD_SIM": "1"}
 PERIOD_S = 0.2  # how often perception asks for a still (the source gives one a second)
 TRUTH_M = 12.0  # a card or a detection this near a thing is that thing
-LANDED_LIMIT_S = 300.0
+LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
 WATCH_S = 0.25
 
 
