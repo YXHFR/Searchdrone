@@ -411,6 +411,32 @@ def _search_examples() -> list[BaseModel]:
             approved_by="operator:demo",
             approved_at=T,
         ),
+        s.SearchProfileDraft(
+            subject_category="hiker",
+            garments=[garment],
+            last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            free_text="Påhittad beskrivning för test.",
+        ),
+        s.SearchProfileProposal(
+            profile=s.SearchProfileDraft(
+                subject_category="hiker",
+                garments=[garment],
+                last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+                free_text="Påhittad beskrivning för test.",
+            ),
+        ),
+        s.SearchProfileProposalResult(proposal_id=OTHER),
+        s.SearchProfileState(
+            proposal=s.SearchProfile(
+                profile_id=PROFILE,
+                profile_version=1,
+                mission_id=MISSION,
+                subject_category="hiker",
+                last_seen=s.LastSeen(lat=-35.3620, lon=149.1640, at_utc=T),
+            ),
+            proposal_id=OTHER,
+            proposed_by="brain:ground",
+        ),
         s.Candidate(
             candidate_id=CANDIDATE,
             rev=2,

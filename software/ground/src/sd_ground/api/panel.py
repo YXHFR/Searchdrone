@@ -48,6 +48,7 @@ from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
 from sd_ground.services import health
 from sd_ground.services import perception as perception_service
+from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_ground.sources import EmergencyUnavailableError
@@ -92,6 +93,7 @@ from sd_schemas.api import (
 from sd_schemas.charter import CharterProposal
 from sd_schemas.gate import GateDecision
 from sd_schemas.safety import SafetyLimits
+from sd_schemas.search import SearchProfile, SearchProfileDraft, SearchProfileState
 
 __all__ = ["OPERATOR_ALIAS", "dispatch_emergency", "router"]
 
@@ -496,6 +498,25 @@ async def post_charter(mission_id: IdPath, body: CharterProposal, g: G, who: Pil
 async def get_sectors(mission_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
     await _flow(g).mission(mission_id)
     return await _flow(g).sectors_geojson(mission_id)
+
+
+@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfileState)
+async def get_search_profile(mission_id: IdPath, g: G, _: Observer) -> SearchProfileState:
+    """The approved profile in force and a newer proposal from the AI, if any."""
+    return await profile_service.state(_flow(g), mission_id)
+
+
+@router.post("/missions/{mission_id}/search-profile", status_code=201, response_model=SearchProfile)
+async def post_search_profile(
+    mission_id: IdPath, body: SearchProfileDraft, g: G, who: Pilot
+) -> SearchProfile:
+    """Approve profile: only a pilot's click. The profile as sent becomes the next version."""
+    return await profile_service.approve(_flow(g), mission_id, body, who.issuer_ref)
+
+
+@router.get("/missions/{mission_id}/search-profile/versions", response_model=list[SearchProfile])
+async def get_search_profile_versions(mission_id: IdPath, g: G, _: Observer) -> list[SearchProfile]:
+    return await profile_service.versions(_flow(g), mission_id)
 
 
 @router.get("/missions/{mission_id}/approvals", response_model=list[Approval])

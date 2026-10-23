@@ -48,6 +48,7 @@ TOPICS = frozenset(
         "chat",
         "alerts",
         "detections",
+        "search_profile",
     }
 )
 

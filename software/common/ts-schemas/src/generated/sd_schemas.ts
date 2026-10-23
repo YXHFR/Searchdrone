@@ -2434,7 +2434,6 @@ export interface ReturnHomeParams {
  * What the person looked like, as the operator approved it.
  *
  * A proposal from the AI has ``approved_by = None`` and is never used for matching.
- * The age and height bands are for the people searching, never for the matching.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SearchProfile".
@@ -2515,6 +2514,116 @@ export interface SearchProfile {
     | "autism"
     | "other";
   visual_notes?: string;
+}
+/**
+ * A search profile before the ground station numbers and stores it: what the AI
+ * proposes from the chat, and what the pilot's card sends when they approve.
+ *
+ * The ground station sets the mission, the profile id, the version and who approved
+ * it. The age and height bands are for the people searching, never for the matching.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileDraft".
+ */
+export interface SearchProfileDraft {
+  age_band?: ("child" | "youth" | "adult" | "senior") | null;
+  /**
+   * @maxItems 5
+   */
+  excluded?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string];
+  free_text?: string;
+  /**
+   * @maxItems 8
+   */
+  garments?:
+    | []
+    | [Garment]
+    | [Garment, Garment]
+    | [Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment, Garment]
+    | [Garment, Garment, Garment, Garment, Garment, Garment, Garment, Garment];
+  hair?: Hair | null;
+  height_band?: ("short" | "medium" | "tall") | null;
+  /**
+   * @maxItems 6
+   */
+  items?:
+    | []
+    | [Item]
+    | [Item, Item]
+    | [Item, Item, Item]
+    | [Item, Item, Item, Item]
+    | [Item, Item, Item, Item, Item]
+    | [Item, Item, Item, Item, Item, Item];
+  last_seen: LastSeen;
+  /**
+   * @minItems 1
+   * @maxItems 4
+   */
+  likely_state?:
+    | ["walking" | "sitting" | "lying" | "unknown"]
+    | ["walking" | "sitting" | "lying" | "unknown", "walking" | "sitting" | "lying" | "unknown"]
+    | [
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown"
+      ]
+    | [
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown",
+        "walking" | "sitting" | "lying" | "unknown"
+      ];
+  mobility?: "good" | "reduced" | "unknown";
+  subject_category:
+    | "dementia"
+    | "hiker"
+    | "despondent"
+    | "gatherer"
+    | "hunter"
+    | "child_1_6"
+    | "child_7_12"
+    | "child_13_15"
+    | "autism"
+    | "other";
+  visual_notes?: string;
+}
+/**
+ * The AI's proposal from the chat. It changes nothing until a pilot approves it.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileProposal".
+ */
+export interface SearchProfileProposal {
+  profile: SearchProfileDraft;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileProposalResult".
+ */
+export interface SearchProfileProposalResult {
+  proposal_id: string;
+}
+/**
+ * The profile in force (highest approved version) and a newer proposal, if any.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SearchProfileState".
+ */
+export interface SearchProfileState {
+  approved?: SearchProfile | null;
+  proposal?: SearchProfile | null;
+  proposal_id?: string | null;
+  proposed_by?: string | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

@@ -145,6 +145,10 @@ from sd_schemas.search import (
     Item,
     LastSeen,
     SearchProfile,
+    SearchProfileDraft,
+    SearchProfileProposal,
+    SearchProfileProposalResult,
+    SearchProfileState,
 )
 from sd_schemas.skills import (
     SKILL_REGISTRY,
@@ -319,6 +323,10 @@ __all__ = [
     "ScoreAnswer",
     "ScoreQuestion",
     "SearchProfile",
+    "SearchProfileDraft",
+    "SearchProfileProposal",
+    "SearchProfileProposalResult",
+    "SearchProfileState",
     "Sector",
     "Session",
     "SetCameraTiltParams",

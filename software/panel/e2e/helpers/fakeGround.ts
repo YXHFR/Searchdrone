@@ -112,6 +112,13 @@ export class FakeGround {
   commands: Command[] = [];
   annotations: Annotation[] = [];
   finds: Find[] = [];
+  /** The search profile: the version in force and a newer proposal (the AI's). */
+  profile: {
+    approved: Record<string, unknown> | null;
+    proposal: Record<string, unknown> | null;
+    proposal_id: string | null;
+    proposed_by: string | null;
+  } = { approved: null, proposal: null, proposal_id: null, proposed_by: null };
   clearance: Clearance | null = null;
   sectors: unknown = { type: "FeatureCollection", features: [] };
   track: number[][] = [];
@@ -475,6 +482,23 @@ export class FakeGround {
     if (k === `GET ${ms}/sectors`) return { status: 200, body: this.sectors };
     if (k === `GET ${ms}/annotations`) return { status: 200, body: this.annotations };
     if (k === `GET ${ms}/finds`) return { status: 200, body: this.finds };
+    if (k === `GET ${ms}/search-profile`) return { status: 200, body: this.profile };
+    if (k === `POST ${ms}/search-profile`) {
+      if (this.session?.role !== "pilot")
+        return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
+      const before = this.profile.approved ?? this.profile.proposal;
+      const version = Number(this.profile.approved?.profile_version ?? 0) + 1;
+      const approved = {
+        ...(req.body as object),
+        profile_id: String(before?.profile_id ?? "PR1"),
+        profile_version: version,
+        mission_id: MISSION,
+        approved_by: "operator:demo",
+        approved_at: new Date().toISOString(),
+      };
+      this.profile = { approved, proposal: null, proposal_id: null, proposed_by: null };
+      return { status: 201, body: approved };
+    }
     if (/^GET \/api\/v1\/missions\/[^/]+\/detections\/[^/]+\/crop$/.test(k))
       return { status: 200, raw: THUMB_JPEG, headers: { "content-type": "image/jpeg" } };
     if (k === `GET ${ms}/chat`) return { status: 200, body: { items: [], next_before: null } };

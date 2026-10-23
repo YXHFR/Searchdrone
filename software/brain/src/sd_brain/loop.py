@@ -67,11 +67,12 @@ from sd_brain.memory import (
     to_update,
     with_changes,
 )
+from sd_brain.profile_draft import ProfileArgsError, profile_proposal
 from sd_brain.runtime.fallback import EngineName
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.sv import height_m
 from sd_brain.toolcall_parse import truncate
-from sd_brain.tools import PROPOSAL_TOOL, AdaptError, adapt, exposed_tools
+from sd_brain.tools import PROFILE_TOOL, PROPOSAL_TOOL, AdaptError, adapt, exposed_tools
 from sd_brain.turn import (
     TRIGGER_PRIORITY,
     AiAction,
@@ -1342,6 +1343,7 @@ class _ReadTools:
     def __init__(self, loop: CommanderLoop, turn: TurnInput) -> None:
         self.loop = loop
         self.turn = turn
+        self.profile_proposed = False  # one search-profile proposal per turn
 
     async def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         mid = str(self.turn.mission_id)
@@ -1379,6 +1381,19 @@ class _ReadTools:
                 return json.loads(est.model_dump_json())
             if name == "brain_note":
                 return {"ok": True}
+            if name == PROFILE_TOOL:
+                if self.profile_proposed:
+                    # A second call would replace the first on the pilot's card.
+                    return {"error": "already proposed in this turn; the pilot corrects it"}
+                proposal = profile_proposal(args, self.turn.situation, self.loop.clock.utc_now())
+                pid = await g.propose_search_profile(mid, proposal)
+                self.profile_proposed = True
+                return {
+                    "proposal_id": pid,
+                    "status": "proposed: the pilot corrects and approves it on the profile card",
+                }
+        except ProfileArgsError as exc:
+            return {"error": truncate(str(exc), TOOL_RESULT_MAX_CHARS)}
         except (GroundError, AdaptError, ValueError, KeyError) as exc:
             return {"error": truncate(str(exc), TOOL_RESULT_MAX_CHARS)}
         return {"error": f"unknown tool {name}"}

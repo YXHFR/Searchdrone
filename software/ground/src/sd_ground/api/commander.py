@@ -38,6 +38,7 @@ from sd_ground.services import approvals as approvals_service
 from sd_ground.services import charters as charter_rules
 from sd_ground.services import chat as chat_service
 from sd_ground.services import commands as commands_service
+from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_safety.constants import BRAIN_HEARTBEAT_TIMEOUT_S
 from sd_schemas.api import ActionDispatched, ChatMessage
@@ -55,6 +56,7 @@ from sd_schemas.commander import (
     SkillSubmitResult,
 )
 from sd_schemas.decide import ChatIntentReport
+from sd_schemas.search import SearchProfileProposal, SearchProfileProposalResult
 from sd_schemas.skills import SKILL_REGISTRY, SkillSpecPublic
 
 __all__ = [
@@ -75,6 +77,7 @@ RAW_BODY_MODELS: tuple[type[BaseModel], ...] = (
     CharterProposal,
     DecisionLog,
     MissionMemoryUpdate,
+    SearchProfileProposal,
 )
 BRAIN_ISSUER = "brain:ground"
 log = get_logger("sd_ground.commander")
@@ -339,6 +342,30 @@ async def post_charter_proposal(mission_id: IdPath, request: Request, g: G, _: C
         approval_id=card.id,
         validation=CharterValidationResult(ok=True, errors=[]),
     )
+
+
+@router.post(
+    "/missions/{mission_id}/profile-proposals",
+    status_code=201,
+    response_model=SearchProfileProposalResult,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/SearchProfileProposal"}
+                }
+            },
+            "required": True,
+        }
+    },
+)
+async def post_profile_proposal(
+    mission_id: IdPath, request: Request, g: G, _: Commander
+) -> SearchProfileProposalResult:
+    """A proposal only: it is never used until a pilot approves the profile in the panel."""
+    body = _validate(SearchProfileProposal, await _body(request))
+    row_id = await profile_service.propose(_flow(g), mission_id, body.profile, BRAIN_ISSUER)
+    return SearchProfileProposalResult(proposal_id=UUID(row_id))
 
 
 @router.post(

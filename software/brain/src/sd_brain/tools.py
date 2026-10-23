@@ -22,10 +22,13 @@ from sd_brain.state_view import Limits, current_limits, motion_block, takeoff_ok
 from sd_brain.turn import ToolSpec
 from sd_schemas.commander import MissionMemory, Situation
 from sd_schemas.safety import MIN_ALT_AGL_M
+from sd_schemas.search import SearchProfileDraft
 from sd_schemas.skills import SkillRegistry, SkillSpec
 
 __all__ = [
     "ALWAYS_ALLOWED",
+    "MAX_SEEN_HOURS_AGO",
+    "PROFILE_TOOL",
     "PROPOSAL_TOOL",
     "READ_TOOL_NAMES",
     "STATE_ALLOWS",
@@ -34,6 +37,8 @@ __all__ = [
     "charter_skills",
     "clean_schema",
     "exposed_tools",
+    "pin_point",
+    "profile_tool",
     "read_tools",
     "registry_tool_schemas",
     "skill_tool",
@@ -41,6 +46,10 @@ __all__ = [
 
 PROPOSAL_TOOL = "propose_charter_change"
 READ_TOOL_NAMES = ("get_situation", "estimate", "get_log", "brain_note")
+# Not a skill: it never moves the drone. The ground stores a proposal that a pilot must
+# approve before anything uses it, and the model gets the answer as a tool result.
+PROFILE_TOOL = "propose_search_profile"
+MAX_SEEN_HOURS_AGO = 168.0
 
 # Skills that need not be in charter.allowed_skills (the gate's same exception).
 ALWAYS_ALLOWED = frozenset({"report", "mark_location", "hold", "return_home", PROPOSAL_TOOL})
@@ -258,6 +267,84 @@ def _read(name: str, description: str, params: dict[str, Any]) -> ToolSpec:
     )
 
 
+def profile_tool(s: Situation | None = None) -> ToolSpec:
+    """The search-profile proposal: ``SearchProfileDraft`` with the last-seen point as a
+    map pin or the coordinates the operator wrote, and the time as hours ago (the model
+    never sees the clock or coordinates it was not given)."""
+    params = clean_schema(SearchProfileDraft.model_json_schema())
+    params["additionalProperties"] = False
+    props = params["properties"]
+    seen: dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "description": "Where and when the person was last seen. Without a place: ask.",
+        "properties": {
+            "pin": {"type": "string", "description": "A map pin listed under Kartnålar."},
+            "lat": {"type": "number", "description": "Only a latitude the operator wrote."},
+            "lon": {"type": "number", "description": "Only a longitude the operator wrote."},
+            "hours_ago": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": MAX_SEEN_HOURS_AGO,
+                "description": "How long ago, in hours (0.5 = half an hour).",
+            },
+            "heading_deg": props["last_seen"]["properties"]["heading_deg"],
+            "kind": props["last_seen"]["properties"]["kind"],
+            "source": props["last_seen"]["properties"]["source"],
+        },
+        "required": ["hours_ago"],
+    }
+    pins = list(dict.fromkeys(p.id for p in s.pins)) if s is not None else []
+    if s is not None and not pins:
+        # No pin to name: only coordinates the operator wrote.
+        del seen["properties"]["pin"]
+        seen["required"] = ["lat", "lon", "hours_ago"]
+    elif pins:
+        # A place is a pin (the pilot can drop one): no coordinates from the model.
+        seen["properties"]["pin"]["enum"] = pins
+        del seen["properties"]["lat"], seen["properties"]["lon"]
+        seen["required"] = ["pin", "hours_ago"]
+    props["last_seen"] = seen
+    props["garments"]["description"] = (
+        "Every piece of clothing the operator mentioned, one entry each, with its own "
+        "colour (never the colour of a bag or another garment), also the ones that are "
+        "only a guess (certainty unsure). "
+        "part: outer = jacka, kappa, rock, väst; upper = tröja, skjorta, t-shirt; "
+        "lower = byxor, jeans, shorts, kjol; headwear = mössa, keps, hatt; "
+        "footwear = skor, stövlar; full_body = overall."
+    )
+    props["items"]["description"] = (
+        "What the person carries or has with them (ryggsäck, väska, käpp, rollator, "
+        "paraply, cykel, hund; anything else is other with a note)."
+    )
+    props["visual_notes"]["description"] = (
+        "Only visible details that are no garment, item or hair (glasögon, skägg, gångstil); "
+        "never a name. Clothes always go in garments."
+    )
+    props["subject_category"]["description"] = (
+        "demens = dementia, vandrare = hiker, nedstämd = despondent, bär-/svampplockare "
+        "= gatherer, jägare = hunter, barn 1-6 / 7-12 / 13-15 år, autism, annat = other."
+    )
+    params.pop("description", None)
+    params.pop("title", None)
+    return ToolSpec(
+        name=PROFILE_TOOL,
+        kind="read",
+        openai={
+            "type": "function",
+            "function": {
+                "name": PROFILE_TOOL,
+                "description": (
+                    "Propose the search profile of the missing person from what the operator "
+                    "said. Nothing is used until the pilot approves it on the card. "
+                    "Swedish: sökprofil, beskrivning, försvunnen person."
+                ),
+                "parameters": params,
+            },
+        },
+    )
+
+
 def read_tools() -> list[ToolSpec]:
     return [
         _read(
@@ -342,12 +429,16 @@ def exposed_tools(
         if k.allowed_from and s.vehicle.executor_state not in k.allowed_from:
             continue  # the onboard executor would refuse it in this state
         out.append(skill_tool(k, lim, skills, s))
+    if any(t.name == PROPOSAL_TOOL for t in out):
+        # Offered with the charter proposal: a pilot's line, the AI on, no latch.
+        out.append(profile_tool(s))
     return out
 
 
 def registry_tool_schemas(reg: SkillRegistry) -> list[dict[str, Any]]:
     """Every exposable tool with the registry's fixed bounds (for ``ai_config_hash``)."""
     tools = [t.openai for t in read_tools()]
+    tools.append(profile_tool().openai)
     skills = charter_skills(reg)
     for k in reg:
         if k.status == "implemented" and k.stage <= EXPOSED_STAGE and k.ai_allowed:
@@ -358,7 +449,7 @@ def registry_tool_schemas(reg: SkillRegistry) -> list[dict[str, Any]]:
 # --- adapter: AI parameters -> registry parameters ---------------------------------------
 
 
-def _pin(s: Situation, pin_id: str) -> tuple[float, float]:
+def pin_point(s: Situation, pin_id: str) -> tuple[float, float]:
     pin = next((p for p in s.pins if p.id == pin_id), None)
     if pin is None:
         known = ", ".join(p.id for p in s.pins) or "none"
@@ -380,7 +471,7 @@ def adapt(skill: str, ai: dict[str, Any], s: Situation) -> dict[str, Any]:
     lim = current_limits(s)
     if skill == "goto":
         if ai.get("pin") is not None:
-            lat, lon = _pin(s, str(ai["pin"]))
+            lat, lon = pin_point(s, str(ai["pin"]))
         else:
             lat, lon = float(ai["lat"]), float(ai["lon"])
         out: dict[str, Any] = {
@@ -419,7 +510,7 @@ def adapt(skill: str, ai: dict[str, Any], s: Situation) -> dict[str, Any]:
         return out
     if skill == "mark_location":
         if ai.get("pin") is not None:
-            lat, lon = _pin(s, str(ai["pin"]))
+            lat, lon = pin_point(s, str(ai["pin"]))
         elif ai.get("lat") is not None:
             lat, lon = float(ai["lat"]), float(ai["lon"])
         elif s.vehicle.lat is not None and s.vehicle.lon is not None:

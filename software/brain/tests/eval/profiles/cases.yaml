@@ -1,0 +1,149 @@
+# Fictional descriptions of a missing person, for the search-profile evaluation
+# (sd_brain.evals.profiles). Nobody here is real; no names, no real places.
+# expect: what was said. A part or kind may be a list of accepted values; colors lists
+# the accepted main colours; unsure marks what the operator only guessed.
+# optional_garments / optional_items: things the text half-mentions that may be left
+# out or added without counting as invented.
+cases:
+  - id: PR-01
+    text: "En man i 80-årsåldern med demens har gått hemifrån. Han hade röd jacka och blå byxor. Han sågs vid P1 för två timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [red]}
+        - {part: lower, colors: [blue]}
+  - id: PR-02
+    text: "En flicka, ungefär 9 år, har försvunnit. Rosa jacka, svarta byxor och en gul ryggsäck. Hon sågs vid P1 för en timme sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [pink]}
+        - {part: lower, colors: [black]}
+      items:
+        - {kind: backpack, colors: [yellow]}
+  - id: PR-03
+    text: "Svampplockare, kvinna runt 60. Grön regnjacka och grå byxor, bär en brun korg. Senast sedd vid P1 för ungefär fyra timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [green]}
+        - {part: lower, colors: [gray]}
+      items:
+        - {kind: [bag, other], colors: [brown]}
+  - id: PR-04
+    text: "Jägare som inte kommit tillbaka. Orange väst och gröna byxor. Han var vid P1 för tre timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [orange]}
+        - {part: lower, colors: [green]}
+  - id: PR-05
+    text: "Äldre kvinna med rollator. Beige kappa och vit mössa. Hon sågs vid P1 för en halvtimme sedan."
+    expect:
+      garments:
+        - {part: [outer, upper, full_body], colors: [beige]}
+        - {part: headwear, colors: [white]}
+      items:
+        - {kind: walker}
+  - id: PR-06
+    text: "Pojke, 5 år, i blå overall. Borta sedan en halvtimme, sågs senast vid P1."
+    expect:
+      garments:
+        - {part: [full_body, outer], colors: [blue]}
+  - id: PR-07
+    text: "Vandrare med röd ryggsäck och svart jacka, kanske blå jeans. Senast sedd vid P1 för sex timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [black]}
+        - {part: lower, colors: [blue], unsure: true}
+      items:
+        - {kind: backpack, colors: [red]}
+  - id: PR-08
+    text: "Nedstämd man i 40-årsåldern. Grå huvtröja, svarta byxor och vita skor. Han sågs vid P1 för två timmar sedan."
+    expect:
+      garments:
+        - {part: [upper, outer], colors: [gray]}
+        - {part: lower, colors: [black]}
+        - {part: footwear, colors: [white]}
+  - id: PR-09
+    text: "En 14-åring med autism. Gul jacka och mörka byxor, vi tror svarta. Sågs vid P1 för en timme sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [yellow]}
+        - {part: lower, colors: [black], unsure: true}
+  - id: PR-10
+    text: "Kvinna, 75 år, med demens. Lila jacka och en ljusbrun käpp. Hon gick från P1 för tre timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [purple]}
+      items:
+        - {kind: cane, colors: [brown, beige]}
+  - id: PR-11
+    text: "Bärplockare med en blå hink. Grön tröja och bruna byxor. Senast vid P1 för fem timmar sedan."
+    expect:
+      garments:
+        - {part: [upper, outer], colors: [green]}
+        - {part: lower, colors: [brown]}
+      items:
+        - {kind: [other, bag], colors: [blue]}
+  - id: PR-12
+    text: "Man med en svart hund. Han har röd mössa och grön jacka. De var vid P1 för en timme sedan."
+    expect:
+      garments:
+        - {part: headwear, colors: [red]}
+        - {part: [outer, upper], colors: [green]}
+      items:
+        - {kind: dog, colors: [black]}
+  - id: PR-13
+    text: "Barn, 3 år. Vit tröja och rosa byxor. Försvann vid P1 för 20 minuter sedan."
+    expect:
+      garments:
+        - {part: [upper, outer], colors: [white]}
+        - {part: lower, colors: [pink]}
+  - id: PR-14
+    text: "Kvinna på en blå cykel, hon har orange jacka. Hon sågs vid P1 för två timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [orange]}
+      items:
+        - {kind: bicycle, colors: [blue]}
+  - id: PR-15
+    text: "Äldre man i grå rock och svart hatt, med en brun väska. Sågs vid P1 för fyra timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper, full_body], colors: [gray]}
+        - {part: headwear, colors: [black]}
+      items:
+        - {kind: bag, colors: [brown]}
+  - id: PR-16
+    text: "Pojke, 11 år. Röd keps, blå t-shirt och svarta shorts. Sågs vid P1 för 40 minuter sedan."
+    expect:
+      garments:
+        - {part: headwear, colors: [red]}
+        - {part: [upper, outer], colors: [blue]}
+        - {part: lower, colors: [black]}
+  - id: PR-17
+    text: "Vandrare med grön ryggsäck och gul regnjacka. Långt rött hår. Sågs vid P1 för tre timmar sedan."
+    expect:
+      garments:
+        - {part: [outer, upper], colors: [yellow]}
+      items:
+        - {kind: backpack, colors: [green]}
+      hair: {colors: [red, orange, brown]}
+  - id: PR-18
+    text: "Kvinna, 50 år, nedstämd. Svart kappa och möjligen en grå halsduk. Sågs vid P1 för en timme sedan."
+    expect:
+      garments:
+        - {part: [outer, upper, full_body], colors: [black]}
+      optional_garments: [upper, headwear, other]
+      optional_items: [other]
+  - id: PR-19
+    text: "Jägare i kamouflagekläder, gröna och bruna, med orange mössa. Han var vid P1 för två timmar sedan."
+    expect:
+      garments:
+        - {part: headwear, colors: [orange]}
+        - {part: [upper, outer, full_body], colors: [green, brown]}
+      optional_garments: [lower, upper, outer, full_body]
+  - id: PR-20
+    text: "Man, 70 år, med demens. Blå skjorta, beige byxor och kort vitt hår. Sågs vid P1 för en och en halv timme sedan."
+    expect:
+      garments:
+        - {part: [upper, outer], colors: [blue]}
+        - {part: lower, colors: [beige]}
+      hair: {colors: [white, gray]}
