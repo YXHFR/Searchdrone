@@ -16,6 +16,7 @@ members = [
     "sd-onboard",
     "sd-safety",
     "sd-schemas",
+    "sd-search",
     "sd-searchsim",
     "sd-sim",
     "sd-testing",
@@ -1782,6 +1783,27 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.13" },
     { name = "uuid-utils", specifier = ">=1.0,<2" },
+]
+
+[[package]]
+name = "sd-search"
+version = "0.0.0"
+source = { editable = "software/search" }
+dependencies = [
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "sd-schemas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "pillow", specifier = ">=11" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-schemas", editable = "software/common/schemas" },
 ]
 
 [[package]]

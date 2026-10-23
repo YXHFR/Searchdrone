@@ -1,6 +1,507 @@
 {
   "components": {
     "schemas": {
+      "BBox": {
+        "additionalProperties": false,
+        "description": "A box in image pixels: top-left corner, width and height (also ``sd_detect.BBox``).",
+        "properties": {
+          "h": {
+            "exclusiveMinimum": 0.0,
+            "title": "H",
+            "type": "number"
+          },
+          "w": {
+            "exclusiveMinimum": 0.0,
+            "title": "W",
+            "type": "number"
+          },
+          "x": {
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "title": "BBox",
+        "type": "object"
+      },
+      "Candidate": {
+        "additionalProperties": false,
+        "description": "A place where something that may be a person was seen. One row per revision.",
+        "properties": {
+          "best_detector_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Best Detector Score",
+            "type": "number"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "first_seen_utc": {
+            "format": "date-time",
+            "title": "First Seen Utc",
+            "type": "string"
+          },
+          "last_seen_utc": {
+            "format": "date-time",
+            "title": "Last Seen Utc",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "latest_assessment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Assessment Id"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "n_in_view": {
+            "minimum": 0.0,
+            "title": "N In View",
+            "type": "integer"
+          },
+          "n_seen": {
+            "minimum": 0.0,
+            "title": "N Seen",
+            "type": "integer"
+          },
+          "priority": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "number"
+          },
+          "refined_person_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refined Person Score"
+          },
+          "rev": {
+            "minimum": 1.0,
+            "title": "Rev",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CandidateState"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "rev",
+          "mission_id",
+          "seq",
+          "state",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "n_seen",
+          "n_in_view",
+          "best_detector_score",
+          "priority",
+          "first_seen_utc",
+          "last_seen_utc"
+        ],
+        "title": "Candidate",
+        "type": "object"
+      },
+      "CandidateAssessment": {
+        "additionalProperties": false,
+        "description": "One engine's view of a candidate against one profile version.\n\nThe model fills only ``person``, ``person_p``, ``fields``, ``overall`` and\n``explanation_sv``; the code fills the rest. Field keys follow ``FIELD_KEY_PATTERN``;\nunknown keys are dropped. ``flags`` mark claims nobody can check from a still (that\nsomeone moves, or who they are): the panel shows them as unverified.",
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "cost_sek": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Cost Sek",
+            "type": "number"
+          },
+          "crops_used": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Crops Used",
+            "type": "array"
+          },
+          "engine": {
+            "enum": [
+              "code",
+              "fast",
+              "strong",
+              "oracle"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "evidence": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "maxProperties": 32,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "explanation_sv": {
+            "maxLength": 300,
+            "title": "Explanation Sv",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "enum": [
+                "match",
+                "conflict",
+                "not_visible"
+              ],
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "flags": {
+            "items": {
+              "enum": [
+                "motion_claim",
+                "identity_claim",
+                "format_repaired"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Flags",
+            "type": "array"
+          },
+          "latency_ms": {
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "overall": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overall",
+            "type": "number"
+          },
+          "person": {
+            "enum": [
+              "yes",
+              "no",
+              "unsure"
+            ],
+            "title": "Person",
+            "type": "string"
+          },
+          "person_p": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Person P",
+            "type": "number"
+          },
+          "profile_version": {
+            "minimum": 0.0,
+            "title": "Profile Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "profile_version",
+          "engine",
+          "model_id",
+          "person",
+          "person_p",
+          "overall",
+          "explanation_sv",
+          "latency_ms"
+        ],
+        "title": "CandidateAssessment",
+        "type": "object"
+      },
+      "CandidateBatch": {
+        "additionalProperties": false,
+        "description": "Revisions written in one transaction: all or none.",
+        "properties": {
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateRevision"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Revisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revisions"
+        ],
+        "title": "CandidateBatch",
+        "type": "object"
+      },
+      "CandidateRevision": {
+        "additionalProperties": false,
+        "description": "A new candidate (``base_rev`` 0) or the next revision of one, from the search\nservice. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps\nthe state in force (a candidate a person or the pilot holds). Confirmed and rejected\nare a person's and are refused here (E1).",
+        "properties": {
+          "assessment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateAssessment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "base_rev": {
+            "minimum": 0.0,
+            "title": "Base Rev",
+            "type": "integer"
+          },
+          "best_detector_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Best Detector Score",
+            "type": "number"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "first_seen_utc": {
+            "format": "date-time",
+            "title": "First Seen Utc",
+            "type": "string"
+          },
+          "last_seen_utc": {
+            "format": "date-time",
+            "title": "Last Seen Utc",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "n_seen": {
+            "minimum": 1.0,
+            "title": "N Seen",
+            "type": "integer"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/SearchObservation"
+            },
+            "maxItems": 200,
+            "title": "Observations",
+            "type": "array"
+          },
+          "priority": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "number"
+          },
+          "refined_person_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refined Person Score"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "new",
+                  "assessing",
+                  "ready",
+                  "merged"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "base_rev",
+          "state",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "n_seen",
+          "best_detector_score",
+          "priority",
+          "first_seen_utc",
+          "last_seen_utc"
+        ],
+        "title": "CandidateRevision",
+        "type": "object"
+      },
+      "CandidateState": {
+        "enum": [
+          "new",
+          "assessing",
+          "ready",
+          "inspecting",
+          "confirmed",
+          "rejected",
+          "merged"
+        ],
+        "title": "CandidateState",
+        "type": "string"
+      },
+      "CandidateWritten": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "rev": {
+            "minimum": 1.0,
+            "title": "Rev",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CandidateState"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "rev",
+          "seq",
+          "state"
+        ],
+        "title": "CandidateWritten",
+        "type": "object"
+      },
       "ColorName": {
         "enum": [
           "black",
@@ -284,6 +785,148 @@
         "title": "LastSeen",
         "type": "object"
       },
+      "SearchDetection": {
+        "additionalProperties": false,
+        "description": "A stored detection of a target class, as the search service reads it.",
+        "properties": {
+          "bbox": {
+            "$ref": "#/components/schemas/BBox"
+          },
+          "captured_utc": {
+            "format": "date-time",
+            "title": "Captured Utc",
+            "type": "string"
+          },
+          "crop_box": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BBox"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "has_crop": {
+            "title": "Has Crop",
+            "type": "boolean"
+          },
+          "label": {
+            "pattern": "^[a-z][a-z0-9_]{1,31}$",
+            "title": "Label",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "px_size": {
+            "exclusiveMinimum": 0.0,
+            "title": "Px Size",
+            "type": "number"
+          },
+          "score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "still_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Still Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detection_id",
+          "seq",
+          "still_id",
+          "label",
+          "score",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "px_size",
+          "bbox",
+          "has_crop",
+          "captured_utc"
+        ],
+        "title": "SearchDetection",
+        "type": "object"
+      },
+      "SearchHeartbeat": {
+        "additionalProperties": false,
+        "description": "``cloud``: ``off`` (not configured), ``ok`` or ``down`` (only the code assesses).",
+        "properties": {
+          "cloud": {
+            "default": "off",
+            "enum": [
+              "off",
+              "ok",
+              "down"
+            ],
+            "title": "Cloud",
+            "type": "string"
+          },
+          "missions": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Missions",
+            "type": "integer"
+          }
+        },
+        "title": "SearchHeartbeat",
+        "type": "object"
+      },
+      "SearchObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "distance_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Distance M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "detection_id",
+          "distance_m"
+        ],
+        "title": "SearchObservation",
+        "type": "object"
+      },
       "SearchProfile": {
         "additionalProperties": false,
         "description": "What the person looked like, as the operator approved it.\n\nA proposal from the AI has ``approved_by = None`` and is never used for matching.",
@@ -463,6 +1106,38 @@
         "title": "SearchProfile",
         "type": "object"
       },
+      "SearchTrack": {
+        "additionalProperties": false,
+        "description": "A candidate in force with everything fusion needs to resume after a restart.",
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/Candidate"
+          },
+          "decided": {
+            "title": "Decided",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "sightings": {
+            "items": {
+              "$ref": "#/components/schemas/SearchDetection"
+            },
+            "title": "Sightings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate",
+          "label",
+          "decided",
+          "sightings"
+        ],
+        "title": "SearchTrack",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -511,6 +1186,45 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/search/v1/detections/{detection_id}/crop": {
+      "get": {
+        "description": "A target detection's crop (JPEG), only from inside its mission's folder.",
+        "operationId": "crop_search_v1_detections__detection_id__crop_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "detection_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Detection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Crop"
+      }
+    },
     "/search/v1/health": {
       "get": {
         "description": "The search service's view of the ground station: up, and whether the database is.",
@@ -530,6 +1244,228 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/search/v1/heartbeat": {
+      "post": {
+        "description": "The search service is alive (``parts.search`` in the health).",
+        "operationId": "heartbeat_search_v1_heartbeat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat"
+      }
+    },
+    "/search/v1/missions": {
+      "get": {
+        "description": "The open missions (the ones that may get detections).",
+        "operationId": "missions_search_v1_missions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Missions Search V1 Missions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Missions"
+      }
+    },
+    "/search/v1/missions/{mission_id}/candidates": {
+      "get": {
+        "description": "Every candidate in force with the detections it observed (to resume after a\nrestart).",
+        "operationId": "candidates_search_v1_missions__mission_id__candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchTrack"
+                  },
+                  "title": "Response Candidates Search V1 Missions  Mission Id  Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Candidates"
+      },
+      "post": {
+        "description": "New candidates and new revisions, all or none. 409 for a stale ``base_rev``, an\nobservation already written, or a candidate a person or the pilot holds.",
+        "operationId": "write_candidates_search_v1_missions__mission_id__candidates_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CandidateWritten"
+                  },
+                  "title": "Response Write Candidates Search V1 Missions  Mission Id  Candidates Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Candidates"
+      }
+    },
+    "/search/v1/missions/{mission_id}/detections": {
+      "get": {
+        "description": "The mission's target detections after ``after_seq``, oldest first.",
+        "operationId": "detections_search_v1_missions__mission_id__detections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchDetection"
+                  },
+                  "title": "Response Detections Search V1 Missions  Mission Id  Detections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Detections"
       }
     },
     "/search/v1/missions/{mission_id}/search-profile": {

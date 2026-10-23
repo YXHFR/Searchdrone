@@ -502,6 +502,51 @@ def _search_examples() -> list[BaseModel]:
     ]
 
 
+def _candidate_panel_examples(search: list[BaseModel]) -> list[BaseModel]:
+    """The panel's candidate queue and detail, built from the search examples."""
+    assessment = next(m for m in search if type(m) is s.CandidateAssessment)
+    card = next(m for m in search if isinstance(m, s.CandidateCard))
+    assert isinstance(card, s.CandidateCard)
+    counts = s.CandidateCounts(review=1, low=0, confirmed=0, rejected=0)
+    row = s.CandidateObservationRow(
+        detection_id=DETECTION,
+        distance_m=1.2,
+        label="person",
+        score=0.62,
+        px_size=32.0,
+        lat=-35.36146,
+        lon=149.16523,
+        sigma95_m=3.0,
+        has_crop=True,
+        captured_utc=T,
+    )
+    stored = s.StoredAssessment.model_validate(
+        assessment.model_dump() | {"id": OTHER, "created_at": T}
+    )
+    decision = s.StoredDecision(
+        id=OTHER,
+        decision="unsure",
+        note="oklart",
+        subject_rev=2,
+        operator_ref="operator:demo",
+        created_at=T,
+    )
+    return [
+        counts,
+        s.CandidateQueue(items=[card], counts=counts),
+        row,
+        stored,
+        decision,
+        s.CandidateDetail(
+            card=card,
+            mission_id=MISSION,
+            observations=[row],
+            assessments=[stored],
+            decisions=[decision],
+        ),
+    ]
+
+
 def examples() -> dict[type[BaseModel], BaseModel]:
     """One instance per exported model, keyed by its class."""
     items: list[BaseModel] = [
@@ -997,7 +1042,8 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             latency_ms=180,
         ),
     ]
-    items += _search_examples()
+    search = _search_examples()
+    items += search + _candidate_panel_examples(search)
     out: dict[type[BaseModel], BaseModel] = {}
     for item in items:
         assert type(item) not in out, f"two examples for {type(item).__name__}"

@@ -9,9 +9,18 @@ from sd_ground.sources import PartState
 from sd_schemas.api import Health, PartStatus, SystemStatus, VehicleLive
 from sd_schemas.mission import OperatorLatch
 
-__all__ = ["READY_PARTS", "health", "parts", "system_status", "vehicle_live", "vehicle_state"]
+__all__ = [
+    "READY_PARTS",
+    "SEARCH_STALE_S",
+    "health",
+    "parts",
+    "system_status",
+    "vehicle_live",
+    "vehicle_state",
+]
 
 READY_PARTS = ("db", "mavlink", "sdlink")  # ready = these three are ok
+SEARCH_STALE_S = 15.0  # no heartbeat from sd-search for this long: down
 
 
 def parts(g: Ground) -> dict[str, PartState]:
@@ -20,6 +29,12 @@ def parts(g: Ground) -> dict[str, PartState]:
         if g.brain_state in ("ready", "busy")
         else ("degraded" if g.brain_state == "degraded" else "down")
     )
+    seen = g.search_seen_mono
+    search: PartState = (
+        "down"
+        if seen is None or g.clock.monotonic() - seen > SEARCH_STALE_S
+        else ("degraded" if g.search_cloud == "down" else "ok")
+    )
     return {
         "db": "ok" if g.db_ok else "down",
         "mavlink": g.vehicle_link.state(),
@@ -27,6 +42,7 @@ def parts(g: Ground) -> dict[str, PartState]:
         "onboard": g.vehicle_link.onboard_state(),
         "brain": brain,
         "mediamtx": g.video_state,  # services.video.VideoMonitor
+        "search": search,  # sd-search's heartbeat; "degraded": only the code assesses
     }
 
 

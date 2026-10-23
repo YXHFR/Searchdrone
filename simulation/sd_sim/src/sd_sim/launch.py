@@ -79,6 +79,7 @@ HEALTH_DB_S = 60.0
 HEALTH_GROUND_S = 30.0
 HEALTH_ONBOARD_S = 30.0
 HEALTH_BRAIN_S = 30.0
+HEALTH_SEARCH_S = 30.0
 DEMO_SCRIPT = "simulation/scenarios/scripts/SC01.yaml"
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
@@ -608,6 +609,7 @@ class Stack:
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
             folder.chmod(0o700)
         write_secret(self.secrets_dir, "brain_token", secrets.token_urlsafe(32))
+        write_secret(self.secrets_dir, "search_token", secrets.token_urlsafe(32))
         env = self.ground_process_env()
         cli = services.ground_cli
         cli(self.repo, env, "db", "setup")
@@ -766,9 +768,20 @@ class Stack:
             "AI-befälhavaren kopplade inte upp mot markstationen.",
         )
 
+    def start_search(self) -> None:
+        env = procs.clean_env(services.search_env(self.ports, self.stack_paths()))
+        proc = self._start_service("sd-search", [sys.executable, "-m", "sd_search", "run"], env)
+        self._wait(
+            "sd-search",
+            proc,
+            HEALTH_SEARCH_S,
+            lambda: self._health_ok("search"),
+            "Söktjänsten kopplade inte upp mot markstationen.",
+        )
+
     def wait_ready(self) -> None:
         """``GET /api/v1/health``: ``ready = true``, and every started part ``ok``."""
-        wanted = ["db", "mavlink", "sdlink", "onboard"]
+        wanted = ["db", "mavlink", "sdlink", "onboard", "search"]
         if self.cfg.brain != "none":
             wanted.append("brain")
 
@@ -816,6 +829,8 @@ class Stack:
             self.start_onboard()
             say("==> sd-brain")
             self.start_brain()
+            say("==> sd-search")
+            self.start_search()
         self.start_video_source()
         self.start_video_relay()
         if ground is not None:

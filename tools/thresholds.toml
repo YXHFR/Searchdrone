@@ -35,5 +35,13 @@ module = "sd_onboard.executor.override"
 branch_min = 100
 
 [[coverage]]
+module = "sd_search.fusion"                     # which detections become one candidate
+branch_min = 95
+
+[[coverage]]
+module = "sd_search.score"
+branch_min = 100
+
+[[coverage]]
 module = "sd_ground"
 line_min = 85

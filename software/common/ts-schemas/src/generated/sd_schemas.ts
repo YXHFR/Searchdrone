@@ -545,6 +545,16 @@ export interface CandidateCard {
   thumb_detection_id?: string | null;
 }
 /**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateCounts".
+ */
+export interface CandidateCounts {
+  confirmed: number;
+  low: number;
+  rejected: number;
+  review: number;
+}
+/**
  * A person's decision on a candidate. Only a logged-in person's session may send it.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -554,6 +564,93 @@ export interface CandidateDecision {
   decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
   note?: string;
   subject_rev: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateDetail".
+ */
+export interface CandidateDetail {
+  assessments: StoredAssessment[];
+  card: CandidateCard;
+  decisions: StoredDecision[];
+  mission_id: string;
+  observations: CandidateObservationRow[];
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "StoredAssessment".
+ */
+export interface StoredAssessment {
+  candidate_id: string;
+  cost_sek?: number;
+  created_at: string;
+  /**
+   * @maxItems 3
+   */
+  crops_used?: [] | [string] | [string, string] | [string, string, string];
+  engine: "code" | "fast" | "strong" | "oracle";
+  evidence?: {
+    [k: string]: number;
+  };
+  explanation_sv: string;
+  fields?: {
+    [k: string]: "match" | "conflict" | "not_visible";
+  };
+  /**
+   * @maxItems 3
+   */
+  flags?:
+    | []
+    | ["motion_claim" | "identity_claim" | "format_repaired"]
+    | ["motion_claim" | "identity_claim" | "format_repaired", "motion_claim" | "identity_claim" | "format_repaired"]
+    | [
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired",
+        "motion_claim" | "identity_claim" | "format_repaired"
+      ];
+  id: string;
+  latency_ms: number;
+  model_id: string;
+  overall: number;
+  person: "yes" | "no" | "unsure";
+  person_p: number;
+  profile_version: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "StoredDecision".
+ */
+export interface StoredDecision {
+  created_at: string;
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  id: string;
+  note: string;
+  operator_ref: string;
+  subject_rev: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateObservationRow".
+ */
+export interface CandidateObservationRow {
+  captured_utc: string;
+  detection_id: string;
+  distance_m: number;
+  has_crop: boolean;
+  label: string;
+  lat: number;
+  lon: number;
+  px_size: number;
+  score: number;
+  sigma95_m: number;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CandidateQueue".
+ */
+export interface CandidateQueue {
+  counts: CandidateCounts;
+  items: CandidateCard[];
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema

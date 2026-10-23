@@ -9,24 +9,36 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Self
 
-from pydantic import AwareDatetime, Field, field_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from sd_schemas.base import OPERATOR_REF_PATTERN, Id, SdModel
 from sd_schemas.colors import ColorName
+from sd_schemas.link import BBox
 
 __all__ = [
     "FIELD_KEY_PATTERN",
+    "FUSION_RADIUS_M",
+    "FUSION_RADIUS_MAX_M",
     "PRIORITY_HIGH",
     "PRIORITY_MEDIUM",
+    "SEARCH_BATCH_MAX",
+    "SEARCH_OBSERVATIONS_MAX",
     "AssessmentEngine",
     "AssessmentFlag",
     "Candidate",
     "CandidateAssessment",
+    "CandidateBatch",
     "CandidateCard",
+    "CandidateCounts",
     "CandidateDecision",
+    "CandidateDetail",
+    "CandidateObservationRow",
+    "CandidateQueue",
+    "CandidateRevision",
     "CandidateState",
+    "CandidateWritten",
     "Certainty",
     "DecisionKind",
     "FieldVerdict",
@@ -35,13 +47,20 @@ __all__ = [
     "Item",
     "LastSeen",
     "PriorityClass",
+    "SearchDetection",
+    "SearchHeartbeat",
+    "SearchObservation",
     "SearchProfile",
     "SearchProfileApproval",
     "SearchProfileDraft",
     "SearchProfileProposal",
     "SearchProfileProposalResult",
     "SearchProfileState",
+    "SearchTrack",
+    "StoredAssessment",
+    "StoredDecision",
     "SubjectCategory",
+    "fusion_radius_m",
     "priority_class",
 ]
 
@@ -323,3 +342,158 @@ class CandidateCard(SdModel):
     merged_into: Id | None = None
     first_seen_utc: AwareDatetime
     last_seen_utc: AwareDatetime
+
+
+# --- the search service's API (/search/v1) ------------------------------------------------
+
+SEARCH_BATCH_MAX: Final = 50
+# Fusion: a sighting joins a candidate within FUSION_RADIUS_M + the larger 95 % radius,
+# at most FUSION_RADIUS_MAX_M. sd-search fuses with it; the panel's "near" uses the same.
+FUSION_RADIUS_M: Final = 4.0
+FUSION_RADIUS_MAX_M: Final = 12.0
+
+
+def fusion_radius_m(sigma_a: float, sigma_b: float) -> float:
+    return min(FUSION_RADIUS_MAX_M, FUSION_RADIUS_M + max(sigma_a, sigma_b))
+
+
+SEARCH_OBSERVATIONS_MAX: Final = 200
+
+
+class SearchDetection(SdModel):
+    """A stored detection of a target class, as the search service reads it."""
+
+    detection_id: Id
+    seq: int = Field(ge=1)  # the feed's cursor (after_seq)
+    still_id: Id
+    label: str = Field(pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    score: float = Field(ge=0, le=1)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    sigma95_m: float = Field(ge=0, le=1000)
+    px_size: float = Field(gt=0)
+    bbox: BBox  # in still pixels
+    crop_box: BBox | None = None  # the crop's square in the still; None for older rows
+    has_crop: bool
+    captured_utc: AwareDatetime
+
+
+class SearchObservation(SdModel):
+    detection_id: Id
+    distance_m: float = Field(ge=0, le=1000)
+
+
+class CandidateRevision(SdModel):
+    """A new candidate (``base_rev`` 0) or the next revision of one, from the search
+    service. It may set ``new``, ``assessing``, ``ready`` or ``merged``; ``state`` None keeps
+    the state in force (a candidate a person or the pilot holds). Confirmed and rejected
+    are a person's and are refused here (E1)."""
+
+    candidate_id: Id
+    base_rev: int = Field(ge=0)  # the rev this one follows; 0 = a new candidate
+    state: Literal["new", "assessing", "ready", "merged"] | None
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    sigma95_m: float = Field(ge=0, le=1000)
+    n_seen: int = Field(ge=1)
+    best_detector_score: float = Field(ge=0, le=1)
+    refined_person_score: float | None = Field(default=None, ge=0, le=1)
+    priority: float = Field(ge=0, le=1)
+    merged_into: Id | None = None
+    first_seen_utc: AwareDatetime
+    last_seen_utc: AwareDatetime
+    observations: list[SearchObservation] = Field(
+        default_factory=list[SearchObservation], max_length=SEARCH_OBSERVATIONS_MAX
+    )
+    assessment: CandidateAssessment | None = None  # the code's (engine "code") only
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        if (self.state == "merged") != (self.merged_into is not None):
+            raise ValueError("merged_into is set exactly when the state is merged")
+        if self.base_rev == 0 and self.state is None:
+            raise ValueError("a new candidate needs a state")
+        if self.assessment is not None and (
+            self.assessment.engine != "code" or self.assessment.candidate_id != self.candidate_id
+        ):
+            raise ValueError("only the code's assessment of this candidate rides along")
+        return self
+
+
+class CandidateBatch(SdModel):
+    """Revisions written in one transaction: all or none."""
+
+    revisions: list[CandidateRevision] = Field(min_length=1, max_length=SEARCH_BATCH_MAX)
+
+
+class CandidateWritten(SdModel):
+    candidate_id: Id
+    rev: int = Field(ge=1)
+    seq: int = Field(ge=1)
+    state: CandidateState
+
+
+class SearchTrack(SdModel):
+    """A candidate in force with everything fusion needs to resume after a restart."""
+
+    candidate: Candidate
+    label: str
+    decided: bool  # a person has recorded a decision on it
+    sightings: list[SearchDetection]
+
+
+class SearchHeartbeat(SdModel):
+    """``cloud``: ``off`` (not configured), ``ok`` or ``down`` (only the code assesses)."""
+
+    cloud: Literal["off", "ok", "down"] = "off"
+    missions: int = Field(default=0, ge=0)
+
+
+# --- the panel's queue (/api/v1) ----------------------------------------------------------
+
+
+class CandidateCounts(SdModel):
+    review: int = Field(ge=0)  # open, priority >= PRIORITY_MEDIUM
+    low: int = Field(ge=0)  # open, below it
+    confirmed: int = Field(ge=0)
+    rejected: int = Field(ge=0)
+
+
+class CandidateQueue(SdModel):
+    items: list[CandidateCard]
+    counts: CandidateCounts
+
+
+class CandidateObservationRow(SdModel):
+    detection_id: Id
+    distance_m: float = Field(ge=0)
+    label: str
+    score: float = Field(ge=0, le=1)
+    px_size: float = Field(gt=0)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    sigma95_m: float = Field(ge=0)
+    has_crop: bool
+    captured_utc: AwareDatetime
+
+
+class StoredAssessment(CandidateAssessment):
+    id: Id
+    created_at: AwareDatetime
+
+
+class StoredDecision(SdModel):
+    id: Id
+    decision: DecisionKind
+    note: str = Field(max_length=300)
+    subject_rev: int = Field(ge=1)
+    operator_ref: str = Field(pattern=OPERATOR_REF_PATTERN)
+    created_at: AwareDatetime
+
+
+class CandidateDetail(SdModel):
+    card: CandidateCard
+    mission_id: Id
+    observations: list[CandidateObservationRow]
+    assessments: list[StoredAssessment]
+    decisions: list[StoredDecision]

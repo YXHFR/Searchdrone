@@ -61,9 +61,10 @@ from sd_schemas.link import (
     StateSnapshot,
 )
 
-__all__ = ["BRAIN", "VID", "FakeOnboard", "H", "Rig", "WallClock", "rig"]
+__all__ = ["BRAIN", "SEARCH", "VID", "FakeOnboard", "H", "Rig", "WallClock", "rig"]
 
 BRAIN = "brain-token-for-flow-tests-0123456789ab"
+SEARCH = "search-token-for-flow-tests-0123456789a"
 H = {"X-SD-Client": "panel", "Content-Type": "application/json"}
 VID = "sim-01"
 
@@ -281,6 +282,8 @@ class Rig:
     plane: Plane
     # Set: the pilot has closed the panel (no live connection keeps the operator present).
     operator_away: asyncio.Event = field(default_factory=asyncio.Event)
+    # The search API (sd-search's token), on the commander's listener.
+    search: httpx.AsyncClient | None = None
 
     @property
     def home(self) -> tuple[float, float]:
@@ -491,7 +494,13 @@ async def ground_stack(
         root=tmp_path,
         env={},
     )
-    g = Ground(loaded=loaded, clock=clock, brain_token=ServiceToken(BRAIN), version="0.0.0")
+    g = Ground(
+        loaded=loaded,
+        clock=clock,
+        brain_token=ServiceToken(BRAIN),
+        search_token=ServiceToken(SEARCH),
+        version="0.0.0",
+    )
     engine = make_engine(app_url(db_name, app_password))
     g.repo = Repo(engine)
     g.db_ok = True
@@ -547,6 +556,11 @@ async def ground_stack(
         base_url="http://127.0.0.1:7700",
         headers={"Authorization": f"Bearer {BRAIN}"},
     )
+    search = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=commander_asgi(g, create_commander_app(g))),  # pyright: ignore[reportArgumentType]
+        base_url="http://127.0.0.1:7700",
+        headers={"Authorization": f"Bearer {SEARCH}"},
+    )
     try:
         panel.headers["Authorization"] = f"Bearer {await _harness_token(g)}"
         home = None
@@ -571,6 +585,7 @@ async def ground_stack(
             clock,
             Plane(home.lat, home.lon),
             away,
+            search,
         )
         await side.start(r.home)
         await r.until(lambda: link.up(VID), 30, "SD-link up")
@@ -583,6 +598,7 @@ async def ground_stack(
         await link.stop()
         await panel.aclose()
         await commander.aclose()
+        await search.aclose()
         await core.close()
         await g.repo.close()
 

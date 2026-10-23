@@ -68,6 +68,8 @@ class Ground:
     db_ok: bool = False
     brain_state: str = "down"
     brain_engine: Literal["cloud", "command"] | None = None  # from the brain's heartbeat
+    search_seen_mono: float | None = None  # sd-search's last heartbeat
+    search_cloud: Literal["off", "ok", "down"] = "off"  # its cloud matching, by the heartbeat
     video_state: PartState = "down"  # set by services.video.VideoMonitor
     operator_seen_mono: float | None = None
     pilot_ws: int = 0
