@@ -25,10 +25,10 @@ turns:
     say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
     action: {skill: inspect_detection, params: {detection_id: "event:detection_id", standoff_m: 20}}
   - on: skill_event
-    when: {skill: inspect_detection, status: [done, failed]}
+    when: {skill: inspect_detection, status: done}
     once: false
-    say: ["Bilderna är tagna. Söker vidare där jag var."]
-    action: {skill: resume, params: {}}
+    say: ["Bilderna är tagna. Söker vidare i sektor A."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   # Only a person confirms: after a confirmation the drone holds and the AI asks.
   - on: candidate_decided
     when: {decision: confirm}
@@ -38,19 +38,12 @@ turns:
     when: {decision: reject}
     once: false
     say: ["Uppfattat, inte personen. Söker vidare."]
-  # The drone turns down a resume whose way is blocked (a cylinder with no way around):
-  # search sector B instead, planned anew around the cylinders.
   - on: skill_event
-    when: {skill: resume, status: [rejected_onboard, failed]}
-    once: false
-    say: ["Vägen tillbaka är spärrad. Söker av sektor B."]
-    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
-  - on: skill_event
-    when: {skill: [survey_sector, resume], status: done}
+    when: {skill: survey_sector, status: done}
     say: ["Sektorn är sökt. Söker av sektor B."]
     action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   - on: skill_event
-    when: {skill: [survey_sector, resume], status: done}
+    when: {skill: survey_sector, status: done}
     say: ["Sektorerna är sökta. Flyger hem och landar."]
     action: {skill: return_home, params: {reason: "Sökningen klar."}}
   - on: operator_message
