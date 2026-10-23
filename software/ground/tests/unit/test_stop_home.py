@@ -474,6 +474,28 @@ async def test_takeover_without_an_ack_loiters_after_the_wait() -> None:
         assert _takeover_outcome(s)["paths"]["sdlink"] == "sent"
 
 
+async def test_a_waiting_takeover_already_counts_as_by_hand() -> None:
+    """From the click on: the onboard side may end the AI's order before its ack (and
+    before its snapshot shows the take-over), so the ground's picture says the pilot has
+    the drone while LOITER waits, and the AI's idle turn and the gate see it."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-wait", by=PILOT)
+        await s.clock.run_for(0.01, step=0.01)  # the MAVLink thread took it, no tick yet
+        snap = s.core.snapshot()
+        assert snap is not None and snap.takeover_pending and snap.by_hand
+        assert not snap.manual  # no sticks yet: LOITER waits for the ack
+        await s.run(TAKEOVER_ACK_WAIT_S + 0.5)
+        snap = s.core.snapshot()
+        assert snap is not None and snap.manual and not snap.takeover_pending and snap.by_hand
+        s.actions.handback(VID, client_action_id="h-wait", by=PILOT)
+        await s.run(0.2)
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.by_hand
+
+
 async def test_takeover_without_sdlink_loiters_at_once() -> None:
     async with stack(sink_up=False) as s:
         s.fly()
@@ -501,7 +523,8 @@ async def test_stop_during_the_takeover_wait_is_untouched_and_wins() -> None:
         await s.run(1.0)  # the take-over's wait is over
         assert s.fc.mode in STOP_MODES
         assert CopterMode.LOITER not in ground_modes(s.fc)
-        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.manual and not snap.by_hand
 
 
 async def test_handback_during_the_takeover_wait_drops_the_takeover() -> None:
@@ -514,7 +537,8 @@ async def test_handback_during_the_takeover_wait_drops_the_takeover() -> None:
         s.actions.handback(VID, client_action_id="h-back", by=PILOT)
         await s.run(1.0)
         assert CopterMode.LOITER not in ground_modes(s.fc)
-        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.manual and not snap.by_hand
 
 
 async def test_resume_during_the_takeover_wait_drops_it_and_says_so() -> None:
@@ -529,7 +553,8 @@ async def test_resume_during_the_takeover_wait_drops_it_and_says_so() -> None:
         s.resume()
         await s.run(1.0)
         assert CopterMode.LOITER not in ground_modes(s.fc)
-        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.manual and not snap.by_hand
         dropped = [p for t, _, p in s.g.events if t == "vehicle.takeover_dropped"]
         assert [(p["takeover_id"], p["reason"]) for p in dropped] == [
             (str(reply.action_id), "newer_action")
@@ -551,6 +576,8 @@ async def test_landing_during_the_takeover_wait_drops_it() -> None:
         assert [(p["takeover_id"], p["reason"]) for p in dropped] == [
             (str(reply.action_id), "landed")
         ]
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.by_hand
 
 
 def _takeover_outcome(s: Stack) -> dict[str, Any]:
@@ -618,7 +645,8 @@ async def test_a_system_action_during_the_takeover_wait_wins() -> None:
         await s.run(1.5)
         assert s.fc.mode in HOME_MODES
         assert CopterMode.LOITER not in ground_modes(s.fc)
-        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.manual and not snap.by_hand
 
 
 async def test_an_rc_switch_flip_during_the_takeover_wait_wins() -> None:
@@ -636,6 +664,8 @@ async def test_an_rc_switch_flip_during_the_takeover_wait_wins() -> None:
         assert s.fc.mode == CopterMode.ALT_HOLD
         assert CopterMode.LOITER not in ground_modes(s.fc)
         assert "alarm.TAKEOVER_FAILED" in s.g.types()
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.by_hand
 
 
 async def test_takeover_refused_while_flying_home() -> None:
@@ -663,7 +693,8 @@ async def test_stop_ends_steering_by_hand() -> None:
         s.stop()
         await s.run(1.0)
         assert s.fc.mode in STOP_MODES
-        assert s.core.snapshot().manual is False  # type: ignore[union-attr]
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.manual and not snap.by_hand
         ended = s.actions.manual_state(VID)
         assert ended is not None and not ended.active and ended.takeover_id is None
         assert s.actions.manual_state("other-vehicle") is None

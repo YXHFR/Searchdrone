@@ -38,10 +38,19 @@ def say(message: str) -> None:
 
 
 def new_run_dir(instance: int, label: str = "sim", repo: Path = paths.REPO) -> Path:
+    """A new, empty run folder, never one an earlier run made: a test that fails at once
+    and the next one on the same instance can start in the same second."""
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run = paths.runs_dir(repo) / f"{stamp}-{label}-i{instance}"
-    run.mkdir(parents=True, exist_ok=False)
-    return run
+    runs = paths.runs_dir(repo)
+    runs.mkdir(parents=True, exist_ok=True)
+    run, n = runs / f"{stamp}-{label}-i{instance}", 1
+    while True:
+        try:
+            run.mkdir(exist_ok=False)
+            return run
+        except FileExistsError:
+            n += 1
+            run = runs / f"{stamp}-{label}-i{instance}-{n}"
 
 
 def udp_port_taken(port: int) -> bool:

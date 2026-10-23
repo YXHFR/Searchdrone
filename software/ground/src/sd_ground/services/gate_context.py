@@ -87,7 +87,7 @@ def build_gate_context(
             home = vehicle.home
     snapshot_age = None if snapshot_received_ms is None else max(0, now_ms - snapshot_received_ms)
     actions, reports = rate.recent(now_ms)
-    manual = (mav is not None and mav.manual) or (snapshot is not None and snapshot.manual_control)
+    manual = (mav is not None and mav.by_hand) or (snapshot is not None and snapshot.manual_control)
     return GateContext(
         side="ground",
         now_mono_ms=now_ms,

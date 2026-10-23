@@ -28,7 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "onboard"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "software/ground/tests/helpers"))
 
-from brain_rig import free_port, run_brain, serve_commander  # pyright: ignore[reportMissingImports]
+from brain_rig import (  # pyright: ignore[reportMissingImports]
+    loopback_listener,
+    run_brain,
+    serve_commander,
+)
 from flow_rig import VID, H, Rig, WallClock, ground_stack  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import (  # pyright: ignore[reportMissingImports]
     P1,
@@ -52,7 +56,8 @@ __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 @pytest.fixture
 async def flight(sim: Sim, migrated_db: Any, tmp_path: Path) -> AsyncIterator[tuple[Rig, int]]:
     ground = _vehicle(f"udpin:127.0.0.1:{sim.ports['ground_mavlink']}", Role.GROUND)
-    port = free_port()
+    sock = loopback_listener()
+    port = sock.getsockname()[1]
 
     def onboard(_clock: WallClock, url: str, token: str) -> SitlOnboard:
         return SitlOnboard(sim, url, token)
@@ -67,7 +72,7 @@ async def flight(sim: Sim, migrated_db: Any, tmp_path: Path) -> AsyncIterator[tu
             onboard=onboard,
             http={"commander_bind": f"127.0.0.1:{port}"},
         ) as r,
-        serve_commander(r, port),
+        serve_commander(r, sock),
     ):
         yield r, port
 

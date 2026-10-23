@@ -131,6 +131,15 @@ class MavSnapshot:
     manual_takeover_id: str | None = None
     manual_since: dt.datetime | None = None
     manual_input_age_ms: int | None = None
+    # The pilot pressed "Ta över" and LOITER waits for the onboard side's ack of the notice.
+    takeover_pending: bool = False
+
+    @property
+    def by_hand(self) -> bool:
+        """The pilot steers, or has pressed "Ta över" and its LOITER still waits: either
+        way the AI may not move the drone. The onboard side may already have ended the
+        AI's order in the wait, before its own snapshot shows the take-over."""
+        return self.manual or self.takeover_pending
 
     @property
     def fc_mode(self) -> CopterMode | None:
@@ -351,6 +360,7 @@ class GroundMav:
                 if m is None or m.axes is None
                 else int((self.clock.monotonic() - m.received_mono) * 1000)
             ),
+            takeover_pending=self._pending is not None,
         )
         with self._lock:
             self._snap = snap
@@ -434,6 +444,7 @@ class GroundMav:
         hand-back, another take-over) or a move of the RC mode switch drops it."""
         pending = _PendingTakeover(takeover_id, action_seq, self.vehicle.telemetry.rc_mode_pwm)
         self._pending = pending
+        self._publish()  # the picture shows it now, not at the next tick
         if wait_s <= 0:
             self._start_takeover(pending)
             return
