@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -127,6 +128,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not best.is_file():
             raise BenchError(f"{best} finns inte. Kör först: just train-detector model={model}", 2)
         name = args.get("name") or f"person_{model}"
+        if not re.fullmatch(r"[a-z0-9_]{1,40}", name):
+            raise BenchError("name= får bara ha små bokstäver, siffror och _", 2)
         out = Path(args.get("out") or data / "models" / "detector")
         onnx_path, manifest = export(best, out, name)
         say(f"skrev {onnx_path} och {manifest}")

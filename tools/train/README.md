@@ -2,8 +2,8 @@
 
 This turns two published detectors into person detectors for pictures taken from the
 air. Training runs on your computer's graphics card. You choose the better of the two
-with numbers measured on the image bank (`tools/bench`). Nothing here goes into git or
-CI: the pictures, the weights and the trained models stay in your data folder
+with numbers measured on the image bank (`tools/bench`). The pictures, the weights and
+the trained models never go into git or CI: they stay in your data folder
 (`<data_dir>`, set by `just setup-config`).
 
 The two candidates, both Apache-2.0 and both started from their authors' COCO weights:

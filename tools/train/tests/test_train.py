@@ -83,6 +83,13 @@ def test_tiles_keep_people_and_some_ground() -> None:
             assert 0 <= b[0] < b[2] <= x1 - x0 and 0 <= b[1] < b[3] <= y1 - y0
 
 
+@pytest.mark.parametrize("file", ["../outside.jpg", "/etc/outside.jpg"])
+def test_a_picture_outside_its_folder_is_refused(tmp_path: Path, file: str) -> None:
+    im = Image("t:x", "t", "s", file, 64, 64, ())
+    with pytest.raises(BenchError):
+        tiles.build_cache([(im, tmp_path / "pictures")], tmp_path / "tiles", progress=False)
+
+
 def test_test_part_and_measure_only_sets_are_never_trained_on(bank: Path) -> None:
     train = tiles.pictures(bank, "train", ["heridal"])
     val = tiles.pictures(bank, "val", ["heridal"])

@@ -374,11 +374,16 @@ class _BrokenModel:
 async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> None:
     write_still(tmp_path, "block0_h30")
     clock = MonotonicClock()
+    landed = False
+
+    def fresh() -> FcTelemetry:
+        return telemetry("block0_h30", clock.monotonic_ms())
+
     captured = DirStillSource(tmp_path, synthetic=True).poll()
     assert captured is not None
     lp = PerceptionLoop(
         SimpleNamespace(poll=lambda: captured),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        lambda: replace(fresh(), alt_rel_home_m=0.5) if landed else fresh(),
         lambda _r: None,
         clock,
         CAM,
@@ -404,7 +409,12 @@ async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> No
     assert not task.done()  # keeps trying: a passing fault may clear
     assert told == [("stills_failing", "RuntimeError")]  # told once
     model.broken = False
-    await until(lambda: "on" in told)  # back: the ground is told
+    landed = True  # stills skipped before detection say nothing about the detector
+    skipped = lp.stats.skipped_on_ground
+    await until(lambda: lp.stats.skipped_on_ground > skipped + 3)
+    assert told == [("stills_failing", "RuntimeError")]
+    landed = False
+    await until(lambda: "on" in told)  # the detector ran again: the ground is told
     model.broken = True
     await until(lambda: len(told) == 3)  # a new streak is told again
     stop.set()

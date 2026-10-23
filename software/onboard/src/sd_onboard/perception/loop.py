@@ -12,9 +12,10 @@ perception is off, the reason is logged and sent to the ground (``off``), and fl
 goes on. Only a reason code and the error's class go to the ground, never the error's
 text (it may hold paths on the on-board computer). ``FAIL_REPORT`` stills failing in a
 row (the detector, the still or the telemetry) are reported the same way, once, as
-``stills_failing``; when a still then goes through again, the ground is told it is back
-(``on``). Kept stills (for a run's record) are capped at ``KEEP_MAX``, the oldest
-removed first.
+``stills_failing``; when the detector then runs on a still again, the ground is told it
+is back (``on``). A still skipped before detection (no pose, on the ground, turning)
+neither ends nor adds to a streak. Kept stills (for a run's record) are capped at
+``KEEP_MAX``, the oldest removed first.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -222,6 +223,18 @@ class PerceptionLoop:
             old.with_suffix(".jpg").unlink(missing_ok=True)
             old.unlink(missing_ok=True)
 
+    def _detected(self) -> int:
+        """Stills the detector ran on (a report, or a view that misses the ground)."""
+        return self.stats.reports + self.stats.skipped_no_footprint
+
+    def _back(self, *, recovered: bool) -> None:
+        self._failing = 0
+        if recovered and self.on is not None:
+            try:  # telling the ground never counts against the still
+                self.on()
+            except Exception:
+                log.exception("perception: could not tell the ground detection is back")
+
     async def run(self, stop: asyncio.Event) -> None:
         try:
             await asyncio.to_thread(lambda: self.built)
@@ -240,12 +253,12 @@ class PerceptionLoop:
                 if captured is not None:
                     t, now_ms = self.telemetry(), self.clock.monotonic_ms()
                     rate = max(rate, self.rate.update(t))
+                    ran = self._detected()
                     out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
                     if out is not None:
                         self.send(out)
-                    if self._failing >= FAIL_REPORT and self.on is not None:
-                        self.on()
-                    self._failing = 0
+                    if self._detected() > ran:  # a skipped still says nothing either way
+                        self._back(recovered=self._failing >= FAIL_REPORT)
             except Exception as exc:
                 self.stats.failed += 1
                 self._failing += 1
