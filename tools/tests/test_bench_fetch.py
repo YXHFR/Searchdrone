@@ -162,6 +162,25 @@ def test_download_asks_for_bounded_ranges(tmp_path: Path) -> None:
     assert server.requests == ["bytes=0-4095", "bytes=4096-8191", "bytes=8192-10239"]
 
 
+def test_download_refuses_a_range_it_did_not_ask_for(tmp_path: Path) -> None:
+    body = bytes(range(256)) * 40
+    (tmp_path / "a.zip.partial").write_bytes(body[:100])
+
+    def wrong_start(req: urllib.request.Request) -> FakeResponse:
+        resp = FakeServer(body)(req)
+        resp.headers["Content-Range"] = f"bytes 0-{len(body) - 1}/{len(body)}"
+        return resp
+
+    with pytest.raises(BenchError, match="begärda delen"):
+        download(
+            "https://example.test/a.zip",
+            tmp_path / "a.zip",
+            len(body),
+            _sha(body),
+            opener=wrong_start,
+        )
+
+
 def test_download_starts_over_when_ranges_are_ignored(tmp_path: Path) -> None:
     body = b"abcdefgh" * 100
     (tmp_path / "a.zip.partial").write_bytes(b"zzzz")
@@ -378,6 +397,18 @@ def test_range_file_refuses_a_server_that_ignores_ranges() -> None:
     rf.seek(100)
     with pytest.raises(BenchError, match="begärda delen"):
         rf.read(10)
+
+
+def test_range_file_asks_for_at_most_one_span(monkeypatch: pytest.MonkeyPatch) -> None:
+    from bench import common
+
+    monkeypatch.setattr(common, "RANGE_SPAN", 64)
+    body = bytes(range(256)) * 4
+    server = FakeServer(body)
+    rf = RangeFile("https://example.test/a.zip", server)
+    buf = bytearray(500)
+    assert rf.readinto(buf) == 64
+    assert server.requests[-1] == "bytes=0-63"
 
 
 def test_the_sim_farm_is_indexed_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

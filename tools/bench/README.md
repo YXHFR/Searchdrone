@@ -14,7 +14,7 @@ setup-config`, outside the repository).
 | Name | What | Licence | Used for |
 |---|---|---|---|
 | `heridal` | HERIDAL: 1,684 pictures (4000×3000) of Croatian hillsides with hikers, from the University of Split | CC BY 3.0 | training, tuning, measuring |
-| `wisard` | WiSARD v1, visible-light part: 20,504 pictures with labels from wilderness search flights in Washington, from the University of Washington | MIT (see below) | training, tuning, measuring |
+| `wisard` | WiSARD v1, visible-light part: 20,504 pictures with labels from wilderness search flights in Washington, from the University of Washington | MIT (see below) | measuring only, for now |
 | `simfarm` | Our own simulator pictures (`just sim-farm`) | Apache-2.0 | pre-training only, never measured on |
 
 The register is `datasets.toml`: address, size, SHA-256, licence and credit of each
@@ -23,9 +23,10 @@ archive. `tools/tests/test_bench_datasets.py` holds the licence rule: only open 
 measured on, on your own computer; nothing without a licence is allowed.
 
 **WiSARD's licence.** The project page carries the MIT licence text for "the Software"
-and says nothing else about the pictures. We read that as allowing use, but until the
-lab confirms it in writing, weights trained on WiSARD stay on your computer
-(`publish_weights = false`).
+and says nothing else about the pictures. Until the lab confirms the data licence in
+writing, WiSARD is only measured on, never trained on (`use = ["measure"]`); once it
+is confirmed, add `"train"` to its `use` in `datasets.toml`. Weights trained on it
+would still stay on your computer (`publish_weights = false`).
 
 **Credit.** Anything published from these measurements names HERIDAL (Božić-Štulić,
 Marušić and Gotovac, IJCV 2019, CC BY 3.0) and WiSARD (Broyles, Hayner and Leung,
@@ -109,7 +110,7 @@ Run these from the repository folder in WSL (Ubuntu).
    just bench-fetch yes=1 sets=simfarm
    ```
 
-5. **Measure a detector** once one is trained (see `tools/train/README.md`):
+5. **Measure a detector** once one is trained:
 
    ```bash
    just bench-detector model=<name>

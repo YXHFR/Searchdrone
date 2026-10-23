@@ -209,7 +209,10 @@ def download(
             if getattr(resp, "status", 206) == 200 and have:
                 part.unlink()  # the server ignored the range: start over
                 have = before = 0
-            total = _content_range_total(getattr(resp, "headers", {}).get("Content-Range"))
+            got = getattr(resp, "headers", {}).get("Content-Range")
+            if have and got is not None and not got.startswith(f"bytes {have}-"):
+                raise BenchError(f"Servern svarade inte med den begärda delen av filen: {url}")
+            total = _content_range_total(got)
             if total is not None and total != size:
                 raise BenchError(f"Filen på servern är {total} byte, väntat {size}: {url}")
             with part.open("ab") as fh:
@@ -262,7 +265,7 @@ class RangeFile(io.RawIOBase):
         return self._pos
 
     def readinto(self, buffer: bytearray | memoryview) -> int:  # type: ignore[override]
-        n = min(len(buffer), self.size - self._pos)
+        n = min(len(buffer), self.size - self._pos, RANGE_SPAN)
         if n <= 0:
             return 0
         req = request(self.url, {"Range": f"bytes={self._pos}-{self._pos + n - 1}"})

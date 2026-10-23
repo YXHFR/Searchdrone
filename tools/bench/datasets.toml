@@ -39,14 +39,14 @@ name = "wisard"
 title = "WiSARD v1, visible-light part (wilderness search and rescue, Washington)"
 licence = "MIT"
 checked = "2026-10-23"
-licence_note = "The project page carries the MIT licence text for \"the Software\" and says nothing else about the data; until the lab confirms in writing, weights trained on it stay on the owner's computer."
+licence_note = "The project page carries the MIT licence text for \"the Software\" and says nothing else about the data; until the lab confirms the data licence in writing, it is only measured on, never trained on (add \"train\" to use then)."
 attribution = "WiSARD, Broyles, Hayner and Leung, \"WiSARD: A Labeled Visual and Thermal Image Dataset for Wilderness Search and Rescue\", IROS 2022, University of Washington"
 source_page = "https://sites.google.com/uw.edu/wisard/"
 url = "https://drive.usercontent.google.com/download?id=1PKjGCqUszHH1nMbXUBTwPSDqRabAt_ht&export=download&confirm=t"
 size_bytes = 43526830098
 sha256 = "PENDING"
 layout = "wisard_vis"
-use = ["train", "measure"]
+use = ["measure"]
 ranges = true
 publish_weights = false
 local_only = false

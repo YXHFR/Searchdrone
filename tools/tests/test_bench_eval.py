@@ -233,6 +233,36 @@ def test_an_index_that_does_not_match_the_split_is_refused(
         ev.pictures({"part": "test"}, data)
 
 
+def test_the_mini_bank_measures_only_its_listed_pictures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bench import datasets
+    from bench.splits import MiniImage
+
+    data = tmp_path / "data"
+    raw = data / "datasets-mini" / "heridal" / "raw"
+    raw.mkdir(parents=True)
+    images = []
+    for seq in ("AAA", "BBB"):
+        name = f"test_{seq}_0001.png"
+        PILImage.new("RGB", (64, 48)).save(raw / name)
+        images.append(Image(f"heridal:test_{seq}_0001", "heridal", seq, name, 64, 48, ()))
+    register = datasets.load_register()
+    datasets.write_index(data, register["heridal"], images, "mini", mini=True)
+
+    def mini(*ids: str) -> None:
+        rows = [MiniImage(i, "m.jpg", "0" * 64, 1, None, None, None) for i in ids]
+        monkeypatch.setattr(ev, "load_mini", lambda *a: ("v1", rows))
+
+    mini("heridal:test_AAA_0001")
+    source, items = ev.pictures({"mini": "1"}, data)
+    assert [p.image.seq for p in items] == ["AAA"]
+    assert source == "mini_v1 (splits/v1)"
+    mini("heridal:test_AAA_0001", "heridal:test_CCC_0001")
+    with pytest.raises(BenchError, match="Minibanken är ofullständig"):
+        ev.pictures({"mini": "1"}, data)
+
+
 def test_profiles_main_writes_a_profile(tmp_path: Path) -> None:
     from bench import profiles
 

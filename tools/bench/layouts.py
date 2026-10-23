@@ -25,10 +25,8 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Literal
 
 Box = tuple[float, float, float, float]
-Role = Literal["image", "label"]
 
 MAX_LABEL_BYTES = 1 << 20
 MAX_BOXES = 500

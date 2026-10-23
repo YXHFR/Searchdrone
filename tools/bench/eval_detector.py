@@ -74,6 +74,8 @@ class FacitDetector:
         ]
 
 
+MINI = "mini_v1"
+
 # model name -> factory; B2-12 adds the trained models
 DETECTORS: dict[str, Callable[[], Detector]] = {
     "null": NullDetector,
@@ -90,13 +92,13 @@ class Picture:
 def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
     """The pictures to measure on and the name of what they are (for the result)."""
     if flag(args, "mini"):
-        split_version, rows = load_mini()
+        split_version, rows = load_mini(MINI)
         wanted = {r.image_id for r in rows}
         images = [i for i in read_index(data, "heridal", mini=True) if i.image_id in wanted]
         if len(images) != len(wanted):
             raise BenchError("Minibanken är ofullständig. Kör: just bench-fetch yes=1 mini=1")
         root = image_root(data, "heridal", mini=True)
-        source = f"mini_v1 (splits/{split_version})"
+        source = f"{MINI} (splits/{split_version})"
     else:
         part = args.get("part", "test")
         if part not in ("test", "val"):

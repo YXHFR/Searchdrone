@@ -208,7 +208,12 @@ def fetch_mini(register: dict[str, Dataset], data: Path) -> int:
             infos = {i.filename: i for i in zf.infolist()}
             for n, (member, sha, size, target) in enumerate(todo, 1):
                 info = infos.get(member)
-                if info is None or info.file_size != size or size > MAX_MEMBER_BYTES:
+                if (
+                    info is None
+                    or info.file_size != size
+                    or size > MAX_MEMBER_BYTES
+                    or info.compress_size > MAX_MEMBER_BYTES
+                ):
                     raise BenchError(f"{member} saknas i arkivet eller har fel storlek")
                 body = zf.read(info)
                 if _sha256(body) != sha:
