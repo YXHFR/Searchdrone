@@ -248,9 +248,10 @@ async def test_a_person_seen_during_the_find_move(
             plane = Plane(*sc.r.home)
             st = sc.sim.harness.state
             e, n = plane.xy(st.lat, st.lon)
-            # Ahead: on the way to the hover point, a little past it. Below: 6 m ahead of
-            # the drone, so the new cylinder holds it and the leg heads deeper.
-            centre = plane.latlon(e, n + (6.0 if seen == "below" else 45.0))
+            # Ahead: on the way to the hover point, a little past it. Below: ahead of the
+            # drone, which is 8 m inside the new cylinder with its leg heading deeper. A
+            # short way out, so it ends well before the find move's deadline.
+            centre = plane.latlon(e, n + (RADIUS_M - 8.0 if seen == "below" else 45.0))
             since = time.monotonic()
             ex.on_detections([person(centre)])
             ((k, _),) = ex.local_keepouts.values()
