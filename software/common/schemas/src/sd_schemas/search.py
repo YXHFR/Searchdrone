@@ -19,6 +19,8 @@ from sd_schemas.link import BBox
 
 __all__ = [
     "FIELD_KEY_PATTERN",
+    "FUSION_RADIUS_M",
+    "FUSION_RADIUS_MAX_M",
     "PRIORITY_HIGH",
     "PRIORITY_MEDIUM",
     "SEARCH_BATCH_MAX",
@@ -53,6 +55,7 @@ __all__ = [
     "StoredAssessment",
     "StoredDecision",
     "SubjectCategory",
+    "fusion_radius_m",
     "priority_class",
 ]
 
@@ -298,6 +301,16 @@ class CandidateCard(SdModel):
 # --- the search service's API (/search/v1) ------------------------------------------------
 
 SEARCH_BATCH_MAX: Final = 50
+# Fusion: a sighting joins a candidate within FUSION_RADIUS_M + the larger 95 % radius,
+# at most FUSION_RADIUS_MAX_M. sd-search fuses with it; the panel's "near" uses the same.
+FUSION_RADIUS_M: Final = 4.0
+FUSION_RADIUS_MAX_M: Final = 12.0
+
+
+def fusion_radius_m(sigma_a: float, sigma_b: float) -> float:
+    return min(FUSION_RADIUS_MAX_M, FUSION_RADIUS_M + max(sigma_a, sigma_b))
+
+
 SEARCH_OBSERVATIONS_MAX: Final = 200
 
 

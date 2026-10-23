@@ -22,12 +22,14 @@ import io
 import logging
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from PIL import Image
 
 from sd_schemas.link import BBox
 from sd_schemas.search import (
+    SEARCH_BATCH_MAX,
     CandidateAssessment,
     CandidateBatch,
     CandidateRevision,
@@ -50,7 +52,6 @@ __all__ = ["FEED_LIMIT", "LOOKBACK", "SearchService", "sighting", "track_of"]
 log = logging.getLogger("sd_search")
 FEED_LIMIT = 200
 LOOKBACK = 64  # detections re-read behind the cursor (out-of-order commits)
-BATCH_MAX = 50
 CROP_CACHE = 256
 HEARTBEAT_S = 5.0
 
@@ -107,9 +108,16 @@ class _Mission:
 
 
 class SearchService:
-    def __init__(self, api: SearchApi, profiles: ProfileSource) -> None:
+    def __init__(
+        self,
+        api: SearchApi,
+        profiles: ProfileSource,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.api = api
         self.profiles = profiles
+        self.monotonic = monotonic
         self.missions: dict[str, _Mission] = {}
         self._crops: OrderedDict[str, bytes | None] = OrderedDict()
         self._beat_at = 0.0
@@ -127,7 +135,7 @@ class SearchService:
                 await asyncio.wait_for(stop.wait(), poll_s)
 
     async def beat(self, *, force: bool = False) -> None:
-        now = time.monotonic()
+        now = self.monotonic()
         if force or now - self._beat_at >= HEARTBEAT_S:
             await self.api.heartbeat(SearchHeartbeat(cloud="off", missions=len(self.missions)))
             self._beat_at = now
@@ -187,8 +195,8 @@ class SearchService:
         for cid, observations in dirty.items():
             t = m.fusion.tracks[cid]
             revisions.append(await self._revision(m, t, profile, version, observations))
-        for i in range(0, len(revisions), BATCH_MAX):
-            chunk = revisions[i : i + BATCH_MAX]
+        for i in range(0, len(revisions), SEARCH_BATCH_MAX):
+            chunk = revisions[i : i + SEARCH_BATCH_MAX]
             written = await self.api.write(mission_id, CandidateBatch(revisions=chunk))
             for w in written:
                 t = m.fusion.tracks[str(w.candidate_id)]
@@ -222,7 +230,7 @@ class SearchService:
         key = (version, tuple(s.detection_id for s in with_crop))
         if m.assessed.get(t.candidate_id) == key:
             return None  # nothing new to look at
-        started = time.monotonic()
+        started = self.monotonic()
         views: list[CropView] = []
         for s in with_crop:
             data = await self._crop(s.detection_id)
@@ -233,13 +241,13 @@ class SearchService:
             views.append(
                 CropView(s.detection_id, s.px_size, data, box_in_crop(bbox, crop_box, w, h))
             )
-        person_p = person_probability(None, t.best_detector_score, t.refined_person_score)
+        person_p = person_probability(t.best_detector_score, t.refined_person_score)
         a = assess_colors(
             t.candidate_id,
             profile,
             views,
             person_p=person_p,
-            latency_ms=round((time.monotonic() - started) * 1000),
+            latency_ms=round((self.monotonic() - started) * 1000),
         )
         m.assessed[t.candidate_id] = key
         m.fields[t.candidate_id] = dict(a.fields)
@@ -257,7 +265,7 @@ class SearchService:
         fields = m.fields.get(t.candidate_id, {})
         match = None if profile is None else match_score(profile, fields)
         p = priority(
-            person_probability(None, t.best_detector_score, t.refined_person_score),
+            person_probability(t.best_detector_score, t.refined_person_score),
             match,
             multi_frame=t.multi_frame,
             refined=t.refined_person_score,

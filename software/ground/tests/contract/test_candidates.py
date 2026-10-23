@@ -9,6 +9,7 @@ in the queue. E7 (no command path) is checked here on the API and in sd_search's
 from __future__ import annotations
 
 import io
+import json
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -29,6 +30,7 @@ from sd_schemas.link import BBox, CropData, DetectorInfo, GeoDetectionMsg, Perce
 from sd_schemas.search import SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
+from sd_search.profile import GroundProfileSource
 
 if TYPE_CHECKING:
     from conftest import Db
@@ -361,3 +363,87 @@ async def test_closed_missions_and_unknown_candidates(r: Rig) -> None:
     assert late.status_code == 409 and late.json()["code"] == "MISSION_CLOSED"
     assert (await r.search.get("/search/v1/missions")).json() == []
     assert (await queue(r, mid))["items"] == []  # a closed mission's queue still answers
+
+
+async def test_a_held_candidate_keeps_its_state(r: Rig) -> None:
+    mid = await r.open_mission()
+    rev = revision(r)
+    assert (await post(r, mid, rev)).status_code == 200
+    # A person opens it (a later ticket's route; written here as that route would).
+    async with r.flow.repo.engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, "
+                "sigma95_m, n_seen, n_in_view, best_detector_score, priority, first_seen_utc, "
+                "last_seen_utc) SELECT candidate_id, 2, mission_id, seq, 'inspecting', geom, "
+                "sigma95_m, n_seen, n_in_view, best_detector_score, priority, first_seen_utc, "
+                "last_seen_utc FROM candidates WHERE candidate_id = :c"
+            ),
+            {"c": rev["candidate_id"]},
+        )
+    moved = await post(r, mid, rev | {"base_rev": 2, "state": "ready"})
+    assert moved.status_code == 409 and moved.json()["code"] == "CANDIDATE_HELD"
+    seen_again = await post(r, mid, rev | {"base_rev": 2, "state": None, "n_seen": 2})
+    assert seen_again.status_code == 200, seen_again.text
+    (card,) = (await queue(r, mid))["items"]
+    assert (card["state"], card["n_seen"], card["rev"]) == ("inspecting", 2, 3)
+
+
+async def _store_profile(r: Rig, mid: str, version: int, *, approved: bool) -> None:
+    body = red_profile(r).model_dump(mode="json") | {"profile_version": version}
+    if not approved:
+        body |= {"approved_by": None, "approved_at": None}
+    async with r.flow.repo.engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO search_profiles (mission_id, profile_id, profile_version, body, "
+                "proposed_by, approved_by, approved_at) VALUES (CAST(:m AS uuid), "
+                "CAST(:p AS uuid), :v, CAST(:b AS jsonb), 'brain', :by, :at)"
+            ),
+            {
+                "m": mid,
+                "p": body["profile_id"],
+                "v": version,
+                "b": json.dumps(body),
+                "by": "operator:demo" if approved else None,
+                "at": r.clock.utc_now() if approved else None,
+            },
+        )
+
+
+async def test_the_search_profile_is_the_approved_one(r: Rig) -> None:
+    assert r.search is not None
+    mid = await r.open_mission()
+    url = f"/search/v1/missions/{mid}/search-profile"
+    assert (await r.search.get(url)).status_code == 404
+    await _store_profile(r, mid, 1, approved=False)  # an AI proposal is never used
+    res = await r.search.get(url)
+    assert res.status_code == 404 and res.json()["code"] == "PROFILE_NOT_FOUND"
+    await _store_profile(r, mid, 2, approved=True)
+    await _store_profile(r, mid, 3, approved=False)
+    res = await r.search.get(url)
+    assert res.status_code == 200, res.text
+    got = SearchProfile.model_validate(res.json())
+    assert (str(got.mission_id), got.profile_version, got.approved) == (mid, 2, True)
+
+    # sd-search reads it from the ground and matches the red jacket with it.
+    transport = httpx.ASGITransport(app=commander_asgi(r.g, create_commander_app(r.g)))  # pyright: ignore[reportArgumentType]
+    client = GroundClient("http://127.0.0.1:7700", SEARCH, transport=transport)
+    try:
+        service = SearchService(client, GroundProfileSource(client))
+        await send(r, person(r, 0, 100))
+        assert await service.step() == 1
+    finally:
+        await client.aclose()
+    (card,) = (await queue(r, mid))["items"]
+    assert card["fields"]["garment:0"] == "match" and card["assessed_profile_version"] == 2
+
+
+async def test_a_merge_needs_another_known_candidate(r: Rig) -> None:
+    mid = await r.open_mission()
+    a, b = revision(r), revision(r)
+    assert (await post(r, mid, a, b)).status_code == 200
+    for target in (str(new_id()), a["candidate_id"]):
+        merged = a | {"base_rev": 1, "state": "merged", "merged_into": target}
+        res = await post(r, mid, merged)
+        assert res.status_code == 409 and res.json()["code"] == "MERGE_TARGET_INVALID", target

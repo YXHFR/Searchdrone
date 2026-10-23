@@ -7,7 +7,7 @@ from search_helpers import profile  # pyright: ignore[reportMissingImports]
 
 from sd_schemas.search import PRIORITY_MEDIUM, FieldVerdict, priority_class
 from sd_search.priority import PRIORITY_MIN, priority
-from sd_search.score import field_weight, match_score, merge_fields, person_probability
+from sd_search.score import field_weight, match_score, person_probability
 
 PROFILE = profile(
     garments=[
@@ -50,18 +50,9 @@ def test_score_conflict_weighs_against() -> None:
     assert match_score(PROFILE, {"garment:0": "conflict"}) == 0.0
 
 
-def test_score_code_match_survives_a_model_that_cannot_see() -> None:
-    code: dict[str, FieldVerdict] = {"garment:0": "match", "garment:1": "not_visible"}
-    model: dict[str, FieldVerdict] = {"garment:0": "not_visible", "garment:1": "conflict"}
-    assert merge_fields(code, model) == {"garment:0": "match", "garment:1": "conflict"}
-    assert merge_fields(code, {"garment:0": "conflict"})["garment:0"] == "conflict"
-    assert merge_fields(code, None) == code
-
-
 def test_score_person_probability() -> None:
-    assert person_probability(0.9, 0.2, None) == 0.9
-    assert person_probability(None, 0.4, 0.7) == 0.7
-    assert person_probability(None, 0.4, None) == 0.4
+    assert person_probability(0.4, 0.7) == 0.7
+    assert person_probability(0.4, None) == 0.4
 
 
 def test_priority_formula() -> None:

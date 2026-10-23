@@ -7,9 +7,9 @@ import random
 import pytest
 from search_helpers import at, sighting  # pyright: ignore[reportMissingImports]
 
+from sd_schemas.geo import plane_distance_m as distance_m
 from sd_schemas.search import CandidateState
 from sd_search.fusion import SIGMA_MIN_M, Fusion, fusion_radius_m
-from sd_search.geo import distance_m
 
 
 def test_fusion_joins_within_the_radius_and_starts_a_new_one_beyond() -> None:

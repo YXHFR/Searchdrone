@@ -17,7 +17,7 @@ from typing import Any
 from sd_ground.api.deps import ApiStatusError
 from sd_ground.db.candidates import CandidateRepo, CandidateWriteError
 from sd_ground.services.missions import MissionFlow
-from sd_safety.targets import distance_m
+from sd_schemas.geo import plane_distance_m
 from sd_schemas.search import (
     PRIORITY_MEDIUM,
     CandidateBatch,
@@ -25,7 +25,9 @@ from sd_schemas.search import (
     CandidateState,
     CandidateWritten,
     SearchDetection,
+    SearchProfile,
     SearchTrack,
+    fusion_radius_m,
     priority_class,
 )
 
@@ -36,6 +38,7 @@ __all__ = [
     "cards",
     "detail",
     "feed",
+    "profile",
     "repo",
     "tracks",
     "write",
@@ -43,7 +46,6 @@ __all__ = [
 
 FEED_MAX = 500
 CARDS_MAX = 200
-NEAR_RADIUS_M, NEAR_RADIUS_MAX_M = 4.0, 12.0  # fusion's radius (sd_search.fusion)
 _DECIDED = (CandidateState.CONFIRMED.value, CandidateState.REJECTED.value)
 
 
@@ -57,6 +59,15 @@ async def feed(
     await flow.mission(mission_id)
     rows = await repo(flow).feed(mission_id, after_seq, min(limit, FEED_MAX))
     return [SearchDetection.model_validate(r) for r in rows]
+
+
+async def profile(flow: MissionFlow, mission_id: str) -> SearchProfile:
+    """The approved search profile in force; 404 when the mission has none yet."""
+    await flow.mission(mission_id)
+    found = await repo(flow).approved_profile(mission_id)
+    if found is None:
+        raise ApiStatusError(404, "PROFILE_NOT_FOUND", "Uppdraget har ingen godkänd sökprofil.")
+    return SearchProfile.model_validate(found)
 
 
 async def tracks(flow: MissionFlow, mission_id: str) -> list[SearchTrack]:
@@ -119,9 +130,10 @@ def _near(c: dict[str, Any], decided: list[dict[str, Any]]) -> dict[str, Any] | 
     for o in decided:
         if o["candidate_id"] == c["candidate_id"]:
             continue
-        d = distance_m(c["lat"], c["lon"], o["lat"], o["lon"])
-        radius = min(NEAR_RADIUS_MAX_M, NEAR_RADIUS_M + max(c["sigma95_m"], o["sigma95_m"]))
-        if d <= radius and (best is None or (d, o["seq"]) < best):
+        d = plane_distance_m(c["lat"], c["lon"], o["lat"], o["lon"])
+        if d <= fusion_radius_m(c["sigma95_m"], o["sigma95_m"]) and (
+            best is None or (d, o["seq"]) < best
+        ):
             best, found = (d, o["seq"]), o
     return found
 

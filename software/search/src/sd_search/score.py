@@ -21,7 +21,6 @@ __all__ = [
     "PART_WEIGHT",
     "field_weight",
     "match_score",
-    "merge_fields",
     "person_probability",
 ]
 
@@ -76,22 +75,6 @@ def match_score(profile: SearchProfile, fields: Mapping[str, FieldVerdict]) -> f
     return None if den == 0 else round(num / den, 4)
 
 
-def merge_fields(
-    code: Mapping[str, FieldVerdict], model: Mapping[str, FieldVerdict] | None
-) -> dict[str, FieldVerdict]:
-    """The model's verdict per field, except a code ``match`` the model could not see."""
-    out: dict[str, FieldVerdict] = dict(code)
-    for key, verdict in (model or {}).items():
-        if verdict == "not_visible" and out.get(key) == "match":
-            continue
-        out[key] = verdict
-    return out
-
-
-def person_probability(
-    model_person_p: float | None, best_detector_score: float, refined: float | None
-) -> float:
-    """The image model's value if there is one, else the best detector evidence."""
-    if model_person_p is not None:
-        return model_person_p
+def person_probability(best_detector_score: float, refined: float | None) -> float:
+    """The best detector evidence that this is a person."""
     return max(best_detector_score, refined if refined is not None else 0.0)

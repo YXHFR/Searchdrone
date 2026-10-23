@@ -94,7 +94,7 @@ test-contract:
     {{_just}} _step db-up
     {{_just}} _step migrate
     uv run pytest -m "not sitl" \
-      --cov=sd_safety --cov=sd_ground --cov=sd_onboard --cov=sd_brain \
+      --cov=sd_safety --cov=sd_ground --cov=sd_onboard --cov=sd_brain --cov=sd_search \
       --cov-branch --cov-report=json:coverage.json --cov-report=term
     uv run lint-imports
     for step in check_coverage check_safety_manifest; do

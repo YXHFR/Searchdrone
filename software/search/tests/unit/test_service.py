@@ -153,6 +153,19 @@ async def test_heartbeat_says_cloud_off() -> None:
     assert g.beats[-1].cloud == "off"
 
 
+async def test_heartbeat_every_five_seconds() -> None:
+    g = FakeGround(MISSION)
+    now = [100.0]
+    s = SearchService(g, GroundProfileSource(g), monotonic=lambda: now[0])
+    await s.beat()
+    now[0] += 4.9
+    await s.beat()
+    assert len(g.beats) == 1
+    now[0] += 0.1
+    await s.beat()
+    assert len(g.beats) == 2
+
+
 def test_file_profile_only_in_the_simulator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

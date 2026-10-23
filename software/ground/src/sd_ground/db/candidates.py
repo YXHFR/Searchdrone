@@ -3,8 +3,9 @@
 Part of the database layer. Every table here is append-only: a change to a candidate is
 a new row with the next ``rev``, written under a per-mission advisory lock so two writers
 cannot give out the same display number or the same revision. The search service may
-never write ``confirmed`` or ``rejected``, nor touch a candidate a person or the pilot
-holds; the checks are here, next to the write, not only in the API.
+never write ``confirmed`` or ``rejected``, never change the state of a candidate a person
+or the pilot holds (``inspecting``; new sightings and scores still come in, the state
+stays) and never merge one; the checks are here, next to the write, not only in the API.
 """
 
 from __future__ import annotations
@@ -377,6 +378,27 @@ class CandidateRepo:
             c=candidate_id,
         )
         return None if not rows else str(rows[0]["m"])
+
+    async def approved_profile(self, mission_id: str) -> dict[str, Any] | None:
+        """The approved profile in force (the highest approved version), as the table holds
+        it: the body with the row's mission, version and approval. Never a proposal."""
+        rows = await self._all(
+            "SELECT body, mission_id::text AS mission_id, profile_version, approved_by, "
+            "approved_at FROM search_profiles WHERE mission_id = :m "
+            "AND approved_by IS NOT NULL ORDER BY profile_version DESC LIMIT 1",
+            m=mission_id,
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        body = row["body"] if isinstance(row["body"], dict) else json.loads(row["body"])
+        return {
+            **body,
+            "mission_id": row["mission_id"],
+            "profile_version": int(row["profile_version"]),
+            "approved_by": row["approved_by"],
+            "approved_at": row["approved_at"],
+        }
 
     async def profile_version(self, mission_id: str) -> int | None:
         """The approved profile version in force, if any."""

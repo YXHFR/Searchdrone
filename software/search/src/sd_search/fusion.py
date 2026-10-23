@@ -23,8 +23,13 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sd_schemas.search import CandidateState
-from sd_search.geo import distance_m
+from sd_schemas.geo import plane_distance_m as distance_m
+from sd_schemas.search import (
+    FUSION_RADIUS_M,
+    FUSION_RADIUS_MAX_M,
+    CandidateState,
+    fusion_radius_m,
+)
 
 __all__ = [
     "FUSION_RADIUS_M",
@@ -37,8 +42,6 @@ __all__ = [
     "fusion_radius_m",
 ]
 
-FUSION_RADIUS_M = 4.0
-FUSION_RADIUS_MAX_M = 12.0
 SIGMA_MIN_M = 2.0
 _SIGMA_FLOOR_M = 0.5  # a sighting's sigma below this counts as this (no division by zero)
 _SCORE_FLOOR = 0.05  # a sighting with score 0 still has a little weight
@@ -51,10 +54,6 @@ HUMAN_STATES = frozenset(
 CLOSED_STATES = frozenset(
     {CandidateState.CONFIRMED, CandidateState.REJECTED, CandidateState.MERGED}
 )
-
-
-def fusion_radius_m(sigma_a: float, sigma_b: float) -> float:
-    return min(FUSION_RADIUS_MAX_M, FUSION_RADIUS_M + max(sigma_a, sigma_b))
 
 
 @dataclass(frozen=True)

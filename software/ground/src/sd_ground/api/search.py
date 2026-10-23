@@ -1,11 +1,12 @@
 """The search API (``/search/v1``), only for ``sd-search`` with the search token.
 
 It lives on the commander's loopback-only listener but has its own token and role. The
-search service reads the open missions and their target detections and crops, writes
-candidates with the code's assessment, reads its candidates back after a restart and
-sends a heartbeat. It has no route for orders, approvals, STOP / RETURN HOME, chat as a
-person or a decision on a candidate (it can never set ``confirmed`` or ``rejected``), and
-its token is refused on the commander API and on the panel listeners (403).
+search service reads the open missions, their approved search profile and their target
+detections and crops, writes candidates with the code's assessment, reads its candidates
+back after a restart and sends a heartbeat. It has no route for orders, approvals, STOP /
+RETURN HOME, chat as a person or a decision on a candidate (it can never set ``confirmed``
+or ``rejected``), and its token is refused on the commander API and on the panel listeners
+(403).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from sd_schemas.search import (
     CandidateWritten,
     SearchDetection,
     SearchHeartbeat,
+    SearchProfile,
     SearchTrack,
 )
 
@@ -102,6 +104,12 @@ async def crop(detection_id: IdPath, _: Search, g: G) -> FileResponse:
     if path is None or not path.is_file():
         raise ApiStatusError(404, "CROP_NOT_FOUND", "Bilden finns inte.")
     return FileResponse(path, media_type="image/jpeg")
+
+
+@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfile)
+async def search_profile(mission_id: IdPath, _: Search, g: G) -> SearchProfile:
+    """The approved search profile in force (never a proposal); 404 when there is none."""
+    return await candidates_service.profile(_flow(g), mission_id)
 
 
 @router.get("/missions/{mission_id}/candidates", response_model=list[SearchTrack])
