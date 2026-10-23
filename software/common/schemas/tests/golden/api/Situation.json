@@ -161,5 +161,6 @@
         "to": "ACTIVE"
       }
     }
-  ]
+  ],
+  "probability_line": null
 }

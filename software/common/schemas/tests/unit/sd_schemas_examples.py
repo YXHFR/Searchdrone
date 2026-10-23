@@ -1042,6 +1042,46 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             latency_ms=180,
         ),
     ]
+    grid = s.ProbabilityGrid(
+        ipp_lat=HOME_LAT,
+        ipp_lon=HOME_LON,
+        x0_m=-50,
+        y0_m=-50,
+        nx=4,
+        ny=4,
+        cell_m=25,
+        west=HOME_LON - 0.0006,
+        south=HOME_LAT - 0.0005,
+        east=HOME_LON + 0.0006,
+        north=HOME_LAT + 0.0005,
+    )
+    score = s.SectorScore(
+        sector_id="A",
+        poa=0.4,
+        covered_pct=20,
+        mean_pod=0.3,
+        pos_plan=0.2,
+        est_min=12,
+        psr=0.017,
+        spacing_m=40,
+    )
+    items += [
+        grid,
+        score,
+        s.ProbabilityMapView(
+            version=1,
+            reason="prior",
+            grid=grid,
+            row=0.1,
+            event_seq=0,
+            profile_version=1,
+            sectors=[score],
+            mission_id=MISSION,
+            p_b64="AAAA",
+            pod_b64="AAAA",
+            created_at=T,
+        ),
+    ]
     search = _search_examples()
     items += search + _candidate_panel_examples(search)
     out: dict[type[BaseModel], BaseModel] = {}
