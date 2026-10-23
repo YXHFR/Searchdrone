@@ -248,6 +248,7 @@ async def cards(
 
 
 async def detail(flow: MissionFlow, candidate_id: str) -> dict[str, Any]:
+    candidate_id = candidate_id.lower()  # the path accepts either case; the tables hold lower
     r = repo(flow)
     mission_id = await r.candidate_mission(candidate_id)
     if mission_id is None:

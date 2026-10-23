@@ -233,6 +233,8 @@ async def test_detections_become_a_candidate_in_the_queue(r: Rig) -> None:
         assert len(d["observations"]) == 2 and d["decisions"] == []
         assert [a["engine"] for a in d["assessments"]] == ["code", "code"]
         assert d["card"]["candidate_id"] == top["candidate_id"] and d["mission_id"] == mid
+        upper = await r.panel.get(f"/api/v1/candidates/{top['candidate_id'].upper()}")
+        assert upper.status_code == 200 and upper.json() == d
 
         types = [
             e.type for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or [] if e.topic == "candidates"

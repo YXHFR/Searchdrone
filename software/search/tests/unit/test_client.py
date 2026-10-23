@@ -6,6 +6,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from sd_schemas.search import CandidateBatch
 from sd_search.client import ConflictError, GroundClient, GroundError
 
 
@@ -47,5 +48,28 @@ async def test_status_codes() -> None:
     c = client({"code": "PROFILE_NOT_FOUND"}, 404)
     try:
         assert await c.profile("m") is None
+    finally:
+        await c.aclose()
+
+
+async def test_a_bad_profile_or_write_answer_is_a_ground_error() -> None:
+    c = client({"profile_version": "x"})
+    try:
+        with pytest.raises(GroundError, match="bad body"):
+            await c.profile("m")
+        with pytest.raises(GroundError, match="bad body"):
+            await c.write("m", CandidateBatch.model_construct(revisions=[]))
+    finally:
+        await c.aclose()
+
+
+async def test_a_body_that_is_not_json_is_a_ground_error() -> None:
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>proxy error</html>")
+
+    c = GroundClient("http://127.0.0.1:7700", "t", transport=httpx.MockTransport(answer))
+    try:
+        with pytest.raises(GroundError, match="bad body"):
+            await c.detections("m", 0, 10)
     finally:
         await c.aclose()
