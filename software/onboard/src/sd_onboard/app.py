@@ -138,7 +138,9 @@ def _perception(
         period_s=p.period_s,
         keep_dir=loaded.state_dir / "stills" if p.keep_stills else None,
         env=loaded.env,
-        off=lambda reason: link.event("executor.perception_off", "warning", {"reason": reason}),
+        off=lambda reason, error: link.event(
+            "executor.perception_off", "warning", {"reason": reason, "error": error}
+        ),
     )
 
 

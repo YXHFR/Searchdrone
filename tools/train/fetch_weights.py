@@ -43,6 +43,8 @@ def load_models(path: Path = REGISTER) -> list[dict[str, Any]]:
             raise BenchError(f"models.toml: {row['name']} saknar https eller SHA-256", 2)
         if row["kind"] not in ("pretrained", "detector"):
             raise BenchError(f"models.toml: {row['name']} har okänd kind", 2)
+        if row["kind"] == "detector" and not {"family", "input_px"} <= row.keys():
+            raise BenchError(f"models.toml: {row['name']} saknar family eller input_px", 2)
     return rows
 
 

@@ -29,6 +29,7 @@ from bench.datasets import load_register
 
 KEYS = ("model", "data", "train", "name", "out")
 MANIFEST_SCHEMA = "sd.detector-model/v1"
+MAX_MODEL_BYTES = 128 << 20  # sd_detect.onnx refuses a larger file on board
 OPSET = 17
 MAX_DIFF = 2e-2  # scores and pixels; fp32 both sides
 
@@ -58,6 +59,9 @@ def export(
         dynamo=False,
     )
     _check(wrapper, tmp, tile, check_images, seed)
+    if tmp.stat().st_size > MAX_MODEL_BYTES:
+        tmp.unlink()
+        raise BenchError("ONNX-filen är större än den inbyggda datorn tar emot (128 MB).", 1)
     tmp.replace(onnx_path)
     digest = hashlib.sha256(onnx_path.read_bytes()).hexdigest()
     register = load_register()

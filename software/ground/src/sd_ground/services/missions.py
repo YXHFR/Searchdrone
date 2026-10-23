@@ -96,7 +96,7 @@ _LATCH_REASON: Final = {
     "watchdog_rtl": "WATCHDOG_RTL",
 }
 # Onboard events the panel shows as they arrive (most only go to the event log).
-_PANEL_EVENTS: Final = frozenset({"executor.find_hold_ended"})
+_PANEL_EVENTS: Final = frozenset({"executor.find_hold_ended", "executor.perception_off"})
 log = get_logger("sd_ground.missions")
 
 

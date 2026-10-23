@@ -20,7 +20,7 @@ from bench.common import BenchError
 from bench.datasets import Image
 from PIL import Image as PILImage
 
-from sd_detect.onnx import MANIFEST_SCHEMA, load_model
+from sd_detect.onnx import MANIFEST_SCHEMA, MAX_MODEL_BYTES, load_model
 
 TRAIN = Path(__file__).resolve().parents[1] / "train"
 
@@ -220,6 +220,7 @@ def test_the_real_register_is_valid() -> None:
         ({"sha256": "abc"}, "SHA-256"),
         ({"sha256": "Z" * 64}, "SHA-256"),
         ({"kind": "other"}, "kind"),
+        ({}, "family"),  # a ready detector needs family and input_px
     ],
 )
 def test_a_wrong_register_row_is_refused(tmp_path: Path, over: dict[str, str], why: str) -> None:
@@ -252,6 +253,8 @@ def test_export_writes_the_schema_the_drone_reads() -> None:
     text = (TRAIN / "export_onnx.py").read_text(encoding="utf-8")
     found = re.search(r'^MANIFEST_SCHEMA = "([^"]+)"', text, re.MULTILINE)
     assert found is not None and found.group(1) == MANIFEST_SCHEMA
+    cap = re.search(r"^MAX_MODEL_BYTES = (\d+) << (\d+)", text, re.MULTILINE)
+    assert cap is not None and int(cap.group(1)) << int(cap.group(2)) == MAX_MODEL_BYTES
 
 
 # --- datadir --------------------------------------------------------------------------

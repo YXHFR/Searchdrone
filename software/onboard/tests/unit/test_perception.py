@@ -14,6 +14,7 @@ import json
 import math
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from sd_obs.clock import MonotonicClock
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.perception import loop as loop_module
 from sd_onboard.perception.loop import (
+    FAIL_REPORT,
     MAX_POSE_AGE_MS,
     MAX_TURN_RATE_DPS,
     AttitudeRate,
@@ -344,14 +346,15 @@ async def test_a_model_that_cannot_be_built_only_turns_perception_off(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     lp = loop(tmp_path, FakeClock(), {"SD_DETECTOR_MODEL": str(tmp_path / "gone.json")})
-    reasons: list[str] = []
-    lp.off = reasons.append
+    reasons: list[tuple[str, str]] = []
+    lp.off = lambda reason, error: reasons.append((reason, error))
     # built in the task, never when sd-onboard starts the executor and link
     assert lp._built is None  # pyright: ignore[reportPrivateUsage]
     with caplog.at_level("ERROR", logger="sd_onboard.perception"):
         await asyncio.wait_for(lp.run(asyncio.Event()), 5)  # ends, never raises
     assert "perception off" in caplog.text
-    assert len(reasons) == 1 and "gone.json" in reasons[0]  # the ground is told why
+    # the ground is told why, by code and class only: no paths from the on-board computer
+    assert reasons == [("sources_failed", "ModelError")]
 
 
 class _BrokenModel:
@@ -366,8 +369,10 @@ class _BrokenModel:
 async def test_a_failing_model_only_counts_a_failed_still(tmp_path: Path) -> None:
     write_still(tmp_path, "block0_h30")
     clock = MonotonicClock()
+    captured = DirStillSource(tmp_path, synthetic=True).poll()
+    assert captured is not None
     lp = PerceptionLoop(
-        DirStillSource(tmp_path, synthetic=True),
+        SimpleNamespace(poll=lambda: captured),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
         lambda: telemetry("block0_h30", clock.monotonic_ms()),
         lambda _r: None,
         clock,
@@ -375,17 +380,20 @@ async def test_a_failing_model_only_counts_a_failed_still(tmp_path: Path) -> Non
         period_s=0.01,
         env={},
     )
+    reasons: list[tuple[str, str]] = []
+    lp.off = lambda reason, error: reasons.append((reason, error))
     lp.built.sources["model"] = _BrokenModel()  # type: ignore[assignment]
     stop = asyncio.Event()
     task = asyncio.ensure_future(lp.run(stop))
-    for _ in range(500):
-        if lp.stats.failed:
+    for _ in range(1000):
+        if lp.stats.failed > FAIL_REPORT:
             break
         await asyncio.sleep(0.01)
-    assert not task.done()
+    assert not task.done()  # keeps trying: a passing fault may clear
     stop.set()
     await asyncio.wait_for(task, 2)
-    assert lp.stats.failed >= 1 and lp.stats.reports == 0
+    assert lp.stats.failed > FAIL_REPORT and lp.stats.reports == 0
+    assert reasons == [("detection_failing", "RuntimeError")]  # told once
 
 
 class _TooLarge:

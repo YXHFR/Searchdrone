@@ -9,8 +9,10 @@ blocks the event loop the executor ticks on. A failing still is logged and skipp
 loop keeps going. The detector sources (a trained model among them) are built in a
 worker thread when the task starts, after the executor and link run; if that fails,
 perception is off, the reason is logged and sent to the ground (``off``), and flying
-goes on. Kept stills (for a
-run's record) are capped at ``KEEP_MAX``, the oldest removed first.
+goes on. Only a reason code and the error's class go to the ground, never the error's
+text (it may hold paths on the on-board computer). A detector that fails on
+``FAIL_REPORT`` stills in a row is reported the same way, once. Kept stills (for a run's
+record) are capped at ``KEEP_MAX``, the oldest removed first.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -37,6 +39,7 @@ from sd_onboard.perception.sources import CapturedStill, StillSource
 from sd_schemas.base import new_id
 
 __all__ = [
+    "FAIL_REPORT",
     "KEEP_MAX",
     "MAX_POSE_AGE_MS",
     "MAX_TURN_RATE_DPS",
@@ -50,6 +53,7 @@ log = logging.getLogger("sd_onboard.perception")
 MAX_POSE_AGE_MS = 1000  # older position or attitude: the still is skipped
 KEEP_MAX = 200  # kept stills (JPEG + JSON pairs) in ``keep_dir``
 MAX_TURN_RATE_DPS = 10.0  # faster attitude change: the still is skipped
+FAIL_REPORT = 10  # stills failing in a row before the ground is told
 
 
 @dataclass
@@ -125,7 +129,7 @@ class PerceptionLoop:
         period_s: float = 0.5,
         keep_dir: Path | None = None,
         env: dict[str, str] | None = None,
-        off: Callable[[str], None] | None = None,
+        off: Callable[[str, str], None] | None = None,
     ) -> None:
         self.source = source
         self.telemetry = telemetry
@@ -136,7 +140,8 @@ class PerceptionLoop:
         self.period_s = period_s
         self.keep_dir = keep_dir
         self.env = env
-        self.off = off  # told why, when perception cannot start
+        self.off = off  # (reason code, error class) when perception cannot work
+        self._failing = 0
         self._built: BuiltSources | None = None
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
@@ -219,7 +224,7 @@ class PerceptionLoop:
         except Exception as exc:
             log.exception("perception off: the detector sources could not be built")
             if self.off is not None:
-                self.off(f"{type(exc).__name__}: {exc}"[:300])
+                self.off("sources_failed", type(exc).__name__)
             return
         log.info(
             "perception on: sources %s, skipped %s", sorted(self.built.sources), self.built.skipped
@@ -232,9 +237,13 @@ class PerceptionLoop:
                     t, now_ms = self.telemetry(), self.clock.monotonic_ms()
                     rate = max(rate, self.rate.update(t))
                     out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
+                    self._failing = 0
                     if out is not None:
                         self.send(out)
-            except Exception:
+            except Exception as exc:
                 self.stats.failed += 1
+                self._failing += 1
                 log.exception("perception failed on a still")
+                if self._failing == FAIL_REPORT and self.off is not None:
+                    self.off("detection_failing", type(exc).__name__)
             await self.clock.sleep(self.period_s)

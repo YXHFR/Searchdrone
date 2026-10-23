@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -112,9 +113,10 @@ class OnnxDetector:
         model_path = Path(model_path)
         if not model_path.is_file():
             raise ModelError(f"Modellfilen finns inte: {model_path}")
-        if model_path.stat().st_size > MAX_MODEL_BYTES:
+        with model_path.open("rb") as fh:
+            data = fh.read(MAX_MODEL_BYTES + 1)  # never more, even if the file grows
+        if len(data) > MAX_MODEL_BYTES:
             raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
-        data = model_path.read_bytes()
         got = hashlib.sha256(data).hexdigest()
         if got != sha256.lower():
             raise ModelError(
@@ -247,6 +249,8 @@ def _read_manifest(manifest_path: Path) -> dict[str, Any]:
         raise ModelError(
             f"Modellens licens ska vara {MODEL_LICENCE}, inte {manifest.get('licence')!r}"
         )
+    if not re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("sha256", "")).lower()):
+        raise ModelError("Manifestets sha256 ska vara 64 hextecken")
     return dict(manifest)
 
 

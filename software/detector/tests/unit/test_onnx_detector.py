@@ -150,11 +150,36 @@ def test_the_model_source_tiles_a_still(tmp_path: Path) -> None:
         ({"family": "yolo9"}, "modellfamilj"),
         ({"licence": "CC-BY-NC-4.0"}, "licens"),
         ({"onnx": "gone.onnx"}, "finns inte"),
+        ({"sha256": None}, "64 hextecken"),
     ],
 )
 def test_a_wrong_manifest_is_refused(tmp_path: Path, over: dict[str, object], why: str) -> None:
     with pytest.raises(ModelError, match=why):
         load_model(_manifest(tmp_path, **over))
+
+
+def test_a_model_over_the_size_cap_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sd_detect.onnx as onnx_mod
+
+    manifest = _manifest(tmp_path)
+    monkeypatch.setattr(onnx_mod, "MAX_MODEL_BYTES", 100)
+    with pytest.raises(ModelError, match="orimligt stor"):
+        load_model(manifest)
+
+
+def test_bytes_that_match_but_are_not_onnx_are_refused(tmp_path: Path) -> None:
+    import hashlib
+
+    manifest = _manifest(tmp_path)
+    junk = b"not an onnx graph"
+    (tmp_path / "person.onnx").write_bytes(junk)
+    body = json.loads(manifest.read_text(encoding="utf-8"))
+    body["sha256"] = hashlib.sha256(junk).hexdigest()
+    manifest.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(Exception):  # noqa: B017 - ONNX Runtime's own error type
+        load_model(manifest)
 
 
 def test_onnx_runtime_gets_few_threads_and_no_busy_wait(tmp_path: Path) -> None:

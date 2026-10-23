@@ -253,6 +253,14 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
     case "executor.find_hold_ended":
       logFindHoldEnded(e.data as Record<string, unknown>, e.ts);
       break;
+    case "executor.perception_off": {
+      // Person detection is off on board; flying goes on. The pilot must not take an
+      // area as searched for people.
+      const text = i18next.t("perception.off");
+      useUiStore.getState().log("info", text);
+      useUiStore.getState().toast(text);
+      break;
+    }
     case "vehicle.action":
       actionBus.publish(e.data as ActionOutcome);
       break;
