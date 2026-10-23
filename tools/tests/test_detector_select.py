@@ -104,6 +104,22 @@ def test_results_from_different_pictures_are_never_ranked(tmp_path: Path) -> Non
     assert pd.main([arg, f"data={tmp_path}"]) == 2
 
 
+def test_an_unreadable_result_is_a_clear_error(tmp_path: Path) -> None:
+    bad = tmp_path / "det_person_x_val.json"
+    bad.write_text('{"schema": "bench.detector/v1"}', encoding="utf-8")
+    gone = tmp_path / "det_gone_val.json"
+    assert pd.main([f"results={bad}", f"data={tmp_path}"]) == 2
+    assert pd.main([f"results={gone}", f"data={tmp_path}"]) == 2
+
+
+def test_a_quick_look_alone_is_picked_with_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = _body("person_a", 0.8, 0.5, 10, source="splits/v1 val (heridal) limit=4")
+    assert pd.main([f"results={_write(tmp_path, body)}", f"data={tmp_path}"]) == 0
+    assert "limit=" in capsys.readouterr().err
+
+
 # --- a trained model in the bench, and the manifest detector-fetch writes -----------
 
 
@@ -202,6 +218,7 @@ def test_the_real_register_is_valid() -> None:
         ({"licence": "MIT"}, "ska ha licensen"),  # a ready detector must be Apache-2.0
         ({"url": "http://example.invalid/m.onnx"}, "https"),
         ({"sha256": "abc"}, "SHA-256"),
+        ({"sha256": "Z" * 64}, "SHA-256"),
         ({"kind": "other"}, "kind"),
     ],
 )

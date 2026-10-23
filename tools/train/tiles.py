@@ -1,11 +1,12 @@
 """The training tiles: the bank's pictures cut into the tiles the drone looks at.
 
 The drone looks at a 12 MP still in 640 px tiles (``sd_detect.tiling``), so the model is
-trained on the same: each picture of the split's ``train`` (or ``val``) part is cut
-into ``tile_px`` tiles with a little overlap, and each tile is saved once as a JPEG with
-its person boxes. A person is kept in a tile when at least half of their box is in it.
-Every tile with a person is kept; of the empty ones (grass, rock, forest) a share
-``empty_share`` is kept so the model also learns what is not a person.
+trained on tiles of the same size and overlap (the grid is laid out a little
+differently: a fixed step and a last tile at the edge). Each picture of the split's
+``train`` (or ``val``) part is cut into ``tile_px`` tiles, and each tile is saved once
+as a JPEG with its person boxes. A person is kept in a tile when at least half of their
+box is in it. Every tile with a person is kept; of the empty ones (grass, rock, forest)
+a share ``empty_share`` is kept so the model also learns what is not a person.
 
 The tiles go to ``<out>/tiles/<part>/`` with ``tiles.json``; a finished cache is reused
 (its ``key`` says what it was cut from). Nothing here is ever in git: the tiles are

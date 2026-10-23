@@ -90,7 +90,7 @@ class OnnxDetector:
     """One ONNX model of a known family (module doc)."""
 
     name: ClassVar[str] = "onnx"
-    license: ClassVar[str] = "Apache-2.0"
+    license: ClassVar[str] = MODEL_LICENCE
 
     def __init__(
         self,

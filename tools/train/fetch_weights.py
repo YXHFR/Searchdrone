@@ -13,6 +13,7 @@ workspace's Python (no PyTorch needed).
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -28,6 +29,9 @@ REGISTER = Path(__file__).with_name("models.toml")
 KEYS = ("yes", "only", "data")
 
 
+SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
 def load_models(path: Path = REGISTER) -> list[dict[str, Any]]:
     rows = tomllib.loads(path.read_text(encoding="utf-8")).get("model", [])
     for row in rows:
@@ -35,7 +39,7 @@ def load_models(path: Path = REGISTER) -> list[dict[str, Any]]:
             raise BenchError(f"models.toml: {row['name']} har licensen {row['licence']}", 2)
         if row["kind"] == "detector" and row["licence"] != MODEL_LICENCE:
             raise BenchError(f"models.toml: {row['name']} ska ha licensen {MODEL_LICENCE}", 2)
-        if not row["url"].startswith("https://") or len(row["sha256"]) != 64:
+        if not row["url"].startswith("https://") or not SHA256.fullmatch(row["sha256"]):
             raise BenchError(f"models.toml: {row['name']} saknar https eller SHA-256", 2)
         if row["kind"] not in ("pretrained", "detector"):
             raise BenchError(f"models.toml: {row['name']} har okänd kind", 2)

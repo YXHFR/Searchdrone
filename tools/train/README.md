@@ -13,7 +13,7 @@ The two candidates, both Apache-2.0 and both started from their authors' COCO we
 | `yolox_s` | YOLOX-s, Megvii (2021) | 9 M parameters |
 | `damoyolo_s` | DAMO-YOLO-S, Alibaba (2022) | 16 M parameters |
 
-Each is trained on the same 640 px tiles the drone looks at, made from the image bank's
+Each is trained on 640 px tiles of the same size and overlap as the drone looks at, made from the image bank's
 `train` part. The `val` part picks the best epoch and the better model. The locked
 `test` part is measured once, on the chosen model only, and is never trained on.
 

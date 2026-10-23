@@ -35,6 +35,16 @@ def _recall(body: dict[str, Any], cls: str) -> float:
     return float(body["recall"][cls]["recall"])
 
 
+def _fields(body: dict[str, Any]) -> tuple[str, float, float, float]:
+    """What the rule reads from a result; a missing or wrong field raises."""
+    return (
+        str(body["model"]),
+        _recall(body, "gt32"),
+        _recall(body, "16to32"),
+        float(body["latency_ms"]["p50"]),
+    )
+
+
 def pick(bodies: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """The chosen result (rule in the module doc)."""
     if not bodies:
@@ -56,7 +66,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         bodies = []
         for f in files:
-            body = json.loads(f.read_text(encoding="utf-8"))
+            try:
+                body = json.loads(f.read_text(encoding="utf-8"))
+                _fields(body)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise BenchError(f"Kan inte läsa mätresultatet {f}: {exc!r}", 2) from exc
             if body.get("schema") != "bench.detector/v1" or body["model"] in BUILT_IN:
                 continue
             if " val " not in str(body.get("source")):
@@ -70,6 +84,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             raise BenchError(f"Resultaten är mätta på olika bilder och jämförs inte: {listed}", 2)
         chosen = pick(bodies)
+        if " limit=" in str(chosen.get("source")):
+            warn("bara ett snabbtest (limit=); mät på hela val-delen innan du väljer på riktigt")
         for b in sorted(bodies, key=lambda b: b["model"]):
             say(
                 f"  {b['model']}: > 32 px {_recall(b, 'gt32'):.3f}, 16-32 px "
