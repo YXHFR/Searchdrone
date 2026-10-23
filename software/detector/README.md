@@ -17,7 +17,8 @@ The detector interface, the class register and the detector sources.
   - `model`: the trained person detector (`sd_detect.onnx`), built only when
     `SD_DETECTOR_MODEL` names its manifest (`tools/train/README.md`). Unset: `person` is
     not reported. Set but wrong (missing file, wrong SHA-256, unknown family): an error
-    at start, never a silent fallback.
+    at start, never a silent fallback. What it is and is not for:
+    [`MODEL_CARD.md`](MODEL_CARD.md).
 - `build_sources`, `detect_all` and `keep_plausible`: build the sources the register
   names, run them on a `Still` (keeping only each source's own classes) and drop
   detections whose size in metres does not fit their class (a red car is no red block).

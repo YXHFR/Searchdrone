@@ -85,7 +85,8 @@ first measurement, are recall ≥ 0.85 over 32 px and ≥ 0.60 at 16–32 px.
 | WiSARD (measuring only) | MIT for the software; the data licence is not confirmed | Broyles, Hayner and Leung, IROS 2022, University of Washington |
 | COCO, which the starting weights were trained on | CC BY 4.0 (annotations) | Lin et al., "Microsoft COCO", ECCV 2014 |
 
-The model code is in `vendor/` (see `vendor/NOTICE.md`).
+The model code is in `tools/train/vendor/` (see its `NOTICE.md`). Training and choosing
+are described in `tools/train/README.md`.
 
 Each model's manifest (`<name>.json`) lists the sets it was trained on, with their
 licences and credit. Its `publish` field is `true` only when every one of those sets

@@ -153,7 +153,7 @@ Useful keys for `just train-detector`:
 
 The manifest (`.json`) next to each model lists what it was trained on, under which
 licence and with which credit. `publish` is `true` only when every training set allows
-publishing the weights. `MODEL_CARD.md` in this folder has the details.
+publishing the weights. `software/detector/MODEL_CARD.md` has the details.
 
 ## For developers
 

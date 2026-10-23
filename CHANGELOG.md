@@ -35,7 +35,7 @@ All notable changes to this project are listed here. The format follows
   pick-detector` chooses on the val part (recall over 32 px, then 16–32 px, then speed).
   `sd_detect.onnx` runs such a model on board with ONNX Runtime only, when
   `SD_DETECTOR_MODEL` names its manifest; a missing or changed file is an error, never a
-  silent fallback. Model card: `tools/train/MODEL_CARD.md`.
+  silent fallback. Model card: `software/detector/MODEL_CARD.md`.
 - Photo mode for the simulator: `just ortho-fetch site=hellasgarden` fetches
   Lantmäteriet's newest colour orthophoto over the site (0.16 m per pixel, all tiles of the
   newest flight year, colour only) with the owner's own Geotorget login from a gitignored
