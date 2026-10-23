@@ -102,11 +102,11 @@ async def test_an_error_answer_releases_and_the_fallback_reserves_again() -> Non
         models.append(model)
         if model == "vendor/main":
             return httpx.Response(503)
-        return httpx.Response(200, json=chat_reply("reserv"))
+        return httpx.Response(200, json=chat_reply("spare answer"))
 
     rt = _rt(handler, books, model="vendor/main", fallback_model="vendor/spare")
     reply = await rt.chat(MSG, [], 10, Sampling())
-    assert reply.content == "reserv" and models == ["vendor/main", "vendor/spare"]
+    assert reply.content == "spare answer" and models == ["vendor/main", "vendor/spare"]
     assert [r.model_id for r in books.reserved] == ["vendor/main", "vendor/spare"]
     assert len(books.released) == 1 and len(books.committed) == 1
 
