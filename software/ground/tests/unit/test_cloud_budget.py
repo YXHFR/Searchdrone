@@ -209,9 +209,7 @@ async def test_rebuilt_from_the_books(make_ground: Any, store: FakeStore) -> Non
     assert store.statuses().count("expired") == 1
 
 
-async def test_refresh_shows_the_books_before_any_call(
-    make_ground: Any, store: FakeStore
-) -> None:
+async def test_refresh_shows_the_books_before_any_call(make_ground: Any, store: FakeStore) -> None:
     """The panel sees what was spent before a restart without waiting for a call, and a
     cap the pilot sets in this run wins over an older stored one."""
     first = _budget(make_ground(cloud_budget={"mission_cap_sek": 1.0}), store)
