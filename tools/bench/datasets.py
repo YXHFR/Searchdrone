@@ -1,0 +1,215 @@
+"""The dataset register (``tools/bench/datasets.toml``), its licence rule and the
+per-dataset index that ``just bench-fetch`` writes.
+
+The index (``<data_dir>/datasets/<name>/index.json``, schema ``bench.index/v1``) lists
+every picture once: its id, sequence, file (relative to ``raw/``), size and person
+boxes. The training and the measurement both read only the index, never the archive.
+"""
+
+from __future__ import annotations
+
+import json
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+from bench.common import BENCH, ROOT, BenchError
+from bench.layouts import LAYOUTS, Box
+
+REGISTER = BENCH / "datasets.toml"
+INDEX_SCHEMA = "bench.index/v1"
+Use = Literal["train", "measure", "pretrain"]
+USES: tuple[Use, ...] = ("train", "measure", "pretrain")
+
+# Open licences: free to train and measure on, results may be published with credit.
+OPEN_LICENCES = frozenset({"CC0-1.0", "CC-BY-3.0", "CC-BY-4.0", "MIT", "Apache-2.0"})
+# Non-commercial licences: only for measuring on the owner's computer, never trained on.
+NC_PREFIXES = ("CC-BY-NC",)
+
+
+@dataclass(frozen=True)
+class Dataset:
+    name: str
+    title: str
+    licence: str
+    attribution: str
+    layout: str
+    use: tuple[Use, ...]
+    publish_weights: bool
+    local_only: bool
+    url: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+    ranges: bool = False
+    local_path: str | None = None
+    licence_note: str | None = None
+    source_page: str | None = None
+    checked: str | None = None
+
+    @property
+    def archive_name(self) -> str:
+        return f"{self.name}.zip"
+
+
+def licence_problems(ds: Dataset) -> list[str]:
+    """What breaks the licence rule (empty: the row is fine)."""
+    problems: list[str] = []
+    is_open = ds.licence in OPEN_LICENCES
+    is_nc = ds.licence.startswith(NC_PREFIXES)
+    if not (is_open or is_nc):
+        problems.append(f"{ds.name}: licence {ds.licence!r} is not allowed")
+    if is_nc and (set(ds.use) != {"measure"} or not ds.local_only or ds.publish_weights):
+        problems.append(f"{ds.name}: a non-commercial set may only be measured on, locally")
+    if "pretrain" in ds.use and len(ds.use) > 1:
+        problems.append(f"{ds.name}: synthetic pre-training data is never trained or measured on")
+    if not ds.attribution.strip():
+        problems.append(f"{ds.name}: attribution missing")
+    if ds.url is None and ds.local_path is None:
+        problems.append(f"{ds.name}: neither url nor local_path")
+    if ds.url is not None and not ds.url.startswith("https://"):
+        problems.append(f"{ds.name}: url must be https")
+    return problems
+
+
+def _dataset(row: dict[str, Any]) -> Dataset:
+    try:
+        use = tuple(row["use"])
+        ds = Dataset(
+            name=row["name"],
+            title=row["title"],
+            licence=row["licence"],
+            attribution=row["attribution"],
+            layout=row["layout"],
+            use=use,  # type: ignore[arg-type]
+            publish_weights=bool(row["publish_weights"]),
+            local_only=bool(row["local_only"]),
+            url=row.get("url"),
+            size_bytes=row.get("size_bytes"),
+            sha256=row.get("sha256"),
+            ranges=bool(row.get("ranges", False)),
+            local_path=row.get("local_path"),
+            licence_note=row.get("licence_note"),
+            source_page=row.get("source_page"),
+            checked=row.get("checked"),
+        )
+    except (KeyError, TypeError) as exc:
+        raise BenchError(f"datasets.toml: felaktig rad ({exc})", 2) from exc
+    if ds.layout not in LAYOUTS or any(u not in USES for u in use):
+        raise BenchError(f"datasets.toml: okänd layout eller användning i {ds.name}", 2)
+    return ds
+
+
+def load_register(path: Path = REGISTER) -> dict[str, Dataset]:
+    rows = tomllib.loads(path.read_text(encoding="utf-8")).get("dataset", [])
+    out: dict[str, Dataset] = {}
+    for row in rows:
+        ds = _dataset(row)
+        if ds.name in out:
+            raise BenchError(f"datasets.toml: {ds.name} finns två gånger", 2)
+        problems = licence_problems(ds)
+        if problems:
+            raise BenchError("datasets.toml bryter licensregeln: " + "; ".join(problems), 2)
+        out[ds.name] = ds
+    return out
+
+
+# --- the index ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Image:
+    image_id: str  # "<dataset>:<id>"
+    dataset: str
+    seq: str
+    file: str  # relative to the dataset's raw/ folder
+    width: int
+    height: int
+    boxes: tuple[Box, ...]
+
+    @property
+    def local_id(self) -> str:
+        return self.image_id.split(":", 1)[1]
+
+
+def dataset_dir(data: Path, name: str, mini: bool = False) -> Path:
+    """``<data>/datasets/<name>``; the mini bank lives apart in ``datasets-mini``."""
+    return data / ("datasets-mini" if mini else "datasets") / name
+
+
+def index_path(data: Path, name: str, mini: bool = False) -> Path:
+    return dataset_dir(data, name, mini) / "index.json"
+
+
+def write_index(
+    data: Path, ds: Dataset, images: list[Image], source: str, mini: bool = False
+) -> Path:
+    path = index_path(data, ds.name, mini)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "schema": INDEX_SCHEMA,
+        "dataset": ds.name,
+        "licence": ds.licence,
+        "source": source,
+        "images": [
+            {
+                "id": im.image_id,
+                "seq": im.seq,
+                "file": im.file,
+                "width": im.width,
+                "height": im.height,
+                "boxes": [[round(v, 2) for v in b] for b in im.boxes],
+            }
+            for im in images
+        ],
+    }
+    tmp = path.with_name(".index.json.tmp")
+    tmp.write_text(json.dumps(body) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def read_index(data: Path, name: str, mini: bool = False) -> list[Image]:
+    path = index_path(data, name, mini)
+    if not path.is_file():
+        how = "mini=1" if mini else f"sets={name}"
+        raise BenchError(f"{name} är inte hämtad. Kör: just bench-fetch yes=1 {how}", 2)
+    body = json.loads(path.read_text(encoding="utf-8"))
+    if body.get("schema") != INDEX_SCHEMA or body.get("dataset") != name:
+        raise BenchError(f"{path} har fel format; kör just bench-fetch igen.", 2)
+    return [
+        Image(
+            image_id=row["id"],
+            dataset=name,
+            seq=row["seq"],
+            file=row["file"],
+            width=int(row["width"]),
+            height=int(row["height"]),
+            boxes=tuple((float(b[0]), float(b[1]), float(b[2]), float(b[3])) for b in row["boxes"]),
+        )
+        for row in body["images"]
+    ]
+
+
+def read_source(data: Path, name: str, mini: bool = False) -> str | None:
+    """The ``source`` an existing index was built from (``None``: no index)."""
+    path = index_path(data, name, mini)
+    if not path.is_file():
+        return None
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("source"))
+    except ValueError:
+        return None
+
+
+def raw_dir(data: Path, name: str, mini: bool = False) -> Path:
+    return dataset_dir(data, name, mini) / "raw"
+
+
+def image_root(data: Path, name: str, mini: bool = False) -> Path:
+    """The folder an index's ``file`` paths are relative to: ``raw/``, or for a local
+    set (the sim farm) the folder in the repository it was indexed from."""
+    source = read_source(data, name, mini) or ""
+    if source.startswith("local:"):
+        return (ROOT / source.removeprefix("local:")).resolve()
+    return raw_dir(data, name, mini)

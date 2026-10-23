@@ -51,6 +51,10 @@ tio = "tio"
 ser = "ser"
 ges = "ges"
 nationella = "nationella"  # Nationella Marktäckedata, the land cover map (fetch_trees.py)
+# Swedish (tools/bench: the image bank's messages, B2-11)
+intervall = "intervall"
+mapp = "mapp"
+licens = "licens"
 
 [default.extend-identifiers]
 # ArduPilot throttle failsafe (B1-07)

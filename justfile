@@ -430,6 +430,17 @@ perf *args:
 
 alias bench := perf
 
+# The image bank for the person detector (tools/bench/README.md). Downloads real aerial
+# pictures with person boxes to <data_dir>/datasets/ only after yes=1; checks every
+# archive's SHA-256 (keys: yes, sets, mini, keep, data)
+bench-fetch *args:
+    PYTHONPATH=tools uv run --no-sync python -m bench.fetch "$@"
+
+# Measure a person detector on the image bank's locked test part; numbers to build/bench/
+# (keys: model, part, sets, mini, limit, data, out, compare)
+bench-detector *args:
+    PYTHONPATH=tools uv run --no-sync python -m bench.eval_detector "$@"
+
 # Download the offline map pack to <data_dir>/tiles/ (keys: site, bbox, maxzoom, name, dry)
 maps-fetch *args:
     uv run --no-sync python tools/maps/fetch.py "$@"
