@@ -25,6 +25,7 @@ from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.gate import GateDecision, StateRef
 from sd_schemas.link import StateSnapshot, StickAxes
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
+from sd_schemas.probmap import PoaHint
 from sd_schemas.safety import LimitCaps, SafetyLimits
 from sd_schemas.sv_commands import OverrideIntent
 
@@ -597,6 +598,7 @@ class Annotation(SdModel):
     created_at: AwareDatetime
     area_m2: float | None
     length_m: float | None = None  # paths only
+    poa_hint: PoaHint | None = None  # areas only: the operator's hint for the map
 
 
 DetectionKind = Literal["target", "context"]
@@ -648,12 +650,15 @@ class AnnotationCreate(SdModel):
     kind: AnnotationKind
     label: str = Field(min_length=1, max_length=40)
     geometry: GeoJsonPoint | GeoJsonPolygon | GeoJsonLineString
+    poa_hint: PoaHint | None = None  # areas only: high, low or excluded on the map
 
     @model_validator(mode="after")
     def _matches_kind(self) -> AnnotationCreate:
         expected = _GEOMETRY_OF[self.kind]
         if self.geometry.get("type") != expected:
             raise ValueError(f"a {self.kind} needs a GeoJSON {expected}")
+        if self.poa_hint is not None and self.kind != "area":
+            raise ValueError("only an area takes a poa_hint")
         if self.kind == "path" and re.fullmatch(PATH_LABEL_PATTERN, self.label) is None:
             raise ValueError("a path is called pa-<n>")
         return self

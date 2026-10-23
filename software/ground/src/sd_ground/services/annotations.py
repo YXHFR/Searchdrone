@@ -63,6 +63,7 @@ async def add(flow: MissionFlow, mission_id: str, body: AnnotationCreate, by: st
         geometry=dict(body.geometry),
         created_by=by,
         now=flow.now(),
+        poa_hint=body.poa_hint,
     )
     if new is None:
         raise FlowError(409, "LABEL_TAKEN", "Namnet används redan på kartan.")
