@@ -512,7 +512,10 @@ class CommanderLoop:
             except GroundError as exc:
                 # The ground station did not answer this turn (a timeout, a restart): the
                 # turn is lost, not the loop. Without this the turn loop ended here and the
-                # AI never woke again (no idle tick, no resume after a hand-back).
+                # AI never woke again (no idle tick, no resume after a hand-back). A
+                # refused token still ends it: that is no passing trouble.
+                if exc.status == 401:
+                    raise
                 log.warning("turen (%s) avbröts, markstationen svarade inte: %s", trigger, exc)
             finally:
                 self._turn_task = None

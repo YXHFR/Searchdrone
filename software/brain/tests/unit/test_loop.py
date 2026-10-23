@@ -354,6 +354,19 @@ async def test_a_turn_the_ground_does_not_answer_leaves_the_loop_running() -> No
         await runner
 
 
+async def test_a_refused_token_still_ends_the_loop() -> None:
+    loop, fg, _ = make_loop(Steps())
+
+    async def situation(mid: str) -> Any:
+        raise GroundError("sd-ground godtar inte befälhavartokenet", 401)
+
+    fg.situation = situation  # type: ignore[method-assign]
+    runner = asyncio.create_task(loop.run_forever())
+    loop.handle_event(fg.operator_message("sök sektor A"))
+    with pytest.raises(GroundError):
+        await asyncio.wait_for(runner, 2)
+
+
 async def test_override_cancels_running_turn() -> None:
     backend = Steps(5.0, say("Stoppat. Drönaren står still."))
     loop, fg, _ = make_loop(backend)

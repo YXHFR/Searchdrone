@@ -53,7 +53,7 @@ def _vehicle(
         gnss_ok=bool(t is not None and t.gps_fix_type >= 3 and t.gps_satellites >= _MIN_SATS),
         link_ok=sdlink_up,
         manual_control=bool(
-            (mav is not None and mav.manual) or (snapshot is not None and snapshot.manual_control)
+            (mav is not None and mav.by_hand) or (snapshot is not None and snapshot.manual_control)
         ),
     )
 

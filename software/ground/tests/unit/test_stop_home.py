@@ -474,6 +474,28 @@ async def test_takeover_without_an_ack_loiters_after_the_wait() -> None:
         assert _takeover_outcome(s)["paths"]["sdlink"] == "sent"
 
 
+async def test_a_waiting_takeover_already_counts_as_by_hand() -> None:
+    """From the click on: the onboard side may end the AI's order before its ack (and
+    before its snapshot shows the take-over), so the ground's picture says the pilot has
+    the drone while LOITER waits, and the AI's idle turn and the gate see it."""
+    async with stack() as s:
+        s.sink.acks = False
+        s.fly()
+        await s.run(0.5)
+        s.actions.takeover(VID, client_action_id="t-wait", by=PILOT)
+        await s.clock.run_for(0.01, step=0.01)  # the MAVLink thread took it, no tick yet
+        snap = s.core.snapshot()
+        assert snap is not None and snap.takeover_pending and snap.by_hand
+        assert not snap.manual  # no sticks yet: LOITER waits for the ack
+        await s.run(TAKEOVER_ACK_WAIT_S + 0.5)
+        snap = s.core.snapshot()
+        assert snap is not None and snap.manual and not snap.takeover_pending and snap.by_hand
+        s.actions.handback(VID, client_action_id="h-wait", by=PILOT)
+        await s.run(0.2)
+        snap = s.core.snapshot()
+        assert snap is not None and not snap.by_hand
+
+
 async def test_takeover_without_sdlink_loiters_at_once() -> None:
     async with stack(sink_up=False) as s:
         s.fly()
