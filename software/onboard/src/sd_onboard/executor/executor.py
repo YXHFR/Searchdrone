@@ -1345,10 +1345,15 @@ class Executor:
             mine = {o.keepout_id: d for d, (o, _) in self.local_keepouts.items()}
             merged = merge_local(k, [o for o, _ in self.local_keepouts.values()], plane)
             if merged is not None:
-                # The same person again: one cylinder that covers both, as a new one (the
-                # reflex lets a drone inside it leave), its hand-over counted from now.
+                # The same person again: one cylinder that covers both, as a new one, its
+                # hand-over counted from now. The reflex treats it as the old one: a drone
+                # that came outside the old one is not let through the grown one.
                 old, grown = merged
                 self.local_keepouts[mine[old.keepout_id]] = (grown, now)
+                if old.keepout_id in self._keepouts_seen:
+                    self._keepouts_seen.add(grown.keepout_id)
+                if old.keepout_id in self._keepouts_through:
+                    self._keepouts_through.add(grown.keepout_id)
                 self._keepouts_changed = True
                 self.emit(
                     "keepout_merged",
@@ -2126,12 +2131,13 @@ class Executor:
         along a straight leg that goes deeper into none of them and enters no other,
         inside the charter's area (``keepout_reflex.way_out``), with the battery for the
         leg, the flight home after it and the reserve. None when the drone is in no
-        cylinder, a limit monitor holds it (its hold is never left for the find) or
-        there is no such way: it hovers where it is."""
+        cylinder, a limit monitor is active or holds it (its hold is never left for the
+        find), the find move's deadline has passed or there is no such way: it hovers
+        where it is."""
         find, charter, plane = self.link_rule.plan, self.charter, self.plane()
         if find is None or charter is None or plane is None:
             return None
-        if self.limits.active() or self._find_move_late():
+        if self.limits.active() or self.hold_reason == "limit" or self._find_move_late():
             return None
         v = self.vehicle_state()
         here = plane.xy(v.lat, v.lon)

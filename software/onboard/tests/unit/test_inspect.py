@@ -397,6 +397,34 @@ async def test_repeated_detections_of_one_person_merge_into_one_cylinder() -> No
         assert len(r.ex.local_keepouts) == 2
 
 
+async def test_a_merged_cylinder_holds_a_goto_short_of_the_person() -> None:
+    """A goto past the drone's own cylinder, clear of it. The same person seen again,
+    less sure: the grown cylinder now holds the drone, which came outside the old one, so
+    it is not let through. The drone hovers, never deeper into the grown one."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        r.ex.on_detections([detection(50, 120, 0.9, sigma=10.0)])
+        ((old, _),) = r.ex.local_keepouts.values()
+        lat, lon = at(0, 180)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 5}), 1)
+        await r.until(lambda: xy(r)[1] >= 90.0, 120)
+        assert r.ex.state == S.TRANSIT
+        r.ex.on_detections([detection(35, 108, 0.9, sigma=25.0)])
+        ((grown, _),) = r.ex.local_keepouts.values()
+        assert grown.keepout_id != old.keepout_id
+        centre = PLANE.xy(grown.lat, grown.lon)
+        assert math.dist(xy(r), centre) < grown.radius_m
+        assert math.dist(xy(r), PLANE.xy(old.lat, old.lon)) > old.radius_m
+        start = len(r.fc.track)
+        await r.until(lambda: r.ex.state == S.HOLD, 20)
+        assert r.ex.hold_reason == "limit"
+        assert "executor.keepout_hold" in r.up.kinds()
+        await r.run(5)
+        dists = [math.dist(p, centre) for p in track_xy(r, start)]
+        assert min(dists) >= dists[0] - 3.0  # the brake, no deeper
+
+
 def test_merge_local_geometry() -> None:
     old = keepout(0, 0, 31.0, source="detection")
     # Too far apart, or one would grow past the largest radius: no merge.

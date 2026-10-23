@@ -703,9 +703,13 @@ async def test_a_person_seen_under_the_drone_during_the_find_move_is_left_first(
         assert r.ex.link_rule.phase == P.FIND_HOVER
 
 
-async def test_the_find_rule_starting_inside_a_cylinder_leaves_it_first(tmp_path: Path) -> None:
+@pytest.mark.parametrize("limit_hold", [False, True])
+async def test_the_find_rule_starting_inside_a_cylinder_leaves_it_first(
+    tmp_path: Path, limit_hold: bool
+) -> None:
     """Hovering inside a candidate's cylinder when the link goes (the way to the find's
-    hover point would go deeper): the drone leaves straight out, then hovers there."""
+    hover point would go deeper): the drone leaves straight out, then hovers there. Not
+    from a limit's hold (its monitor may have gone quiet since): it stays."""
     find = keepout(east=0, north=110, radius_m=30.0)
     cand = keepout(east=0, north=40, radius_m=30.0, source="candidate")
     async with rig() as r:
@@ -719,8 +723,17 @@ async def test_the_find_rule_starting_inside_a_cylinder_leaves_it_first(tmp_path
         centre = PLANE.xy(cand.lat, cand.lon)
         before = math.dist(_xy(r), centre)
         assert before < cand.radius_m
+        if limit_hold:
+            r.ex.hold_reason = "limit"
         start = len(r.fc.track)
         r.link = False
+        if limit_hold:
+            await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+            await r.run(3)
+            assert "executor.find_move_keepout_exit" not in r.up.kinds()
+            assert r.ex.state == S.HOLD
+            assert math.dist(_xy(r), centre) == pytest.approx(before, abs=1.0)
+            return
         await r.until(lambda: "executor.find_move_keepout_exit" in r.up.kinds(), 20)
         await r.until(lambda: r.ex.state == S.HOLD, 20)
         assert r.ex.hold_reason == "find_hold" and r.ex.link_rule.phase == P.FIND_HOVER
