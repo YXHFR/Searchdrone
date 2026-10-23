@@ -130,6 +130,20 @@ async def test_budget_cap(budget: CloudBudget, store: FakeStore) -> None:
     assert (await budget.reserve("commander", req(mission=OTHER_MISSION))).granted
 
 
+async def test_exhausted_refuses_smaller_calls(budget: CloudBudget) -> None:
+    """A large call that does not fit makes the mission exhausted, and then a smaller one
+    that would fit is refused too: the panel's "no cloud calls" holds."""
+    g = await budget.reserve("search", req(90_000))
+    await budget.commit("search", done(g.reservation_id, 90_000))
+    big = await budget.reserve("commander", req(20_000))
+    assert not big.granted and big.reason == "MISSION_CAP"
+    assert budget.status(MISSION).state == "exhausted"
+    small = await budget.reserve("search", req(1_000))
+    assert not small.granted and small.reason == "MISSION_CAP"
+    await budget.set_mission_cap(MISSION, 2.0, "operator:pilot")
+    assert (await budget.reserve("search", req(1_000))).granted
+
+
 async def test_day_cap_counts_both_processes(budget: CloudBudget) -> None:
     for mission in (MISSION, OTHER_MISSION, None):
         for process in ("search", "commander"):

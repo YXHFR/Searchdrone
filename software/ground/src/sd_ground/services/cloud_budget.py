@@ -285,11 +285,15 @@ class CloudBudget:
             day = self._today()
             if mission_id is not None:
                 self._active_mission = mission_id
-            if self.day_sek(day) + est > self.day_cap():
+            # Once a scope is full nothing more goes, a smaller call neither: "exhausted"
+            # on the panel means no cloud calls, until the pilot raises the cap (or the
+            # day ends).
+            if f"day:{day}" in self._full or self.day_sek(day) + est > self.day_cap():
                 self._full.add(f"day:{day}")
                 grant = self._deny("DAY_CAP", est, self._remaining(mission_id))
             elif mission_id is not None and (
-                self.mission_sek(mission_id) + est > self.mission_cap(mission_id)
+                mission_id in self._full
+                or self.mission_sek(mission_id) + est > self.mission_cap(mission_id)
             ):
                 self._full.add(mission_id)
                 grant = self._deny("MISSION_CAP", est, self._remaining(mission_id))
@@ -361,6 +365,8 @@ class CloudBudget:
                 )
             except Exception as exc:  # the sum in memory counts it all the same
                 log.warning("cloud_budget.write_failed", error=type(exc).__name__)
+            if actual < entry.est_sek:
+                self._freed(entry)
             await self._notify(entry.mission_id)
             return BudgetCommitted(actual_sek=actual)
 
@@ -377,7 +383,16 @@ class CloudBudget:
                 await self._write(rid, entry)
             except Exception as exc:
                 log.warning("cloud_budget.write_failed", error=type(exc).__name__)
+            self._freed(entry)
+            await self._notify(entry.mission_id)
             return "ok"
+
+    def _freed(self, entry: _Entry) -> None:
+        """A booking below its estimate (or a release) gave room back: the scopes it was
+        reserved in are no longer full; the next call is measured against the sums."""
+        self._full.discard(f"day:{entry.day}")
+        if entry.mission_id is not None:
+            self._full.discard(entry.mission_id)
 
     async def set_mission_cap(self, mission_id: str, cap_sek: float, by: str) -> CloudBudgetStatus:
         """The pilot's new cap for the mission (logged as an event; never above the outer

@@ -94,6 +94,7 @@ async def _run(args: argparse.Namespace, token: str, cfg: SearchConfig, key: str
         await service.run(stop, poll_s=args.poll_s)
     finally:
         cascade.cancel()
+        await cascade.drain()  # the cancelled calls book their reservations first
         for c in closers:
             await c.aclose()
         await client.aclose()

@@ -269,6 +269,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 40ch;
+  min-width: 0;
+  flex: 0 1 auto; /* gives way to the menu on a phone */
 }
 .budget-notice[data-tone="bad"] {
   border-color: var(--c-bad);

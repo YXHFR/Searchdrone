@@ -8,8 +8,9 @@ queue takes nothing new (the candidate is offered again on its next change).
 
 When the cloud fails (no network, a timeout, a server error) or the budget refuses, the
 matching pauses: running calls finish, nothing new is sent, and the cloud is tried again
-after ``retry_after_s``. The heartbeat then says ``down`` and the panel shows that only
-the code assesses. Without a cloud engine the state is ``off``.
+after ``retry_after_s``. The heartbeat says ``down`` (and the panel that only the code
+assesses) until a call gets through again, retries refused by the budget included.
+Without a cloud engine the state is ``off``.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ class Cascade:
     retry_after_s: float = RETRY_AFTER_S
     monotonic: Callable[[], float] = time.monotonic
     paused_until: float | None = None
+    down: bool = False  # from a pause until a call gets through again
     results: list[MatchResult] = field(default_factory=list[MatchResult])
     _pending: dict[str, asyncio.Task[None]] = field(default_factory=dict[str, asyncio.Task[None]])
     _slots: asyncio.Semaphore | None = None
@@ -71,7 +73,7 @@ class Cascade:
     def state(self) -> Literal["off", "ok", "down"]:
         if self.engine is None:
             return "off"
-        return "down" if self.paused else "ok"
+        return "down" if self.down or self.paused else "ok"
 
     @property
     def paused(self) -> bool:
@@ -125,9 +127,14 @@ class Cascade:
                 else:  # this candidate's crops or answer: not asked again until they change
                     log.warning("molnbedömningen misslyckades (%s): %s", exc.kind, exc)
                 return
+            except Exception:  # a bug in the engine: logged, the search goes on
+                log.exception("molnbedömningen kraschade")
+                return
+        self.down = False
         self.results.append(MatchResult(req.mission_id, req.candidate_id, key, a))
 
     def _pause(self, exc: ModelError) -> None:
+        self.down = True
         if self.paused_until is None:
             why = "budgeten" if isinstance(exc, BudgetDeniedError) else exc.kind
             log.warning(

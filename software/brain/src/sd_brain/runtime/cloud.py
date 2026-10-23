@@ -18,6 +18,7 @@ caps.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -25,6 +26,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from pydantic import ValidationError
 
 from sd_brain.config import CloudConfig
 from sd_brain.runtime.base import (
@@ -74,6 +76,7 @@ class CloudModelRuntime:
         self._mono = monotonic
         self.budget = budget
         self._budget_context = budget_context
+        self._settling: set[asyncio.Task[None]] = set()  # bookings after a cancel
 
     @property
     def configured(self) -> bool:
@@ -117,19 +120,18 @@ class CloudModelRuntime:
             await self._settle_failed(reservation, exc)
             raise
         except BaseException:
-            await self._settle_failed(reservation, None)
+            # Cancelled (a turn timeout, the operator): book it in the background, so the
+            # cancel is not held up by the ground station.
+            task = asyncio.ensure_future(self._settle_failed(reservation, None))
+            self._settling.add(task)
+            task.add_done_callback(self._settling.discard)
             raise
         reply.engine = "cloud"
         reply.model_id = reply.model_id or model
         if reservation is not None and self.budget is not None:
             booked = await self.budget.commit(
-                BudgetCommit.model_validate(
-                    {
-                        "reservation_id": reservation[0],
-                        "prompt_tokens": reply.prompt_tokens,
-                        "completion_tokens": reply.completion_tokens,
-                        "cost_usd": reply.cost_usd,
-                    }
+                _commit(
+                    reservation[0], reply.prompt_tokens, reply.completion_tokens, reply.cost_usd
                 )
             )
             reply.cost_sek = booked.actual_sek if booked is not None else None
@@ -146,8 +148,8 @@ class CloudModelRuntime:
         if self.budget is None:
             return None
         prompt_tokens, images = estimate_prompt_tokens(messages)
-        grant = await self.budget.reserve(
-            BudgetReserve.model_validate(
+        try:
+            req = BudgetReserve.model_validate(
                 {
                     "purpose": ctx.purpose,
                     "mission_id": ctx.mission_id,
@@ -157,7 +159,9 @@ class CloudModelRuntime:
                     "image_count": images,
                 }
             )
-        )
+        except ValidationError:  # a request the budget cannot price is not sent
+            raise BudgetDeniedError("ogiltig reservation") from None
+        grant = await self.budget.reserve(req)
         if not grant.granted or grant.reservation_id is None:
             raise BudgetDeniedError(grant.reason or "nekad")
         return str(grant.reservation_id), prompt_tokens
@@ -172,14 +176,13 @@ class CloudModelRuntime:
             return
         rid, prompt_tokens = reservation
         never_billed = exc is not None and exc.kind == "http_error"
-        if never_billed:
-            await self.budget.release(rid)
-        else:
-            await self.budget.commit(
-                BudgetCommit.model_validate(
-                    {"reservation_id": rid, "prompt_tokens": prompt_tokens, "completion_tokens": 0}
-                )
-            )
+        try:
+            if never_billed:
+                await self.budget.release(rid)
+            else:
+                await self.budget.commit(_commit(rid, prompt_tokens, 0, None))
+        except Exception as err:  # unbooked, it expires at its estimate on the ground
+            log.warning("cloud_budget_settle_failed: %s", type(err).__name__)
 
     async def chat(
         self,
@@ -214,3 +217,13 @@ class CloudModelRuntime:
                 raise
             log.warning("huvudmodellen svarade fel (%s); reservmodellen tar över", exc.kind)
         return await self._call(key, client, fallback, *args, left, sampling, ctx, response_format)
+
+
+def _commit(rid: str, prompt: int, completion: int, cost_usd: float | None) -> BudgetCommit:
+    """The booking; a provider price out of range is dropped (the ground prices the
+    tokens instead), never an error that would stop the caller."""
+    body = {"reservation_id": rid, "prompt_tokens": prompt, "completion_tokens": completion}
+    try:
+        return BudgetCommit.model_validate(body | {"cost_usd": cost_usd})
+    except ValidationError:
+        return BudgetCommit.model_validate(body)

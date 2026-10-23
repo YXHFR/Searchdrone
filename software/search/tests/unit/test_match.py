@@ -267,10 +267,11 @@ async def test_cascade_offline(fail: str) -> None:
     assert not cascade.submit(_request(profile(), n=1), (1, ("b",)))
     assert len(cloud.requests) == sent
     clock.t += 61
+    assert cascade.state == "down"  # down until a call gets through, not just retried
     cloud.fail, budget.cap_sek = None, 100.0
-    assert cascade.state == "ok"
     assert cascade.submit(_request(profile(), n=1), (1, ("c",)))
     await cascade.drain()
+    assert cascade.state == "ok"
     (r,) = cascade.take()
     assert r.assessment is not None and r.assessment.engine == "fast"
 

@@ -18,11 +18,13 @@ import pytest
 from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flow_rig import H, Rig, rig  # pyright: ignore[reportMissingImports]
 
 from sd_ground.db.cloud_usage import CloudUsageRepo
 from sd_ground.services.cloud_budget import CloudBudget, load_prices
+from sd_schemas.base import new_id
 
 if TYPE_CHECKING:
     from conftest import Db
@@ -151,3 +153,31 @@ async def test_pilot_cap_survives_restart(r: Rig) -> None:
     r.g.cloud_budget = budget(r)
     status = (await r.panel.get("/api/v1/cloud-budget", params={"mission_id": mid})).json()
     assert status["mission_sek"] == pytest.approx(0.105)
+
+
+async def test_mission_cap_route_refusals(r: Rig) -> None:
+    """Only a pilot sets the cap, of a mission that exists and is not closed."""
+    from test_search_profile import observer_token  # pyright: ignore[reportMissingImports]
+
+    mid = await r.open_mission()
+    url = f"/api/v1/missions/{mid}/cloud-budget"
+    res = await r.panel.put(
+        f"/api/v1/missions/{new_id()}/cloud-budget", json={"cap_sek": 5}, headers=H
+    )
+    assert res.status_code == 404
+    res = await r.panel.put(url, json={"cap_sek": 5000}, headers=H)
+    assert res.status_code == 422  # above the outer cap
+    observer = await observer_token(r)
+    res = await r.panel.put(
+        url, json={"cap_sek": 5}, headers=H | {"Authorization": f"Bearer {observer}"}
+    )
+    assert res.status_code == 403
+    res = await r.panel.get("/api/v1/cloud-budget", headers={"Authorization": f"Bearer {observer}"})
+    assert res.status_code == 200  # an observer may read it
+    assert r.g.repo is not None
+    async with r.g.repo.engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE missions SET status = 'CLOSED' WHERE id = CAST(:m AS uuid)"), {"m": mid}
+        )
+    res = await r.panel.put(url, json={"cap_sek": 5}, headers=H)
+    assert res.status_code == 409
