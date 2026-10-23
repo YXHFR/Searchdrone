@@ -15,6 +15,11 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
   the survey ends ``done``.
 * ``test_orbit_around_a_find``: an orbit around a confirmed find flies a ring outside
   its cylinder and hovers when done; STOP during a second orbit brakes and holds.
+* ``test_a_person_seen_during_the_find_move``: the radio is cut near a confirmed find
+  and the drone sees a person while it flies the link-loss find move. Ahead on its
+  way: it hovers short of the new cylinder. Right below it (the drone inside the new
+  cylinder, its leg heading deeper): it first leaves the cylinder straight out, then
+  hovers outside it. Either way the find hover holds there, never inside a cylinder.
 """
 
 from __future__ import annotations
@@ -40,6 +45,9 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
 )
 from test_sc_emergency import stopped_and_holding  # pyright: ignore[reportMissingImports]
 from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
+    back_and_land,
+    find_ahead,
+    north_m,
     onboard_events,
     survey_box,
     surveying,
@@ -47,7 +55,8 @@ from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
 )
 from test_sk_inspect import person  # pyright: ignore[reportMissingImports]
 
-from sd_safety.constants import PERSON_KEEPOUT_M
+from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
+from sd_safety.constants import FIND_MOVE_DEADLINE_S, LINK_LOSS_DETECT_S, PERSON_KEEPOUT_M
 from sd_safety.targets import Plane, distance_m
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
@@ -59,6 +68,8 @@ CLEAR_M = 15.0  # how far outside the cylinder the drone is when the find comes
 ORBIT_M = 50.0  # the ring's radius: more than the cylinder plus the orbit's 10 m
 RING_SLACK_M = 10.0  # the flown ring's distance from its waypoint polygon and overshoot
 SKILLS = ["orbit"]
+FIND_LOITER_BY_S = LINK_LOSS_DETECT_S + FIND_MOVE_DEADLINE_S + 0.5  # LOITER by then
+FIND_RADIUS_M = PERSON_KEEPOUT_M + 5.0  # ``find_ahead``'s find (its sigma is 5 m)
 
 
 def _inside(sc: Scenario, since: float, centre: tuple[float, float]) -> list[Any]:
@@ -214,4 +225,54 @@ async def test_orbit_around_a_find(sim: Any, migrated_db: Any, tmp_path: Path) -
         assert (await sc.press("stop")).status_code == 202
         await stopped_and_holding(sc, t0)
         assert (await sc.press("resume")).status_code == 202
+        await _land(sc)
+
+
+@pytest.mark.parametrize("seen", ["ahead", "below"])
+@pytest.mark.budget_s(420)
+async def test_a_person_seen_during_the_find_move(
+    sim: Any, migrated_db: Any, tmp_path: Path, seen: str
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
+        await sc.airborne()
+        ex = sc.r.onboard.ex
+        flat, flon, _, _ = await find_ahead(sc)
+        sc.radio(mavlink=True, sdlink=False)
+        down = time.monotonic()
+        try:
+            await sc.until(
+                lambda: ex.active is not None and ex.active.skill == INTERNAL_FIND_GOTO,
+                LINK_LOSS_DETECT_S + 3.0,
+                "the find move",
+            )
+            plane = Plane(*sc.r.home)
+            st = sc.sim.harness.state
+            e, n = plane.xy(st.lat, st.lon)
+            # Ahead: on the way to the hover point, a little past it. Below: 6 m ahead of
+            # the drone, so the new cylinder holds it and the leg heads deeper.
+            centre = plane.latlon(e, n + (6.0 if seen == "below" else 45.0))
+            since = time.monotonic()
+            ex.on_detections([person(centre)])
+            ((k, _),) = ex.local_keepouts.values()
+            await sc.until(lambda: sc.fc_mode() == "LOITER", FIND_LOITER_BY_S, "find hover")
+            assert time.monotonic() - down <= FIND_LOITER_BY_S
+            assert str(ex.state) == "HOLD" and ex.hold_reason == "find_hold"
+            await sc.until(lambda: st.ground_speed_ms < 0.5, 15, "still")
+            await sc.hold_for(10.0, lambda: sc.fc_mode() == "LOITER", "the find hover holds")
+            track = [s for s in sc.track if s.t >= since and s.armed]
+            dists = [distance_m(s.lat, s.lon, k.lat, k.lon) for s in track]
+            if seen == "ahead":
+                assert min(dists) >= k.radius_m, min(dists)
+            else:
+                assert dists[0] < k.radius_m  # it came with the drone inside
+                out = next(i for i, d in enumerate(dists) if d >= k.radius_m)
+                assert all(d >= k.radius_m for d in dists[out:]), "back into the cylinder"
+                # Out, not deeper: no closer than braking from the find move's speed.
+                assert min(dists) >= dists[0] - 8.0, (dists[0], min(dists))
+            assert all(distance_m(s.lat, s.lon, flat, flon) >= FIND_RADIUS_M for s in track)
+            assert north_m(sc) < 150.0
+        finally:
+            await back_and_land(sc)
+        kinds = {"ahead": "find_move_keepout", "below": "find_move_keepout_exit"}
+        await until_event(sc, kinds[seen])
         await _land(sc)

@@ -52,10 +52,12 @@ from sd_onboard.executor.keepout_reflex import (
     blocks_find_move,
     contained,
     entry_m,
+    merge_local,
     remaining,
     route_clear,
     stop_m,
     survey_run,
+    way_out,
 )
 from sd_onboard.executor.limits import (
     INTERNAL_ALT_GOTO,
@@ -110,7 +112,7 @@ from sd_safety.constants import (
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
-from sd_safety.keepout import circles
+from sd_safety.keepout import circles, xy_route_violation
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -122,6 +124,7 @@ from sd_safety.limits import (
     fc_area_max_from_home_m,
 )
 from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, KEEPOUT_EXEMPT, MODE_A_EXEMPT
+from sd_safety.rules import route_battery_pct
 from sd_safety.targets import Plane, distance_m, polygon_from_geojson
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
@@ -210,6 +213,8 @@ _WARNING: Final = frozenset(
         "find_hold_started",
         "find_move_deadline",
         "find_move_keepout",
+        "find_move_keepout_exit",
+        "find_move_exit_refused",
         "find_hold_ended",
         "gcs_lost_ignored_find",
         "gnss_degraded",
@@ -402,6 +407,9 @@ class Executor:
         self._gcs_hold_rc: int | None = None  # the RC mode switch at the last operator notice
         self._taken_by: str | None = None  # who took over from the executor, for L-FIND
         self._find_record: dict[str, Any] | None = None  # the running find hover's record
+        # Where the link-loss find move flies (lat, lon), and whether it leaves cylinders.
+        self._find_goal: tuple[float, float] | None = None
+        self._find_leaving = False
         self.pilot = PilotTracker()
         self.charter: MissionCharter | None = None
         self.hard_limits: SafetyLimits = DEFAULT_LIMITS
@@ -1313,7 +1321,8 @@ class Executor:
 
     def on_detections(self, detections: Sequence[GeoDetectionMsg]) -> None:
         """Target detections from perception: one cylinder for each at least
-        ``KEEPOUT_SCORE_MIN`` sure, unless one in force already holds it."""
+        ``KEEPOUT_SCORE_MIN`` sure, unless one in force already holds it. One that mostly
+        overlaps a local cylinder grows that one instead (``keepout_reflex.merge_local``)."""
         plane = self.plane()
         if plane is None:
             return
@@ -1330,6 +1339,19 @@ class Executor:
                 source_id=d.detection_id,
             )
             if contained(k, self.keepouts_in_force(), plane):
+                continue
+            mine = {o.keepout_id: d for d, (o, _) in self.local_keepouts.items()}
+            merged = merge_local(k, [o for o, _ in self.local_keepouts.values()], plane)
+            if merged is not None:
+                # The same person again: one cylinder that covers both, as a new one (the
+                # reflex lets a drone inside it leave), its hand-over counted from now.
+                old, grown = merged
+                self.local_keepouts[mine[old.keepout_id]] = (grown, now)
+                self._keepouts_changed = True
+                self.emit(
+                    "keepout_merged",
+                    {"replaces": str(old.keepout_id), **grown.model_dump(mode="json")},
+                )
                 continue
             if len(self.local_keepouts) >= LOCAL_KEEPOUTS_MAX:
                 # No room to keep this person out of the route: a search or a move stops.
@@ -1621,23 +1643,37 @@ class Executor:
 
     def _find_move_reflex(self) -> None:
         """The link-loss find move meets a cylinder that came on the way (a person the
-        drone sees as it flies): it ends its stop short of it, in the find hover there."""
-        find, plane = self.link_rule.plan, self.plane()
-        if find is None or plane is None or self.state != S.TRANSIT:
+        drone sees as it flies): it ends its stop short of it, in the find hover there.
+        One that came with the drone inside, the leg heading deeper or ending in it: the
+        drone leaves it first (``_find_hover_here``)."""
+        find, plane, goal = self.link_rule.plan, self.plane(), self._find_goal
+        if find is None or plane is None or goal is None or self.state != S.TRANSIT:
             return
         v = self.vehicle_state()
-        others = [k for k in self.keepouts_in_force() if k.keepout_id != find.keepout_id]
-        route = [plane.xy(v.lat, v.lon), plane.xy(find.hover_lat, find.hover_lon)]
-        entry = entry_m(route, circles(others, plane))
-        if entry is None:
+        # The move to the hover point leaves the find's own cylinder; a way out of
+        # cylinders was planned against all of them.
+        keepouts = self.keepouts_in_force()
+        if not self._find_leaving:
+            keepouts = tuple(k for k in keepouts if k.keepout_id != find.keepout_id)
+        cyl = circles(keepouts, plane)
+        end = plane.xy(*goal)
+        entry = entry_m([plane.xy(v.lat, v.lon), end], cyl)
+        if entry is None and xy_route_violation([end], cyl) is None:
             return
-        if entry > stop_m(v.groundspeed_ms):
+        if entry is not None and entry > stop_m(v.groundspeed_ms):
             self._keepout_watch = True
             return
         self._find_hover_here()
 
     def _find_hover_here(self) -> None:
-        """End the link-loss find move where the drone is: the find hover starts there."""
+        """End the link-loss find move where the drone is: the find hover starts there.
+        Inside a cylinder with a way out, the move leaves it first and hovers there."""
+        out = self._find_way_out()
+        if out is not None:
+            self.emit("find_move_keepout_exit", {"lat": out[0], "lon": out[1]})
+            self._drop_active(stage=None, save_resume=False)
+            self._find_goto(out, leaving=True)
+            return
         action = LimitAction("L-FIND", "hold", "find_hold", "find_move_keepout", {})
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
@@ -2041,9 +2077,11 @@ class Executor:
         if find is None or self.charter is None:
             return
         # Any other cylinder on the way or at the point (a candidate, the drone's own
-        # detection): hover here instead, outside the find's cylinder as it is.
+        # detection): hover here instead, outside the find's cylinder as it is. Inside a
+        # cylinder, leave it first when there is a way out.
         arrived = self.link_rule.phase == LinkLossPhase.FIND_HOVER or self._find_move_blocked()
-        target = self.target_of(Trigger.LIMIT_FIND, find_arrived=arrived)
+        out = self._find_way_out() if arrived else None
+        target = self.target_of(Trigger.LIMIT_FIND, find_arrived=arrived and out is None)
         if isinstance(target, Refusal):
             return
         self._drop_active(stage="superseded", codes=(action.limit,))
@@ -2051,15 +2089,61 @@ class Executor:
             self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
             self._side(self._loiter(SendOrigin.LIMIT))
             return
-        # Yaw: the nose toward the find from the start (the position target carries it),
-        # so the drone arrives facing the find and LOITER keeps that heading.
-        speed = min(FIND_MOVE_SPEED_MS, self.charter.max_speed_ms)
+        self._enter(target, cause=action.limit)
+        if out is not None:
+            self.emit("find_move_keepout_exit", {"lat": out[0], "lon": out[1]})
+            self._find_goto(out, leaving=True)
+        else:
+            self._find_goto((find.hover_lat, find.hover_lon), leaving=False)
+
+    def _find_goto(self, goal: tuple[float, float], *, leaving: bool) -> None:
+        """The internal find goto to ``goal`` (the hover point, or the way out of the
+        cylinders the drone is in), at the find's height. Yaw: the nose toward the find
+        from the start (the position target carries it), so the drone arrives facing the
+        find and LOITER keeps that heading."""
+        find, charter, plane = self.link_rule.plan, self.charter, self.plane()
+        if find is None or charter is None or plane is None:
+            return
+        gx, gy = plane.xy(*goal)
+        fx, fy = plane.xy(find.find_lat, find.find_lon)
+        yaw = find.yaw_deg if not leaving else math.degrees(math.atan2(fx - gx, fy - gy)) % 360
+        speed = min(FIND_MOVE_SPEED_MS, charter.max_speed_ms)
         goto = GotoHandler()
         ctx = self._plan_context(new_id())
-        goto.prepare(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed, yaw_deg=find.yaw_deg)
-        plan = goto_plan(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed)
-        self._enter(target, cause=action.limit)
+        goto.prepare(ctx, goal[0], goal[1], find.alt_m, speed, yaw_deg=yaw)
+        plan = goto_plan(ctx, goal[0], goal[1], find.alt_m, speed)
+        self._find_goal, self._find_leaving = goal, leaving
         self._internal(INTERNAL_FIND_GOTO, goto, plan, SendOrigin.LIMIT)
+
+    def _find_way_out(self) -> tuple[float, float] | None:
+        """For the link-loss find: the point just outside the cylinders the drone is in,
+        along a straight leg that goes deeper into none of them and enters no other,
+        inside the charter's area (``keepout_reflex.way_out``), with the battery for the
+        leg, the flight home after it and the reserve. None when the drone is in no
+        cylinder, a limit monitor holds it (its hold is never left for the find) or
+        there is no such way: it hovers where it is."""
+        find, charter, plane = self.link_rule.plan, self.charter, self.plane()
+        if find is None or charter is None or plane is None:
+            return None
+        if any(name != "L-AI" for name in self.limits.active()):
+            return None
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        area = polygon_from_geojson(charter.area, plane)
+        out = way_out(here, circles(self.keepouts_in_force(), plane), area)
+        if out is None:
+            return None
+        lat, lon = plane.latlon(*out)
+        home = charter.home
+        speed = min(FIND_MOVE_SPEED_MS, charter.max_speed_ms)
+        back_m = distance_m(lat, lon, home.lat, home.lon)
+        need = charter.battery_rtl_pct + route_battery_pct(
+            math.dist(here, out), back_m, speed, find.alt_m
+        )
+        if v.battery_pct is None or v.battery_pct < need:
+            self.emit("find_move_exit_refused", {"battery_pct": v.battery_pct, "needed_pct": need})
+            return None
+        return lat, lon
 
     def _find_move_blocked(self) -> bool:
         find, plane = self.link_rule.plan, self.plane()

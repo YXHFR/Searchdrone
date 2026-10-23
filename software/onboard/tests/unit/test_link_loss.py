@@ -630,3 +630,131 @@ async def test_a_person_seen_during_the_find_move_is_kept_out(
             assert north_of(r) - here < 10.0  # hovers where it saw the person
         assert r.ex.link_rule.phase == P.FIND_HOVER
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+
+
+# --- leaving a cylinder before the find hover ---------------------------------------------
+
+
+def person_at(east: float, north: float, sigma: float = 3.0) -> GeoDetectionMsg:
+    lat, lon = at(east, north)
+    return GeoDetectionMsg(
+        detection_id=new_id(),
+        bbox=BBox(x=1, y=1, w=10, h=10),
+        score=0.9,
+        lat=lat,
+        lon=lon,
+        sigma95_m=sigma,
+        px_size=10.0,
+        crop_inline=True,
+        label="person",
+        source="model",
+    )
+
+
+def _xy(r: Rig) -> tuple[float, float]:
+    return PLANE.xy(r.fc.lat, r.fc.lon)
+
+
+async def _find_move(r: Rig, tmp_path: Path, find: Keepout, seen_north: float) -> None:
+    """Flying north when the link goes; returns once the find move is past ``seen_north``."""
+    r.ex.store = StateStore(tmp_path, r.clock)
+    await r.install(charter())
+    await r.takeoff(40)
+    r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find]), new_id())
+    lat, lon = at(0, 60)
+    await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 3}))
+    await r.until(lambda: north_of(r) >= 15, 60)
+    r.link = False
+    await r.until(lambda: r.ex.active is not None and r.ex.active.skill == INTERNAL_FIND_GOTO, 20)
+    await r.until(lambda: north_of(r) >= seen_north, 20)
+    assert r.ex.active is not None and r.ex.active.skill == INTERNAL_FIND_GOTO
+
+
+@pytest.mark.parametrize("ahead", [6.0, -10.0])
+async def test_a_person_seen_under_the_drone_during_the_find_move_is_left_first(
+    tmp_path: Path, ahead: float
+) -> None:
+    """A person right below the drone during the find move: its new cylinder holds the
+    drone. Ahead of it (the leg would go deeper), or behind it with the hover point still
+    inside: the drone first leaves straight out, never deeper and into no other cylinder
+    (the find's own lies straight out ahead), then hovers outside, in the find hover."""
+    find = keepout(east=0, north=110, radius_m=30.0)
+    async with rig() as r:
+        await _find_move(r, tmp_path, find, 45.0 if ahead > 0 else 55.0)
+        e, n = _xy(r)
+        person = person_at(e, n + ahead)
+        r.ex.on_detections([person])
+        ((k, _),) = r.ex.local_keepouts.values()
+        centre = PLANE.xy(k.lat, k.lon)
+        start = len(r.fc.track)
+        await r.run(0.3)
+        assert "executor.find_move_keepout_exit" in r.up.kinds()
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        await r.run(3)
+        track = [PLANE.xy(la, lo) for la, lo, _ in r.fc.track[start:]]
+        dists = [math.dist(p, centre) for p in track]
+        # No deeper than the brake while the reflex turns it, out, and never back in.
+        assert min(dists) >= dists[0] - 2.0
+        out = next(i for i, d in enumerate(dists) if d >= k.radius_m)
+        assert all(d >= k.radius_m for d in dists[out:])
+        f = PLANE.xy(find.lat, find.lon)
+        assert all(math.dist(p, f) >= find.radius_m for p in track)
+        assert r.ex.link_rule.phase == P.FIND_HOVER
+
+
+async def test_the_find_rule_starting_inside_a_cylinder_leaves_it_first(tmp_path: Path) -> None:
+    """Hovering inside a candidate's cylinder when the link goes (the way to the find's
+    hover point would go deeper): the drone leaves straight out, then hovers there."""
+    find = keepout(east=0, north=110, radius_m=30.0)
+    cand = keepout(east=0, north=40, radius_m=30.0, source="candidate")
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        lat, lon = at(0, 30)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 8}))
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find, cand]), new_id())
+        centre = PLANE.xy(cand.lat, cand.lon)
+        before = math.dist(_xy(r), centre)
+        assert before < cand.radius_m
+        start = len(r.fc.track)
+        r.link = False
+        await r.until(lambda: "executor.find_move_keepout_exit" in r.up.kinds(), 20)
+        await r.until(lambda: r.ex.state == S.HOLD, 20)
+        assert r.ex.hold_reason == "find_hold" and r.ex.link_rule.phase == P.FIND_HOVER
+        await r.run(3)
+        dists = [math.dist(PLANE.xy(la, lo), centre) for la, lo, _ in r.fc.track[start:]]
+        assert min(dists) >= before - 0.5
+        assert dists[-1] >= cand.radius_m
+
+
+@pytest.mark.parametrize("why", ["battery", "no_way", "limit"])
+async def test_no_way_out_of_the_cylinder_hovers_where_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, why: str
+) -> None:
+    """Inside a new cylinder during the find move, but no way out: the battery would not
+    last for the leg, the flight home and the reserve, no straight leg out stays clear
+    and inside the charter, or a limit monitor is active (its hold is never left). The
+    drone hovers where it is, as before."""
+    if why == "no_way":
+        monkeypatch.setattr("sd_onboard.executor.executor.way_out", lambda *_a: None)
+    find = keepout(east=0, north=110, radius_m=30.0)
+    async with rig() as r:
+        await _find_move(r, tmp_path, find, 45.0)
+        if why == "battery":
+            r.fc.battery_pct = 15.5  # above the return-home limit, short of the way out
+            await r.run(0.5)
+        if why == "limit":
+            monkeypatch.setattr(r.ex.limits, "active", lambda: ["L-AI", "L-RANGE"])
+        e, n = _xy(r)
+        r.ex.on_detections([person_at(e, n + 6.0)])
+        await r.run(0.3)
+        assert "executor.find_move_keepout_exit" not in r.up.kinds()
+        if why == "battery":
+            assert "executor.find_move_exit_refused" in r.up.kinds()
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        await r.run(3)
+        assert distance_m(r.fc.lat, r.fc.lon, *PLANE.latlon(e, n)) < 10.0

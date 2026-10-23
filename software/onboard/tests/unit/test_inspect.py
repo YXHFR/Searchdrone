@@ -13,10 +13,17 @@ from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
 from sd_onboard.executor import executor as executor_module
-from sd_onboard.executor.keepout_reflex import LOCAL_KEEPOUTS_MAX, entry_m, stop_m
+from sd_onboard.executor.keepout_reflex import (
+    LOCAL_KEEPOUTS_MAX,
+    entry_m,
+    merge_local,
+    stop_m,
+    way_out,
+)
 from sd_onboard.skills import survey_sector
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
+from sd_safety.targets import polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.gate import GateContext, GateDecision, GateRequest
@@ -356,6 +363,76 @@ async def test_own_detections_make_cylinders_until_the_ground_takes_over() -> No
         assert r.ex.keepouts_in_force() == (ground,)
 
 
+def _covers(big: Keepout, small: Keepout) -> bool:
+    c = PLANE.xy(big.lat, big.lon)
+    return math.dist(c, PLANE.xy(small.lat, small.lon)) + small.radius_m <= big.radius_m
+
+
+async def test_repeated_detections_of_one_person_merge_into_one_cylinder() -> None:
+    """One person seen again and again, the position a few metres off each time: one
+    local cylinder that grows to cover every detection's, never smaller. A person farther
+    off gets a cylinder of their own."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        first = detection(100, 100, 0.9, sigma=5.0)
+        r.ex.on_detections([first])
+        ((k0, _),) = r.ex.local_keepouts.values()
+        seen = [k0]
+        for i in range(60):
+            dx, dy = 8.0 * math.cos(i), 8.0 * math.sin(i)
+            r.ex.on_detections([detection(100 + dx, 100 + dy, 0.9, sigma=5.0)])
+            ((k, _),) = r.ex.local_keepouts.values()
+            seen.append(k)
+        assert r.up.kinds().count("executor.keepout_created") == 1
+        assert "executor.keepout_merged" in r.up.kinds()
+        final = seen[-1]
+        # Each step covers the one before (so every detection's circle), with a new id.
+        for a, b in pairwise(seen):
+            if a != b:
+                assert _covers(b, a) and a.keepout_id != b.keepout_id
+        assert final.source == "detection" and final.radius_m < 50.0
+        merged = [d for t, _, d in r.up.events if t == "executor.keepout_merged"]
+        assert merged[-1]["keepout_id"] == str(final.keepout_id)
+        r.ex.on_detections([detection(160, 100, 0.9, sigma=5.0)])
+        assert len(r.ex.local_keepouts) == 2
+
+
+def test_merge_local_geometry() -> None:
+    old = keepout(0, 0, 31.0, source="detection")
+    # Too far apart, or one would grow past the largest radius: no merge.
+    assert merge_local(keepout(16, 0, 31.0, source="detection"), [old], PLANE) is None
+    huge = keepout(0, 0, 480.0, source="detection")
+    assert merge_local(keepout(100, 0, 480.0, source="detection"), [huge], PLANE) is None
+    # The new one holds the old one: it is the new one, a little larger.
+    wide = keepout(5, 0, 50.0, source="detection")
+    found = merge_local(wide, [old], PLANE)
+    assert found is not None and found[0] is old
+    assert _covers(found[1], wide) and _covers(found[1], old)
+    assert found[1].radius_m == pytest.approx(50.1)
+    # The old one holds the new one: the old one, a little larger.
+    small = keepout(2, 0, 10.0, source="detection")
+    found = merge_local(small, [old], PLANE)
+    assert found is not None and found[1].radius_m == pytest.approx(31.1)
+    # The nearest of several.
+    near = keepout(10, 0, 31.0, source="detection")
+    found = merge_local(keepout(12, 0, 31.0, source="detection"), [old, near], PLANE)
+    assert found is not None and found[0] is near
+
+
+def test_way_out_of_cylinders() -> None:
+    area = polygon_from_geojson(square(200.0), PLANE)
+    cyl = [((0.0, 0.0), 30.0), ((0.0, 50.0), 15.0)]
+    assert way_out((40.0, 0.0), cyl, area) is None  # in none
+    out = way_out((0.0, 10.0), cyl, area)
+    assert out is not None
+    # Out of the first, deeper into neither, into no other.
+    assert math.dist(out, cyl[0][0]) > cyl[0][1]
+    assert xy_route_violation([(0.0, 10.0), out], cyl) is None
+    # The charter's area leaves no way out.
+    tight = polygon_from_geojson(square(20.0), PLANE)
+    assert way_out((0.0, 0.0), [((0.0, 0.0), 30.0)], tight) is None
+
+
 async def test_a_full_list_of_own_cylinders_stops_a_search() -> None:
     box = square(60, east=0, north=120)
     async with rig() as r:
@@ -365,10 +442,16 @@ async def test_a_full_list_of_own_cylinders_stops_a_search() -> None:
             r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
         )
         assert r.ex.state == S.SURVEY
-        # Behind the drone, a few metres apart: none holds another, none is on the route.
+        # Behind the drone, 16 m apart: none holds another, none is close enough to merge
+        # with another, none is on the route.
+        side = math.isqrt(LOCAL_KEEPOUTS_MAX - 1) + 1
         r.ex.on_detections(
-            [detection(-140 + 2.8 * i, -90, 0.9, sigma=1.0) for i in range(LOCAL_KEEPOUTS_MAX)]
+            [
+                detection(-80 + 16 * (i % side), -90 - 16 * (i // side), 0.9, sigma=1.0)
+                for i in range(LOCAL_KEEPOUTS_MAX)
+            ]
         )
+        assert len(r.ex.local_keepouts) == LOCAL_KEEPOUTS_MAX
         assert r.ex.state == S.SURVEY
         r.ex.on_detections([detection(140, -90, 0.9)])
         assert "executor.keepouts_full" in r.up.kinds()
@@ -408,9 +491,9 @@ BRAKE_M = 2.0  # how far the drone goes on while the reflex stops it
 
 
 async def test_two_own_cylinders_under_the_drone_the_search_leaves_both() -> None:
-    """Two stills of a person right below: the centres either side of the drone. The way
-    out goes deeper into neither (straight out from the first would go into the second),
-    and the search goes on."""
+    """Two stills of a person right below, too far apart to merge: the centres either side
+    of the drone. The way out goes deeper into neither (straight out from the first would
+    go into the second), and the search goes on."""
     box = square(60, east=0, north=120)
     async with rig() as r:
         await r.install(charter(allowed_skills=SKILLS))
@@ -424,10 +507,10 @@ async def test_two_own_cylinders_under_the_drone_the_search_leaves_both() -> Non
         to = PLANE.xy(ahead.x / 1e7, ahead.y / 1e7)
         d = math.dist(here, to)
         u = ((to[0] - here[0]) / d, (to[1] - here[1]) / d)
-        # One centre just behind, one just ahead: out from the first is into the second.
+        # One centre just behind, one ahead: out from the first is into the second.
         dets = [
             detection(here[0] - u[0], here[1] - u[1], 0.9, 3.0),
-            detection(here[0] + 2 * u[0], here[1] + 2 * u[1], 0.9, 3.0),
+            detection(here[0] + 18 * u[0], here[1] + 18 * u[1], 0.9, 3.0),
         ]
         start = len(r.fc.track)
         r.ex.on_detections(dets)

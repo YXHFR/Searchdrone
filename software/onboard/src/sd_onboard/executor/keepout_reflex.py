@@ -8,24 +8,29 @@ and ``resume``: a ``SurveyRun``) is planned again around the cylinders, through 
 clear of every cylinder and inside the charter. Anything else, or a search with no way
 around, hovers (``KEEPOUT_VIOLATION``). A drone inside a cylinder whose leg already
 leads out of it flies on; one whose leg leads deeper first leaves straight away from the
-centre (``sd_safety.keepout.reroute``).
+centre (``sd_safety.keepout.reroute``). The link-loss find move never ends in a hover
+inside a cylinder while a way out exists (:func:`way_out`).
 
 Local cylinders (from the drone's own detections) give way once a ground install at
 least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
-and while the link is down, they stay. With ``LOCAL_KEEPOUTS_MAX`` of them a further
-detection stops a moving order in a hover.
+and while the link is down, they stay. A detection whose cylinder mostly overlaps a local
+one (:func:`merge_local`) grows that one to cover both, so one person seen again and
+again keeps one cylinder. With ``LOCAL_KEEPOUTS_MAX`` of them a further detection stops a
+moving order in a hover.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from itertools import pairwise
 from typing import Final, Protocol, runtime_checkable
 
 from sd_onboard.skills.base import SkillHandler, SkillPlan
 from sd_onboard.skills.survey_sector import SurveyRun
-from sd_safety.keepout import Circle, circles, xy_route_violation
-from sd_safety.targets import Plane, Xy, polygon_from_geojson
+from sd_safety.keepout import Circle, circles, reroute, xy_route_violation
+from sd_safety.targets import Plane, Polygon, Xy, polygon_from_geojson
+from sd_schemas.base import new_id
 from sd_schemas.charter import MissionCharter
 from sd_schemas.keepout import Keepout, leg_enters
 
@@ -37,10 +42,12 @@ __all__ = [
     "blocks_find_move",
     "contained",
     "entry_m",
+    "merge_local",
     "remaining",
     "route_clear",
     "stop_m",
     "survey_run",
+    "way_out",
 ]
 
 # The orders whose rest is a search to re-plan. ``orbit`` also flies a SurveyRun, but its
@@ -52,6 +59,9 @@ _NOTHING_LEFT_M: Final = 2.0  # closer to the end than this: hovering, not flyin
 _STOP_MARGIN_M: Final = 5.0  # an order is held this far (plus its stop) short of a cylinder
 _STOP_REACT_S: Final = 1.5  # the reflex's tick, the link to the flight controller, LOITER
 _STOP_DECEL_MS2: Final = 2.0  # LOITER's braking, well under ArduCopter's default
+_MERGE_SHARE: Final = 0.5  # centres at most this share of the smaller radius apart: merged
+_MERGE_EPS_M: Final = 0.1  # a merged cylinder grows this much more: rounding never shrinks it
+_KEEPOUT_MAX_M: Final = 500.0  # the largest radius a Keepout may have
 
 
 @runtime_checkable
@@ -138,3 +148,51 @@ def stop_m(speed_ms: float) -> float:
     """How far short of a cylinder a moving order must be held to stop outside it."""
     v = max(0.0, speed_ms)
     return _STOP_MARGIN_M + v * _STOP_REACT_S + v * v / (2.0 * _STOP_DECEL_MS2)
+
+
+def way_out(here: Xy, cyl: list[Circle], area: Polygon) -> Xy | None:
+    """The point just outside every cylinder ``here`` lies in, along a straight leg that
+    goes deeper into none of them and enters no other, inside ``area``
+    (``sd_safety.keepout.reroute``); None when ``here`` is in none or no such leg exists."""
+    way = reroute([here], cyl, area=area)
+    return None if way is None or len(way) < 2 else way[1]
+
+
+def merge_local(
+    k: Keepout, local: Sequence[Keepout], plane: Plane
+) -> tuple[Keepout, Keepout] | None:
+    """The local cylinder ``k`` mostly overlaps (the centres at most ``_MERGE_SHARE`` of
+    the smaller radius apart, the nearest first) and one new cylinder that covers both, or
+    None. The new one is the smallest circle around both (never smaller than either)
+    plus ``_MERGE_EPS_M``; none when that would be larger than a Keepout may be."""
+    c = plane.xy(k.lat, k.lon)
+    near = sorted(
+        (math.dist(c, plane.xy(o.lat, o.lon)), i)
+        for i, o in enumerate(local)
+        if math.dist(c, plane.xy(o.lat, o.lon)) <= _MERGE_SHARE * min(k.radius_m, o.radius_m)
+    )
+    if not near:
+        return None
+    old = local[near[0][1]]
+    centre, radius = _enclose((plane.xy(old.lat, old.lon), old.radius_m), (c, k.radius_m))
+    radius += _MERGE_EPS_M
+    if radius > _KEEPOUT_MAX_M:
+        return None
+    lat, lon = plane.latlon(*centre)
+    grown = old.model_copy(
+        update={"keepout_id": new_id(), "lat": lat, "lon": lon, "radius_m": radius}
+    )
+    return old, grown
+
+
+def _enclose(a: Circle, b: Circle) -> Circle:
+    """The smallest circle that holds both."""
+    (ca, ra), (cb, rb) = a, b
+    d = math.dist(ca, cb)
+    if d + rb <= ra:
+        return a
+    if d + ra <= rb:
+        return b
+    big = (d + ra + rb) / 2.0
+    t = (big - ra) / d
+    return (ca[0] + t * (cb[0] - ca[0]), ca[1] + t * (cb[1] - ca[1])), big
