@@ -131,8 +131,8 @@ def reroute(
     if len(out) == 1:
         return out  # nothing left to fly
     # Every leg from ``start`` on is now clear of the cylinders (the loop above); the
-    # area is checked for the legs kept as they were too.
-    if area is not None and any(area.leg_outside_by(a, b) > 0.0 for a, b in pairwise(out[start:])):
+    # area is checked for every leg, the way out and the legs kept as they were too.
+    if area is not None and any(area.leg_outside_by(a, b) > 0.0 for a, b in pairwise(out)):
         return None
     return out
 

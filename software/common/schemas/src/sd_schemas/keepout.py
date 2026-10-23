@@ -104,8 +104,8 @@ def inspect_geometry(
     cylinder that holds the target (its own ``target_radius_m`` included). The height
     puts the target ``INSPECT_AIM_DEG`` from straight down, within the band (so a drone
     a metre off the point still sees it within ``INSPECT_VIEW_DEG``). The point
-    lies on the drone's side of the target; if a straight leg there would enter another
-    cylinder, or the point lies in one, the next direction around is tried (15 degrees
+    lies on the drone's side of the target; if a straight leg there would enter a
+    cylinder (the target's own circle included), or the point lies in one, the next direction around is tried (15 degrees
     at a time, nearest first). The heading puts the target to the drone's right, along
     the picture's long side (the camera's x axis is the drone's right)."""
     reach = target_radius_m
@@ -116,6 +116,7 @@ def inspect_geometry(
         if d < r:
             reach = max(reach, d + r)
     standoff = max(standoff_m, reach + INSPECT_STANDOFF_MARGIN_M)
+    near.append((t, target_radius_m))  # also when its own cylinder is not in force
     if alt_max_m < alt_min_m:
         return None
     alt = min(max(standoff / math.tan(math.radians(INSPECT_AIM_DEG)), alt_min_m), alt_max_m)

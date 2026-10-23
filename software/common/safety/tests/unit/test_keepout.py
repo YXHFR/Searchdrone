@@ -38,7 +38,7 @@ from sd_safety.keepout import (
 from sd_safety.targets import Polygon, Xy, polygon_from_geojson
 from sd_schemas.base import LatLonAlt, new_id
 from sd_schemas.gate import GateContext, GateRequest
-from sd_schemas.keepout import Keepout, leg_enters
+from sd_schemas.keepout import Keepout, inspect_geometry, leg_enters
 from sd_schemas.skills import OrbitRing
 
 ALLOWED = [*IMPLEMENTED, "orbit", "inspect_detection", "capture_stills"]
@@ -323,6 +323,37 @@ def test_reroute_from_inside() -> None:
     out = reroute([(0.0, -200.0), (0.0, 0.0), (0.0, 200.0)], cyl)
     assert out is not None and (0.0, 0.0) not in out
     assert reroute([(0.0, -200.0)], cyl) == [(0.0, -200.0)]
+
+
+def test_reroute_checks_the_way_out_against_the_area() -> None:
+    """The leg out of a cylinder counts too: out across the area's edge is no route."""
+    cyl = [((0.0, 0.0), 40.0)]
+    area = Polygon(((-400.0, -400.0), (400.0, -400.0), (400.0, 30.0), (-400.0, 30.0)))
+    # The only corner left lies inside the cylinder: the way out is the whole route.
+    route: list[Xy] = [(0.0, 10.0), (0.0, -5.0)]
+    assert reroute(route, cyl, area=area, exit_dir=(0.0, 1.0)) is None
+    out = reroute(route, cyl, area=BOX, exit_dir=(0.0, 1.0))
+    assert out is not None and len(out) == 2 and out[1][1] > 40.0
+
+
+def test_inspect_way_there_keeps_out_of_the_target_without_its_cylinder() -> None:
+    """Other cylinders block the near side and the target has no cylinder in force: the
+    way round to a point never cuts the target's own circle (here no way is left)."""
+    t = (0.0, 150.0)
+    here = (0.0, t[1] + 62.2)
+    others = [cylinder(-11.9, t[1] + 49.7, 13.5), cylinder(15.3, t[1] + 49.1, 11.3)]
+    g = inspect_geometry(
+        target_lat=latlon(*t)[0],
+        target_lon=latlon(*t)[1],
+        target_radius_m=30.0,
+        standoff_m=20.0,
+        here_lat=latlon(*here)[0],
+        here_lon=latlon(*here)[1],
+        alt_min_m=10.0,
+        alt_max_m=120.0,
+        keepouts=others,
+    )
+    assert g is None or not leg_enters(here, PLANE.xy(g.lat, g.lon), t, 30.0)
 
 
 def test_reroute_gives_up_on_cylinders_it_cannot_pass() -> None:

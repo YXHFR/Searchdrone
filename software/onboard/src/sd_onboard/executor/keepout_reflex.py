@@ -85,6 +85,15 @@ def route_clear(
     return all(area.leg_outside_by(a, b) <= 0.0 for a, b in pairwise(route))
 
 
+def blocks_find_move(here: Xy, point: Xy, others: list[Circle]) -> bool:
+    """Whether the link-loss find's move from ``here`` to its hover ``point`` would enter
+    one of ``others`` (every cylinder in force but the find's own) or end inside one."""
+    return (
+        xy_route_violation([here, point], others) is not None
+        or xy_route_violation([point], others) is not None
+    )
+
+
 def contained(k: Keepout, others: tuple[Keepout, ...], plane: Plane) -> bool:
     """Whether ``k`` lies wholly inside one of ``others`` (it adds nothing)."""
     c = plane.xy(k.lat, k.lon)

@@ -531,23 +531,50 @@ async def test_keepout_install_highest_seq_wins() -> None:
         assert r.ex.keepouts == ()
 
 
-async def test_find_hover_from_a_hold_flies_to_the_point(tmp_path: Path) -> None:
-    """Hovering (here after a goto; a cylinder's hold is the same) 50 m from a confirmed
-    find when the link goes: the find hover still flies to its hover point (T26 from
-    HOLD), it does not count the hover it started from as arrived."""
-    find = keepout(east=0, north=110)
+def north(r: Rig) -> float:
+    return PLANE.xy(r.fc.lat, r.fc.lon)[1]
+
+
+async def test_find_hover_from_a_hold_hovers_where_it_is(tmp_path: Path) -> None:
+    """Hovering short of a candidate's cylinder (here after a goto; a limit's or a
+    cylinder's hold is the same) when the link goes, a confirmed find beyond it: the find
+    hover starts where the drone is, it never flies into the candidate's cylinder."""
+    find = keepout(east=0, north=110, radius_m=30.0)
+    cand = keepout(east=0, north=80, radius_m=30.0, source="candidate")
     async with rig() as r:
         r.ex.store = StateStore(tmp_path, r.clock)
         await r.install(charter())
         await r.takeoff(40)
-        lat, lon = at(0, 60)
+        lat, lon = at(0, 30)
         await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 8}))
         await r.until(lambda: r.ex.state == S.HOLD, 60)
-        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find]), new_id())
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find, cand]), new_id())
+        held = (r.fc.lat, r.fc.lon)
         r.link = False
-        await r.until(lambda: r.ex.link_rule.phase in (P.FIND_MOVE, P.FIND_HOVER), 20)
-        await r.until(lambda: r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold", 30)
-        plan = r.ex.link_rule.plan
-        assert plan is not None
-        assert distance_m(r.fc.lat, r.fc.lon, plan.hover_lat, plan.hover_lon) <= 3.0
-        assert distance_m(r.fc.lat, r.fc.lon, find.lat, find.lon) >= find.radius_m
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        await r.run(10)
+        assert distance_m(r.fc.lat, r.fc.lon, *held) <= 3.0
+        assert distance_m(r.fc.lat, r.fc.lon, cand.lat, cand.lon) >= cand.radius_m
+
+
+async def test_find_move_into_another_cylinder_hovers_here(tmp_path: Path) -> None:
+    """Flying when the link goes, a confirmed find ahead whose hover point lies in a
+    candidate's cylinder: no move to the point, the drone hovers where it is."""
+    find = keepout(east=0, north=130, radius_m=30.0)
+    cand = keepout(east=0, north=95, radius_m=15.0, source="candidate")
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find, cand]), new_id())
+        lat, lon = at(0, 70)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 4}))
+        await r.until(lambda: north(r) >= 40, 60)
+        assert r.ex.state == S.TRANSIT
+        r.link = False
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        assert north(r) < 60
+        await r.run(10)
+        assert distance_m(r.fc.lat, r.fc.lon, cand.lat, cand.lon) >= cand.radius_m

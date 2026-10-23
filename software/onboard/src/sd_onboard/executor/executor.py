@@ -49,6 +49,7 @@ from sd_onboard.executor.keepout_reflex import (
     LOCAL_KEEPOUT_HANDOVER_MS,
     LOCAL_KEEPOUTS_MAX,
     REROUTABLE,
+    blocks_find_move,
     contained,
     entry_m,
     remaining,
@@ -2008,7 +2009,9 @@ class Executor:
         find = self.link_rule.plan
         if find is None or self.charter is None:
             return
-        arrived = self.link_rule.phase == LinkLossPhase.FIND_HOVER
+        # Any other cylinder on the way or at the point (a candidate, the drone's own
+        # detection): hover here instead, outside the find's cylinder as it is.
+        arrived = self.link_rule.phase == LinkLossPhase.FIND_HOVER or self._find_move_blocked()
         target = self.target_of(Trigger.LIMIT_FIND, find_arrived=arrived)
         if isinstance(target, Refusal):
             return
@@ -2026,6 +2029,18 @@ class Executor:
         plan = goto_plan(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed)
         self._enter(target, cause=action.limit)
         self._internal(INTERNAL_FIND_GOTO, goto, plan, SendOrigin.LIMIT)
+
+    def _find_move_blocked(self) -> bool:
+        find, plane = self.link_rule.plan, self.plane()
+        if find is None or plane is None:
+            return False
+        v = self.vehicle_state()
+        others = [k for k in self.keepouts_in_force() if k.keepout_id != find.keepout_id]
+        return blocks_find_move(
+            plane.xy(v.lat, v.lon),
+            plane.xy(find.hover_lat, find.hover_lon),
+            circles(others, plane),
+        )
 
     # --- snapshot and persistence --------------------------------------------------------
 

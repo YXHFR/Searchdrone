@@ -53,7 +53,6 @@ from sd_safety.constants import (
     SDLINK_HOLD_S,
 )
 from sd_safety.targets import Plane, distance_m
-from sd_schemas.executor import LinkLossPhase
 from sd_sim.params import merge_layers
 from sd_sim.sitl import SAFETY_PARAM_FILE
 
@@ -102,10 +101,11 @@ def north_m(sc: Scenario) -> float:
     return Plane(*sc.r.home).xy(s.lat, s.lon)[1]
 
 
-async def find_ahead(sc: Scenario, find_north_m: float = 150.0, cut_at_m: float = 90.0) -> Any:
+async def find_ahead(sc: Scenario, find_north_m: float = 150.0, cut_at_m: float = 70.0) -> Any:
     """On the way north a person's find is confirmed ahead; once the drone is
     ``find_north_m - cut_at_m`` from it, the function returns (the caller cuts the radio).
-    Returns (find lat, lon, the hover point lat, lon)."""
+    The cut comes early enough that the loss is detected before the keep-out reflex holds
+    the goto short of the find's cylinder. Returns (find lat, lon, the hover point lat, lon)."""
     await heading_north(sc)
     flat, flon = sc.at(0.0, find_north_m)
     await sc.confirm_find(flat, flon, SIGMA_M)
@@ -326,14 +326,7 @@ async def _hover_checks(
     sc: Scenario, points: tuple[float, float, float, float], down: float, until_s: float
 ) -> None:
     flat, flon, hlat, hlon = points
-    # The find's own hover: a goto that heads into the cylinder already stops short of it
-    # in LOITER before the link loss is detected (the keep-out reflex).
-    rule = sc.r.onboard.ex.link_rule
-    await sc.until(
-        lambda: rule.phase == LinkLossPhase.FIND_HOVER and sc.fc_mode() == "LOITER",
-        FIND_LOITER_BY + 0.5,
-        "find hover",
-    )
+    await sc.until(lambda: sc.fc_mode() == "LOITER", FIND_LOITER_BY + 0.5, "find hover")
     assert time.monotonic() - down <= FIND_LOITER_BY + 0.5
     await sc.until(
         lambda: distance_m(hlat, hlon, sc.sim.harness.state.lat, sc.sim.harness.state.lon) <= 3.0,
