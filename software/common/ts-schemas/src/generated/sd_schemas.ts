@@ -431,6 +431,62 @@ export interface BrainMessage {
   text: string;
 }
 /**
+ * The real use of a granted call. ``cost_usd`` is the provider's own price, when it
+ * states one; otherwise the ground prices the tokens.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetCommit".
+ */
+export interface BudgetCommit {
+  completion_tokens: number;
+  cost_usd?: number | null;
+  prompt_tokens: number;
+  reservation_id: string;
+}
+/**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetCommitted".
+ */
+export interface BudgetCommitted {
+  actual_sek: number;
+}
+/**
+ * ``granted`` false: no call. ``reservation_id`` is set exactly when granted.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetGrant".
+ */
+export interface BudgetGrant {
+  est_sek?: number;
+  granted: boolean;
+  reason?: ("MISSION_CAP" | "DAY_CAP" | "UNKNOWN_PRICE" | "NO_LEDGER") | null;
+  remaining_sek: number;
+  reservation_id?: string | null;
+}
+/**
+ * Nothing was sent (the call failed before reaching the provider).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetRelease".
+ */
+export interface BudgetRelease {
+  reservation_id: string;
+}
+/**
+ * A cloud call about to be made: what it is for and how large it may get.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "BudgetReserve".
+ */
+export interface BudgetReserve {
+  est_completion_tokens: number;
+  est_prompt_tokens: number;
+  image_count?: number;
+  mission_id?: string | null;
+  model_id: string;
+  purpose: "chat" | "match";
+}
+/**
  * A place where something that may be a person was seen. One row per revision.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1079,6 +1135,21 @@ export interface ClearanceState {
   received_mono_ms: number;
   valid_for_ms: number;
   vehicle_id: string;
+}
+/**
+ * What the panel shows: spent and caps for the mission (when one is given) and the
+ * day (Swedish date). ``exhausted``: no cloud calls; ``warning`` from 80 %.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "CloudBudgetStatus".
+ */
+export interface CloudBudgetStatus {
+  day_cap_sek: number;
+  day_sek: number;
+  mission_cap_sek: number;
+  mission_id?: string | null;
+  mission_sek: number;
+  state: "ok" | "warning" | "exhausted";
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2003,6 +2074,15 @@ export interface SafetyLimits {
   max_alt_agl_m?: number;
   max_range_from_pilot_m?: number;
   max_speed_ms?: number;
+}
+/**
+ * The pilot raises (or lowers) the mission's cap, never above the outer cap.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "MissionBudgetCap".
+ */
+export interface MissionBudgetCap {
+  cap_sek: number;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -3126,6 +3206,7 @@ export interface SurveySectorParams {
  */
 export interface SystemStatus {
   brain_engine?: ("cloud" | "command") | null;
+  cloud_budget?: ("ok" | "warning" | "exhausted") | null;
   internet: "up" | "down" | "unknown";
   operator_present: boolean;
   parts: {

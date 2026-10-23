@@ -1237,7 +1237,7 @@
       },
       "SearchHeartbeat": {
         "additionalProperties": false,
-        "description": "``cloud``: ``off`` (not configured), ``ok`` or ``down`` (only the code assesses).",
+        "description": "``cloud``: ``off`` (not configured), ``ok`` or ``down`` (matching paused: the cloud\nfailed or the budget is spent; only the code assesses).",
         "properties": {
           "cloud": {
             "default": "off",

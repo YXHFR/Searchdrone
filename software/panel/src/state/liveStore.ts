@@ -23,6 +23,8 @@ interface LiveState {
   latch: OperatorLatch | null;
   /** Alert BRAIN_DISCONNECTED seen and the AI not back to "ok" since. */
   aiDisconnected: boolean;
+  /** The cloud budget from the live cloud_budget.state (null: not heard yet). */
+  cloudBudget: "ok" | "warning" | "exhausted" | null;
   setWs(ws: WsState): void;
   patch(p: Partial<Omit<LiveState, "setWs" | "patch" | "reset">>): void;
   reset(): void;
@@ -40,6 +42,7 @@ const empty = {
   brainBusySince: null,
   latch: null,
   aiDisconnected: false,
+  cloudBudget: null,
 };
 
 export const useLiveStore = create<LiveState>((set, get) => ({

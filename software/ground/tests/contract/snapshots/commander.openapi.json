@@ -357,6 +357,199 @@
         "title": "BrainMessage",
         "type": "object"
       },
+      "BudgetCommit": {
+        "additionalProperties": false,
+        "description": "The real use of a granted call. ``cost_usd`` is the provider's own price, when it\nstates one; otherwise the ground prices the tokens.",
+        "properties": {
+          "completion_tokens": {
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "prompt_tokens": {
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "reservation_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Reservation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id",
+          "prompt_tokens",
+          "completion_tokens"
+        ],
+        "title": "BudgetCommit",
+        "type": "object"
+      },
+      "BudgetCommitted": {
+        "additionalProperties": false,
+        "properties": {
+          "actual_sek": {
+            "minimum": 0.0,
+            "title": "Actual Sek",
+            "type": "number"
+          }
+        },
+        "required": [
+          "actual_sek"
+        ],
+        "title": "BudgetCommitted",
+        "type": "object"
+      },
+      "BudgetGrant": {
+        "additionalProperties": false,
+        "description": "``granted`` false: no call. ``reservation_id`` is set exactly when granted.",
+        "properties": {
+          "est_sek": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Est Sek",
+            "type": "number"
+          },
+          "granted": {
+            "title": "Granted",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "MISSION_CAP",
+                  "DAY_CAP",
+                  "UNKNOWN_PRICE",
+                  "NO_LEDGER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "remaining_sek": {
+            "minimum": 0.0,
+            "title": "Remaining Sek",
+            "type": "number"
+          },
+          "reservation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reservation Id"
+          }
+        },
+        "required": [
+          "granted",
+          "remaining_sek"
+        ],
+        "title": "BudgetGrant",
+        "type": "object"
+      },
+      "BudgetRelease": {
+        "additionalProperties": false,
+        "description": "Nothing was sent (the call failed before reaching the provider).",
+        "properties": {
+          "reservation_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Reservation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id"
+        ],
+        "title": "BudgetRelease",
+        "type": "object"
+      },
+      "BudgetReserve": {
+        "additionalProperties": false,
+        "description": "A cloud call about to be made: what it is for and how large it may get.",
+        "properties": {
+          "est_completion_tokens": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Est Completion Tokens",
+            "type": "integer"
+          },
+          "est_prompt_tokens": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Est Prompt Tokens",
+            "type": "integer"
+          },
+          "image_count": {
+            "default": 0,
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Image Count",
+            "type": "integer"
+          },
+          "mission_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mission Id"
+          },
+          "model_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "chat",
+              "match"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "purpose",
+          "model_id",
+          "est_prompt_tokens",
+          "est_completion_tokens"
+        ],
+        "title": "BudgetReserve",
+        "type": "object"
+      },
       "Charter": {
         "additionalProperties": false,
         "properties": {
@@ -4085,6 +4278,116 @@
           }
         },
         "summary": "Get Skills"
+      }
+    },
+    "/internal/v1/cloud-budget/commit": {
+      "post": {
+        "description": "The real use of a granted call. 404: not the caller's reservation; 409: already\nbooked, released or expired.",
+        "operationId": "commit_internal_v1_cloud_budget_commit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetCommit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetCommitted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit"
+      }
+    },
+    "/internal/v1/cloud-budget/release": {
+      "post": {
+        "description": "Nothing was sent: the reservation no longer counts.",
+        "operationId": "release_internal_v1_cloud_budget_release_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetRelease"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release"
+      }
+    },
+    "/internal/v1/cloud-budget/reserve": {
+      "post": {
+        "description": "A reservation for one call, or a refusal (``granted`` false, with the reason).\nWithout the books (no database) every call is refused.",
+        "operationId": "reserve_internal_v1_cloud_budget_reserve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetReserve"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetGrant"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reserve"
       }
     }
   }

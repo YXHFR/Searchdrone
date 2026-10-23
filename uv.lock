@@ -1553,6 +1553,7 @@ version = "0.0.0"
 source = { editable = "software/brain" }
 dependencies = [
     { name = "httpx" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sd-schemas" },
@@ -1563,6 +1564,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pillow", specifier = ">=11" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sd-schemas", editable = "software/common/schemas" },
@@ -1796,6 +1798,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "sd-brain" },
     { name = "sd-schemas" },
     { name = "shapely" },
 ]
@@ -1806,6 +1809,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "pillow", specifier = ">=11" },
     { name = "pydantic", specifier = ">=2.9" },
+    { name = "sd-brain", editable = "software/brain" },
     { name = "sd-schemas", editable = "software/common/schemas" },
     { name = "shapely", specifier = ">=2.1" },
 ]

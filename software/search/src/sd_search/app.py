@@ -10,7 +10,14 @@ A restart reads the candidates back with the detections they observed and goes o
 there: the same detection never makes a second observation (fusion's ``seen`` set and the
 database's unique index), and nothing that arrived while the service was down is lost.
 A 409 (a person decided, or another revision came first) makes the service read the
-mission back and fuse again. If sd-search dies, the rest of the system goes on: it has
+mission back and fuse again.
+
+After the code, a candidate goes to the cascade (``sd_search.match``): the fast cloud
+model looks at its largest crops in the background, and its answer is written as the
+next revision. Its field verdicts override the code's, except that a ``match`` the code
+saw stays when the model calls the field ``not_visible``; its ``person_p`` replaces the
+detector's. Cloud answers live in memory only: after a restart the candidates are asked
+again (the budget bounds what that costs). If sd-search dies, the rest of the system goes on: it has
 no part in flying, and the panel shows ``parts.search`` as down.
 """
 
@@ -44,17 +51,32 @@ from sd_search.client import ConflictError, GroundError, SearchApi
 from sd_search.color import CROPS_MAX, CropView, assess_colors, box_in_crop
 from sd_search.fusion import Fusion, Sighting, Track
 from sd_search.mapper import MapService
+from sd_search.match.cascade import Cascade, skip_cloud
+from sd_search.match.engines import CROPS_FAST, Crop, MatchRequest
 from sd_search.priority import priority
 from sd_search.profile import ProfileSource
 from sd_search.score import match_score, person_probability
 
-__all__ = ["FEED_LIMIT", "LOOKBACK", "SearchService", "sighting", "track_of"]
+__all__ = ["FEED_LIMIT", "LOOKBACK", "SearchService", "merge_fields", "sighting", "track_of"]
 
 log = logging.getLogger("sd_search")
 FEED_LIMIT = 200
 LOOKBACK = 64  # detections re-read behind the cursor (out-of-order commits)
 CROP_CACHE = 256
 HEARTBEAT_S = 5.0
+
+
+def merge_fields(
+    code: dict[str, FieldVerdict], model: dict[str, FieldVerdict]
+) -> dict[str, FieldVerdict]:
+    """The image model's verdicts over the code's, but a ``match`` the code saw is kept
+    where the model could not see the field."""
+    out = dict(code)
+    for key, verdict in model.items():
+        if verdict == "not_visible" and code.get(key) == "match":
+            continue
+        out[key] = verdict
+    return out
 
 
 def sighting(d: SearchDetection) -> Sighting:
@@ -106,6 +128,15 @@ class _Mission:
     fields: dict[str, dict[str, FieldVerdict]] = field(
         default_factory=dict[str, dict[str, FieldVerdict]]
     )  # candidate id -> the code's verdicts
+    cloud: dict[str, CandidateAssessment] = field(
+        default_factory=dict[str, CandidateAssessment]
+    )  # candidate id -> the cloud model's latest assessment
+    asked: dict[str, tuple[int, tuple[str, ...]]] = field(
+        default_factory=dict[str, tuple[int, tuple[str, ...]]]
+    )  # candidate id -> (profile version, crops) last sent to the cloud
+    unsent: dict[str, CandidateAssessment] = field(
+        default_factory=dict[str, CandidateAssessment]
+    )  # cloud answers not yet written
 
 
 class SearchService:
@@ -115,11 +146,13 @@ class SearchService:
         profiles: ProfileSource,
         *,
         mapper: MapService | None = None,
+        cascade: Cascade | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.api = api
         self.profiles = profiles
         self.mapper = mapper
+        self.cascade = cascade or Cascade(None)
         self.monotonic = monotonic
         self.missions: dict[str, _Mission] = {}
         self._crops: OrderedDict[str, bytes | None] = OrderedDict()
@@ -140,7 +173,9 @@ class SearchService:
     async def beat(self, *, force: bool = False) -> None:
         now = self.monotonic()
         if force or now - self._beat_at >= HEARTBEAT_S:
-            await self.api.heartbeat(SearchHeartbeat(cloud="off", missions=len(self.missions)))
+            await self.api.heartbeat(
+                SearchHeartbeat(cloud=self.cascade.state, missions=len(self.missions))
+            )
             self._beat_at = now
 
     async def step(self) -> int:
@@ -148,6 +183,14 @@ class SearchService:
         open_ids = await self.api.missions()
         for gone in set(self.missions) - set(open_ids):
             del self.missions[gone]
+        for r in self.cascade.take():
+            m = self.missions.get(r.mission_id)
+            if m is None:
+                continue
+            if r.assessment is None:  # the cloud paused: ask again after the pause
+                m.asked.pop(r.candidate_id, None)
+            elif m.asked.get(r.candidate_id) == r.key:
+                m.unsent[r.candidate_id] = r.assessment
         fused = 0
         for mid in open_ids:
             try:
@@ -195,7 +238,14 @@ class SearchService:
         for t in m.fusion.tracks.values():  # a new profile version: score the open ones again
             if t.open and m.assessed.get(t.candidate_id, (version,))[0] != version:
                 dirty.setdefault(t.candidate_id, [])
+        for cid in list(m.unsent):  # a cloud answer to write (an open candidate's only)
+            t = m.fusion.tracks.get(cid)
+            if t is not None and t.open:
+                dirty.setdefault(cid, [])
+            else:
+                del m.unsent[cid]
         if not dirty:
+            await self._offer(mission_id, m, profile, version)
             return 0
         revisions: list[CandidateRevision] = []
         for cid, observations in dirty.items():
@@ -208,12 +258,49 @@ class SearchService:
                 t = m.fusion.tracks[str(w.candidate_id)]
                 t.rev, t.seq, t.state = w.rev, w.seq, w.state
         for r in revisions:
-            if r.assessment is not None:
-                m.assessed[str(r.candidate_id)] = (
-                    version,
-                    tuple(str(c) for c in r.assessment.crops_used),
-                )
+            a = r.assessment
+            if a is None:
+                continue
+            cid = str(r.candidate_id)
+            if a.engine == "code":
+                m.assessed[cid] = (version, tuple(str(c) for c in a.crops_used))
+            elif m.unsent.get(cid) is a:
+                del m.unsent[cid]
+        await self._offer(mission_id, m, profile, version)
         return fused
+
+    # --- the cloud -----------------------------------------------------------------------
+
+    async def _offer(
+        self, mission_id: str, m: _Mission, profile: SearchProfile | None, version: int
+    ) -> None:
+        """Send the open candidates the cloud has not seen like this to the cascade."""
+        for t in m.fusion.tracks.values():
+            if not self.cascade.accepting:
+                return
+            cid = t.candidate_id
+            if not t.open or cid not in m.assessed or self.cascade.pending(cid):
+                continue
+            if skip_cloud(t.refined_person_score, t.best_detector_score, t.n_seen):
+                continue
+            with_crop = sorted(
+                (s for s in t.sightings if s.has_crop), key=lambda s: (-s.px_size, s.detection_id)
+            )[:CROPS_FAST]
+            key = (version, tuple(s.detection_id for s in with_crop))
+            if not with_crop or m.asked.get(cid) == key:
+                continue
+            crops: list[Crop] = []
+            for s in with_crop:
+                data = await self._crop(s.detection_id)
+                if data is not None:
+                    crops.append(Crop(s.detection_id, s.px_size, data))
+            if not crops:
+                continue
+            req = MatchRequest(
+                mission_id=mission_id, candidate_id=cid, profile=profile, crops=crops
+            )
+            if self.cascade.submit(req, key):
+                m.asked[cid] = key
 
     # --- one candidate -----------------------------------------------------------------
 
@@ -268,10 +355,19 @@ class SearchService:
         observations: list[tuple[str, float]],
     ) -> CandidateRevision:
         assessment = None if not t.open else await self._assess(m, t, profile, version)
+        if assessment is None and t.open:
+            assessment = m.unsent.get(t.candidate_id)
+            if assessment is not None:
+                m.cloud[t.candidate_id] = assessment
         fields = m.fields.get(t.candidate_id, {})
+        person_p = person_probability(t.best_detector_score, t.refined_person_score)
+        cloud = m.cloud.get(t.candidate_id)
+        if cloud is not None and cloud.profile_version == version:
+            fields = merge_fields(fields, dict(cloud.fields))
+            person_p = cloud.person_p
         match = None if profile is None else match_score(profile, fields)
         p = priority(
-            person_probability(t.best_detector_score, t.refined_person_score),
+            person_p,
             match,
             multi_frame=t.multi_frame,
             refined=t.refined_person_score,

@@ -1009,6 +1009,186 @@
       "title": "BrainMessage",
       "type": "object"
     },
+    "BudgetCommit": {
+      "additionalProperties": false,
+      "description": "The real use of a granted call. ``cost_usd`` is the provider's own price, when it\nstates one; otherwise the ground prices the tokens.",
+      "properties": {
+        "completion_tokens": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_tokens": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reservation_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservation_id",
+        "prompt_tokens",
+        "completion_tokens"
+      ],
+      "title": "BudgetCommit",
+      "type": "object"
+    },
+    "BudgetCommitted": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_sek": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "actual_sek"
+      ],
+      "title": "BudgetCommitted",
+      "type": "object"
+    },
+    "BudgetGrant": {
+      "additionalProperties": false,
+      "description": "``granted`` false: no call. ``reservation_id`` is set exactly when granted.",
+      "properties": {
+        "est_sek": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number"
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "MISSION_CAP",
+                "DAY_CAP",
+                "UNKNOWN_PRICE",
+                "NO_LEDGER"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "remaining_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "reservation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "granted",
+        "remaining_sek"
+      ],
+      "title": "BudgetGrant",
+      "type": "object"
+    },
+    "BudgetRelease": {
+      "additionalProperties": false,
+      "description": "Nothing was sent (the call failed before reaching the provider).",
+      "properties": {
+        "reservation_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservation_id"
+      ],
+      "title": "BudgetRelease",
+      "type": "object"
+    },
+    "BudgetReserve": {
+      "additionalProperties": false,
+      "description": "A cloud call about to be made: what it is for and how large it may get.",
+      "properties": {
+        "est_completion_tokens": {
+          "maximum": 100000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "est_prompt_tokens": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "image_count": {
+          "default": 0,
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "model_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "chat",
+            "match"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "purpose",
+        "model_id",
+        "est_prompt_tokens",
+        "est_completion_tokens"
+      ],
+      "title": "BudgetReserve",
+      "type": "object"
+    },
     "Candidate": {
       "additionalProperties": false,
       "description": "A place where something that may be a person was seen. One row per revision.",
@@ -2567,6 +2747,58 @@
         "consumed"
       ],
       "title": "ClearanceState",
+      "type": "object"
+    },
+    "CloudBudgetStatus": {
+      "additionalProperties": false,
+      "description": "What the panel shows: spent and caps for the mission (when one is given) and the\nday (Swedish date). ``exhausted``: no cloud calls; ``warning`` from 80 %.",
+      "properties": {
+        "day_cap_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "day_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "mission_cap_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_sek": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "state": {
+          "enum": [
+            "ok",
+            "warning",
+            "exhausted"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_sek",
+        "mission_cap_sek",
+        "day_sek",
+        "day_cap_sek",
+        "state"
+      ],
+      "title": "CloudBudgetStatus",
       "type": "object"
     },
     "ColorName": {
@@ -6084,6 +6316,22 @@
       "title": "Mission",
       "type": "object"
     },
+    "MissionBudgetCap": {
+      "additionalProperties": false,
+      "description": "The pilot raises (or lowers) the mission's cap, never above the outer cap.",
+      "properties": {
+        "cap_sek": {
+          "maximum": 1000.0,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "cap_sek"
+      ],
+      "title": "MissionBudgetCap",
+      "type": "object"
+    },
     "MissionCharter": {
       "additionalProperties": false,
       "description": "An approved (or proposed) charter. Fields marked *server* are set by the ground station.",
@@ -9452,6 +9700,22 @@
               "enum": [
                 "cloud",
                 "command"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cloud_budget": {
+          "anyOf": [
+            {
+              "enum": [
+                "ok",
+                "warning",
+                "exhausted"
               ],
               "type": "string"
             },

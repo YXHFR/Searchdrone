@@ -1683,6 +1683,63 @@
         "title": "Clearance",
         "type": "object"
       },
+      "CloudBudgetStatus": {
+        "additionalProperties": false,
+        "description": "What the panel shows: spent and caps for the mission (when one is given) and the\nday (Swedish date). ``exhausted``: no cloud calls; ``warning`` from 80 %.",
+        "properties": {
+          "day_cap_sek": {
+            "minimum": 0.0,
+            "title": "Day Cap Sek",
+            "type": "number"
+          },
+          "day_sek": {
+            "minimum": 0.0,
+            "title": "Day Sek",
+            "type": "number"
+          },
+          "mission_cap_sek": {
+            "minimum": 0.0,
+            "title": "Mission Cap Sek",
+            "type": "number"
+          },
+          "mission_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mission Id"
+          },
+          "mission_sek": {
+            "minimum": 0.0,
+            "title": "Mission Sek",
+            "type": "number"
+          },
+          "state": {
+            "enum": [
+              "ok",
+              "warning",
+              "exhausted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mission_sek",
+          "mission_cap_sek",
+          "day_sek",
+          "day_cap_sek",
+          "state"
+        ],
+        "title": "CloudBudgetStatus",
+        "type": "object"
+      },
       "ColorName": {
         "enum": [
           "black",
@@ -3211,6 +3268,23 @@
           "notes"
         ],
         "title": "Mission",
+        "type": "object"
+      },
+      "MissionBudgetCap": {
+        "additionalProperties": false,
+        "description": "The pilot raises (or lowers) the mission's cap, never above the outer cap.",
+        "properties": {
+          "cap_sek": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Cap Sek",
+            "type": "number"
+          }
+        },
+        "required": [
+          "cap_sek"
+        ],
+        "title": "MissionBudgetCap",
         "type": "object"
       },
       "MissionCharter": {
@@ -5125,6 +5199,22 @@
             ],
             "title": "Brain Engine"
           },
+          "cloud_budget": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ok",
+                  "warning",
+                  "exhausted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Budget"
+          },
           "internet": {
             "enum": [
               "up",
@@ -5841,6 +5931,54 @@
           }
         },
         "summary": "Get Candidate"
+      }
+    },
+    "/api/v1/cloud-budget": {
+      "get": {
+        "description": "Spent and caps today and for the mission (the latest one with a call, unless one\nis named).",
+        "operationId": "get_budget_api_v1_cloud_budget_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "mission_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mission Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudBudgetStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Budget"
       }
     },
     "/api/v1/commands/{command_id}/cancel": {
@@ -6761,6 +6899,57 @@
           }
         },
         "summary": "Post Clearance"
+      }
+    },
+    "/api/v1/missions/{mission_id}/cloud-budget": {
+      "put": {
+        "description": "The pilot sets the mission's cap (at most the outer cap). Logged.",
+        "operationId": "put_mission_cap_api_v1_missions__mission_id__cloud_budget_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MissionBudgetCap"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudBudgetStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Mission Cap"
       }
     },
     "/api/v1/missions/{mission_id}/commands": {

@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from sd_ground.api import cloud_budget as cloud_budget_api
 from sd_ground.api import commander as commander_api
 from sd_ground.api import live as live_api
 from sd_ground.api import panel as panel_api
@@ -35,6 +36,7 @@ from sd_ground.auth import ServiceToken
 from sd_ground.config import Loaded, check, limit_caps, parse_bind
 from sd_ground.context import Ground, lan_addresses
 from sd_ground.control_socket import ControlSocket, socket_path
+from sd_ground.db.cloud_usage import CloudUsageRepo
 from sd_ground.db.engine import make_engine, with_password
 from sd_ground.db.flow import FlowRepo
 from sd_ground.db.repo import Repo
@@ -44,6 +46,7 @@ from sd_ground.link import GroundLink
 from sd_ground.liveness import LoopLiveness
 from sd_ground.logging import get_logger, setup_logging
 from sd_ground.mav.thread import GroundMav, HeartbeatGate, MavThread, vehicle_events
+from sd_ground.services.cloud_budget import CloudBudget, load_prices
 from sd_ground.services.latches import Latches
 from sd_ground.services.missions import MissionFlow
 from sd_ground.services.telemetry import TelemetryService
@@ -84,6 +87,7 @@ def create_panel_app(g: Ground) -> FastAPI:
     app.state.ground = g
     install_error_handlers(app)
     app.include_router(panel_api.router)
+    app.include_router(cloud_budget_api.panel_router)
     app.include_router(live_api.router)
     app.include_router(tiles_api.router)
     app.include_router(video_api.router)
@@ -108,6 +112,8 @@ def create_commander_app(g: Ground) -> FastAPI:
     # The search service shares the loopback listener with its own token; its routes are
     # documented on their own (``create_search_doc``), so the commander's list stays its own.
     app.include_router(search_api.router, include_in_schema=False)
+    # The cloud budget's books, for both processes (each with its own token).
+    app.include_router(cloud_budget_api.internal_router)
     _with_schemas(app, commander_api.RAW_BODY_MODELS)
     return app
 
@@ -238,6 +244,9 @@ class Background:
             with contextlib.suppress(Exception):
                 await g.repo.touch_sessions([r for r in g.sessions.all() if not r.pending_persist])
                 g.sessions.load(await g.repo.sessions())
+        if g.cloud_budget is not None:
+            with contextlib.suppress(Exception):
+                await g.cloud_budget.tick()
         await g.flush_events()
 
     async def run_db(self) -> None:
@@ -328,6 +337,7 @@ async def _serve(loaded: Loaded, *, announce_login: bool = True) -> int:
         raise
     engine = make_engine(with_password(cfg.db.url, loaded.secret("SD_GROUND__DB_APP_PASSWORD")))
     g.repo = Repo(engine)
+    g.cloud_budget = CloudBudget(g, load_prices(loaded.root), CloudUsageRepo(engine))
     await _start_db(g)
     link, flow = await start_mission_flow(g, FlowRepo(engine), actions, mav_thread)
     background = Background(g, liveness)
