@@ -8212,6 +8212,7 @@
     },
     "/api/v1/views/{view_id}": {
       "get": {
+        "description": "The picture of a logged large view (JPEG).",
         "operationId": "get_view_api_v1_views__view_id__get",
         "parameters": [
           {

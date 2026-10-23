@@ -105,6 +105,8 @@ export function ReviewCandidate({
   const pictures = detail ? crops(detail.observations) : [];
   const ai = detail ? latest(detail.assessments) : null;
   const open = isOpen(card);
+  // The server takes confirm and reject only once the search service has made it ready.
+  const ready = card.state !== "new";
 
   return (
     <div className="view-body cand-review" data-testid="cand-review" data-seq={card.seq}>
@@ -190,9 +192,13 @@ export function ReviewCandidate({
           <div className="cand-buttons">
             <HoldButton
               onDone={() => setAsking("confirm")}
-              disabled={!viewed || busy}
+              disabled={!viewed || busy || !ready}
               hint={
-                viewed ? t("candidates.review.confirmHint") : t("candidates.review.confirmLocked")
+                !ready
+                  ? t("candidates.review.notReady")
+                  : viewed
+                    ? t("candidates.review.confirmHint")
+                    : t("candidates.review.confirmLocked")
               }
               testId="cand-confirm"
             >
@@ -201,7 +207,7 @@ export function ReviewCandidate({
             <button
               type="button"
               className="btn cand-reject"
-              disabled={busy}
+              disabled={busy || !ready}
               data-testid="cand-reject"
               onClick={() => void decide("reject")}
             >

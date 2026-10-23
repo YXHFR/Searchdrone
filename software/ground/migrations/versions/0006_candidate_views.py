@@ -25,7 +25,7 @@ STATEMENTS = (
     "CREATE TABLE candidate_views ("
     "  id            uuid PRIMARY KEY DEFAULT uuidv7(),"
     "  mission_id    uuid NOT NULL REFERENCES missions(id),"
-    "  detection_id  uuid NOT NULL,"
+    "  detection_id  uuid NOT NULL REFERENCES detections(detection_id),"
     "  operator_ref  text NOT NULL CHECK (operator_ref ~ '^operator:.+'),"
     "  session_id    text NOT NULL,"
     "  created_at    timestamptz NOT NULL DEFAULT now()"

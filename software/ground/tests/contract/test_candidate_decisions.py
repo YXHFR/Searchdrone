@@ -348,7 +348,8 @@ async def test_confirm_requires_view(r: Rig) -> None:
         await view(tab, det)  # nor does another session's view
         res = await decide(pilot, cid, "confirm")
         assert res.status_code == 409 and res.json()["code"] == "NOT_VIEWED"
-        await view(pilot, det)
+        first = await view(pilot, det)
+        assert await view(pilot, det) == first  # opening it again logs no new row
         res = await decide(pilot, cid, "confirm", "röd jacka, ligger still")
         assert res.status_code == 200, res.text
         assert other_cid != cid

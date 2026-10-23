@@ -825,6 +825,7 @@
       "note": "Anteckning (valfri)",
       "confirm": "Bekräfta",
       "confirmHint": "håll in 0,8 s",
+      "notReady": "Kandidaten är inte färdigbehandlad än.",
       "confirmLocked": "Visa en bild större innan du kan bekräfta.",
       "reject": "Inte hen",
       "inspect": "Titta närmare",

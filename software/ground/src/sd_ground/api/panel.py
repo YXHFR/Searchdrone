@@ -768,6 +768,7 @@ async def post_detection_view(detection_id: IdPath, g: G, who: Observer) -> Cand
 
 @router.get("/views/{view_id}")
 async def get_view(view_id: IdPath, g: G, _: Observer) -> Response:
+    """The picture of a logged large view (JPEG)."""
     path = await candidates_service.view_file(_flow(g), view_id)
     return FileResponse(path, media_type="image/jpeg")
 

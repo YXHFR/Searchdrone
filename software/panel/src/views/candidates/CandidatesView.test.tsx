@@ -149,6 +149,17 @@ describe("CandidatesView", () => {
     expect((screen.getByTestId("cand-confirm") as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("offers only Osäker on a candidate the search service has not made ready", async () => {
+    useCandidateStore.getState().setCards([card({ state: "new" })]);
+    useCandidateStore.getState().open("c-1");
+    view();
+    fireEvent.click(await screen.findByTestId("cand-larger"));
+    await screen.findByTestId("cand-large");
+    expect((screen.getByTestId("cand-confirm") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("cand-reject") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("cand-unsure") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("confirms after the hold and the question, then shows the position three ways", async () => {
     useCandidateStore.getState().setCards([card()]);
     useCandidateStore.getState().markViewed("c-1");

@@ -81,10 +81,13 @@ CANDIDATE_TRANSITIONS: Final[
 ] = {
     "confirm": dict.fromkeys(_OPEN, _S.CONFIRMED),
     "reject": dict.fromkeys(_OPEN, _S.REJECTED),
+    # Not reachable yet: ``decide`` answers 501 until the closer-look skill exists.
     "inspect": {_S.READY: _S.INSPECTING, _S.ASSESSING: _S.INSPECTING},
     "unsure": dict.fromkeys((_S.NEW, *_OPEN), None),
     "reopen": {_S.REJECTED: _S.READY, _S.CONFIRMED: _S.READY},
 }
+# The pilot and the observer may both confirm or reject a find (a second pair of eyes on
+# the pictures); moving the drone closer and undoing a decision are the pilot's.
 PILOT_ONLY: Final = frozenset({"inspect", "reopen"})
 PEOPLE: Final = frozenset({"pilot", "observer"})
 

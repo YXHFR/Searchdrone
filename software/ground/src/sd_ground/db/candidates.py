@@ -489,6 +489,16 @@ class CandidateRepo:
         session_id: str,
         now: dt.datetime,
     ) -> str:
+        """One row per session and picture: opening it again returns the same view, so the
+        append-only table grows with the pictures, not with the clicks."""
+        have = await self._all(
+            "SELECT id::text AS id FROM candidate_views "
+            "WHERE detection_id = :d AND session_id = :sid ORDER BY created_at LIMIT 1",
+            d=detection_id,
+            sid=session_id,
+        )
+        if have:
+            return str(have[0]["id"])
         rows = await self._insert(
             "INSERT INTO candidate_views "
             "(mission_id, detection_id, operator_ref, session_id, created_at) "
