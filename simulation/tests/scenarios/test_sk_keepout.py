@@ -192,7 +192,7 @@ async def test_orbit_around_a_find(sim: Any, migrated_db: Any, tmp_path: Path) -
         )
         on_ring = time.monotonic()
         await sc.wait_command("orbit", "done", 240)
-        assert await _executor(sc, "HOLD")
+        await sc.until(lambda: _executor(sc, "HOLD"), 5, "hovers after the orbit")
         assert not _inside(sc, since, centre)
         flown = [
             distance_m(s.lat, s.lon, *centre)

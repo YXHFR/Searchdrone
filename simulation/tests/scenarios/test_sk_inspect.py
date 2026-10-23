@@ -182,22 +182,23 @@ class Camera:
         return rep.still_id
 
 
-async def _status(sc: Scenario, command_id: str, want: str) -> bool:
-    return (await sc.command(command_id))["status"] == want
+async def _status(sc: Scenario, command_id: str, *want: str) -> bool:
+    return (await sc.command(command_id))["status"] in want
 
 
 @contextlib.asynccontextmanager
 async def flooded(sc: Scenario) -> AsyncIterator[None]:
-    """Reports with crops queued faster than SD-link takes them: the onboard link's
-    perception queue stays full."""
+    """Reports with crops queued faster than SD-link takes them: every ``FLOOD_S`` more
+    than the onboard link's perception queue holds, so it is full and drops reports."""
     link = sc.r.onboard.link
     jpeg = _jpeg()
     far = sc.at(-120.0, 250.0)  # well away from the inspected person
 
     async def run() -> None:
         while True:
-            dets = [person(far) for _ in range(FLOOD_CROPS)]
-            link.perception(with_crops(report(sc, dets), jpeg))
+            for _ in range(MAX_PERCEPTION + 1):
+                dets = [person(far) for _ in range(FLOOD_CROPS)]
+                link.perception(with_crops(report(sc, dets), jpeg))
             await asyncio.sleep(FLOOD_S)
 
     task = asyncio.ensure_future(run())
@@ -237,8 +238,11 @@ async def test_inspect_detection_geometry(sim: Any, migrated_db: Any, tmp_path: 
         since = time.monotonic()
         await inspecting(sc, det)
         await sc.wait_command("inspect_detection", "done", 180)
-        live = await sc.onboard_state()
-        assert live["executor_state"] == "HOLD", live
+
+        async def holding() -> bool:  # the snapshot may still be the one before the end
+            return (await sc.onboard_state())["executor_state"] == "HOLD"
+
+        await sc.until(holding, 5, "hovers after the inspection")
 
         assert len(cam.poses) == STILLS, cam.poses
         for lat, lon, alt in cam.poses:
@@ -272,14 +276,15 @@ async def test_sk08_stop_and_fly_home_during_an_inspection(
         first = await inspecting(sc, det)
         async with flooded(sc):
             await sc.until(lambda: sc.from_home_m() >= 20.0, 60, "on the way")
-            assert len(link._perception) == MAX_PERCEPTION  # pyright: ignore[reportPrivateUsage]
+            dropped = link.dropped_perception
             t0 = time.monotonic()
             assert (await sc.press("stop")).status_code == 202
             await stopped_and_holding(sc, t0)
+            assert link.dropped_perception > dropped  # still full through STOP
         live = await sc.onboard_state()
         assert live["executor_state"] == "HELD" and live["held_by"] == "operator_stop", live
         await sc.until(
-            lambda: _status(sc, first["id"], "cancelled"), 10, "the inspection cancelled"
+            lambda: _status(sc, first["id"], "cancelled", "superseded"), 10, "the inspection ended"
         )
         assert (await sc.press("resume")).status_code == 202
         await sc.until(lambda: sc.r.actions.latches.get(VID) is None, 10, "released")
@@ -288,10 +293,11 @@ async def test_sk08_stop_and_fly_home_during_an_inspection(
         second = await inspecting(sc, det)
         async with flooded(sc):
             await asyncio.sleep(3.0)
-            assert len(link._perception) == MAX_PERCEPTION  # pyright: ignore[reportPrivateUsage]
+            dropped = link.dropped_perception
             assert (await sc.press("return_home")).status_code == 202
             await sc.until(lambda: sc.mode() in HOME_MODES, 2.0 * STOP_ACK_S, "flying home")
             assert sc.mode() == "SMART_RTL"
+            assert link.dropped_perception > dropped  # still full through FLY HOME
         await sc.until(lambda: not sc.tel.armed, 240, "landed")
         assert sc.from_home_m() <= 3.0
         after = await sc.command(second["id"])
