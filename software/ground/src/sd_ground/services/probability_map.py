@@ -164,6 +164,17 @@ async def write(
         raise ApiStatusError(
             409, "MAP_PROFILE_STALE", "Kartan bygger inte på sökprofilen som gäller nu."
         )
+    if (body.frozen or body.reason == "confirmed") and not await flow.repo.confirmed_candidates(
+        mission_id
+    ):
+        # Only a person confirms a find; the search service cannot fake its effect.
+        raise ApiStatusError(
+            409, "MAP_NOT_CONFIRMED", "Kartan låses bara när en person har bekräftat ett fynd."
+        )
+    charter = await flow.active_charter(mission)
+    known = set() if charter is None else {s.sector_id for s in charter.sectors}
+    if any(s.sector_id not in known for s in body.sectors):
+        raise _invalid("Kartan nämner en sektor som inte finns i uppdragsramen.")
     grid = _bounded_grid(body.grid)
     ls = profile.last_seen
     north_r = 111_320.0  # metres per degree, enough for a 1 m check

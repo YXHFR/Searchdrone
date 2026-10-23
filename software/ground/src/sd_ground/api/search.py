@@ -165,6 +165,7 @@ async def stills(
 async def write_probability_map(
     mission_id: IdPath, body: ProbabilityMapWrite, _: Search, g: G
 ) -> ProbabilityMapWritten:
-    """A new version of the map. 409 for a stale version, a version after a frozen one
-    or a profile that is no longer in force; 422 for arrays that do not fit the grid."""
+    """A new version of the map. 409 for a stale version, a version after a frozen one,
+    a profile that is no longer in force or a freeze without a find a person confirmed;
+    422 for arrays that do not fit the grid or a sector that is not in the charter."""
     return await map_service.write(_flow(g), mission_id, body)

@@ -1994,7 +1994,7 @@
     },
     "/search/v1/missions/{mission_id}/probability-maps": {
       "post": {
-        "description": "A new version of the map. 409 for a stale version, a version after a frozen one\nor a profile that is no longer in force; 422 for arrays that do not fit the grid.",
+        "description": "A new version of the map. 409 for a stale version, a version after a frozen one,\na profile that is no longer in force or a freeze without a find a person confirmed;\n422 for arrays that do not fit the grid or a sector that is not in the charter.",
         "operationId": "write_probability_map_search_v1_missions__mission_id__probability_maps_post",
         "parameters": [
           {

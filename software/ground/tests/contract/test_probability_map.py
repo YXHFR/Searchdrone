@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import numpy as np
 import pytest
+from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 
@@ -109,6 +110,22 @@ async def still(r: Rig, east: float, north: float, half: float = 30.0) -> None:
         return q is not None and q.handled > before and not q.running
 
     await r.until(done, 10, "report handled")
+
+
+async def confirmed_candidate(r: Rig, mid: str) -> None:
+    """A candidate a person confirmed, written as the ground stores the decision."""
+    lat, lon = r.at(0, 0)
+    async with r.flow.repo.engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO candidates (candidate_id, rev, mission_id, seq, state, geom, "
+                "sigma95_m, n_seen, n_in_view, best_detector_score, priority, "
+                "first_seen_utc, last_seen_utc) VALUES (uuidv7(), 1, CAST(:m AS uuid), 1, "
+                "'confirmed', ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 5, 3, 3, 0.8, 0.9, "
+                "now(), now())"
+            ),
+            {"m": mid, "lon": lon, "lat": lat},
+        )
 
 
 def f16(b64: str) -> np.ndarray:
@@ -230,6 +247,23 @@ async def test_the_ground_checks_every_version(r: Rig) -> None:
     got = (await r.panel.get(f"/api/v1/missions/{mid}/probability-map")).json()
     assert got["version"] == 2 and got["grid"]["west"] == pytest.approx(good["grid"]["west"])
 
+    sector = {
+        "poa": 0.1,
+        "covered_pct": 0,
+        "mean_pod": 0,
+        "pos_plan": 0.05,
+        "est_min": 4,
+        "psr": 0.01,
+        "spacing_m": 30,
+    }
+    unknown = await post(version=3, sectors=[sector | {"sector_id": "ZZ"}])
+    assert unknown.status_code == 422 and unknown.json()["code"] == "MAP_INVALID"
+
+    # Only a find a person confirmed freezes the map; the search token cannot fake one.
+    fake = await post(version=3, reason="confirmed", frozen=True)
+    assert fake.status_code == 409 and fake.json()["code"] == "MAP_NOT_CONFIRMED"
+    assert (await post(version=3, frozen=True)).status_code == 409
+    await confirmed_candidate(r, mid)
     frozen = await post(version=3, reason="confirmed", frozen=True)
     assert frozen.status_code == 201 and frozen.json() == {"version": 3, "frozen": True}
     after = await post(version=4)
