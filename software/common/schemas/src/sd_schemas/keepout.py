@@ -40,7 +40,7 @@ __all__ = [
 
 Xy = tuple[float, float]
 
-KEEPOUT_RADIUS_MAX_M: Final = 500.0  # the largest radius a Keepout may have
+KEEPOUT_RADIUS_MAX_M: Final = 500  # the largest radius a Keepout may have
 INSPECT_VIEW_DEG: Final = 25.0  # the target at most this far from straight down
 INSPECT_AIM_DEG: Final = 24.0  # the height aims a degree steeper: the hover's error fits
 INSPECT_VIEW_MAX_DEG: Final = 28.0  # beyond this at the highest allowed height: refused
