@@ -14,6 +14,7 @@ from sd_brain.config import BrainConfig
 from sd_brain.constants import FRESH_SNAPSHOT_WAIT_S
 from sd_brain.decide.engines import EngineAnswer
 from sd_brain.decide.service import DecisionService
+from sd_brain.ground_client import GroundError
 from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
 from sd_brain.memory import mission_request, pending_request
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
@@ -319,6 +320,38 @@ async def test_shutdown_mid_turn_stops_the_loop() -> None:
     runner.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(runner, 2)
+
+
+async def test_a_turn_the_ground_does_not_answer_leaves_the_loop_running() -> None:
+    """A ground station that does not answer one turn (here a skill event's) costs that
+    turn only: the loop keeps running and the next wake-up gets its turn."""
+    backend = Steps()
+    loop, fg, _ = make_loop(backend)
+    answer = fg.situation
+    down = [True]
+
+    async def situation(mid: str) -> Any:
+        if down.pop() if down else False:
+            raise GroundError("sd-ground svarar inte (ReadTimeout)")
+        return await answer(mid)
+
+    fg.situation = situation  # type: ignore[method-assign]
+    runner = asyncio.create_task(loop.run_forever())
+    loop.handle_event(
+        {"type": "event.skill", "body": {"skill": "survey_sector", "status": "superseded"}}
+    )
+    await asyncio.sleep(0.05)
+    assert not runner.done() and loop._turn_task is None
+    assert backend.turns == []  # the failed turn reached no backend
+    loop.handle_event(fg.operator_message("sök sektor A"))
+    for _ in range(100):
+        if backend.turns:
+            break
+        await asyncio.sleep(0.01)
+    assert [t.trigger for t in backend.turns] == ["operator_message"]
+    runner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await runner
 
 
 async def test_override_cancels_running_turn() -> None:
