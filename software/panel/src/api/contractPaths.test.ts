@@ -55,6 +55,9 @@ const CALLS: [string, string][] = [
   ["POST", paths.missionAnnotations(ID)],
   ["DELETE", paths.annotation(ID)],
   ["GET", paths.missionTrack(ID)],
+  ["GET", paths.searchProfile(ID)],
+  ["POST", paths.searchProfile(ID)],
+  ["GET", paths.searchProfileVersions(ID)],
 ];
 
 describe("contract paths", () => {

@@ -29,6 +29,7 @@ from sd_schemas.commander import (
 )
 from sd_schemas.decide import ChatIntentReport
 from sd_schemas.gate import GateDecision
+from sd_schemas.search import SearchProfileProposal
 from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry, SkillSpecPublic
 
 __all__ = ["FakeGround"]
@@ -70,6 +71,7 @@ class FakeGround:
         self.commands: list[SkillRequest] = []
         self.results: list[SkillSubmitResult] = []
         self.proposals: list[CharterProposal] = []
+        self.profiles: list[SearchProfileProposal] = []
         self.decisions: list[DecisionLog] = []
         self.intents: list[ChatIntentReport] = []
         self.chat_intents: Literal["acted", "refused", "down"] = chat_intents
@@ -339,6 +341,10 @@ class FakeGround:
         return CharterProposalOutcome(
             ok=False, errors=[CharterError.model_validate(e) for e in res.get("errors", [])]
         )
+
+    async def propose_search_profile(self, mission_id: str, proposal: SearchProfileProposal) -> str:
+        self.profiles.append(proposal)
+        return str(new_id())
 
     async def memory(self, mission_id: str) -> MissionMemory:
         return self.mem

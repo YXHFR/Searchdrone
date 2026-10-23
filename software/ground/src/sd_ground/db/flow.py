@@ -24,7 +24,7 @@ from sd_schemas.gate import GateDecision
 from sd_schemas.mission import OperatorLatch
 from sd_schemas.safety import SafetyLimits
 
-__all__ = ["FlowRepo", "MissionExistsError"]
+__all__ = ["FlowRepo", "MissionExistsError", "ProfileStaleError"]
 
 _MISSION_COLS = """m.id, m.vehicle_id, m.title, m.status, m.paused_by, m.returning_cause,
   m.state_seq, m.limits, m.active_charter_id, c.autonomy_mode, m.ai_enabled, m.created_by,
@@ -46,6 +46,10 @@ OPEN_STATUSES = ("pending_approval", "dispatched", "received", "accepted", "runn
 
 class MissionExistsError(Exception):
     """The vehicle already has an open mission."""
+
+
+class ProfileStaleError(Exception):
+    """An approval based on a profile version or proposal that is no longer the newest."""
 
 
 def _json(value: Any) -> Any:
@@ -1228,6 +1232,128 @@ class FlowRepo:
             "ST_Y(geom) AS lat, ST_X(geom) AS lon, sigma95_m FROM candidates "
             "WHERE mission_id = :m ORDER BY candidate_id, rev DESC) newest "
             "WHERE state = 'confirmed' ORDER BY seq, candidate_id",
+            m=mission_id,
+        )
+        return [dict(r) for r in rows]
+
+    # --- the search profile ------------------------------------------------------------
+
+    _PROFILE_COLS = (
+        "id::text AS row_id, profile_id::text, profile_version, body, proposed_by, "
+        "approved_by, approved_at, created_at"
+    )
+
+    async def _profile_ids(self, conn: AsyncConnection, mission_id: str) -> tuple[str, int]:
+        """The mission's profile id (new for its first row) and the next approved version.
+        Called under the mission's profile lock."""
+        await conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext('search_profile:' || :m))"),
+            {"m": mission_id},
+        )
+        sql = (
+            "SELECT (SELECT profile_id::text FROM search_profiles WHERE mission_id = :m "
+            "ORDER BY created_at, id LIMIT 1) AS profile_id, (SELECT max(profile_version) "
+            "FROM search_profiles WHERE mission_id = :m AND approved_by IS NOT NULL) AS version"
+        )
+        row = (await conn.execute(text(sql), {"m": mission_id})).mappings().one()
+        return row["profile_id"] or str(new_id()), int(row["version"] or 0) + 1
+
+    async def add_search_profile(
+        self,
+        mission_id: str,
+        body: dict[str, Any],
+        *,
+        proposed_by: str,
+        approved_by: str | None,
+        approved_at: dt.datetime | None,
+        based_on: tuple[int, str | None] | None = None,
+    ) -> dict[str, Any]:
+        """Store a profile row: a proposal (``approved_by`` None) or the pilot's approval,
+        which becomes the next version. ``body`` is the draft; the row's own ids, version
+        and approval are filled in here. The rows are never changed afterwards.
+
+        ``based_on`` is the approved version and the pending proposal the approval was made
+        from; under the mission's profile lock, anything newer raises ProfileStaleError.
+        ``created_at`` is taken after the lock, so the rows are ordered as they were stored.
+        """
+        async with self.engine.begin() as conn:
+            profile_id, version = await self._profile_ids(conn, mission_id)
+            if based_on is not None:
+                pending = (
+                    await conn.execute(
+                        text(
+                            "SELECT id::text FROM search_profiles WHERE mission_id = :m "
+                            "AND approved_by IS NULL AND created_at > COALESCE((SELECT "
+                            "max(created_at) FROM search_profiles WHERE mission_id = :m AND "
+                            "approved_by IS NOT NULL), '-infinity') "
+                            "ORDER BY created_at DESC, id DESC LIMIT 1"
+                        ),
+                        {"m": mission_id},
+                    )
+                ).scalar()
+                if based_on[0] != version - 1 or pending not in (None, based_on[1]):
+                    raise ProfileStaleError
+            full = body | {
+                "profile_id": profile_id,
+                "profile_version": version,
+                "mission_id": mission_id,
+                "approved_by": approved_by,
+                "approved_at": None if approved_at is None else approved_at.isoformat(),
+            }
+            row = (
+                (
+                    await conn.execute(
+                        text(
+                            "INSERT INTO search_profiles (mission_id, profile_id, profile_version, "  # noqa: S608
+                            "body, proposed_by, approved_by, approved_at, created_at) VALUES "
+                            "(:m, :p, :v, CAST(:body AS jsonb), :by, :ab, :at, clock_timestamp()) "
+                            f"RETURNING {self._PROFILE_COLS}"
+                        ),
+                        {
+                            "m": mission_id,
+                            "p": profile_id,
+                            "v": version,
+                            "body": json.dumps(full),
+                            "by": proposed_by,
+                            "ab": approved_by,
+                            "at": approved_at,
+                        },
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        return dict(row)
+
+    async def search_profile_rows(
+        self, mission_id: str
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """The approved row in force (highest version) and the newest proposal stored
+        after it (``None`` when the pilot has dealt with every proposal)."""
+        approved = await self._one(
+            f"SELECT {self._PROFILE_COLS} FROM search_profiles "  # noqa: S608
+            "WHERE mission_id = :m AND approved_by IS NOT NULL "
+            "ORDER BY profile_version DESC LIMIT 1",
+            m=mission_id,
+        )
+        proposal = await self._one(
+            f"SELECT {self._PROFILE_COLS} FROM search_profiles "  # noqa: S608
+            "WHERE mission_id = :m AND approved_by IS NULL "
+            "AND created_at > COALESCE(CAST(:after AS timestamptz), '-infinity') "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            m=mission_id,
+            after=None if approved is None else approved["created_at"],
+        )
+        return (
+            None if approved is None else dict(approved),
+            None if proposal is None else dict(proposal),
+        )
+
+    async def search_profile_versions(self, mission_id: str) -> list[dict[str, Any]]:
+        """Every approved version of the mission's profile, oldest first."""
+        rows = await self._all(
+            f"SELECT {self._PROFILE_COLS} FROM search_profiles "  # noqa: S608
+            "WHERE mission_id = :m AND approved_by IS NOT NULL ORDER BY profile_version",
             m=mission_id,
         )
         return [dict(r) for r in rows]

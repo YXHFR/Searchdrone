@@ -20,6 +20,7 @@ from sd_brain.evals.fake_ground import FakeGround
 from sd_schemas.charter import CharterProposal
 from sd_schemas.commander import BrainMessage, DecisionLog, MissionMemoryUpdate, SkillRequest
 from sd_schemas.decide import ChatIntentReport
+from sd_schemas.search import SearchProfileProposal
 
 TOKEN = "brain-token-for-contract-tests-0123456789"
 
@@ -97,6 +98,12 @@ class MockCommander:
         async def estimate(mid: str, request: Request) -> Any:
             req = SkillRequest.model_validate(await request.json())
             return json.loads((await fg.estimate(mid, req)).model_dump_json())
+
+        @app.post(base + "/missions/{mid}/profile-proposals")
+        async def profile_proposals(mid: str, request: Request) -> Any:
+            prop = SearchProfileProposal.model_validate(await request.json())
+            pid = await fg.propose_search_profile(mid, prop)
+            return JSONResponse({"proposal_id": pid}, status_code=201)
 
         @app.post(base + "/missions/{mid}/charter-proposals")
         async def proposals(mid: str, request: Request) -> Any:

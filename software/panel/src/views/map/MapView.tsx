@@ -8,6 +8,7 @@ import {
   Pentagon,
   Route,
   Square,
+  UserSearch,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -46,6 +47,7 @@ import {
   targetData,
   trackData,
 } from "./mapData";
+import { ProfileCard } from "./ProfileCard";
 import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";
 import { usePathOverlay } from "./pathOverlay";
 
@@ -189,6 +191,7 @@ export default function MapView({ isCompact }: ViewProps) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [drawError, setDrawError] = useState<string | null>(null);
   const [findId, setFindId] = useState<string | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   const find = useMissionStore((s) => (findId ? (s.finds[findId] ?? null) : null));
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -522,6 +525,7 @@ export default function MapView({ isCompact }: ViewProps) {
       <div className="view-body view-empty">
         <p>{t(webgl ? "views.map.failed" : "views.map.noWebgl")}</p>
         <DroneText />
+        {missionId ? <ProfileCard missionId={missionId} /> : null}
       </div>
     );
   }
@@ -550,6 +554,19 @@ export default function MapView({ isCompact }: ViewProps) {
             <Maximize2 aria-hidden="true" size={15} />
             {t("views.map.showCharter")}
           </button>
+          {missionId ? (
+            <button
+              type="button"
+              className="tool"
+              data-testid="profile-tab"
+              aria-pressed={profileOpen}
+              aria-controls={profileOpen ? "map-profile" : undefined}
+              onClick={() => setProfileOpen(!profileOpen)}
+            >
+              <UserSearch aria-hidden="true" size={15} />
+              {t("profile.tab")}
+            </button>
+          ) : null}
           <Menu
             tool
             label={t("views.map.layers")}
@@ -673,6 +690,18 @@ export default function MapView({ isCompact }: ViewProps) {
           </p>
         ) : null}
         {cursor && !isCompact ? <p className="map-cursor">{cursor}</p> : null}
+        {profileOpen && missionId ? (
+          <div className="map-profile" id="map-profile" data-testid="map-profile">
+            <button
+              type="button"
+              className="btn btn-small btn-outline map-profile-close"
+              onClick={() => setProfileOpen(false)}
+            >
+              {t("profile.close")}
+            </button>
+            <ProfileCard missionId={missionId} />
+          </div>
+        ) : null}
         {find && missionId && !isCompact ? (
           <FindCard find={find} missionId={missionId} onClose={() => setFindId(null)} />
         ) : null}

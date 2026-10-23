@@ -216,6 +216,14 @@ brain-eval:
 brain-eval-cloud:
     uv run --package sd-brain sd-brain eval --backend cloud --repeat 3
 
+# The search-profile evaluation: 20 fictional descriptions, recorded answers (no network)
+brain-eval-profiles:
+    uv run --package sd-brain sd-brain eval-profiles --backend replay
+
+# The same against the cloud model (the owner's key in .env; costs a cent or two)
+brain-eval-profiles-cloud:
+    uv run --package sd-brain sd-brain eval-profiles --backend cloud
+
 # Simulator exam: random searches with an answer key, the cloud model decides (keys:
 # flights, seed, model). Hard cap 30 kr per day on real usage, then the script flies.
 brain-eval-sim *args:

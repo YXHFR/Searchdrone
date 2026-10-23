@@ -34,6 +34,7 @@ export const TOPICS = [
   "alerts",
   "detections",
   "system",
+  "search_profile",
 ] as const;
 
 export interface LiveSocketHandlers {

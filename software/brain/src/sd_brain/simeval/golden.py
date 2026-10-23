@@ -28,7 +28,14 @@ from sd_brain.simeval.decider import DecisionMaker, cloud_commander
 from sd_brain.simeval.runner import fly
 from sd_brain.simeval.scenario import make_scenario
 
-__all__ = ["GOLDEN_SCHEMA", "GoldenError", "export_golden", "load_fixture", "replay_golden"]
+__all__ = [
+    "GOLDEN_SCHEMA",
+    "GoldenError",
+    "export_golden",
+    "load_fixture",
+    "refuse_secrets",
+    "replay_golden",
+]
 
 GOLDEN_SCHEMA = "sd-brain-golden-sim/1"
 # Points below the recorded grade a replay may land before it counts as a regression.
@@ -66,7 +73,8 @@ def _clean_reply(raw: Mapping[str, Any]) -> dict[str, Any]:
     return {"content": raw.get("content"), "tool_calls": calls}
 
 
-def _refuse_secrets(replies: list[dict[str, Any]], env: Mapping[str, str]) -> None:
+def refuse_secrets(replies: list[dict[str, Any]], env: Mapping[str, str]) -> None:
+    """Raise :class:`GoldenError` when recorded answers hold a key or personal data."""
     text = json.dumps(replies, ensure_ascii=False)
     for name in SECRET_ENV:
         value = env.get(name, "").strip()
@@ -88,7 +96,7 @@ def export_golden(record: Mapping[str, Any], name: str, env: Mapping[str, str]) 
     if not raw:
         raise GoldenError("flygningen saknar modellens svar")
     replies = [_clean_reply(r) for r in raw]
-    _refuse_secrets(replies, env)
+    refuse_secrets(replies, env)
     return {
         "schema": GOLDEN_SCHEMA,
         "id": name,

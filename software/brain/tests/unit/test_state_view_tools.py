@@ -12,6 +12,7 @@ from brain_helpers import REG, situation, with_stub
 from sd_brain.memory import PendingRequest, empty_memory, pending_request, to_update, with_changes
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.tools import (
+    PROFILE_TOOL,
     AdaptError,
     adapt,
     charter_skills,
@@ -25,6 +26,7 @@ from sd_schemas.skills import SkillRegistry
 NOW = dt.datetime(2026, 1, 1, 0, 1, tzinfo=dt.UTC)
 READ = {t.name for t in read_tools()}
 LATCH = READ | {"report", "mark_location"}
+PROFILE = PROFILE_TOOL
 STOP = {
     "vehicle_id": "sim-01",
     "action": "stop",
@@ -69,35 +71,35 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
         "draft_p1.json",
         {},
         {},
-        READ | {"report", "mark_location", "propose_charter_change"},
+        READ | {"report", "mark_location", "propose_charter_change", PROFILE},
     ),
     (
         "CHARTER_PROPOSED",
         "draft_p1.json",
         {"mission_status": "CHARTER_PROPOSED"},
         {},
-        READ | {"report", "mark_location", "propose_charter_change"},
+        READ | {"report", "mark_location", "propose_charter_change", PROFILE},
     ),
     (
         "READY, no clearance",
         "ready_charter_v1_modeB.json",
         {},
         {"request": True},
-        READ | {"report", "mark_location", "propose_charter_change"},
+        READ | {"report", "mark_location", "propose_charter_change", PROFILE},
     ),
     (
         "READY, clearance and request",
         "ready_charter_v1_modeB.json",
         _cleared(),
         {"request": True},
-        READ | {"report", "mark_location", "propose_charter_change", "takeoff"},
+        READ | {"report", "mark_location", "propose_charter_change", PROFILE, "takeoff"},
     ),
     (
         "READY, clearance, no request",
         "ready_charter_v1_modeB.json",
         _cleared(),
         {},
-        READ | {"report", "mark_location", "propose_charter_change"},
+        READ | {"report", "mark_location", "propose_charter_change", PROFILE},
     ),
     (
         "ACTIVE airborne",
@@ -109,6 +111,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
             "report",
             "mark_location",
             "propose_charter_change",
+            PROFILE,
             "goto",
             "survey_sector",
             "hold",
@@ -144,6 +147,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
             "report",
             "mark_location",
             "propose_charter_change",
+            PROFILE,
             "goto",
             "survey_sector",
             "hold",
@@ -161,6 +165,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
             "report",
             "mark_location",
             "propose_charter_change",
+            PROFILE,
             "goto",
             "survey_sector",
             "hold",
@@ -178,6 +183,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
             "report",
             "mark_location",
             "propose_charter_change",
+            PROFILE,
             "goto",
             "survey_sector",
             "hold",
@@ -190,7 +196,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], set[str]]] = [
         "airborne_modeB.json",
         {"mission_status": "LANDED", "vehicle": {"airborne": False, "landed": True}},
         {},
-        READ | {"report", "mark_location", "propose_charter_change"},
+        READ | {"report", "mark_location", "propose_charter_change", PROFILE},
     ),
     ("CLOSED", "airborne_modeB.json", {"mission_status": "CLOSED"}, {}, READ),
     ("recovered turn: read only", "airborne_modeB.json", {}, {"actions": False}, READ),

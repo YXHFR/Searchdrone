@@ -118,5 +118,9 @@ def test_search_health_is_off_without_a_token_file(ground: Ground) -> None:
 
 def test_search_api_has_only_its_own_routes() -> None:
     """E7: the search service has no route that gives orders, approves or decides."""
-    assert _routes(openapi_documents()["search"]) == [("GET", "/search/v1/health")]
+    assert _routes(openapi_documents()["search"]) == [
+        ("GET", "/search/v1/health"),
+        # Read only: the approved profile version, never a proposal.
+        ("GET", "/search/v1/missions/{mission_id}/search-profile"),
+    ]
     assert "/search/v1/health" not in openapi_documents()["commander"]["paths"]

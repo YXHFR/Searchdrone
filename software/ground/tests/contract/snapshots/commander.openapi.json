@@ -950,6 +950,25 @@
         "title": "ChatMessage",
         "type": "object"
       },
+      "ColorName": {
+        "enum": [
+          "black",
+          "white",
+          "gray",
+          "red",
+          "orange",
+          "yellow",
+          "green",
+          "blue",
+          "purple",
+          "pink",
+          "brown",
+          "beige",
+          "unknown"
+        ],
+        "title": "ColorName",
+        "type": "string"
+      },
       "Command": {
         "additionalProperties": false,
         "properties": {
@@ -1546,6 +1565,109 @@
         "title": "ExecutorState",
         "type": "string"
       },
+      "Garment": {
+        "additionalProperties": false,
+        "properties": {
+          "certainty": {
+            "enum": [
+              "certain",
+              "likely",
+              "unsure"
+            ],
+            "title": "Certainty",
+            "type": "string"
+          },
+          "colors": {
+            "items": {
+              "$ref": "#/components/schemas/ColorName"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Colors",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          },
+          "part": {
+            "enum": [
+              "outer",
+              "upper",
+              "lower",
+              "headwear",
+              "footwear",
+              "full_body"
+            ],
+            "title": "Part",
+            "type": "string"
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "enum": [
+                  "solid",
+                  "striped",
+                  "checked",
+                  "patterned",
+                  "reflective"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pattern"
+          },
+          "shade": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "dark"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shade"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          }
+        },
+        "required": [
+          "part",
+          "colors",
+          "certainty"
+        ],
+        "title": "Garment",
+        "type": "object"
+      },
       "GateDecision": {
         "additionalProperties": false,
         "properties": {
@@ -1619,6 +1741,161 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Hair": {
+        "additionalProperties": false,
+        "properties": {
+          "certainty": {
+            "enum": [
+              "certain",
+              "likely",
+              "unsure"
+            ],
+            "title": "Certainty",
+            "type": "string"
+          },
+          "color": {
+            "$ref": "#/components/schemas/ColorName"
+          },
+          "length": {
+            "enum": [
+              "short",
+              "long",
+              "bald",
+              "unknown"
+            ],
+            "title": "Length",
+            "type": "string"
+          }
+        },
+        "required": [
+          "color",
+          "length",
+          "certainty"
+        ],
+        "title": "Hair",
+        "type": "object"
+      },
+      "Item": {
+        "additionalProperties": false,
+        "properties": {
+          "certainty": {
+            "enum": [
+              "certain",
+              "likely",
+              "unsure"
+            ],
+            "title": "Certainty",
+            "type": "string"
+          },
+          "colors": {
+            "items": {
+              "$ref": "#/components/schemas/ColorName"
+            },
+            "maxItems": 3,
+            "title": "Colors",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "backpack",
+              "bag",
+              "cane",
+              "walker",
+              "umbrella",
+              "bicycle",
+              "dog",
+              "other"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "required": [
+          "kind",
+          "certainty"
+        ],
+        "title": "Item",
+        "type": "object"
+      },
+      "LastSeen": {
+        "additionalProperties": false,
+        "description": "The initial planning point (IPP): where and when the person was last seen.",
+        "properties": {
+          "at_utc": {
+            "format": "date-time",
+            "title": "At Utc",
+            "type": "string"
+          },
+          "heading_deg": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 360,
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Heading Deg"
+          },
+          "kind": {
+            "default": "point_last_seen",
+            "enum": [
+              "point_last_seen",
+              "last_known_position"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90,
+            "minimum": -90,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180,
+            "minimum": -180,
+            "title": "Lon",
+            "type": "number"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "at_utc"
+        ],
+        "title": "LastSeen",
         "type": "object"
       },
       "LatLon": {
@@ -2121,6 +2398,174 @@
           }
         },
         "title": "SafetyLimits",
+        "type": "object"
+      },
+      "SearchProfileDraft": {
+        "additionalProperties": false,
+        "description": "A search profile before the ground station numbers and stores it: what the AI\nproposes from the chat, and what the pilot's card sends when they approve.\n\nThe ground station sets the mission, the profile id, the version and who approved\nit. The age and height bands, the place last seen and the sources are for the people\nsearching, never for the cloud matching.",
+        "properties": {
+          "age_band": {
+            "anyOf": [
+              {
+                "enum": [
+                  "child",
+                  "youth",
+                  "adult",
+                  "senior"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Age Band"
+          },
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Excluded",
+            "type": "array"
+          },
+          "free_text": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Free Text",
+            "type": "string"
+          },
+          "garments": {
+            "items": {
+              "$ref": "#/components/schemas/Garment"
+            },
+            "maxItems": 8,
+            "title": "Garments",
+            "type": "array"
+          },
+          "hair": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Hair"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "height_band": {
+            "anyOf": [
+              {
+                "enum": [
+                  "short",
+                  "medium",
+                  "tall"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Height Band"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            },
+            "maxItems": 6,
+            "title": "Items",
+            "type": "array"
+          },
+          "last_seen": {
+            "$ref": "#/components/schemas/LastSeen"
+          },
+          "likely_state": {
+            "items": {
+              "enum": [
+                "walking",
+                "sitting",
+                "lying",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Likely State",
+            "type": "array"
+          },
+          "mobility": {
+            "default": "unknown",
+            "enum": [
+              "good",
+              "reduced",
+              "unknown"
+            ],
+            "title": "Mobility",
+            "type": "string"
+          },
+          "subject_category": {
+            "enum": [
+              "dementia",
+              "hiker",
+              "despondent",
+              "gatherer",
+              "hunter",
+              "child_1_6",
+              "child_7_12",
+              "child_13_15",
+              "autism",
+              "other"
+            ],
+            "title": "Subject Category",
+            "type": "string"
+          },
+          "visual_notes": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Visual Notes",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_category",
+          "last_seen"
+        ],
+        "title": "SearchProfileDraft",
+        "type": "object"
+      },
+      "SearchProfileProposal": {
+        "additionalProperties": false,
+        "description": "The AI's proposal from the chat. It changes nothing until a pilot approves it.",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/SearchProfileDraft"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "title": "SearchProfileProposal",
+        "type": "object"
+      },
+      "SearchProfileProposalResult": {
+        "additionalProperties": false,
+        "properties": {
+          "proposal_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id"
+        ],
+        "title": "SearchProfileProposalResult",
         "type": "object"
       },
       "Sector": {
@@ -3500,6 +3945,57 @@
           }
         },
         "summary": "Post Message"
+      }
+    },
+    "/commander/v1/missions/{mission_id}/profile-proposals": {
+      "post": {
+        "description": "A proposal only: it is never used until a pilot approves the profile in the panel.",
+        "operationId": "post_profile_proposal_commander_v1_missions__mission_id__profile_proposals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchProfileProposal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchProfileProposalResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Profile Proposal"
       }
     },
     "/commander/v1/missions/{mission_id}/situation": {

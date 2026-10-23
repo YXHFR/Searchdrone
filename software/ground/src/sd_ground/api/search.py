@@ -13,8 +13,10 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 
-from sd_ground.api.deps import ApiStatusError, ground
+from sd_ground.api.deps import ApiStatusError, IdPath, ground, repo_of
 from sd_ground.context import Ground
+from sd_ground.services import search_profile as profile_service
+from sd_schemas.search import SearchProfile
 
 __all__ = ["require_search", "router"]
 
@@ -39,3 +41,13 @@ G = Annotated[Ground, Depends(ground)]
 async def health(_: Search, g: G) -> dict[str, Any]:
     """The search service's view of the ground station: up, and whether the database is."""
     return {"ok": True, "role": "search", "version": g.version, "db_ok": g.db_ok}
+
+
+@router.get("/missions/{mission_id}/search-profile", response_model=SearchProfile | None)
+async def get_search_profile(mission_id: IdPath, _: Search, g: G) -> SearchProfile | None:
+    """The approved version in force, or ``null``: a proposal from the AI is never
+    returned here, so the matching cannot use one (E10)."""
+    repo_of(g)
+    if g.flow is None:
+        raise ApiStatusError(503, "DB_DOWN", "Uppdragsflödet är inte igång just nu.")
+    return await profile_service.approved(g.flow, mission_id)

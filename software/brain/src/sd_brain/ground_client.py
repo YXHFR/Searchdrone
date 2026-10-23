@@ -32,6 +32,7 @@ from sd_schemas.commander import (
     SkillSubmitResult,
 )
 from sd_schemas.decide import ChatIntentReport
+from sd_schemas.search import SearchProfileProposal
 from sd_schemas.skills import SkillSpecPublic
 
 __all__ = [
@@ -73,6 +74,9 @@ class GroundApi(Protocol):
     async def propose_charter(
         self, mission_id: str, proposal: CharterProposal
     ) -> CharterProposalOutcome: ...
+    async def propose_search_profile(
+        self, mission_id: str, proposal: SearchProfileProposal
+    ) -> str: ...
     async def memory(self, mission_id: str) -> MissionMemory: ...
     async def put_memory(self, mission_id: str, mem: MissionMemoryUpdate) -> None: ...
     async def post_decision(self, mission_id: str, entry: DecisionLog) -> None: ...
@@ -202,6 +206,16 @@ class GroundClient:
             return _outcome(resp)
         except (ValueError, ValidationError, KeyError) as exc:
             raise GroundError(f"oväntat svar på ramförslaget: {type(exc).__name__}") from None
+
+    async def propose_search_profile(self, mission_id: str, proposal: SearchProfileProposal) -> str:
+        """Store the profile proposal for the pilot's card; returns its id."""
+        data = await self._json(
+            "POST",
+            f"/missions/{mission_id}/profile-proposals",
+            (201,),
+            json=proposal.model_dump(mode="json"),
+        )
+        return str(data["proposal_id"])
 
     async def memory(self, mission_id: str) -> MissionMemory:
         data = await self._json("GET", f"/missions/{mission_id}/memory", (200,))

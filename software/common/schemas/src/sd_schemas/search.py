@@ -36,6 +36,11 @@ __all__ = [
     "LastSeen",
     "PriorityClass",
     "SearchProfile",
+    "SearchProfileApproval",
+    "SearchProfileDraft",
+    "SearchProfileProposal",
+    "SearchProfileProposalResult",
+    "SearchProfileState",
     "SubjectCategory",
     "priority_class",
 ]
@@ -99,16 +104,15 @@ class LastSeen(SdModel):
     source: str | None = Field(default=None, max_length=80)
 
 
-class SearchProfile(SdModel):
-    """What the person looked like, as the operator approved it.
+class SearchProfileDraft(SdModel):
+    """A search profile before the ground station numbers and stores it: what the AI
+    proposes from the chat, and what the pilot's card sends when they approve.
 
-    A proposal from the AI has ``approved_by = None`` and is never used for matching.
-    The age and height bands are for the people searching, never for the matching.
+    The ground station sets the mission, the profile id, the version and who approved
+    it. The age and height bands, the place last seen and the sources are for the people
+    searching, never for the cloud matching.
     """
 
-    profile_id: Id  # one per mission
-    profile_version: int = Field(ge=1)  # grows with every approved change
-    mission_id: Id
     subject_category: SubjectCategory
     mobility: Literal["good", "reduced", "unknown"] = "unknown"
     age_band: Literal["child", "youth", "adult", "senior"] | None = None
@@ -121,10 +125,10 @@ class SearchProfile(SdModel):
     )
     last_seen: LastSeen
     visual_notes: str = Field(default="", max_length=300)  # visible details
-    free_text: str = Field(default="", max_length=2000)  # may hold health details: never sent
+    # Anything else, health details included: it may reach the cloud model as text when
+    # the cloud is used, but it is never written to a log.
+    free_text: str = Field(default="", max_length=2000)
     excluded: list[str] = Field(default_factory=list[str], max_length=5)
-    approved_by: str | None = Field(default=None, pattern=OPERATOR_REF_PATTERN)
-    approved_at: AwareDatetime | None = None
 
     @field_validator("excluded")
     @classmethod
@@ -132,10 +136,6 @@ class SearchProfile(SdModel):
         if any(len(v) > 80 for v in value):
             raise ValueError("each exclusion is at most 80 characters")
         return value
-
-    @property
-    def approved(self) -> bool:
-        return self.approved_by is not None and self.approved_at is not None
 
     @property
     def field_keys(self) -> list[str]:
@@ -148,6 +148,52 @@ class SearchProfile(SdModel):
         if keys:
             keys.append("state")
         return keys
+
+
+class SearchProfile(SearchProfileDraft):
+    """What the person looked like, as the operator approved it.
+
+    A proposal from the AI has ``approved_by = None`` and is never used for matching.
+    """
+
+    profile_id: Id  # one per mission
+    profile_version: int = Field(ge=1)  # grows with every approved change
+    mission_id: Id
+    approved_by: str | None = Field(default=None, pattern=OPERATOR_REF_PATTERN)
+    approved_at: AwareDatetime | None = None
+
+    @property
+    def approved(self) -> bool:
+        return self.approved_by is not None and self.approved_at is not None
+
+
+class SearchProfileProposal(SdModel):
+    """The AI's proposal from the chat. It changes nothing until a pilot approves it."""
+
+    profile: SearchProfileDraft
+
+
+class SearchProfileApproval(SdModel):
+    """The pilot's approval from the card: the profile as corrected, and what the card
+    showed when they began. A newer version or proposal than that is refused (409), so an
+    approval never covers AI content the pilot has not seen."""
+
+    profile: SearchProfileDraft
+    base_version: int = Field(ge=0)  # the approved version the card showed, 0 for none
+    proposal_id: Id | None = None  # the proposal the card showed, if any
+
+
+class SearchProfileProposalResult(SdModel):
+    proposal_id: Id
+
+
+class SearchProfileState(SdModel):
+    """The profile in force (highest approved version) and a newer proposal, if any."""
+
+    approved: SearchProfile | None = None
+    proposal: SearchProfile | None = None  # not approved: the version it would become
+    proposal_id: Id | None = None
+    proposed_by: str | None = Field(default=None, max_length=80)
 
 
 class CandidateState(StrEnum):

@@ -339,6 +339,14 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
     case "find.updated":
       if (forMission) m.upsertFind(e.data as Find);
       break;
+    case "search_profile.proposed":
+    case "search_profile.approved":
+      if (forMission) {
+        m.bumpProfile();
+        if (e.type === "search_profile.proposed")
+          useUiStore.getState().toast("Ny sökprofil föreslagen: granska den under Sökprofil.");
+      }
+      break;
     case "annotation.deleted":
       m.removeAnnotation((e.data as { id: string }).id);
       break;
