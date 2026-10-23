@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -49,8 +49,6 @@ class Layout:
     name: str
     members: Callable[[list[str]], list[Member]]
     boxes: Callable[[bytes | None, int, int], list[Box]]
-    image_ext: tuple[str, ...] = (".jpg", ".jpeg", ".png")
-    notes: list[str] = field(default_factory=list[str])
 
 
 def _clip(box: Box, width: int, height: int) -> Box | None:
@@ -133,13 +131,9 @@ def _heridal(names: list[str]) -> list[Member]:
         if not re.fullmatch(r"(train|test)_[A-Z]+_\d+", stem):
             continue
         label = str(p.parent.parent / "Annotations" / f"{stem}.xml")
-        out.append(Member(stem, stem.split("_")[1], name, label if label in present else None))
+        seq = sequence_of("heridal_voc", stem)
+        out.append(Member(stem, seq, name, label if label in present else None))
     return out
-
-
-def wisard_sequence(folder: str) -> str:
-    parts = folder.split("_")
-    return "_".join(parts[:2])
 
 
 def _wisard(names: list[str]) -> list[Member]:
@@ -156,8 +150,8 @@ def _wisard(names: list[str]) -> list[Member]:
         label = str(p.with_suffix(".txt"))
         if label not in present:
             continue  # flights without labels are left out
-        folder = p.parts[0]
-        out.append(Member(f"{folder}/{p.stem}", wisard_sequence(folder), name, label))
+        image_id = f"{p.parts[0]}/{p.stem}"
+        out.append(Member(image_id, sequence_of("wisard_vis", image_id), name, label))
     return out
 
 
@@ -168,9 +162,10 @@ def _simfarm(names: list[str]) -> list[Member]:
         p = PurePosixPath(name)
         if len(p.parts) != 3 or p.parts[1] != "images" or p.suffix.lower() != ".png":
             continue
-        rnd = p.parts[0]
-        label = f"{rnd}/labels/{p.stem}.txt"
-        out.append(Member(f"{rnd}/{p.stem}", rnd, name, label if label in present else None))
+        image_id = f"{p.parts[0]}/{p.stem}"
+        label = f"{p.parts[0]}/labels/{p.stem}.txt"
+        seq = sequence_of("simfarm", image_id)
+        out.append(Member(image_id, seq, name, label if label in present else None))
     return out
 
 
@@ -184,11 +179,11 @@ LAYOUTS: dict[str, Layout] = {
 
 
 def sequence_of(layout: str, image_id: str) -> str:
-    """The sequence an image id belongs to (the split's leak check uses it)."""
+    """The sequence an image id belongs to: the one rule the layouts and the split use."""
     if layout == "heridal_voc":
         return image_id.split("_")[1]
     if layout == "wisard_vis":
-        return wisard_sequence(image_id.split("/")[0])
+        return "_".join(image_id.split("/")[0].split("_")[:2])
     if layout == "simfarm":
         return image_id.split("/")[0]
     raise KeyError(layout)

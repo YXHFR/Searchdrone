@@ -1,4 +1,4 @@
-"""Box arithmetic shared by the tiling, the ONNX decoders and the image bank.
+"""Box arithmetic shared by the tiling and the image bank.
 
 Boxes are ``(x0, y0, x1, y1)`` in pixels as float arrays of shape ``(n, 4)``; ``BBox``
 (top-left corner, width, height) is converted at the edges.

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -21,7 +21,7 @@ from sd_detect.boxes import iou_matrix
 
 MATCH_IOU = 0.5
 FP_PER_12MP = 0.5
-SCORE_MIN = 0.25  # DETECTOR_SCORE_MIN on board
+SCORE_MIN = 0.25  # assumed on-board score floor (no on-board constant exists yet)
 MP12 = 12_000_000
 SIZE_CLASSES = ("lt16", "16to32", "gt32")
 
@@ -147,7 +147,6 @@ class Summary:
     latency_ms: dict[str, float]
     score_hit: dict[str, float] | None = None
     score_fp: dict[str, float] | None = None
-    notes: list[str] = field(default_factory=list[str])
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -162,7 +161,6 @@ class Summary:
             "latency_ms": self.latency_ms,
             "score_hit": self.score_hit,
             "score_fp": self.score_fp,
-            "notes": self.notes,
         }
 
 

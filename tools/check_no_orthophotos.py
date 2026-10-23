@@ -27,7 +27,9 @@ A file is flagged when:
 What it cannot see: a photo saved as an ordinary picture (PNG, JPEG, WebP) by hand,
 with nothing that says where it came from. Such pictures are kept out of git by
 ``check_forbidden_files.py`` (no images outside ``testdata/`` and the panel's assets) and
-none is made in CI, where no photo is ever fetched.
+none is made in CI. The one CI job that fetches photos, the nightly ``bench-mini``
+(published HERIDAL test pictures, not orthophotos), keeps them in ``$RUNNER_TEMP`` and
+uploads only its JSON result, after this check and a JSON-only check.
 
 Exit code 0 when nothing was found, 1 otherwise. Standard library only.
 """

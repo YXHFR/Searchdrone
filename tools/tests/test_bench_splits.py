@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from bench.common import BenchError
-from bench.layouts import sequence_of
+from bench.layouts import LAYOUTS, sequence_of
 from bench.splits import (
     PARTS,
     RATIOS,
@@ -44,20 +44,26 @@ def test_split_no_leakage() -> None:
 
 
 @pytest.mark.parametrize(
-    ("layout", "a", "b"),
+    ("layout", "names"),
     [
         # HERIDAL's own train and test pictures share places: the place is the group
-        ("heridal_voc", "train_TRS_0001", "test_TRS_0002"),
+        ("heridal_voc", ["h/JPEGImages/train_TRS_0001.jpg", "h/JPEGImages/test_TRS_0002.jpg"]),
         # two flights over one place on one day are one sequence
         (
             "wisard_vis",
-            "210924_FHL_Enterprise_VIS_0126/DJI_0001",
-            "210924_FHL_Enterprise_VIS_0401/DJI_0002",
+            [
+                "210924_FHL_Enterprise_VIS_0126/DJI_0001.jpg",
+                "210924_FHL_Enterprise_VIS_0126/DJI_0001.txt",
+                "210924_FHL_Enterprise_VIS_0401/DJI_0002.jpg",
+                "210924_FHL_Enterprise_VIS_0401/DJI_0002.txt",
+            ],
         ),
     ],
 )
-def test_near_copies_share_a_sequence(layout: str, a: str, b: str) -> None:
-    assert sequence_of(layout, a) == sequence_of(layout, b)
+def test_near_copies_share_a_sequence(layout: str, names: list[str]) -> None:
+    members = LAYOUTS[layout].members(names)
+    assert len(members) == 2
+    assert members[0].seq == members[1].seq
 
 
 def test_split_check_refuses_other_pictures() -> None:
@@ -110,3 +116,15 @@ def test_mini_bank_is_drawn_from_the_test_part() -> None:
         assert r.image_member.endswith(".jpg")
     size = sum(r.image_bytes + (r.label_bytes or 0) for r in rows)
     assert size < 400e6
+
+
+def test_pick_mini_spreads_by_sequence_size() -> None:
+    from bench.make_splits import pick_mini
+
+    ids = {"A": [f"A{i:02d}" for i in range(60)], "B": [f"B{i}" for i in range(30)], "C": ["C0"]}
+    picked = pick_mini(ids, 9)
+    assert len(picked) == len(set(picked)) == 9
+    counts = {s: sum(p.startswith(s) for p in picked) for s in ids}
+    assert counts == {"A": 6, "B": 3, "C": 0}  # 5.93, 2.97, 0.10 by largest remainder
+    assert pick_mini(ids, 9) == picked  # the same every time
+    assert pick_mini(ids, 500) == sorted(i for v in ids.values() for i in v)

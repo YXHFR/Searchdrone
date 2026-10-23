@@ -334,3 +334,77 @@ def test_mini_fetch_checks_each_member(tmp_path: Path, monkeypatch: pytest.Monke
     assert fetch.fetch_mini(load_register(), tmp_path) == 0
     (image,) = read_index(tmp_path, "heridal", mini=True)
     assert image.boxes == ((10.0, 10.0, 30.0, 40.0),)
+
+
+# --- limits and answers that must be refused ----------------------------------------------
+
+
+def test_a_huge_member_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fetch, "MAX_MEMBER_BYTES", 100)
+    body = heridal_zip()
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=FakeServer(body)))
+    with pytest.raises(BenchError, match="orimligt stor"):
+        fetch.fetch_archive(_heridal_row(body), tmp_path, keep=True)
+
+
+def test_a_target_through_a_symlink_out_of_raw_is_refused(tmp_path: Path) -> None:
+    from bench.common import inside
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (raw / "JPEGImages").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(BenchError, match="utanför"):
+        inside(raw, safe_relpath("JPEGImages/a.jpg"))
+
+
+def test_a_redirect_to_plain_http_is_refused() -> None:
+    from bench.common import _HttpsOnlyRedirects, request
+
+    handler = _HttpsOnlyRedirects()
+    req = request("https://example.test/a.zip")
+    with pytest.raises(BenchError, match="utan https"):
+        handler.redirect_request(req, io.BytesIO(), 302, "Found", {}, "http://example.test/a")
+    again = handler.redirect_request(req, io.BytesIO(), 302, "Found", {}, "https://cdn.test/a")
+    assert again is not None and again.full_url == "https://cdn.test/a"
+
+
+def test_range_file_refuses_a_server_that_ignores_ranges() -> None:
+    body = bytes(range(256)) * 4
+    server = FakeServer(body)
+    rf = RangeFile("https://example.test/a.zip", server)
+    server.ranges = False  # from now on the whole file, from the start
+    rf.seek(100)
+    with pytest.raises(BenchError, match="begärda delen"):
+        rf.read(10)
+
+
+def test_the_sim_farm_is_indexed_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from bench import common, datasets
+
+    repo = tmp_path / "repo"
+    farm = repo / "build" / "simfarm"
+    (farm / "r1" / "images").mkdir(parents=True)
+    (farm / "r1" / "labels").mkdir(parents=True)
+    PILImage.new("RGB", (40, 20)).save(farm / "r1" / "images" / "a.png")
+    (farm / "r1" / "labels" / "a.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+    for mod in (fetch, datasets, common):
+        monkeypatch.setattr(mod, "ROOT", repo, raising=False)
+    ds = dataclasses.replace(load_register()["simfarm"], local_path="build/simfarm")
+    data = tmp_path / "data"
+    assert fetch.index_local(ds, data) == 0
+    (image,) = read_index(data, "simfarm")
+    assert (image.image_id, image.seq, image.boxes) == (
+        "simfarm:r1/a",
+        "r1",
+        ((10.0, 5.0, 30.0, 15.0),),
+    )
+    assert datasets.image_root(data, "simfarm") == farm.resolve()
+    # an index that points outside the repository is not followed
+    index = datasets.index_path(data, "simfarm")
+    body = json.loads(index.read_text(encoding="utf-8"))
+    body["source"] = "local:../../elsewhere"
+    index.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(BenchError, match="utanför repot"):
+        datasets.image_root(data, "simfarm")

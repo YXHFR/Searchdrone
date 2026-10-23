@@ -15,7 +15,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -121,8 +121,28 @@ def inside(base: Path, rel: PurePosixPath) -> Path:
 Opener = Callable[[urllib.request.Request], BinaryIO]
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to another https address (hosts move files to storage)."""
+
+    def redirect_request(  # type: ignore[override]
+        self,
+        req: urllib.request.Request,
+        fp: BinaryIO,
+        code: int,
+        msg: str,
+        headers: Mapping[str, str],
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if not newurl.startswith("https://"):
+            raise BenchError(f"Servern skickar vidare till en adress utan https: {newurl}", 2)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)  # type: ignore[arg-type]
+
+
+_OPENER = urllib.request.build_opener(_HttpsOnlyRedirects)
+
+
 def _open(req: urllib.request.Request) -> BinaryIO:
-    return urllib.request.urlopen(req, timeout=TIMEOUT_S)  # noqa: S310 - https only, see request()
+    return _OPENER.open(req, timeout=TIMEOUT_S)  # https only: request() and the redirects
 
 
 def request(url: str, headers: Mapping[str, str] | None = None) -> urllib.request.Request:
@@ -248,12 +268,10 @@ class RangeFile(io.RawIOBase):
         req = request(self.url, {"Range": f"bytes={self._pos}-{self._pos + n - 1}"})
         with self._opener(req) as resp:
             _refuse_html(resp, self.url)
+            got = getattr(resp, "headers", {}).get("Content-Range") or ""
+            if getattr(resp, "status", 206) != 206 or not got.startswith(f"bytes {self._pos}-"):
+                raise BenchError(f"Servern svarade inte med den begärda delen av filen: {self.url}")
             data = resp.read(n)
         buffer[: len(data)] = data
         self._pos += len(data)
         return len(data)
-
-
-def chunks(fh: BinaryIO) -> Iterator[bytes]:
-    while chunk := fh.read(CHUNK):
-        yield chunk

@@ -58,7 +58,7 @@ sizes count by area). At that threshold the result gives:
 
 - **recall per size class** of the person box's longest side: under 16 px, 16–32 px and
   over 32 px, with a 95 % interval, and per dataset;
-- AP50, precision at score 0.25 (the drone's `DETECTOR_SCORE_MIN`), time per picture
+- AP50, precision at score 0.25 (an assumed on-board score floor), time per picture
   (median and 95th percentile);
 - the score distributions of hits and false alarms (for the simulator's stand-in).
 

@@ -211,5 +211,8 @@ def image_root(data: Path, name: str, mini: bool = False) -> Path:
     set (the sim farm) the folder in the repository it was indexed from."""
     source = read_source(data, name, mini) or ""
     if source.startswith("local:"):
-        return (ROOT / source.removeprefix("local:")).resolve()
+        root = (ROOT / source.removeprefix("local:")).resolve()
+        if not root.is_relative_to(ROOT.resolve()):
+            raise BenchError(f"{name}: indexet pekar utanför repot ({root})", 2)
+        return root
     return raw_dir(data, name, mini)

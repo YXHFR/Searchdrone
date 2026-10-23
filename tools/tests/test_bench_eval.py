@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from bench import eval_detector as ev
+from bench.common import BenchError
 from bench.datasets import Image
 from bench.metrics import MP12, ap50, match_picture, size_class, summarise, threshold_for, wilson
 from bench.profiles import START, build_profile
@@ -168,3 +169,79 @@ def test_profile_has_the_oracle_format() -> None:
     assert set(p["recall"]) == {"lt16", "16to32", "gt32"}  # type: ignore[arg-type]
     assert p["score_hit"] == {"a": 5.0, "b": 2.0}
     assert p["not_measured"] == ["occlusion_factor", "score_fp"]
+
+
+# --- the locked test part ------------------------------------------------------------
+
+
+def _indexed_bank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fetched 'heridal' with a test place (TST), a val place (VAL) and a train place
+    (TRN), and the split that says so."""
+    from bench import datasets
+    from bench.splits import Split, ids_digest
+
+    data = tmp_path / "data"
+    raw = data / "datasets" / "heridal" / "raw"
+    raw.mkdir(parents=True)
+    images = []
+    for seq in ("TST", "VAL", "TRN"):
+        name = f"test_{seq}_0001.png"
+        PILImage.new("RGB", (64, 48)).save(raw / name)
+        images.append(Image(f"heridal:test_{seq}_0001", "heridal", seq, name, 64, 48, ()))
+    datasets.write_index(data, datasets.load_register()["heridal"], images, "test")
+    parts = {"TST": "test", "VAL": "val", "TRN": "train"}
+    split = Split(
+        "v1",
+        {("heridal", s): p for s, p in parts.items()},  # type: ignore[misc]
+        {("heridal", s): 1 for s in parts},
+        {("heridal", s): ids_digest([f"test_{s}_0001"]) for s in parts},
+    )
+    monkeypatch.setattr(ev, "load_split", lambda *a: split)
+    return data
+
+
+@pytest.mark.parametrize(("part", "seq"), [("test", "TST"), ("val", "VAL")])
+def test_only_the_asked_part_is_measured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part: str, seq: str
+) -> None:
+    data = _indexed_bank(tmp_path, monkeypatch)
+    source, items = ev.pictures({"part": part, "sets": "heridal"}, data)
+    assert [p.image.seq for p in items] == [seq]
+    assert source == f"splits/v1 {part} (heridal)"
+
+
+def test_train_part_and_unmeasured_sets_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _indexed_bank(tmp_path, monkeypatch)
+    with pytest.raises(BenchError, match="part"):
+        ev.pictures({"part": "train"}, data)
+    with pytest.raises(BenchError, match="Mäts inte"):
+        ev.pictures({"sets": "simfarm"}, data)
+
+
+def test_an_index_that_does_not_match_the_split_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bench import datasets
+
+    data = _indexed_bank(tmp_path, monkeypatch)
+    extra = Image("heridal:test_TST_0002", "heridal", "TST", "x.png", 64, 48, ())
+    images = [*datasets.read_index(data, "heridal"), extra]
+    datasets.write_index(data, datasets.load_register()["heridal"], images, "test")
+    with pytest.raises(BenchError, match="andra bilder"):
+        ev.pictures({"part": "test"}, data)
+
+
+def test_profiles_main_writes_a_profile(tmp_path: Path) -> None:
+    from bench import profiles
+
+    pics = _pictures(tmp_path)
+    body = ev.result_body("facit", "splits/v1 test (t)", ev.measure("facit", pics))
+    result = tmp_path / "r.json"
+    result.write_text(json.dumps(body), encoding="utf-8")
+    out = tmp_path / "p.json"
+    assert profiles.main(["model=facit_x", "version=2", f"result={result}", f"out={out}"]) == 0
+    p = json.loads(out.read_text(encoding="utf-8"))
+    assert p["profile_id"] == "det_facit_x_v2" and p["recall"]["gt32"] == 1.0
+    assert profiles.main(["model=Bad-Name", f"result={result}", f"out={out}"]) == 2
