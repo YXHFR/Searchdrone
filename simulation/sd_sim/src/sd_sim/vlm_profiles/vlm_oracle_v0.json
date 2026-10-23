@@ -1,0 +1,8 @@
+{
+  "profile_id": "vlm_oracle_v0",
+  "label": "modelled",
+  "note": "Assumed numbers at the level published aerial person-tracking work reports for a fast vision-language model; not measured on Searchdrone data. Replace with a measured profile.",
+  "person": {"tp_yes": 0.85, "tp_unsure": 0.10, "fp_yes": 0.08, "fp_unsure": 0.20},
+  "field": {"match_given_true": 0.70, "conflict_given_true": 0.08, "match_given_false": 0.15},
+  "latency_ms": {"p50": 1800, "p95": 4500}
+}

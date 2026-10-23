@@ -4,7 +4,8 @@ There is no local language model. When the cloud runtime is not configured, or f
 within the last ``retry_after_s``, :meth:`engine` says ``"command"`` and :meth:`chat`
 raises :class:`CloudUnavailableError` at once, so the turn goes to the command mode
 (``GrammarBackend``) without waiting. A failed call starts that pause, so later turns are
-not slowed down by a cloud that does not answer.
+not slowed down by a cloud that does not answer. A call the cloud budget refused (the
+cap is reached) starts the same pause: no AI chat until the budget allows a call again.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from sd_brain.runtime.base import ModelError, ModelReply, ModelTimeoutError, Sampling
+from sd_brain.runtime.budget import BudgetDeniedError
 from sd_brain.runtime.cloud import CloudModelRuntime
 
 __all__ = ["BestAvailableRuntime", "CloudUnavailableError", "EngineName"]
@@ -83,7 +85,12 @@ class BestAvailableRuntime:
         except ModelError as exc:
             self._cloud_failed_at = self._mono()
             self.last_engine = "command"
-            log.warning("molnmodellen svarade inte (%s); kommandoläget tar över", exc.kind)
+            if isinstance(exc, BudgetDeniedError):
+                log.warning(
+                    "molnbudgeten tillåter inget anrop (%s); kommandoläget tar över", exc.reason
+                )
+            else:
+                log.warning("molnmodellen svarade inte (%s); kommandoläget tar över", exc.kind)
             raise
         self._cloud_failed_at = None
         self.last_engine = "cloud"

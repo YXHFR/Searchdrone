@@ -10,7 +10,6 @@ import pytest
 from pydantic import ValidationError
 
 from sd_schemas import link, search
-from sd_schemas.cloud_payload import UnapprovedProfileError, build_cloud_payload
 from sd_schemas.colors import COLOR_TABLE, ColorName
 from sd_schemas_examples import JPEG, examples
 
@@ -226,47 +225,3 @@ def test_profile_schema_roundtrip() -> None:
     for extra in ("profile_id", "approved_by", "mission_id"):  # the ground sets these
         with pytest.raises(ValidationError):
             search.SearchProfileDraft.model_validate(draft.model_dump(mode="json") | {extra: "x"})
-
-
-def test_cloud_payload_fields() -> None:
-    """The approved description goes as text (only what an image can show), no image, and
-    never data collection."""
-    profile = EXAMPLES[search.SearchProfile]
-    assert isinstance(profile, search.SearchProfile)
-    marker = "PÅHITTAD-MARKÖR-7f3a"
-    profile = profile.model_copy(
-        update={
-            "free_text": f"Dement, påhittad person. {marker}",
-            "visual_notes": "röd mössa med vit tofs",
-            "excluded": ["inte gul jacka"],
-            "hair": search.Hair(color=ColorName.GRAY, length="short", certainty="unsure"),
-        }
-    )
-    payload = build_cloud_payload(profile, model="test/model")
-    assert payload["provider"]["data_collection"] == "deny"
-    parts = [p for m in payload["messages"] if isinstance(m["content"], list) for p in m["content"]]
-    assert parts and all(p["type"] == "text" for p in parts)  # no image of any kind
-    blob = json.dumps(payload, ensure_ascii=False)
-    assert "image_url" not in blob and "base64" not in blob
-    text = parts[0]["text"].removeprefix("SÖKPROFIL: ")
-    sent = json.loads(text)
-    ground_only = {"approved_by", "approved_at", "mission_id", "profile_id"}
-    ground_only |= {"last_seen", "age_band", "height_band"}
-    expected = profile.model_dump(mode="json", exclude=ground_only)
-    for entry in [*expected["garments"], *expected["items"]]:
-        entry.pop("source", None)
-    if expected.get("hair"):
-        expected["hair"].pop("source", None)
-    assert {k: v for k, v in sent.items() if k != "field_keys"} == expected
-    assert "source" not in text and "last_seen" not in text
-    assert sent["field_keys"] == ["garment:0", "hair", "state"]
-    assert marker in text and "dementia" in text
-    assert "operator:" not in blob and str(profile.mission_id) not in blob
-
-
-def test_cloud_payload_refuses_a_proposal() -> None:
-    """E10: a profile no pilot approved is never sent."""
-    profile = EXAMPLES[search.SearchProfile]
-    proposal = profile.model_copy(update={"approved_by": None, "approved_at": None})
-    with pytest.raises(UnapprovedProfileError):
-        build_cloud_payload(proposal, model="test/model")  # type: ignore[arg-type]

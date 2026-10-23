@@ -368,6 +368,12 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       });
       break;
     }
+    case "cloud_budget.state": {
+      const { state } = e.data as { state?: string };
+      if (state === "ok" || state === "warning" || state === "exhausted")
+        live.patch({ cloudBudget: state });
+      break;
+    }
     case "gate.decision": {
       const d = e.data as { decision?: string; message_sv?: string };
       if (d.decision === "REJECT") useUiStore.getState().log("info", d.message_sv ?? "");

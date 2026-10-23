@@ -1,0 +1,21 @@
+# Search service (sd-search). Copy to config/search.toml to change a value; that file is
+# merged over this one. Unknown keys stop the service.
+#
+# The cloud matching runs when SD_CLOUD_API_KEY is set (environment or .env); without a
+# key only the code assesses (the heartbeat says "off"). Every call is booked against the
+# ground station's cloud budget first ([cloud_budget] in ground.toml) and carries only
+# small crops (at most 3, JPEG, 512 x 512, no metadata).
+
+[cloud]
+enabled = true                          # false: only the code assesses, even with a key
+base_url = "https://openrouter.ai/api/v1"
+fast_model = "anthropic/claude-haiku-5.5"   # cascade steps 1-2; needs a price in cloud_prices
+timeout_s = 8                           # per call
+max_concurrent = 4                      # cloud calls at a time
+queue_max = 8                           # calls waiting; a full queue takes nothing new
+retry_after_s = 60                      # after a failure or a refused budget
+
+[cloud.provider]
+data_collection = "deny"                # fixed: no provider that stores or trains on the data
+require_parameters = true               # only providers that support the answer schema
+# zdr: zero-data-retention endpoints only. Unset: on outside the simulator (SD_SIM=1).
