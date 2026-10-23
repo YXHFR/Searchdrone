@@ -29,6 +29,7 @@ from sd_safety.targets import distance_m
 from sd_sim.invariants import Sample
 
 __all__ = [
+    "HOME_MODES",
     "KEEPOUT_TOLERANCE_M",
     "CandidateWatch",
     "SeenKeepout",
@@ -41,6 +42,9 @@ __all__ = [
 # edge is noise, not an entry.
 KEEPOUT_TOLERANCE_M: Final = 1.0
 CLEAR_M: Final = 5.0
+# FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
+# straight home and lands, so E8 holds for the flight up to the first such sample.
+HOME_MODES: Final = frozenset({"SMART_RTL", "RTL", "LAND"})
 
 
 def _ts(value: Any) -> dt.datetime:
@@ -128,11 +132,18 @@ class SeenKeepout:
     until: float = math.inf  # when it was no longer in force
 
 
+def _searching(track: Sequence[Sample]) -> Sequence[Sample]:
+    """The track up to the first sample on the way home (``HOME_MODES``)."""
+    end = next((i for i, s in enumerate(track) if s.mode in HOME_MODES), len(track))
+    return track[:end]
+
+
 def _edge_distances(k: SeenKeepout, track: Sequence[Sample]) -> list[tuple[float, float]]:
-    """(t, distance outside the edge) for the armed samples while ``k`` was in force."""
+    """(t, distance outside the edge) for the armed samples while ``k`` was in force,
+    before the drone was on its way home."""
     return [
         (s.t, distance_m(k.lat, k.lon, s.lat, s.lon) - k.radius_m)
-        for s in track
+        for s in _searching(track)
         if s.armed and k.since <= s.t <= k.until
     ]
 

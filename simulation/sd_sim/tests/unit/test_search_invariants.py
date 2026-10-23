@@ -74,9 +74,9 @@ def test_a_vanished_or_older_candidate_breaks_e2() -> None:
     assert len(w.broken) == 2
 
 
-def _track(points: list[tuple[float, float, float]]) -> list[Sample]:
+def _track(points: list[tuple[float, float, float]], mode: str = "GUIDED") -> list[Sample]:
     plane = Plane(*HOME)
-    return [Sample(t, *plane.latlon(e, n), 40.0, 5.0, "GUIDED", True) for t, e, n in points]
+    return [Sample(t, *plane.latlon(e, n), 40.0, 5.0, mode, True) for t, e, n in points]
 
 
 def _cyl(since: float = 0.0, until: float = float("inf")) -> SeenKeepout:
@@ -97,6 +97,13 @@ def test_leaving_a_cylinder_made_around_the_drone_is_fine_but_coming_back_is_not
     broken = keepout_never_entered([_cyl()], back)
     assert broken and broken[0].startswith("E8")
     assert (keepout_distances([_cyl()], back) or 0.0) < 0
+
+
+def test_the_way_home_goes_past_cylinders() -> None:
+    track = _track([(1, 95, 0), (2, 40, 0)]) + _track([(3, 90, 0), (4, 140, 0)], "SMART_RTL")
+    assert keepout_never_entered([_cyl()], track) == []
+    searching = _track([(1, 95, 0), (2, 40, 0), (3, 90, 0), (4, 140, 0)])
+    assert keepout_never_entered([_cyl()], searching)
 
 
 def test_the_distance_counts_from_clearly_outside() -> None:
