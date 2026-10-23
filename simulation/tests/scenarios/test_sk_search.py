@@ -12,8 +12,8 @@ only notices that its heartbeat stops.
 
 * SK01: the drone flies over the person in red and over a person in blue; the one in
   red becomes a candidate seen in several stills with ``garment:0 = match`` and the
-  higher priority, the one in blue a mismatch, and the median time from a stored
-  detection to its candidate observation is under a second.
+  higher priority, the one in blue a conflict (another strong colour), and the median
+  time from a stored detection to its candidate observation is under a second.
 * SK12: ``sd-search`` dies mid-search while reports keep coming and is started again:
   every person detection is observed exactly once, the person in red is one candidate,
   the health part ``search`` goes down and comes back without touching ``ready``, and
@@ -58,6 +58,7 @@ from sd_schemas.link import BBox, CropData, DetectorInfo, GeoDetectionMsg, Perce
 from sd_schemas.search import SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
+from sd_sim.report import measure
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -176,7 +177,7 @@ class People:
 
 
 class Profile:
-    """The approved profile (B2-05's fixture): a red jacket, as the panel would approve it."""
+    """The approved profile (a fixture): a red jacket, as the panel would approve it."""
 
     def __init__(self, sc: Scenario) -> None:
         now = sc.r.clock.utc_now().isoformat()
@@ -296,7 +297,7 @@ async def test_sk01_the_person_in_red_becomes_a_matching_candidate(
         (other,) = near(items, blue)
         assert target["n_seen"] == len(people.sent["red"]) and target["n_seen"] >= 2
         assert target["fields"]["garment:0"] == "match", target
-        assert other["fields"]["garment:0"] == "mismatch", other
+        assert other["fields"]["garment:0"] == "conflict", other  # blue, never red
         assert target["priority"] > other["priority"]
         assert target["state"] == "ready" and target["engine"] == "code"
         n, distinct = await observed(sc)
@@ -309,6 +310,7 @@ async def test_sk01_the_person_in_red_becomes_a_matching_candidate(
             "WHERE d.mission_id = CAST(:m AS uuid)",
         )
         median = statistics.median(float(row[0]) for row in lags)
+        measure("median detection -> candidate", round(median, 3), LATENCY_S)
         assert median < LATENCY_S, f"median detection -> candidate {median:.2f} s"
         await home_and_land(sc)
 
