@@ -62,6 +62,7 @@ __all__ = [
 ]
 
 log = get_logger("sd_ground.probability_map")
+AREAS_MAX: Final = 200  # ProbabilityMapInputs.areas
 
 TOPIC: Final = "probability_map"
 STILLS_MAX: Final = 500
@@ -98,7 +99,7 @@ async def inputs(flow: MissionFlow, mission_id: str) -> ProbabilityMapInputs:
         SearchArea(annotation_id=a.id, poa_hint=a.poa_hint, polygon=a.geometry)
         for a in annotations
         if a.kind == "area" and a.poa_hint is not None
-    ]
+    ][-AREAS_MAX:]  # the newest, within what the inputs carry
     head = await repo(flow).head(mission_id)
     if charter is None:
         return ProbabilityMapInputs(area=None, areas=areas, latest=_latest(head))
@@ -174,6 +175,8 @@ async def write(
     known = set() if charter is None else {s.sector_id for s in charter.sectors}
     if any(s.sector_id not in known for s in body.sectors):
         raise _invalid("Kartan nämner en sektor som inte finns i uppdragsramen.")
+    if len({s.sector_id for s in body.sectors}) != len(body.sectors):
+        raise _invalid("Kartan nämner samma sektor två gånger.")
     grid = _bounded_grid(body.grid)
     ls = profile.last_seen
     if plane_distance_m(grid.ipp_lat, grid.ipp_lon, ls.lat, ls.lon) > IPP_TOLERANCE_M:
@@ -273,12 +276,17 @@ async def sector_scores(flow: MissionFlow, mission_id: str) -> list[SectorScore]
 
 
 async def probability_line(flow: MissionFlow, mission_id: str) -> str | None:
-    """The AI's situation line, or None before the first map with sectors."""
-    head = await repo(flow).head(mission_id)
-    scores = [] if head is None else head["grid"].get("sectors", [])
-    if not scores:
+    """The AI's situation line, or None before the first map with sectors. A fault here
+    never takes the rest of the situation with it."""
+    try:
+        head = await repo(flow).head(mission_id)
+        scores = [] if head is None else head["grid"].get("sectors", [])
+        if not scores:
+            return None
+        return situation_line([SectorScore.model_validate(s) for s in scores])
+    except Exception:
+        log.exception("probability_map.situation_line_failed", mission_id=mission_id)
         return None
-    return situation_line([SectorScore.model_validate(s) for s in scores])
 
 
 def _chunk(kind: bytes, data: bytes) -> bytes:

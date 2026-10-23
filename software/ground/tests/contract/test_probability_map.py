@@ -258,6 +258,8 @@ async def test_the_ground_checks_every_version(r: Rig) -> None:
     }
     unknown = await post(version=3, sectors=[sector | {"sector_id": "ZZ"}])
     assert unknown.status_code == 422 and unknown.json()["code"] == "MAP_INVALID"
+    twice = await post(version=3, sectors=[sector | {"sector_id": "A"}] * 2)
+    assert twice.status_code == 422 and twice.json()["code"] == "MAP_INVALID"
 
     # Only a find a person confirmed freezes the map; the search token cannot fake one.
     fake = await post(version=3, reason="confirmed", frozen=True)

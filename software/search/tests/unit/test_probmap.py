@@ -15,7 +15,7 @@ from sd_schemas.search import SubjectCategory
 from sd_search.probmap.bayes import HeadingPrior, OperatorArea, RingTerrainMap
 from sd_search.probmap.build import MapBuilder, MapCandidate, MapInputs
 from sd_search.probmap.grid import Grid, grid_around
-from sd_search.probmap.pod import DETECTORS, Still, pass_pod, still_pod, total_pod
+from sd_search.probmap.pod import DETECTORS, Still, pass_pod, still_pod
 from sd_search.probmap.rings import ring_mass, rings_for
 from sd_search.probmap.sectors import spacing_m
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
@@ -242,7 +242,7 @@ def test_a_pass_counts_at_most_two_looks() -> None:
     assert cell is not None
     assert pod[cell] == pytest.approx(1 - (1 - 0.889) ** 2)
     one = pass_pod(g, many[:1], canopy, DET)
-    assert total_pod([one, one], g.shape)[cell] == pytest.approx(pod[cell])
+    assert 1 - (1 - one[cell]) ** 2 == pytest.approx(pod[cell])
 
 
 # --- Bayes, properties --------------------------------------------------------------------
@@ -304,7 +304,7 @@ def test_the_same_passes_give_the_same_map(order: list[int]) -> None:
 
 def test_a_frozen_map_takes_no_update() -> None:
     g = grid(500)
-    state = MODEL.freeze(MODEL.prior(HeadingPrior("hiker"), NoTerrain(), [], g), "confirmed")
+    state = MODEL.freeze(MODEL.prior(HeadingPrior("hiker"), NoTerrain(), [], g))
     assert MODEL.update_negative(state, np.full(g.shape, 0.9)) is state
 
 

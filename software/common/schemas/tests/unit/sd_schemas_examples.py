@@ -1077,8 +1077,8 @@ def examples() -> dict[type[BaseModel], BaseModel]:
             profile_version=1,
             sectors=[score],
             mission_id=MISSION,
-            p_b64="AAAA",
-            pod_b64="AAAA",
+            p_b64="A" * 43 + "=",  # 16 float16 zeros
+            pod_b64="A" * 43 + "=",
             created_at=T,
         ),
     ]

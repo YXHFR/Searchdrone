@@ -144,7 +144,7 @@ class MapService:
             return 0
         state = built.state
         if built.confirmed:
-            state = m.builder.model.freeze(state, "confirmed")
+            state = m.builder.model.freeze(state)
         latest = 0 if inputs.latest is None else inputs.latest.version
         body = ProbabilityMapWrite(
             version=latest + 1,

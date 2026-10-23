@@ -35,7 +35,6 @@ __all__ = [
     "pass_pod",
     "plan_pod",
     "still_pod",
-    "total_pod",
 ]
 
 PERSON_WIDTH_M: Final = 0.5  # shoulder width: standing or sitting, the hardest case
@@ -138,13 +137,6 @@ def pass_pod(
     for j, i in hold:
         pod[j, i] = 0.0
     return pod
-
-
-def total_pod(passes: Iterable[Floats], shape: tuple[int, int]) -> Floats:
-    miss = np.ones(shape)
-    for p in passes:
-        miss *= 1 - p
-    return 1 - miss
 
 
 def plan_pod(

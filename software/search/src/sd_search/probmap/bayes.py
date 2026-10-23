@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Final, Protocol
+from typing import Final
 
 import numpy as np
 import shapely
@@ -39,7 +39,6 @@ __all__ = [
     "HeadingPrior",
     "MapState",
     "OperatorArea",
-    "ProbabilityMap",
     "RingTerrainMap",
     "heading_weight",
 ]
@@ -67,23 +66,10 @@ class MapState:
     p: Floats  # (ny, nx)
     row: float
     pod_cum: Floats  # (ny, nx), the cumulative POD
-    version: int = 0
     frozen: bool = False
 
     def total(self) -> float:
         return float(self.p.sum()) + self.row
-
-
-class ProbabilityMap(Protocol):
-    def prior(
-        self,
-        subject: HeadingPrior,
-        terrain: TerrainSource,
-        operator_areas: Sequence[OperatorArea],
-        grid: Grid,
-    ) -> MapState: ...
-    def update_negative(self, state: MapState, pod: Floats) -> MapState: ...
-    def freeze(self, state: MapState, reason: str) -> MapState: ...
 
 
 def heading_weight(grid: Grid, heading_deg: float | None) -> Floats:
@@ -152,6 +138,5 @@ class RingTerrainMap:
             pod_cum=1 - (1 - state.pod_cum) * (1 - pod),
         )
 
-    def freeze(self, state: MapState, reason: str) -> MapState:
-        del reason  # recorded with the stored version
+    def freeze(self, state: MapState) -> MapState:
         return replace(state, frozen=True)

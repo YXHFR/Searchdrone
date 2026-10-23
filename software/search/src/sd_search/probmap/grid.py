@@ -18,7 +18,7 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
-from sd_schemas.geo import tangent_radii, wrap_lon
+from sd_schemas.geo import plane_offset, tangent_radii, wrap_lon
 from sd_schemas.probmap import ProbabilityGrid
 
 __all__ = [
@@ -70,11 +70,7 @@ class Grid:
         )
 
     def latlon(self, x: float, y: float) -> tuple[float, float]:
-        east_r, north_r = self._radii
-        return (
-            self.lat0 + math.degrees(y / north_r),
-            wrap_lon(self.lon0 + math.degrees(x / east_r)),
-        )
+        return plane_offset(self.lat0, self.lon0, x, y)
 
     def ring_xy(self, ring: Iterable[Sequence[float]]) -> list[tuple[float, float]]:
         """A GeoJSON ring ([lon, lat] pairs) in the plane."""
