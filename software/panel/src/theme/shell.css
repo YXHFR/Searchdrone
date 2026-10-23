@@ -445,6 +445,17 @@
   font-size: var(--fs-small);
   color: var(--c-faint);
 }
+.sectors li:has(.sec-score) {
+  height: auto;
+  min-height: 31px;
+  padding-block: 4px;
+}
+/* The probability map's figures: a line of their own under the sector's row. */
+.sec-score {
+  grid-column: 1 / -1;
+  margin-top: -4px;
+  font-size: var(--fs-small);
+}
 .sectors li[data-status="active"] .sec-name,
 .sectors li[data-status="active"] .sec-st {
   color: var(--c-acc);

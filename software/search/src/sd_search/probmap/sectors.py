@@ -17,7 +17,7 @@ from typing import Final
 import shapely
 from shapely.geometry import Polygon
 
-from sd_schemas.probmap import SectorScore
+from sd_schemas.probmap import SectorScore, situation_line, suggest_sector_order
 from sd_search.probmap.bayes import MapState
 from sd_search.probmap.grid import Floats
 from sd_search.probmap.pod import PLAN_CAMERA, SIDELAP, Camera, DetectorProfile, plan_pod
@@ -75,21 +75,3 @@ def sector_scores(
             )
         )
     return out
-
-
-def suggest_sector_order(scores: Sequence[SectorScore]) -> list[SectorScore]:
-    """Greedy by PSR, highest first (ties by sector id)."""
-    return sorted(scores, key=lambda s: (-s.psr, s.sector_id))
-
-
-def situation_line(scores: Sequence[SectorScore]) -> str:
-    """The AI's situation line, in the suggested order."""
-    parts = [
-        f"{s.sector_id} {_sv(s.poa, 2)}/{s.covered_pct:.0f}%/{_sv(s.mean_pod, 2)}/{_sv(s.psr, 3)}"
-        for s in suggest_sector_order(scores)
-    ]
-    return "Sektorer (POA kvar / täckt / medel-POD / PSR): " + "  ".join(parts)
-
-
-def _sv(x: float, n: int) -> str:
-    return f"{x:.{n}f}".replace(".", ",")

@@ -1066,8 +1066,9 @@ class FlowRepo:
         now: dt.datetime,
         poa_hint: str | None = None,
     ) -> str | None:
-        """A pin, area or path (an area may carry the operator's hint for the map). ``label = None`` gives the next free ``M<n>`` (pins the AI
-        marks). ``None`` when the label is taken."""
+        """A pin, area or path (an area may carry the operator's hint for the map).
+        ``label = None`` gives the next free ``M<n>`` (pins the AI marks). ``None`` when the
+        label is taken."""
         async with self.engine.begin() as conn:
             if label is None:
                 n = (

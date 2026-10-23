@@ -278,6 +278,7 @@ export interface Annotation {
   label: string;
   length_m?: number | null;
   mission_id: string;
+  poa_hint?: ("high" | "low" | "excluded") | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -289,6 +290,7 @@ export interface AnnotationCreate {
   };
   kind: "pin" | "area" | "path";
   label: string;
+  poa_hint?: ("high" | "low" | "excluded") | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2481,6 +2483,90 @@ export interface PilotPosition {
   source: "charter" | "phone";
 }
 /**
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "ProbabilityGrid".
+ */
+export interface ProbabilityGrid {
+  cell_m: number;
+  east: number;
+  ipp_lat: number;
+  ipp_lon: number;
+  north: number;
+  nx: number;
+  ny: number;
+  south: number;
+  west: number;
+  x0_m: number;
+  y0_m: number;
+}
+/**
+ * The panel's view of the latest version. ``p_b64`` and ``pod_b64`` are base64 of
+ * little-endian float16 arrays (row-major, row 0 the southernmost).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "ProbabilityMapView".
+ */
+export interface ProbabilityMapView {
+  created_at: string;
+  event_seq: number;
+  frozen?: boolean;
+  grid: ProbabilityGrid;
+  mission_id: string;
+  /**
+   * @maxItems 4
+   */
+  notes?:
+    | []
+    | ["no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"]
+    | [
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"
+      ]
+    | [
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"
+      ]
+    | [
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter",
+        "no_terrain" | "child_statistics" | "uncertain_statistics" | "no_charter"
+      ];
+  p_b64: string;
+  pod_b64: string;
+  profile_version: number;
+  reason: "prior" | "search" | "candidate" | "profile" | "areas" | "charter" | "confirmed";
+  row: number;
+  /**
+   * @maxItems 64
+   */
+  sectors?: SectorScore[];
+  version: number;
+}
+/**
+ * One sector of the charter on the current map.
+ *
+ * ``poa``: the chance the person is in the sector now (cells whose centre lies in it).
+ * ``covered_pct``: the share of its cells seen with a POD of at least 0.1.
+ * ``mean_pod``: the mean cumulative POD over its cells.
+ * ``pos_plan``: the chance of finding the person if the sector is surveyed once more as
+ * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "SectorScore".
+ */
+export interface SectorScore {
+  covered_pct: number;
+  est_min: number;
+  mean_pod: number;
+  poa: number;
+  pos_plan: number;
+  psr: number;
+  sector_id: string;
+  spacing_m: number;
+}
+/**
  * Validated as a charter proposal by the ground station, never by the gate.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -2781,6 +2867,7 @@ export interface Situation {
   pending_proposal: Charter | null;
   pilot: LatLon | null;
   pins: MapPin[];
+  probability_line?: string | null;
   recent_events: Event[];
   returning_cause: ("brain" | "operator" | "battery" | "failsafe" | "system") | null;
   sectors: {

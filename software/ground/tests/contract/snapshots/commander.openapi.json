@@ -103,6 +103,22 @@
             "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
             "title": "Mission Id",
             "type": "string"
+          },
+          "poa_hint": {
+            "anyOf": [
+              {
+                "enum": [
+                  "high",
+                  "low",
+                  "excluded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poa Hint"
           }
         },
         "required": [
@@ -2754,6 +2770,17 @@
             },
             "title": "Pins",
             "type": "array"
+          },
+          "probability_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probability Line"
           },
           "recent_events": {
             "items": {

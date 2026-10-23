@@ -13,6 +13,7 @@ the rest of the world: the chance the person is outside the grid. ``sum(p) + row
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Final, Literal, Self
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -35,6 +36,8 @@ __all__ = [
     "SearchArea",
     "SearchStill",
     "SectorScore",
+    "situation_line",
+    "suggest_sector_order",
 ]
 
 PROBMAP_SIDE_MAX: Final = 160  # 4 km of 25 m cells
@@ -171,3 +174,22 @@ class ProbabilityMapInputs(SdModel):
         if len(ids) != len(set(ids)):
             raise ValueError("sector ids are unique")
         return self
+
+
+def suggest_sector_order(scores: Sequence[SectorScore]) -> list[SectorScore]:
+    """Greedy by PSR, highest first (ties by sector id). Only a suggestion: the AI
+    proposes, and the gate and a person approve as before."""
+    return sorted(scores, key=lambda s: (-s.psr, s.sector_id))
+
+
+def situation_line(scores: Sequence[SectorScore]) -> str:
+    """The AI's situation line, in the suggested order (Swedish decimal commas)."""
+    parts = [
+        f"{s.sector_id} {_sv(s.poa, 2)}/{s.covered_pct:.0f}%/{_sv(s.mean_pod, 2)}/{_sv(s.psr, 3)}"
+        for s in suggest_sector_order(scores)
+    ]
+    return "Sektorer (POA kvar / täckt / medel-POD / PSR): " + "  ".join(parts)
+
+
+def _sv(x: float, n: int) -> str:
+    return f"{x:.{n}f}".replace(".", ",")

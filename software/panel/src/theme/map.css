@@ -110,6 +110,12 @@
   background: var(--c-panel);
   border-top: 2px solid var(--c-acc);
 }
+.map-draw-hint {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--fs-small);
+}
 .map-note,
 .map-cursor,
 .map-path-progress {
@@ -138,7 +144,42 @@
   border-color: var(--c-warn);
   font-weight: 600;
 }
+.map-prob {
+  position: absolute;
+  top: 48px;
+  right: 8px;
+  max-width: 260px;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  font-size: var(--fs-small);
+}
+.map-prob p {
+  margin: 0 0 2px;
+}
+.map-prob-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+/* The same colours as the ground's images: transparent to red, transparent to blue. */
+.map-prob-scale {
+  flex: none;
+  width: 56px;
+  height: 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 2px;
+}
+.map-prob-poa {
+  background: linear-gradient(90deg, rgb(220 38 38 / 0), rgb(220 38 38 / 0.8));
+}
+.map-prob-pod {
+  background: linear-gradient(90deg, rgb(37 99 235 / 0), rgb(37 99 235 / 0.8));
+}
 .surface.is-pip .map-tools,
+.surface.is-pip .map-prob,
 .surface.is-pip .map-cursor,
 .surface.is-pip .map-path-progress,
 .surface.is-pip .map-note,
