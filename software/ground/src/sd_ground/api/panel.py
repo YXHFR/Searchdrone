@@ -41,6 +41,7 @@ from sd_ground.emergency import EmergencyRefusedError
 from sd_ground.logging import get_logger
 from sd_ground.services import annotations as annotations_service
 from sd_ground.services import approvals as approvals_service
+from sd_ground.services import candidates as candidates_service
 from sd_ground.services import charters as charter_rules
 from sd_ground.services import chat as chat_service
 from sd_ground.services import clearance as clearance_service
@@ -92,6 +93,7 @@ from sd_schemas.api import (
 from sd_schemas.charter import CharterProposal
 from sd_schemas.gate import GateDecision
 from sd_schemas.safety import SafetyLimits
+from sd_schemas.search import CandidateDetail, CandidateQueue, CandidateState
 
 __all__ = ["OPERATOR_ALIAS", "dispatch_emergency", "router"]
 
@@ -673,12 +675,34 @@ async def get_file(mission_id: IdPath, file_id: IdPath, g: G, _: Observer) -> Re
     return FileResponse(path, filename=path.name)
 
 
-@router.get("/missions/{mission_id}/candidates")
+@router.get("/missions/{mission_id}/candidates", response_model=CandidateQueue)
 async def get_candidates(
-    mission_id: IdPath, _: Observer, response: Response
-) -> dict[str, list[Any]]:
-    response.headers[STAGE2_HEADER] = STAGE2_VALUE
-    return {"items": []}
+    mission_id: IdPath,
+    g: G,
+    _: Observer,
+    state: CandidateState | None = None,
+    min_priority: Annotated[float | None, Query(ge=0, le=1)] = None,
+    before_seq: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=candidates_service.CARDS_MAX)] = 100,
+) -> dict[str, Any]:
+    """The review queue: candidates by priority, highest first. Every candidate is
+    listed (a low priority only puts it further down); merged ones only with
+    ``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected."""
+    return await candidates_service.cards(
+        _flow(g),
+        mission_id,
+        state=state,
+        min_priority=min_priority,
+        before_seq=before_seq,
+        limit=limit,
+    )
+
+
+@router.get("/candidates/{candidate_id}", response_model=CandidateDetail)
+async def get_candidate(candidate_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
+    """One candidate: its card, the detections it observed, every assessment and every
+    person's decision."""
+    return jsonable_encoder(await candidates_service.detail(_flow(g), candidate_id))
 
 
 @router.get("/missions/{mission_id}/detections", response_model=list[DetectionRow])

@@ -1449,6 +1449,35 @@
       "title": "CandidateCard",
       "type": "object"
     },
+    "CandidateCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "low": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "review",
+        "low",
+        "confirmed",
+        "rejected"
+      ],
+      "title": "CandidateCounts",
+      "type": "object"
+    },
     "CandidateDecision": {
       "additionalProperties": false,
       "description": "A person's decision on a candidate. Only a logged-in person's session may send it.",
@@ -1478,6 +1507,127 @@
         "subject_rev"
       ],
       "title": "CandidateDecision",
+      "type": "object"
+    },
+    "CandidateDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "assessments": {
+          "items": {
+            "$ref": "#/$defs/StoredAssessment"
+          },
+          "type": "array"
+        },
+        "card": {
+          "$ref": "#/$defs/CandidateCard"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/StoredDecision"
+          },
+          "type": "array"
+        },
+        "mission_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/CandidateObservationRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "card",
+        "mission_id",
+        "observations",
+        "assessments",
+        "decisions"
+      ],
+      "title": "CandidateDetail",
+      "type": "object"
+    },
+    "CandidateObservationRow": {
+      "additionalProperties": false,
+      "properties": {
+        "captured_utc": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "detection_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "distance_m": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "has_crop": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number"
+        },
+        "px_size": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "sigma95_m": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "detection_id",
+        "distance_m",
+        "label",
+        "score",
+        "px_size",
+        "lat",
+        "lon",
+        "sigma95_m",
+        "has_crop",
+        "captured_utc"
+      ],
+      "title": "CandidateObservationRow",
+      "type": "object"
+    },
+    "CandidateQueue": {
+      "additionalProperties": false,
+      "properties": {
+        "counts": {
+          "$ref": "#/$defs/CandidateCounts"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/CandidateCard"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items",
+        "counts"
+      ],
+      "title": "CandidateQueue",
       "type": "object"
     },
     "CandidateState": {
@@ -8415,6 +8565,174 @@
         }
       },
       "title": "StopFollowParams",
+      "type": "object"
+    },
+    "StoredAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "cost_sek": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "crops_used": {
+          "items": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "engine": {
+          "enum": [
+            "code",
+            "fast",
+            "strong",
+            "oracle"
+          ],
+          "type": "string"
+        },
+        "evidence": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "maxProperties": 32,
+          "type": "object"
+        },
+        "explanation_sv": {
+          "maxLength": 300,
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "enum": [
+              "match",
+              "conflict",
+              "not_visible"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "flags": {
+          "items": {
+            "enum": [
+              "motion_claim",
+              "identity_claim",
+              "format_repaired"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "overall": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "person": {
+          "enum": [
+            "yes",
+            "no",
+            "unsure"
+          ],
+          "type": "string"
+        },
+        "person_p": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "profile_version": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "profile_version",
+        "engine",
+        "model_id",
+        "person",
+        "person_p",
+        "overall",
+        "explanation_sv",
+        "latency_ms",
+        "id",
+        "created_at"
+      ],
+      "title": "StoredAssessment",
+      "type": "object"
+    },
+    "StoredDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "confirm",
+            "reject",
+            "inspect",
+            "unsure",
+            "reopen"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "note": {
+          "maxLength": 300,
+          "type": "string"
+        },
+        "operator_ref": {
+          "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
+          "type": "string"
+        },
+        "subject_rev": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "decision",
+        "note",
+        "subject_rev",
+        "operator_ref",
+        "created_at"
+      ],
+      "title": "StoredDecision",
       "type": "object"
     },
     "SurveyResumePoint": {

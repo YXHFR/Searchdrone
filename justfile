@@ -202,6 +202,10 @@ brain-token:
 search-token:
     uv run --no-sync python tools/search_token.py
 
+# Start the search service: candidates from the detections (reads secrets/search_token)
+search:
+    uv run --package sd-search sd-search run
+
 # --- AI commander (sd-brain) -----------------------------------------------------------
 
 # Start the AI commander (reads config/brain.toml; keys from .env)

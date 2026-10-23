@@ -12,7 +12,15 @@ def test_health_answers_without_login(panel: TestClient) -> None:
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "ok"
-    assert set(body["parts"]) == {"db", "mavlink", "sdlink", "onboard", "brain", "mediamtx"}
+    assert set(body["parts"]) == {
+        "db",
+        "mavlink",
+        "sdlink",
+        "onboard",
+        "brain",
+        "mediamtx",
+        "search",
+    }
     assert body["test_rig"] is False
 
 
@@ -37,6 +45,23 @@ def test_brain_is_not_needed_for_ready(panel: TestClient, ground: Ground) -> Non
     body = panel.get("/api/v1/health").json()
     assert body["parts"]["brain"] == "down"
     assert body["ready"] is True
+
+
+def test_search_is_its_heartbeat_and_not_needed_for_ready(
+    panel: TestClient, ground: Ground
+) -> None:
+    from sd_ground.services.health import SEARCH_STALE_S
+
+    ground.db_ok = True
+    body = panel.get("/api/v1/health").json()
+    assert body["parts"]["search"] == "down" and body["ready"] is True
+    ground.search_seen_mono = ground.clock.monotonic()
+    assert panel.get("/api/v1/health").json()["parts"]["search"] == "ok"
+    ground.search_cloud = "down"  # only the code assesses
+    assert panel.get("/api/v1/health").json()["parts"]["search"] == "degraded"
+    ground.search_seen_mono = ground.clock.monotonic() - SEARCH_STALE_S - 1
+    body = panel.get("/api/v1/health").json()
+    assert body["parts"]["search"] == "down" and body["ready"] is True
 
 
 def test_test_rig_is_visible(make_ground: object) -> None:

@@ -681,6 +681,438 @@
         "title": "AutonomyRequest",
         "type": "object"
       },
+      "CandidateCard": {
+        "additionalProperties": false,
+        "description": "One candidate as the panel's queue shows it.",
+        "properties": {
+          "assessed_profile_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessed Profile Version"
+          },
+          "best_detector_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Best Detector Score",
+            "type": "number"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "current_profile_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Profile Version"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "fast",
+                  "strong",
+                  "oracle"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "fields": {
+            "additionalProperties": {
+              "enum": [
+                "match",
+                "conflict",
+                "not_visible"
+              ],
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "first_seen_utc": {
+            "format": "date-time",
+            "title": "First Seen Utc",
+            "type": "string"
+          },
+          "flags": {
+            "items": {
+              "enum": [
+                "motion_claim",
+                "identity_claim",
+                "format_repaired"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Flags",
+            "type": "array"
+          },
+          "last_seen_utc": {
+            "format": "date-time",
+            "title": "Last Seen Utc",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "n_in_view": {
+            "minimum": 0.0,
+            "title": "N In View",
+            "type": "integer"
+          },
+          "n_seen": {
+            "minimum": 0.0,
+            "title": "N Seen",
+            "type": "integer"
+          },
+          "near_seq": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near Seq"
+          },
+          "near_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rejected",
+                  "confirmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Near State"
+          },
+          "person": {
+            "anyOf": [
+              {
+                "enum": [
+                  "yes",
+                  "no",
+                  "unsure"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person"
+          },
+          "priority": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "number"
+          },
+          "priority_class": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Priority Class",
+            "type": "string"
+          },
+          "refined_person_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refined Person Score"
+          },
+          "rev": {
+            "minimum": 1.0,
+            "title": "Rev",
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "sigma95_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CandidateState"
+          },
+          "thumb_detection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumb Detection Id"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "rev",
+          "seq",
+          "state",
+          "priority",
+          "priority_class",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "n_seen",
+          "n_in_view",
+          "best_detector_score",
+          "first_seen_utc",
+          "last_seen_utc"
+        ],
+        "title": "CandidateCard",
+        "type": "object"
+      },
+      "CandidateCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "minimum": 0.0,
+            "title": "Confirmed",
+            "type": "integer"
+          },
+          "low": {
+            "minimum": 0.0,
+            "title": "Low",
+            "type": "integer"
+          },
+          "rejected": {
+            "minimum": 0.0,
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "review": {
+            "minimum": 0.0,
+            "title": "Review",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "review",
+          "low",
+          "confirmed",
+          "rejected"
+        ],
+        "title": "CandidateCounts",
+        "type": "object"
+      },
+      "CandidateDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "assessments": {
+            "items": {
+              "$ref": "#/components/schemas/StoredAssessment"
+            },
+            "title": "Assessments",
+            "type": "array"
+          },
+          "card": {
+            "$ref": "#/components/schemas/CandidateCard"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/StoredDecision"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateObservationRow"
+            },
+            "title": "Observations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "card",
+          "mission_id",
+          "observations",
+          "assessments",
+          "decisions"
+        ],
+        "title": "CandidateDetail",
+        "type": "object"
+      },
+      "CandidateObservationRow": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_utc": {
+            "format": "date-time",
+            "title": "Captured Utc",
+            "type": "string"
+          },
+          "detection_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Detection Id",
+            "type": "string"
+          },
+          "distance_m": {
+            "minimum": 0.0,
+            "title": "Distance M",
+            "type": "number"
+          },
+          "has_crop": {
+            "title": "Has Crop",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          },
+          "px_size": {
+            "exclusiveMinimum": 0.0,
+            "title": "Px Size",
+            "type": "number"
+          },
+          "score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "sigma95_m": {
+            "minimum": 0.0,
+            "title": "Sigma95 M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "detection_id",
+          "distance_m",
+          "label",
+          "score",
+          "px_size",
+          "lat",
+          "lon",
+          "sigma95_m",
+          "has_crop",
+          "captured_utc"
+        ],
+        "title": "CandidateObservationRow",
+        "type": "object"
+      },
+      "CandidateQueue": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/CandidateCounts"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateCard"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "counts"
+        ],
+        "title": "CandidateQueue",
+        "type": "object"
+      },
+      "CandidateState": {
+        "enum": [
+          "new",
+          "assessing",
+          "ready",
+          "inspecting",
+          "confirmed",
+          "rejected",
+          "merged"
+        ],
+        "title": "CandidateState",
+        "type": "string"
+      },
       "Charter": {
         "additionalProperties": false,
         "properties": {
@@ -3530,6 +3962,196 @@
         "title": "StateSnapshot",
         "type": "object"
       },
+      "StoredAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "cost_sek": {
+            "default": 0.0,
+            "minimum": 0.0,
+            "title": "Cost Sek",
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "crops_used": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Crops Used",
+            "type": "array"
+          },
+          "engine": {
+            "enum": [
+              "code",
+              "fast",
+              "strong",
+              "oracle"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "evidence": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "maxProperties": 32,
+            "title": "Evidence",
+            "type": "object"
+          },
+          "explanation_sv": {
+            "maxLength": 300,
+            "title": "Explanation Sv",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "enum": [
+                "match",
+                "conflict",
+                "not_visible"
+              ],
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "flags": {
+            "items": {
+              "enum": [
+                "motion_claim",
+                "identity_claim",
+                "format_repaired"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Flags",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "latency_ms": {
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "overall": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Overall",
+            "type": "number"
+          },
+          "person": {
+            "enum": [
+              "yes",
+              "no",
+              "unsure"
+            ],
+            "title": "Person",
+            "type": "string"
+          },
+          "person_p": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Person P",
+            "type": "number"
+          },
+          "profile_version": {
+            "minimum": 0.0,
+            "title": "Profile Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "profile_version",
+          "engine",
+          "model_id",
+          "person",
+          "person_p",
+          "overall",
+          "explanation_sv",
+          "latency_ms",
+          "id",
+          "created_at"
+        ],
+        "title": "StoredAssessment",
+        "type": "object"
+      },
+      "StoredDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "confirm",
+              "reject",
+              "inspect",
+              "unsure",
+              "reopen"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 300,
+            "title": "Note",
+            "type": "string"
+          },
+          "operator_ref": {
+            "pattern": "^operator:[a-z0-9][a-z0-9_-]{0,31}$",
+            "title": "Operator Ref",
+            "type": "string"
+          },
+          "subject_rev": {
+            "minimum": 1.0,
+            "title": "Subject Rev",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "decision",
+          "note",
+          "subject_rev",
+          "operator_ref",
+          "created_at"
+        ],
+        "title": "StoredDecision",
+        "type": "object"
+      },
       "SystemStatus": {
         "additionalProperties": false,
         "properties": {
@@ -4225,6 +4847,47 @@
         "summary": "Post Decision"
       }
     },
+    "/api/v1/candidates/{candidate_id}": {
+      "get": {
+        "description": "One candidate: its card, the detections it observed, every assessment and every\nperson's decision.",
+        "operationId": "get_candidate_api_v1_candidates__candidate_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Candidate"
+      }
+    },
     "/api/v1/commands/{command_id}/cancel": {
       "post": {
         "operationId": "post_cancel_api_v1_commands__command_id__cancel_post",
@@ -4755,6 +5418,7 @@
     },
     "/api/v1/missions/{mission_id}/candidates": {
       "get": {
+        "description": "The review queue: candidates by priority, highest first. Every candidate is\nlisted (a low priority only puts it further down); merged ones only with\n``state=merged``. ``counts``: to review (priority >= 0.30), low, confirmed, rejected.",
         "operationId": "get_candidates_api_v1_missions__mission_id__candidates_get",
         "parameters": [
           {
@@ -4766,6 +5430,69 @@
               "title": "Mission Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CandidateState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_priority",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Priority"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -4773,12 +5500,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "items": {},
-                    "type": "array"
-                  },
-                  "title": "Response Get Candidates Api V1 Missions  Mission Id  Candidates Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CandidateQueue"
                 }
               }
             },

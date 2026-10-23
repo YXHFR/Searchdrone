@@ -348,6 +348,7 @@ async def on_report(
                 "synthetic": report.synthetic,
                 "crop_path": None if crop is None else f"crops/{did}.jpg",
                 "crop_sha256": None if crop is None else hashlib.sha256(crop.jpeg).hexdigest(),
+                "crop_box": None if crop is None else crop.bbox_in_still.model_dump(),
             }
         )
     changes = [finds.add(r) for r in rows]
@@ -389,7 +390,15 @@ async def on_report(
             {
                 k: (v.isoformat() if k == "captured_at" else v)
                 for k, v in row.items()
-                if k not in ("mission_id", "crop_path", "crop_sha256", "detection_id", "px_size")
+                if k
+                not in (
+                    "mission_id",
+                    "crop_path",
+                    "crop_sha256",
+                    "crop_box",
+                    "detection_id",
+                    "px_size",
+                )
             }
             | {"has_crop": rel is not None},
             vehicle_id=vehicle_id,

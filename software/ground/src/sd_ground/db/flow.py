@@ -1174,15 +1174,17 @@ class FlowRepo:
                     f":score_{i}, CAST(:bbox_{i} AS jsonb), "
                     f"ST_SetSRID(ST_MakePoint(:lon_{i}, :lat_{i}), 4326), :sigma95_m_{i}, "
                     f":px_size_{i}, :crop_path_{i}, :crop_sha256_{i}, :label_{i}, :kind_{i}, "
-                    f":source_{i}, :find_id_{i})"
+                    f":source_{i}, :find_id_{i}, CAST(:crop_box_{i} AS jsonb))"
                 )
                 params |= {f"{n}_{i}": r[n] for n in names}
                 params[f"bbox_{i}"] = json.dumps(r["bbox"])
+                box = r.get("crop_box")
+                params[f"crop_box_{i}"] = None if box is None else json.dumps(box)
             res = await conn.execute(
                 text(
                     "INSERT INTO detections (detection_id, mission_id, vehicle_id, still_id, "  # noqa: S608
                     "score, bbox, geom, sigma95_m, px_size, crop_path, crop_sha256, label, kind, "
-                    f"source, find_id) VALUES {', '.join(values)} "
+                    f"source, find_id, crop_box) VALUES {', '.join(values)} "
                     "ON CONFLICT (detection_id) DO NOTHING RETURNING detection_id::text"
                 ),
                 params,

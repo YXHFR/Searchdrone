@@ -23,7 +23,7 @@ members = [
   "software/common/schemas", "software/common/safety", "software/common/geo",
   "software/common/mav", "software/common/link", "software/common/link_testing",
   "software/common/obs", "software/common/testing", "software/detector", "software/onboard", "software/ground",
-  "software/brain", "software/hwcalc", "simulation/sd_sim", "simulation/searchsim",
+  "software/brain", "software/search", "software/hwcalc", "simulation/sd_sim", "simulation/searchsim",
 ]
 
 [tool.uv.sources]
@@ -39,6 +39,7 @@ sd-detect = { workspace = true }
 sd-onboard = { workspace = true }
 sd-ground = { workspace = true }
 sd-brain = { workspace = true }
+sd-search = { workspace = true }
 sd-hwcalc = { workspace = true }
 sd-sim = { workspace = true }
 sd-searchsim = { workspace = true }
