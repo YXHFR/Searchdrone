@@ -20,7 +20,7 @@ from itertools import pairwise
 from typing import Any
 
 from sd_schemas.base import LatLon
-from sd_schemas.geo import WGS84_A, WGS84_F, plane_offset, tangent_radii, wrap_lon
+from sd_schemas.geo import WGS84_A, WGS84_F, local_xy, plane_offset, wrap_lon
 
 __all__ = [
     "Plane",
@@ -103,15 +103,8 @@ class Plane:
     lat0: float
     lon0: float
 
-    def _radii(self) -> tuple[float, float]:
-        """Metres per radian east and north at the reference point."""
-        return tangent_radii(self.lat0)
-
     def xy(self, lat: float, lon: float) -> Xy:
-        east_r, north_r = self._radii()
-        east = math.radians(wrap_lon(lon - self.lon0)) * east_r
-        north = math.radians(lat - self.lat0) * north_r
-        return east, north
+        return local_xy(self.lat0, self.lon0, lat, lon)
 
     def latlon(self, east: float, north: float) -> tuple[float, float]:
         """The exact inverse of :meth:`xy`: (lat, lon) of a point in the plane."""

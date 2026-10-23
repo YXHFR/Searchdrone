@@ -69,4 +69,7 @@ def test_no_handler_adds_rows_yet() -> None:
         "hold",
         "resume",
         "return_home",
+        "orbit",
+        "inspect_detection",
+        "capture_stills",
     }

@@ -36,6 +36,7 @@ from sd_onboard.perception.loop import (
 )
 from sd_onboard.perception.sources import DirStillSource, read_ppm
 from sd_safety.targets import Plane
+from sd_schemas.base import new_id
 from sd_schemas.geo import plane_offset
 from sd_testing import FakeClock
 
@@ -356,6 +357,9 @@ async def test_a_model_that_cannot_be_built_only_turns_perception_off(
     assert "perception off" in caplog.text
     # the ground is told why, by code and class only: no paths from the on-board computer
     assert reasons == [("sources_failed", "ModelError")]
+    # An order's still then gets none at once, without building the sources again.
+    assert await lp.capture(new_id()) is None
+    assert lp._built is None  # pyright: ignore[reportPrivateUsage]
 
 
 class _BrokenModel:
@@ -505,3 +509,35 @@ def test_a_still_taken_while_turning_is_skipped(tmp_path: Path) -> None:
     assert lp.handle(captured, t, 0, turn_rate_dps=MAX_TURN_RATE_DPS + 1) is None
     assert lp.stats.skipped_turning == 1
     assert lp.handle(captured, t, 0, turn_rate_dps=MAX_TURN_RATE_DPS - 1) is not None
+
+
+async def test_an_order_takes_its_own_still(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``capture``: the next still, reported with the order's id; targets go to the
+    executor too (its keep-out cylinders); no still in time or a failing source: None."""
+    import sd_onboard.perception.loop as perception_loop
+
+    write_still(tmp_path, "block0_h30")
+    clock = MonotonicClock()
+    sent: list[Any] = []
+    targets: list[Any] = []
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        sent.append,
+        clock,
+        CAM,
+        env={},
+        on_targets=targets.extend,
+    )
+    command_id = new_id()
+    still_id = await lp.capture(command_id)
+    assert still_id is not None and sent[0].report.still_id == still_id
+    assert sent[0].report.command_id == command_id
+    assert [d.label for d in targets] == ["red_block"]
+    monkeypatch.setattr(perception_loop, "CAPTURE_WAIT_S", 0.05)
+    assert await lp.capture(command_id) is None  # the folder is empty now
+    flaky = _FlakySource(tmp_path)
+    lp.source = flaky
+    assert await lp.capture(command_id) is None and lp.stats.failed == 1

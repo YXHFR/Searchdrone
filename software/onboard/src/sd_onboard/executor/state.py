@@ -104,6 +104,9 @@ def _rows() -> dict[tuple[ExecutorState, TriggerKey], Transition]:
     add(_STEERING, skill_key("survey_sector"), {S.SURVEY}, "always")  # T7
     add(_STEERING, skill_key("follow_path"), {S.TRANSIT}, "always")  # T7b: a drawn path
     add(_STEERING, skill_key("hold"), {S.HOLD}, "always")  # T8
+    add(_STEERING, skill_key("orbit"), {S.TRANSIT}, "always")  # T8b: a ring of waypoints
+    add(_STEERING, skill_key("inspect_detection"), {S.TRANSIT}, "always")  # T8c: a closer look
+    add({S.HOLD}, skill_key("capture_stills"), {S.HOLD}, "always")  # T8d: stills, no move
     add({S.HOLD}, skill_key("resume"), {S.TRANSIT, S.SURVEY}, "resume_target")  # T9
     add(_LIMITED, skill_key("return_home"), {S.RTL}, "always")  # T10
     add({S.RTL}, skill_key("return_home"), {S.RTL}, "always")  # T11

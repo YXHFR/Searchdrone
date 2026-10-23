@@ -17,6 +17,11 @@ is back (``on``). A still skipped before detection (no pose, on the ground, turn
 neither ends nor adds to a streak. Kept stills (for a run's record) are capped at
 ``KEEP_MAX``, the oldest removed first.
 
+An order can ask for a still of its own (``capture``: ``capture_stills`` and
+``inspect_detection``): the next still from the source, reported with the order's
+``command_id``, at most ``CAPTURE_WAIT_S`` after the asking. Target detections go to
+``on_targets`` too: the executor puts a keep-out cylinder around each that is sure enough.
+
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
 (a turn, braking, yawing towards a find) it does: 10 degrees of attitude at 40 m move a
@@ -31,6 +36,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import UUID
 
 from sd_detect import ClassRegistry, Still, build_sources, default_registry, detect_all
 from sd_detect.sources import BuiltSources
@@ -40,8 +46,10 @@ from sd_obs.clock import Clock
 from sd_onboard.perception.pipeline import MIN_AGL_M, Perception, Pose, process
 from sd_onboard.perception.sources import CapturedStill, StillSource
 from sd_schemas.base import new_id
+from sd_schemas.link import GeoDetectionMsg
 
 __all__ = [
+    "CAPTURE_WAIT_S",
     "FAIL_REPORT",
     "KEEP_MAX",
     "MAX_POSE_AGE_MS",
@@ -56,6 +64,8 @@ log = logging.getLogger("sd_onboard.perception")
 MAX_POSE_AGE_MS = 1000  # older position or attitude: the still is skipped
 KEEP_MAX = 200  # kept stills (JPEG + JSON pairs) in ``keep_dir``
 MAX_TURN_RATE_DPS = 10.0  # faster attitude change: the still is skipped
+CAPTURE_WAIT_S = 3.0  # an order's still: no still from the source this long -> none
+_CAPTURE_POLL_S = 0.1
 FAIL_REPORT = 10  # stills failing in a row before the ground is told
 
 
@@ -132,6 +142,7 @@ class PerceptionLoop:
         period_s: float = 0.5,
         keep_dir: Path | None = None,
         env: dict[str, str] | None = None,
+        on_targets: Callable[[list[GeoDetectionMsg]], None] | None = None,
         off: Callable[[str, str], None] | None = None,
         on: Callable[[], None] | None = None,
     ) -> None:
@@ -148,9 +159,12 @@ class PerceptionLoop:
         self.on = on  # perception works again after ``stills_failing``
         self._failing = 0
         self._built: BuiltSources | None = None
+        self._build_failed = False  # ``run`` could not build the sources: no stills at all
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
         self._last_still_ms: int | None = None
+        self.on_targets = on_targets
+        self._lock = asyncio.Lock()  # one still at a time: the loop's or an order's
 
     @property
     def built(self) -> BuiltSources:
@@ -161,7 +175,12 @@ class PerceptionLoop:
         return self._built
 
     def handle(
-        self, captured: CapturedStill, t: FcTelemetry, now_ms: int, turn_rate_dps: float = 0.0
+        self,
+        captured: CapturedStill,
+        t: FcTelemetry,
+        now_ms: int,
+        turn_rate_dps: float = 0.0,
+        command_id: UUID | None = None,
     ) -> Perception | None:
         """One still and the telemetry read when it arrived (with the attitude rate then):
         a report and its crops, or ``None`` when it cannot be placed on the ground well
@@ -193,6 +212,7 @@ class PerceptionLoop:
             sources=sorted(self.built.sources),
             latency_ms=max(0, self.clock.monotonic_ms() - start),
             rate_hz=rate_hz,
+            command_id=command_id,
         )
         if out is None:
             self.stats.skipped_no_footprint += 1
@@ -223,6 +243,65 @@ class PerceptionLoop:
             old.with_suffix(".jpg").unlink(missing_ok=True)
             old.unlink(missing_ok=True)
 
+    def _deliver(self, out: Perception) -> None:
+        self.send(out)
+        if self.on_targets is None:
+            return
+        targets = [
+            d
+            for d in out.report.detections
+            if d.label is not None
+            and d.label in self.registry
+            and self.registry.get(d.label).kind == "target"
+        ]
+        if targets:
+            self.on_targets(targets)
+
+    async def _one(self, command_id: UUID | None = None) -> Perception | None:
+        """Poll the source once; the still's report, if there was one and it could be placed."""
+        rate = self.rate.update(self.telemetry())
+        captured = await asyncio.to_thread(self.source.poll)
+        if captured is None:
+            return None
+        t, now_ms = self.telemetry(), self.clock.monotonic_ms()
+        rate = max(rate, self.rate.update(t))
+        ran = self._detected()
+        out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate, command_id)
+        if out is not None:
+            self._deliver(out)
+        if self._detected() > ran:  # a skipped still says nothing either way
+            self._back(recovered=self._failing >= FAIL_REPORT)
+        return out
+
+    async def capture(self, command_id: UUID) -> UUID | None:
+        """One still for an order: its ``still_id``, or ``None`` when none came in
+        ``CAPTURE_WAIT_S`` or it could not be placed on the ground."""
+        if self._build_failed:
+            return None
+        deadline = self.clock.monotonic() + CAPTURE_WAIT_S
+        # A still stuck in the loop must not hold the order past its wait: a watchdog, so on
+        # the event loop's (wall) clock, which runs even when the stuck still holds the lock.
+        try:
+            await asyncio.wait_for(self._lock.acquire(), CAPTURE_WAIT_S)
+        except TimeoutError:
+            log.warning("perception busy: no still for the order")
+            return None
+        try:
+            while True:
+                try:
+                    out = await self._one(command_id)
+                except Exception:
+                    self.stats.failed += 1
+                    log.exception("perception failed on an order's still")
+                    return None
+                if out is not None:
+                    return out.report.still_id
+                if self.clock.monotonic() >= deadline:
+                    return None
+                await self.clock.sleep(_CAPTURE_POLL_S)
+        finally:
+            self._lock.release()
+
     def _detected(self) -> int:
         """Stills the detector ran on (a report, or a view that misses the ground)."""
         return self.stats.reports + self.stats.skipped_no_footprint
@@ -240,6 +319,7 @@ class PerceptionLoop:
             await asyncio.to_thread(lambda: self.built)
         except Exception as exc:
             log.exception("perception off: the detector sources could not be built")
+            self._build_failed = True
             if self.off is not None:
                 self.off("sources_failed", type(exc).__name__)
             return
@@ -248,17 +328,8 @@ class PerceptionLoop:
         )
         while not stop.is_set():
             try:  # one bad still must not end perception
-                rate = self.rate.update(self.telemetry())
-                captured = await asyncio.to_thread(self.source.poll)
-                if captured is not None:
-                    t, now_ms = self.telemetry(), self.clock.monotonic_ms()
-                    rate = max(rate, self.rate.update(t))
-                    ran = self._detected()
-                    out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate)
-                    if out is not None:
-                        self.send(out)
-                    if self._detected() > ran:  # a skipped still says nothing either way
-                        self._back(recovered=self._failing >= FAIL_REPORT)
+                async with self._lock:
+                    await self._one()
             except Exception as exc:
                 self.stats.failed += 1
                 self._failing += 1

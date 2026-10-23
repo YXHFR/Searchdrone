@@ -33,7 +33,7 @@ def test_codes_are_upper_snake_with_text() -> None:
             assert text.strip()
     for code in ONBOARD_REASON_CODES:
         assert code.startswith("ONB_")
-    assert len(ONBOARD_REASON_CODES) == 34
+    assert len(ONBOARD_REASON_CODES) == 36
 
 
 def test_text_lookup() -> None:

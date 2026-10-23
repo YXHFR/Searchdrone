@@ -12,8 +12,9 @@ not changed without a new minor version.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, Protocol
+from uuid import UUID
 
 from pydantic import Field
 
@@ -25,6 +26,7 @@ from sd_safety.targets import Plane
 from sd_schemas.base import Id, LatLonAlt, SdModel
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState, ResumePoint
+from sd_schemas.keepout import Keepout
 from sd_schemas.skills import SkillParams
 from sd_schemas.vehicle import VehicleState
 
@@ -73,6 +75,7 @@ class PlanContext:
     plane: Plane  # east/north metres around the charter's home
     resume_point: ResumePoint | None
     clock: Clock
+    keepouts: tuple[Keepout, ...] = field(default=())  # every cylinder in force
 
     def alt_amsl(self, alt_rel_home_m: float) -> float:
         return self.charter.home.alt_amsl_m + alt_rel_home_m
@@ -147,6 +150,9 @@ class ExecutorIO(Protocol):
     async def sleep(self, seconds: float) -> None: ...
     def last_statustext(self) -> str: ...
     def emit_event(self, type: str, data: dict[str, Any]) -> None: ...
+    # One still now, through perception as usual (its report carries ``command_id``);
+    # the still's id, or None when the camera gave none.
+    async def capture_still(self, command_id: Id) -> UUID | None: ...
 
 
 class SkillHandler(Protocol):

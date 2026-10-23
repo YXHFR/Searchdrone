@@ -101,8 +101,9 @@ GPS_OK_FOR_S: Final = 5.0
 EKF_SOURCE_SET_NO_GPS: Final = 2  # MAV_CMD_SET_EKF_SOURCE_SET param1 after spoofing
 EKF_SOURCE_SET_TRIES: Final = 3
 FS_DR_TIMEOUT_S: Final = 30  # = FS_DR_TIMEOUT: dead reckoning this long, then the EKF failsafe
-# A confirmed find's keep-out cylinder: radius = this + the candidate's sigma95_m.
+# A keep-out cylinder around a possible person: radius = this + the position's sigma95_m.
 PERSON_KEEPOUT_M: Final = 30.0
+KEEPOUT_SCORE_MIN: Final = 0.5  # a detection (or candidate) at least this sure gets one
 
 # --- the flight controller's fence --------------------------------------------------------
 

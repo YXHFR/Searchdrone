@@ -96,6 +96,10 @@ def _targets(params: SkillParams, ctx: GateContext) -> GateTargets | None:
         if v is not None:
             position = LatLonAlt(lat=v.lat, lon=v.lon, alt_amsl_m=v.alt_amsl_m)
         home = ctx.charter.home if ctx.charter is not None else (v.home if v is not None else None)
-        return params.gate_targets(TargetContext(charter=ctx.charter, position=position, home=home))
+        return params.gate_targets(
+            TargetContext(
+                charter=ctx.charter, position=position, home=home, keepouts=list(ctx.keepouts)
+            )
+        )
     except Exception:  # any failure here must reject, never crash the gate
         return None

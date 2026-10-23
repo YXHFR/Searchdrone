@@ -1659,8 +1659,22 @@ export interface GateTargets {
   path?: LatLon[];
   points?: LatLon[];
   resolved?: boolean;
+  ring?: OrbitRing | null;
   route_energy?: boolean;
   speed_ms?: number | null;
+}
+/**
+ * An orbit's flown ring: every point of it lies between ``inner_m`` and ``outer_m``
+ * from the centre (the gate keeps the whole band away from every cylinder).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "OrbitRing".
+ */
+export interface OrbitRing {
+  inner_m: number;
+  lat: number;
+  lon: number;
+  outer_m: number;
 }
 /**
  * One detection, placed on the map. A hint for a person to look at, never a find.
@@ -1795,15 +1809,23 @@ export interface HoldParams {
   reason?: string;
 }
 /**
- * Stage 2. The detection's position exists only onboard: always unresolved here.
+ * A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).
+ *
+ * The ground fills in where the target is (``lat``, ``lon``: the candidate's position
+ * when the detection belongs to one) and its cylinder's radius from its own records;
+ * without them the order is unresolved. ``alt_m`` is the highest the drone may go for it
+ * (the charter's ceiling when left out).
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "InspectDetectionParams".
  */
 export interface InspectDetectionParams {
-  alt_m: number;
+  alt_m?: number | null;
   detection_id: string;
+  lat?: number | null;
+  lon?: number | null;
   standoff_m: number;
+  target_radius_m?: number | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -3240,6 +3262,7 @@ export interface TakeoffParams {
 export interface TargetContext {
   charter: MissionCharter | null;
   home: LatLonAlt | null;
+  keepouts?: Keepout[];
   position: LatLonAlt | null;
   resume_point?: (SurveyResumePoint | GotoResumePoint) | null;
 }

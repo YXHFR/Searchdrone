@@ -23,7 +23,7 @@ from sd_safety.targets import distance_m
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.executor import LinkLossPhase as P
-from sd_schemas.link import Keepout, KeepoutInstall, ManualTakeover
+from sd_schemas.link import BBox, GeoDetectionMsg, Keepout, KeepoutInstall, ManualTakeover
 
 SPEC = Path(__file__).with_name("link_loss_spec.yaml")
 FIND_EAST, FIND_NORTH, FIND_R = 60.0, 0.0, 10.0
@@ -529,3 +529,104 @@ async def test_keepout_install_highest_seq_wins() -> None:
         assert r.ex.keepouts == (a,)
         r.ex.on_keepouts(KeepoutInstall(install_seq=6, keepouts=[]), new_id())
         assert r.ex.keepouts == ()
+
+
+def north_of(r: Rig) -> float:
+    return PLANE.xy(r.fc.lat, r.fc.lon)[1]
+
+
+async def test_find_hover_from_a_hold_hovers_where_it_is(tmp_path: Path) -> None:
+    """Hovering short of a candidate's cylinder (here after a goto; a limit's or a
+    cylinder's hold is the same) when the link goes, a confirmed find beyond it: the find
+    hover starts where the drone is, it never flies into the candidate's cylinder."""
+    find = keepout(east=0, north=110, radius_m=30.0)
+    cand = keepout(east=0, north=80, radius_m=30.0, source="candidate")
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        lat, lon = at(0, 30)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 8}))
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find, cand]), new_id())
+        held = (r.fc.lat, r.fc.lon)
+        r.link = False
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        await r.run(10)
+        assert distance_m(r.fc.lat, r.fc.lon, *held) <= 3.0
+        assert distance_m(r.fc.lat, r.fc.lon, cand.lat, cand.lon) >= cand.radius_m
+
+
+async def test_find_move_into_another_cylinder_hovers_here(tmp_path: Path) -> None:
+    """Flying when the link goes, a confirmed find ahead whose hover point lies in a
+    candidate's cylinder: no move to the point, the drone hovers where it is."""
+    find = keepout(east=0, north=130, radius_m=30.0)
+    cand = keepout(east=0, north=95, radius_m=15.0, source="candidate")
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find, cand]), new_id())
+        lat, lon = at(0, 70)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 4}))
+        await r.until(lambda: north_of(r) >= 40, 60)
+        assert r.ex.state == S.TRANSIT
+        r.link = False
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        assert north_of(r) < 60
+        await r.run(10)
+        assert distance_m(r.fc.lat, r.fc.lon, cand.lat, cand.lon) >= cand.radius_m
+
+
+@pytest.mark.parametrize(
+    ("north", "sigma", "full"), [(80.0, 3.0, False), (102.0, 2.0, False), (300.0, 3.0, True)]
+)
+async def test_a_person_seen_during_the_find_move_is_kept_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, north: float, sigma: float, full: bool
+) -> None:
+    """The drone sees a person while it flies the link-loss find move: on its way, or the
+    find's own person a little nearer (the hover point inside the new cylinder). The
+    move ends in the find hover outside the new cylinder. With no room left for a
+    cylinder, any person seen ends the move in the hover too."""
+    if full:
+        monkeypatch.setattr("sd_onboard.executor.executor.LOCAL_KEEPOUTS_MAX", 0)
+    find = keepout(east=0, north=110, radius_m=30.0)
+    async with rig() as r:
+        r.ex.store = StateStore(tmp_path, r.clock)
+        await r.install(charter())
+        await r.takeoff(40)
+        r.ex.on_keepouts(KeepoutInstall(install_seq=1, keepouts=[find]), new_id())
+        lat, lon = at(0, 60)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 3}))
+        await r.until(lambda: north_of(r) >= 15, 60)
+        r.link = False
+        await r.until(
+            lambda: r.ex.active is not None and r.ex.active.skill == INTERNAL_FIND_GOTO, 20
+        )
+        plat, plon = at(0, north)
+        person = GeoDetectionMsg(
+            detection_id=new_id(),
+            bbox=BBox(x=1, y=1, w=10, h=10),
+            score=0.9,
+            lat=plat,
+            lon=plon,
+            sigma95_m=sigma,
+            px_size=10.0,
+            crop_inline=True,
+            label="person",
+            source="model",
+        )
+        r.ex.on_detections([person])
+        radius = 0.0 if full else next(k for k, _ in r.ex.local_keepouts.values()).radius_m
+        here = north_of(r)
+        closest = math.inf
+        for _ in range(300):
+            await r.run(0.1)
+            closest = min(closest, distance_m(r.fc.lat, r.fc.lon, plat, plon))
+        assert closest >= radius
+        if full:
+            assert north_of(r) - here < 10.0  # hovers where it saw the person
+        assert r.ex.link_rule.phase == P.FIND_HOVER
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"

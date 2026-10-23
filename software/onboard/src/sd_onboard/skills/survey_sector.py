@@ -4,6 +4,10 @@ The mission is home, speed, the search points, a 30 s loiter at the last point a
 return-to-launch, so it ends safely even if the onboard computer dies. When the last
 search point is reached the executor switches to LOITER (HOLD). ``resume`` flies a new
 mission from the point where the search was interrupted.
+
+Every mission goes around the keep-out cylinders in force when it is planned
+(``sd_safety.keepout.reroute``); when a new cylinder comes during the flight the
+executor plans the rest again the same way (the reflex).
 """
 
 from __future__ import annotations
@@ -30,7 +34,8 @@ from sd_onboard.skills.base import (
     mode_failed,
 )
 from sd_safety.constants import DEFAULT_SURVEY_SPACING_M, MISSION_MAX_ITEMS, SURVEY_MAX_AREA_M2
-from sd_safety.targets import Plane
+from sd_safety.keepout import circles, reroute, xy_route_violation
+from sd_safety.targets import Plane, polygon_from_geojson
 from sd_schemas.base import Id, LatLon, LatLonAlt
 from sd_schemas.executor import ExecutorState, ResumePoint, SurveyResumePoint
 from sd_schemas.skills import SkillParams, SurveySectorParams
@@ -90,7 +95,27 @@ class SurveyRun:
     def last_nav_seq(self) -> int:
         return FIRST_SEARCH_SEQ + self.seq_offset + (len(self.waypoints) - self.base_index) - 1
 
+    def around_keepouts(self, ctx: PlanContext) -> None:
+        """Replace the points still to fly with a way around the cylinders in force, if
+        the straight way enters one (``PlanError`` when there is none in the charter)."""
+        if not ctx.keepouts:
+            return
+        plane = ctx.plane
+        cyl = circles(ctx.keepouts, plane)
+        here = plane.xy(ctx.vehicle.lat, ctx.vehicle.lon)
+        route = [here, *(plane.point(p) for p in self.flown_points)]
+        if xy_route_violation(route, cyl) is None:
+            return
+        area = polygon_from_geojson(ctx.charter.area, plane)
+        out = reroute(route, cyl, area=area)
+        if out is None or len(out) < 2:
+            raise PlanError("KEEPOUT_VIOLATION", "ingen väg runt förbudscylindrarna")
+        points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]
+        self.waypoints, self.base_index, self.next_index = points, 0, 0
+        self.interrupted_at, self.seq_offset = None, 0
+
     def plan(self, ctx: PlanContext) -> SkillPlan:
+        self.around_keepouts(ctx)
         if len(self.flown_points) + 4 > MISSION_MAX_ITEMS:
             raise PlanError("ONB_SURVEY_TOO_LARGE", f"{len(self.flown_points)} punkter")
         here = ctx.here()
@@ -199,6 +224,15 @@ class SurveyHandler:
     def __init__(self) -> None:
         self.run: SurveyRun | None = None
         self._home: LatLonAlt | None = None
+        self._brake = False  # a reroute: stop in LOITER before the new mission goes up
+
+    @classmethod
+    def rerouted(cls, run: SurveyRun, home: LatLonAlt) -> SurveyHandler:
+        """The keep-out reflex's handler: the rest of a running order (``survey_sector``,
+        ``follow_path`` or ``resume``) as an already planned ``run``."""
+        handler = cls()
+        handler.run, handler._home, handler._brake = run, home, True
+        return handler
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
         if not isinstance(params, SurveySectorParams):
@@ -218,6 +252,8 @@ class SurveyHandler:
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None:
         if self.run is None or self._home is None:
             raise RuntimeError("planned before running")
+        if self._brake and not await io.set_mode(CopterMode.LOITER):
+            raise mode_failed(CopterMode.LOITER)
         await self.run.fly(plan, io, self._home)
 
     def on_tick(self, ctx: TickContext) -> SkillStatus:

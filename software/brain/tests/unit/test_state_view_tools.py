@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from brain_helpers import REG, situation, with_stub
 
+from sd_brain.constants import EXPOSED_STAGE
 from sd_brain.memory import PendingRequest, empty_memory, pending_request, to_update, with_changes
 from sd_brain.state_view import current_limits, fresh_request, motion_block, takeoff_ok
 from sd_brain.tools import (
@@ -214,7 +215,7 @@ def test_exposed_tools_table(
 def test_stubs_and_stage2_never_exposed() -> None:
     s = situation()
     names = _names(s, reg=REG)
-    assert not names & {"orbit", "land_at", "follow_me", "find_me", "inspect_detection"}
+    assert not names & {"land_at", "follow_me", "find_me", "inspect_detection"}
     assert "goto" in names
     # A skill that is a stub (in another build) never becomes a tool.
     assert "goto" not in _names(s, reg=with_stub("goto"))
@@ -223,8 +224,8 @@ def test_stubs_and_stage2_never_exposed() -> None:
 def test_stub_in_allowed_skills_is_not_exposed() -> None:
     s = situation()
     data = s.model_dump(mode="json")
-    data["charter"]["allowed_skills"].append("orbit")
-    assert "orbit" not in _names(type(s).model_validate(data))
+    data["charter"]["allowed_skills"].append("land_at")
+    assert "land_at" not in _names(type(s).model_validate(data))
 
 
 def test_tool_bounds_follow_the_charter() -> None:
@@ -372,9 +373,21 @@ def test_no_setting_drops_the_start_request() -> None:
 @pytest.mark.parametrize(
     ("state", "want"),
     [
-        ("HOLD", {"goto", "survey_sector", "follow_path", "hold", "resume", "return_home"}),
-        ("TRANSIT", {"goto", "survey_sector", "follow_path", "hold", "return_home"}),
-        ("SURVEY", {"goto", "survey_sector", "follow_path", "hold", "return_home"}),
+        (
+            "HOLD",
+            {
+                "goto",
+                "survey_sector",
+                "follow_path",
+                "hold",
+                "resume",
+                "return_home",
+                "orbit",
+                "capture_stills",
+            },
+        ),
+        ("TRANSIT", {"goto", "survey_sector", "follow_path", "hold", "return_home", "orbit"}),
+        ("SURVEY", {"goto", "survey_sector", "follow_path", "hold", "return_home", "orbit"}),
         ("TAKEOFF", {"return_home"}),
         ("RTL", {"return_home"}),
         ("LAND", set()),
@@ -383,11 +396,17 @@ def test_no_setting_drops_the_start_request() -> None:
     ],
 )
 def test_onboard_skills_only_from_their_executor_states(state: str | None, want: set[str]) -> None:
-    s = situation(vehicle={"executor_state": state}, charter=_allowing("follow_path"))
+    allow = _allowing("follow_path", "orbit", "capture_stills", "inspect_detection")
+    s = situation(vehicle={"executor_state": state}, charter=allow)
     moving = {k.name for k in REG if k.allowed_from}
     assert _names(s) & moving == want
-    # Mirrors the registry: exactly the onboard skills the executor may start from here.
-    assert want == {k.name for k in REG if state in k.allowed_from and k.name != "takeoff"}
+    # Mirrors the registry: exactly the onboard skills the executor may start from here
+    # (inspect_detection is stage 2: the operator's "look closer", never an AI tool).
+    assert want == {
+        k.name
+        for k in REG
+        if state in k.allowed_from and k.name != "takeoff" and k.stage <= EXPOSED_STAGE
+    }
 
 
 def _allowing(*extra: str) -> dict[str, Any]:

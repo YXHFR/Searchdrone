@@ -10,6 +10,9 @@
 - {id: T7, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:survey_sector"], to: [SURVEY], guard: always}
 - {id: T7b, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:follow_path"], to: [TRANSIT], guard: always}
 - {id: T8, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:hold"], to: [HOLD], guard: always}
+- {id: T8b, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:orbit"], to: [TRANSIT], guard: always}
+- {id: T8c, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:inspect_detection"], to: [TRANSIT], guard: always}
+- {id: T8d, from: [HOLD], trigger: ["skill:capture_stills"], to: [HOLD], guard: always}
 - {id: T9, from: [HOLD], trigger: ["skill:resume"], to: [TRANSIT, SURVEY], guard: resume_target}
 - {id: T10, from: [TAKEOFF, TRANSIT, SURVEY, HOLD], trigger: ["skill:return_home"], to: [RTL], guard: always}
 - {id: T11, from: [RTL], trigger: ["skill:return_home"], to: [RTL], guard: always}

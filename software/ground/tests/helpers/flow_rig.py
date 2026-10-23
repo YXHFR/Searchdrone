@@ -360,12 +360,13 @@ class Rig:
             headers=H,
         )
 
-    async def ready_mission(self, half: float = 150.0) -> str:
-        """Open, propose (as the pilot), approve: READY with fence and install."""
+    async def ready_mission(self, half: float = 150.0, **proposal: Any) -> str:
+        """Open, propose (as the pilot, with ``proposal``'s fields), approve: READY with
+        fence and install."""
         mid = await self.open_mission()
         res = await self.panel.post(
             f"/api/v1/missions/{mid}/charters",
-            json={"area": self.square(half), "reason_sv": "Test"},
+            json={"area": self.square(half), "reason_sv": "Test", **proposal},
             headers=H,
         )
         assert res.status_code == 201, res.text

@@ -101,10 +101,11 @@ def north_m(sc: Scenario) -> float:
     return Plane(*sc.r.home).xy(s.lat, s.lon)[1]
 
 
-async def find_ahead(sc: Scenario, find_north_m: float = 150.0, cut_at_m: float = 90.0) -> Any:
+async def find_ahead(sc: Scenario, find_north_m: float = 150.0, cut_at_m: float = 70.0) -> Any:
     """On the way north a person's find is confirmed ahead; once the drone is
     ``find_north_m - cut_at_m`` from it, the function returns (the caller cuts the radio).
-    Returns (find lat, lon, the hover point lat, lon)."""
+    The cut comes early enough that the loss is detected before the keep-out reflex holds
+    the goto short of the find's cylinder. Returns (find lat, lon, the hover point lat, lon)."""
     await heading_north(sc)
     flat, flon = sc.at(0.0, find_north_m)
     await sc.confirm_find(flat, flon, SIGMA_M)

@@ -9,7 +9,7 @@ A fake onboard computer over the real SD-link server and a migrated database
 from __future__ import annotations
 
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -69,9 +69,16 @@ async def test_keepout_install_confirmed(r: Rig) -> None:
     cid = await candidate(rig_, mid, lat, lon, state="ready", rev=1)
     await candidate(rig_, mid, lat, lon, state="confirmed", rev=2, cid=cid)
 
-    def confirmed() -> bool:
-        last = installs(rig_)[-1] if installs(rig_) else None
-        return last is not None and [str(k.source_id) for k in last.keepouts] == [cid]
+    def installed(source: str) -> Callable[[], bool]:
+        def check() -> bool:
+            last = installs(rig_)[-1] if installs(rig_) else None
+            return last is not None and [(str(k.source_id), k.source) for k in last.keepouts] == [
+                (cid, source)
+            ]
+
+        return check
+
+    confirmed = installed("confirmed")
 
     await rig_.until(confirmed, 10, "the confirmed find installed")
     first = installs(rig_)[-1]
@@ -80,13 +87,17 @@ async def test_keepout_install_confirmed(r: Rig) -> None:
     assert k.radius_m == pytest.approx(PERSON_KEEPOUT_M + 5.0)
     assert (k.lat, k.lon) == pytest.approx((lat, lon))
 
-    # Reopened (a newer revision that is not confirmed): an empty list, a higher seq.
+    # Reopened (a newer revision that is not confirmed): still kept out, as an open
+    # candidate with a detector score of at least 0.5, under a higher seq.
     await candidate(rig_, mid, lat, lon, state="inspecting", rev=3, cid=cid)
-    await rig_.until(lambda: installs(rig_)[-1].keepouts == [], 10, "the reopened find gone")
+    await rig_.until(installed("candidate"), 10, "the reopened find kept as a candidate")
     assert installs(rig_)[-1].install_seq > first.install_seq
+    # Rejected: an empty list.
+    await candidate(rig_, mid, lat, lon, state="rejected", rev=4, cid=cid)
+    await rig_.until(lambda: installs(rig_)[-1].keepouts == [], 10, "the rejected find gone")
 
     # Confirmed again, then a new SD-link session: the list again at its Hello.
-    await candidate(rig_, mid, lat, lon, state="confirmed", rev=4, cid=cid)
+    await candidate(rig_, mid, lat, lon, state="confirmed", rev=5, cid=cid)
     await rig_.until(confirmed, 10, "confirmed again")
     before = len(installs(rig_))
     seq = installs(rig_)[-1].install_seq

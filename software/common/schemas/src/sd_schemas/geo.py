@@ -13,6 +13,7 @@ __all__ = [
     "WGS84_A",
     "WGS84_E2",
     "WGS84_F",
+    "local_xy",
     "plane_distance_m",
     "plane_offset",
     "tangent_radii",
@@ -36,6 +37,16 @@ def tangent_radii(lat0: float) -> tuple[float, float]:
     n_radius = WGS84_A / w  # prime vertical
     m_radius = WGS84_A * (1 - WGS84_E2) / (w * w * w)  # meridian
     return n_radius * math.cos(phi), m_radius
+
+
+def local_xy(lat0: float, lon0: float, lat: float, lon: float) -> tuple[float, float]:
+    """(east, north) metres of (lat, lon) in the plane tangent at (lat0, lon0); the
+    inverse of :func:`plane_offset`."""
+    east_r, north_r = tangent_radii(lat0)
+    return (
+        math.radians(wrap_lon(lon - lon0)) * east_r,
+        math.radians(lat - lat0) * north_r,
+    )
 
 
 def plane_offset(lat0: float, lon0: float, east: float, north: float) -> tuple[float, float]:

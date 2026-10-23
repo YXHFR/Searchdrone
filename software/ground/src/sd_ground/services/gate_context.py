@@ -6,7 +6,7 @@ only refuse). Inputs: the mission and its active charter, the ground's own MAVLi
 (armed, in the air, battery, position), the latest onboard ``StateSnapshot`` (executor
 state, preflight, the state numbers the AI's ``based_on`` is compared with), the latch,
 the "clear around the drone" confirmation, the AI's recent orders (rate limit), its
-waiting cards and whether a pilot is present.
+waiting cards, whether a pilot is present and the keep-out cylinders sent to the drone.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from sd_schemas.api import Mission
 from sd_schemas.base import LatLon
 from sd_schemas.charter import MissionCharter
 from sd_schemas.gate import ClearanceState, GateContext
+from sd_schemas.keepout import Keepout
 from sd_schemas.link import StateSnapshot
 from sd_schemas.mission import OperatorLatch
 from sd_schemas.skills import SkillSpec
@@ -69,6 +70,7 @@ def build_gate_context(
     rate: BrainRate,
     brain_pending_approvals: int,
     operator_present: bool,
+    keepouts: tuple[Keepout, ...] = (),
 ) -> GateContext:
     home = charter.home if charter is not None else None
     if charter is not None:
@@ -118,4 +120,5 @@ def build_gate_context(
         brain_pending_approvals=brain_pending_approvals,
         operator_present=operator_present,
         rc_link_ok=None if snapshot is None else snapshot.preflight.get("PF12"),
+        keepouts=keepouts,
     )

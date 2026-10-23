@@ -28,22 +28,25 @@ import datetime as dt
 from typing import TYPE_CHECKING, Any, Final, Literal
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from sd_ground.logging import get_logger
 from sd_ground.services import annotations as annotations_service
 from sd_ground.services import charters as charter_rules
 from sd_ground.services.missions import FlowError
 from sd_safety import evaluate
-from sd_safety.constants import APPROVAL_TIMEOUT_S
+from sd_safety.constants import APPROVAL_TIMEOUT_S, PERSON_KEEPOUT_M
 from sd_safety.targets import distance_m, line_length_m
 from sd_schemas.api import Approval, ApprovalDecisionRequest, Command, Mission
 from sd_schemas.approval import command_hash
-from sd_schemas.base import new_id
+from sd_schemas.base import LatLonAlt, new_id
 from sd_schemas.charter import CharterProposal
 from sd_schemas.commander import EstimateResult, SkillSubmitResult
-from sd_schemas.gate import GateDecision, GateRequest, StateRef
+from sd_schemas.gate import GateContext, GateDecision, GateRequest, StateRef
 from sd_schemas.link import Ack, ApprovalRef, CommandCancel, SkillCommand, StateSnapshot
 from sd_schemas.mission import Trigger
-from sd_schemas.reason_codes import GATE_REASON_CODES
+from sd_schemas.reason_codes import GATE_REASON_CODES, ONBOARD_REASON_CODES
+from sd_schemas.skills import InspectDetectionParams, TargetContext
 
 if TYPE_CHECKING:
     from sd_ground.services.missions import MissionFlow
@@ -273,8 +276,17 @@ async def submit(
         row = await flow.active_charter_row(mission)
         if issuer_kind == "operator":
             charter_version = None if row is None else row.version
-            based_on = None
+            # The state the operator sees: the onboard computer refuses an order from
+            # before its last restart (ONB_STALE_ORDER).
+            snapshot, _ = flow.snapshot(mission.vehicle_id)
+            based_on = (
+                None
+                if snapshot is None
+                else StateRef(state_epoch=snapshot.state_epoch, state_seq=snapshot.state_seq)
+            )
         ctx = await flow.gate_context(mission)
+        if skill == "inspect_detection":
+            params = await _inspect_params(flow, mission_id, params)
         req = _gate_request(
             mission,
             command_id=command_id,
@@ -286,7 +298,7 @@ async def submit(
             based_on=based_on,
             phase="submit",
         )
-        gate = evaluate(req, ctx)
+        gate = _explained(skill, params, ctx, evaluate(req, ctx))
         if issuer_kind == "brain" and skill == "follow_path" and gate.decision != "REJECT":
             gate = await _drawn_path_check(flow, mission_id, params) or gate
         now = flow.now()
@@ -408,6 +420,68 @@ async def _drawn_path_check(
         rule_ids=["R-PATH-DRAWN"],
         message_sv=text,
         details={"path": label if isinstance(label, str) else None},
+        side="ground",
+    )
+
+
+async def _inspect_params(
+    flow: MissionFlow, mission_id: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """``inspect_detection`` with its target filled in by the ground: where the detection's
+    candidate (or the detection) lies and its keep-out radius. An unknown detection stays
+    without a target, and the gate refuses it."""
+    try:
+        asked = InspectDetectionParams.model_validate(params)
+    except ValidationError:
+        # The gate refuses malformed parameters; a target is never the caller's.
+        return {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
+    found = await flow.repo.inspect_target(mission_id, str(asked.detection_id))
+    if found is None:
+        return {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
+    radius = min(500.0, PERSON_KEEPOUT_M + float(found["sigma95_m"]))
+    return {
+        **params,
+        "lat": float(found["lat"]),
+        "lon": float(found["lon"]),
+        "target_radius_m": radius,
+    }
+
+
+_INSPECT_TARGET: Final = ("lat", "lon", "target_radius_m")
+
+
+def _explained(
+    skill: str, params: dict[str, Any], ctx: GateContext, gate: GateDecision
+) -> GateDecision:
+    """An ``inspect_detection`` refused only for its missing target says why there is
+    none, when the target is known (``_inspect_geometry_check``)."""
+    if skill == "inspect_detection" and gate.reason_codes == ["SCHEMA_INVALID"]:
+        return _inspect_geometry_check(params, ctx) or gate
+    return gate
+
+
+def _inspect_geometry_check(params: dict[str, Any], ctx: GateContext) -> GateDecision | None:
+    """A refused ``inspect_detection`` whose target is known but whose look has no point
+    (no height in the charter's band sees it steeply enough, or every way there crosses a
+    cylinder): ``ONB_INSPECT_GEOMETRY``, the code the drone would answer with."""
+    try:
+        asked = InspectDetectionParams.model_validate(params)
+    except ValidationError:
+        return None
+    if asked.lat is None or ctx.vehicle is None:
+        return None
+    here = LatLonAlt(lat=ctx.vehicle.lat, lon=ctx.vehicle.lon, alt_amsl_m=ctx.vehicle.alt_amsl_m)
+    target = TargetContext(
+        charter=ctx.charter, position=here, home=None, keepouts=list(ctx.keepouts)
+    )
+    if asked.geometry(target) is not None:
+        return None
+    return GateDecision(
+        decision="REJECT",
+        reason_codes=["ONB_INSPECT_GEOMETRY"],
+        rule_ids=["R-INSPECT-GEOMETRY"],
+        message_sv=ONBOARD_REASON_CODES["ONB_INSPECT_GEOMETRY"],
+        details={"detection_id": str(asked.detection_id)},
         side="ground",
     )
 
@@ -546,6 +620,8 @@ async def estimate(
     """The gate in phase ``estimate`` (no order is created) plus a rough time and battery."""
     mission = await flow.open_mission_of(mission_id)
     ctx = await flow.gate_context(mission)
+    if skill == "inspect_detection":
+        params = await _inspect_params(flow, mission_id, params)
     req = _gate_request(
         mission,
         command_id=str(new_id()),
@@ -557,7 +633,7 @@ async def estimate(
         based_on=based_on,
         phase="estimate",
     )
-    gate = evaluate(req, ctx)
+    gate = _explained(skill, params, ctx, evaluate(req, ctx))
     duration = None
     v = ctx.vehicle
     lat, lon = params.get("lat"), params.get("lon")

@@ -87,12 +87,15 @@ ONBOARD_IMPLEMENTED = {
     "hold",
     "resume",
     "return_home",
+    "orbit",
+    "capture_stills",
+    "inspect_detection",
 }
 GROUND_IMPLEMENTED = {"report", "mark_location", "propose_charter_change"}
 
 
 def test_only_built_skills_are_implemented() -> None:
-    """Six skills run onboard and three in the ground station; the rest are stubs."""
+    """Ten skills run onboard and three in the ground station; the rest are stubs."""
     implemented = {k.name for k in SKILL_REGISTRY if k.status == "implemented"}
     assert implemented == ONBOARD_IMPLEMENTED | GROUND_IMPLEMENTED
     for k in SKILL_REGISTRY:

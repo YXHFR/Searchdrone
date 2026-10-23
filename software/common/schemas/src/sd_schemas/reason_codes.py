@@ -70,6 +70,7 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "ALT_BELOW_CHARTER": "Höjden är under uppdragsramens golv.",
         "OUTSIDE_CHARTER": "Målet ligger utanför sökområdet.",
         "AREA_BEYOND_FC_FENCE": "Området ligger för långt från hemplatsen för staketet.",
+        "KEEPOUT_VIOLATION": "Vägen går in i en förbudscylinder runt en möjlig person.",
         "PILOT_DISTANCE": "Målet ligger för långt från piloten.",
         "SPEED_ABOVE_LIMIT": "Farten är över uppdragets gräns.",
         "SPEED_ABOVE_CHARTER": "Farten är över uppdragsramens gräns.",
@@ -139,6 +140,11 @@ ONBOARD_REASON_CODES: Final = MappingProxyType(
         "ONB_MISSION_READBACK_MISMATCH": "Sökrutten i flygkontrollern stämmer inte.",
         "ONB_SURVEY_TOO_LARGE": "Sökningen har för många punkter.",
         "ONB_UNKNOWN_SECTOR": "Okänd sektor.",
+        "ONB_INSPECT_GEOMETRY": (
+            "Det går inte att se målet rakt nog uppifrån inom ramens höjder och utanför "
+            "förbudscylindrarna."
+        ),
+        "ONB_CAMERA_UNAVAILABLE": "Kameran tar inga bilder just nu.",
         "ONB_NOTHING_TO_RESUME": "Det finns inget att fortsätta med.",
         "ONB_SKILL_TIMEOUT": "Färdigheten tog för lång tid.",
         "ONB_WRONG_EXECUTOR": "Färdigheten körs på marken, inte i drönaren.",

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+import math
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
@@ -44,6 +45,18 @@ from sd_mav.vehicle import (
 from sd_obs.clock import Clock
 from sd_onboard.executor.authority import Authority
 from sd_onboard.executor.guards import GuardInput, Refusal, is_airborne, run_guard
+from sd_onboard.executor.keepout_reflex import (
+    LOCAL_KEEPOUT_HANDOVER_MS,
+    LOCAL_KEEPOUTS_MAX,
+    REROUTABLE,
+    blocks_find_move,
+    contained,
+    entry_m,
+    remaining,
+    route_clear,
+    stop_m,
+    survey_run,
+)
 from sd_onboard.executor.limits import (
     INTERNAL_ALT_GOTO,
     LimitAction,
@@ -77,6 +90,7 @@ from sd_onboard.skills.base import (
 )
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.return_home import ReturnHomeHandler
+from sd_onboard.skills.survey_sector import SurveyHandler, SurveyRun
 from sd_safety import evaluate
 from sd_safety.constants import (
     CLEARANCE_VALID_S,
@@ -89,11 +103,14 @@ from sd_safety.constants import (
     FIND_MOVE_SPEED_MS,
     GCS_SEEN_FOR_RELEASE_S,
     HOME_MATCH_M,
+    KEEPOUT_SCORE_MIN,
     LINK_LOSS_DETECT_S,
     MODE_CONFIRM_TIMEOUT_S,
+    PERSON_KEEPOUT_M,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
+from sd_safety.keepout import circles
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -104,13 +121,13 @@ from sd_safety.limits import (
     charter_violations,
     fc_area_max_from_home_m,
 )
-from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, MODE_A_EXEMPT
+from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, KEEPOUT_EXEMPT, MODE_A_EXEMPT
 from sd_safety.targets import Plane, distance_m, polygon_from_geojson
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState, LinkLossPhase, ResumePoint
-from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest
+from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest, StateRef
 from sd_schemas.link import (
     SCHEMA_MAJOR,
     AckStage,
@@ -118,6 +135,7 @@ from sd_schemas.link import (
     CharterInstall,
     ClearanceConfirmation,
     CommanderStatus,
+    GeoDetectionMsg,
     Hello,
     HelloAck,
     Keepout,
@@ -191,6 +209,7 @@ _WARNING: Final = frozenset(
         "link_loss_hold",
         "find_hold_started",
         "find_move_deadline",
+        "find_move_keepout",
         "find_hold_ended",
         "gcs_lost_ignored_find",
         "gnss_degraded",
@@ -260,9 +279,13 @@ class _Active:
     origin: SendOrigin
     task: asyncio.Task[None] | None = None
     ack_done: bool = True  # Ack(done)/(failed) for this order (False for internal orders)
+    cmd: SkillCommand | None = None  # the order (None for internal orders)
 
 
 _PARAM_TOLERANCE: Final = 1e-3
+# The most an order waits for one still. A watchdog against a camera that hangs, so it
+# runs on the event loop's own (wall) clock, not the injected one a hung call never advances.
+_CAPTURE_LIMIT_S: Final = 10.0
 # The fence and LOITER speed may be raised with the mission limits (by the ground, by
 # the pilot's click); PF6 then checks them against the hard floor instead of the file.
 _RAISABLE: Final = ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS")
@@ -315,6 +338,16 @@ class _IO:
     def emit_event(self, type: str, data: dict[str, Any]) -> None:
         self._ex.emit(type, data)
 
+    async def capture_still(self, command_id: UUID) -> UUID | None:
+        camera = self._ex.camera
+        if camera is None:
+            return None
+        try:  # whatever the camera does, the order goes on without the still
+            return await asyncio.wait_for(camera(command_id), _CAPTURE_LIMIT_S)
+        except TimeoutError:
+            self._ex.emit("capture_timeout", {"command_id": str(command_id)})
+            return None
+
 
 class Executor:
     def __init__(
@@ -354,6 +387,14 @@ class Executor:
         self.gps_health = GpsHealth()
         self.keepouts: tuple[Keepout, ...] = ()
         self.keepout_seq = -1  # the highest KeepoutInstall.install_seq taken
+        # Cylinders from the drone's own detections: detection_id -> (cylinder, created).
+        self.local_keepouts: dict[UUID, tuple[Keepout, int]] = {}
+        self._keepouts_changed = False  # the reflex runs on the next tick
+        self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
+        self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
+        self._keepouts_through: set[UUID] = set()  # came with the drone inside: left on the leg
+        # Takes one still for an order (perception, ``PerceptionLoop.capture``).
+        self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way
@@ -697,6 +738,9 @@ class Executor:
         self.active = None
         if self.state == S.RTL:
             return  # return home is done at LANDED
+        if self.state == S.HOLD and active.skill == "capture_stills":
+            self._ack(active.command_id, "done")  # taken while hovering: no transition
+            return
         target = self.target_of(Trigger.SKILL_DONE)
         if isinstance(target, Refusal):
             return
@@ -890,8 +934,10 @@ class Executor:
             self.flown = False
         origin = SendOrigin.SKILL
         reason = "ai_hold" if spec.name == "hold" else None
+        if spec.name == "capture_stills":
+            reason = self.hold_reason  # stills while hovering: the hover stays what it was
         self._enter(target, hold_reason=reason, cause=f"skill:{spec.name}")
-        self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin))
+        self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin, cmd=cmd))
         self._ack(cmd.command_id, "running")
 
     def _onboard_checks(
@@ -993,6 +1039,7 @@ class Executor:
             plane=plane,
             resume_point=self.resume_point,
             clock=self.clock,
+            keepouts=self.keepouts_in_force(),
         )
 
     def _gate_request(self, cmd: SkillCommand, plan: SkillPlan) -> GateRequest:
@@ -1047,6 +1094,7 @@ class Executor:
             recent_brain_reports_mono_ms=(),
             brain_pending_approvals=0,
             operator_present=True,
+            keepouts=self.keepouts_in_force(),
         )
 
     def on_cancel(self, command_id: UUID) -> None:
@@ -1246,8 +1294,51 @@ class Executor:
             return
         self.keepout_seq = install.install_seq
         self.keepouts = tuple(install.keepouts)
+        # Our own cylinders give way to the ground's once one of those covers them (the
+        # ground has had time to include them as candidates). One it never covers stays.
+        handed = self.now_ms() - LOCAL_KEEPOUT_HANDOVER_MS
+        plane = self.plane()
+        self.local_keepouts = {
+            d: (k, t)
+            for d, (k, t) in self.local_keepouts.items()
+            if t > handed or plane is None or not contained(k, self.keepouts, plane)
+        }
+        self._keepouts_changed = True
         self._save()
         self._ack(ref_id, "done")
+
+    def keepouts_in_force(self) -> tuple[Keepout, ...]:
+        """The ground's cylinders and the drone's own: what the gate and the plans use."""
+        return (*self.keepouts, *(k for k, _ in self.local_keepouts.values()))
+
+    def on_detections(self, detections: Sequence[GeoDetectionMsg]) -> None:
+        """Target detections from perception: one cylinder for each at least
+        ``KEEPOUT_SCORE_MIN`` sure, unless one in force already holds it."""
+        plane = self.plane()
+        if plane is None:
+            return
+        now = self.now_ms()
+        for d in detections:
+            if d.score < KEEPOUT_SCORE_MIN or d.detection_id in self.local_keepouts:
+                continue
+            k = Keepout(
+                keepout_id=new_id(),
+                lat=d.lat,
+                lon=d.lon,
+                radius_m=min(500.0, PERSON_KEEPOUT_M + d.sigma95_m),
+                source="detection",
+                source_id=d.detection_id,
+            )
+            if contained(k, self.keepouts_in_force(), plane):
+                continue
+            if len(self.local_keepouts) >= LOCAL_KEEPOUTS_MAX:
+                # No room to keep this person out of the route: a search or a move stops.
+                self.emit("keepouts_full", {"detection_id": str(d.detection_id)})
+                self._keepout_hold()
+                continue
+            self.local_keepouts[d.detection_id] = (k, now)
+            self._keepouts_changed = True
+            self.emit("keepout_created", k.model_dump(mode="json"))
 
     def on_pilot_position(self, p: PilotPosition) -> None:
         self.pilot.update(p.lat, p.lon, self.now_ms())
@@ -1443,6 +1534,9 @@ class Executor:
         self._last_tick_ms = now
         t = self.vehicle.telemetry
         self._finish_active()
+        if self._keepouts_changed or self._keepout_watch:
+            self._keepouts_changed = False
+            self._keepout_reflex()
         if self.state in AIRBORNE_CONTROLLED and not t.fc_connected:
             self._take(Trigger.FC_SILENT, held_by="fc_silent", event="fc_silent")
         if t.fc_connected:
@@ -1475,6 +1569,139 @@ class Executor:
             self._save()
         self._tick_ms.append((self.clock.monotonic() - started) * 1000)
         del self._tick_ms[:-100]
+
+    def _keepout_reflex(self) -> None:
+        """A cylinder came: plan the rest of a search around it, or hover short of the
+        cylinder (see ``executor.keepout_reflex``). Internal orders, return home and
+        take-off go on."""
+        self._keepout_watch = False
+        active, plane, charter = self.active, self.plane(), self.charter
+        if active is not None and active.skill == INTERNAL_FIND_GOTO:
+            self._find_move_reflex()
+            return
+        if (
+            active is None
+            or not active.ack_done
+            or active.skill in KEEPOUT_EXEMPT
+            or self.state not in (S.TRANSIT, S.SURVEY)
+            or plane is None
+            or charter is None
+        ):
+            return
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        rest = remaining(active.handler, active.plan, here, plane)
+        keepouts = self.keepouts_in_force()
+        cyl = circles(keepouts, plane)
+        # The cylinders that held the drone when they came: it may leave them along its leg.
+        inside = {
+            k.keepout_id for k, (c, r) in zip(keepouts, cyl, strict=True) if math.dist(here, c) < r
+        }
+        new = {k.keepout_id for k in keepouts} - self._keepouts_seen
+        self._keepouts_through = inside & (self._keepouts_through | new)
+        self._keepouts_seen = {k.keepout_id for k in keepouts}
+        run = survey_run(active.handler)
+        if active.skill in REROUTABLE and run is not None:
+            if entry_m([here, *rest], cyl) is not None and not self._reroute(active, run, charter):
+                self._keepout_hold()
+            return
+        # Any other order leaves a new cylinder it is inside along its current leg (rather
+        # than hover over the person) and flies on until it is its stop short of the next
+        # cylinder ahead (a find's link-loss hover still finds it on the way), then hovers.
+        through = frozenset(
+            i for i, k in enumerate(keepouts) if k.keepout_id in self._keepouts_through
+        )
+        entry = entry_m([here, *rest], cyl, through=through)
+        if entry is None:
+            return
+        if entry > stop_m(v.groundspeed_ms):
+            self._keepout_watch = True
+            return
+        self._keepout_hold()
+
+    def _find_move_reflex(self) -> None:
+        """The link-loss find move meets a cylinder that came on the way (a person the
+        drone sees as it flies): it ends its stop short of it, in the find hover there."""
+        find, plane = self.link_rule.plan, self.plane()
+        if find is None or plane is None or self.state != S.TRANSIT:
+            return
+        v = self.vehicle_state()
+        others = [k for k in self.keepouts_in_force() if k.keepout_id != find.keepout_id]
+        route = [plane.xy(v.lat, v.lon), plane.xy(find.hover_lat, find.hover_lon)]
+        entry = entry_m(route, circles(others, plane))
+        if entry is None:
+            return
+        if entry > stop_m(v.groundspeed_ms):
+            self._keepout_watch = True
+            return
+        self._find_hover_here()
+
+    def _find_hover_here(self) -> None:
+        """End the link-loss find move where the drone is: the find hover starts there."""
+        action = LimitAction("L-FIND", "hold", "find_hold", "find_move_keepout", {})
+        self.emit(action.event, dict(action.data))
+        self._apply_limit(action)
+
+    def _keepout_hold(self) -> None:
+        """Stop a moving order in a hover (``KEEPOUT_VIOLATION``). Internal orders, return
+        home and take-off go on; the link-loss find move ends in its hover here."""
+        active = self.active
+        if active is not None and active.skill == INTERNAL_FIND_GOTO:
+            if self.state == S.TRANSIT:
+                self._find_hover_here()
+            return
+        if (
+            active is None
+            or not active.ack_done
+            or active.skill in KEEPOUT_EXEMPT
+            or self.state not in (S.TRANSIT, S.SURVEY)
+        ):
+            return
+        action = LimitAction(
+            limit="KEEPOUT_VIOLATION",
+            kind="hold",
+            hold_reason="limit",
+            event="keepout_hold",
+            data={"command_id": str(active.command_id), "skill": active.skill},
+        )
+        self.emit(action.event, dict(action.data))
+        self._apply_limit(action)
+
+    def _reroute(self, active: _Active, run: SurveyRun, charter: MissionCharter) -> bool:
+        """The rest of a search around the cylinders, as a new mission for the same order."""
+        rest = run.waypoints[run.next_index :]
+        new = SurveyRun(
+            active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
+        )
+        ctx = self._plan_context(active.command_id)
+        try:
+            plan = new.plan(ctx)
+        except PlanError:
+            return False
+        route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
+        if active.cmd is None or not route_clear(route, ctx.keepouts, ctx.plane, charter):
+            return False
+        # The whole gate on the new route (battery and return reserve included). The order
+        # was accepted already: the new route is judged on the state it is flown from.
+        now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
+        cmd = active.cmd.model_copy(update={"based_on": now})
+        decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
+        if decision.decision != "ALLOW":
+            self.emit(
+                "keepout_reroute_refused",
+                {"command_id": str(active.command_id), "codes": decision.reason_codes},
+            )
+            return False
+        handler = SurveyHandler.rerouted(new, charter.home)
+        self._drop_active(stage=None, save_resume=False)
+        self.emit(
+            "keepout_reroute",
+            {"command_id": str(active.command_id), "skill": active.skill, "points": len(route) - 1},
+        )
+        self._start_active(
+            _Active(active.command_id, active.skill, handler, plan, active.origin, cmd=active.cmd)
+        )
+        return True
 
     def _flying_home(self) -> bool:
         t = self.vehicle.telemetry
@@ -1813,7 +2040,9 @@ class Executor:
         find = self.link_rule.plan
         if find is None or self.charter is None:
             return
-        arrived = self.link_rule.phase == LinkLossPhase.FIND_HOVER
+        # Any other cylinder on the way or at the point (a candidate, the drone's own
+        # detection): hover here instead, outside the find's cylinder as it is.
+        arrived = self.link_rule.phase == LinkLossPhase.FIND_HOVER or self._find_move_blocked()
         target = self.target_of(Trigger.LIMIT_FIND, find_arrived=arrived)
         if isinstance(target, Refusal):
             return
@@ -1831,6 +2060,18 @@ class Executor:
         plan = goto_plan(ctx, find.hover_lat, find.hover_lon, find.alt_m, speed)
         self._enter(target, cause=action.limit)
         self._internal(INTERNAL_FIND_GOTO, goto, plan, SendOrigin.LIMIT)
+
+    def _find_move_blocked(self) -> bool:
+        find, plane = self.link_rule.plan, self.plane()
+        if find is None or plane is None:
+            return False
+        v = self.vehicle_state()
+        others = [k for k in self.keepouts_in_force() if k.keepout_id != find.keepout_id]
+        return blocks_find_move(
+            plane.xy(v.lat, v.lon),
+            plane.xy(find.hover_lat, find.hover_lon),
+            circles(others, plane),
+        )
 
     # --- snapshot and persistence --------------------------------------------------------
 

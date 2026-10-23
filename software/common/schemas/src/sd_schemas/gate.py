@@ -20,6 +20,7 @@ from sd_schemas.base import (
 )
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState
+from sd_schemas.keepout import Keepout
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.skills import SkillSpec
@@ -109,6 +110,9 @@ class GateContext(SdModel):
     # The onboard computer's PF12 from the latest snapshot: False = an RC transmitter is
     # required and the flight controller does not hear one; None = not required/unknown.
     rc_link_ok: bool | None = None
+    # The keep-out cylinders in force (onboard: the ground's and its own; ground: the list
+    # it installs). No route may enter one (R-KEEPOUT).
+    keepouts: tuple[Keepout, ...] = ()
 
 
 class GateDecision(SdModel):

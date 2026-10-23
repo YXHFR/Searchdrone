@@ -92,7 +92,7 @@ def test_alt_band_invalid() -> None:
 
 
 def test_stub_skill_refused() -> None:
-    c = make(square(100), allowed_skills=["goto", "orbit"])
+    c = make(square(100), allowed_skills=["goto", "land_at"])
     assert "SKILL_NOT_IMPLEMENTED" in codes(c)
     c = make(square(100), allowed_skills=["goto"])
     c2 = c.model_copy(update={"allowed_skills": ["teleport"]})

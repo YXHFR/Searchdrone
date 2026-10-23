@@ -547,6 +547,7 @@ class MissionFlow:
             rate=self.rates.setdefault(vid, BrainRate()),
             brain_pending_approvals=await self.repo.brain_pending_approvals(vid),
             operator_present=self.operator_present(),
+            keepouts=tuple(watch.keepouts) if (watch := self.link_watch.get(vid)) else (),
         )
 
     # --- clearance ---------------------------------------------------------------------
