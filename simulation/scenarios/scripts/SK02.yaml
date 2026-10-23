@@ -24,7 +24,7 @@ turns:
     say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
     action: {skill: inspect_detection, params: {detection_id: "event:detection_id", standoff_m: 20}}
   - on: skill_event
-    when: {skill: inspect_detection, status: done}
+    when: {skill: inspect_detection, status: [done, failed]}
     once: false
     say: ["Bilderna är tagna. Söker vidare där jag var."]
     action: {skill: resume, params: {}}

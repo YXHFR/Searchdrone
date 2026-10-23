@@ -1,6 +1,7 @@
-# SK09: the wrong person in sector A, the right one in sector B. After each closer look
-# the AI resumes the search where it broke off, sector A and then sector B (the operator
-# rejects the wrong person meanwhile). Test data for the scripted commander.
+# SK09: the wrong person in sector A, the right one in sector B. After a closer look at
+# the first HÖG candidate the AI resumes the search where it broke off, sector A and
+# then sector B (the operator rejects the wrong person meanwhile). Test data for the
+# scripted commander.
 scenario: SK09
 timeout_s: 900
 expected_runtime_s: 540
@@ -19,14 +20,19 @@ turns:
     when: {skill: takeoff, status: done}
     say: ["På 40 meter. Söker av sektor A."]
     action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
-  # A HÖG candidate: a closer look at it; the operator decides in the panel.
+  # The first HÖG candidate: a closer look at it; the operator decides in the panel. A
+  # person who is seen again and again comes back as new candidates, so later ones are
+  # only named and the search goes on.
+  - on: candidate
+    when: {priority_class: high}
+    say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
+    action: {skill: inspect_detection, params: {detection_id: "event:detection_id", standoff_m: 20}}
   - on: candidate
     when: {priority_class: high}
     once: false
-    say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
-    action: {skill: inspect_detection, params: {detection_id: "event:detection_id", standoff_m: 20}}
+    say: ["K{seq} HÖG. Granska bilden, jag söker vidare."]
   - on: skill_event
-    when: {skill: inspect_detection, status: done}
+    when: {skill: inspect_detection, status: [done, failed]}
     once: false
     say: ["Bilderna är tagna. Söker vidare där jag var."]
     action: {skill: resume, params: {}}
