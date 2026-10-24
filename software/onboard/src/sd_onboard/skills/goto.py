@@ -1,8 +1,9 @@
 """``goto``: fly to a point in GUIDED and hover there (also a pure height change).
 
 Above a 5 m height difference the vehicle first climbs or sinks where it is, then flies
-straight. The target is sent again every 2 s. Arrived = within 2 m, height within 1.5 m
-and slower than 0.5 m/s for 2 s; then LOITER.
+straight. The target is sent again every 2 s, and at once when it changes
+(:meth:`GotoHandler.retarget`). Arrived = within 2 m, height within 1.5 m and slower
+than 0.5 m/s for 2 s; then LOITER.
 """
 
 from __future__ import annotations
@@ -83,6 +84,8 @@ class GotoHandler:
         self._plane: Plane | None = None
         self._start_dist = 0.0
         self._progress = 0.0
+        self._resend = False  # the target changed: send it on the next tick
+        self._deadline = math.inf  # monotonic seconds: not there by then, the order fails
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
         if not isinstance(params, GotoParams):
@@ -108,32 +111,53 @@ class GotoHandler:
         self._plane = ctx.plane
         self._start_dist = horizontal_m(ctx.plane, ctx.vehicle, lat, lon)
 
+    def retarget(
+        self,
+        ctx: PlanContext,
+        lat: float,
+        lon: float,
+        alt_m: float,
+        speed_ms: float,
+        *,
+        yaw_deg: float | None = None,
+    ) -> None:
+        """A new end for the leg being flown, from ``ctx``: sent on the next tick."""
+        self.prepare(ctx, lat, lon, alt_m, speed_ms, yaw_deg=yaw_deg)
+        self._resend = True
+        self._deadline = self._deadline_for(
+            ctx.clock.monotonic(), goto_plan(ctx, lat, lon, alt_m, speed_ms)
+        )
+
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None:
         if self.target is None or self._plane is None:
             raise RuntimeError("planned before running")
-        lat, lon, alt = self.target
         if io.vehicle.fc_mode != CopterMode.GUIDED.name and not await io.set_mode(
             CopterMode.GUIDED
         ):
             raise mode_failed(CopterMode.GUIDED)
         await io.change_speed(self.speed_ms)
-        deadline = io.clock.monotonic() + plan.expected_duration_s * 2 + 30
-        if abs(io.vehicle.alt_rel_home_m - alt) > ALT_STEP_FIRST_M:
+        self._deadline = self._deadline_for(io.clock.monotonic(), plan)
+        if abs(io.vehicle.alt_rel_home_m - self.target[2]) > ALT_STEP_FIRST_M:
             # Climb or sink on the spot first.
             v = io.vehicle
             spot = (v.lat, v.lon)
             last = -math.inf
-            while abs(io.vehicle.alt_rel_home_m - alt) > GOTO_ALT_STEP_TOL_M:
-                if io.clock.monotonic() - last >= RESEND_S:
-                    await io.set_position_target(spot[0], spot[1], alt, self.yaw_deg)
+            while abs(io.vehicle.alt_rel_home_m - self.target[2]) > GOTO_ALT_STEP_TOL_M:
+                if self._resend or io.clock.monotonic() - last >= RESEND_S:
+                    self._resend = False
+                    await io.set_position_target(spot[0], spot[1], self.target[2], self.yaw_deg)
                     last = io.clock.monotonic()
-                self._timeout(io, deadline)
+                self._timeout(io)
                 await io.sleep(TICK_S)
         last = -math.inf
         arrived_since: float | None = None
         while True:
             now = io.clock.monotonic()
-            if now - last >= RESEND_S:
+            lat, lon, alt = self.target
+            if self._resend:
+                arrived_since = None  # a new end: arrived there afresh
+            if self._resend or now - last >= RESEND_S:
+                self._resend = False
                 await io.set_position_target(lat, lon, alt, self.yaw_deg)
                 last = now
             v = io.vehicle
@@ -149,15 +173,18 @@ class GotoHandler:
                     break
             else:
                 arrived_since = None
-            self._timeout(io, deadline)
+            self._timeout(io)
             await io.sleep(TICK_S)
         self._progress = 100.0
         if not await io.set_mode(CopterMode.LOITER):
             raise mode_failed(CopterMode.LOITER)
 
     @staticmethod
-    def _timeout(io: ExecutorIO, deadline: float) -> None:
-        if io.clock.monotonic() > deadline:
+    def _deadline_for(now: float, plan: SkillPlan) -> float:
+        return now + plan.expected_duration_s * 2 + 30
+
+    def _timeout(self, io: ExecutorIO) -> None:
+        if io.clock.monotonic() > self._deadline:
             raise SkillFailedError("ONB_SKILL_TIMEOUT", "Drönaren kom inte fram i tid.")
 
     def on_tick(self, ctx: TickContext) -> SkillStatus:
