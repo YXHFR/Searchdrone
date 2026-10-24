@@ -12,7 +12,9 @@ From <https://github.com/Megvii-BaseDetection/YOLOX>, commit
 
 - `darknet.py`, `network_blocks.py`, `yolo_pafpn.py`, `losses.py`: unchanged.
 - `yolo_head.py`: imports its three helpers from `_utils.py` instead of `yolox.utils`,
-  logs with `logging` instead of `loguru`, and drops `visualize_assign_result`.
+  logs with `logging` instead of `loguru`, and drops `visualize_assign_result`. The
+  label assignment turns autocast off with `torch.autocast(<device>, enabled=False)`
+  instead of `torch.cuda.amp.autocast(enabled=False)`, so it is off on any device.
 - `yolox.py`: drops `visualize`.
 - `_utils.py`: `meshgrid`, `bboxes_iou` and `cxcywh2xyxy` from `yolox/utils/compat.py`
   and `yolox/utils/boxes.py`, unchanged.
@@ -32,10 +34,16 @@ Apache-2.0), as its own header says.
 - `ops.py`: `make_divisible` copied in from `damo/utils/model_utils.py`.
 - `zero_head.py`: logs with `logging` instead of `loguru`; takes the targets as
   `(boxes, classes)` pairs instead of DAMO-YOLO's `BoxList`; returns the raw scores and
-  boxes without its own NMS (the ONNX consumer, `sd_detect.onnx`, does the NMS).
+  boxes without its own NMS (the ONNX consumer, `sd_detect.onnx`, does the NMS);
+  computes the class scores and the loss in float32 with autocast off (the label
+  assignment and the quality focal loss call `binary_cross_entropy`, which mixed
+  precision refuses).
 - `core_utils.py`: `damo/base_models/core/utils.py`, unchanged.
-- `tinynas_res.py`, `giraffe_fpn_btn.py`, `gfocal_loss.py`, `ota_assigner.py`,
-  `weight_init.py`: unchanged apart from the imports.
+- `tinynas_res.py`, `giraffe_fpn_btn.py`, `gfocal_loss.py`, `weight_init.py`: unchanged
+  apart from the imports.
+- `ota_assigner.py`: unchanged apart from the imports, except that the move to the CPU
+  catches only `torch.OutOfMemoryError` instead of every `RuntimeError`, so other errors
+  are not reported as running out of memory.
 - `bbox_calculator.py`: unchanged apart from the imports, except that `batched_nms` and
   `multiclass_nms` are removed: nothing calls them, and `batched_nms` ran `eval` on a
   config string.

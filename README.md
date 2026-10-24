@@ -63,6 +63,22 @@ Common commands (`just --list` shows all):
 
 Settings are passed as `key=value` after the recipe name, for example `just test-sitl physics=builtin sc=SC04`.
 
+### Try your trained detector in the simulator
+
+The simulator uses a stand-in person detector unless you choose your own trained one
+([`tools/train/README.md`](tools/train/README.md)) with `detector=model`:
+
+```bash
+just sim-farm-setup                                   # once: the 3D person models
+export SD_DETECTOR_MODEL=/path/to/person_yolox_s.json # the line pick-detector printed
+just demo detector=model          # Gazebo with the SK01 persons; sd-onboard runs your model
+just e2e-search detector=model    # the search demo with your model, report in runs/<run>/
+```
+
+`model=/path/to/manifest.json` works instead of the variable. A missing or changed model
+stops the start; it never falls back to the stand-in. Details in
+[`tools/train/README.md`](tools/train/README.md#try-your-trained-detector-in-the-simulator).
+
 ## Repository layout
 
 ```

@@ -234,15 +234,18 @@ class ZeroHead(nn.Module):
         bbox_preds = torch.cat(bbox_preds, dim=1)
         bbox_before_softmax = torch.cat(bbox_before_softmax, dim=1)
 
-        # calculating losses
-        loss = self.loss(
-            cls_scores,
-            bbox_preds,
-            bbox_before_softmax,
-            gt_bbox_list,
-            gt_cls_list,
-            mlvl_priors,
-        )
+        # calculating losses, in float32 outside autocast: the label assignment and
+        # the quality focal loss call binary_cross_entropy on probabilities, which
+        # autocast refuses (and a half/float mix fails without it)
+        with torch.autocast(xin[0].device.type, enabled=False):
+            loss = self.loss(
+                cls_scores.float(),
+                bbox_preds.float(),
+                bbox_before_softmax.float(),
+                [b.float() for b in gt_bbox_list],
+                gt_cls_list,
+                mlvl_priors,
+            )
         return loss
 
     def forward_eval(self, xin, labels=None, imgs=None):
@@ -304,7 +307,7 @@ class ZeroHead(nn.Module):
             reg_feat = reg_conv(reg_feat)
 
         bbox_pred = scale(gfl_reg(reg_feat)).float()
-        cls_score = gfl_cls(cls_feat).sigmoid()
+        cls_score = gfl_cls(cls_feat).float().sigmoid()
         N, C, H, W = bbox_pred.size()
         if self.training:
             bbox_before_softmax = bbox_pred.reshape(N, 4, self.reg_max + 1, H,

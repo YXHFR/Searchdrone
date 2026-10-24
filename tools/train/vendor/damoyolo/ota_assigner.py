@@ -243,7 +243,7 @@ class AlignOTAAssigner(BaseAssigner):
                                          gt_bboxes, gt_labels,
                                          gt_bboxes_ignore, eps)
             return assign_result
-        except RuntimeError:
+        except torch.OutOfMemoryError:  # only memory: other errors must not hide here
             origin_device = pred_scores.device
             warnings.warn('OOM RuntimeError is raised due to the huge memory '
                           'cost during label assignment. CPU mode is applied '

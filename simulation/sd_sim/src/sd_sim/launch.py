@@ -29,17 +29,22 @@ from typing import Any, Protocol
 from sd_sim import (
     _args,
     config,
+    detector_choice,
     gazebo,
     objects,
     paths,
+    people_scene,
     ports,
     procs,
+    search_world,
     services,
     site,
     world,
 )
 from sd_sim.config import SimConfig
+from sd_sim.detector_choice import DetectorChoice
 from sd_sim.errors import InfraError, StopRequestedError
+from sd_sim.farm import people
 from sd_sim.sitl import SitlLayout, SitlOptions, build_sitl_argv, write_qgc_params
 from sd_sim.util import LOOPBACK_OPENER, busy_ports, new_run_dir, say, udp_port_taken
 
@@ -67,6 +72,8 @@ ALLOWED_KEYS = (
     "objects",
     "world",
     "gi",
+    "detector",
+    "model",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db")
@@ -81,6 +88,8 @@ HEALTH_ONBOARD_S = 30.0
 HEALTH_BRAIN_S = 30.0
 HEALTH_SEARCH_S = 30.0
 DEMO_SCRIPT = "simulation/scenarios/scripts/SC01.yaml"
+# detector=model with Gazebo: the persons of this search world stand in the world.
+PEOPLE_WORLD = ("SK01", 1)
 HEALTH_HEARTBEAT_S = 60.0
 HEALTH_READY_S = 60.0
 HEALTH_VIDEO_S = 15.0
@@ -139,8 +148,11 @@ class Stack:
         scene: SearchScene | None = None,
         light: Mapping[str, Any] | None = None,
         stills_archive: Path | None = None,
+        detector: DetectorChoice = detector_choice.ORACLE,
     ) -> None:
         self.cfg = cfg
+        # detector: the person detector sd-onboard runs (detector=model: the owner's).
+        self.detector = detector
         # scene: a search scenario's objects in the Gazebo world, the vehicle's stills
         # camera instead of its video camera, and the stills captured into stills_dir.
         self.scene = scene
@@ -294,7 +306,8 @@ class Stack:
                 placed,
                 vehicle=self.cfg.vehicle,
                 stills=self.scene is not None,
-                video=self.scene is None,
+                # A search scenario's tests fly without video; the launcher keeps it.
+                video=self.scene is None or (self.services and self.cfg.video == "camera"),
                 light=self.light,
                 gi=self.cfg.gi,
             )
@@ -312,6 +325,8 @@ class Stack:
             say(self.world.note)
         argv = gazebo.gz_sim_argv(self.world, gui=self.cfg.gui)
         env = gazebo.gz_env(self.cfg.instance, gui=self.cfg.gui)
+        if self.places_people():
+            env["GZ_SIM_RESOURCE_PATH"] = people_scene.resource_path(env, self.repo)
         proc = self.group.start("gazebo", argv, env=env, cwd=self.run_dir)
         running = self.world
         self._wait(
@@ -728,8 +743,23 @@ class Stack:
             "Markstationen ser ingen HEARTBEAT från flygkontrollern (linksim).",
         )
 
+    def places_people(self) -> bool:
+        return any(isinstance(obj, people.Person) for obj in self.placed)
+
+    def check_people_fetched(self) -> None:
+        missing = people.missing(self.repo) if self.places_people() else []
+        if missing:
+            raise InfraError(
+                f"Personmodellerna saknas ({', '.join(missing)}). Kör: just sim-farm-setup"
+            )
+
     def start_onboard(self) -> None:
-        env = procs.clean_env(services.onboard_env(self.ports, self.stack_paths()))
+        still_dir = self.stills_dir if self.scene is not None else None
+        env = procs.clean_env(
+            services.onboard_env(
+                self.ports, self.stack_paths(), model=self.detector.env(), still_dir=still_dir
+            )
+        )
         proc = self._start_service("sd-onboard", [sys.executable, "-m", "sd_onboard"], env)
         self._wait(
             "sd-onboard",
@@ -801,6 +831,7 @@ class Stack:
     def up(self) -> None:
         os.umask(0o077)
         self.placed = self.world_objects()
+        self.check_people_fetched()
         if not self.renders_world():
             world.clear_truth(self.cfg.instance, self.repo)  # no world, so no facit
         self.check_ports_free()
@@ -938,8 +969,35 @@ def main(argv: list[str] | None = None) -> int:
         )
     if shutil.which("ss") is None:
         say("Varning: ss saknas, portkontrollen hoppas över (installera iproute2).")
-    stack = Stack(cfg, new_run_dir(cfg.instance, "demo" if demo else "sim"), services=True)
+    try:
+        detector = detector_choice.choose(cfg.detector, cfg.model)
+    except detector_choice.DetectorError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    run_dir = new_run_dir(cfg.instance, "demo" if demo else "sim")
+    stack = Stack(
+        cfg, run_dir, services=True, scene=people_scene_for(cfg, detector), detector=detector
+    )
     return _run_foreground(stack)
+
+
+def people_scene_for(cfg: SimConfig, detector: DetectorChoice) -> SearchScene | None:
+    """With ``detector=model`` and Gazebo in the flat world, the persons of
+    ``PEOPLE_WORLD`` stand in it and ``sd-onboard`` reads the stills camera; without a
+    camera it still gets the model, and says so."""
+    if not detector.model:
+        return None
+    say(f"Persondetektor: {detector.manifest}")
+    if (cfg.physics, cfg.world, cfg.vehicle) != ("gz", world.WORLD_NAME, world.MODEL_NAME):
+        say(
+            "Obs: personer och stillbildskamera finns bara med physics=gz, "
+            f"world={world.WORLD_NAME} och vehicle={world.MODEL_NAME}; sd-onboard får "
+            "modellen men ser inga bilder."
+        )
+        return None
+    scenario, seed = PEOPLE_WORLD
+    say(f"Personerna i {scenario} (seed {seed}) står i världen; sd-onboard läser stillbilderna.")
+    return people_scene.PeopleScene(search_world.load(scenario, seed))
 
 
 def open_browser(url: str) -> None:

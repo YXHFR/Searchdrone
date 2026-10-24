@@ -33,3 +33,7 @@ Fetched by the tools into build/ and never committed. Simulator pictures made wi
   with the owner's own Geotorget login and never committed, uploaded or cached anywhere
   (tools/check_no_orthophotos.py); pictures of a world draped with it stay on the
   owner's computer too and say so in their ATTRIBUTION.txt.
+- simulation/sd_sim/src/sd_sim/farm/people.py (just sim-farm-setup): person models from
+  Gazebo Fuel (Open Robotics), CC0 1.0 and CC BY 4.0 (Rescue Randy), placed in the sim
+  farm's worlds and, with detector=model, in the search scenario's world. Each model's
+  source, version, SHA-256, licence and credit: simulation/farm/people/ATTRIBUTION.md.

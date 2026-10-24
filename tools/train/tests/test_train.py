@@ -152,6 +152,78 @@ def test_train_one_epoch_resume_and_export(
     assert manifest["publish"] is True
 
 
+def _bce_as_cuda_autocast_allows(real: Any) -> Any:
+    """``binary_cross_entropy`` as CUDA's autocast treats it: refused while autocast is on,
+    and the inputs must have one dtype. CPU autocast quietly runs it in float32, so
+    without this a CPU test would miss what crashes on the graphics card."""
+
+    def bce(input: torch.Tensor, target: torch.Tensor, *a: Any, **k: Any) -> torch.Tensor:
+        if any(torch.is_autocast_enabled(d) for d in ("cpu", "cuda")):
+            raise RuntimeError("binary_cross_entropy is unsafe to autocast")
+        if input.dtype != target.dtype:
+            raise RuntimeError(f"Found dtype {target.dtype} but expected {input.dtype}")
+        return real(input, target, *a, **k)
+
+    return bce
+
+
+@pytest.mark.parametrize("model", list(families.FAMILIES))
+def test_train_step_under_mixed_precision(model: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        torch.nn.functional,
+        "binary_cross_entropy",
+        _bce_as_cuda_autocast_allows(torch.nn.functional.binary_cross_entropy),
+    )
+    torch.manual_seed(0)
+    net = families.build(model).train()
+    images = torch.rand(2, 3, TILE, TILE) * 255
+    boxes = [torch.tensor([[10.0, 10.0, 40.0, 50.0], [60.0, 60.0, 90.0, 100.0]]), torch.zeros(0, 4)]
+    targets = families.train_targets(model, boxes, torch.device("cpu"))
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        loss = families.loss(net, images, targets)
+    assert loss.dtype == torch.float32 and torch.isfinite(loss)
+    loss.backward()
+    grads = [p.grad for p in net.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+@pytest.mark.parametrize(
+    ("error", "falls_back"), [(torch.OutOfMemoryError, True), (RuntimeError, False)]
+)
+def test_damo_assignment_moves_to_the_cpu_only_when_memory_runs_out(
+    error: type[Exception], falls_back: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vendor.damoyolo.ota_assigner import AlignOTAAssigner
+
+    assigner = AlignOTAAssigner(center_radius=2.5, cls_weight=1.0, iou_weight=3.0)
+    real = assigner._assign
+    calls: list[int] = []
+
+    def fail_once(*a: Any, **k: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise error("first try")
+        return real(*a, **k)
+
+    monkeypatch.setattr(assigner, "_assign", fail_once)
+    priors = torch.tensor([[16.0, 16.0, 8.0, 8.0], [48.0, 48.0, 8.0, 8.0]])
+    args = (
+        torch.full((2, 1), 0.5),
+        priors,
+        torch.tensor([[8.0, 8.0, 24.0, 24.0], [40.0, 40.0, 56.0, 56.0]]),
+        torch.tensor([[6.0, 6.0, 26.0, 26.0]]),
+        torch.zeros(1, dtype=torch.long),
+    )
+    if falls_back:
+        with pytest.warns(UserWarning, match="OOM"):
+            result = assigner.assign(*args)
+        assert len(calls) == 2 and result.gt_inds.shape == (2,)
+    else:
+        with pytest.raises(RuntimeError, match="first try"):
+            assigner.assign(*args)
+        assert len(calls) == 1
+
+
 def test_missing_weights_say_what_to_run(bank: Path, tmp_path: Path) -> None:
     (bank / "models" / "pretrained" / "yolox_s.pth").unlink()
     with pytest.raises(BenchError, match="detector-fetch"):

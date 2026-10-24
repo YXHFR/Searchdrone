@@ -119,7 +119,43 @@ home internet line.
    using it. If the file is missing or changed, only the detector is turned off, and the
    ground station gets the reason (`executor.perception_off`) so you can see that person
    detection is off. Flying goes on. When the variable is not set, no model is
-   loaded. The simulator keeps its stand-in detector.
+   loaded. The simulator keeps its stand-in detector unless you ask for yours (next
+   section).
+
+## Try your trained detector in the simulator
+
+The simulator's default person detector is a stand-in (the oracle, which knows where
+everyone is). `detector=model` swaps it for your model. It needs Gazebo
+(`just sim-setup`) and, once, the 3D person models from Gazebo Fuel (CC0 1.0 and CC BY
+4.0, credits in `simulation/farm/people/ATTRIBUTION.md`; fetched into `build/`, never
+committed):
+
+```bash
+just sim-farm-setup
+export SD_DETECTOR_MODEL=/path/to/person_yolox_s.json   # what pick-detector printed
+```
+
+Instead of the variable you can add `model=/path/to/person_yolox_s.json` to each command
+below. Use the full path.
+
+| Command | What happens |
+|---|---|
+| `just demo detector=model` | The demo in Gazebo. The persons of the search scenario SK01 (seed 1) lie and sit in the world, the drone carries the stills camera, and `sd-onboard` runs your model on its pictures. Finds show up in the panel. |
+| `just e2e-search detector=model` | The search demo (SK01) headless in Gazebo on this computer, with your model instead of the stand-in. The report is `runs/<run>/search_report.md`; its "Motorer" line names your model. |
+| `just demo-search detector=model` | The same search demo. |
+| `just sim-headless detector=model` | Builtin physics has no camera: `sd-onboard` gets your model and checks it, but sees no pictures. Useful to check that the model loads. |
+
+Before anything starts, the manifest and the ONNX file's SHA-256 are checked. If the
+file is missing or changed, the command stops with the reason (exit code 2); it never
+falls back to the stand-in. The persons stand exactly where the scenario (and the
+stand-in) has them, so the report's truth and the camera agree. Each model has the colour
+of the person's upper garment; the faces and clothes are not real people.
+
+CI always uses the stand-in: there are no weights in CI. The run asserts what the stand-in
+run asserts: the person in the red jacket is found and confirmed. A real detector can miss
+the person; then `just e2e-search detector=model` fails without a confirmed find. That
+says something about the model (more training pictures, a lower threshold), not the
+simulator.
 
 ## If something goes wrong
 

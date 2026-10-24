@@ -8,6 +8,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `detector=model` for `just sim-headless`, `just demo`, `just demo-search` and `just
+  e2e-search`: the simulator runs the owner's trained person detector
+  (`SD_DETECTOR_MODEL` or `model=<manifest .json>`) instead of the stand-in, and passes it
+  on to `sd-onboard`. The manifest and the model's SHA-256 are checked before anything
+  starts; a missing or changed model stops the start, never a fallback to the stand-in
+  (`sd_sim.detector_choice`, `sd_detect.onnx.check_model`). With Gazebo the search
+  scenario's persons stand in the world as Gazebo Fuel models where the oracle has them
+  (`sd_sim.people_scene`) and the drone carries the stills camera. The default and CI
+  keep the stand-in. How to: `tools/train/README.md`.
 - The search chain end to end in the simulator: synthetic stills of a seeded scenario
   world (`sd_sim.search_world`, `simulation/scenarios/SK*.yaml`), the detector and
   image-model oracles (`det_oracle_v0`, `vlm_oracle_v0`), the product's perception and
@@ -416,6 +425,19 @@ All notable changes to this project are listed here. The format follows
   were filed under whatever mission was open when they arrived, so a find hold reported
   after landing (and after the mission closed) was in no mission's log (LL4). Each event
   now carries its mission id.
+- `just train-detector model=damoyolo_s` no longer stops on a graphics card with "unsafe
+  to autocast" and then "Found dtype Float but expected Half". DAMO-YOLO's label
+  assignment and quality focal loss call `binary_cross_entropy`, which mixed precision
+  refuses; the head now computes its scores and loss in float32 with autocast off. The
+  assignment's move to the CPU no longer catches every error as running out of memory
+  (the misleading OOM warning before the second error). YOLOX turns autocast off for its
+  assignment on every device, not only CUDA. A test runs both families' training step
+  under autocast.
+- The link test `test_client_unreachable_returns_none` no longer fails on WSL2 with
+  mirrored networking, where a connection to a closed port hangs instead of being
+  refused: it dials a port held bound without listening and allows the client's own open
+  timeout. A new test checks that the client gives up on a server that accepts TCP but
+  never answers, within its open timeout.
 - The AI's charter proposals no longer fail five times on the demo request. The brain
   turns every draft into the proposal inside the turn, so an unknown pin, a rectangle
   without its size, a skill name the registry does not have, a value beyond the mission

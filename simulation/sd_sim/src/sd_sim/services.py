@@ -19,10 +19,12 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sd_sim import world
 from sd_sim.errors import InfraError
 from sd_sim.util import LOOPBACK_OPENER
 
@@ -120,9 +122,18 @@ def ground_env(
     return env
 
 
-def onboard_env(ports: dict[str, int], paths: StackPaths) -> dict[str, str]:
-    """``sd-onboard`` in the simulator: MAVLink through mavtap, SD-link through linksim."""
-    return {
+def onboard_env(
+    ports: dict[str, int],
+    paths: StackPaths,
+    *,
+    model: Mapping[str, str] | None = None,
+    still_dir: Path | None = None,
+) -> dict[str, str]:
+    """``sd-onboard`` in the simulator: MAVLink through mavtap, SD-link through linksim.
+    ``model``: the trained detector's environment (``DetectorChoice.env``), passed on
+    only when ``detector=model`` chose it. ``still_dir``: perception on, reading the
+    vehicle's stills camera there."""
+    env = {
         "SD_ONBOARD__VEHICLE_ID": VEHICLE_ID,
         "SD_ONBOARD__PROFILE": "sim",
         "SD_ONBOARD__MAV_URL": f"udpin:127.0.0.1:{ports['onboard_mavlink']}",
@@ -133,6 +144,17 @@ def onboard_env(ports: dict[str, int], paths: StackPaths) -> dict[str, str]:
         "SD_ONBOARD__REQUIRE_RC": "false",
         "SD_DATA_DIR": str(paths.data_dir),
     }
+    env.update(model or {})
+    if still_dir is not None:
+        cam = world.STILLS
+        env |= {
+            "SD_ONBOARD__PERCEPTION__ENABLED": "true",
+            "SD_ONBOARD__PERCEPTION__STILL_DIR": str(still_dir),
+            "SD_ONBOARD__PERCEPTION__WIDTH_PX": str(cam["width"]),
+            "SD_ONBOARD__PERCEPTION__HEIGHT_PX": str(cam["height"]),
+            "SD_ONBOARD__PERCEPTION__HFOV_DEG": str(cam["hfov_deg"]),
+        }
+    return env
 
 
 def brain_env(

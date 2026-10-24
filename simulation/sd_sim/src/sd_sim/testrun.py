@@ -24,6 +24,10 @@ mode), ``cloud`` (the cloud model with the owner's key, the command mode without
 the run by test name. ``seeds=`` (``1-50`` or ``1,2,3``, at most 200 seeds) reaches the
 search tests as ``SD_SEARCH_SEEDS``, which they read when they are collected. Only
 test-rig failures (``InfraError``) are retried, once.
+``detector=model`` (with ``model=<manifest .json>`` or ``SD_DETECTOR_MODEL``) flies
+``mode=e2e-search`` with the owner's trained person detector on Gazebo's stills instead
+of the oracle (``sd_sim.detector_choice``); the manifest and the model's SHA-256 are
+checked before pytest starts, and a bad one stops the run (exit 2).
 Afterwards ``runs/summary.md`` lists every result written during the run.
 
 In ``mode=e2e`` the demo (``test_demo_flight``) gets simulator instance 0, the only one
@@ -41,7 +45,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sd_sim import _args, paths, search_world
+from sd_sim import _args, detector_choice, paths, search_world
 
 ALLOWED_KEYS = (
     "mode",
@@ -59,6 +63,8 @@ ALLOWED_KEYS = (
     "workers",
     "runs",
     "seeds",
+    "detector",
+    "model",
     "dry",
 )
 TEST_PATHS = ("simulation/tests", "simulation/sd_sim/tests/sitl")
@@ -122,6 +128,21 @@ def seeds(values: dict[str, str]) -> dict[str, str]:
     except search_world.WorldError as e:
         _args.fail(f"sd_sim.testrun: seeds= {e}")
     return {SEEDS_ENV: raw}
+
+
+def detector_env(values: dict[str, str]) -> dict[str, str]:
+    """``detector=`` and ``model=`` as the environment the search demo reads (only the
+    key decides, never an inherited ``SD_SIM__DETECTOR``). A bad model fails here,
+    before anything starts."""
+    try:
+        choice = detector_choice.choose(values.get("detector", "oracle"), values.get("model"))
+    except detector_choice.DetectorError as e:
+        _args.fail(f"sd_sim.testrun: {e}")
+    if not choice.model:
+        return {}
+    if values.get("mode") != "e2e-search":
+        _args.fail("sd_sim.testrun: detector=model fungerar bara med mode=e2e-search")
+    return {detector_choice.MODE_ENV: choice.mode, **choice.env()}
 
 
 def pytest_argv(values: dict[str, str], name_filter: str = "") -> list[str]:
@@ -223,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
 def commands(values: dict[str, str]) -> list[tuple[list[str], dict[str, str]]]:
     """The pytest runs of one round, each with its extra environment. ``mode=e2e`` with
     more than one worker: the demo alone on instance 0, the rest on instances 1 and up."""
-    env = seeds(values)
+    env = seeds(values) | detector_env(values)
     if values.get("mode") != "e2e":
         return [(pytest_argv(values), env)]
     workers = _int(values, "workers", 1, 1, 8)
@@ -239,13 +260,15 @@ def run_round(values: dict[str, str]) -> int:
     cmds = commands(values)
     for cmd, _extra in cmds:
         print("+ " + " ".join(cmd[1:]), flush=True)
+    # Only detector= picks the detector, never a value inherited from the shell.
+    base = {k: v for k, v in os.environ.items() if k != detector_choice.MODE_ENV}
     if len(cmds) == 1:
         cmd, extra = cmds[0]
-        env = {**os.environ, **extra}
+        env = {**base, **extra}
         codes = [subprocess.run(cmd, cwd=paths.REPO, env=env, check=False).returncode]  # noqa: S603
     else:
         procs = [
-            subprocess.Popen(cmd, cwd=paths.REPO, env={**os.environ, **extra})  # noqa: S603
+            subprocess.Popen(cmd, cwd=paths.REPO, env={**base, **extra})  # noqa: S603
             for cmd, extra in cmds
         ]
         codes = [p.wait() for p in procs]
