@@ -135,6 +135,8 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
         lines.append("Sektorer: " + ", ".join(parts))
     elif s.charter is not None and s.charter.sectors:
         lines.append("Sektorer: " + ", ".join(f"{x.sector_id} 0 %" for x in s.charter.sectors))
+    # The ground's own lines (fixed words and numbers, no text typed by a person).
+    lines.extend(x for x in (s.probability_line, s.candidates_line, s.finds_line) if x)
     if s.pins:
         pins = [
             f"{p.id} {_quote(p.note)} {_where(s, p.lat, p.lon)}".replace("  ", " ") for p in s.pins
@@ -393,11 +395,18 @@ class ContextBuilder:
                     "version",
                     "name_sv",
                     "source",
+                    "priority_class",
+                    "multi_frame",
+                    "detection_id",
+                    "decision",
+                    "after",
                     "lat",
                     "lon",
                 )
                 if body.get(k) is not None
             )
+            if kind.startswith("candidate") and body.get("seq") is not None:
+                kind = f"{kind} K{body['seq']}"
             bits.append(f"{kind} ({detail})" if detail else kind)
         return f"{turn.trigger}: " + "; ".join(bits)
 

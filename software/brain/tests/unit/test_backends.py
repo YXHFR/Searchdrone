@@ -83,6 +83,73 @@ async def test_scripted_when_matches_any_event_of_the_turn(tmp_path: Path) -> No
     assert out.action is not None and out.action.skill == "survey_sector"
 
 
+_COALESCED = """
+scenario: SCX
+turns:
+  - on: candidate_decided
+    when: {decision: confirm}
+    action: {skill: hold, params: {reason: "Bekräftat."}}
+  - on: candidate_decided
+    when: {decision: reject}
+    once: false
+    say: ["Söker vidare."]
+  - on: skill_event
+    when: {skill: survey_sector, status: done}
+    say: ["Sektor B."]
+    action: {skill: survey_sector, params: {sector_id: "B"}}
+"""
+
+
+async def test_scripted_answers_each_trigger_of_a_coalesced_turn(tmp_path: Path) -> None:
+    """A segment ends while the operator rejects a card: the turn is named after the
+    decision, and the segment's end still moves the search on."""
+    path = tmp_path / "s.yaml"
+    path.write_text(_COALESCED)
+    b = ScriptedBackend.from_file(path)
+    ev = [
+        {"type": "event.skill", "body": {"skill": "survey_sector", "status": "done"}},
+        {"type": "event.candidate_decided", "body": {"decision": "reject"}},
+    ]
+    out = await b.decide(_turn(None, trigger="candidate_decided", events=ev), _NoTools())
+    assert [m.text for m in out.messages] == ["Söker vidare.", "Sektor B."]
+    assert out.action is not None and out.action.params == {"sector_id": "B"}
+
+
+async def test_scripted_coalesced_confirm_wins_and_keeps_the_other_turn(tmp_path: Path) -> None:
+    """A confirmation and a segment's end in one turn: the drone holds, and the left-out
+    segment turn is still there for the next end."""
+    path = tmp_path / "s.yaml"
+    path.write_text(_COALESCED)
+    b = ScriptedBackend.from_file(path)
+    ev = [
+        {"type": "event.skill", "body": {"skill": "survey_sector", "status": "done"}},
+        {"type": "event.candidate_decided", "body": {"decision": "confirm"}},
+    ]
+    out = await b.decide(_turn(None, trigger="candidate_decided", events=ev), _NoTools())
+    assert out.action is not None and out.action.skill == "hold"
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev[:1]), _NoTools())
+    assert out.action is not None and out.action.skill == "survey_sector"
+
+
+async def test_scripted_when_reason_code_is_one_of_the_events(tmp_path: Path) -> None:
+    """The keep-out reflex stops a search: its reason is in the event's reason_codes."""
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "scenario: SCX\nturns:\n  - on: skill_event\n"
+        "    when: {skill: survey_sector, status: superseded, reason_code: KEEPOUT_VIOLATION}\n"
+        "    action: {skill: hold}\n"
+    )
+    b = ScriptedBackend.from_file(path)
+    body = {"skill": "survey_sector", "status": "superseded", "reason_codes": ["OTHER"]}
+    ev = [{"type": "event.skill", "body": body}]
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    body["reason_codes"] = ["KEEPOUT_VIOLATION"]
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.skill == "hold"
+
+
 @pytest.mark.parametrize(
     ("text", "skill", "params"),
     [

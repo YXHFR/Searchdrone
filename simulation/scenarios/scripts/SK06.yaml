@@ -1,0 +1,25 @@
+# SK06: the AI's start only (charter, take-off); the test orders the sectors itself on
+# the commander API, in the map's order or the fixed one, as the comparison needs. Test
+# data for the scripted commander.
+scenario: SK06
+timeout_s: 900
+expected_runtime_s: 540
+fixture: ../SK06_stig_demens.yaml
+turns:
+  - on: mission_created
+    say: ["Hej. Säg vad vi ska göra."]
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: operator_message
+    match: '^Flyg hem\.$'
+    say: ["Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Operatören bad om det."}}
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

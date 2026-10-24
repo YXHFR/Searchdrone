@@ -26,6 +26,8 @@ NOT_BUILT_EXIT = 2
 RECIPES: dict[str, tuple[str | None, frozenset[str]]] = {
     "dev": ("B1-16", frozenset({"physics", "gui", "brain", "instance"})),
     "e2e": (None, frozenset({"runs", "offline"})),
+    "e2e-search": (None, frozenset({"runs"})),
+    "demo-search": (None, frozenset()),
     "accept": (None, frozenset({"phase", "sha"})),
     "perf": (None, frozenset({"runs", "gui", "eval"})),
     "showcase": ("B1-18", frozenset({"stage", "brain"})),

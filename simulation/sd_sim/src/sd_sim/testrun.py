@@ -7,16 +7,23 @@ Runs the simulator tests with pytest and the ``sd_sim.pytest_plugin`` plugin:
         --physics <physics> --brain <brain> simulation/tests/ simulation/sd_sim/tests/sitl/
 
 ``mode=pr`` (default) selects ``sitl and not gz and not llm and not nightly and not e2e``
-(with ``physics=gz`` the Gazebo tests are included); ``mode=e2e`` selects the end-to-end
-set of ``just e2e`` (``sitl and e2e``: the demo and the emergency buttons), which CI runs
-in a job of its own; ``mode=nightly`` selects ``sitl and nightly``; ``mode=panel``
-selects the panel's browser test (``sitl and panel``, started by
-``just test-panel-sitl``). ``brain=`` picks the AI commander the scenarios fly
+and none of the search sets (with ``physics=gz`` the Gazebo tests are included);
+``mode=e2e`` selects the end-to-end set of ``just e2e`` (``sitl and e2e``: the demo and
+the emergency buttons), which CI runs in a job of its own; ``mode=nightly`` selects
+``sitl and nightly``; ``mode=panel`` selects the panel's browser test (``sitl and
+panel``, started by ``just test-panel-sitl``). The search chain has three sets, each in
+a CI job of its own and in no other mode: ``mode=search`` (``sitl and search``, the pull
+request set), ``mode=search-nightly`` (``sitl and search_nightly``, the nightly oracle
+campaign) and ``mode=e2e-search`` (``sitl and e2e_search``, the search demo of ``just
+e2e-search``). A search test that also carries ``e2e`` runs in ``mode=e2e`` only.
+``brain=`` picks the AI commander the scenarios fly
 with: ``scripted`` (default, the script per scenario), ``grammar`` (the fixed command
 mode), ``cloud`` (the cloud model with the owner's key, the command mode without it; adds the
 ``llm`` tests) or
 ``none`` (no commander: only the tests that need none). ``sc=`` and ``variant=`` narrow
-the run by test name. Only test-rig failures (``InfraError``) are retried, once.
+the run by test name. ``seeds=`` (``1-50`` or ``1,2,3``, at most 200 seeds) reaches the
+search tests as ``SD_SEARCH_SEEDS``, which they read when they are collected. Only
+test-rig failures (``InfraError``) are retried, once.
 Afterwards ``runs/summary.md`` lists every result written during the run.
 
 In ``mode=e2e`` the demo (``test_demo_flight``) gets simulator instance 0, the only one
@@ -34,7 +41,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sd_sim import _args, paths
+from sd_sim import _args, paths, search_world
 
 ALLOWED_KEYS = (
     "mode",
@@ -51,6 +58,7 @@ ALLOWED_KEYS = (
     "shards",
     "workers",
     "runs",
+    "seeds",
     "dry",
 )
 TEST_PATHS = ("simulation/tests", "simulation/sd_sim/tests/sitl")
@@ -59,6 +67,10 @@ PYTEST_NO_TESTS = 5
 # pass them already.
 FUTURE_KEYS = ("video", "link_profile", "private_db", "instance")
 BRAINS = ("scripted", "grammar", "cloud", "none")
+MODES = ("pr", "e2e", "nightly", "panel", "search", "search-nightly", "e2e-search")
+# The search chain's sets: mode -> marker. Each runs in its own mode only.
+SEARCH_SETS = {"search": "search", "search-nightly": "search_nightly", "e2e-search": "e2e_search"}
+SEEDS_ENV = "SD_SEARCH_SEEDS"
 
 
 DEMO_TEST = "test_demo_flight"
@@ -71,12 +83,16 @@ def selection(mode: str, physics: str, brain: str = "scripted") -> str:
     if mode == "panel":
         return "sitl and panel"
     gz = "" if physics == "gz" else " and not gz"
-    if mode == "nightly":
-        base = "sitl and nightly"
+    no_search = " and not search_nightly and not e2e_search"
+    if mode in SEARCH_SETS:
+        base = f"sitl and {SEARCH_SETS[mode]}{gz} and not llm and not nightly and not e2e"
+    elif mode == "nightly":
+        base = f"sitl and nightly and not search{no_search}"
     elif mode == "e2e":
-        base = f"sitl and e2e{gz} and not llm and not nightly"
+        # SK08's first seed carries both e2e and search: it runs here, not in mode=search.
+        base = f"sitl and e2e{gz} and not llm and not nightly{no_search}"
     else:
-        base = f"sitl{gz} and not llm and not nightly and not e2e"
+        base = f"sitl{gz} and not llm and not nightly and not e2e and not search{no_search}"
     if brain == "cloud":
         base = base.replace(" and not llm", "")
     elif brain == "none":
@@ -95,10 +111,23 @@ def _int(values: dict[str, str], key: str, default: int, low: int, high: int) ->
     return number
 
 
+def seeds(values: dict[str, str]) -> dict[str, str]:
+    """``seeds=`` as the environment the search tests read, checked as they read it
+    (``sd_sim.search_world.seeds``)."""
+    raw = values.get("seeds")
+    if raw is None:
+        return {}
+    try:
+        search_world.seeds(raw)
+    except search_world.WorldError as e:
+        _args.fail(f"sd_sim.testrun: seeds= {e}")
+    return {SEEDS_ENV: raw}
+
+
 def pytest_argv(values: dict[str, str], name_filter: str = "") -> list[str]:
     mode = values.get("mode", "pr")
-    if mode not in ("pr", "e2e", "nightly", "panel"):
-        _args.fail("sd_sim.testrun: mode= ska vara pr, e2e, nightly eller panel")
+    if mode not in MODES:
+        _args.fail(f"sd_sim.testrun: mode= ska vara en av {', '.join(MODES)}")
     physics = values.get("physics", "builtin")
     if physics not in ("builtin", "gz"):
         _args.fail("sd_sim.testrun: physics= ska vara builtin eller gz")
@@ -194,15 +223,16 @@ def main(argv: list[str] | None = None) -> int:
 def commands(values: dict[str, str]) -> list[tuple[list[str], dict[str, str]]]:
     """The pytest runs of one round, each with its extra environment. ``mode=e2e`` with
     more than one worker: the demo alone on instance 0, the rest on instances 1 and up."""
+    env = seeds(values)
     if values.get("mode") != "e2e":
-        return [(pytest_argv(values), {})]
+        return [(pytest_argv(values), env)]
     workers = _int(values, "workers", 1, 1, 8)
     if workers == 1:
-        return [(pytest_argv(values), {})]
+        return [(pytest_argv(values), env)]
     demo = pytest_argv({**values, "workers": "1"}, DEMO_TEST)
     rest_workers = str(min(workers - 1, 7))
     rest = pytest_argv({**values, "workers": rest_workers}, f"not {DEMO_TEST}")
-    return [(demo, {}), (rest, {FIRST_INSTANCE_ENV: "1"})]
+    return [(demo, env), (rest, {**env, FIRST_INSTANCE_ENV: "1"})]
 
 
 def run_round(values: dict[str, str]) -> int:

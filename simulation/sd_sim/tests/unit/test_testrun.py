@@ -14,16 +14,16 @@ import pytest
 
 from sd_sim import paths, testrun, util
 
+NO_SEARCH = " and not search and not search_nightly and not e2e_search"
+PR_MARKS = "sitl and not gz and not llm and not nightly and not e2e" + NO_SEARCH
+
 
 def test_pr_selection_matches_ci() -> None:
     argv = testrun.pytest_argv(
         {"physics": "builtin", "brain": "scripted", "shard": "2", "shards": "4", "workers": "4"}
     )
     assert argv[1:5] == ["-m", "pytest", "-p", "sd_sim.pytest_plugin"]
-    assert (
-        argv[argv.index("-m", 2) + 1]
-        == "sitl and not gz and not llm and not nightly and not e2e and not panel"
-    )
+    assert argv[argv.index("-m", 2) + 1] == PR_MARKS + " and not panel"
     assert argv[argv.index("-n") + 1] == "4" and "--dist" in argv
     assert argv[argv.index("--shard-id") + 1] == "2"
     assert argv[argv.index("--num-shards") + 1] == "4"
@@ -37,10 +37,11 @@ def test_pr_selection_matches_ci() -> None:
 
 
 def test_nightly_and_gz_selection() -> None:
-    assert testrun.selection("nightly", "builtin") == "sitl and nightly and not panel"
-    assert (
-        testrun.selection("pr", "gz")
-        == "sitl and not llm and not nightly and not e2e and not panel"
+    assert testrun.selection("nightly", "builtin") == (
+        "sitl and nightly" + NO_SEARCH + " and not panel"
+    )
+    assert testrun.selection("pr", "gz") == (
+        "sitl and not llm and not nightly and not e2e" + NO_SEARCH + " and not panel"
     )
     assert testrun.selection("pr", "builtin").endswith("and not panel")
     assert testrun.selection("panel", "builtin") == "sitl and panel"
@@ -60,11 +61,20 @@ def test_single_worker_without_xdist_and_names() -> None:
         {"shard": "5", "shards": "4"},
         {"workers": "9"},
         {"shards": "x"},
+        {"seeds": "0-3"},
+        {"seeds": "5-2"},
+        {"seeds": "1-201"},
+        {"seeds": "1,x"},
+        {"seeds": "1,,2"},
+        {"seeds": "-3"},
+        {"seeds": "1-2-3"},
+        {"seeds": ""},
+        {"seeds": ",".join(str(i) for i in range(1, 202))},
     ],
 )
 def test_bad_values_exit_2(values: dict[str, str]) -> None:
     with pytest.raises(SystemExit) as exc:
-        testrun.pytest_argv(values)
+        testrun.commands(values)
     assert exc.value.code == 2
 
 
@@ -106,13 +116,10 @@ def test_exit_codes(
 @pytest.mark.parametrize(
     ("brain", "marks"),
     [
-        ("scripted", "sitl and not gz and not llm and not nightly and not e2e and not panel"),
-        ("grammar", "sitl and not gz and not llm and not nightly and not e2e and not panel"),
-        ("cloud", "sitl and not gz and not nightly and not e2e and not panel"),
-        (
-            "none",
-            "sitl and not gz and not llm and not nightly and not e2e and not brain and not panel",
-        ),
+        ("scripted", PR_MARKS + " and not panel"),
+        ("grammar", PR_MARKS + " and not panel"),
+        ("cloud", "sitl and not gz and not nightly and not e2e" + NO_SEARCH + " and not panel"),
+        ("none", PR_MARKS + " and not brain and not panel"),
     ],
 )
 def test_brain_reaches_pytest(brain: str, marks: str) -> None:
@@ -154,7 +161,8 @@ def test_summary_lists_new_results(tmp_path: Path) -> None:
 
 def test_e2e_selection_and_split() -> None:
     assert testrun.selection("e2e", "builtin") == (
-        "sitl and e2e and not gz and not llm and not nightly and not panel"
+        "sitl and e2e and not gz and not llm and not nightly and not search_nightly"
+        " and not e2e_search and not panel"
     )
     (demo, demo_env), (rest, rest_env) = testrun.commands({"mode": "e2e", "workers": "4"})
     assert demo[demo.index("-k") + 1] == "test_demo_flight" and "-n" not in demo
@@ -195,3 +203,51 @@ def test_run_dirs_in_the_same_second_differ(tmp_path: Path) -> None:
         "20261022T075501Z-onboard-i2-3",
     ]
     assert all(r.is_dir() and not any(r.iterdir()) for r in runs)
+
+
+@pytest.mark.parametrize(
+    ("mode", "marks"),
+    [
+        ("search", "sitl and search and not gz and not llm and not nightly and not e2e"),
+        (
+            "search-nightly",
+            "sitl and search_nightly and not gz and not llm and not nightly and not e2e",
+        ),
+        ("e2e-search", "sitl and e2e_search and not gz and not llm and not nightly and not e2e"),
+    ],
+)
+def test_search_modes(mode: str, marks: str) -> None:
+    """Each search set runs in its own mode only; brain= adjusts it like the others."""
+    assert testrun.selection(mode, "builtin") == marks + " and not panel"
+    assert testrun.selection(mode, "builtin", "none") == marks + " and not brain and not panel"
+    cloud = marks.replace(" and not llm", "") + " and not panel"
+    assert testrun.selection(mode, "builtin", "cloud") == cloud
+    argv = testrun.pytest_argv({"mode": mode})
+    assert argv[argv.index("-m", 2) + 1] == marks + " and not panel"
+    marker = marks.split()[2]
+    for other in ("pr", "nightly"):
+        assert f" not {marker} " in testrun.selection(other, "builtin"), other
+
+
+@pytest.mark.parametrize(("raw", "want"), [("1-50", "1-50"), ("1,2,3", "1,2,3"), ("7", "7")])
+def test_seeds_reach_pytest_as_env(raw: str, want: str) -> None:
+    for _cmd, env in testrun.commands({"mode": "search-nightly", "seeds": raw}):
+        assert env == {"SD_SEARCH_SEEDS": want}
+    (_demo, demo_env), (_rest, rest_env) = testrun.commands(
+        {"mode": "e2e", "workers": "4", "seeds": raw}
+    )
+    assert demo_env == {"SD_SEARCH_SEEDS": want}
+    assert rest_env == {"SD_SEARCH_SEEDS": want, "SD_SIM__FIRST_INSTANCE": "1"}
+    assert testrun.commands({"mode": "search"})[0][1] == {}
+
+
+def test_seeds_env_set_for_the_pytest_run(runs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, str] = {}
+
+    def fake(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert testrun.main(["mode=search-nightly", "seeds=1-200"]) == 0
+    assert seen["SD_SEARCH_SEEDS"] == "1-200"

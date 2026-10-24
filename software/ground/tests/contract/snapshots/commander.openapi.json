@@ -2857,6 +2857,17 @@
             "title": "Brain May Takeoff",
             "type": "boolean"
           },
+          "candidates_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates Line"
+          },
           "charter": {
             "anyOf": [
               {
@@ -2874,6 +2885,17 @@
           "fence_verified": {
             "title": "Fence Verified",
             "type": "boolean"
+          },
+          "finds_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finds Line"
           },
           "home": {
             "anyOf": [

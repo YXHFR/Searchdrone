@@ -80,3 +80,83 @@ def test_a_new_find_reaches_the_ai_and_updates_do_not() -> None:
     }
     assert to_commander(event("find.updated", find)) is None
     assert to_commander(event("detection.new", find)) is None
+
+
+def card(**over: Any) -> dict[str, Any]:
+    """A candidate card as the topic ``candidates`` carries it."""
+    return {
+        "candidate_id": "0192f49e-2000-7000-8000-000000000003",
+        "rev": 2,
+        "seq": 3,
+        "state": "ready",
+        "priority": 0.72,
+        "priority_class": "high",
+        "lat": -35.3615,
+        "lon": 149.1652,
+        "sigma95_m": 4.1,
+        "n_seen": 1,
+        "n_in_view": 2,
+        "best_detector_score": 0.8,
+        "thumb_detection_id": "0192f49e-3000-7000-8000-000000000009",
+        "engine": "fast",
+        "person": "yes",
+        "fields": {"garment:0": "match"},
+        "flags": [],
+        **over,
+    }
+
+
+def test_a_high_candidate_waiting_for_a_person_wakes_the_ai() -> None:
+    for type_ in ("candidate.new", "candidate.updated"):
+        out = to_commander(event(type_, card()))
+        assert out is not None and out["type"] == "event.candidate"
+        assert out["body"] == {
+            "candidate_id": "0192f49e-2000-7000-8000-000000000003",
+            "seq": 3,
+            "priority_class": "high",
+            "priority": 0.72,
+            "state": "ready",
+            "lat": -35.3615,
+            "lon": 149.1652,
+            "sigma95_m": 4.1,
+            "n_seen": 1,
+            "n_in_view": 2,
+            "engine": "fast",
+            "detection_id": "0192f49e-3000-7000-8000-000000000009",
+            "multi_frame": False,
+        }
+    out = to_commander(event("candidate.updated", card(state="assessing", n_seen=2)))
+    assert out is not None and out["body"]["multi_frame"] is True
+
+
+def test_other_candidates_do_not_wake_the_ai() -> None:
+    assert to_commander(event("candidate.new", card(priority_class="medium"))) is None
+    for state in ("new", "inspecting", "confirmed", "rejected", "merged"):
+        assert to_commander(event("candidate.updated", card(state=state))) is None
+    # The assessment is the same card again: the update above already said it.
+    assert to_commander(event("candidate.assessed", card())) is None
+
+
+def test_a_decision_reaches_the_ai_without_who_or_the_note() -> None:
+    decision = {
+        "candidate_id": "0192f49e-2000-7000-8000-000000000003",
+        "seq": 3,
+        "decision": "confirm",
+        "before": "ready",
+        "after": "confirmed",
+        "rev": 3,
+        "decision_id": "0192f49e-4000-7000-8000-000000000001",
+        "by": "operator:pilot",
+    }
+    out = to_commander(event("candidate.decided", card(state="confirmed") | {"decision": decision}))
+    assert out is not None and out["type"] == "event.candidate_decided"
+    assert out["body"] == {
+        "candidate_id": "0192f49e-2000-7000-8000-000000000003",
+        "seq": 3,
+        "decision": "confirm",
+        "after": "confirmed",
+        "lat": -35.3615,
+        "lon": 149.1652,
+        "sigma95_m": 4.1,
+    }
+    assert "operator:pilot" not in str(out)

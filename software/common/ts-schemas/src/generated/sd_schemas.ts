@@ -2966,9 +2966,11 @@ export interface Situation {
   areas: Annotation[];
   autonomy_mode: AutonomyMode | null;
   brain_may_takeoff: boolean;
+  candidates_line?: string | null;
   charter: MissionCharter | null;
   charter_installed: boolean;
   fence_verified: boolean;
+  finds_line?: string | null;
   home: LatLon | null;
   limits: SafetyLimits;
   mission_id: string;

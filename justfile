@@ -388,6 +388,15 @@ demo *args:
     {{_just}} _step panel-build
     uv run --all-packages python -m sd_sim.launch up --demo "$@"
 
+# The search demo locally: the e2e-search run (SK01, the scripted AI and operator) with
+# Gazebo physics and its window
+demo-search *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --no-sync python tools/just_args.py demo-search "$@"
+    docker compose --env-file .env -f compose.yaml up -d --wait db
+    uv run --package sd-sim python -m sd_sim.testrun mode=e2e-search physics=gz brain=scripted
+
 # The demo (SC01) and the emergency buttons end to end, headless with builtin physics,
 # the scripted commander and the test picture, in the SITL container (keys: runs, offline)
 e2e *args:
@@ -430,6 +439,23 @@ e2e *args:
     # The next `just db-up` or `just video-up` puts the services back on their usual
     # networks and user (compose recreates a service whose settings differ).
     SD_SIM__REQUIRE_VIDEO=1 {{_just}} ci-sitl mode=e2e "runs=$runs" workers=4
+
+# The search demo end to end, headless with builtin physics and the scripted commander,
+# in the SITL container; writes runs/<run>/search_report.md (keys: runs)
+e2e-search *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv run --no-sync python tools/just_args.py e2e-search "$@"
+    runs=1
+    for arg in "$@"; do
+        case "$arg" in
+            runs=*) runs="${arg#runs=}" ;;
+            dry=1) exit 0 ;;
+        esac
+    done
+    [[ "$runs" =~ ^[1-9][0-9]?$ ]] || { echo "just e2e-search: runs= ska vara 1-99"; exit 2; }
+    docker compose --env-file .env -f compose.yaml up -d --wait db
+    {{_just}} ci-sitl mode=e2e-search physics=builtin brain=scripted "runs=$runs"
 
 # Performance measurement on the owner's computer: the demo with Gazebo and the cloud AI,
 # P0-P8 and the cloud model's answer time, report in data/reports/ (keys: runs, gui, eval)

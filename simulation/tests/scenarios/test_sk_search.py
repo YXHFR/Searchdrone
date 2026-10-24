@@ -59,6 +59,7 @@ from sd_schemas.search import SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
 from sd_sim.report import measure
+from sd_sim.search_world import seed_offset
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -315,14 +316,17 @@ async def test_sk01_the_person_in_red_becomes_a_matching_candidate(
         await home_and_land(sc)
 
 
+@pytest.mark.search
 @pytest.mark.budget_s(540)
+@pytest.mark.parametrize("seed", [1, 2, 3])
 async def test_sk12_search_service_restart_mid_search(
-    sim: Any, migrated_db: Any, tmp_path: Path
+    sim: Any, migrated_db: Any, tmp_path: Path, seed: int
 ) -> None:
+    de, dn = seed_offset(seed, 10.0, "SK12")  # the person moves with the seed
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await sc.airborne()
         plane = Plane(*sc.r.home)
-        red = plane.latlon(0.0, 60.0)
+        red = plane.latlon(de, 60.0 + dn)
         people = People(sc, {"red": (red, _crop(RED))})
         profile = Profile(sc)
         sender = asyncio.ensure_future(people.run())

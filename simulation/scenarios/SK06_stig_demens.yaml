@@ -1,0 +1,50 @@
+# SK06: a person with dementia lies 20-80 m from a trail. The same seeds are flown twice:
+# with the probability map (the sectors in its order, the trail's first) and without it
+# (the sectors in a fixed order). With the map the find must come sooner. The trail is
+# also the map's terrain layer. Nightly only. Synthetic world, no real person.
+scenario: SK06
+title: "Stig, demens, med och utan karta"
+home: { lat: -35.363261, lon: 149.165230, alt_amsl_m: 584.0, heading_deg: 353 }
+pilot: { east_m: 0.0, north_m: 0.0 }
+pins: []
+areas:
+  sector_a: { area_enu: [[30,150],[150,150],[150,270],[30,270]] }
+  sector_b: { area_enu: [[150,150],[270,150],[270,270],[150,270]] }
+  sector_c: { area_enu: [[150,30],[270,30],[270,150],[150,150]] }
+  sector_d: { area_enu: [[30,30],[150,30],[150,150],[30,150]] }
+  all_sectors: { area_enu: [[35,35],[265,35],[265,265],[35,265]] }
+charters:
+  charter_sk06:
+    area_enu: [[-60,-60],[300,-60],[300,300],[-60,300]]
+    geofence_buffer_m: 20
+    alt_min_agl_m: 20
+    alt_max_agl_m: 120
+    default_alt_agl_m: 40
+    max_speed_ms: 12
+    max_range_from_pilot_m: 500
+    battery_rtl_pct: 15
+    allowed_skills: [takeoff, goto, survey_sector, hold, resume, return_home, mark_location,
+                     report, inspect_detection, orbit, capture_stills]
+    sectors:
+      - { sector_id: "A", name: "Sektor A", from: sector_a }
+      - { sector_id: "B", name: "Sektor B", from: sector_b }
+      - { sector_id: "C", name: "Sektor C", from: sector_c }
+      - { sector_id: "D", name: "Sektor D", from: sector_d }
+search:
+  limit_s: 900
+  survey: { alt_m: 50, spacing_m: 45, speed_ms: 7 }
+  last_seen_enu: [40, 40]          # where the trail begins
+  trail: [[40, 40], [200, 90], [230, 260]]
+  sector_order: [A, B, C, D]       # without the map
+  profile:
+    subject_category: dementia
+    garments:
+      - { part: upper, colors: [yellow], certainty: certain }
+      - { part: lower, colors: [gray], certainty: likely }
+    likely_state: [lying, sitting]
+  people:
+    - { id: target, target: true, near_trail_m: [20, 80], area: all_sectors, pose: lying,
+        upper: yellow, lower: gray }
+  decoys:
+    - { kind: rock, count: 6, area: sector_a, lure: 0.02 }
+    - { kind: rock, count: 6, area: sector_c, lure: 0.02 }

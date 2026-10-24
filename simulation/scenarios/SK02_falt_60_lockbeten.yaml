@@ -1,0 +1,48 @@
+# SK02: as SK01, with 60 decoys: rocks, logs, a grey backpack, a red tarp (it has the
+# jacket's colour) and the person in the green jacket. Nightly only. The scripted
+# commander's fixture as in SK01. Synthetic world, no real person.
+scenario: SK02
+title: "Öppet fält, 60 lockbeten"
+home: { lat: -35.363261, lon: 149.165230, alt_amsl_m: 584.0, heading_deg: 353 }
+pilot: { east_m: 0.0, north_m: 0.0 }
+pins: []
+areas:
+  sector_a: { area_enu: [[150,150],[270,150],[270,270],[150,270]] }   # 120 x 120 m, centre 297 m NE
+  sector_b: { area_enu: [[30,150],[150,150],[150,270],[30,270]] }
+charters:
+  charter_sk02:
+    area_enu: [[-60,-60],[300,-60],[300,300],[-60,300]]               # farthest corner 424 m
+    geofence_buffer_m: 20
+    alt_min_agl_m: 20
+    alt_max_agl_m: 120
+    default_alt_agl_m: 40
+    max_speed_ms: 12
+    max_range_from_pilot_m: 500
+    battery_rtl_pct: 15
+    allowed_skills: [takeoff, goto, survey_sector, hold, resume, return_home, mark_location,
+                     report, inspect_detection, orbit, capture_stills]
+    sectors:
+      - { sector_id: "A", name: "Sektor A", from: sector_a }
+      - { sector_id: "B", name: "Sektor B", from: sector_b }
+search:
+  limit_s: 1200                    # nightly: found within 20 min
+  survey: { alt_m: 50, spacing_m: 45, speed_ms: 7 }
+  last_seen_enu: [0, 0]
+  profile:
+    subject_category: hiker
+    garments:
+      - { part: upper, colors: [red], certainty: certain }
+      - { part: lower, colors: [black], certainty: likely }
+    items:
+      - { kind: backpack, colors: [blue], certainty: certain }
+    likely_state: [lying, sitting]
+  people:
+    - { id: target, target: true, at_enu: [210, 210], jitter_m: 40, pose: lying,
+        upper: red, lower: black, backpack: blue }
+    - { id: green-jacket, at_enu: [90, 230], jitter_m: 20, pose: lying, upper: green, lower: black }
+  decoys:
+    - { kind: rock, count: 30, area: sector_a, lure: 0.02 }
+    - { kind: rock, count: 20, area: sector_b, lure: 0.02 }
+    - { kind: log, count: 7, area: sector_b, size_m: 1.6, lure: 0.04 }
+    - { kind: backpack, color: gray, count: 1, area: sector_a, lure: 0.12 }
+    - { kind: tarp, color: red, count: 1, area: sector_a, size_m: 2.0, lure: 0.15 }

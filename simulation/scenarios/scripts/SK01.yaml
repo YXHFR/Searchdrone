@@ -1,0 +1,73 @@
+# SK01, the search chain's demo (also `just e2e-search` and `just demo-search`): the AI
+# searches sector A, takes a closer look at each HÖG candidate, searches on, and after
+# the operator's confirmation holds and asks; on "Flyg hem." it flies home and lands.
+# After both sectors without a confirmation it flies home. Test data for the scripted
+# commander.
+scenario: SK01
+timeout_s: 900
+expected_runtime_s: 420
+fixture: ../SK01_falt_rod_jacka.yaml
+turns:
+  - on: mission_created
+    say: ["Hej. Säg vad vi ska göra."]
+  - on: operator_message
+    match: '^Använd ramen (?P<name>charter_\w+)\.$'
+    say: ["Jag föreslår ramen {name}."]
+    charter_proposal: {from_fixture: "{name}"}
+  - on: operator_message
+    match: '^Starta\.$'
+    action: {skill: takeoff, params: {alt_m: 40}}
+  - on: skill_event
+    when: {skill: takeoff, status: done}
+    say: ["På 40 meter. Söker av sektor A."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  # A HÖG candidate: a closer look at it; the operator decides in the panel.
+  - on: candidate
+    when: {priority_class: high}
+    once: false
+    say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
+    action: {skill: inspect_detection, params: {detection_id: "event:detection_id", standoff_m: 20}}
+  - on: skill_event
+    when: {skill: inspect_detection, status: done}
+    once: false
+    say: ["Bilderna är tagna. Söker vidare i sektor A."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  # Only a person confirms: after a confirmation the drone holds and the AI asks.
+  - on: candidate_decided
+    when: {decision: confirm}
+    say: ["Operatören har bekräftat fyndet. Jag håller positionen. Ska drönaren flyga hem?"]
+    action: {skill: hold, params: {reason: "Bekräftat fynd."}}
+  - on: candidate_decided
+    when: {decision: reject}
+    once: false
+    say: ["Uppfattat, inte personen. Söker vidare."]
+  # The keep-out reflex stops a search with no way around a cylinder (a hover): search
+  # sector B anew, planned around the cylinders; turned down as well, fly home.
+  - on: skill_event
+    when: {skill: survey_sector, status: superseded, reason_code: KEEPOUT_VIOLATION}
+    once: false
+    say: ["En spärrzon ligger i vägen. Söker av sektor B runt den."]
+    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: survey_sector, status: rejected_onboard, reason_code: KEEPOUT_VIOLATION}
+    say: ["Ingen väg runt spärrzonen. Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Spärrzon i vägen."}}
+  - on: skill_event
+    when: {skill: survey_sector, status: done}
+    say: ["Sektorn är sökt. Söker av sektor B."]
+    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: survey_sector, status: done}
+    say: ["Sektorerna är sökta. Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Sökningen klar."}}
+  - on: operator_message
+    match: '^Flyg hem\.$'
+    say: ["Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Operatören bad om det."}}
+  - on: skill_event
+    when: {skill: return_home, status: done}
+    say: ["Uppdraget är klart. Drönaren har landat."]
+  - on: operator_message
+    match: '.*'
+    once: false
+    say: ["Uppfattat."]

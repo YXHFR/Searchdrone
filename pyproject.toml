@@ -128,4 +128,7 @@ markers = [
   "brain: flies with an AI commander (skipped with brain=none)",
   "video: needs MediaMTX (just video-up) and GStreamer; run with just test-video",
   "e2e: the end-to-end set of just e2e (the demo and the emergency buttons)",
+  "search: the search chain set of a pull request (just ci-sitl mode=search)",
+  "search_nightly: the nightly search campaign over SD_SEARCH_SEEDS (mode=search-nightly)",
+  "e2e_search: the end-to-end search demo of just e2e-search",
 ]

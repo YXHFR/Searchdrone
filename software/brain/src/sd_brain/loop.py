@@ -129,8 +129,8 @@ FINISH_REASON = "Uppdraget är klart och inget har hänt på en stund."
 FINISH_DONE_TEXT = "Jag flyger hem."
 # A finish check (not a model turn) at most this often while one is due.
 FINISH_CHECK_S = 5.0
-# Operator input and decisions that restart the backstop's idle time (a target find
-# counts too, see handle_event; a charter decision when it wakes a turn).
+# Operator input and decisions that restart the backstop's idle time (a target find and
+# a high candidate count too, see handle_event; a charter decision when it wakes a turn).
 ACTIVITY_EVENTS = frozenset(
     {
         "event.operator_message",
@@ -143,6 +143,7 @@ ACTIVITY_EVENTS = frozenset(
         "event.pin_set",
         "event.area_drawn",
         "event.path_drawn",
+        "event.candidate_decided",  # a person confirmed or rejected a candidate
     }
 )
 # A charter proposal the ground took, when the model wrote nothing with it.
@@ -277,6 +278,8 @@ class CommanderLoop:
         self._finish_checked_at = -1e9
         # The charter decisions that already woke a turn: (charter_id, version, status).
         self._charter_woken: set[tuple[str, Any, Any]] = set()
+        # The candidates that already woke a turn in this mission (once each).
+        self._candidates_woken: set[str] = set()
 
     # --- status for the heartbeat -----------------------------------------------------
 
@@ -318,6 +321,7 @@ class CommanderLoop:
             self._backlog.clear()
             self._charter_attempts = 0
             self._carry = None
+            self._candidates_woken.clear()
             self._activity_at = self.clock.monotonic()
 
     async def connected(self, reconnect: bool) -> None:
@@ -345,7 +349,11 @@ class CommanderLoop:
         other = evt.get("mission_id") and self.mission_id and evt["mission_id"] != self.mission_id
         if other and not (kind == "event.mission" and body.get("created")):
             return
-        if kind in ACTIVITY_EVENTS or (kind == "event.detection" and body.get("kind") == "target"):
+        if (
+            kind in ACTIVITY_EVENTS
+            or kind == "event.candidate"
+            or (kind == "event.detection" and body.get("kind") == "target")
+        ):
             self._activity_at = self.clock.monotonic()  # not idle: the backstop waits
         trigger: Trigger | None = None
         if kind == "event.operator_message":
@@ -407,6 +415,17 @@ class CommanderLoop:
             # tells it what it flies over. The AI may look closer and ask the pilot; it
             # never confirms a find.
             trigger = "detection"
+        elif kind == "event.candidate":
+            # A high candidate waiting for a person wakes the AI once per candidate (its
+            # updates are in the situation's candidates line). The AI may look closer and
+            # tell the operator; only a person confirms or rejects it.
+            cid = str(body.get("candidate_id"))
+            if cid not in self._candidates_woken:
+                self._candidates_woken.add(cid)
+                trigger = "candidate"
+        elif kind == "event.candidate_decided":
+            # A person's decision: every one wakes the AI (follow a find, or search on).
+            trigger = "candidate_decided"
         elif kind == "event.mission" and body.get("created"):
             trigger = "mission_created"
             mid = evt.get("mission_id") or body.get("mission_id")
@@ -414,6 +433,7 @@ class CommanderLoop:
                 if str(mid) != self.mission_id:
                     self._charter_attempts = 0
                     self._carry = None
+                    self._candidates_woken.clear()
                 self.mission_id = str(mid)
         if trigger is None:
             return

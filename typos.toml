@@ -57,6 +57,9 @@ nationella = "nationella"  # Nationella Marktäckedata, the land cover map (fetc
 intervall = "intervall"
 mapp = "mapp"
 licens = "licens"
+# Swedish (simulation/scenarios: the search scenarios' file names, B2-10)
+falt = "falt"
+forst = "forst"
 
 [default.extend-identifiers]
 # ArduPilot throttle failsafe (B1-07)
