@@ -265,7 +265,7 @@ def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -
     prev = [-1] * len(nodes)
     best[0] = 0.0
     todo = set(range(len(nodes)))
-    while todo:
+    while True:  # ends at b, or when nothing left can be reached
         i = min(todo, key=best.__getitem__)
         if best[i] == math.inf:
             return None
@@ -280,7 +280,6 @@ def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -
             d = best[i] + math.dist(nodes[i], nodes[j])
             if d < best[j] and clear(nodes[i], nodes[j]):
                 best[j], prev[j] = d, i
-    return None
 
 
 def _arc(a: Xy, b: Xy, circle: Circle, sign: float) -> list[Xy]:

@@ -26,7 +26,7 @@ from gate_fixtures import (
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from sd_safety import evaluate
+from sd_safety import evaluate, keepout
 from sd_safety.keepout import (
     KEEPOUT_ARC_MARGIN_M,
     ORBIT_KEEPOUT_MARGIN_M,
@@ -444,6 +444,15 @@ def test_keepout_reroute_overlapping(
     _check_reroute(route, cyl, BOX)
     _check_reroute(route, cyl, None)
     assert reroute(route, cyl) is not None  # no area: always a way around the group
+
+
+def test_reroute_gives_up_after_too_many_detours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A route that keeps needing detours is given up (None), never flown half-planned."""
+    route = [(-200.0, 0.0), (200.0, 0.0)]
+    cyl = [((0.0, 0.0), 30.0)]
+    assert reroute(route, cyl) is not None
+    monkeypatch.setattr(keepout, "_MAX_DETOURS", 0)
+    assert reroute(route, cyl) is None
 
 
 @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
