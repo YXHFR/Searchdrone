@@ -289,6 +289,11 @@ async def test_sk08_stop_and_fly_home_during_an_inspection(
         assert (await sc.press("resume")).status_code == 202
         await sc.until(lambda: sc.r.actions.latches.get(VID) is None, 10, "released")
 
+        async def let_go() -> bool:  # the ground's latch clears before the drone hears it
+            return (await sc.onboard_state())["executor_state"] != "HELD"
+
+        await sc.until(let_go, 30, "released onboard")
+
         # FLY HOME mid-inspection with the queue full.
         second = await inspecting(sc, det)
         async with flooded(sc):
