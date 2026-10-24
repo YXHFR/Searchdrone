@@ -29,7 +29,6 @@ from sd_safety.targets import distance_m
 from sd_sim.invariants import Sample
 
 __all__ = [
-    "HOME_MODES",
     "KEEPOUT_TOLERANCE_M",
     "CandidateWatch",
     "SeenKeepout",
@@ -45,7 +44,6 @@ CLEAR_M: Final = 5.0
 # FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
 # straight home and lands, so E8 skips those samples. LAND counts as the way home only
 # after SMART_RTL or RTL: it is also the end of STOP, which is not exempt.
-HOME_MODES: Final = frozenset({"SMART_RTL", "RTL", "LAND"})
 _FLY_HOME_MODES: Final = frozenset({"SMART_RTL", "RTL"})
 
 

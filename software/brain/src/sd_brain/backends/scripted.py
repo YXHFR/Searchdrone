@@ -23,6 +23,11 @@ that started the turn (``detection_id: "event:detection_id"``); ``fixture:<area>
 ``polygon`` becomes a GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}`` sends
 that charter from the fixture. ``delay_s`` delays the turn and ``fail: timeout | crash``
 simulates a broken backend. Unknown keys refuse to load.
+
+A turn can carry events of several triggers (the loop runs them as one, named after the
+highest): each event's own trigger is answered too, top-down by priority. The replies are
+said (two lines at most); the first action (or charter) wins, and a later turn whose
+action is left out stays unused.
 """
 
 from __future__ import annotations
@@ -38,7 +43,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sd_brain.backends.base import BackendCrashError, ToolExecutor
 from sd_brain.geo import from_enu
-from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
+from sd_brain.turn import (
+    TRIGGER_PRIORITY,
+    AiAction,
+    OutMessage,
+    Trigger,
+    TurnDiagnostics,
+    TurnInput,
+    TurnOutput,
+)
 from sd_schemas.charter import CharterProposal
 
 __all__ = ["ScriptError", "ScriptedBackend", "load_script"]
@@ -59,6 +72,19 @@ WHEN_FIELDS: dict[str, frozenset[str]] = {
     "idle_tick": frozenset(),
     "gate_reject_retry": frozenset(),
     "recovered": frozenset(),
+}
+
+
+# An event's own trigger, for the events that wake the AI whatever their level (see
+# ``CommanderLoop``); the others are answered under the turn's trigger only.
+_EVENT_TRIGGERS: dict[str, Trigger] = {
+    "event.skill": "skill_event",
+    "event.detection": "detection",
+    "event.candidate": "candidate",
+    "event.candidate_decided": "candidate_decided",
+    "event.approval": "approval_event",
+    "event.charter": "charter_event",
+    "event.takeoff_clearance": "takeoff_clearance",
 }
 
 
@@ -303,41 +329,78 @@ class ScriptedBackend:
         script, fixture = load_script(path)
         return cls(script, fixture)
 
-    def _pick(self, turn: TurnInput) -> ScriptTurn | None:
-        bodies = _event_bodies(turn)
-        text = next((m.text for m in reversed(turn.chat_tail) if m.role == "operator"), "")
+    def _pick(
+        self, trigger: str, bodies: list[dict[str, Any]], text: str, taken: set[int]
+    ) -> int | None:
         for i, t in enumerate(self.script.turns):
-            if t.on != turn.trigger or (t.once and i in self._used):
+            if t.on != trigger or i in taken or (t.once and i in self._used):
                 continue
             if t.match is not None and re.fullmatch(t.match, text) is None:
                 continue
-            if not any(_matches_when(t.when, body) for body in bodies):
-                continue
-            if t.once:
-                self._used.add(i)
-            return t
+            if any(_matches_when(t.when, body) for body in bodies):
+                return i
         return None
+
+    def _picks(self, turn: TurnInput, text: str) -> list[tuple[int, list[dict[str, Any]]]]:
+        """The script turns that answer this turn: one for the turn's trigger (``when``
+        on any of its events), then one per other trigger among its events (``when`` on
+        those events), by priority."""
+        order = {t: i for i, t in enumerate(TRIGGER_PRIORITY)}
+        own: dict[Trigger, list[dict[str, Any]]] = {}
+        for e in reversed(turn.events):
+            trig = _EVENT_TRIGGERS.get(str(e.get("type")))
+            if trig is not None and trig != turn.trigger:
+                own.setdefault(trig, []).append(dict(e.get("body") or {}))
+        groups = [(turn.trigger, _event_bodies(turn))]
+        groups += [(t, own[t]) for t in sorted(own, key=lambda t: order.get(t, 99))]
+        picks: list[tuple[int, list[dict[str, Any]]]] = []
+        for trig, bodies in groups:
+            i = self._pick(trig, bodies, text, {j for j, _ in picks})
+            if i is not None:
+                picks.append((i, bodies))
+        return picks
 
     async def decide(self, turn: TurnInput, tools: ToolExecutor) -> TurnOutput:
         start = time.monotonic()
         out = TurnOutput(diagnostics=TurnDiagnostics(backend="scripted"))
-        t = self._pick(turn)
-        if t is None:
+        text = next((m.text for m in reversed(turn.chat_tail) if m.role == "operator"), "")
+        picks = self._picks(turn, text)
+        if not picks:
             return out
-        if t.delay_s:
-            await asyncio.sleep(t.delay_s)
-        if t.fail == "timeout":
+        first = self.script.turns[picks[0][0]]
+        if first.delay_s:
+            await asyncio.sleep(first.delay_s)
+        if first.fail == "timeout":
             await asyncio.sleep(3600)
-        if t.fail == "crash":
+        if first.fail == "crash":
             raise BackendCrashError("scripted crash")
+        for i, bodies in picks:
+            t = self.script.turns[i]
+            acts = t.action is not None or t.raw is not None or t.charter_proposal is not None
+            if acts and (out.action is not None or out.ready_proposal is not None):
+                continue  # one action per turn: the higher trigger's
+            if t.once:
+                self._used.add(i)
+            self._render(t, turn, text, bodies, out)
+        out.diagnostics.latency_ms = int((time.monotonic() - start) * 1000)
+        return out
+
+    def _render(
+        self,
+        t: ScriptTurn,
+        turn: TurnInput,
+        text: str,
+        bodies: list[dict[str, Any]],
+        out: TurnOutput,
+    ) -> None:
         groups: dict[str, str] = {}
         if t.match is not None:
-            text = next((m.text for m in reversed(turn.chat_tail) if m.role == "operator"), "")
             m = re.fullmatch(t.match, text)
             groups = {k: v for k, v in (m.groupdict() if m else {}).items() if v is not None}
-        event = next((b for b in _event_bodies(turn) if _matches_when(t.when, b)), {})
+        event = next((b for b in bodies if _matches_when(t.when, b)), {})
         fields = {k: str(v) for k, v in event.items() if isinstance(v, str | int | float)}
-        out.messages = [OutMessage(text=line.format(**{**fields, **groups})) for line in t.say]
+        said = [OutMessage(text=line.format(**{**fields, **groups})) for line in t.say]
+        out.messages = (out.messages + said)[:2]  # a turn says at most two lines
         if t.charter_proposal is not None:
             name = t.charter_proposal.get("from_fixture", "").format(**groups)
             out.ready_proposal = self.fixture.charter(name, f"Ram {name} ur manuset.")
@@ -350,5 +413,3 @@ class ScriptedBackend:
                 rationale_sv="Steg i manuset.",
                 adapted=not t.action.ai,
             )
-        out.diagnostics.latency_ms = int((time.monotonic() - start) * 1000)
-        return out
