@@ -406,6 +406,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- A search no longer stops in front of one person seen again and again. Each sighting
+  brings its own keep-out cylinder, and the way around one of them ran into the next, so
+  no way around was found: the drone hovered, the new search was turned down and SK09
+  flew home without its find. Cylinders whose margins overlap are now passed as one
+  group, along the shortest way that enters none of them and stays inside the charter.
+- Onboard events held back by a lost link land in the mission they happened in. They
+  were filed under whatever mission was open when they arrived, so a find hold reported
+  after landing (and after the mission closed) was in no mission's log (LL4). Each event
+  now carries its mission id.
 - The AI's charter proposals no longer fail five times on the demo request. The brain
   turns every draft into the proposal inside the turn, so an unknown pin, a rectangle
   without its size, a skill name the registry does not have, a value beyond the mission

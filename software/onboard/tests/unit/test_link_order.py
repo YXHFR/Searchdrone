@@ -29,6 +29,7 @@ class _Executor:
     """Records what reaches it; a charter install waits until ``fence_read`` is set."""
 
     def __init__(self) -> None:
+        self.charter: Any = None
         self.calls: list[str] = []
         self.fence_read = asyncio.Event()
         self.fail_next_charter = False
@@ -54,13 +55,13 @@ class _Executor:
         self.calls.append(f"order:{cmd.skill}")
 
 
-def _envelope(body: SdModel) -> Envelope:
+def _envelope(body: SdModel, mission_id: Any = None) -> Envelope:
     return Envelope.model_construct(
         msg_id=new_id(),
         kind=type(body).__name__,
         sender="ground:main",
         vehicle_id="sim-01",
-        mission_id=None,
+        mission_id=mission_id,
         seq=0,
         sent_utc=dt.datetime(2026, 10, 15, tzinfo=dt.UTC),
         ttl_ms=None,
@@ -130,7 +131,7 @@ async def test_a_failing_install_is_reported_and_the_queue_goes_on() -> None:
         await link._dispatch(_inbound(SkillCommand.model_construct(skill="hold")))
         await _settle()
         assert ex.calls == ["order:hold"]
-        failed = [e for e in link._events if e.type == "executor.inbound_failed"]
+        failed = [e for e, _ in link._events if e.type == "executor.inbound_failed"]
         assert failed and failed[0].data["kind"] == "CharterInstall"
         assert failed[0].severity == "critical"
     finally:
@@ -172,10 +173,12 @@ class _Session:
 
     def __init__(self) -> None:
         self.sent: list[SdModel] = []
+        self.missions: list[Any] = []
         self.events: asyncio.Queue[LinkEvent] = asyncio.Queue()
 
-    async def send(self, body: SdModel, **_: Any) -> None:
+    async def send(self, body: SdModel, *, mission_id: Any = None, **_: Any) -> None:
         self.sent.append(body)
+        self.missions.append(mission_id)
 
     async def next_event(self) -> LinkEvent:
         return await self.events.get()
@@ -210,4 +213,31 @@ async def test_events_lost_with_the_link_are_sent_again_first() -> None:
     session.events.put_nowait(Closed(None, "no ack", (_envelope(second),)))
     await asyncio.wait_for(task, 5)
     link.event("executor.find_hold_ended", "warning", {"n": 3})
-    assert [e.data["n"] for e in link._events] == [1, 2, 3]
+    assert [e.data["n"] for e, _ in link._events] == [1, 2, 3]
+
+
+async def test_events_carry_the_mission_they_happened_in() -> None:
+    """An event goes out with the mission whose charter was in force when it happened,
+    also when it is sent again after the link was lost (the mission may have closed)."""
+    link, _ = _link()
+    ex = _LinkExecutor()
+    link.executor = ex  # type: ignore[assignment]
+    link.event("executor.boot", "info", {"n": 0})
+    ex.charter = charter(version=1)
+    mid = ex.charter.mission_id
+    link.event("executor.find_hold_started", "warning", {"n": 1})
+    ex.charter = None
+    session = _Session()
+    task = asyncio.ensure_future(
+        link._on_session(session, HelloAck.model_construct())  # type: ignore[arg-type]
+    )
+    await _settle()
+    sent = [
+        (b, m)
+        for b, m in zip(session.sent, session.missions, strict=True)
+        if isinstance(b, OnboardEvent) and b.data
+    ]
+    assert [(b.data["n"], m) for b, m in sent] == [(0, None), (1, mid)]
+    session.events.put_nowait(Closed(None, "no ack", (_envelope(sent[1][0], mid),)))
+    await asyncio.wait_for(task, 5)
+    assert [(e.data["n"], m) for e, m in link._events] == [(1, mid)]

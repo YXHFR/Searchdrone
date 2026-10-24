@@ -399,6 +399,53 @@ def test_reroute_out_of_overlapping_cylinders() -> None:
     assert reroute([(0.0, 10.0), (0.0, -300.0)], ring) is None
 
 
+def test_reroute_around_overlapping_cylinders_of_one_person() -> None:
+    """One person seen again and again: cylinders a few metres apart. The way around
+    one alone runs into the next; the group is passed as one, on the short side, with
+    the margin, and the corners of the search after it are kept."""
+    cyl = [((0.0, 0.0), 35.0), ((8.0, 4.0), 40.0), ((-6.0, 9.0), 33.0), ((3.0, -10.0), 38.0)]
+    route: list[Xy] = [(-5.0, -200.0), (-5.0, 200.0), (100.0, 200.0)]
+    out = reroute(route, cyl, area=BOX)
+    assert out is not None
+    assert xy_route_violation(out, cyl) is None
+    assert out[0] == route[0] and out[-2:] == route[1:]
+    around = out[1:-2]
+    assert around and all(p[0] < 0.0 for p in around)  # the west side, the shorter one
+    assert all(math.dist(p, c) >= r + KEEPOUT_ARC_MARGIN_M - 1e-6 for p in around for c, r in cyl)
+    # Only one side inside the area: that one.
+    east = Polygon(((-20.0, -400.0), (400.0, -400.0), (400.0, 400.0), (-20.0, 400.0)))
+    out = reroute(route, cyl, area=east)
+    assert out is not None and xy_route_violation(out, cyl) is None
+    assert all(p[0] > 0.0 for p in out[1:-2])
+    # Neither side inside the area: no way around.
+    narrow = Polygon(((-20.0, -400.0), (20.0, -400.0), (20.0, 400.0), (-20.0, 400.0)))
+    assert reroute(route, cyl, area=narrow) is None
+
+
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    route=st.lists(xy, min_size=2, max_size=8),
+    group=st.lists(
+        st.tuples(st.floats(-25, 25), st.floats(-25, 25), st.floats(30.5, 50.0)),
+        min_size=2,
+        max_size=6,
+    ),
+    centre=xy,
+)
+def test_keepout_reroute_overlapping(
+    route: list[Xy], group: list[tuple[float, float, float]], centre: Xy
+) -> None:
+    """Property: past a group of overlapping cylinders a rerouted route never enters one,
+    stays in the area and keeps the corners outside them in order; with room around the
+    group inside the area there always is one."""
+    cyl = [((centre[0] + dx, centre[1] + dy), r) for dx, dy, r in group]
+    if any(math.dist(route[0], c) < r for c, r in cyl):
+        return  # starting inside: test_keepout_reroute_from_inside
+    _check_reroute(route, cyl, BOX)
+    _check_reroute(route, cyl, None)
+    assert reroute(route, cyl) is not None  # no area: always a way around the group
+
+
 @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     route=st.lists(xy, min_size=2, max_size=6),

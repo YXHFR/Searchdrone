@@ -9,9 +9,12 @@ around one at its centre).
 the two tangents to a circle ``KEEPOUT_ARC_MARGIN_M`` outside the cylinder and an arc of
 corners between them, on the side that stays inside the charter (the shorter if both
 do). Corners lie just outside that circle, so no straight leg between them comes
-closer. A route that starts inside cylinders first leaves them along a straight leg that goes
-deeper into none of them and enters no other: the given direction (the leg being
-flown), away from their centres, or the nearest direction that works. Pure functions in the plane of
+closer. Cylinders whose margins overlap (one person seen again and again) are passed as
+one group: the shortest way through the corners around each of them that enters none of
+them and stays inside the charter. A route that starts inside cylinders first leaves
+them along a straight leg that goes deeper into none of them and enters no other: the
+given direction (the leg being flown), away from their centres, or the nearest
+direction that works. Pure functions in the plane of
 ``sd_safety.targets.Plane``.
 """
 
@@ -124,7 +127,8 @@ def reroute(
         detours += 1
         if detours > _MAX_DETOURS:
             return None
-        way = _around(a, b, cyl[hit], area)
+        group = _group(cyl, hit)
+        way = _around(a, b, cyl[hit], area) if len(group) == 1 else _around_group(a, b, group, area)
         if way is None:
             return None
         out[i + 1 : i + 1] = way
@@ -219,6 +223,64 @@ def _around(a: Xy, b: Xy, circle: Circle, area: Polygon | None) -> list[Xy] | No
     options.sort(key=lambda o: (not o[0], o[1]))
     inside, _, corners = options[0]
     return corners if inside else None
+
+
+def _group(cyl: Sequence[Circle], hit: int) -> list[Circle]:
+    """``cyl[hit]`` and every cylinder linked to it by overlapping margins: a way around
+    one of them alone would run into the next."""
+    reach = 2 * KEEPOUT_ARC_MARGIN_M
+    group, todo = [hit], [hit]
+    while todo:
+        c, r = cyl[todo.pop()]
+        for j, (cj, rj) in enumerate(cyl):
+            if j not in group and math.dist(c, cj) < r + rj + reach:
+                group.append(j)
+                todo.append(j)
+    return [cyl[j] for j in group]
+
+
+def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -> list[Xy] | None:
+    """The corners of the shortest way from ``a`` to ``b`` past cylinders whose margins
+    overlap (both ends excluded): through the corners of a polygon just outside each
+    margin circle that lie outside every other margin, along legs that enter none of the
+    cylinders and stay inside ``area``; None when there is no such way."""
+    steps = round(2 * math.pi / _ARC_STEP)
+    corners: list[Xy] = []
+    for c, r in group:
+        corner_r = (r + KEEPOUT_ARC_MARGIN_M) / math.cos(math.pi / steps)
+        for k in range(steps):
+            t = 2 * math.pi * k / steps
+            p = (c[0] + corner_r * math.cos(t), c[1] + corner_r * math.sin(t))
+            if all(math.dist(p, c2) >= r2 + KEEPOUT_ARC_MARGIN_M for c2, r2 in group):
+                corners.append(p)
+    nodes = [a, *corners, b]
+    end = len(nodes) - 1
+
+    def clear(p: Xy, q: Xy) -> bool:
+        if any(leg_enters(p, q, c, r) for c, r in group):
+            return False
+        return area is None or area.leg_outside_by(p, q) <= 0.0
+
+    best = [math.inf] * len(nodes)
+    prev = [-1] * len(nodes)
+    best[0] = 0.0
+    todo = set(range(len(nodes)))
+    while todo:
+        i = min(todo, key=best.__getitem__)
+        if best[i] == math.inf:
+            return None
+        if i == end:
+            path: list[Xy] = []
+            while prev[i] > 0:
+                i = prev[i]
+                path.append(nodes[i])
+            return path[::-1]
+        todo.discard(i)
+        for j in todo:
+            d = best[i] + math.dist(nodes[i], nodes[j])
+            if d < best[j] and clear(nodes[i], nodes[j]):
+                best[j], prev[j] = d, i
+    return None
 
 
 def _arc(a: Xy, b: Xy, circle: Circle, sign: float) -> list[Xy]:

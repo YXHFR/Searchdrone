@@ -54,6 +54,8 @@ from sd_schemas.safety import LimitCaps, SafetyLimits
 from sd_schemas.skills import SKILL_REGISTRY, SkillSpec
 
 if TYPE_CHECKING:
+    import uuid
+
     from sd_ground.context import Ground
     from sd_ground.link import GroundLink
     from sd_ground.services.link_loss import LinkWatch
@@ -601,7 +603,9 @@ class MissionFlow:
         elif isinstance(body, CharterAck):
             await approvals_service.on_charter_ack(self, vehicle_id, body)
         elif isinstance(body, OnboardEvent):
-            mission = await self.repo.open_mission(vehicle_id)
+            # The mission the event happened in, when it says (one held back by a lost
+            # link may come after that mission closed); otherwise the open one.
+            mission = await _event_mission(self.repo, vehicle_id, inbound.envelope.mission_id)
             self.g.add_event(
                 body.type,
                 severity=body.severity,
@@ -934,3 +938,15 @@ class MissionFlow:
             candidates_line=candidates_line,
             finds_line=finds_line,
         )
+
+
+async def _event_mission(
+    repo: FlowRepo, vehicle_id: str, mission_id: uuid.UUID | None
+) -> Mission | None:
+    """The mission an onboard event belongs to: the one it names when that is this
+    vehicle's, else the vehicle's open mission."""
+    if mission_id is not None:
+        mission = await repo.mission(str(mission_id))
+        if mission is not None and mission.vehicle_id == vehicle_id:
+            return mission
+    return await repo.open_mission(vehicle_id)
