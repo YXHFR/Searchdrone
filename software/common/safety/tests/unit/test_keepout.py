@@ -35,7 +35,7 @@ from sd_safety.keepout import (
     route_violation,
     xy_route_violation,
 )
-from sd_safety.targets import Polygon, Xy, polygon_from_geojson
+from sd_safety.targets import Polygon, Xy, point_segment_distance, polygon_from_geojson
 from sd_schemas.base import LatLonAlt, new_id
 from sd_schemas.gate import GateContext, GateRequest
 from sd_schemas.keepout import Keepout, inspect_geometry, leg_enters
@@ -258,13 +258,6 @@ def _check_reroute(route: list[Xy], cyl: list[tuple[Xy, float]], area: Polygon |
     assert all(any(q == p for q in it) for p in kept)  # the corners kept, in their order
 
 
-def _closest(a: Xy, b: Xy, c: Xy) -> float:
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    seg2 = dx * dx + dy * dy
-    t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / seg2))
-    return math.dist((a[0] + t * dx, a[1] + t * dy), c)
-
-
 def _check_margin(out: list[Xy], route: list[Xy], cyl: list[tuple[Xy, float]]) -> None:
     """Every leg of a way around (an end not in ``route``) keeps the margin from every
     cylinder, or no closer than an end already inside it."""
@@ -273,7 +266,7 @@ def _check_margin(out: list[Xy], route: list[Xy], cyl: list[tuple[Xy, float]]) -
             continue
         for c, r in cyl:
             keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
-            assert _closest(p, q, c) >= keep - 1e-6
+            assert point_segment_distance(c, p, q) >= keep - 1e-6
 
 
 xy = st.tuples(st.floats(-300, 300), st.floats(-300, 300))
@@ -492,13 +485,13 @@ def test_reroute_bounds_the_work_of_grouped_ways(monkeypatch: pytest.MonkeyPatch
         y = -337.5 + 45.0 * k
         route += [(-600.0, y), (600.0, y)] if k % 2 == 0 else [(600.0, y), (-600.0, y)]
     checks = [0]
-    closest = keepout._closest
+    closest = point_segment_distance
 
-    def counted(a: Xy, b: Xy, c: Xy) -> float:
+    def counted(p: Xy, a: Xy, b: Xy) -> float:
         checks[0] += 1
-        return closest(a, b, c)
+        return closest(p, a, b)
 
-    monkeypatch.setattr(keepout, "_closest", counted)
+    monkeypatch.setattr(keepout, "point_segment_distance", counted)
     keepout.reroute(route, cyl)
     nodes = 2 + 24 * len(cyl)
     assert checks[0] <= keepout._GROUP_WORK_MAX + nodes * len(cyl)

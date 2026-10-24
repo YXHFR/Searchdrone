@@ -16,8 +16,7 @@ than the margin (an end already inside it: no closer than that end) and stay ins
 charter. A route that starts inside cylinders first leaves them along a straight leg
 that goes deeper into none of them and enters no other: the given direction (the leg
 being flown), away from their centres, or the nearest direction that works. Pure
-functions in the plane of
-``sd_safety.targets.Plane``.
+functions in the plane of ``sd_safety.targets.Plane``.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from collections.abc import Sequence
 from itertools import pairwise
 from typing import Final
 
-from sd_safety.targets import Plane, Polygon, Xy
+from sd_safety.targets import Plane, Polygon, Xy, point_segment_distance
 from sd_schemas.base import LatLon
 from sd_schemas.keepout import Keepout, leg_enters
 from sd_schemas.skills import OrbitRing
@@ -280,7 +279,7 @@ def _around_group(
         work[0] -= len(group)
         for c, r in group:
             keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
-            if leg_enters(p, q, c, r) or _closest(p, q, c) < keep - _MARGIN_EPS_M:
+            if leg_enters(p, q, c, r) or point_segment_distance(c, p, q) < keep - _MARGIN_EPS_M:
                 return False
         return area is None or area.leg_outside_by(p, q) <= 0.0
 
@@ -303,14 +302,6 @@ def _around_group(
             d = best[i] + math.dist(nodes[i], nodes[j])
             if d < best[j] and clear(nodes[i], nodes[j]):
                 best[j], prev[j] = d, i
-
-
-def _closest(a: Xy, b: Xy, c: Xy) -> float:
-    """How close the leg ``a`` -> ``b`` comes to ``c``."""
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    seg2 = dx * dx + dy * dy
-    t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / seg2))
-    return math.dist((a[0] + t * dx, a[1] + t * dy), c)
 
 
 def _arc(a: Xy, b: Xy, circle: Circle, sign: float) -> list[Xy]:
