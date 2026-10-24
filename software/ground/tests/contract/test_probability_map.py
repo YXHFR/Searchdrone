@@ -158,8 +158,11 @@ async def test_the_map_reaches_the_panel_and_the_ai(r: Rig) -> None:
     service, client = mapper(r)
     try:
         assert await service.step([mid]) == 0  # no approved profile: no map
+        # No map yet is a state, not an error: a 404 would land in the browser's console.
         none = await r.panel.get(f"/api/v1/missions/{mid}/probability-map")
-        assert none.status_code == 404
+        assert none.status_code == 200 and none.json() is None
+        png = await r.panel.get(f"/api/v1/missions/{mid}/probability-map.png")
+        assert png.status_code == 404
         assert (await r.panel.get(f"/api/v1/missions/{mid}/sectors/poa")).json() == []
 
         await approve_profile(r, mid)

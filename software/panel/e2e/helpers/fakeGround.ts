@@ -570,9 +570,11 @@ export class FakeGround {
     if (k === `GET ${ms}/probability-map`)
       return this.probabilityMap
         ? { status: 200, body: this.probabilityMap }
-        : {
-            status: 404,
-            body: { code: "MAP_NOT_FOUND", detail_sv: "Ingen sannolikhetskarta ännu." },
+        : // No map yet: the ground answers null (an empty body here would become {}).
+          {
+            status: 200,
+            raw: Buffer.from("null"),
+            headers: { "content-type": "application/json" },
           };
     if (k === `GET ${ms}/probability-map.png`)
       return { status: 200, raw: PNG_1PX, headers: { "content-type": "image/png" } };

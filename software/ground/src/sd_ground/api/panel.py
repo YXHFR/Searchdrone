@@ -511,10 +511,11 @@ async def get_sectors(mission_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
     return await _flow(g).sectors_geojson(mission_id)
 
 
-@router.get("/missions/{mission_id}/probability-map", response_model=ProbabilityMapView)
-async def get_probability_map(mission_id: IdPath, g: G, _: Observer) -> ProbabilityMapView:
-    """The newest version of the probability map (404 before the first). ``p_b64`` and
-    ``pod_b64``: base64 float16, row-major, row 0 the southernmost."""
+@router.get("/missions/{mission_id}/probability-map", response_model=ProbabilityMapView | None)
+async def get_probability_map(mission_id: IdPath, g: G, _: Observer) -> ProbabilityMapView | None:
+    """The newest version of the probability map, ``null`` before the first (like the
+    search profile: no map yet is a state, not an error). ``p_b64`` and ``pod_b64``:
+    base64 float16, row-major, row 0 the southernmost."""
     return await map_service.view(_flow(g), mission_id)
 
 

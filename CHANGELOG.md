@@ -415,6 +415,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The panel no longer logs a 404 in the browser's console for every mission without a
+  probability map. `GET /missions/{id}/probability-map` now answers 200 with `null` before
+  the first map (like the search profile); the map's picture still answers 404 then. The
+  nightly panel test in a browser on SITL failed on that console line.
 - A search no longer stops in front of one person seen again and again. Each sighting
   brings its own keep-out cylinder, and the way around one of them ran into the next, so
   no way around was found: the drone hovered, the new search was turned down and SK09

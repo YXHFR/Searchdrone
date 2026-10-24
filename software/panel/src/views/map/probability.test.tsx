@@ -17,6 +17,7 @@ const GRID: ProbabilityMapView["grid"] = {
   north: -35.356,
 };
 let version = 1;
+let noMap = false;
 const calls: string[] = [];
 vi.mock("../../api/http", () => ({
   HttpError: class extends Error {},
@@ -35,6 +36,7 @@ vi.mock("../../api/http", () => ({
           spacing_m: 41.6,
         } satisfies SectorScore,
       ];
+    if (noMap) return null;
     return {
       version,
       reason: "prior",
@@ -158,6 +160,20 @@ describe("the layers follow the newest version", () => {
     expect(f.layers["prob-poa"]?.visibility).toBe("visible");
     await waitFor(() => expect(result.current?.version).toBe(2));
     expect(f.sources["prob-poa"]?.url).toContain("&v=2");
+  });
+
+  it("draws nothing before the first map (the ground answers null)", async () => {
+    noMap = true;
+    const before = calls.length;
+    const f = fakeMap();
+    const handle = { current: { map: f.map, mod: {} } } as never;
+    const { result } = renderHook(() =>
+      useProbabilityLayers(true, handle, "m2", { poa: true, pod: true }),
+    );
+    await waitFor(() => expect(calls.length).toBe(before + 1));
+    expect(result.current).toBeNull();
+    expect(f.layers["prob-poa"]).toBeUndefined();
+    noMap = false;
   });
 
   it("reads the sector scores again on a new version", async () => {
