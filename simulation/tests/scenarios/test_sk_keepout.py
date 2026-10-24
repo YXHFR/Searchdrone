@@ -24,6 +24,7 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
 
 from __future__ import annotations
 
+import math
 import sys
 import time
 from pathlib import Path
@@ -127,10 +128,18 @@ async def test_own_detections_under_the_drone_during_a_search(
         await sc.until(lambda: _executor(sc, "SURVEY"), 120, "in the box")
         await surveying(sc)
 
-        # Two stills of a person right below: the centres a metre or two either side.
+        # Two people right below, one just ahead along the line and one behind: the leg heads
+        # deeper into the first, and they lie far enough apart not to merge into one cylinder.
         plane = Plane(*sc.r.home)
-        e, n = plane.xy(sc.tel.lat, sc.tel.lon)
-        centres = [plane.latlon(e - 1.0, n - 1.0), plane.latlon(e + 2.0, n + 1.5)]
+        now = sc.track[-1]
+        before = next(s for s in reversed(sc.track) if s.t <= now.t - 1.0)
+        (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
+        step = math.dist((e, n), (e0, n0))
+        ue, un = (e - e0) / step, (n - n0) / step
+        centres = [
+            plane.latlon(e + 6.0 * ue, n + 6.0 * un),
+            plane.latlon(e - 13.0 * ue, n - 13.0 * un),
+        ]
         since = time.monotonic()
         sc.r.onboard.ex.on_detections([person(c) for c in centres])
         await until_event(sc, "keepout_reroute")
