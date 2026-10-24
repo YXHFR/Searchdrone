@@ -107,6 +107,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- A detector manifest's `input_px` and `tile_px` must be integers. A manifest with, for
+  example, `"input_px": 640.0` or `"640"` is now refused when the model is loaded
+  ("Manifestets input_px och tile_px ska vara heltal"); write the plain number.
 - The panel's look is one design system (`software/panel/src/theme/tokens.css`): spacing on
   a 4 px grid, one type scale, one corner radius, one height for inline chips and segments
   (touch targets keep their 44 px) and one for pane headers. The drone's state, the
