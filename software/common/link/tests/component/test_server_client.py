@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -14,9 +15,10 @@ from link_helpers import VEHICLE, frame, goto, hello, stop_notice
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
+import sd_link.client as client_module
 from sd_link.client import Backoff, InsecureLinkUrlError, LinkClient
 from sd_link.close_codes import CloseCode
-from sd_link.constants import AUTH_RETRY_S, SDLINK_PATH
+from sd_link.constants import AUTH_RETRY_S, OPEN_TIMEOUT_S, SDLINK_PATH
 from sd_link.server import LinkServer, bearer_token
 from sd_link.session import Inbound, LinkSession
 from sd_link.tokens import TokenStore, generate_token, hash_token
@@ -285,16 +287,47 @@ async def test_client_with_wrong_token_sees_4401() -> None:
         assert await asyncio.wait_for(client.connect_once(), 3) == CloseCode.AUTH_FAILED
 
 
-async def test_client_unreachable_returns_none() -> None:
-    client = LinkClient(
-        url="ws://127.0.0.1:9/sdlink/v1/control",
+def _client_to(port: int) -> LinkClient:
+    return LinkClient(
+        url=f"ws://127.0.0.1:{port}{SDLINK_PATH}",
         token=TOKEN,
         vehicle_id=VEHICLE,
         make_hello=hello,
         on_session=lambda s, a: asyncio.sleep(0),
         clock=MonotonicClock(),
     )
-    assert await asyncio.wait_for(client.connect_once(), 3) is None
+
+
+async def test_client_unreachable_returns_none() -> None:
+    # A port that is bound but not listening: nothing can answer on it while the test
+    # runs. Linux refuses the connection at once; WSL2 with mirrored networking lets it
+    # hang instead, and then the client's own open timeout must end it.
+    with socket.socket() as hole:
+        hole.bind(("127.0.0.1", 0))
+        client = _client_to(hole.getsockname()[1])
+        assert await asyncio.wait_for(client.connect_once(), OPEN_TIMEOUT_S + 1) is None
+
+
+async def test_client_gives_up_on_a_silent_server_within_its_open_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The hanging case on every platform: TCP is accepted, the handshake never answered.
+    monkeypatch.setattr(client_module, "OPEN_TIMEOUT_S", 0.3)
+    accepted: list[asyncio.StreamWriter] = []
+
+    async def keep(_: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        accepted.append(writer)
+
+    server = await asyncio.start_server(keep, "127.0.0.1", 0)
+    async with server:
+        client = _client_to(server.sockets[0].getsockname()[1])
+        started = asyncio.get_running_loop().time()
+        assert await asyncio.wait_for(client.connect_once(), 3) is None
+        elapsed = asyncio.get_running_loop().time() - started
+        assert 0.25 <= elapsed < 2  # no sooner than the open timeout, nor much later
+        assert accepted  # it got as far as TCP, so the timeout is what ended it
+        for writer in accepted:
+            writer.close()
 
 
 async def test_orders_over_a_real_lossy_proxy() -> None:

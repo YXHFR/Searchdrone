@@ -415,6 +415,19 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- `just train-detector model=damoyolo_s` no longer stops on a graphics card with "unsafe
+  to autocast" and then "Found dtype Float but expected Half". DAMO-YOLO's label
+  assignment and quality focal loss call `binary_cross_entropy`, which mixed precision
+  refuses; the head now computes its scores and loss in float32 with autocast off. The
+  assignment's move to the CPU no longer catches every error as running out of memory
+  (the misleading OOM warning before the second error). YOLOX turns autocast off for its
+  assignment on every device, not only CUDA. A test runs both families' training step
+  under autocast.
+- The link test `test_client_unreachable_returns_none` no longer fails on WSL2 with
+  mirrored networking, where a connection to a closed port hangs instead of being
+  refused: it dials a port held bound without listening and allows the client's own open
+  timeout. A new test checks that the client gives up on a server that accepts TCP but
+  never answers, within its open timeout.
 - The AI's charter proposals no longer fail five times on the demo request. The brain
   turns every draft into the proposal inside the turn, so an unknown pin, a rectangle
   without its size, a skill name the registry does not have, a value beyond the mission
