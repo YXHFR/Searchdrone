@@ -27,6 +27,17 @@ turns:
     when: {decision: reject}
     once: false
     say: ["Uppfattat, inte personen. Söker vidare."]
+  # The keep-out reflex stops a search with no way around a cylinder (a hover): search
+  # sector B anew, planned around the cylinders; turned down as well, fly home.
+  - on: skill_event
+    when: {skill: survey_sector, status: superseded, reason_code: KEEPOUT_VIOLATION}
+    once: false
+    say: ["En spärrzon ligger i vägen. Söker av sektor B runt den."]
+    action: {skill: survey_sector, params: {sector_id: "B", alt_m: 50, spacing_m: 45, speed_ms: 7}}
+  - on: skill_event
+    when: {skill: survey_sector, status: rejected_onboard, reason_code: KEEPOUT_VIOLATION}
+    say: ["Ingen väg runt spärrzonen. Flyger hem och landar."]
+    action: {skill: return_home, params: {reason: "Spärrzon i vägen."}}
   - on: skill_event
     when: {skill: survey_sector, status: done}
     say: ["Sektorn är sökt. Söker av sektor B."]

@@ -131,6 +131,25 @@ async def test_scripted_coalesced_confirm_wins_and_keeps_the_other_turn(tmp_path
     assert out.action is not None and out.action.skill == "survey_sector"
 
 
+async def test_scripted_when_reason_code_is_one_of_the_events(tmp_path: Path) -> None:
+    """The keep-out reflex stops a search: its reason is in the event's reason_codes."""
+    path = tmp_path / "s.yaml"
+    path.write_text(
+        "scenario: SCX\nturns:\n  - on: skill_event\n"
+        "    when: {skill: survey_sector, status: superseded, reason_code: KEEPOUT_VIOLATION}\n"
+        "    action: {skill: hold}\n"
+    )
+    b = ScriptedBackend.from_file(path)
+    body = {"skill": "survey_sector", "status": "superseded", "reason_codes": ["OTHER"]}
+    ev = [{"type": "event.skill", "body": body}]
+    assert (
+        await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    ).action is None
+    body["reason_codes"] = ["KEEPOUT_VIOLATION"]
+    out = await b.decide(_turn(None, trigger="skill_event", events=ev), _NoTools())
+    assert out.action is not None and out.action.skill == "hold"
+
+
 @pytest.mark.parametrize(
     ("text", "skill", "params"),
     [

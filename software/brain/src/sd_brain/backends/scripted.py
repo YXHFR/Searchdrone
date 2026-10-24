@@ -18,7 +18,8 @@ Script format (``simulation/scenarios/scripts/SCxx.yaml``)::
 becomes ``lat``/``lon`` (``at: here`` is the drone's position in the turn's situation,
 ``at: "event:find"`` the find that started a ``detection`` turn, ``at: "event:candidate"``
 the candidate that started a ``candidate`` turn; ``say`` may use the event's fields, e.g.
-``{name_sv}``); ``"event:<field>"`` under any other key takes that field of the event
+``{name_sv}``); ``when: {reason_code: X}`` matches an event whose ``reason_codes`` hold
+X; ``"event:<field>"`` under any other key takes that field of the event
 that started the turn (``detection_id: "event:detection_id"``); ``fixture:<area>`` under
 ``polygon`` becomes a GeoJSON polygon; ``charter_proposal: {from_fixture: <name>}`` sends
 that charter from the fixture. ``delay_s`` delays the turn and ``fail: timeout | crash``
@@ -60,7 +61,7 @@ WHEN_FIELDS: dict[str, frozenset[str]] = {
     "mission_created": frozenset(),
     "operator_message": frozenset(),
     "operator_override": frozenset({"action", "via"}),
-    "skill_event": frozenset({"skill", "status", "status_reason", "issuer_kind"}),
+    "skill_event": frozenset({"skill", "status", "reason_code", "issuer_kind"}),
     "detection": frozenset({"label", "kind", "source"}),
     "candidate": frozenset({"priority_class", "state", "engine", "multi_frame"}),
     "candidate_decided": frozenset({"decision", "after"}),
@@ -307,6 +308,11 @@ def _event_bodies(turn: TurnInput) -> list[dict[str, Any]]:
 
 def _matches_when(when: dict[str, Any], body: dict[str, Any]) -> bool:
     for key, want in when.items():
+        if key == "reason_code":  # one of the event's reason_codes
+            wanted = want if isinstance(want, list) else [want]
+            if not set(wanted) & set(body.get("reason_codes") or ()):
+                return False
+            continue
         have = body.get(key)
         if isinstance(want, list):
             if have not in want:
