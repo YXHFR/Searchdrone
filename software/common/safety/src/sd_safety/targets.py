@@ -155,7 +155,7 @@ class Polygon:
         return inside
 
     def boundary_distance(self, p: Xy) -> float:
-        return min(_point_segment_distance(p, a, b) for a, b in self.edges())
+        return min(point_segment_distance(p, a, b) for a, b in self.edges())
 
     def leg_outside_by(self, p: Xy, q: Xy) -> float:
         """How far the straight leg p->q leaves the polygon (0.0 when it stays inside). The
@@ -203,7 +203,8 @@ def _signed_area(corners: Sequence[Xy]) -> float:
     return total / 2
 
 
-def _point_segment_distance(p: Xy, a: Xy, b: Xy) -> float:
+def point_segment_distance(p: Xy, a: Xy, b: Xy) -> float:
+    """How close the segment ``a`` -> ``b`` comes to ``p``."""
     dx, dy = b[0] - a[0], b[1] - a[1]
     length2 = dx * dx + dy * dy
     t = 0.0 if length2 == 0.0 else ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2
@@ -214,10 +215,10 @@ def _point_segment_distance(p: Xy, a: Xy, b: Xy) -> float:
 def _segments_touch(a: Xy, b: Xy, c: Xy, d: Xy) -> bool:
     """Whether segments ab and cd share any point."""
     return (
-        _point_segment_distance(a, c, d) <= _EPS_M
-        or _point_segment_distance(b, c, d) <= _EPS_M
-        or _point_segment_distance(c, a, b) <= _EPS_M
-        or _point_segment_distance(d, a, b) <= _EPS_M
+        point_segment_distance(a, c, d) <= _EPS_M
+        or point_segment_distance(b, c, d) <= _EPS_M
+        or point_segment_distance(c, a, b) <= _EPS_M
+        or point_segment_distance(d, a, b) <= _EPS_M
         or (
             (_cross(a, b, c) > 0) != (_cross(a, b, d) > 0)
             and (_cross(c, d, a) > 0) != (_cross(c, d, b) > 0)
@@ -232,8 +233,7 @@ def _overlap_beyond_corner(e1: tuple[Xy, Xy], e2: tuple[Xy, Xy]) -> bool:
     far1 = a if shared == b else b
     far2 = d if shared == c else c
     return (
-        _point_segment_distance(far1, c, d) <= _EPS_M
-        or _point_segment_distance(far2, a, b) <= _EPS_M
+        point_segment_distance(far1, c, d) <= _EPS_M or point_segment_distance(far2, a, b) <= _EPS_M
     )
 
 
@@ -255,7 +255,7 @@ def _crossings(p: Xy, q: Xy, a: Xy, b: Xy) -> list[float]:
     # parallel: the ends of a collinear edge split the leg
     out: list[float] = []
     for corner in (a, b):
-        if _point_segment_distance(corner, p, q) <= _EPS_M:
+        if point_segment_distance(corner, p, q) <= _EPS_M:
             t = ((corner[0] - p[0]) * d[0] + (corner[1] - p[1]) * d[1]) / dd
             out.append(min(1.0, max(0.0, t)))
     return out

@@ -415,6 +415,16 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- A search no longer stops in front of one person seen again and again. Each sighting
+  brings its own keep-out cylinder, and the way around one of them ran into the next, so
+  no way around was found: the drone hovered, the new search was turned down and SK09
+  flew home without its find. Cylinders whose margins overlap are now passed as one
+  group, along the shortest way that keeps the 5 m margin from each of them and stays
+  inside the charter; a cluster of more than 20 has no way around (the drone holds).
+- Onboard events held back by a lost link land in the mission they happened in. They
+  were filed under whatever mission was open when they arrived, so a find hold reported
+  after landing (and after the mission closed) was in no mission's log (LL4). Each event
+  now carries its mission id.
 - `just train-detector model=damoyolo_s` no longer stops on a graphics card with "unsafe
   to autocast" and then "Found dtype Float but expected Half". DAMO-YOLO's label
   assignment and quality focal loss call `binary_cross_entropy`, which mixed precision

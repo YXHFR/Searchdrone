@@ -26,7 +26,7 @@ from gate_fixtures import (
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from sd_safety import evaluate
+from sd_safety import evaluate, keepout
 from sd_safety.keepout import (
     KEEPOUT_ARC_MARGIN_M,
     ORBIT_KEEPOUT_MARGIN_M,
@@ -35,7 +35,7 @@ from sd_safety.keepout import (
     route_violation,
     xy_route_violation,
 )
-from sd_safety.targets import Polygon, Xy, polygon_from_geojson
+from sd_safety.targets import Polygon, Xy, point_segment_distance, polygon_from_geojson
 from sd_schemas.base import LatLonAlt, new_id
 from sd_schemas.gate import GateContext, GateRequest
 from sd_schemas.keepout import Keepout, inspect_geometry, leg_enters
@@ -258,6 +258,17 @@ def _check_reroute(route: list[Xy], cyl: list[tuple[Xy, float]], area: Polygon |
     assert all(any(q == p for q in it) for p in kept)  # the corners kept, in their order
 
 
+def _check_margin(out: list[Xy], route: list[Xy], cyl: list[tuple[Xy, float]]) -> None:
+    """Every leg of a way around (an end not in ``route``) keeps the margin from every
+    cylinder, or no closer than an end already inside it."""
+    for p, q in pairwise(out):
+        if p in route and q in route:
+            continue
+        for c, r in cyl:
+            keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
+            assert point_segment_distance(c, p, q) >= keep - 1e-6
+
+
 xy = st.tuples(st.floats(-300, 300), st.floats(-300, 300))
 
 
@@ -397,6 +408,105 @@ def test_reroute_out_of_overlapping_cylinders() -> None:
         for a in (k * math.pi / 4 for k in range(8))
     ]
     assert reroute([(0.0, 10.0), (0.0, -300.0)], ring) is None
+
+
+def test_reroute_around_overlapping_cylinders_of_one_person() -> None:
+    """One person seen again and again: cylinders a few metres apart. The way around
+    one alone runs into the next; the group is passed as one, on the short side, with
+    the margin, and the corners of the search after it are kept."""
+    cyl = [((0.0, 0.0), 35.0), ((8.0, 4.0), 40.0), ((-6.0, 9.0), 33.0), ((3.0, -10.0), 38.0)]
+    route: list[Xy] = [(-5.0, -200.0), (-5.0, 200.0), (100.0, 200.0)]
+    out = reroute(route, cyl, area=BOX)
+    assert out is not None
+    assert xy_route_violation(out, cyl) is None
+    assert out[0] == route[0] and out[-2:] == route[1:]
+    around = out[1:-2]
+    assert around and all(p[0] < 0.0 for p in around)  # the west side, the shorter one
+    assert all(math.dist(p, c) >= r + KEEPOUT_ARC_MARGIN_M - 1e-6 for p in around for c, r in cyl)
+    _check_margin(out, route, cyl)
+    # Only one side inside the area: that one.
+    east = Polygon(((-20.0, -400.0), (400.0, -400.0), (400.0, 400.0), (-20.0, 400.0)))
+    out = reroute(route, cyl, area=east)
+    assert out is not None and xy_route_violation(out, cyl) is None
+    _check_margin(out, route, cyl)
+    assert all(p[0] > 0.0 for p in out[1:-2])
+    # Neither side inside the area: no way around.
+    narrow = Polygon(((-20.0, -400.0), (20.0, -400.0), (20.0, 400.0), (-20.0, 400.0)))
+    assert reroute(route, cyl, area=narrow) is None
+
+
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    route=st.lists(xy, min_size=2, max_size=8),
+    group=st.lists(
+        st.tuples(st.floats(-25, 25), st.floats(-25, 25), st.floats(30.5, 50.0)),
+        min_size=2,
+        max_size=6,
+    ),
+    centre=xy,
+)
+def test_keepout_reroute_overlapping(
+    route: list[Xy], group: list[tuple[float, float, float]], centre: Xy
+) -> None:
+    """Property: past a group of overlapping cylinders a rerouted route never enters one,
+    keeps the margin on its way around, stays in the area and keeps the corners outside
+    them in order; with room around the group inside the area there always is one."""
+    cyl = [((centre[0] + dx, centre[1] + dy), r) for dx, dy, r in group]
+    if any(math.dist(route[0], c) < r for c, r in cyl):
+        return  # starting inside: test_keepout_reroute_from_inside
+    _check_reroute(route, cyl, BOX)
+    _check_reroute(route, cyl, None)
+    boxed = reroute(route, cyl, area=BOX)
+    if boxed is not None:
+        _check_margin(boxed, route, cyl)
+    out = reroute(route, cyl)
+    assert out is not None  # no area: always a way around the group
+    _check_margin(out, route, cyl)
+
+
+def test_reroute_gives_up_on_too_large_a_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cluster of more overlapping cylinders than a group may hold has no way around
+    (the drone holds) rather than a search that keeps the executor busy."""
+    monkeypatch.setattr(keepout, "_GROUP_WORK_MAX", 10**9)  # the size limit alone
+    n = keepout._GROUP_MAX + 1
+    cyl = [((0.0, 40.0 * k), 30.0) for k in range(n)]
+    route: list[Xy] = [(-300.0, 20.0 * n), (300.0, 20.0 * n)]
+    assert reroute(route, cyl) is None
+    assert reroute(route, cyl[:-1]) is not None
+
+
+def test_reroute_bounds_the_work_of_grouped_ways(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A survey's every sweep line crosses a cluster of overlapping cylinders: the ways
+    around in one reroute check at most ``_GROUP_WORK_MAX`` legs (and one search step
+    more); with no work left there is no way around (the drone holds)."""
+    cyl = [((-40.0 + 25.0 * (k % 5), -30.0 + 30.0 * (k // 5)), 30.0 + k % 3) for k in range(20)]
+    route: list[Xy] = []
+    for k in range(16):
+        y = -337.5 + 45.0 * k
+        route += [(-600.0, y), (600.0, y)] if k % 2 == 0 else [(600.0, y), (-600.0, y)]
+    checks = [0]
+    closest = point_segment_distance
+
+    def counted(p: Xy, a: Xy, b: Xy) -> float:
+        checks[0] += 1
+        return closest(p, a, b)
+
+    monkeypatch.setattr(keepout, "point_segment_distance", counted)
+    keepout.reroute(route, cyl)
+    nodes = 2 + 24 * len(cyl)
+    assert checks[0] <= keepout._GROUP_WORK_MAX + nodes * len(cyl)
+    monkeypatch.setattr(keepout, "_GROUP_WORK_MAX", 1)
+    group = [((0.0, 0.0), 35.0), ((8.0, 4.0), 40.0)]
+    assert reroute([(-5.0, -200.0), (-5.0, 200.0)], group) is None
+
+
+def test_reroute_gives_up_after_too_many_detours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A route that keeps needing detours is given up (None), never flown half-planned."""
+    route = [(-200.0, 0.0), (200.0, 0.0)]
+    cyl = [((0.0, 0.0), 30.0)]
+    assert reroute(route, cyl) is not None
+    monkeypatch.setattr(keepout, "_MAX_DETOURS", 0)
+    assert reroute(route, cyl) is None
 
 
 @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])

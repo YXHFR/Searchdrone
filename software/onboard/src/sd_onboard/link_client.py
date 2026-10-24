@@ -1,6 +1,8 @@
 """SD-link onboard: dials the ground station, feeds the executor and sends back what it
 says. Acks and events wait in a bounded queue while the link is down (events: the newest
-500, oldest sent first); the state snapshot goes out at 2 Hz while connected.
+500, oldest sent first); the state snapshot goes out at 2 Hz while connected. Each event
+carries the mission it happened in, so one that reaches the ground after the mission has
+closed still lands in that mission's log.
 
 Stick values (``ManualControl``) are never forwarded from here: the ground station sends
 the pilot's sticks to the flight controller itself (as 250/190, the way STOP goes), so
@@ -75,8 +77,8 @@ PERCEPTION_TTL_MS: Final = 30_000  # a report or crop delivered later than this 
 _WATCH_S: Final = 0.1
 
 
-def _event_of(envelope: Envelope) -> OnboardEvent:
-    return OnboardEvent.model_validate(envelope.body)
+def _event_of(envelope: Envelope) -> tuple[OnboardEvent, UUID | None]:
+    return OnboardEvent.model_validate(envelope.body), envelope.mission_id
 
 
 class OnboardLink:
@@ -94,7 +96,7 @@ class OnboardLink:
             clock=clock,
         )
         self._session: LinkSession | None = None
-        self._events: deque[OnboardEvent] = deque(maxlen=MAX_EVENTS)
+        self._events: deque[tuple[OnboardEvent, UUID | None]] = deque(maxlen=MAX_EVENTS)
         self._acks: deque[Callable[[LinkSession], Awaitable[object]]] = deque(maxlen=MAX_ACKS)
         self._perception: deque[list[PerceptionReport | CropData]] = deque(maxlen=MAX_PERCEPTION)
         self.dropped_perception = 0
@@ -130,7 +132,9 @@ class OnboardLink:
             self.dropped_events += 1
             log.warning("link down too long: oldest event dropped (%d so far)", self.dropped_events)
         clean = {k: (str(v) if isinstance(v, UUID) else v) for k, v in data.items()}
-        self._events.append(OnboardEvent(type=type, severity=severity, data=clean))
+        charter = None if self.executor is None else self.executor.charter
+        mission_id = None if charter is None else charter.mission_id
+        self._events.append((OnboardEvent(type=type, severity=severity, data=clean), mission_id))
         self._wake.set()
 
     def perception(self, out: Perception) -> None:
@@ -177,7 +181,7 @@ class OnboardLink:
             asyncio.ensure_future(self._watch(session)),
         ]
         self._wake.set()
-        lost: list[OnboardEvent] = []
+        lost: list[tuple[OnboardEvent, UUID | None]] = []
         try:
             while True:
                 event = await session.next_event()
@@ -290,7 +294,8 @@ class OnboardLink:
                     await self._acks[0](session)
                     self._acks.popleft()
                 while self._events:
-                    await session.send(self._events[0])
+                    event, mission_id = self._events[0]
+                    await session.send(event, mission_id=mission_id)
                     self._events.popleft()
                 # One message per round (a report, then its crops one by one), and only
                 # with nothing more urgent waiting.
