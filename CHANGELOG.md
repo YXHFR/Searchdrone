@@ -418,8 +418,8 @@ All notable changes to this project are listed here. The format follows
 - The nightly SK06 comparison no longer ends a run when the keep-out reflex stops a
   sector's search (`KEEPOUT_VIOLATION`). The test then stopped ordering sectors, the
   drone flew home after one sector and the run counted as not found (900 s): two of the
-  50 runs without the map in the nightly of 24 October. The sector is now ordered once
-  more, planned around the cylinders, and then the next one, as the SK04 script does.
+  50 runs without the map in the nightly of 24 October. Such a sector is now ordered
+  again when it comes next, planned around the cylinders; stopped twice, it is passed over.
 - A search no longer stops in front of one person seen again and again. Each sighting
   brings its own keep-out cylinder, and the way around one of them ran into the next, so
   no way around was found: the drone hovered, the new search was turned down and SK09
