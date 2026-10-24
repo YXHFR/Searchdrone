@@ -28,6 +28,7 @@ __all__ = [
     "Xy",
     "distance_m",
     "line_length_m",
+    "point_segment_distance",
     "polygon_from_geojson",
 ]
 

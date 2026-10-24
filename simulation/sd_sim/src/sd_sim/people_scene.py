@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from sd_schemas.colors import COLOR_TABLE
+from sd_schemas.colors import COLOR_TABLE, ColorName
 from sd_sim import paths
 from sd_sim.farm import people
 from sd_sim.oracle_detector import lab_to_rgb
@@ -42,8 +42,7 @@ _LYING_TURN_DEG = -90.0
 def _tint(name: str | None) -> tuple[float, float, float] | None:
     if name is None:
         return None
-    ref = next(ref for key, ref in COLOR_TABLE.items() if key == name)  # a checked name
-    rgb = lab_to_rgb(ref.lab)
+    rgb = lab_to_rgb(COLOR_TABLE[ColorName(name)].lab)  # a checked name
     return (rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
 
 

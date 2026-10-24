@@ -7735,7 +7735,7 @@
     },
     "/api/v1/missions/{mission_id}/probability-map": {
       "get": {
-        "description": "The newest version of the probability map (404 before the first). ``p_b64`` and\n``pod_b64``: base64 float16, row-major, row 0 the southernmost.",
+        "description": "The newest version of the probability map, ``null`` before the first (like the\nsearch profile: no map yet is a state, not an error). ``p_b64`` and ``pod_b64``:\nbase64 float16, row-major, row 0 the southernmost.",
         "operationId": "get_probability_map_api_v1_missions__mission_id__probability_map_get",
         "parameters": [
           {
@@ -7754,7 +7754,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProbabilityMapView"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProbabilityMapView"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Probability Map Api V1 Missions  Mission Id  Probability Map Get"
                 }
               }
             },
