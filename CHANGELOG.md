@@ -418,6 +418,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The nightly SK06 comparison no longer ends a run when the keep-out reflex stops a
+  sector's search (`KEEPOUT_VIOLATION`). The test then stopped ordering sectors, the
+  drone flew home after one sector and the run counted as not found (900 s): two of the
+  50 runs without the map in the nightly of 24 October. Such a sector is now ordered
+  again when it comes next, planned around the cylinders; stopped twice, it is passed over.
 - Gazebo's camera stream starts also on a busy computer. `gz topic -p` publishes the
   request once after a fixed 0.8 s and exits 0 even when the camera plugin had not been
   found yet (gz-transport 13, its issue #47), so the stream sometimes never started and

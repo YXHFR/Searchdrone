@@ -80,10 +80,17 @@ async def _sector_order(run: SearchRun, with_map: bool, done: set[str]) -> str |
 
 
 def _fly(with_map: bool) -> Any:
+    """The sectors one by one, as the AI orders them. A search the keep-out reflex stops
+    (``KEEPOUT_VIOLATION``: a hover or no way around) leaves its sector in the running: it
+    is ordered again, planned around the cylinders from where the drone is, when it comes
+    next (with the map, the highest PSR first). Stopped a second time, it is passed over.
+    Any other end (the operator's STOP, a replaced order) ends the run."""
+
     async def fly(run: SearchRun) -> None:
         sc, survey = run.sc, dict(run.world.survey)
-        done: set[str] = set()
-        while (sector := await _sector_order(run, with_map, done)) is not None:
+        finished: set[str] = set()  # searched, or stopped by the reflex twice
+        held: set[str] = set()
+        while (sector := await _sector_order(run, with_map, finished)) is not None:
             await asyncio.sleep(3.1)  # the gate's rate limit: one AI action per 3 s
             res = await sc.order("survey_sector", {"sector_id": sector, **survey})
             assert res.get("decision") == "ALLOW", res
@@ -93,9 +100,15 @@ def _fly(with_map: bool) -> Any:
                 return (await sc.command(cid))["status"] in TERMINAL
 
             await sc.until(ended, SECTOR_LIMIT_S, f"sector {sector} searched")
-            if (await sc.command(cid))["status"] != "done":
+            after = await sc.command(cid)
+            if after["status"] == "done":
+                finished.add(sector)
+            elif after.get("status_reason") == "KEEPOUT_VIOLATION":
+                if sector in held:
+                    finished.add(sector)
+                held.add(sector)
+            else:
                 return  # stopped or replaced: the operator's or the AI's call
-            done.add(sector)
         await asyncio.sleep(3.1)
         await sc.order("return_home", {"reason": "Sektorerna är sökta."})
 
