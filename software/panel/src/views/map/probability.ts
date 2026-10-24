@@ -2,7 +2,7 @@
 // layer (how well each cell was seen), as image sources the ground draws one pixel per
 // cell. The map only ranks where to look: nothing here can start a flight.
 import { useEffect, useState } from "react";
-import { api, HttpError } from "../../api/http";
+import { api } from "../../api/http";
 import { paths } from "../../api/paths";
 import type { ProbabilityMapView } from "../../api/types";
 import { useMissionStore } from "../../state/missionStore";
@@ -97,16 +97,18 @@ export function useProbabilityLayers(
   useEffect(() => {
     if (!missionId) return;
     let stale = false;
-    api<ProbabilityMapView>(paths.probabilityMap(missionId))
+    // null: no map yet (no approved profile). An error leaves the layers as they were.
+    api<ProbabilityMapView | null>(paths.probabilityMap(missionId))
       .then((v) => {
         if (stale) return;
+        if (v === null) {
+          setMeta(null);
+          return;
+        }
         const { version, row, grid } = v;
         setMeta({ version, row, grid, frozen: v.frozen ?? false, notes: v.notes ?? [] });
       })
-      .catch((e: unknown) => {
-        // 404: no map yet (no approved profile). Anything else: the layers stay as they were.
-        if (!stale && e instanceof HttpError && e.status === 404) setMeta(null);
-      });
+      .catch(() => undefined);
     return () => {
       stale = true;
     };
