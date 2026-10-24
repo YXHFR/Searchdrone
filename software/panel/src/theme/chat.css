@@ -12,18 +12,18 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: var(--sp-2) 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-1);
 }
 .chat-empty {
   flex: 1;
-  padding: 14px;
+  padding: var(--sp-3);
   color: var(--c-mute);
 }
 .msg {
-  padding: 6px 14px 7px 12px;
+  padding: var(--sp-1) var(--sp-3) 6px 10px;
   border-left: 2px solid transparent;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -33,7 +33,7 @@
   margin-bottom: 1px;
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
 }
@@ -54,19 +54,19 @@
   color: var(--c-bad);
 }
 .answer-btn {
-  margin-top: 6px;
+  margin-top: var(--sp-2);
 }
 .msg-card {
   list-style: none;
-  padding: 6px 12px;
+  padding: var(--sp-1) var(--sp-3);
 }
 .msgs-older {
   align-self: center;
   list-style: none;
-  padding: 4px 0 8px;
+  padding: var(--sp-1) 0 var(--sp-2);
 }
 .system-line {
-  margin: 0 12px 8px;
+  margin: 0 var(--sp-3) var(--sp-2);
   padding: 6px 10px;
   border-left: 2px solid var(--c-warn);
   background: var(--c-panel-2);
@@ -76,12 +76,12 @@
 }
 .brain-row {
   min-height: 0;
-  padding: 0 14px;
+  padding: 0 var(--sp-3);
   font-size: var(--fs-small);
   color: var(--c-mute);
 }
 .brain-row:not(:empty) {
-  padding-bottom: 6px;
+  padding-bottom: var(--sp-2);
 }
 .brain-row-warn {
   color: var(--c-warn);
@@ -90,9 +90,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   margin: 0;
-  padding: 0 12px 8px;
+  padding: 0 var(--sp-3) var(--sp-2);
   border: 0;
   min-width: 0;
 }
@@ -103,8 +103,8 @@
   flex: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
   border-top: 1px solid var(--c-line);
 }
 .composer textarea {
@@ -134,24 +134,24 @@
 .approval {
   margin: 0;
   min-width: 0;
-  padding: 8px 12px 10px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-3);
+  border-radius: var(--r);
   background: var(--c-panel);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-1);
   white-space: normal;
 }
 .approval:has(.approval-need) {
   border-color: var(--c-warn);
-  border-left-width: 3px;
+  border-left-width: 4px;
 }
 .approval:focus-visible {
   outline: 2px solid var(--c-focus);
 }
 .approval h3 {
-  font-size: 14px;
+  font-size: var(--fs-title);
 }
 .approval-top {
   display: flex;
@@ -164,7 +164,7 @@
 .approval-need {
   font-size: var(--fs-label);
   font-weight: 700;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-warn);
 }
@@ -177,7 +177,7 @@
 .approval-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: stretch;
 }
 .approval-actions > .btn {
@@ -189,7 +189,7 @@
   border-color: transparent;
   color: var(--c-acc);
   justify-self: start;
-  padding: 0 4px;
+  padding: 0 var(--sp-1);
 }
 .btn-decide {
   background: var(--c-panel-2);
@@ -213,12 +213,12 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   border: 1px solid var(--c-line);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
 }
 .facts > div {
   display: flex;
   flex-direction: column;
-  padding: 6px 10px;
+  padding: 6px var(--sp-2);
   border-top: 1px solid var(--c-line);
 }
 .facts > div:nth-child(-n + 2) {
@@ -241,7 +241,7 @@
 .facts dt {
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
 }
@@ -292,17 +292,17 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   overflow: hidden;
 }
 .mode-choice legend {
   float: left;
   grid-column: 1 / -1;
   width: 100%;
-  padding: 0 0 4px;
+  padding: 0 0 var(--sp-1);
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
   background: var(--c-panel);
@@ -312,7 +312,7 @@
   gap: 6px;
   align-items: center;
   min-height: var(--hit);
-  padding: 4px 8px;
+  padding: var(--sp-1) var(--sp-2);
   font-size: var(--fs-small);
   cursor: pointer;
 }
@@ -329,18 +329,18 @@
 }
 .clearance-check {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
   min-height: var(--hit);
 }
 .clearance {
-  margin: 0 12px 8px;
-  padding: 8px 10px;
+  margin: 0 var(--sp-3) var(--sp-2);
+  padding: var(--sp-2) 10px;
   border: 1px solid var(--c-warn);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
 }
 .approval .clearance {
@@ -358,22 +358,22 @@
 .limits-form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .limits-row {
   display: grid;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 .title-form {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-2);
 }
 
 /* --- the proposal's mini map ----------------------------------------------------------------- */
 .minimap {
   margin: 0;
   border: 1px solid var(--c-line);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   overflow: hidden;
 }
 .minimap svg {
@@ -443,8 +443,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
-  padding: 4px 8px;
+  gap: var(--sp-1) 6px;
+  padding: var(--sp-1) var(--sp-2);
   border-top: 1px solid var(--c-line);
   font-size: var(--fs-label);
   color: var(--c-mute);
@@ -475,8 +475,8 @@
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 12px 10px;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
   border-bottom: 1px solid var(--c-line);
   background: var(--c-warn-soft);
   border-top: 2px solid var(--c-warn);
@@ -485,21 +485,21 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 .cmd-head strong {
-  font-size: 14px;
+  font-size: var(--fs-title);
 }
 .cmd-panel .kv {
   border: 1px solid var(--c-line);
-  border-radius: var(--r-2);
+  border-radius: var(--r);
   background: var(--c-panel);
   gap: 0;
 }
 .cmd-panel .kv > div {
   flex-direction: column;
   gap: 1px;
-  padding: 6px 10px;
+  padding: 6px var(--sp-2);
 }
 .cmd-panel .kv > div + div {
   border-top: 1px solid var(--c-line);
@@ -507,7 +507,7 @@
 .cmd-panel .kv dt {
   font-size: var(--fs-label);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--c-faint);
 }

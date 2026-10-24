@@ -2,9 +2,9 @@
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  gap: var(--sp-3);
   align-content: start;
-  padding: 14px;
+  padding: var(--sp-3);
 }
 .event-log {
   list-style: none;
@@ -14,7 +14,7 @@
   overflow: auto;
 }
 .event-log li {
-  padding: 3px 0;
+  padding: var(--sp-1) 0;
   border-top: 1px solid var(--c-line);
 }
 .event-log li:first-child {
@@ -27,20 +27,20 @@
 .manual {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
 }
 .manual-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-3);
 }
 .sticks {
   display: flex;
   justify-content: space-around;
-  gap: 16px;
-  padding: 8px 0;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 0;
 }
 .stick-wrap {
   display: flex;
