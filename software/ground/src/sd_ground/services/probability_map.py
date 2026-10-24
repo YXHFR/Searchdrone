@@ -257,8 +257,12 @@ def _f16(a: Floats) -> str:
     return base64.b64encode(a.astype("<f2").tobytes()).decode("ascii")
 
 
-async def view(flow: MissionFlow, mission_id: str) -> ProbabilityMapView:
-    row = await _row(flow, mission_id)
+async def view(flow: MissionFlow, mission_id: str) -> ProbabilityMapView | None:
+    """The newest version, or None before the first."""
+    await flow.mission(mission_id)
+    row = await repo(flow).latest(mission_id)
+    if row is None:
+        return None
     grid, p, pod = _arrays(row)
     meta = row["grid"]
     return ProbabilityMapView(

@@ -107,6 +107,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- A detector manifest's `input_px` and `tile_px` must be integers. A manifest with, for
+  example, `"input_px": 640.0` or `"640"` is now refused when the model is loaded
+  ("Manifestets input_px och tile_px ska vara heltal"); write the plain number.
 - The panel's look is one design system (`software/panel/src/theme/tokens.css`): spacing on
   a 4 px grid, one type scale, one corner radius, one height for inline chips and segments
   (touch targets keep their 44 px) and one for pane headers. The drone's state, the
@@ -420,6 +423,18 @@ All notable changes to this project are listed here. The format follows
   drone flew home after one sector and the run counted as not found (900 s): two of the
   50 runs without the map in the nightly of 24 October. Such a sector is now ordered
   again when it comes next, planned around the cylinders; stopped twice, it is passed over.
+- Gazebo's camera stream starts also on a busy computer. `gz topic -p` publishes the
+  request once after a fixed 0.8 s and exits 0 even when the camera plugin had not been
+  found yet (gz-transport 13, its issue #47), so the stream sometimes never started and
+  the nightly smoke flight counted 0 frames. The simulator now sends the request again
+  until linksim sees frames, within the same 30 s. In the nightly Gazebo job the terrain
+  world's steps no longer depend on the stock smoke flight, and every flight in the
+  terrain world runs only after the world is built: the sd_fpv7 flight there built it
+  itself after a red smoke flight, and that took it past its 3 minutes.
+- The panel no longer logs a 404 in the browser's console for every mission without a
+  probability map. `GET /missions/{id}/probability-map` now answers 200 with `null` before
+  the first map (like the search profile); the map's picture still answers 404 then. The
+  nightly panel test in a browser on SITL failed on that console line.
 - A search no longer stops in front of one person seen again and again. Each sighting
   brings its own keep-out cylinder, and the way around one of them ran into the next, so
   no way around was found: the drone hovered, the new search was turned down and SK09

@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,10 @@ STOCK_WORLD = "iris_runway"
 # Camera frame rates of the models, used for the frame-count check.
 CAMERA_FPS = {"sd_quad14": 15, "sd_fpv7": 15, "stock": 10}
 CAMERA_WAIT_S = 30.0
+# How long a request to start the stream may go unanswered before it is sent again. The
+# plugin starts streaming on the camera's next image (10-15 per simulated second), so
+# frames arrive well within this once the request got through.
+CAMERA_CONFIRM_S = 5.0
 GZ_PASSTHROUGH = ("GZ_VERSION", "GZ_SIM_SYSTEM_PLUGIN_PATH", "GZ_SIM_RESOURCE_PATH")
 # Gazebo Harmonic's Python bindings are built for Ubuntu 24.04's system Python
 # (sd_sim.gz_stills runs with it).
@@ -129,10 +134,18 @@ def real_time_factor(
     return round((end[0] - start[0]) / (end[1] - start[1]), 3)
 
 
-def enable_camera(instance: int, timeout: float = CAMERA_WAIT_S) -> str:
+def enable_camera(
+    instance: int,
+    timeout: float = CAMERA_WAIT_S,
+    streaming: Callable[[], bool] | None = None,
+) -> str:
     """Turn on the camera's UDP stream; returns the topic that was used.
 
     The camera sensor appears a few seconds after the world, so this waits for it.
+    ``gz topic -p`` publishes once after a fixed 0.8 s and exits 0 whether or not the
+    camera plugin had been found by then (gz-transport 13, its issue #47): on a busy
+    computer the request is lost and no frame ever comes. With ``streaming`` (true once
+    frames arrive) the request is sent again until the stream runs, within ``timeout``.
     """
     end = time.monotonic() + timeout
     while True:
@@ -143,7 +156,18 @@ def enable_camera(instance: int, timeout: float = CAMERA_WAIT_S) -> str:
         if time.monotonic() > end:
             raise InfraError("Hittade ingen kamera med enable_streaming i Gazebo.")
         time.sleep(1.0)
-    res = _gz(["topic", "-t", topics[0], "-m", "gz.msgs.Boolean", "-p", "data: 1"], instance, 10)
-    if res.returncode != 0:
-        raise InfraError(f"Kunde inte slå på kameran: {res.stderr.strip()}")
-    return topics[0]
+    while True:
+        res = _gz(
+            ["topic", "-t", topics[0], "-m", "gz.msgs.Boolean", "-p", "data: 1"], instance, 10
+        )
+        if res.returncode != 0:
+            raise InfraError(f"Kunde inte slå på kameran: {res.stderr.strip()}")
+        if streaming is None:
+            return topics[0]
+        confirm = time.monotonic() + CAMERA_CONFIRM_S
+        while time.monotonic() < confirm:
+            if streaming():
+                return topics[0]
+            time.sleep(0.25)
+        if time.monotonic() > end:
+            raise InfraError("Kameran skickar inga bilder fast den har slagits på.")

@@ -217,6 +217,11 @@ class Stack:
         with LOOPBACK_OPENER.open(req, timeout=2) as resp:
             return json.loads(resp.read())
 
+    def video_frames(self) -> int:
+        """Camera frames linksim has passed on from the vehicle so far."""
+        flows: Any = self.linksim_get("/state")["flows"]
+        return int(flows["video"]["from_vehicle"]["rtp_frames"])
+
     def _linksim_healthy(self) -> bool:
         try:
             return self.linksim_get("/health").get("ok") is True
@@ -487,7 +492,8 @@ class Stack:
         if self.cfg.instance != 0 or self.cfg.video == "off":
             return
         if self.cfg.video == "camera" and self.world is not None:
-            gazebo.enable_camera(self.cfg.instance)
+            start = self.video_frames()
+            gazebo.enable_camera(self.cfg.instance, streaming=lambda: self.video_frames() > start)
         elif self.cfg.video == "test":
             self.group.start(
                 "testvideo",
