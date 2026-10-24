@@ -8,6 +8,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `detector=model` for `just sim-headless`, `just demo`, `just demo-search` and `just
+  e2e-search`: the simulator runs the owner's trained person detector
+  (`SD_DETECTOR_MODEL` or `model=<manifest .json>`) instead of the stand-in, and passes it
+  on to `sd-onboard`. The manifest and the model's SHA-256 are checked before anything
+  starts; a missing or changed model stops the start, never a fallback to the stand-in
+  (`sd_sim.detector_choice`, `sd_detect.onnx.check_model`). With Gazebo the search
+  scenario's persons stand in the world as Gazebo Fuel models where the oracle has them
+  (`sd_sim.people_scene`) and the drone carries the stills camera. The default and CI
+  keep the stand-in. How to: `tools/train/README.md`.
 - The search chain end to end in the simulator: synthetic stills of a seeded scenario
   world (`sd_sim.search_world`, `simulation/scenarios/SK*.yaml`), the detector and
   image-model oracles (`det_oracle_v0`, `vlm_oracle_v0`), the product's perception and

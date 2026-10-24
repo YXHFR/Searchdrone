@@ -316,7 +316,8 @@ sim *args:
 
 alias sim-up := sim
 
-# Like `sim` but builtin physics and a test picture as video
+# Like `sim` but builtin physics and a test picture as video (detector=model model=<.json>:
+# sd-onboard gets your trained person detector)
 sim-headless *args:
     SD_SIM__HEADLESS=1 uv run --all-packages python -m sd_sim.launch up video=test "$@"
 
@@ -383,19 +384,21 @@ ci-sitl *args:
         "$image" bash -lc "$sync"' && uv run --no-sync --package sd-sim python -m sd_sim.testrun "$@"' testrun "$@"
 
 # Full demo locked to the public CMAC home: Gazebo, SITL, database, ground station,
-# onboard computer, AI and video, then the login link (keys: lan, physics, gui, brain, ...)
+# onboard computer, AI and video, then the login link (keys: lan, physics, gui, brain,
+# detector, model, ...)
 demo *args:
     {{_just}} _step panel-build
     uv run --all-packages python -m sd_sim.launch up --demo "$@"
 
 # The search demo locally: the e2e-search run (SK01, the scripted AI and operator) with
-# Gazebo physics and its window
+# Gazebo physics and its window (keys: detector, model)
 demo-search *args:
     #!/usr/bin/env bash
     set -euo pipefail
     uv run --no-sync python tools/just_args.py demo-search "$@"
+    [[ " $* " == *" dry=1 "* ]] && exit 0
     docker compose --env-file .env -f compose.yaml up -d --wait db
-    uv run --package sd-sim python -m sd_sim.testrun mode=e2e-search physics=gz brain=scripted
+    uv run --package sd-sim python -m sd_sim.testrun mode=e2e-search physics=gz brain=scripted "$@"
 
 # The demo (SC01) and the emergency buttons end to end, headless with builtin physics,
 # the scripted commander and the test picture, in the SITL container (keys: runs, offline)
@@ -441,21 +444,32 @@ e2e *args:
     SD_SIM__REQUIRE_VIDEO=1 {{_just}} ci-sitl mode=e2e "runs=$runs" workers=4
 
 # The search demo end to end, headless with builtin physics and the scripted commander,
-# in the SITL container; writes runs/<run>/search_report.md (keys: runs)
+# in the SITL container; writes runs/<run>/search_report.md (keys: runs, detector, model).
+# detector=model flies in Gazebo on this computer with your trained person detector.
 e2e-search *args:
     #!/usr/bin/env bash
     set -euo pipefail
     uv run --no-sync python tools/just_args.py e2e-search "$@"
     runs=1
+    detector=()
     for arg in "$@"; do
         case "$arg" in
             runs=*) runs="${arg#runs=}" ;;
+            detector=*|model=*) detector+=("$arg") ;;
             dry=1) exit 0 ;;
         esac
     done
     [[ "$runs" =~ ^[1-9][0-9]?$ ]] || { echo "just e2e-search: runs= ska vara 1-99"; exit 2; }
     docker compose --env-file .env -f compose.yaml up -d --wait db
-    {{_just}} ci-sitl mode=e2e-search physics=builtin brain=scripted "runs=$runs"
+    if [[ " ${detector[*]-} " == *" detector=model "* ]]; then
+        # The SITL container has no Gazebo for the stills camera: this run is local, and
+        # sd_sim.testrun checks the model before anything starts.
+        uv run --package sd-sim python -m sd_sim.testrun mode=e2e-search physics=gz \
+            brain=scripted "runs=$runs" "${detector[@]}"
+    else
+        {{_just}} ci-sitl mode=e2e-search physics=builtin brain=scripted "runs=$runs" \
+            ${detector[@]+"${detector[@]}"}
+    fi
 
 # Performance measurement on the owner's computer: the demo with Gazebo and the cloud AI,
 # P0-P8 and the cloud model's answer time, report in data/reports/ (keys: runs, gui, eval)

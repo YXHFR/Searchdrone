@@ -6,12 +6,20 @@ confirms the person in the red jacket after viewing the picture, the drone holds
 home and lands. ``search_report.md`` in the run's folder holds the time to the find, POS,
 the queue at the end and the engines that judged the candidates; CI keeps it with the
 run's ``search_metrics.json``.
+
+``detector=model`` (``just e2e-search detector=model``, never in CI: no weights there)
+flies the same run in Gazebo with SK01's persons as 3D models (``sd_sim.people_scene``)
+and the owner's trained detector on the stills camera instead of the oracle; the run's
+report names the model. The asserts are the oracle's: a real detector that misses the
+person fails the run, which is the model's result, not a fault in the simulator.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -25,26 +33,45 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     migrated_db,
     passwords,
     scenario,
-    sim,
 )
-from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
+from test_onboard_sitl import Sim, sim_stack  # pyright: ignore[reportMissingImports]
 
-from sd_sim import search_world
+from sd_sim import detector_choice, search_world
+from sd_sim.people_scene import PeopleScene
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow, pytest.mark.brain, pytest.mark.e2e_search]
-__all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
+__all__ = ["fresh_db", "migrated_db", "passwords"]
 
 SEED = 1
 LIMIT_S = 480.0
 
 
+@pytest.fixture
+def detector() -> detector_choice.DetectorChoice:
+    """``sd_sim.testrun`` sets ``SD_SIM__DETECTOR`` only for ``detector=model``."""
+    return detector_choice.choose(environ=os.environ)
+
+
+@pytest.fixture
+def sim(detector: detector_choice.DetectorChoice) -> Iterator[Sim]:
+    if not detector.model:
+        with sim_stack() as s:
+            yield s
+        return
+    scene = PeopleScene(search_world.load("SK01", SEED))
+    with sim_stack("e2e_search_model", physics="gz", scene=scene) as s:
+        yield s
+
+
 @pytest.mark.budget_s(720)
-async def test_e2e_search_sk01(sim: Sim, migrated_db: Any, tmp_path: Path) -> None:
+async def test_e2e_search_sk01(
+    sim: Sim, detector: detector_choice.DetectorChoice, migrated_db: Any, tmp_path: Path
+) -> None:
     world = search_world.load("SK01", SEED)
     made: list[ChainOnboard] = []
 
     def factory(s: Sim, url: str, token: str) -> ChainOnboard:
-        made.append(ChainOnboard(s, url, token, world, None))
+        made.append(ChainOnboard(s, url, token, world, None, detector))
         return made[-1]
 
     async with scenario(sim, migrated_db, tmp_path, onboard_factory=factory) as sc:
