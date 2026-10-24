@@ -410,7 +410,8 @@ All notable changes to this project are listed here. The format follows
   brings its own keep-out cylinder, and the way around one of them ran into the next, so
   no way around was found: the drone hovered, the new search was turned down and SK09
   flew home without its find. Cylinders whose margins overlap are now passed as one
-  group, along the shortest way that enters none of them and stays inside the charter.
+  group, along the shortest way that keeps the 5 m margin from each of them and stays
+  inside the charter; a cluster of more than 20 has no way around (the drone holds).
 - Onboard events held back by a lost link land in the mission they happened in. They
   were filed under whatever mission was open when they arrived, so a find hold reported
   after landing (and after the mission closed) was in no mission's log (LL4). Each event
