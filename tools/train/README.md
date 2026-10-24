@@ -151,9 +151,11 @@ falls back to the stand-in. The persons stand exactly where the scenario (and th
 stand-in) has them, so the report's truth and the camera agree. Each model has the colour
 of the person's upper garment; the faces and clothes are not real people.
 
-CI always uses the stand-in: there are no weights in CI. A real detector can miss the
-person, so with `detector=model` the search demo may end without a confirmed find; that is
-a result, not a broken simulator.
+CI always uses the stand-in: there are no weights in CI. The run asserts what the stand-in
+run asserts: the person in the red jacket is found and confirmed. A real detector can miss
+the person; then `just e2e-search detector=model` fails without a confirmed find. That
+says something about the model (more training pictures, a lower threshold), not the
+simulator.
 
 ## If something goes wrong
 

@@ -50,7 +50,6 @@ from scenario_rig import H, Scenario  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
-from sd_detect.sources import MODEL_ENV
 from sd_geo import PinholeCamera
 from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.pipeline import Perception
@@ -64,6 +63,7 @@ from sd_search.match.cascade import Cascade
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource, TerrainSource
 from sd_search.profile import GroundProfileSource
 from sd_sim import world as sim_world
+from sd_sim.detector_choice import ORACLE, DetectorChoice
 from sd_sim.eval_search import RunMetrics, write_run
 from sd_sim.operator import ScriptedOperator
 from sd_sim.oracle_detector import OracleDetector, OraclePerception, SyntheticStillSource
@@ -90,8 +90,8 @@ WATCH_S = 0.25
 
 class ChainOnboard(SitlOnboard):
     """The onboard executor plus the perception task on the world's synthetic stills,
-    wired as ``sd-onboard`` wires them; with ``model`` (a checked manifest), the trained
-    detector on the Gazebo stills instead (``sim`` flies with the world's persons)."""
+    wired as ``sd-onboard`` wires them; with ``detector=model`` (a checked manifest), the
+    trained detector on the Gazebo stills instead (``sim`` flies with the world's persons)."""
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class ChainOnboard(SitlOnboard):
         token: str,
         world: World,
         keep_dir: Path | None,
-        model: Path | None = None,
+        detector: DetectorChoice = ORACLE,
     ) -> None:
         super().__init__(sim, url, token)
         cam = sim_world.STILLS
@@ -112,7 +112,7 @@ class ChainOnboard(SitlOnboard):
         self.positions: dict[str, tuple[float, float]] = {}  # detection id -> where
         self.detector: OracleDetector | None = None
         self.perception: PerceptionLoop
-        if model is None:
+        if detector.manifest is None:
             stills = SyntheticStillSource(world, telemetry, camera, env=SIM_ENV)
             self.detector = OracleDetector(stills, seed=world.seed, env=SIM_ENV)
             self.detector_name = self.detector.profile.profile_id
@@ -128,7 +128,7 @@ class ChainOnboard(SitlOnboard):
                 on_targets=self.ex.on_detections,
             )
         else:
-            self.detector_name = f"model:{model.stem}"
+            self.detector_name = detector.name
             self.perception = PerceptionLoop(
                 DirStillSource(sim.stack.stills_dir, synthetic=True),
                 telemetry,
@@ -137,7 +137,7 @@ class ChainOnboard(SitlOnboard):
                 camera,
                 period_s=PERIOD_S,
                 keep_dir=keep_dir,
-                env={**SIM_ENV, MODEL_ENV: str(model)},
+                env={**SIM_ENV, **detector.env()},
                 on_targets=self.ex.on_detections,
             )
         self.ex.camera = self.perception.capture

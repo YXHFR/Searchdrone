@@ -50,7 +50,7 @@ class DetectorChoice:
 
     @property
     def name(self) -> str:
-        """For reports: the oracle, or ``model:<manifest name>``."""
+        """For reports (``search_metrics.json``): ``model:<manifest name>``, or the mode."""
         return f"model:{self.manifest.stem}" if self.manifest is not None else self.mode
 
     def env(self) -> dict[str, str]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -159,19 +160,23 @@ def test_a_wrong_manifest_is_refused(tmp_path: Path, over: dict[str, object], wh
         load_model(_manifest(tmp_path, **over))
 
 
+@pytest.mark.parametrize("check", [check_model, load_model])
 @pytest.mark.parametrize(
     ("over", "why"),
     [
         ({"sha256": "1" * 64}, "kontrollsumma"),
         ({"onnx": "gone.onnx"}, "finns inte"),
         ({"schema": "other"}, "manifest"),
+        ({"input_px": 100}, "delbart med 32"),
+        ({"input_px": "640"}, "heltal"),
+        ({"tile_px": 16}, "minst 32"),
     ],
 )
 def test_check_model_refuses_what_load_model_refuses(
-    tmp_path: Path, over: dict[str, object], why: str
+    tmp_path: Path, over: dict[str, object], why: str, check: Callable[[Path], object]
 ) -> None:
     with pytest.raises(ModelError, match=why):
-        check_model(_manifest(tmp_path, **over))
+        check(_manifest(tmp_path, **over))
 
 
 def test_check_model_gives_the_checked_file(tmp_path: Path) -> None:

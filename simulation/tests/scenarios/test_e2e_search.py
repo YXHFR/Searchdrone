@@ -10,8 +10,8 @@ run's ``search_metrics.json``.
 ``detector=model`` (``just e2e-search detector=model``, never in CI: no weights there)
 flies the same run in Gazebo with SK01's persons as 3D models (``sd_sim.people_scene``)
 and the owner's trained detector on the stills camera instead of the oracle; the run's
-report names the model. A real detector may miss the person, so the find is not
-guaranteed there the way it is with the oracle.
+report names the model. The asserts are the oracle's: a real detector that misses the
+person fails the run, which is the model's result, not a fault in the simulator.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ async def test_e2e_search_sk01(
     made: list[ChainOnboard] = []
 
     def factory(s: Sim, url: str, token: str) -> ChainOnboard:
-        made.append(ChainOnboard(s, url, token, world, None, detector.manifest))
+        made.append(ChainOnboard(s, url, token, world, None, detector))
         return made[-1]
 
     async with scenario(sim, migrated_db, tmp_path, onboard_factory=factory) as sc:

@@ -42,7 +42,8 @@ _LYING_TURN_DEG = -90.0
 def _tint(name: str | None) -> tuple[float, float, float] | None:
     if name is None:
         return None
-    rgb = lab_to_rgb(tuple(float(v) for v in COLOR_TABLE[name].lab))  # type: ignore[index, arg-type]
+    ref = next(ref for key, ref in COLOR_TABLE.items() if key == name)  # a checked name
+    rgb = lab_to_rgb(ref.lab)
     return (rgb[0] / 255, rgb[1] / 255, rgb[2] / 255)
 
 

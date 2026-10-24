@@ -82,3 +82,34 @@ def test_the_stack_asks_for_the_models_before_it_starts(tmp_path: Path) -> None:
         st.check_people_fetched()
     plain = launch.Stack(cfg, tmp_path / "run2", repo=tmp_path)
     plain.check_people_fetched()  # nothing placed, nothing to fetch
+
+
+class _RenderedError(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("services", "video", "keeps_video"),
+    [(True, "camera", True), (True, "off", False), (False, "camera", False)],
+)
+def test_the_launcher_keeps_the_video_camera_beside_the_stills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, services: bool, video: str, keeps_video: bool
+) -> None:
+    """A launcher stack with people (``just demo detector=model``) keeps its video camera;
+    a search test's stack flies with the stills camera only, as before."""
+    cfg = config.SimConfig(
+        physics="gz", world=world.WORLD_NAME, vehicle=world.MODEL_NAME, video=video
+    )
+    scene = PeopleScene(search_world.load("SK01", 1))
+    st = launch.Stack(cfg, tmp_path / "run", scene=scene, services=services)
+    st.placed = list(scene.objects())
+    seen: dict[str, object] = {}
+
+    def render(*args: object, **kw: object) -> None:
+        seen.update(kw)
+        raise _RenderedError
+
+    monkeypatch.setattr(world, "render_world", render)
+    with pytest.raises(_RenderedError):
+        st.start_gazebo()
+    assert seen["stills"] is True and seen["video"] is keeps_video

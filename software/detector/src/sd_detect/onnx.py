@@ -84,6 +84,27 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _check_input_px(input_px: int) -> None:
+    if input_px % 32 or not 64 <= input_px <= 2048:
+        raise ModelError(f"input_px ska vara delbart med 32 (64-2048), inte {input_px}")
+
+
+def _checked_model_bytes(model_path: Path, sha256: str) -> bytes:
+    """The model file's bytes, if it exists, is not too large and has ``sha256``."""
+    if not model_path.is_file():
+        raise ModelError(f"Modellfilen finns inte: {model_path}")
+    with model_path.open("rb") as fh:
+        data = fh.read(MAX_MODEL_BYTES + 1)  # never more, even if the file grows
+    if len(data) > MAX_MODEL_BYTES:
+        raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
+    got = hashlib.sha256(data).hexdigest()
+    if got != sha256.lower():
+        raise ModelError(
+            f"Modellfilens kontrollsumma stämmer inte ({model_path.name}: {got}); den körs inte."
+        )
+    return data
+
+
 def _resize(rgb: npt.NDArray[np.uint8], width: int, height: int) -> npt.NDArray[np.uint8]:
     from PIL import Image
 
@@ -111,21 +132,8 @@ class OnnxDetector:
     ) -> None:
         if family not in FAMILIES:
             raise ModelError(f"okänd modellfamilj {family!r}")
-        if input_px % 32 or not 64 <= input_px <= 2048:
-            raise ModelError(f"input_px ska vara delbart med 32 (64-2048), inte {input_px}")
-        model_path = Path(model_path)
-        if not model_path.is_file():
-            raise ModelError(f"Modellfilen finns inte: {model_path}")
-        with model_path.open("rb") as fh:
-            data = fh.read(MAX_MODEL_BYTES + 1)  # never more, even if the file grows
-        if len(data) > MAX_MODEL_BYTES:
-            raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
-        got = hashlib.sha256(data).hexdigest()
-        if got != sha256.lower():
-            raise ModelError(
-                f"Modellfilens kontrollsumma stämmer inte ({model_path.name}: {got}); "
-                "den körs inte."
-            )
+        _check_input_px(input_px)
+        data = _checked_model_bytes(Path(model_path), sha256)
         import onnxruntime as ort
 
         options = ort.SessionOptions()
@@ -254,25 +262,23 @@ def _read_manifest(manifest_path: Path) -> dict[str, Any]:
         )
     if not re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("sha256", "")).lower()):
         raise ModelError("Manifestets sha256 ska vara 64 hextecken")
+    sizes = {k: manifest[k] for k in ("input_px", "tile_px") if k in manifest}
+    if any(type(v) is not int for v in sizes.values()):
+        raise ModelError("Manifestets input_px och tile_px ska vara heltal")
+    _check_input_px(sizes.get("input_px", 640))
+    if sizes.get("tile_px", 32) < 32:
+        raise ModelError(f"tile_px ska vara minst 32, inte {sizes['tile_px']}")
     return dict(manifest)
 
 
 def check_model(manifest_path: Path) -> Path:
     """The manifest and its model file as ``load_model`` checks them (schema, family,
-    licence, size, SHA-256), without ONNX Runtime; returns the model file. For a caller
-    that must refuse to start on a bad model rather than run without it."""
+    licence, sizes, file size, SHA-256), without ONNX Runtime; returns the model file. For
+    a caller that must refuse to start on a bad model rather than run without it."""
     manifest_path = Path(manifest_path)
     manifest = _read_manifest(manifest_path)
     model_path = manifest_path.with_name(str(manifest["onnx"]))
-    if not model_path.is_file():
-        raise ModelError(f"Modellfilen finns inte: {model_path}")
-    if model_path.stat().st_size > MAX_MODEL_BYTES:
-        raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
-    got = sha256_of(model_path)
-    if got != str(manifest["sha256"]).lower():
-        raise ModelError(
-            f"Modellfilens kontrollsumma stämmer inte ({model_path.name}: {got}); den körs inte."
-        )
+    _checked_model_bytes(model_path, str(manifest["sha256"]))
     return model_path
 
 

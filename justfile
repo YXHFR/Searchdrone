@@ -467,7 +467,8 @@ e2e-search *args:
         uv run --package sd-sim python -m sd_sim.testrun mode=e2e-search physics=gz \
             brain=scripted "runs=$runs" "${detector[@]}"
     else
-        {{_just}} ci-sitl mode=e2e-search physics=builtin brain=scripted "runs=$runs" "${detector[@]}"
+        {{_just}} ci-sitl mode=e2e-search physics=builtin brain=scripted "runs=$runs" \
+            ${detector[@]+"${detector[@]}"}
     fi
 
 # Performance measurement on the owner's computer: the demo with Gazebo and the cloud AI,
