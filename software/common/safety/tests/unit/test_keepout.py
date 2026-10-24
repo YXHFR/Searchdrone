@@ -471,14 +471,40 @@ def test_keepout_reroute_overlapping(
     _check_margin(out, route, cyl)
 
 
-def test_reroute_gives_up_on_too_large_a_group() -> None:
+def test_reroute_gives_up_on_too_large_a_group(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cluster of more overlapping cylinders than a group may hold has no way around
     (the drone holds) rather than a search that keeps the executor busy."""
+    monkeypatch.setattr(keepout, "_GROUP_WORK_MAX", 10**9)  # the size limit alone
     n = keepout._GROUP_MAX + 1
     cyl = [((0.0, 40.0 * k), 30.0) for k in range(n)]
     route: list[Xy] = [(-300.0, 20.0 * n), (300.0, 20.0 * n)]
     assert reroute(route, cyl) is None
     assert reroute(route, cyl[:-1]) is not None
+
+
+def test_reroute_bounds_the_work_of_grouped_ways(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A survey's every sweep line crosses a cluster of overlapping cylinders: the ways
+    around in one reroute check at most ``_GROUP_WORK_MAX`` legs (and one search step
+    more); with no work left there is no way around (the drone holds)."""
+    cyl = [((-40.0 + 25.0 * (k % 5), -30.0 + 30.0 * (k // 5)), 30.0 + k % 3) for k in range(20)]
+    route: list[Xy] = []
+    for k in range(16):
+        y = -337.5 + 45.0 * k
+        route += [(-600.0, y), (600.0, y)] if k % 2 == 0 else [(600.0, y), (-600.0, y)]
+    checks = [0]
+    closest = keepout._closest
+
+    def counted(a: Xy, b: Xy, c: Xy) -> float:
+        checks[0] += 1
+        return closest(a, b, c)
+
+    monkeypatch.setattr(keepout, "_closest", counted)
+    keepout.reroute(route, cyl)
+    nodes = 2 + 24 * len(cyl)
+    assert checks[0] <= keepout._GROUP_WORK_MAX + nodes * len(cyl)
+    monkeypatch.setattr(keepout, "_GROUP_WORK_MAX", 1)
+    group = [((0.0, 0.0), 35.0), ((8.0, 4.0), 40.0)]
+    assert reroute([(-5.0, -200.0), (-5.0, 200.0)], group) is None
 
 
 def test_reroute_gives_up_after_too_many_detours(monkeypatch: pytest.MonkeyPatch) -> None:

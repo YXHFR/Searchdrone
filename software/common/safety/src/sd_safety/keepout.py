@@ -10,12 +10,13 @@ the two tangents to a circle ``KEEPOUT_ARC_MARGIN_M`` outside the cylinder and a
 corners between them, on the side that stays inside the charter (the shorter if both
 do). Corners lie just outside that circle, so no straight leg between them comes
 closer. Cylinders whose margins overlap (one person seen again and again) are passed as
-one group (``_GROUP_MAX`` at most): the shortest way through the corners around each of
-them along legs that come no closer than the margin (an end already inside it: no closer
-than that end) and stay inside the charter. A route that starts inside cylinders first
-leaves them along a straight leg that goes deeper into none of them and enters no
-other: the given direction (the leg being flown), away from their centres, or the
-nearest direction that works. Pure functions in the plane of
+one group (``_GROUP_MAX`` at most, ``_GROUP_WORK_MAX`` leg checks in one reroute): the
+shortest way through the corners around each of them along legs that come no closer
+than the margin (an end already inside it: no closer than that end) and stay inside the
+charter. A route that starts inside cylinders first leaves them along a straight leg
+that goes deeper into none of them and enters no other: the given direction (the leg
+being flown), away from their centres, or the nearest direction that works. Pure
+functions in the plane of
 ``sd_safety.targets.Plane``.
 """
 
@@ -49,6 +50,10 @@ _MAX_DETOURS: Final = 100  # a backstop: a route that keeps needing ways around,
 # Overlapping cylinders passed as one group: at most this many (the search grows with the
 # square of their corners); a larger cluster has no way around.
 _GROUP_MAX: Final = 20
+# The grouped ways around in one reroute check at most this many legs against a cylinder
+# (about a tenth of a second here, well under the reflex's reaction time on board); more
+# and there is no way around: the drone holds instead of planning on and on.
+_GROUP_WORK_MAX: Final = 50_000
 _MARGIN_EPS_M: Final = 1e-6  # a leg along a margin polygon's edge touches the margin
 _EXIT_EPS_M: Final = 0.5  # past the circle when leaving a cylinder
 _EXIT_STEP: Final = math.radians(5.0)  # the directions tried when leaving cylinders
@@ -123,6 +128,7 @@ def reroute(
     out += [p for p in route[1:] if not any(math.dist(p, c) < r for c, r in cyl)]
     start = len(way_out)  # the leg out of the cylinders is clear already (``_exit``)
     i, detours = start, 0
+    work = [_GROUP_WORK_MAX]  # what the grouped ways around may still check
     while i < len(out) - 1:
         a, b = out[i], out[i + 1]
         hit = _first_hit(a, b, cyl)
@@ -135,7 +141,10 @@ def reroute(
         group = _group(cyl, hit)
         if len(group) > _GROUP_MAX:
             return None
-        way = _around(a, b, cyl[hit], area) if len(group) == 1 else _around_group(a, b, group, area)
+        if len(group) == 1:
+            way = _around(a, b, cyl[hit], area)
+        else:
+            way = _around_group(a, b, group, area, work)
         if way is None:
             return None
         out[i + 1 : i + 1] = way
@@ -246,12 +255,15 @@ def _group(cyl: Sequence[Circle], hit: int) -> list[Circle]:
     return [cyl[j] for j in group]
 
 
-def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -> list[Xy] | None:
+def _around_group(
+    a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None, work: list[int]
+) -> list[Xy] | None:
     """The corners of the shortest way from ``a`` to ``b`` past cylinders whose margins
     overlap (both ends excluded): through the corners of a polygon just outside each
     margin circle that lie outside every other margin, along legs that keep the margin
     from every cylinder (a leg with an end inside a margin: no closer than that end) and
-    stay inside ``area``; None when there is no such way."""
+    stay inside ``area``; None when there is no such way, or none found before ``work``
+    (leg checks against a cylinder, shared by one reroute) runs out."""
     steps = round(2 * math.pi / _ARC_STEP)
     corners: list[Xy] = []
     for c, r in group:
@@ -265,6 +277,7 @@ def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -
     end = len(nodes) - 1
 
     def clear(p: Xy, q: Xy) -> bool:
+        work[0] -= len(group)
         for c, r in group:
             keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
             if leg_enters(p, q, c, r) or _closest(p, q, c) < keep - _MARGIN_EPS_M:
@@ -277,7 +290,7 @@ def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -
     todo = set(range(len(nodes)))
     while True:  # ends at b, or when nothing left can be reached
         i = min(todo, key=best.__getitem__)
-        if best[i] == math.inf:
+        if best[i] == math.inf or work[0] <= 0:
             return None
         if i == end:
             path: list[Xy] = []
