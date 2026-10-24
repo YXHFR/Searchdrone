@@ -481,9 +481,15 @@ async def search_run(
         and metrics.confirmed_thing != world.target.thing_id
     ):
         orders = [(c["skill"], c["status"], c.get("status_reason")) for c in await sc.commands()]
+        det = onboard.detector
+        seen = det.in_view.get(world.target.thing_id, 0)
+        drawn = sum(d.thing_id == world.target.thing_id for d in det.drawn)
+        where = world.where(world.target)
+        near = [round(distance_m(c["lat"], c["lon"], *where)) for c in await run.operator.queue()]
         raise AssertionError(
             f"no confirmed find: {metrics.decisions}; queue {metrics.queue_end}; "
-            f"AI turns {sc.brain_turns()}; orders {orders}"
+            f"AI turns {sc.brain_turns()}; orders {orders}; "
+            f"the target in {seen} stills, detected in {drawn}, cards from it at {sorted(near)} m"
         )
     return metrics
 
