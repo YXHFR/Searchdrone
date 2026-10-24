@@ -51,7 +51,15 @@ from sd_schemas.gate import GateContext, GateRequest
 from sd_schemas.mission import MissionState
 from sd_schemas.skills import PATH_MAX_LENGTH_M, GateTargets, SkillParams, SkillSpec
 
-__all__ = ["CLEAR_AROUND_DRONE", "RULES", "Facts", "Finding", "Rule", "clearance_problem"]
+__all__ = [
+    "CLEAR_AROUND_DRONE",
+    "RULES",
+    "Facts",
+    "Finding",
+    "Rule",
+    "clearance_problem",
+    "route_battery_pct",
+]
 
 CLEAR_AROUND_DRONE: Final = "clear_around_drone"
 
@@ -473,6 +481,14 @@ def _brain_battery(f: Facts) -> list[Finding]:
     return _one(pct <= margin, "BATTERY_RESERVE", battery_pct=pct, rtl_pct=f.rtl_pct)
 
 
+def route_battery_pct(route_m: float, back_m: float, speed_ms: float, top_m: float) -> float:
+    """The battery (percent) a route of ``route_m`` at ``speed_ms`` takes, with the flight
+    home of ``back_m`` after it and the landing from ``top_m`` above home; the reserve
+    (``battery_rtl_pct``) comes on top."""
+    seconds = route_m / speed_ms + back_m / EXECUTOR_DEFAULT_SPEED_MS + top_m / ROUTE_DESCENT_MS
+    return seconds / 60.0 * ROUTE_BATTERY_PCT_PER_MIN
+
+
 def _route_battery(f: Facts) -> list[Finding]:
     """A drawn path: the drawn line (``path[1:]``, as saved) not longer than the cap, and
     the battery lasts for the way there, the line, the flight home from its end and the
@@ -495,12 +511,7 @@ def _route_battery(f: Facts) -> list[Finding]:
     end, home = t.path[-1], charter.home
     back_m = distance_m(end.lat, end.lon, home.lat, home.lon)
     speed = t.speed_ms or EXECUTOR_DEFAULT_SPEED_MS
-    seconds = (
-        route_m / speed
-        + back_m / EXECUTOR_DEFAULT_SPEED_MS
-        + max(t.alts_m, default=0.0) / ROUTE_DESCENT_MS
-    )
-    need = f.rtl_pct + seconds / 60.0 * ROUTE_BATTERY_PCT_PER_MIN
+    need = f.rtl_pct + route_battery_pct(route_m, back_m, speed, max(t.alts_m, default=0.0))
     return out + _one(
         not math.isfinite(need) or pct < need,
         "ROUTE_BATTERY",
