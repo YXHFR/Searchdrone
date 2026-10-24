@@ -135,10 +135,10 @@ async def test_own_detections_under_the_drone_during_a_search(
         before = next(s for s in reversed(sc.track) if s.t <= now.t - 1.0)
         (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
         step = math.dist((e, n), (e0, n0))
-        ue, un = (e - e0) / step, (n - n0) / step
+        de, dn = (e - e0) / step, (n - n0) / step
         centres = [
-            plane.latlon(e + 6.0 * ue, n + 6.0 * un),
-            plane.latlon(e - 13.0 * ue, n - 13.0 * un),
+            plane.latlon(e + 6.0 * de, n + 6.0 * dn),
+            plane.latlon(e - 13.0 * de, n - 13.0 * dn),
         ]
         since = time.monotonic()
         sc.r.onboard.ex.on_detections([person(c) for c in centres])
