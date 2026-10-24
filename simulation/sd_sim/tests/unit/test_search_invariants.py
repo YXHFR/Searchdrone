@@ -114,6 +114,14 @@ def test_searching_again_after_the_way_home_is_checked() -> None:
     assert broken and broken[0].startswith("E8")
 
 
+def test_a_landing_after_stop_is_checked() -> None:
+    home = _track([(1, 95, 0), (2, 40, 0)]) + _track([(3, 60, 0)], "SMART_RTL")
+    assert keepout_never_entered([_cyl()], home + _track([(4, 90, 0)], "LAND")) == []
+    stop = _track([(1, 95, 0), (2, 40, 0)]) + _track([(3, 90, 0)], "LAND")
+    broken = keepout_never_entered([_cyl()], stop)
+    assert broken and broken[0].startswith("E8")
+
+
 def test_the_distance_counts_from_clearly_outside() -> None:
     leave = _track([(1, 95, 0), (2, 70, 0), (3, 60, 0), (4, 20, 0)])
     assert keepout_distances([_cyl()], leave) == pytest.approx(10.0, abs=0.5)

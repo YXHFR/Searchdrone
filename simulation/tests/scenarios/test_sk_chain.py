@@ -64,7 +64,7 @@ async def _run(sim: Sim, db: Any, tmp_path: Path, name: str, seed: int, **kw: An
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_sk01_chain(sim: Sim, migrated_db: Any, tmp_path: Path, seed: int) -> None:
     m = await _run(sim, migrated_db, tmp_path, "SK01", seed)
-    assert m.found or m.time_to_confirmed_s is not None
+    assert m.confirmed_thing == "target", m.decisions
 
 
 @pytest.mark.budget_s(720)

@@ -43,8 +43,10 @@ __all__ = [
 KEEPOUT_TOLERANCE_M: Final = 1.0
 CLEAR_M: Final = 5.0
 # FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
-# straight home and lands, so E8 holds for every sample flown in another mode.
+# straight home and lands, so E8 skips those samples. LAND counts as the way home only
+# after SMART_RTL or RTL: it is also the end of STOP, which is not exempt.
 HOME_MODES: Final = frozenset({"SMART_RTL", "RTL", "LAND"})
+_FLY_HOME_MODES: Final = frozenset({"SMART_RTL", "RTL"})
 
 
 def _ts(value: Any) -> dt.datetime:
@@ -133,8 +135,17 @@ class SeenKeepout:
 
 
 def _searching(track: Sequence[Sample]) -> list[Sample]:
-    """The track without the samples on the way home (``HOME_MODES``)."""
-    return [s for s in track if s.mode not in HOME_MODES]
+    """The track without the samples on the way home: SMART_RTL, RTL and the LAND
+    that follows them."""
+    out: list[Sample] = []
+    homing = False
+    for s in track:
+        if s.mode in _FLY_HOME_MODES:
+            homing = True
+        elif s.mode != "LAND" or not homing:
+            homing = False
+            out.append(s)
+    return out
 
 
 def _edge_distances(k: SeenKeepout, track: Sequence[Sample]) -> list[tuple[float, float]]:

@@ -135,12 +135,13 @@ def test_search_budget(job: str, mode: str, shards: str, seeds: str) -> None:
     assert budget_problems(budgets, count, workers) == [], (SHARD_LIMIT_S, budgets)
 
 
-def test_search_nightly_campaign_needs_30_shards() -> None:
-    """6 runs x 50 seeds of budget_s 600 on 4 workers: 29 shards leave 11 tests (three
-    runs, 30 minutes, on some worker) in some shards, 30 give each 10 (25 minutes)."""
-    campaign = [(f"t{i}", 600.0) for i in range(6 * 50)]
-    assert budget_problems(campaign, 29, 4)
-    assert budget_problems(campaign, 30, 4) == []
+def test_search_nightly_campaign_needs_38_shards() -> None:
+    """6 runs x 50 seeds of budget_s 720 on 4 workers: 37 shards leave 9 tests (three
+    runs, 36 minutes, on some worker) in some shards, 38 give each at most 8 (24 minutes);
+    sitl.yml uses 40."""
+    campaign = [(f"t{i}", 720.0) for i in range(6 * 50)]
+    assert budget_problems(campaign, 37, 4)
+    assert budget_problems(campaign, 38, 4) == []
 
 
 def test_missing_budget_is_a_usage_error(tmp_path: Path) -> None:
