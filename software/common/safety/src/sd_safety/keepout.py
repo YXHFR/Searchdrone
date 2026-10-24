@@ -10,11 +10,12 @@ the two tangents to a circle ``KEEPOUT_ARC_MARGIN_M`` outside the cylinder and a
 corners between them, on the side that stays inside the charter (the shorter if both
 do). Corners lie just outside that circle, so no straight leg between them comes
 closer. Cylinders whose margins overlap (one person seen again and again) are passed as
-one group: the shortest way through the corners around each of them that enters none of
-them and stays inside the charter. A route that starts inside cylinders first leaves
-them along a straight leg that goes deeper into none of them and enters no other: the
-given direction (the leg being flown), away from their centres, or the nearest
-direction that works. Pure functions in the plane of
+one group (``_GROUP_MAX`` at most): the shortest way through the corners around each of
+them along legs that come no closer than the margin (an end already inside it: no closer
+than that end) and stay inside the charter. A route that starts inside cylinders first
+leaves them along a straight leg that goes deeper into none of them and enters no
+other: the given direction (the leg being flown), away from their centres, or the
+nearest direction that works. Pure functions in the plane of
 ``sd_safety.targets.Plane``.
 """
 
@@ -44,7 +45,11 @@ __all__ = [
 KEEPOUT_ARC_MARGIN_M: Final = 5.0  # a way around keeps this outside the cylinder
 ORBIT_KEEPOUT_MARGIN_M: Final = 10.0  # an orbit's ring keeps this from every cylinder
 _ARC_STEP: Final = math.radians(15.0)  # the most an arc turns between two corners
-_MAX_DETOURS: Final = 100  # more ways around than this: overlapping cylinders, give up
+_MAX_DETOURS: Final = 100  # a backstop: a route that keeps needing ways around, given up
+# Overlapping cylinders passed as one group: at most this many (the search grows with the
+# square of their corners); a larger cluster has no way around.
+_GROUP_MAX: Final = 20
+_MARGIN_EPS_M: Final = 1e-6  # a leg along a margin polygon's edge touches the margin
 _EXIT_EPS_M: Final = 0.5  # past the circle when leaving a cylinder
 _EXIT_STEP: Final = math.radians(5.0)  # the directions tried when leaving cylinders
 
@@ -128,6 +133,8 @@ def reroute(
         if detours > _MAX_DETOURS:
             return None
         group = _group(cyl, hit)
+        if len(group) > _GROUP_MAX:
+            return None
         way = _around(a, b, cyl[hit], area) if len(group) == 1 else _around_group(a, b, group, area)
         if way is None:
             return None
@@ -242,8 +249,9 @@ def _group(cyl: Sequence[Circle], hit: int) -> list[Circle]:
 def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -> list[Xy] | None:
     """The corners of the shortest way from ``a`` to ``b`` past cylinders whose margins
     overlap (both ends excluded): through the corners of a polygon just outside each
-    margin circle that lie outside every other margin, along legs that enter none of the
-    cylinders and stay inside ``area``; None when there is no such way."""
+    margin circle that lie outside every other margin, along legs that keep the margin
+    from every cylinder (a leg with an end inside a margin: no closer than that end) and
+    stay inside ``area``; None when there is no such way."""
     steps = round(2 * math.pi / _ARC_STEP)
     corners: list[Xy] = []
     for c, r in group:
@@ -257,8 +265,10 @@ def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -
     end = len(nodes) - 1
 
     def clear(p: Xy, q: Xy) -> bool:
-        if any(leg_enters(p, q, c, r) for c, r in group):
-            return False
+        for c, r in group:
+            keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
+            if leg_enters(p, q, c, r) or _closest(p, q, c) < keep - _MARGIN_EPS_M:
+                return False
         return area is None or area.leg_outside_by(p, q) <= 0.0
 
     best = [math.inf] * len(nodes)
@@ -280,6 +290,14 @@ def _around_group(a: Xy, b: Xy, group: Sequence[Circle], area: Polygon | None) -
             d = best[i] + math.dist(nodes[i], nodes[j])
             if d < best[j] and clear(nodes[i], nodes[j]):
                 best[j], prev[j] = d, i
+
+
+def _closest(a: Xy, b: Xy, c: Xy) -> float:
+    """How close the leg ``a`` -> ``b`` comes to ``c``."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    seg2 = dx * dx + dy * dy
+    t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / seg2))
+    return math.dist((a[0] + t * dx, a[1] + t * dy), c)
 
 
 def _arc(a: Xy, b: Xy, circle: Circle, sign: float) -> list[Xy]:
