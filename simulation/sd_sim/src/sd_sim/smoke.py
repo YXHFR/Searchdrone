@@ -92,21 +92,18 @@ def count_frames(stack: Stack, result: dict[str, Any] | None = None) -> int:
     """Camera frames through the radio in FRAME_WINDOW_S, and Gazebo's real-time factor
     over the same window (camera rendering is the costly part on a computer without GPU)."""
 
-    def frames() -> int:
-        flows: Any = stack.linksim_get("/state")["flows"]
-        return int(flows["video"]["from_vehicle"]["rtp_frames"])
-
     if stack.world is None:
         raise InfraError("ingen Gazebo-värld kör")
-    gazebo.enable_camera(stack.cfg.instance)
-    start, t_start = frames(), gazebo.world_times(stack.world, stack.cfg.instance)
+    before = stack.video_frames()
+    gazebo.enable_camera(stack.cfg.instance, streaming=lambda: stack.video_frames() > before)
+    start, t_start = stack.video_frames(), gazebo.world_times(stack.world, stack.cfg.instance)
     time.sleep(FRAME_WINDOW_S)
     t_end = gazebo.world_times(stack.world, stack.cfg.instance)
     if result is not None:
         result["real_time_factor"] = gazebo.real_time_factor(t_start, t_end)
         if t_start is not None and t_end is not None and t_end[0] > t_start[0]:
             result["sim_seconds"] = round(t_end[0] - t_start[0], 2)
-    return frames() - start
+    return stack.video_frames() - start
 
 
 def hover_current(harness: Harness, seconds: float = CURRENT_WINDOW_S) -> float | None:

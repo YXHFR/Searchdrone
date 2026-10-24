@@ -415,6 +415,14 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- Gazebo's camera stream starts also on a busy computer. `gz topic -p` publishes the
+  request once after a fixed 0.8 s and exits 0 even when the camera plugin had not been
+  found yet (gz-transport 13, its issue #47), so the stream sometimes never started and
+  the nightly smoke flight counted 0 frames. The simulator now sends the request again
+  until linksim sees frames, within the same 30 s. In the nightly Gazebo job the terrain
+  world's steps no longer depend on the stock smoke flight, and every flight in the
+  terrain world runs only after the world is built: the sd_fpv7 flight there built it
+  itself after a red smoke flight, and that took it past its 3 minutes.
 - The panel no longer logs a 404 in the browser's console for every mission without a
   probability map. `GET /missions/{id}/probability-map` now answers 200 with `null` before
   the first map (like the search profile); the map's picture still answers 404 then. The
