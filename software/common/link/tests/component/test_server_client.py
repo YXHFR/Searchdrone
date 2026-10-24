@@ -323,7 +323,8 @@ async def test_client_gives_up_on_a_silent_server_within_its_open_timeout(
         client = _client_to(server.sockets[0].getsockname()[1])
         started = asyncio.get_running_loop().time()
         assert await asyncio.wait_for(client.connect_once(), 3) is None
-        assert asyncio.get_running_loop().time() - started < 2
+        elapsed = asyncio.get_running_loop().time() - started
+        assert 0.25 <= elapsed < 2  # no sooner than the open timeout, nor much later
         assert accepted  # it got as far as TCP, so the timeout is what ended it
         for writer in accepted:
             writer.close()

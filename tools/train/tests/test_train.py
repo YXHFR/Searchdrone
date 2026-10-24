@@ -187,6 +187,43 @@ def test_train_step_under_mixed_precision(model: str, monkeypatch: pytest.Monkey
     assert grads and all(torch.isfinite(g).all() for g in grads)
 
 
+@pytest.mark.parametrize(
+    ("error", "falls_back"), [(torch.OutOfMemoryError, True), (RuntimeError, False)]
+)
+def test_damo_assignment_moves_to_the_cpu_only_when_memory_runs_out(
+    error: type[Exception], falls_back: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vendor.damoyolo.ota_assigner import AlignOTAAssigner
+
+    assigner = AlignOTAAssigner(center_radius=2.5, cls_weight=1.0, iou_weight=3.0)
+    real = assigner._assign
+    calls: list[int] = []
+
+    def fail_once(*a: Any, **k: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise error("first try")
+        return real(*a, **k)
+
+    monkeypatch.setattr(assigner, "_assign", fail_once)
+    priors = torch.tensor([[16.0, 16.0, 8.0, 8.0], [48.0, 48.0, 8.0, 8.0]])
+    args = (
+        torch.full((2, 1), 0.5),
+        priors,
+        torch.tensor([[8.0, 8.0, 24.0, 24.0], [40.0, 40.0, 56.0, 56.0]]),
+        torch.tensor([[6.0, 6.0, 26.0, 26.0]]),
+        torch.zeros(1, dtype=torch.long),
+    )
+    if falls_back:
+        with pytest.warns(UserWarning, match="OOM"):
+            result = assigner.assign(*args)
+        assert len(calls) == 2 and result.gt_inds.shape == (2,)
+    else:
+        with pytest.raises(RuntimeError, match="first try"):
+            assigner.assign(*args)
+        assert len(calls) == 1
+
+
 def test_missing_weights_say_what_to_run(bank: Path, tmp_path: Path) -> None:
     (bank / "models" / "pretrained" / "yolox_s.pth").unlink()
     with pytest.raises(BenchError, match="detector-fetch"):
