@@ -39,7 +39,9 @@ The detector interface, the class register and the detector sources.
   with ONNX Runtime on the CPU (letterboxed BGR input, decoding, score floor, NMS),
   after checking its size and SHA-256 against the manifest (`sd.detector-model/v1`).
   The manifest names the file, family, input size, classes, licence and what the model
-  was trained on. ONNX Runtime is imported only when a model is chosen.
+  was trained on. ONNX Runtime is imported only when a model is chosen. `check_model`
+  makes the same file checks without ONNX Runtime, for a caller that must refuse to
+  start on a bad model (the simulator's `detector=model`).
 
 A detection is only a hint for a person to look at: nothing here steers the vehicle or
 reaches the safety gate, and only a person confirms a find. No face recognition.

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_sim import paths, site
+from sd_sim.detector_choice import DETECTORS
 from sd_sim.sitl import CMAC_HOME
 
 # Global illumination for the cameras: off, or Gazebo's voxel cone tracing
@@ -78,6 +79,8 @@ class SimConfig:
     home: str = CMAC_HOME
     personal_home: bool = False
     gi: str = "off"  # "off" | "vct": global illumination for the cameras (sd_sim.site_world)
+    detector: str = "oracle"  # "oracle" | "model": the person detector (sd_sim.detector_choice)
+    model: str = ""  # detector=model: the manifest (.json); else SD_DETECTOR_MODEL
 
 
 def _bool(key: str, value: Any) -> bool:
@@ -197,6 +200,8 @@ def load(
     cfg.private_db = _bool("private_db", merged.get("private_db", False))
     cfg.open_browser = _bool("open.browser", merged.get("open_browser", True))
     cfg.gi = _choice("gi", merged.get("gi", "off"), GI_MODES)
+    cfg.detector = _choice("detector", merged.get("detector", "oracle"), DETECTORS)
+    cfg.model = str(merged.get("model", "")).strip()
     home = str(merged.get("home_override", "")).strip()
     if home and not demo:
         if not _HOME.match(home):

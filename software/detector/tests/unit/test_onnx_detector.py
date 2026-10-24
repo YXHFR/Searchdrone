@@ -19,6 +19,7 @@ from sd_detect.onnx import (
     MANIFEST_SCHEMA,
     ModelError,
     OnnxDetector,
+    check_model,
     load_model,
     sha256_of,
 )
@@ -156,6 +157,27 @@ def test_the_model_source_tiles_a_still(tmp_path: Path) -> None:
 def test_a_wrong_manifest_is_refused(tmp_path: Path, over: dict[str, object], why: str) -> None:
     with pytest.raises(ModelError, match=why):
         load_model(_manifest(tmp_path, **over))
+
+
+@pytest.mark.parametrize(
+    ("over", "why"),
+    [
+        ({"sha256": "1" * 64}, "kontrollsumma"),
+        ({"onnx": "gone.onnx"}, "finns inte"),
+        ({"schema": "other"}, "manifest"),
+    ],
+)
+def test_check_model_refuses_what_load_model_refuses(
+    tmp_path: Path, over: dict[str, object], why: str
+) -> None:
+    with pytest.raises(ModelError, match=why):
+        check_model(_manifest(tmp_path, **over))
+
+
+def test_check_model_gives_the_checked_file(tmp_path: Path) -> None:
+    assert check_model(_manifest(tmp_path)) == tmp_path / "person.onnx"
+    with pytest.raises(ModelError, match="Kan inte läsa"):
+        check_model(tmp_path / "missing.json")
 
 
 def test_a_model_over_the_size_cap_is_refused(

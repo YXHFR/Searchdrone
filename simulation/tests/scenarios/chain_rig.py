@@ -7,7 +7,9 @@ the product's own:
   ``sd-onboard`` wires them (target detections to the executor's keep-out cylinders, the
   executor's stills to ``capture``); the stills are ``SyntheticStillSource``'s pictures
   of the scenario's world from the flight controller's position, and the detector is
-  ``OracleDetector`` (``det_oracle_v0``);
+  ``OracleDetector`` (``det_oracle_v0``). With a ``model`` (``detector=model``) the
+  stills are Gazebo's (the world's persons as models, ``sd_sim.people_scene``) and the
+  detector the owner's trained one, as ``sd-onboard`` runs it;
 * ``sd-search`` runs as its CLI builds it (fusion, ``ColorScorer``, the probability map,
   the cascade) with ``OracleMatcher`` (``vlm_oracle_v0``) as the image model;
 * ``sd-brain`` runs with the ``ScriptedBackend`` and the scenario's search script
@@ -48,8 +50,11 @@ from scenario_rig import H, Scenario  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
+from sd_detect.sources import MODEL_ENV
 from sd_geo import PinholeCamera
+from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.pipeline import Perception
+from sd_onboard.perception.sources import DirStillSource
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.probmap import ProbabilityGrid
 from sd_search.app import SearchService
@@ -85,9 +90,18 @@ WATCH_S = 0.25
 
 class ChainOnboard(SitlOnboard):
     """The onboard executor plus the perception task on the world's synthetic stills,
-    wired as ``sd-onboard`` wires them."""
+    wired as ``sd-onboard`` wires them; with ``model`` (a checked manifest), the trained
+    detector on the Gazebo stills instead (``sim`` flies with the world's persons)."""
 
-    def __init__(self, sim: Sim, url: str, token: str, world: World, keep_dir: Path | None) -> None:
+    def __init__(
+        self,
+        sim: Sim,
+        url: str,
+        token: str,
+        world: World,
+        keep_dir: Path | None,
+        model: Path | None = None,
+    ) -> None:
         super().__init__(sim, url, token)
         cam = sim_world.STILLS
         camera = PinholeCamera(int(cam["width"]), int(cam["height"]), float(cam["hfov_deg"]))
@@ -95,20 +109,37 @@ class ChainOnboard(SitlOnboard):
         def telemetry() -> Any:
             return self.vehicle.telemetry
 
-        stills = SyntheticStillSource(world, telemetry, camera, env=SIM_ENV)
-        self.detector = OracleDetector(stills, seed=world.seed, env=SIM_ENV)
         self.positions: dict[str, tuple[float, float]] = {}  # detection id -> where
-        self.perception = OraclePerception(
-            self.detector,
-            telemetry,
-            self._send,
-            self.clock,
-            camera,
-            period_s=PERIOD_S,
-            keep_dir=keep_dir,
-            env=SIM_ENV,
-            on_targets=self.ex.on_detections,
-        )
+        self.detector: OracleDetector | None = None
+        self.perception: PerceptionLoop
+        if model is None:
+            stills = SyntheticStillSource(world, telemetry, camera, env=SIM_ENV)
+            self.detector = OracleDetector(stills, seed=world.seed, env=SIM_ENV)
+            self.detector_name = self.detector.profile.profile_id
+            self.perception = OraclePerception(
+                self.detector,
+                telemetry,
+                self._send,
+                self.clock,
+                camera,
+                period_s=PERIOD_S,
+                keep_dir=keep_dir,
+                env=SIM_ENV,
+                on_targets=self.ex.on_detections,
+            )
+        else:
+            self.detector_name = f"model:{model.stem}"
+            self.perception = PerceptionLoop(
+                DirStillSource(sim.stack.stills_dir, synthetic=True),
+                telemetry,
+                self._send,
+                self.clock,
+                camera,
+                period_s=PERIOD_S,
+                keep_dir=keep_dir,
+                env={**SIM_ENV, MODEL_ENV: str(model)},
+                on_targets=self.ex.on_detections,
+            )
         self.ex.camera = self.perception.capture
 
     def _send(self, out: Perception) -> None:
@@ -291,7 +322,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
     m = RunMetrics(
         scenario=world.scenario,
         seed=world.seed,
-        detector=run.onboard.detector.profile.profile_id,
+        detector=run.onboard.detector_name,
         matcher=run.matcher.profile.profile_id,
         limit_s=world.limit_s,
         has_target=target is not None,
@@ -477,8 +508,8 @@ async def search_run(
     ):
         orders = [(c["skill"], c["status"], c.get("status_reason")) for c in await sc.commands()]
         det = onboard.detector
-        seen = det.in_view.get(world.target.thing_id, 0)
-        drawn = sum(d.thing_id == world.target.thing_id for d in det.drawn)
+        seen = -1 if det is None else det.in_view.get(world.target.thing_id, 0)
+        drawn = -1 if det is None else sum(d.thing_id == world.target.thing_id for d in det.drawn)
         where = world.where(world.target)
         near = [round(distance_m(c["lat"], c["lon"], *where)) for c in await run.operator.queue()]
         raise AssertionError(

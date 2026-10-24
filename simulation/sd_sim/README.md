@@ -23,8 +23,8 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just test-sitl [sc=SC00] [physics=builtin\|gz] [mode=pr\|nightly\|search\|search-nightly\|e2e-search] [seeds=1-50] [workers=N] [shard=N shards=M]` | Runs the scenario tests (pytest with `sd_sim.pytest_plugin`). Each test writes `runs/<run>/result.json`; the run writes `runs/summary.md`. The search chain's sets run only in their own modes: `search` (the pull request set), `search-nightly` (the nightly campaign over `seeds=`, `A-B` or `1,2,3`, default 1-3) and `e2e-search` (the search demo). |
 | `just test-video [physics=builtin\|gz]` | Video tests against MediaMTX (`just video-up`; the browser test also needs `just db-up migrate` and Google Chrome): publishing password, loopback-only ports, the delay read from the time code strip, recordings per mission, LAN mode. |
 | `just ci-sitl [same keys]` | Runs the same tests inside the SITL image, exactly like the `sitl` CI job. |
-| `just e2e-search [runs=N]` | The search demo end to end in the SITL image with the database from `compose.yaml`, like the `e2e-search` CI job; writes `runs/<run>/search_report.md` and `search_metrics.json`. |
-| `just demo-search` | The e2e-search run (SK01, scripted AI and operator) locally with Gazebo physics and its window. |
+| `just e2e-search [runs=N] [detector=model] [model=<.json>]` | The search demo end to end in the SITL image with the database from `compose.yaml`, like the `e2e-search` CI job; writes `runs/<run>/search_report.md` and `search_metrics.json`. `detector=model` flies it on this computer in Gazebo with the SK01 persons as models and the owner's trained detector (`sd_sim.detector_choice`, `sd_sim.people_scene`; `tools/train/README.md`). |
+| `just demo-search [detector=model] [model=<.json>]` | The e2e-search run (SK01, scripted AI and operator) locally with Gazebo physics and its window. |
 
 ## Worlds
 

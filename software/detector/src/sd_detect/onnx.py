@@ -55,6 +55,7 @@ __all__ = [
     "ModelError",
     "ModelSource",
     "OnnxDetector",
+    "check_model",
     "load_model",
     "sha256_of",
 ]
@@ -254,6 +255,25 @@ def _read_manifest(manifest_path: Path) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{64}", str(manifest.get("sha256", "")).lower()):
         raise ModelError("Manifestets sha256 ska vara 64 hextecken")
     return dict(manifest)
+
+
+def check_model(manifest_path: Path) -> Path:
+    """The manifest and its model file as ``load_model`` checks them (schema, family,
+    licence, size, SHA-256), without ONNX Runtime; returns the model file. For a caller
+    that must refuse to start on a bad model rather than run without it."""
+    manifest_path = Path(manifest_path)
+    manifest = _read_manifest(manifest_path)
+    model_path = manifest_path.with_name(str(manifest["onnx"]))
+    if not model_path.is_file():
+        raise ModelError(f"Modellfilen finns inte: {model_path}")
+    if model_path.stat().st_size > MAX_MODEL_BYTES:
+        raise ModelError(f"Modellfilen är orimligt stor: {model_path}")
+    got = sha256_of(model_path)
+    if got != str(manifest["sha256"]).lower():
+        raise ModelError(
+            f"Modellfilens kontrollsumma stämmer inte ({model_path.name}: {got}); den körs inte."
+        )
+    return model_path
 
 
 def load_model(
