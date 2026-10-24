@@ -16,11 +16,13 @@ from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import (
     LOCAL_KEEPOUTS_MAX,
     entry_m,
+    leg_entry_m,
     merge_local,
     stop_m,
     way_out,
 )
 from sd_onboard.skills import survey_sector
+from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
 from sd_safety.targets import polygon_from_geojson
@@ -206,6 +208,150 @@ async def test_inspect_without_stills_fails_into_hold() -> None:
         await r.until(lambda: "failed" in r.up.stages(cmd.command_id), 120)
         assert r.up.codes(cmd.command_id) == ("ONB_CAMERA_UNAVAILABLE",)
         assert r.ex.state == S.HOLD
+
+
+def _dists(track: list[tuple[float, float]], centre: tuple[float, float]) -> list[float]:
+    return [math.dist(p, centre) for p in track]
+
+
+async def test_inspect_inside_new_cylinders_leaves_them_first_then_plans_from_there() -> None:
+    """The order comes with the drone inside two cylinders (the target's and an own
+    detection's): it leaves both on a straight way out that goes deeper into neither, stops
+    past them, and only then works out the point from where it stopped. The track never
+    goes back into either."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        target = keepout(20, 0, 35)
+        install(r, target)
+        r.ex.on_detections([detection(-25, 0, 0.9, 3.0)])
+        cyl = circles(r.ex.keepouts_in_force(), PLANE)
+        assert len(cyl) == 2 and all(math.dist(xy(r), c) < rad for c, rad in cyl)
+        cam = camera(r)
+        start = len(r.fc.track)
+        cmd = await r.send(r.order("inspect_detection", inspect(20, 0, 35)), 0.5)
+        assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 240)
+        assert len(cam.asked) == 5 and "executor.keepout_hold" not in r.up.kinds()
+        track = track_xy(r, start)
+        inside = [any(math.dist(p, c) < rad for c, rad in cyl) for p in track]
+        out = inside.index(False)
+        assert not any(inside[out:])
+        for c, _ in cyl:  # never deeper on the way out
+            d = _dists(track[: out + 1], c)
+            assert all(b >= a - 1e-6 for a, b in pairwise(d))
+        east, north = xy(r)
+        view = math.degrees(
+            math.atan2(math.hypot(east - 20, north), r.ex.vehicle_state().alt_rel_home_m)
+        )
+        assert view <= INSPECT_VIEW_DEG
+
+
+async def _inspect_with_a_cylinder_moved_onto_the_leg(
+    r: Rig,
+) -> tuple[Any, Keepout, int]:
+    """A target 150 m east, the point 45 m short of it; a candidate's cylinder off to the
+    north that the ground moves onto the leg (the same id) once the drone is on its way."""
+    await r.install(charter(allowed_skills=SKILLS))
+    await r.takeoff()
+    target = keepout(150, 0, 35)
+    off = keepout(60, 80, 15, source="candidate")
+    install(r, target, off)
+    camera(r)
+    cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
+    assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+    await r.until(lambda: xy(r)[0] >= 15.0, 60)
+    moved = off.model_copy(update=dict(zip(("lat", "lon"), at(60, -12), strict=True)))
+    install(r, target, moved)
+    return cmd, moved, len(r.fc.track)
+
+
+async def test_a_cylinder_moved_onto_an_inspection_leg_plans_the_leg_again() -> None:
+    async with rig() as r:
+        cmd, moved, start = await _inspect_with_a_cylinder_moved_onto_the_leg(r)
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 240)
+        assert "executor.keepout_replan" in r.up.kinds(), r.up.kinds()
+        assert "executor.keepout_hold" not in r.up.kinds()
+        assert xy_route_violation(track_xy(r, start), circles([moved], PLANE)) is None
+
+
+async def test_a_cylinder_moved_onto_an_inspection_leg_with_no_way_hovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No new leg passes the gate (here as if it ate the return reserve): the order stops
+    in a hover short of the cylinder (``KEEPOUT_VIOLATION``)."""
+    async with rig() as r:
+
+        def refused(req: GateRequest, ctx: GateContext) -> GateDecision:
+            return evaluate(req, ctx).model_copy(
+                update={"decision": "REJECT", "reason_codes": ["ROUTE_BATTERY"]}
+            )
+
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        target = keepout(150, 0, 35)
+        off = keepout(60, 80, 15, source="candidate")
+        install(r, target, off)
+        camera(r)
+        cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
+        await r.until(lambda: xy(r)[0] >= 15.0, 60)
+        monkeypatch.setattr(executor_module, "evaluate", refused)
+        moved = off.model_copy(update=dict(zip(("lat", "lon"), at(60, -12), strict=True)))
+        install(r, target, moved)
+        start = len(r.fc.track)
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        assert r.ex.hold_reason == "limit"
+        assert "executor.keepout_replan_refused" in r.up.kinds(), r.up.kinds()
+        assert ("KEEPOUT_VIOLATION",) in [c for ref, _, c in r.up.acks if ref == cmd.command_id]
+        await r.run(10)
+        assert xy_route_violation(track_xy(r, start), circles([moved], PLANE)) is None
+
+
+async def test_a_cylinder_that_shrinks_under_an_inspection_changes_nothing() -> None:
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        target = keepout(150, 0, 35)
+        near = keepout(60, -25, 20, source="candidate")
+        install(r, target, near)
+        camera(r)
+        cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
+        await r.until(lambda: xy(r)[0] >= 15.0, 60)
+        install(r, target, near.model_copy(update={"radius_m": 12.0}))
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 240)
+        kinds = r.up.kinds()
+        assert "executor.keepout_replan" not in kinds and "executor.keepout_hold" not in kinds
+
+
+async def test_cylinders_that_keep_coming_under_an_inspection_stop_it() -> None:
+    """Each time the drone comes out, a new cylinder comes around it: after ``EXITS_MAX``
+    ways out the order stops in a hover rather than chase its way out for ever."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        install(r, keepout(150, 0, 35))
+        camera(r)
+        r.ex.on_detections([detection(*xy(r), 0.9, 3.0)])
+        cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
+        assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+
+        def ended() -> bool:
+            return r.up.stages(cmd.command_id)[-1] in ("failed", "superseded")
+
+        def out() -> bool:
+            cyl = circles(r.ex.keepouts_in_force(), PLANE)
+            return all(math.dist(xy(r), c) >= rad for c, rad in cyl)
+
+        made = 0
+        while not ended():
+            await r.until(lambda: ended() or out(), 120)
+            if not ended():
+                r.ex.on_detections([detection(*xy(r), 0.9, 3.0)])
+                made += 1
+        assert made == EXITS_MAX
+        assert r.ex.state == S.HOLD
+        codes = [c for ref, _, c in r.up.acks if ref == cmd.command_id][-1]
+        assert codes in (("ONB_INSPECT_GEOMETRY",), ("KEEPOUT_VIOLATION",))
 
 
 # --- orbit ------------------------------------------------------------------------------
@@ -672,6 +818,20 @@ def test_entry_and_stop_distances() -> None:
     assert entry_m(back, cyl, through=frozenset({0})) == pytest.approx(110.0 + 70.0)
     assert stop_m(0.0) < stop_m(4.0) < stop_m(15.0)
     assert stop_m(-1.0) == stop_m(0.0)
+
+
+def test_leg_entry_from_where_the_drone_is() -> None:
+    cyl = [((0.0, 100.0), 30.0)]
+    assert leg_entry_m((0.0, 0.0), (0.0, 200.0), cyl) == pytest.approx(70.0)
+    assert leg_entry_m((0.0, 0.0), (50.0, 0.0), cyl) is None
+    assert leg_entry_m((0.0, 0.0), (0.0, 0.0), cyl) is None
+    # Inside: leaving is clear, ending inside or going deeper is an entry at once.
+    assert leg_entry_m((0.0, 90.0), (0.0, 50.0), cyl) is None
+    assert leg_entry_m((0.0, 90.0), (0.0, 80.0), cyl) == 0.0
+    assert leg_entry_m((0.0, 80.0), (0.0, 140.0), cyl) == 0.0
+    # A way out seen from a little further on comes a few cm closer: still leaving.
+    assert leg_entry_m((0.5, 90.0), (-40.0, 89.0), cyl) is None
+    assert leg_entry_m((5.0, 90.0), (-40.0, 89.0), cyl) == 0.0
 
 
 async def test_a_goto_over_a_new_own_detection_flies_on_out() -> None:

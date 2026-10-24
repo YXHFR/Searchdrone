@@ -11,6 +11,11 @@ leads out of it flies on; one whose leg leads deeper first leaves straight away 
 centre (``sd_safety.keepout.reroute``). The link-loss find move never ends in a hover
 inside a cylinder while a way out exists (:func:`way_out`).
 
+A handler that flies one straight leg at a time (``Replans``: ``inspect_detection``) is
+checked from where the drone is on every tick while it flies, every cylinder counted
+(none it may cross): its leg is planned again from there when it would enter one within
+the stop distance, through the whole gate, and held when there is no such leg.
+
 Local cylinders (from the drone's own detections) give way once a ground install at
 least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
 and while the link is down, they stay. A detection whose cylinder mostly overlaps a local
@@ -22,15 +27,15 @@ moving order in a hover.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from itertools import pairwise
 from typing import Final, Protocol, runtime_checkable
 
-from sd_onboard.skills.base import SkillHandler, SkillPlan
+from sd_onboard.skills.base import PlanContext, SkillHandler, SkillPlan
 from sd_onboard.skills.survey_sector import SurveyRun
 from sd_safety.keepout import Circle, circles, reroute, xy_route_violation
 from sd_safety.targets import Plane, Polygon, Xy, polygon_from_geojson
-from sd_schemas.base import new_id
+from sd_schemas.base import LatLonAlt, new_id
 from sd_schemas.charter import MissionCharter
 from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M, Keepout, leg_enters
 
@@ -39,9 +44,11 @@ __all__ = [
     "LOCAL_KEEPOUT_HANDOVER_MS",
     "REROUTABLE",
     "FliesSurveyRun",
+    "Replans",
     "blocks_find_move",
     "contained",
     "entry_m",
+    "leg_entry_m",
     "merge_local",
     "remaining",
     "route_clear",
@@ -59,6 +66,9 @@ _NOTHING_LEFT_M: Final = 2.0  # closer to the end than this: hovering, not flyin
 _STOP_MARGIN_M: Final = 5.0  # an order is held this far (plus its stop) short of a cylinder
 _STOP_REACT_S: Final = 1.5  # the reflex's tick, the link to the flight controller, LOITER
 _STOP_DECEL_MS2: Final = 2.0  # LOITER's braking, well under ArduCopter's default
+# A way out planned a tick ago, seen from where the drone has moved on to, may come this
+# much closer to a centre before it counts as going deeper (the drone keeps leaving).
+_DEEPER_TOL_M: Final = 1.0
 _MERGE_SHARE: Final = 0.5  # centres at most this share of the smaller radius apart: merged
 _MERGE_EPS_M: Final = 0.1  # a merged cylinder grows this much more: rounding never shrinks it
 _MERGE_GROW_MAX: Final = 2.0  # a merged cylinder: at most this many new detection radii
@@ -71,6 +81,25 @@ class FliesSurveyRun(Protocol):
     run: SurveyRun | None
 
 
+@runtime_checkable
+class Replans(Protocol):
+    """A handler that flies one straight leg at a time and can plan it again from where
+    the drone is (``inspect_detection``)."""
+
+    def leg_end(self) -> tuple[float, float] | None:
+        """Where the leg being flown ends (lat, lon); None when no leg is being flown."""
+        ...
+
+    def exiting(self) -> bool:
+        """Whether the leg being flown is a way out of cylinders."""
+        ...
+
+    def replan(self, ctx: PlanContext, allowed: Callable[[list[LatLonAlt]], bool]) -> bool:
+        """Plan the leg again from ``ctx`` and fly it if ``allowed`` takes its path;
+        False (nothing changed) when there is no such leg."""
+        ...
+
+
 def survey_run(handler: SkillHandler) -> SurveyRun | None:
     return handler.run if isinstance(handler, FliesSurveyRun) else None
 
@@ -80,9 +109,15 @@ def remaining(handler: SkillHandler, plan: SkillPlan, here: Xy, plane: Plane) ->
     run = survey_run(handler)
     if run is not None:
         return [plane.point(p) for p in run.waypoints[run.next_index :]]
-    if not plan.path:
+    if isinstance(handler, Replans):
+        leg = handler.leg_end()
+        if leg is None:
+            return []
+        end = plane.xy(*leg)
+    elif not plan.path:
         return []
-    end = plane.xy(plan.path[-1].lat, plan.path[-1].lon)
+    else:
+        end = plane.xy(plan.path[-1].lat, plan.path[-1].lon)
     return [] if math.dist(here, end) < _NOTHING_LEFT_M else [end]
 
 
@@ -130,6 +165,30 @@ def entry_m(
             return done + min(hits) * length
         done += length
     return None
+
+
+def leg_entry_m(here: Xy, end: Xy, cyl: list[Circle]) -> float | None:
+    """How far along the straight leg ``here`` -> ``end`` it first comes inside a
+    cylinder it is outside of; 0.0 when it ends inside one it is in, or comes more than
+    ``_DEEPER_TOL_M`` closer to its centre; None when clear."""
+    length = math.dist(here, end)
+    hits: list[float] = []
+    for c, r in cyl:
+        now = math.dist(here, c)
+        if now < r:
+            if math.dist(end, c) < r or _closest(here, end, c) < now - _DEEPER_TOL_M:
+                hits.append(0.0)
+        elif leg_enters(here, end, c, r):
+            hits.append(_leg_entry(here, end, c, r) * length)
+    return min(hits, default=None)
+
+
+def _closest(a: Xy, b: Xy, c: Xy) -> float:
+    """The leg a -> b's closest approach to ``c``."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    seg2 = dx * dx + dy * dy
+    t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / seg2))
+    return math.dist((a[0] + t * dx, a[1] + t * dy), c)
 
 
 def _leg_entry(a: Xy, b: Xy, c: Xy, r: float) -> float:

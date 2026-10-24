@@ -153,6 +153,12 @@ class ExecutorIO(Protocol):
     # One still now, through perception as usual (its report carries ``command_id``);
     # the still's id, or None when the camera gave none.
     async def capture_still(self, command_id: Id) -> UUID | None: ...
+    # Every cylinder in force now (read only).
+    @property
+    def keepouts(self) -> tuple[Keepout, ...]: ...
+    # Whether this order may fly ``path`` (current position first) from where the drone is
+    # now: clear of every cylinder, inside the charter and through the whole gate.
+    def leg_allowed(self, path: list[LatLonAlt]) -> bool: ...
 
 
 class SkillHandler(Protocol):

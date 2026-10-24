@@ -49,9 +49,11 @@ from sd_onboard.executor.keepout_reflex import (
     LOCAL_KEEPOUT_HANDOVER_MS,
     LOCAL_KEEPOUTS_MAX,
     REROUTABLE,
+    Replans,
     blocks_find_move,
     contained,
     entry_m,
+    leg_entry_m,
     merge_local,
     remaining,
     route_clear,
@@ -112,7 +114,7 @@ from sd_safety.constants import (
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
-from sd_safety.keepout import circles, xy_route_violation
+from sd_safety.keepout import Circle, circles, xy_route_violation
 from sd_safety.limits import (
     ABSOLUTE_MAX_ALT_AGL_M,
     ABSOLUTE_MAX_RANGE_FROM_PILOT_M,
@@ -126,7 +128,7 @@ from sd_safety.limits import (
 from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS
 from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, KEEPOUT_EXEMPT, MODE_A_EXEMPT
 from sd_safety.rules import route_battery_pct
-from sd_safety.targets import Plane, distance_m, polygon_from_geojson
+from sd_safety.targets import Plane, Xy, distance_m, polygon_from_geojson
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
@@ -301,9 +303,10 @@ _RAISABLE: Final = ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS")
 class _IO:
     """``ExecutorIO`` for one order. Every write passes the executor's send gate."""
 
-    def __init__(self, ex: Executor, origin: SendOrigin) -> None:
+    def __init__(self, ex: Executor, origin: SendOrigin, command_id: UUID | None = None) -> None:
         self._ex = ex
         self._origin = origin
+        self._command_id = command_id
         self.clock = ex.clock
 
     @property
@@ -354,6 +357,16 @@ class _IO:
         except TimeoutError:
             self._ex.emit("capture_timeout", {"command_id": str(command_id)})
             return None
+
+    @property
+    def keepouts(self) -> tuple[Keepout, ...]:
+        return self._ex.keepouts_in_force()
+
+    def leg_allowed(self, path: list[LatLonAlt]) -> bool:
+        active = self._ex.active
+        if active is None or active.command_id != self._command_id:
+            return False  # no longer this order's to fly
+        return self._ex.path_allowed(active, path)
 
 
 class Executor:
@@ -618,14 +631,14 @@ class Executor:
 
     # --- the active order ---------------------------------------------------------------
 
-    def _io(self, origin: SendOrigin) -> _IO:
-        return _IO(self, origin)
+    def _io(self, origin: SendOrigin, command_id: UUID | None = None) -> _IO:
+        return _IO(self, origin, command_id)
 
     def _start_active(self, active: _Active) -> None:
         self.active = active
 
         async def body() -> None:
-            await active.handler.start(active.plan, self._io(active.origin))
+            await active.handler.start(active.plan, self._io(active.origin, active.command_id))
 
         active.task = asyncio.ensure_future(body())
 
@@ -1567,7 +1580,9 @@ class Executor:
         self._last_tick_ms = now
         t = self.vehicle.telemetry
         self._finish_active()
-        if self._keepouts_changed or self._keepout_watch:
+        # A leg flown one at a time is checked from where the drone is on every tick.
+        replans = self.active is not None and isinstance(self.active.handler, Replans)
+        if self._keepouts_changed or self._keepout_watch or replans:
             self._keepouts_changed = False
             self._keepout_reflex()
         if self.state in AIRBORNE_CONTROLLED and not t.fc_connected:
@@ -1633,6 +1648,9 @@ class Executor:
         new = {k.keepout_id for k in keepouts} - self._keepouts_seen
         self._keepouts_through = inside & (self._keepouts_through | new)
         self._keepouts_seen = {k.keepout_id for k in keepouts}
+        if isinstance(active.handler, Replans):
+            self._replan_reflex(active, active.handler, here, rest, cyl, v.groundspeed_ms)
+            return
         run = survey_run(active.handler)
         if active.skill in REROUTABLE and run is not None:
             if entry_m([here, *rest], cyl) is not None and not self._reroute(active, run, charter):
@@ -1651,6 +1669,61 @@ class Executor:
             self._keepout_watch = True
             return
         self._keepout_hold()
+
+    def _replan_reflex(
+        self,
+        active: _Active,
+        handler: Replans,
+        here: Xy,
+        rest: list[Xy],
+        cyl: list[Circle],
+        speed_ms: float,
+    ) -> None:
+        """A leg flown one at a time (``inspect_detection``): checked from where the drone
+        is on every tick while it flies, against every cylinder (none it may cross: a
+        cylinder that comes around the drone is left on a way out of its own, and a way
+        out never goes deeper, ``leg_entry_m``). One it would enter within the stop
+        distance: the leg is planned again from here, through the whole gate, or the
+        order hovers."""
+        if not rest:
+            return
+        self._keepout_watch = True
+        if not handler.exiting() and any(math.dist(here, c) < r for c, r in cyl):
+            entry: float | None = 0.0  # a cylinder came around the drone: out of it first
+        else:
+            entry = leg_entry_m(here, rest[-1], cyl)
+        if entry is None or entry > stop_m(speed_ms):
+            return
+        ctx = self._plan_context(active.command_id)
+        if handler.replan(ctx, lambda path: self.path_allowed(active, path)):
+            self.emit(
+                "keepout_replan", {"command_id": str(active.command_id), "skill": active.skill}
+            )
+            return
+        self._keepout_hold()
+
+    def path_allowed(self, active: _Active, path: list[LatLonAlt]) -> bool:
+        """Whether the running order may fly ``path`` (current position first) from here:
+        clear of every cylinder, inside the charter, and through the whole gate (battery
+        and return reserve included), judged on the state it is flown from."""
+        charter = self.charter
+        if active.cmd is None or charter is None or self.active is not active:
+            return False
+        ctx = self._plan_context(active.command_id)
+        route = [ctx.plane.xy(p.lat, p.lon) for p in path]
+        if not route_clear(route, ctx.keepouts, ctx.plane, charter):
+            return False
+        now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
+        cmd = active.cmd.model_copy(update={"based_on": now})
+        plan = active.plan.model_copy(update={"path": path})
+        decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
+        if decision.decision != "ALLOW":
+            self.emit(
+                "keepout_replan_refused",
+                {"command_id": str(active.command_id), "codes": decision.reason_codes},
+            )
+            return False
+        return True
 
     def _find_move_reflex(self) -> None:
         """The link-loss find move meets a cylinder that came on the way (a person the

@@ -20,6 +20,13 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
   way: it hovers short of the new cylinder. Right below it (the drone inside the new
   cylinder, its leg heading deeper): it first leaves the cylinder straight out, then
   hovers outside it. Either way the find hover holds there, never inside a cylinder.
+* ``test_an_inspection_started_inside_new_cylinders``: mid-survey the drone sees a person
+  right below (two of its own cylinders around it) and the ground holds a candidate's
+  cylinder there; the pilot asks for a closer look at once. The drone leaves the
+  cylinders on a straight way out, stops, and flies to the point worked out from there;
+  meanwhile the ground moves the candidate's cylinder (or shrinks it) under the same id.
+  After the drone is out of a cylinder's shape it never comes back into it (more than a
+  metre: the track's noise), and the inspection ends done or in a keep-out hover.
 """
 
 from __future__ import annotations
@@ -54,11 +61,20 @@ from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
     surveying,
     until_event,
 )
-from test_sk_inspect import person  # pyright: ignore[reportMissingImports]
+from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
+    Camera,
+    a_detection,
+    airborne_for_inspection,
+    inspecting,
+    person,
+)
 
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_safety.constants import FIND_MOVE_DEADLINE_S, LINK_LOSS_DETECT_S, PERSON_KEEPOUT_M
 from sd_safety.targets import Plane, distance_m
+from sd_schemas.base import new_id
+from sd_schemas.keepout import Keepout
+from sd_schemas.link import KeepoutInstall
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -71,6 +87,9 @@ RING_SLACK_M = 10.0  # the flown ring's distance from its waypoint polygon and o
 SKILLS = ["orbit"]
 FIND_LOITER_BY_S = LINK_LOSS_DETECT_S + FIND_MOVE_DEADLINE_S + 0.5  # LOITER by then
 FIND_RADIUS_M = PERSON_KEEPOUT_M + 5.0  # ``find_ahead``'s find (its sigma is 5 m)
+NOISE_M = 1.0  # the flight controller's wobble and the track's sampling
+# Far above the ground's own installs in this test: a later one of those is stale.
+INSTALL_SEQ = 1_000_000
 
 
 def _inside(sc: Scenario, since: float, centre: tuple[float, float]) -> list[Any]:
@@ -293,3 +312,105 @@ async def test_a_person_seen_during_the_find_move(
         kinds = {"ahead": "find_move_keepout", "below": "find_move_keepout_exit"}
         await until_event(sc, kinds[seen])
         await _land(sc)
+
+
+def _shapes_entered(
+    shapes: list[tuple[float, float, float, float, float]], track: list[Any]
+) -> list[str]:
+    """(lat, lon, radius, since, until) per shape of a cylinder: the samples that came
+    back more than ``NOISE_M`` into one after being out of it."""
+    broken: list[str] = []
+    for lat, lon, radius, since, until in shapes:
+        out = False
+        for s in track:
+            if not since <= s.t <= until:
+                continue
+            d = distance_m(lat, lon, s.lat, s.lon) - radius
+            out = out or d >= 0.0
+            if out and d < -NOISE_M:
+                broken.append(f"{-d:.1f} m in, {s.t - since:.0f} s after the shape came")
+                break
+    return broken
+
+
+@pytest.mark.parametrize("change", ["moves", "shrinks"])
+@pytest.mark.budget_s(480)
+async def test_an_inspection_started_inside_new_cylinders(
+    sim: Any, migrated_db: Any, tmp_path: Path, change: str
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await airborne_for_inspection(sc)
+        res = await sc.operator_order("survey_sector", {"polygon": survey_box(sc)})
+        assert res["gate"]["decision"] == "ALLOW", res
+        await sc.wait_command("survey_sector", "running", 60)
+        await sc.until(lambda: _executor(sc, "SURVEY"), 120, "in the box")
+        await surveying(sc)
+        ex = sc.r.onboard.ex
+
+        # A person just ahead, right below: two of the drone's own cylinders around it
+        # (two stills of one person) and the candidate's cylinder from the ground.
+        plane = Plane(*sc.r.home)
+        now = sc.track[-1]
+        before = next(s for s in reversed(sc.track) if s.t <= now.t - 1.0)
+        (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
+        step = math.dist((e, n), (e0, n0))
+        de, dn = (e - e0) / step, (n - n0) / step
+        target = plane.latlon(e + 6.0 * de, n + 6.0 * dn)
+        det = await a_detection(sc, target)
+        ex.on_detections([person(target), person(plane.latlon(e - 13.0 * de, n - 13.0 * dn))])
+        cand = Keepout(
+            keepout_id=new_id(),
+            lat=target[0],
+            lon=target[1],
+            radius_m=RADIUS_M,
+            source="candidate",
+            source_id=new_id(),
+        )
+        ex.on_keepouts(KeepoutInstall(install_seq=INSTALL_SEQ, keepouts=[cand]), new_id())
+        Camera(sc)
+        since = time.monotonic()
+        order = await inspecting(sc, det)
+
+        # Once the drone is out of the cylinders, the ground moves (or shrinks) the
+        # candidate's cylinder under the same id.
+        def out() -> bool:
+            st = sc.sim.harness.state
+            return all(
+                distance_m(k.lat, k.lon, st.lat, st.lon) >= k.radius_m
+                for k in ex.keepouts_in_force()
+            )
+
+        await sc.until(out, 60, "out of the cylinders")
+        st = sc.sim.harness.state
+        if change == "moves":  # 12 m towards where the drone is
+            ce, cn = plane.xy(cand.lat, cand.lon)
+            here_e, here_n = plane.xy(st.lat, st.lon)
+            k = 12.0 / math.dist((ce, cn), (here_e, here_n))
+            lat, lon = plane.latlon(ce + k * (here_e - ce), cn + k * (here_n - cn))
+            later = cand.model_copy(update={"lat": lat, "lon": lon})
+        else:
+            later = cand.model_copy(update={"radius_m": PERSON_KEEPOUT_M - 10.0})
+        changed = time.monotonic()
+        ex.on_keepouts(KeepoutInstall(install_seq=INSTALL_SEQ + 1, keepouts=[later]), new_id())
+
+        await sc.until(
+            lambda: _status(sc, order["id"], "done", "superseded", "failed"), 240, "ended"
+        )
+        after = await sc.command(order["id"])
+        assert after["status"] in ("done", "superseded"), after
+        if after["status"] == "superseded":  # the keep-out hover (KEEPOUT_VIOLATION)
+            assert await onboard_events(sc, "keepout_hold"), after
+        own = [(k.lat, k.lon, k.radius_m, since, math.inf) for k, _ in ex.local_keepouts.values()]
+        shapes = [
+            *own,
+            (cand.lat, cand.lon, cand.radius_m, since, changed),
+            (later.lat, later.lon, later.radius_m, changed, math.inf),
+        ]
+        track = [s for s in sc.track if s.t >= since and s.armed]
+        broken = _shapes_entered(shapes, track)
+        assert not broken, broken
+        await _land(sc)
+
+
+async def _status(sc: Scenario, command_id: str, *want: str) -> bool:
+    return (await sc.command(command_id))["status"] in want
