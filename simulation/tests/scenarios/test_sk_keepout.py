@@ -384,9 +384,9 @@ async def test_an_inspection_started_inside_new_cylinders(
         st = sc.sim.harness.state
         if change == "moves":  # 12 m towards where the drone is
             ce, cn = plane.xy(cand.lat, cand.lon)
-            pe, pn = plane.xy(st.lat, st.lon)
-            k = 12.0 / math.dist((ce, cn), (pe, pn))
-            lat, lon = plane.latlon(ce + k * (pe - ce), cn + k * (pn - cn))
+            here_e, here_n = plane.xy(st.lat, st.lon)
+            k = 12.0 / math.dist((ce, cn), (here_e, here_n))
+            lat, lon = plane.latlon(ce + k * (here_e - ce), cn + k * (here_n - cn))
             later = cand.model_copy(update={"lat": lat, "lon": lon})
         else:
             later = cand.model_copy(update={"radius_m": PERSON_KEEPOUT_M - 10.0})
