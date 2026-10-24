@@ -33,7 +33,7 @@ import sys
 import time
 import zlib
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -196,13 +196,18 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
         now = time.monotonic()
         held = {str(k.keepout_id): k for k in ex.keepouts_in_force()}
         for kid, k in held.items():
-            if kid not in run.keepouts:
+            seen = run.keepouts.get(kid)
+            shape = (k.lat, k.lon, k.radius_m)
+            if seen is not None and (seen.lat, seen.lon, seen.radius_m) != shape:
+                # The ground moves a candidate's cylinder as its position firms up, under
+                # the same id: the old shape ends here and the new one starts.
+                run.keepouts[f"{kid}@{seen.since}"] = replace(seen, until=now)
+                seen = None
+            if seen is None:
                 run.keepouts[kid] = SeenKeepout(kid, k.lat, k.lon, k.radius_m, now)
         for kid, seen in list(run.keepouts.items()):
             if kid not in held and seen.until == math.inf:
-                run.keepouts[kid] = SeenKeepout(
-                    kid, seen.lat, seen.lon, seen.radius_m, seen.since, now
-                )
+                run.keepouts[kid] = replace(seen, until=now)
         if now - looked >= 2.0 and run.sc.mid:
             looked = now
             got = await rows(
@@ -360,7 +365,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
         "ON c.candidate_id = a.candidate_id WHERE c.mission_id = CAST(:m AS uuid)",
     )
     m.engines = sorted(str(r[0]) for r in engines)
-    m.keepouts = len(run.keepouts)
+    m.keepouts = len({k.keepout_id for k in run.keepouts.values()})
     m.keepout_min_distance_m = keepout_distances(run.keepouts.values(), sc.track)
     if m.keepout_min_distance_m is not None:
         m.keepout_min_distance_m = round(m.keepout_min_distance_m, 1)
