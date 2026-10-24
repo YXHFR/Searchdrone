@@ -15,11 +15,11 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Final
 
 from sd_ground.logging import get_logger
+from sd_ground.services.candidates import queue_counts
 from sd_safety.constants import PERSON_KEEPOUT_M
 from sd_schemas.colors import COLOR_TABLE, ColorName
 from sd_schemas.geo import local_xy
 from sd_schemas.search import (
-    PRIORITY_MEDIUM,
     AssessmentEngine,
     CandidateCard,
     CandidateState,
@@ -153,17 +153,10 @@ def candidates_line(
     att granska 4, låg 11". None for a mission without candidates."""
     if not cards:
         return None
-    # The same counts as the queue's (``candidates.cards``).
-    review = low = 0
-    for c in cards:
-        if c.state not in (_S.CONFIRMED, _S.REJECTED, _S.MERGED):
-            if c.priority >= PRIORITY_MEDIUM:
-                review += 1
-            else:
-                low += 1
+    counts = queue_counts(cards)
     shown = sorted((c for c in cards if c.state in _OPEN), key=lambda c: (-c.priority, c.seq))
     parts = [_one(c, profiles, drone) for c in shown[:LINE_CANDIDATES_MAX]]
-    parts.append(f"att granska {review}, låg {low}")
+    parts.append(f"att granska {counts['review']}, låg {counts['low']}")
     return "Kandidater: " + " | ".join(parts)
 
 

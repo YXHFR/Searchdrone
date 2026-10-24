@@ -71,7 +71,8 @@ class Record:
 
 def test_the_candidate_triggers_rank_after_the_person_and_the_detection() -> None:
     p = list(TRIGGER_PRIORITY)
-    assert p.index("candidate_decided") == p.index("operator_message") + 1
+    assert p.index("candidate_decided") == p.index("alert_critical") + 1
+    assert p.index("alert_critical") == p.index("operator_message") + 1
     assert p.index("candidate") == p.index("detection") + 1
 
 

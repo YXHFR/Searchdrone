@@ -35,7 +35,6 @@ __all__ = [
     "RunMetrics",
     "aggregate",
     "main",
-    "percentile",
     "wilson_lower",
     "write_run",
 ]
@@ -95,16 +94,6 @@ class RunMetrics:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
-def percentile(values: Sequence[float], q: float) -> float | None:
-    """The ``q``-th percentile (0-100) with linear interpolation."""
-    if not values:
-        return None
-    xs = sorted(values)
-    pos = (len(xs) - 1) * q / 100.0
-    lo, hi = math.floor(pos), math.ceil(pos)
-    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
 
 
 def wilson_lower(successes: int, n: int, z: float = Z95_TWO_SIDED) -> float:

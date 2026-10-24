@@ -20,7 +20,7 @@ def test_seeds_parse_ranges_and_lists() -> None:
     assert len(seeds("1-50")) == 50
 
 
-@pytest.mark.parametrize("bad", ["", "0", "a", "1-x", "3,3", "1-201", "-2"])
+@pytest.mark.parametrize("bad", ["", "0", "a", "1-x", "3,3", "1-201", "-2", "1,,2"])
 def test_seeds_refuse_bad_input(bad: str) -> None:
     with pytest.raises(WorldError):
         seeds(bad)

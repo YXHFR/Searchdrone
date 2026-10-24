@@ -12,7 +12,6 @@ from sd_sim.eval_search import (
     RunMetrics,
     aggregate,
     main,
-    percentile,
     wilson_lower,
     write_run,
 )
@@ -32,11 +31,9 @@ def test_found_needs_the_target_within_the_limit() -> None:
     assert run("SK01", 1, pos_end=0.5, battery_used_pct=25.0).pos_per_batt_pct == 0.02
 
 
-def test_wilson_and_percentile() -> None:
+def test_wilson() -> None:
     assert wilson_lower(50, 50) == pytest.approx(0.9287, abs=1e-3)
     assert wilson_lower(0, 0) == 0.0
-    assert percentile([1, 2, 3, 4], 50) == 2.5
-    assert percentile([], 50) is None
 
 
 def test_the_report_is_swedish_labelled_and_has_no_profile_text(tmp_path: Path) -> None:

@@ -59,9 +59,10 @@ from sd_search.match.cascade import Cascade
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource, TerrainSource
 from sd_search.profile import GroundProfileSource
 from sd_sim import world as sim_world
-from sd_sim.eval_search import RunMetrics, percentile, write_run
+from sd_sim.eval_search import RunMetrics, write_run
 from sd_sim.operator import ScriptedOperator
 from sd_sim.oracle_detector import OracleDetector, OraclePerception, SyntheticStillSource
+from sd_sim.perf.stats import percentile
 from sd_sim.report import measure
 from sd_sim.search_invariants import (
     CandidateWatch,
@@ -131,7 +132,6 @@ class SearchRun:
     plane: Plane
     matcher: OracleMatcher
     lift_t: float | None = None
-    end_t: float | None = None
     battery_start: float | None = None
     keepouts: dict[str, SeenKeepout] = field(default_factory=dict[str, SeenKeepout])
     candidates: CandidateWatch = field(default_factory=CandidateWatch)
@@ -259,16 +259,16 @@ async def _search_invariants(run: SearchRun) -> list[str]:
     return broken
 
 
-async def _map_measures(run: SearchRun) -> tuple[float | None, float | None]:
-    """POS at the end (the first map's probabilities times the last map's cumulative
-    POD) and the missing person's cell's POA percentile in the first map."""
+async def _pos_end(run: SearchRun) -> float | None:
+    """POS at the end: the first map's probabilities times the last map's cumulative
+    POD."""
     maps = await rows(
         run.sc,
         "SELECT version, grid, p, pod_cum FROM probability_maps "
         "WHERE mission_id = CAST(:m AS uuid) ORDER BY version",
     )
     if not maps:
-        return None, None
+        return None
     first, last = maps[0], maps[-1]
     g0 = ProbabilityGrid.model_validate(first.grid["grid"])
     g1 = ProbabilityGrid.model_validate(last.grid["grid"])
@@ -277,16 +277,7 @@ async def _map_measures(run: SearchRun) -> tuple[float | None, float | None]:
     same = (g0.nx, g0.ny, g0.x0_m, g0.y0_m, g0.cell_m) == (g1.nx, g1.ny, g1.x0_m, g1.y0_m,
                                                            g1.cell_m)  # fmt: skip
     pos = float((p0 * pod).sum()) if same and p0.size == pod.size else None
-    rank = None
-    target = run.world.target
-    if target is not None:
-        lat, lon = run.world.where(target)
-        x, y = Plane(g0.ipp_lat, g0.ipp_lon).xy(lat, lon)
-        i, j = math.floor((x - g0.x0_m) / g0.cell_m), math.floor((y - g0.y0_m) / g0.cell_m)
-        if 0 <= i < g0.nx and 0 <= j < g0.ny:
-            v = p0[j * g0.nx + i]
-            rank = round(100.0 * float((p0 < v).sum()) / p0.size, 1)
-    return (None if pos is None else round(pos, 4)), rank
+    return None if pos is None else round(pos, 4)
 
 
 async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
@@ -361,7 +352,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
     ms = [float(r[0]) for r in lags]
     m.latency_still_to_queue_ms = {
         "p50": None if not ms else round(statistics.median(ms)),
-        "p95": None if not ms else round(percentile(ms, 95) or 0.0),
+        "p95": None if not ms else round(percentile(ms, 0.95) or 0.0),
     }
     engines = await rows(
         sc,
@@ -373,7 +364,7 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
     m.keepout_min_distance_m = keepout_distances(run.keepouts.values(), sc.track)
     if m.keepout_min_distance_m is not None:
         m.keepout_min_distance_m = round(m.keepout_min_distance_m, 1)
-    m.pos_end, _rank = await _map_measures(run)
+    m.pos_end = await _pos_end(run)
     battery_end = sc.tel.battery_pct
     if run.battery_start is not None and battery_end is not None:
         m.battery_used_pct = round(run.battery_start - battery_end, 1)
@@ -455,7 +446,6 @@ async def search_run(
             if flying is not None and not flying.done():
                 flying.cancel()
             await sc.until(lambda: not sc.tel.armed, LANDED_LIMIT_S, "landed")
-            run.end_t = time.monotonic()
             # The last cards the operator has not reached yet are left as they are.
         finally:
             stop.set()

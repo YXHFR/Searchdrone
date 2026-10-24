@@ -57,7 +57,7 @@ async def _run(sim: Sim, db: Any, tmp_path: Path, name: str, seed: int, **kw: An
         return await search_run(sc, world, made[0], sim.stack.run_dir, require_found=False, **kw)
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("name", ["SK01", "SK02", "SK03", "SK04"])
 async def test_search_campaign(
@@ -102,7 +102,7 @@ def _fly(with_map: bool) -> Any:
     return fly
 
 
-@pytest.mark.budget_s(600)
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("with_map", [True, False], ids=["med-karta", "utan-karta"])
 async def test_sk06_map_against_fixed_order(

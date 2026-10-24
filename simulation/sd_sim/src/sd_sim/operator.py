@@ -65,7 +65,6 @@ class ScriptedOperator:
     monotonic: Callable[[], float] = time.monotonic
     decisions: list[Decision] = field(default_factory=list[Decision])
     target_first_rank: int | None = None  # the target's place when its card was first ready
-    target_first_seen: float | None = None
     target_ever_low: bool = False  # the target's card, assessed, was in the low class
     _rng: random.Random = field(init=False)
 
@@ -108,7 +107,7 @@ class ScriptedOperator:
             if c["priority_class"] == "low":
                 self.target_ever_low = True
             if self.target_first_rank is None:
-                self.target_first_rank, self.target_first_seen = rank, self.monotonic()
+                self.target_first_rank = rank
 
     async def review_once(self) -> Decision | None:
         """Look at the top open card and decide on it; ``None`` when there is none."""

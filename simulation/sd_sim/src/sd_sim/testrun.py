@@ -41,7 +41,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sd_sim import _args, paths
+from sd_sim import _args, paths, search_world
 
 ALLOWED_KEYS = (
     "mode",
@@ -71,7 +71,6 @@ MODES = ("pr", "e2e", "nightly", "panel", "search", "search-nightly", "e2e-searc
 # The search chain's sets: mode -> marker. Each runs in its own mode only.
 SEARCH_SETS = {"search": "search", "search-nightly": "search_nightly", "e2e-search": "e2e_search"}
 SEEDS_ENV = "SD_SEARCH_SEEDS"
-MAX_SEEDS = 200
 
 
 DEMO_TEST = "test_demo_flight"
@@ -113,19 +112,15 @@ def _int(values: dict[str, str], key: str, default: int, low: int, high: int) ->
 
 
 def seeds(values: dict[str, str]) -> dict[str, str]:
-    """``seeds=`` as the environment the search tests read: ``A-B`` or ``a,b,c``."""
+    """``seeds=`` as the environment the search tests read, checked as they read it
+    (``sd_sim.search_world.seeds``)."""
     raw = values.get("seeds")
     if raw is None:
         return {}
-    first, dash, last = raw.partition("-")
-    parts = [first, last] if dash else raw.split(",")
-    if not all(p.isdigit() and int(p) > 0 for p in parts):
-        _args.fail(f"sd_sim.testrun: seeds= ska vara A-B eller en lista som 1,2,3, inte {raw!r}")
-    count = int(last) - int(first) + 1 if dash else len(parts)
-    if count < 1:
-        _args.fail(f"sd_sim.testrun: seeds= {raw!r} är ett tomt intervall")
-    if count > MAX_SEEDS:
-        _args.fail(f"sd_sim.testrun: seeds= ger {count} frön, högst {MAX_SEEDS}")
+    try:
+        search_world.seeds(raw)
+    except search_world.WorldError as e:
+        _args.fail(f"sd_sim.testrun: seeds= {e}")
     return {SEEDS_ENV: raw}
 
 

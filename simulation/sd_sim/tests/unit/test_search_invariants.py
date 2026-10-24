@@ -106,6 +106,14 @@ def test_the_way_home_goes_past_cylinders() -> None:
     assert keepout_never_entered([_cyl()], searching)
 
 
+def test_searching_again_after_the_way_home_is_checked() -> None:
+    track = (
+        _track([(1, 95, 0), (2, 40, 0)]) + _track([(3, 40, 10)], "SMART_RTL") + _track([(4, 90, 0)])
+    )
+    broken = keepout_never_entered([_cyl()], track)
+    assert broken and broken[0].startswith("E8")
+
+
 def test_the_distance_counts_from_clearly_outside() -> None:
     leave = _track([(1, 95, 0), (2, 70, 0), (3, 60, 0), (4, 20, 0)])
     assert keepout_distances([_cyl()], leave) == pytest.approx(10.0, abs=0.5)

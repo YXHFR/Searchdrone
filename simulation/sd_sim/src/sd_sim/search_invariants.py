@@ -43,7 +43,7 @@ __all__ = [
 KEEPOUT_TOLERANCE_M: Final = 1.0
 CLEAR_M: Final = 5.0
 # FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
-# straight home and lands, so E8 holds for the flight up to the first such sample.
+# straight home and lands, so E8 holds for every sample flown in another mode.
 HOME_MODES: Final = frozenset({"SMART_RTL", "RTL", "LAND"})
 
 
@@ -132,15 +132,14 @@ class SeenKeepout:
     until: float = math.inf  # when it was no longer in force
 
 
-def _searching(track: Sequence[Sample]) -> Sequence[Sample]:
-    """The track up to the first sample on the way home (``HOME_MODES``)."""
-    end = next((i for i, s in enumerate(track) if s.mode in HOME_MODES), len(track))
-    return track[:end]
+def _searching(track: Sequence[Sample]) -> list[Sample]:
+    """The track without the samples on the way home (``HOME_MODES``)."""
+    return [s for s in track if s.mode not in HOME_MODES]
 
 
 def _edge_distances(k: SeenKeepout, track: Sequence[Sample]) -> list[tuple[float, float]]:
     """(t, distance outside the edge) for the armed samples while ``k`` was in force,
-    before the drone was on its way home."""
+    except those on the way home."""
     return [
         (s.t, distance_m(k.lat, k.lon, s.lat, s.lon) - k.radius_m)
         for s in _searching(track)

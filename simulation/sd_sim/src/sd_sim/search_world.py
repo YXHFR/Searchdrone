@@ -177,7 +177,7 @@ def seeds(spec: str) -> list[int]:
             if "-" in part:
                 lo, hi = (int(x) for x in part.split("-", 1))
                 out += range(lo, hi + 1)
-            elif part:
+            else:
                 out.append(int(part))
     except ValueError:
         raise WorldError(f"frön ska skrivas 1-50 eller 1,2,3, inte {spec!r}") from None
