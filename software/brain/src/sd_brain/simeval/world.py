@@ -40,6 +40,9 @@ COVERAGE_MAX_ALT_M = 80.0  # higher than this, a pass does not count as searched
 CELL_M = 10.0
 CLOSE_UP_ALT_M = 30.0
 CLOSE_UP_RADIUS_M = 15.0
+# Plans the AI did not order: no skill event when they end.
+BATTERY_ID = "battery"
+FLY_HOME_ID = "fly_home"
 
 
 def _detect_p(alt: float, visibility: float) -> float:
@@ -189,8 +192,23 @@ class SimWorld:
             return False
         return True
 
+    def fly_home(self) -> None:
+        """The pilot's FLY HOME button: home and land, past the AI (no order, no gate)."""
+        if not self.landed:
+            self.held_plan = None
+            self.plan = _Plan(
+                FLY_HOME_ID, "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True
+            )
+
     def mark(self, lat: float, lon: float, label: str) -> None:
         self.marks.append(Mark(self.t, lat, lon, label))
+
+    def marked(self, s: _Sighting) -> bool:
+        """A mark lies on this sighting's pin. The ground shows a mark as a pin of its own;
+        here the sighting's pin says so, so the AI can see what it already marked."""
+        return any(
+            math.dist(to_enu(m.lat, m.lon, *HOME), (s.east, s.north)) < 1 for m in self.marks
+        )
 
     # --- time ---------------------------------------------------------------------------
 
@@ -309,7 +327,7 @@ class SimWorld:
             if self.battery <= self.rtl_pct and not self.battery_rtl:
                 self.battery_rtl = True
                 self.plan = _Plan(
-                    "battery", "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True
+                    BATTERY_ID, "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True
                 )
                 return [
                     self._event(
@@ -328,7 +346,7 @@ class SimWorld:
                 if plan.lands:
                     self.landed = True
                     self.alt = 0.0
-                if plan.command_id != "battery":
+                if plan.command_id not in (BATTERY_ID, FLY_HOME_ID):
                     events.append(
                         self._event(
                             "event.skill",
@@ -385,7 +403,7 @@ class SimGround(FakeGround):
                 else s["pins"][i]["annotation_id"],
                 "lat": round(from_enu(g.east, g.north, *HOME)[0], 7),
                 "lon": round(from_enu(g.east, g.north, *HOME)[1], 7),
-                "note": f"möjlig person {g.confidence} %",
+                "note": f"möjlig person {g.confidence} %{', markerad' if w.marked(g) else ''}",
             }
             for i, g in enumerate(w.sightings)
         ]

@@ -114,6 +114,8 @@ def _what_went_wrong(s: dict[str, Any]) -> list[str]:
         out.append(f"låg täckning ({s['coverage']:.0%})")
     if s.get("pilot_questions"):
         out.append(f"frågade piloten ({s['pilot_questions']})")
+    if s.get("turn_cap_reached"):
+        out.append(f"nådde turgränsen ({s['turns']} turer), simulatorn flög hem")
     if not s.get("landed_home"):
         out.append("landade inte hemma")
     return out

@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from shapely.geometry import Point
 
 from sd_brain.cli import main
 from sd_brain.config import BehaviourConfig, CloudConfig
-from sd_brain.runtime.base import ModelReply, Sampling
+from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.simeval.bank import (
     BankError,
@@ -37,12 +38,12 @@ from sd_brain.simeval.budget import (
     MeteredRuntime,
     reply_cost_sek,
 )
-from sd_brain.simeval.decider import DecisionMaker, make_decision_maker
-from sd_brain.simeval.runner import fly
+from sd_brain.simeval.decider import DecisionMaker, cloud_commander, make_decision_maker
+from sd_brain.simeval.runner import _fly_home, fly
 from sd_brain.simeval.scenario import make_scenario
 from sd_brain.simeval.score import FlightLog, LoggedMark, LoggedOrder, score_flight
-from sd_brain.simeval.trend import load_scores, trend_rows, trend_text
-from sd_brain.simeval.world import SimWorld
+from sd_brain.simeval.trend import failure_rows, load_scores, trend_rows, trend_text
+from sd_brain.simeval.world import SimGround, SimWorld, _Sighting
 
 KEY = "sk-test-" + "k" * 40
 
@@ -450,3 +451,138 @@ def test_cli_sim_without_a_key_flies_the_script(
     assert "script" in capsys.readouterr().out
     assert main(["scores", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["flights"] == 2
+
+
+# --- sightings and the turn cap ---------------------------------------------------------
+
+
+class _CloudLike:
+    """Answers the way the cloud model flew the daily exam: each sector in turn, home at
+    the end, and on a sighting (``POSSIBLE_PERSON_<pin>``) either an urgent report that
+    asks the pilot to confirm (what it did) or a mark at the pin (what the prompt asks)."""
+
+    name = "cloud-like"
+    model_id = "cloud-like"
+    supports_images = False
+
+    def __init__(self, sectors: list[str], *, marks: bool) -> None:
+        self.sectors = list(sectors)
+        self.marks = marks
+        self.sighting_turns: list[list[str]] = []  # the tools offered on each sighting turn
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        timeout_s: float,
+        sampling: Sampling,
+    ) -> ModelReply:
+        block = str(messages[-1]["content"])
+        event = block.rsplit("HÄNDELSE: ", 1)[-1].splitlines()[0]
+        if len(messages) > 2 or not event.startswith(("operator_message", "skill", "alert")):
+            return _reply("")
+        if event.startswith("alert_warning"):
+            self.sighting_turns.append([t["function"]["name"] for t in tools])
+            pin = re.search(r"POSSIBLE_PERSON_(P\d+)", event)
+            assert pin is not None
+            if self.marks:
+                args = {"pin": pin[1], "label": "möjlig person", "rationale_sv": "Sågs nyss."}
+                return _reply(f"{pin[1]} är markerad, titta på den.", ("mark_location", args))
+            text = f"Möjlig person vid {pin[1]}. Bekräfta eller avvisa i panelen."
+            args = {"priority": "urgent", "text_sv": text, "rationale_sv": "Detektorn såg något."}
+            return _reply("", ("report", args))
+        if "status=done" in event and "return_home" in event:
+            return _reply("Hemma och landad.")
+        if self.sectors:
+            args = {"sector": self.sectors.pop(0), "rationale_sv": "Nästa sektor."}
+            return _reply("", ("survey_sector", args))
+        return _reply("Klart, flyger hem.", ("return_home", {"rationale_sv": "Klart."}))
+
+
+def _reply(content: str, call: tuple[str, dict[str, Any]] | None = None) -> ModelReply:
+    calls = [RawToolCall(id="c0", name=call[0], arguments_json=json.dumps(call[1]))] if call else []
+    return ModelReply(
+        content=content or None,
+        tool_calls=calls,
+        finish_reason="tool_calls" if calls else "stop",
+    )
+
+
+async def _fly_cloud_like(seed: int, *, marks: bool) -> tuple[Any, _CloudLike]:
+    sc = make_scenario(seed)
+    runtime = _CloudLike([str(s["sector_id"]) for s in sc.situation["sectors"]], marks=marks)
+    decider = DecisionMaker(cloud_commander(runtime, BehaviourConfig()), None)
+    return await fly(sc, decider, model="m", ai_config_hash="h"), runtime
+
+
+async def test_a_sighting_only_reported_is_no_find_and_a_mark_at_its_pin_is() -> None:
+    # The daily exam's seed: the person is seen, and the scripted decider finds them.
+    seed = 1792904165
+    script = await fly(
+        make_scenario(seed), DecisionMaker(None, None), model="m", ai_config_hash="h"
+    )
+    assert script.score.found
+    told, runtime = await _fly_cloud_like(seed, marks=False)
+    # The sighting reached the model as an event with its pin, with mark_location on
+    # offer, and the world raised it on the model's own search pattern.
+    assert runtime.sighting_turns and all("mark_location" in t for t in runtime.sighting_turns)
+    assert told.score.safety.ok and told.score.coverage > 0.9
+    assert any(o.skill == "report" for o in told.log.orders)
+    assert not told.log.marks and not told.score.found  # a report is no mark: not found
+    marked, _ = await _fly_cloud_like(seed, marks=True)
+    # The same flight with a mark at the pin, through the real grammar and adapter.
+    assert marked.score.found and marked.score.passed
+
+
+def test_the_prompt_says_to_mark_a_sighting_and_fly_on() -> None:
+    system = cloud_commander(_CloudLike([], marks=True), BehaviourConfig()).context.system
+    rule = next(p for p in system.split("\n\n") if p.startswith("SIGHTINGS."))
+    assert "POSSIBLE_PERSON_<pin>" in rule and "`mark_location` with that pin" in rule
+    assert "keep flying the plan" in rule
+
+
+async def test_at_the_turn_cap_the_harness_flies_home_past_the_ai() -> None:
+    sc = make_scenario(4)
+    res = await fly(sc, DecisionMaker(None, None), model="m", ai_config_hash="h", max_turns=2)
+    assert res.score.turns == 2 and res.score.turn_cap_reached
+    # No AI order after the cap: the return home is the button's, not a skill.
+    assert [o.skill for o in res.log.orders] == ["survey_sector"] * 2
+    assert res.score.landed_home and res.score.safety.ok
+    assert res.log.duration_s < sc.max_time_s
+    rows = failure_rows([{**res.score.model_dump(), "_day": "d", "exam": True, "passed": False}])
+    assert any("turgränsen" in p for p in rows[0]["problems"])
+    free = await fly(sc, DecisionMaker(None, None), model="m", ai_config_hash="h")
+    assert not free.score.turn_cap_reached and free.score.landed_home
+
+
+def test_fly_home_overrides_the_plan_and_lands_without_a_skill_event() -> None:
+    world = SimWorld(make_scenario(4))
+    world.east, world.north = 120.0, 80.0
+    world.fly_home()
+    events: list[dict[str, Any]] = []
+    while not world.finished():
+        events += world.advance()
+    assert world.landed and abs(world.east) < 5 and abs(world.north) < 5
+    assert not any(e["type"] == "event.skill" for e in events)
+
+
+async def test_a_marked_pin_says_so_in_the_situation() -> None:
+    world = SimWorld(make_scenario(4))
+    world.sightings.append(_Sighting("P1", 50.0, 20.0, True, 80))
+    ground = SimGround(world, now=lambda: dt.datetime(2026, 10, 25, tzinfo=dt.UTC))
+    pin = (await ground.situation(ground.mission_id)).pins[0]
+    assert pin.note == "möjlig person 80 %"
+    world.mark(pin.lat, pin.lon, "möjlig person")
+    assert (await ground.situation(ground.mission_id)).pins[
+        0
+    ].note == "möjlig person 80 %, markerad"
+
+
+def test_a_stop_on_the_way_home_holds_and_the_button_flies_home_after_its_release() -> None:
+    sc = next(s for s in map(make_scenario, range(100)) if s.stop_at_s is not None)
+    assert sc.stop_at_s is not None
+    world = SimWorld(sc)
+    world.t, world.east, world.north = sc.stop_at_s - 5, 150.0, 100.0
+    _fly_home(world)
+    assert world.stop_set_at is not None and world.stop_released_at is not None
+    assert world.landed and abs(world.east) < 5 and abs(world.north) < 5

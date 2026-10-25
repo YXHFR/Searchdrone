@@ -4,7 +4,9 @@ The pilot's opening line starts the flight. Then the world runs until something 
 should hear happens (an order done, a sighting, a STOP), the event goes to the loop, and
 the loop's turn answers through the decision maker and the gate. When the drone hovers
 with nothing to do, the loop gets an idle tick; three in a row without an order end the
-flight, as do landing, the time limit and ``max_turns``.
+flight, as do landing and the time limit. At ``max_turns`` the AI gets no more turns and
+the harness presses FLY HOME, as the pilot's button does, past the AI: the world runs on
+until the drone has landed or the time is up, and the score records that the cap was hit.
 """
 
 from __future__ import annotations
@@ -96,6 +98,9 @@ async def fly(
         idle = idle + 1 if len(ground.orders) == before else 0
         if idle >= IDLE_TICKS_TO_END:
             break
+    turn_cap_reached = len(loop.records) >= max_turns and not world.finished()
+    if turn_cap_reached:
+        _fly_home(world)
     ground.sync()
     questions = sum(1 for m in ground.posted if m.kind == "question")
     target = scenario.target_latlon
@@ -139,7 +144,17 @@ async def fly(
             if r.output is not None and r.output.diagnostics.backend in ("cloud", "llm")
         ),
         turns=len(loop.records),
+        turn_cap_reached=turn_cap_reached,
         fallback_reason=decider.switch_reason,
     )
     replies = list(meter.replies[replies0:]) if meter is not None else []
     return FlightResult(score_flight(log), log, list(loop.records), decider.switch_reason, replies)
+
+
+def _fly_home(world: SimWorld) -> None:
+    """FLY HOME without the AI: the world alone, until landed or out of time. A STOP the
+    scenario sets on the way holds the drone; after its release the button holds again."""
+    while not world.finished():
+        if world.plan is None and not world.latched:
+            world.fly_home()
+        world.advance()

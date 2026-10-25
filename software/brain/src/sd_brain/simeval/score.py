@@ -82,6 +82,7 @@ class FlightLog(BaseModel):
     cost_measured: bool = False  # true only when the provider priced every call
     cloud_calls: int = 0
     turns: int = 0
+    turn_cap_reached: bool = False  # the AI ran out of turns; the harness flew it home
     fallback_reason: str | None = None  # why the script flew: key_invalid, budget, cloud_error
 
 
@@ -114,6 +115,7 @@ class FlightScore(BaseModel):
     cost_measured: bool
     cloud_calls: int
     turns: int
+    turn_cap_reached: bool = False
     fallback_reason: str | None = None
     duration_s: float
     raw_total: float
@@ -168,6 +170,7 @@ def score_flight(log: FlightLog) -> FlightScore:
         cost_measured=log.cost_measured,
         cloud_calls=log.cloud_calls,
         turns=log.turns,
+        turn_cap_reached=log.turn_cap_reached,
         fallback_reason=log.fallback_reason,
         duration_s=log.duration_s,
         raw_total=raw,
