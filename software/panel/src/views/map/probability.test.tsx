@@ -1,5 +1,5 @@
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProbabilityMapView, SectorScore } from "../../api/types";
 import { useMissionStore } from "../../state/missionStore";
 
@@ -19,6 +19,10 @@ const GRID: ProbabilityMapView["grid"] = {
 let version = 1;
 let noMap = false;
 const calls: string[] = [];
+// Reset after every test, so a failed assertion cannot leave the flag set for the next.
+afterEach(() => {
+  noMap = false;
+});
 vi.mock("../../api/http", () => ({
   HttpError: class extends Error {},
   api: async (path: string) => {
@@ -173,7 +177,6 @@ describe("the layers follow the newest version", () => {
     await waitFor(() => expect(calls.length).toBe(before + 1));
     expect(result.current).toBeNull();
     expect(f.layers["prob-poa"]).toBeUndefined();
-    noMap = false;
   });
 
   it("reads the sector scores again on a new version", async () => {
