@@ -46,7 +46,12 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import flow_rig  # pyright: ignore[reportMissingImports]
-from scenario_rig import LANDING_MODES, H, Scenario  # pyright: ignore[reportMissingImports]
+from scenario_rig import (  # pyright: ignore[reportMissingImports]
+    LANDING_MODES,
+    TERMINAL,
+    H,
+    Scenario,
+)
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
@@ -413,12 +418,14 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
 
 
 def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
-    """Every person but the missing one has a card whose top the image model saw."""
+    """Every person but the missing one has a card whose top the image model saw (the
+    cards ``_metrics`` counts: not merged)."""
     others = {t.thing_id for t in run.world.people if not t.target}
     judged = {
         run.thing_at(c["lat"], c["lon"])[0]
         for c in queue
-        if (c.get("fields") or {}).get("garment:0") in ("conflict", "match")
+        if c["state"] != "merged"
+        and (c.get("fields") or {}).get("garment:0") in ("conflict", "match")
     }
     return others <= judged
 
@@ -431,8 +438,8 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
     flight. Nothing is searched when the drone was already on its way home or down before
     (a return ordered earlier, a landing mode, no hold): the operator then asks it home as
     after any confirmation. The search ends early when the drone heads home on its own
-    after "Sök vidare." (a new return, a landing mode, disarmed). True when it does;
-    otherwise the operator asks the drone home."""
+    after "Sök vidare." (a new return not turned down, a landing mode, disarmed). True
+    when it does; otherwise the operator asks the drone home."""
     sc = run.sc
     before = {c["id"] for c in await sc.commands() if c["skill"] == "return_home"}
 
@@ -445,6 +452,7 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
             not sc.tel.armed
             or sc.mode() in LANDING_MODES
             or any(c["skill"] == "return_home" and c["id"] not in before
+                   and (c["status"] not in TERMINAL or c["status"] == "done")
                    for c in await sc.commands())
         )  # fmt: skip
 
