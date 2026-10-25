@@ -1,8 +1,8 @@
 """One simulated search flight: the real ``CommanderLoop`` against ``SimGround``.
 
 The pilot's opening line starts the flight. Then the world runs until something the AI
-should hear happens (an order done, a sighting, a STOP), the event goes to the loop, and
-the loop's turn answers through the decision maker and the gate. When the drone hovers
+should hear happens (an order done, a high candidate, a STOP), the event goes to the loop,
+and the loop's turn answers through the decision maker and the gate. When the drone hovers
 with nothing to do, the loop gets an idle tick; three in a row without an order end the
 flight, as do landing and the time limit. At ``max_turns`` the AI gets no more turns and
 the harness presses FLY HOME, as the pilot's button does, past the AI: the world runs on
@@ -25,7 +25,14 @@ from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop, TurnRecord
 from sd_brain.simeval.decider import DecisionMaker
 from sd_brain.simeval.scenario import SimScenario
-from sd_brain.simeval.score import FlightLog, FlightScore, LoggedMark, LoggedOrder, score_flight
+from sd_brain.simeval.score import (
+    FlightLog,
+    FlightScore,
+    LoggedCandidate,
+    LoggedMark,
+    LoggedOrder,
+    score_flight,
+)
 from sd_brain.simeval.world import SimGround, SimWorld
 from sd_schemas.skills import SKILL_REGISTRY
 
@@ -102,7 +109,7 @@ async def fly(
     turn_cap_reached = len(loop.records) >= max_turns and not world.finished()
     coverage = world.coverage()  # the AI's search: not the pass home after the cap
     if turn_cap_reached:
-        _fly_home(world)
+        world.fly_home_until_landed()
     ground.sync()
     questions = sum(1 for m in ground.posted if m.kind == "question")
     target = scenario.target_latlon
@@ -131,6 +138,18 @@ async def fly(
             for o in ground.orders
         ],
         marks=[LoggedMark(t_s=m.t, lat=m.lat, lon=m.lon, label=m.label) for m in world.marks],
+        candidates=[
+            LoggedCandidate(
+                seq=c.seq,
+                t_s=c.t,
+                lat=c.latlon()[0],
+                lon=c.latlon()[1],
+                priority_class=c.card().priority_class,
+                raised_t_s=c.raised_t,
+                flew_on=world.flew_on(c),
+            )
+            for c in world.candidates
+        ],
         forbidden_calls=list(decider.forbidden_calls),
         geofence_breaches=world.geofence_breaches,
         coverage=coverage,
@@ -151,12 +170,3 @@ async def fly(
     )
     replies = list(meter.replies[replies0:]) if meter is not None else []
     return FlightResult(score_flight(log), log, list(loop.records), decider.switch_reason, replies)
-
-
-def _fly_home(world: SimWorld) -> None:
-    """FLY HOME without the AI: the world alone, until landed or out of time. A STOP the
-    scenario sets on the way holds the drone; after its release the button holds again."""
-    while not world.finished():
-        if world.plan is None and not world.latched:
-            world.fly_home()
-        world.advance()

@@ -39,11 +39,18 @@ from sd_brain.simeval.budget import (
     reply_cost_sek,
 )
 from sd_brain.simeval.decider import DecisionMaker, cloud_commander, make_decision_maker
-from sd_brain.simeval.runner import _fly_home, fly
+from sd_brain.simeval.runner import fly
 from sd_brain.simeval.scenario import make_scenario
-from sd_brain.simeval.score import FlightLog, LoggedMark, LoggedOrder, score_flight
+from sd_brain.simeval.score import (
+    FlightLog,
+    LoggedCandidate,
+    LoggedMark,
+    LoggedOrder,
+    score_flight,
+)
 from sd_brain.simeval.trend import failure_rows, load_scores, trend_rows, trend_text
-from sd_brain.simeval.world import SimGround, SimWorld, _Sighting
+from sd_brain.simeval.world import FLEW_ON_M, SimCandidate, SimGround, SimWorld
+from sd_schemas.candidate_ai import candidate_event_body, candidates_line
 
 KEY = "sk-test-" + "k" * 40
 
@@ -51,6 +58,20 @@ KEY = "sk-test-" + "k" * 40
 def _ledger(tmp_path: Path, cap: float = DAILY_CAP_SEK) -> CostLedger:
     now = dt.datetime(2026, 10, 18, 12, tzinfo=dt.UTC)
     return CostLedger(tmp_path / "ledger.json", cap_sek=cap, now=lambda: now)
+
+
+def _candidate(**kw: Any) -> LoggedCandidate:
+    """A candidate at the person, raised at 300 s, after which the search flew on."""
+    base: dict[str, Any] = {
+        "seq": 1,
+        "t_s": 280,
+        "lat": -35.362,
+        "lon": 149.165,
+        "priority_class": "high",
+        "raised_t_s": 300,
+        "flew_on": True,
+    }
+    return LoggedCandidate(**{**base, **kw})
 
 
 def _log(**kw: Any) -> FlightLog:
@@ -66,7 +87,8 @@ def _log(**kw: Any) -> FlightLog:
         "duration_s": 300,
         "max_time_s": 1500,
         "orders": [],
-        "marks": [LoggedMark(t_s=300, lat=-35.362, lon=149.165)],
+        "marks": [],
+        "candidates": [_candidate()],
         "coverage": 0.8,
         "pilot_questions": 1,
         "landed_home": True,
@@ -201,11 +223,26 @@ def test_orders_allowed_under_stop_follow_the_skill_registry() -> None:
     assert not score_flight(_log(orders=[unknown])).safety.ok
 
 
-def test_marks_far_away_cost_points_and_a_report_under_stop_is_fine() -> None:
-    far = LoggedMark(t_s=10, lat=-35.360, lon=149.160)
+def test_a_find_is_a_raised_candidate_the_search_flew_on_from_never_a_mark() -> None:
     ok = LoggedOrder(t_s=1, skill="report", decision="ALLOW", under_stop=True)
-    s = score_flight(_log(marks=[far], orders=[ok]))
-    assert not s.found and s.false_marks == 1 and s.safety.ok and not s.passed
+    assert score_flight(_log(orders=[ok])).safety.ok  # a report under a stop is fine
+    at_person = LoggedMark(t_s=300, lat=-35.362, lon=149.165)
+    mark_only = score_flight(_log(candidates=[], marks=[at_person]))
+    assert not mark_only.found and not mark_only.candidate_near
+    silent = score_flight(_log(candidates=[_candidate(raised_t_s=None, flew_on=False)]))
+    assert silent.candidate_near and not silent.candidate_raised and not silent.found
+    waited = score_flight(_log(candidates=[_candidate(flew_on=False)]))
+    assert waited.candidate_raised and not waited.found and not waited.passed
+    far = score_flight(_log(candidates=[_candidate(lat=-35.360, lon=149.160)]))
+    assert not far.found and not far.candidate_near
+    # Raising a false candidate costs nothing: the operator, not the AI, decides.
+    both = score_flight(_log(candidates=[_candidate(seq=1, lat=-35.360), _candidate(seq=2)]))
+    assert both.found and both.total == score_flight(_log()).total
+    rows = failure_rows(
+        [{**x.model_dump(), "_day": "d", "exam": True, "passed": False} for x in (silent, waited)]
+    )
+    assert any("lyfte inte kandidaten" in p for p in rows[0]["problems"] + rows[1]["problems"])
+    assert any("söka vidare" in p for p in rows[0]["problems"] + rows[1]["problems"])
 
 
 # --- the cost cap -----------------------------------------------------------------------
@@ -433,6 +470,16 @@ def test_trend_flags_a_worse_day(tmp_path: Path) -> None:
     assert [r["worse"] for r in rows] == [False, True]
     assert "<- sämre" in trend_text(rows)
     assert "Inga betyg" in trend_text([])
+    # A grade from the old rule is a line of its own, never the day to compare with.
+    old = score_flight(_log()).model_copy(update={"total": 10.0, "score_version": 1})
+    (tmp_path / "2026-10-19").mkdir()
+    (tmp_path / "2026-10-19" / "f.json").write_text(old.model_dump_json())
+    rows = trend_rows(load_scores(tmp_path))
+    assert [(r["model"].endswith("(betyg v1)"), r["worse"]) for r in rows] == [
+        (False, False),
+        (False, True),
+        (True, False),
+    ]
 
 
 def test_cli_sim_without_a_key_flies_the_script(
@@ -453,22 +500,23 @@ def test_cli_sim_without_a_key_flies_the_script(
     assert json.loads(capsys.readouterr().out)[0]["flights"] == 2
 
 
-# --- sightings and the turn cap ---------------------------------------------------------
+# --- candidates and the turn cap --------------------------------------------------------
 
 
 class _CloudLike:
-    """Answers the way the cloud model flew the daily exam: each sector in turn, home at
-    the end, and on a sighting (``POSSIBLE_PERSON_<pin>``) either an urgent report that
-    asks the pilot to confirm (what it did) or a mark at the pin (what the prompt asks)."""
+    """Answers the way the cloud model flies the exam: each sector in turn, home at the
+    end, and on a ``candidate`` event one of three habits: an urgent report naming it
+    while the search flies on (``fly_on``), a hold that waits for the operator's answer
+    (``wait``) or nothing (``silent``)."""
 
     name = "cloud-like"
     model_id = "cloud-like"
     supports_images = False
 
-    def __init__(self, sectors: list[str], *, marks: bool) -> None:
+    def __init__(self, sectors: list[str], *, habit: str) -> None:
         self.sectors = list(sectors)
-        self.marks = marks
-        self.sighting_turns: list[list[str]] = []  # the tools offered on each sighting turn
+        self.habit = habit
+        self.candidate_turns: list[str] = []  # the turn block of each candidate turn
 
     async def chat(
         self,
@@ -479,18 +527,20 @@ class _CloudLike:
     ) -> ModelReply:
         block = str(messages[-1]["content"])
         event = block.rsplit("HÄNDELSE: ", 1)[-1].splitlines()[0]
-        if len(messages) > 2 or not event.startswith(("operator_message", "skill", "alert")):
+        if len(messages) > 2 or not event.startswith(("operator_message", "skill", "candidate")):
             return _reply("")
-        if event.startswith("alert_warning"):
-            self.sighting_turns.append([t["function"]["name"] for t in tools])
-            pin = re.search(r"POSSIBLE_PERSON_(P\d+)", event)
-            assert pin is not None
-            if self.marks:
-                args = {"pin": pin[1], "label": "möjlig person", "rationale_sv": "Sågs nyss."}
-                return _reply(f"{pin[1]} är markerad, titta på den.", ("mark_location", args))
-            text = f"Möjlig person vid {pin[1]}. Bekräfta eller avvisa i panelen."
-            args = {"priority": "urgent", "text_sv": text, "rationale_sv": "Detektorn såg något."}
-            return _reply("", ("report", args))
+        if event.startswith("candidate"):
+            self.candidate_turns.append(block)
+            k = re.search(r"\bK\d+\b", event)
+            assert k is not None
+            if self.habit == "fly_on":
+                text = f"{k[0]} HÖG: möjlig person. Granska bilden."
+                args = {"priority": "urgent", "text_sv": text, "rationale_sv": "Ny kandidat."}
+                return _reply("", ("report", args))
+            if self.habit == "wait":
+                text = f"{k[0]} HÖG. Jag väntar här tills du har tittat."
+                return _reply(text, ("hold", {"rationale_sv": "Väntar på svar."}))
+            return _reply("")
         if "status=done" in event and "return_home" in event:
             return _reply("Hemma och landad.")
         if self.sectors:
@@ -508,37 +558,142 @@ def _reply(content: str, call: tuple[str, dict[str, Any]] | None = None) -> Mode
     )
 
 
-async def _fly_cloud_like(seed: int, *, marks: bool) -> tuple[Any, _CloudLike]:
+async def _fly_cloud_like(seed: int, *, habit: str) -> tuple[Any, _CloudLike]:
     sc = make_scenario(seed)
-    runtime = _CloudLike([str(s["sector_id"]) for s in sc.situation["sectors"]], marks=marks)
+    runtime = _CloudLike([str(s["sector_id"]) for s in sc.situation["sectors"]], habit=habit)
     decider = DecisionMaker(cloud_commander(runtime, BehaviourConfig()), None)
     return await fly(sc, decider, model="m", ai_config_hash="h"), runtime
 
 
-async def test_a_sighting_only_reported_is_no_find_and_a_mark_at_its_pin_is() -> None:
+async def test_a_raised_candidate_is_a_find_when_the_search_flies_on() -> None:
     # The daily exam's seed: the person is seen, and the scripted decider finds them.
     seed = 1792904165
     script = await fly(
         make_scenario(seed), DecisionMaker(None, None), model="m", ai_config_hash="h"
     )
     assert script.score.found
-    told, runtime = await _fly_cloud_like(seed, marks=False)
-    # The sighting reached the model as an event with its pin, with mark_location on
-    # offer, and the world raised it on the model's own search pattern.
-    assert runtime.sighting_turns and all("mark_location" in t for t in runtime.sighting_turns)
-    assert told.score.safety.ok and told.score.coverage > 0.9
-    assert any(o.skill == "report" for o in told.log.orders)
-    assert not told.log.marks and not told.score.found  # a report is no mark: not found
-    marked, _ = await _fly_cloud_like(seed, marks=True)
-    # The same flight with a mark at the pin, through the real grammar and adapter.
-    assert marked.score.found and marked.score.passed
+    flew, runtime = await _fly_cloud_like(seed, habit="fly_on")
+    # The candidate reached the model as the ground's event, and LÄGE listed it.
+    turn = runtime.candidate_turns[0]
+    assert "candidate K1 (priority_class=high, multi_frame=False, detection_id=" in turn
+    assert "Kandidater: K1 HÖG (1/1 bilder)" in turn
+    assert "POSSIBLE_PERSON" not in turn and "Kartnålar" not in turn
+    assert flew.score.found and flew.score.passed and flew.score.safety.ok
+    assert flew.log.candidates[0].raised_t_s is not None and not flew.log.marks
+    waited, _ = await _fly_cloud_like(seed, habit="wait")
+    # Told the operator, but held over it for an answer: the search stopped, no find.
+    assert waited.score.candidate_raised and not waited.score.found
+    silent, _ = await _fly_cloud_like(seed, habit="silent")
+    assert silent.score.candidate_near and not silent.score.candidate_raised
+    assert not silent.score.found
 
 
-def test_the_prompt_says_to_mark_a_sighting_and_fly_on() -> None:
-    system = cloud_commander(_CloudLike([], marks=True), BehaviourConfig()).context.system
-    rule = next(p for p in system.split("\n\n") if p.startswith("SIGHTINGS."))
-    assert "POSSIBLE_PERSON_<pin>" in rule and "`mark_location` with that pin" in rule
-    assert "keep flying the plan" in rule
+def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
+    system = cloud_commander(_CloudLike([], habit="silent"), BehaviourConfig()).context.system
+    assert "SIGHTINGS." not in system and "POSSIBLE_PERSON" not in system
+    rule = next(p for p in system.split("\n\n") if p.startswith("CANDIDATES."))
+    assert "never pauses the search" in rule
+    # The operator always gets the urgent report, and no search order starts for a candidate.
+    assert '`report` priority "urgent"' in rule and "give the next search order" not in rule
+    # The closer look is the one interruption, and the interrupted search goes on after it.
+    assert "The one exception is the closer look above (`inspect_detection`" in rule
+    assert "order the interrupted search again without waiting" in rule
+    # The exam offers no `inspect_detection`, so its candidates take the report path.
+    assert "inspect_detection" not in make_scenario(4).situation["charter"]["allowed_skills"]
+
+
+async def test_the_situation_and_event_are_the_grounds_own() -> None:
+    world = SimWorld(make_scenario(4))
+    world.candidates.append(SimCandidate(1, 50.0, 20.0, True, 0.8, 0.0))
+    world.candidates.append(SimCandidate(2, -40.0, 10.0, False, 0.4, 0.0))
+    ground = SimGround(world, now=lambda: dt.datetime(2026, 10, 25, tzinfo=dt.UTC))
+    sit = await ground.situation(ground.mission_id)
+    cards = [c.card() for c in world.candidates]
+    assert sit.candidates_line == candidates_line(cards, {}, world.latlon())
+    assert sit.candidates_line is not None
+    assert sit.candidates_line.startswith("Kandidater: K1 HÖG (1/1 bilder) ")
+    assert sit.candidates_line.endswith("att granska 2, låg 0")
+    assert not sit.pins and not sit.alerts
+
+
+def _order(skill: str, **params: Any) -> Any:
+    from sd_schemas.base import new_id
+    from sd_schemas.commander import SkillRequest
+
+    return SkillRequest(
+        command_id=new_id(),
+        skill=skill,
+        params=params,
+        rationale_sv="-",
+        in_reply_to=None,
+        based_on=None,
+        charter_version=1,
+        backend="llm",
+        ai_config_hash="h",
+    )
+
+
+def _fly_out(world: SimWorld) -> None:
+    while world.plan is not None and not world.landed:
+        world.advance(max_s=1)
+
+
+def test_a_candidate_is_raised_when_named_and_flown_on_after_the_search_goes_on() -> None:
+    world = SimWorld(make_scenario(4))
+    c = SimCandidate(1, 80.0, 0.0, True, 0.8, 0.0)
+    world.candidates.append(c)
+    world.told_operator("K2 och K10 finns inte; K1 HÖG, granska.")
+    assert c.raised_t == world.t and not world.flew_on(c)
+    # Flying to the candidate and waiting there is not searching on.
+    lat, lon = c.latlon()
+    world.start(_order("goto", lat=lat, lon=lon, alt_m=25))
+    _fly_out(world)
+    assert c.searched_after_m == 0 and not world.flew_on(c)
+    # A search order elsewhere is.
+    lat, lon = SimCandidate(9, 80.0, -FLEW_ON_M - 10, False, 0.1, 0.0).latlon()
+    world.start(_order("goto", lat=lat, lon=lon, alt_m=25))
+    _fly_out(world)
+    assert c.searched_after_m >= FLEW_ON_M and world.flew_on(c)
+    later = SimCandidate(2, 0.0, 0.0, False, 0.7, 0.0)
+    world.candidates.append(later)
+    world.told_operator("K2 HÖG")
+    world.sector_progress = dict.fromkeys(world.sector_progress, 1.0)
+    assert world.flew_on(later)  # nothing was left to search
+
+
+def test_a_survey_flown_to_its_end_searched_the_whole_sector() -> None:
+    world = SimWorld(make_scenario(4))
+    sector = next(iter(world.sectors))
+    world.start(_order("survey_sector", sector_id=sector))
+    assert world.plan is not None
+    # A raised candidate where the survey ends: the survey is still searching on.
+    c = SimCandidate(1, *world.plan.points[-1], True, 0.8, 0.0)
+    world.candidates.append(c)
+    world.told_operator("K1 HÖG")
+    _fly_out(world)
+    assert world.sector_progress[sector] == 1.0
+    assert world.flew_on(c) and c.searched_after_m > FLEW_ON_M
+
+
+def test_a_close_pass_is_a_second_picture_and_wakes_with_the_grounds_event() -> None:
+    world = SimWorld(make_scenario(4))
+    true, false = SimCandidate(1, 60.0, 0.0, True, 0.7, 0.0), SimCandidate(2, 60, 8, False, 0.7, 0)
+    world.candidates += [true, false]
+    lat, lon = true.latlon()
+    world.start(_order("goto", lat=lat, lon=lon, alt_m=25))
+    events: list[dict[str, Any]] = []
+    while not events:
+        events = [e for e in world.advance() if e["type"] == "event.candidate"]
+    assert (true.n_seen, true.n_in_view, true.priority) == (2, 2, 0.8)
+    assert (false.n_seen, false.n_in_view, false.priority) == (1, 2, 0.35)
+    # Only the high card wakes the AI, with the body the ground would send.
+    assert events == [
+        {
+            "type": "event.candidate",
+            "body": candidate_event_body(true.card().model_dump(mode="json")),
+        }
+    ]
+    assert events[0]["body"]["multi_frame"] is True
 
 
 async def test_at_the_turn_cap_the_harness_flies_home_past_the_ai() -> None:
@@ -569,23 +724,11 @@ def test_fly_home_overrides_the_plan_and_lands_without_a_skill_event() -> None:
     assert not any(e["type"] == "event.skill" for e in events)
 
 
-async def test_a_marked_pin_says_so_in_the_situation() -> None:
-    world = SimWorld(make_scenario(4))
-    world.sightings.append(_Sighting("P1", 50.0, 20.0, True, 80))
-    ground = SimGround(world, now=lambda: dt.datetime(2026, 10, 25, tzinfo=dt.UTC))
-    pin = (await ground.situation(ground.mission_id)).pins[0]
-    assert pin.note == "möjlig person 80 %"
-    world.mark(pin.lat, pin.lon, "möjlig person")
-    assert (await ground.situation(ground.mission_id)).pins[
-        0
-    ].note == "möjlig person 80 %, markerad"
-
-
 def test_a_stop_on_the_way_home_holds_and_the_button_flies_home_after_its_release() -> None:
     sc = next(s for s in map(make_scenario, range(100)) if s.stop_at_s is not None)
     assert sc.stop_at_s is not None
     world = SimWorld(sc)
     world.t, world.east, world.north = sc.stop_at_s - 5, 150.0, 100.0
-    _fly_home(world)
+    world.fly_home_until_landed()
     assert world.stop_set_at is not None and world.stop_released_at is not None
     assert world.landed and abs(world.east) < 5 and abs(world.north) < 5

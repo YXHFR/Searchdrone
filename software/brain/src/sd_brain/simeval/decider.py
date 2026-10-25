@@ -15,6 +15,7 @@ no longer counts as an exam (``exam`` false); it is still good image data for th
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from sd_brain.backends.base import ToolExecutor
@@ -31,15 +32,18 @@ __all__ = ["DecisionMaker", "SearchScript", "cloud_commander", "make_decision_ma
 
 DeciderKind = Literal["cloud", "script"]
 SwitchReason = Literal["key_invalid", "budget", "cloud_error"]
+# A high candidate as sd_schemas.candidate_ai.candidates_line writes it (its _CLASS words).
+_HIGH = re.compile(r"\bK(\d+) HÖG\b")
 
 
 class SearchScript:
-    """The fixed search script: sectors in order, mark every sighting, then fly home."""
+    """The fixed search script: sectors in order, tell the operator of every high
+    candidate and fly on, then fly home."""
 
     name = "scripted"
 
     def __init__(self) -> None:
-        self.marked: set[str] = set()
+        self.raised: set[str] = set()
 
     async def decide(self, turn: TurnInput, tools: ToolExecutor) -> TurnOutput:
         s = turn.situation
@@ -47,15 +51,15 @@ class SearchScript:
         offered = {t.name for t in turn.tools}
         if motion_block(s) is not None or not s.vehicle.airborne:
             return out
-        for pin in s.pins:
-            if pin.id not in self.marked and "mark_location" in offered:
-                self.marked.add(pin.id)
+        for seq in _HIGH.findall(s.candidates_line or ""):
+            if seq not in self.raised and "report" in offered:
+                self.raised.add(seq)
                 out.action = AiAction(
-                    skill="mark_location",
-                    params={"pin": pin.id, "label": "möjlig person"},
-                    rationale_sv=f"Detektorn såg något vid {pin.id}.",
+                    skill="report",
+                    params={"priority": "urgent", "text_sv": f"K{seq} HÖG: granska bilden."},
+                    rationale_sv=f"Kandidat K{seq} väntar på en person.",
                 )
-                out.messages = [OutMessage(text=f"Markerar {pin.id}, möjlig person.")]
+                out.messages = [OutMessage(text=f"K{seq} HÖG, granska bilden. Jag söker vidare.")]
                 return out
         if s.active_command is not None:
             return out

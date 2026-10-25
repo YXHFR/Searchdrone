@@ -8,33 +8,33 @@ The farm flies a round in SITL and writes the round folder; this reads it and wr
   (folder paths relative to the round, default every folder under ``runs/``).
 - ``truth.json``: the answer key, ``targets`` (a list of ``{"lat", "lon"}``) or ``target``.
 - per run, ``flight.json``: what happened, in the form of :class:`FarmFlight` (the orders
-  with the gate's answers, the map marks, geofence breaches, coverage, pilot questions,
-  landing). The farm builds it from its own logs (tlog, commands, chat).
+  with the gate's answers, the people the ground found as ``marks``, geofence breaches,
+  coverage, pilot questions, landing). The farm builds it from its own logs (tlog,
+  commands, chat).
 - per run, ``brain.json`` when sd-brain decided (:class:`BrainRecord`, written with
   :func:`brain_record`): which decision maker flew, why it switched and what it cost.
 
-The grade is :func:`score_flight`, the same as for ``sd-brain eval --backend sim``; with
-several targets a mark near any of them counts. ``cost_sek`` is null unless the provider
-priced every call (no price is guessed). A round without ``brain.json`` was flown by the
-script.
+The grade is :func:`score_flight`, the same as for ``sd-brain eval --backend sim``, best
+over the targets. The farm records no candidate queue or raises yet: each person the
+ground found stands for a candidate raised when its best picture was taken, with the
+search going on. ``cost_sek`` is null unless the provider priced every call (no price is
+guessed). A round without ``brain.json`` was flown by the script.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import uuid
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from sd_brain.geo import to_enu
 from sd_brain.simeval.decider import DecisionMaker
 from sd_brain.simeval.score import (
-    FOUND_RADIUS_M,
     FlightLog,
     FlightScore,
+    LoggedCandidate,
     LoggedMark,
     LoggedOrder,
     score_flight,
@@ -68,6 +68,8 @@ class FarmFlight(BaseModel):
     duration_s: float = Field(ge=0)
     max_time_s: float = Field(gt=0)
     orders: list[LoggedOrder] = Field(default_factory=list[LoggedOrder])
+    # The people the ground found (the farm's own name in flight.json). The farm has no
+    # candidate queue yet: each one is graded as a raised candidate the search flew on from.
     marks: list[LoggedMark] = Field(default_factory=list[LoggedMark])
     geofence_breaches: int = Field(default=0, ge=0)
     coverage: float = Field(default=0.0, ge=0, le=1)
@@ -155,11 +157,20 @@ def _grade_run(
         )
     except ValidationError as exc:
         raise RoundError(f"{run_dir.name}: fel form ({exc.error_count()} fel)") from None
+    candidates = [
+        LoggedCandidate(
+            seq=i + 1,
+            t_s=m.t_s,
+            lat=m.lat,
+            lon=m.lon,
+            priority_class="high",
+            raised_t_s=m.t_s,
+            flew_on=True,
+        )
+        for i, m in enumerate(flight.marks)
+    ]
     scores: list[FlightScore] = []
     for lat, lon in targets:
-        others = [t for t in targets if t != (lat, lon)]
-        # A mark near another target is not a false mark.
-        marks = [m for m in flight.marks if not _near_any(m, others)]
         log = FlightLog(
             flight_id=str(uuid.uuid4()),
             seed=int(rnd.get("seed", 0)),
@@ -172,7 +183,8 @@ def _grade_run(
             duration_s=flight.duration_s,
             max_time_s=flight.max_time_s,
             orders=flight.orders,
-            marks=marks,
+            marks=[],
+            candidates=candidates,
             forbidden_calls=brain.forbidden_calls if brain else [],
             geofence_breaches=flight.geofence_breaches,
             coverage=flight.coverage,
@@ -197,12 +209,6 @@ def _grade_run(
         "fallback_reason": brain.fallback_reason if brain else None,
         "score": best.model_dump(mode="json"),
     }
-
-
-def _near_any(m: LoggedMark, targets: list[tuple[float, float]]) -> bool:
-    return any(
-        math.hypot(*to_enu(m.lat, m.lon, lat, lon)) <= FOUND_RADIUS_M for lat, lon in targets
-    )
 
 
 def grade_round(round_dir: Path) -> dict[str, Any]:

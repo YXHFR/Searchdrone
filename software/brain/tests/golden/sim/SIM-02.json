@@ -50,27 +50,27 @@
       ]
     },
     {
-      "content": "Markerar P1.",
+      "content": "K1 HÖG, granska bilden. Jag söker vidare.",
       "tool_calls": [
         {
-          "name": "mark_location",
+          "name": "report",
           "arguments": {
-            "pin": "P1",
-            "label": "möjlig person",
-            "rationale_sv": "Detektorn såg något."
+            "priority": "urgent",
+            "text_sv": "K1 HÖG: granska bilden.",
+            "rationale_sv": "Kandidat väntar på en person."
           }
         }
       ]
     },
     {
-      "content": "Markerar P2.",
+      "content": "K2 HÖG, granska bilden. Jag söker vidare.",
       "tool_calls": [
         {
-          "name": "mark_location",
+          "name": "report",
           "arguments": {
-            "pin": "P2",
-            "label": "möjlig person",
-            "rationale_sv": "Detektorn såg något."
+            "priority": "urgent",
+            "text_sv": "K2 HÖG: granska bilden.",
+            "rationale_sv": "Kandidat väntar på en person."
           }
         }
       ]

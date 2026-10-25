@@ -6,7 +6,8 @@ import asyncio
 import datetime as dt
 from typing import Any
 
-from sd_ground.services.candidate_lines import candidate_lines, candidates_line, finds_line
+from sd_ground.services.candidate_lines import candidate_lines, finds_line
+from sd_schemas.candidate_ai import candidates_line
 from sd_schemas.geo import plane_offset
 from sd_schemas.search import CandidateCard, SearchProfile, priority_class
 

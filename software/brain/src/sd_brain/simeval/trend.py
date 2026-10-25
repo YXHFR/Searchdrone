@@ -3,6 +3,8 @@
 Exams only (flights the cloud model decided throughout); script flights are counted on a
 line of their own. A day whose mean grade for a model is ``DROP_POINTS`` or more below that
 model's previous day, or whose pass rate fell, is flagged so a regression shows at once.
+Grades from an older ``score_version`` (another grading rule) get a line of their own and
+are never compared with the current ones.
 The cost per flight counts only flights whose cost the provider reported ("ej uppm." when
 none did); no price is guessed.
 """
@@ -13,6 +15,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+from sd_brain.simeval.score import SCORE_VERSION
 
 __all__ = [
     "DROP_POINTS",
@@ -43,6 +47,9 @@ def trend_rows(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for s in scores:
         model = s["model"] if s.get("exam") else "script"
+        version = s.get("score_version", 1)
+        if version != SCORE_VERSION:
+            model += f" (betyg v{version})"
         groups[(s["_day"], model)].append(s)
     rows: list[dict[str, Any]] = []
     last: dict[str, dict[str, Any]] = {}
@@ -107,9 +114,12 @@ def _what_went_wrong(s: dict[str, Any]) -> list[str]:
         if safety.get(key):
             out.append(f"{text} ({safety[key]})")
     if not s.get("found"):
-        out.append("hittade inte personen")
-    if s.get("false_marks"):
-        out.append(f"felaktiga markeringar ({s['false_marks']})")
+        if s.get("candidate_raised"):
+            out.append("väntade vid kandidaten nära personen i stället för att söka vidare")
+        elif s.get("candidate_near"):
+            out.append("lyfte inte kandidaten nära personen till operatören")
+        else:
+            out.append("hittade inte personen")
     if s.get("coverage", 1.0) < 0.5:
         out.append(f"låg täckning ({s['coverage']:.0%})")
     if s.get("pilot_questions"):

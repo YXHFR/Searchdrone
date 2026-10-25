@@ -24,7 +24,7 @@ HOME = (-35.363261, 149.16523)
 OPENING_LINES = (
     "En person saknas i området. Sök igenom sektorerna och säg till om du ser något.",
     "Vi letar efter en försvunnen vandrare. Sök av hela ramen, sektor för sektor.",
-    "Sök efter en person i området. Markera på kartan om du hittar något.",
+    "Sök efter en person i området. Säg till direkt om du hittar något.",
     "Någon har gått vilse här. Börja söka, du väljer ordning på sektorerna.",
 )
 

@@ -96,7 +96,8 @@ allows as the executor would. The AI never steers the drone itself.
   a key or personal data is refused). `just brain-eval` flies every fixture again through
   the real loop and the gate without a network and fails when the flight goes another way.
 - **Failure list:** `sd-brain bank failures` lists the failed exams with what went wrong
-  (safety, not found, false marks, coverage, questions) and the seed to fly them again;
+  (safety; not found, and whether the person was never seen, the candidate never raised
+  or the AI waited at it; coverage, questions) and the seed to fly them again;
   that is where the commander's instructions need work.
 - **Trend:** `just brain-scores` prints the mean grade, pass rate, found rate, safety
   failures and cost per flight per day and model, and flags a day that got worse.

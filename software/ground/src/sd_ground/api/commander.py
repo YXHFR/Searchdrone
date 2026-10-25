@@ -41,6 +41,7 @@ from sd_ground.services import search_profile as profile_service
 from sd_ground.services.missions import MissionFlow
 from sd_safety.constants import BRAIN_HEARTBEAT_TIMEOUT_S
 from sd_schemas.api import ActionDispatched, ChatMessage
+from sd_schemas.candidate_ai import candidate_event_body
 from sd_schemas.charter import CharterProposal, CharterValidationResult
 from sd_schemas.commander import (
     PROMPT_JSON_MAX_BYTES,
@@ -593,29 +594,11 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             )
         }
     elif event.type in ("candidate.new", "candidate.updated"):
-        # Only a high candidate waiting for a person wakes the AI; it sees the rest in the
-        # situation's candidates line. It never decides one: only a person confirms.
-        if d.get("priority_class") != "high" or d.get("state") not in ("ready", "assessing"):
+        # Only a high candidate waiting for a person wakes the AI (``candidate_event_body``).
+        wake = candidate_event_body(d)
+        if wake is None:
             return None
-        kind = "event.candidate"
-        body = {
-            k: d.get(k)
-            for k in (
-                "candidate_id",
-                "seq",
-                "priority_class",
-                "priority",
-                "state",
-                "lat",
-                "lon",
-                "sigma95_m",
-                "n_seen",
-                "n_in_view",
-                "engine",
-            )
-        }
-        body["detection_id"] = d.get("thumb_detection_id")
-        body["multi_frame"] = int(d.get("n_seen") or 0) >= 2
+        kind, body = "event.candidate", wake
     elif event.type == "candidate.decided":
         # A person's decision, without who made it or their note.
         decision = d.get("decision") or {}
