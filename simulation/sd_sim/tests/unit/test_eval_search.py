@@ -69,14 +69,44 @@ def test_sk03_fails_on_any_confirmation() -> None:
     assert not all(r.ok for r in _by(aggregate(r.as_dict() for r in runs), "SK03"))
 
 
-def test_sk04_needs_the_hikers_conflict() -> None:
-    fields = {"green-jacket": {"garment:0": "conflict"}}
+def test_sk02_judges_the_share_and_shows_its_wilson_bound() -> None:
+    runs = [run("SK02", s, time_to_confirmed_s=300.0, queue_rank_target=1,
+                target_ever_low=s <= 2) for s in range(1, 51)]  # fmt: skip
+    never_low = _by(aggregate(r.as_dict() for r in runs), "SK02")[2]
+    assert never_low.ok  # 48/50 = 0.96, its lower bound below 0.95 does not decide
+    assert never_low.value == f"48/50 = 0.96, Wilson-nedre {wilson_lower(48, 50):.2f}"
+    runs[2].target_ever_low = True
+    assert not _by(aggregate(r.as_dict() for r in runs), "SK02")[2].ok  # 47/50
+
+
+def _sk04(tops: list[list[str]]) -> list:
     runs = [run("SK04", s, time_to_confirmed_s=200.0, confirmed_thing="target",
-                fields_by_thing=fields) for s in range(1, 11)]  # fmt: skip
-    assert all(r.ok for r in _by(aggregate(r.as_dict() for r in runs), "SK04"))
-    for r in runs[:3]:
-        r.fields_by_thing = {"green-jacket": {"garment:0": "match"}}
-    assert not all(r.ok for r in _by(aggregate(r.as_dict() for r in runs), "SK04"))
+                upper_by_thing={"green-jacket": t, "target": ["match"]})
+            for s, t in enumerate(tops, 1)]  # fmt: skip
+    return _by(aggregate(r.as_dict() for r in runs), "SK04")
+
+
+def test_sk04_counts_the_hikers_verdicts_that_saw_the_top() -> None:
+    # 8 conflict and 2 match among the verdicts that saw the top; not_visible is left out.
+    tops = [["conflict", "not_visible"]] * 8 + [["match"], ["match", "not_visible"]]
+    first, hiker = _sk04(tops)
+    assert first.ok and hiker.ok and not hiker.too_few
+    assert hiker.value == "8/10 = 0.80 (19 kort)"
+    first, hiker = _sk04([["conflict"]] * 7 + [["match"]] * 3)
+    assert not hiker.ok and not hiker.too_few  # 0.70
+
+
+def test_sk04_with_too_few_sightings_says_so_and_never_passes(tmp_path: Path) -> None:
+    _, hiker = _sk04([["conflict"]] * 9 + [["not_visible"]] * 5)
+    assert hiker.too_few and not hiker.ok
+    assert hiker.value == "9 sedda av 14 kort"
+    _, hiker = _sk04([[]] * 3)  # the hiker never seen
+    assert hiker.too_few and not hiker.ok
+    m = run("SK04", 1, upper_by_thing={"green-jacket": ["conflict"]})
+    write_run(tmp_path / "runs" / "r1", m)
+    assert main(["aggregate", str(tmp_path / "runs"), str(tmp_path / "out")]) == 1
+    md = (tmp_path / "out" / "search_requirements.md").read_text(encoding="utf-8")
+    assert "| för få data |" in md
 
 
 def test_sk06_pairs_seeds_and_counts_a_miss_as_its_limit() -> None:
@@ -85,10 +115,20 @@ def test_sk06_pairs_seeds_and_counts_a_miss_as_its_limit() -> None:
         runs.append(run("SK06", s, with_map=True, time_to_confirmed_s=200.0 + s))
         runs.append(run("SK06", s, with_map=False, time_to_confirmed_s=400.0 + 3 * s))
     (req,) = _by(aggregate(r.as_dict() for r in runs), "SK06")
-    assert req.ok and req.n == 10
+    assert req.ok and req.n == 10 and "0,9 x" in req.text
     slow = [run("SK06", s, with_map=m) for s in range(1, 11) for m in (True, False)]
     (req,) = _by(aggregate(r.as_dict() for r in slow), "SK06")
-    assert not req.ok  # 900 vs 0.8 x 900
+    assert not req.ok  # 900 vs 0.9 x 900
+
+
+def test_sk06_needs_ten_percent_off() -> None:
+    def pairs(ratio: float) -> list[dict]:
+        return [r.as_dict() for s in range(1, 41) for r in (
+            run("SK06", s, with_map=True, time_to_confirmed_s=ratio * (200.0 + s)),
+            run("SK06", s, with_map=False, time_to_confirmed_s=200.0 + s))]  # fmt: skip
+
+    assert _by(aggregate(pairs(0.85)), "SK06")[0].ok
+    assert not _by(aggregate(pairs(0.92)), "SK06")[0].ok
 
 
 def test_every_run_needs_a_fast_queue_and_no_cylinder_entry() -> None:

@@ -46,7 +46,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import flow_rig  # pyright: ignore[reportMissingImports]
-from scenario_rig import H, Scenario  # pyright: ignore[reportMissingImports]
+from scenario_rig import LANDING_MODES, H, Scenario  # pyright: ignore[reportMissingImports]
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
@@ -85,6 +85,8 @@ SIM_ENV = {"SD_SIM": "1"}
 PERIOD_S = 0.2  # how often perception asks for a still (the source gives one a second)
 TRUTH_M = 12.0  # a card or a detection this near a thing is that thing
 LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
+HOLD_LIMIT_S = 60.0  # the AI's hold after a confirmation
+GATE_RATE_S = 3.1  # the gate's rate limit: one AI action per 3 s
 WATCH_S = 0.25
 
 
@@ -367,6 +369,9 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
         thing = run.thing_at(c["lat"], c["lon"])[0]
         if thing is not None and thing not in m.fields_by_thing and c.get("fields"):
             m.fields_by_thing[thing] = dict(c["fields"])
+        top = (c.get("fields") or {}).get("garment:0")
+        if thing is not None and top is not None and c["state"] != "merged":
+            m.upper_by_thing.setdefault(thing, []).append(str(top))
         if c["state"] == "confirmed" and target is not None and thing == target.thing_id:
             m.geo_error_m = round(distance_m(c["lat"], c["lon"], *world.where(target)), 2)
     flight = [s for s in sc.track if s.armed]
@@ -407,6 +412,53 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
     return m.finish()
 
 
+def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
+    """Every person but the missing one has a card whose top the image model saw."""
+    others = {t.thing_id for t in run.world.people if not t.target}
+    judged = {
+        run.thing_at(c["lat"], c["lon"])[0]
+        for c in queue
+        if (c.get("fields") or {}).get("garment:0") in ("conflict", "match")
+    }
+    return others <= judged
+
+
+async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
+    """After the confirmation the AI holds (its script); the operator asks it to search on
+    so the other persons get seen too, until each has a card whose top was judged, for at
+    most ``extra_s`` and never past ``limit_s`` from take-off. The orders are the AI's,
+    through the gate, so the charter, the geofence and the battery return apply as in any
+    flight; the search ends early when the drone heads home on its own (the AI's own
+    return, a battery return or a landing). True when it does; otherwise the operator
+    asks the drone home, as after any confirmation."""
+    sc = run.sc
+
+    async def holding() -> bool:
+        return any(c["skill"] == "hold" and c["issuer_kind"] == "brain"
+                   and c["status"] == "running" for c in await sc.commands())  # fmt: skip
+
+    await sc.until(holding, HOLD_LIMIT_S, "the AI holds after the confirmation")
+    left = limit_s - (time.monotonic() - (run.lift_t or time.monotonic()))
+    if left <= GATE_RATE_S:
+        return False
+    await asyncio.sleep(GATE_RATE_S)
+    await sc.say("Sök vidare.")
+
+    async def homeward() -> bool:
+        return (
+            not sc.tel.armed
+            or sc.mode() in LANDING_MODES
+            or any(c["skill"] == "return_home" for c in await sc.commands())
+        )
+
+    async def enough() -> bool:
+        return await homeward() or _others_judged(run, await run.operator.queue())
+
+    with contextlib.suppress(AssertionError):  # the time is up: home as always
+        await sc.until(enough, min(extra_s, left - GATE_RATE_S), "the others seen")
+    return await homeward()
+
+
 async def search_run(
     sc: Scenario,
     world: World,
@@ -417,11 +469,14 @@ async def search_run(
     fly: Callable[[SearchRun], Any] | None = None,
     require_found: bool = True,
     with_map: bool | None = None,
+    search_on_s: float | None = None,
 ) -> RunMetrics:
     """One scenario run (see the module's docstring). ``fly`` replaces the AI's search
     once airborne (SK06 orders the sectors itself); ``confirm_limit_s`` is how long the
     operator may take to the confirmed find after take-off (the scenario's limit when
-    left out). With ``require_found`` the test fails without a confirmed find."""
+    left out). With ``require_found`` the test fails without a confirmed find. With
+    ``search_on_s`` the AI searches on after the confirmation (``_search_on``) before the
+    operator asks the drone home."""
     plane = Plane(*sc.r.home)
     limit = confirm_limit_s or world.limit_s
     holder: list[SearchRun] = []
@@ -470,7 +525,8 @@ async def search_run(
                 if reviewing.done() and reviewing.exception() is not None:
                     raise reviewing.exception()  # type: ignore[misc]
                 if operator.confirmed is not None:
-                    await sc.say("Flyg hem.")
+                    if search_on_s is None or not await _search_on(run, search_on_s, limit):
+                        await sc.say("Flyg hem.")
                 elif sc.tel.armed:
                     assert (await sc.press("return_home")).status_code == 202
             elif fly is None:

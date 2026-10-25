@@ -211,7 +211,8 @@ def test_search_jobs() -> None:
         assert step["timeout-minutes"] <= 35
         assert mode in step["run"] and f'"shards=${shards}"' in step["run"], name
         assert "physics=builtin" in step["run"] and "brain=scripted" in step["run"], name
-    assert "seeds=1-50" in _run_of(jobs["sitl-search-nightly"], "ci-sitl")["run"]
+    nightly_run = _run_of(jobs["sitl-search-nightly"], "ci-sitl")["run"]
+    assert "seeds=1-50 " in nightly_run and "sk06_seeds=1-100" in nightly_run
     e2e = jobs["e2e-search"]
     _run_of(e2e, "just e2e-search runs=1")
     assert "GITHUB_STEP_SUMMARY" in _run_of(e2e, "search_report.md")["run"]

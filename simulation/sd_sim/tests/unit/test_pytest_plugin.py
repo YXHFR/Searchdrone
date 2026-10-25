@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -70,14 +69,36 @@ def test_first_instance_moves_the_workers_up() -> None:
         worker_instance({"PYTEST_XDIST_WORKER": "gw7", "SD_SIM__FIRST_INSTANCE": "1"})
 
 
-def collected_budgets(mode: str = "pr", seeds: str = "") -> list[tuple[str, float]]:
+# Collects in a process of its own and prints each test's budget as the plugin reads it
+# (``budget_of``: the closest marker, so a parameter's own budget wins).
+_COLLECT = """
+import sys
+import pytest
+from sd_sim.pytest_plugin import budget_of
+
+class Budgets:
+    def pytest_collection_finish(self, session):
+        for item in session.items:
+            print("BUDGET", budget_of(item), item.nodeid)
+
+sys.exit(pytest.main(sys.argv[1:], plugins=[Budgets()]))
+"""
+
+
+def collected_budgets(
+    mode: str = "pr", seeds: str = "", sk06_seeds: str = ""
+) -> list[tuple[str, float]]:
     """Collect a CI job's selection with the plugin and read each test's budget."""
-    env = {**os.environ, testrun.SEEDS_ENV: seeds} if seeds else None
+    env = dict(os.environ)
+    if seeds:
+        env[testrun.SEEDS_ENV] = seeds
+    if sk06_seeds:
+        env[testrun.SK06_SEEDS_ENV] = sk06_seeds
     out = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "pytest",
+            "-c",
+            _COLLECT,
             "-p",
             "sd_sim.pytest_plugin",
             "--collect-only",
@@ -96,14 +117,12 @@ def collected_budgets(mode: str = "pr", seeds: str = "") -> list[tuple[str, floa
         check=False,
     )
     assert out.returncode in (0, 5), out.stdout + out.stderr
-    nodes = [line for line in out.stdout.splitlines() if "::" in line]
     budgets = []
-    for node in nodes:
-        path = paths.REPO / node.split("::")[0]
-        text = path.read_text(encoding="utf-8")
-        found = re.findall(r"budget_s\((\d+)\)", text)
-        assert found, f"{node}: budget_s saknas"
-        budgets.append((node, float(found[0])))
+    for line in out.stdout.splitlines():
+        if line.startswith("BUDGET "):
+            _, budget, node = line.split(" ", 2)
+            assert budget != "None", f"{node}: budget_s saknas"
+            budgets.append((node, float(budget)))
     return budgets
 
 
@@ -119,29 +138,30 @@ def test_sitl_budget() -> None:
 
 
 @pytest.mark.parametrize(
-    ("job", "mode", "shards", "seeds"),
+    ("job", "mode", "shards", "seeds", "sk06_seeds"),
     [
-        ("sitl-search", "search", "SEARCH_SHARDS", ""),
-        ("sitl-search-nightly", "search-nightly", "SEARCH_NIGHTLY_SHARDS", "1-50"),
+        ("sitl-search", "search", "SEARCH_SHARDS", "", ""),
+        ("sitl-search-nightly", "search-nightly", "SEARCH_NIGHTLY_SHARDS", "1-50", "1-100"),
     ],
 )
-def test_search_budget(job: str, mode: str, shards: str, seeds: str) -> None:
+def test_search_budget(job: str, mode: str, shards: str, seeds: str, sk06_seeds: str) -> None:
     """The search chain's sets fit the shards and workers of their own sitl.yml jobs."""
     doc = yaml.safe_load(SITL_YML.read_text(encoding="utf-8"))
     count, workers = int(doc["env"][shards]), int(doc["env"]["WORKERS"])
     assert doc["jobs"][job]["strategy"]["matrix"]["shard"] == list(range(1, count + 1))
-    budgets = collected_budgets(mode, seeds)
+    budgets = collected_budgets(mode, seeds, sk06_seeds)
     assert budgets, f"inga tester samlades in för mode={mode}"
     assert budget_problems(budgets, count, workers) == [], (SHARD_LIMIT_S, budgets)
 
 
-def test_search_nightly_campaign_needs_38_shards() -> None:
-    """6 runs x 50 seeds of budget_s 720 on 4 workers: 37 shards leave 9 tests (three
-    runs, 36 minutes, on some worker) in some shards, 38 give each at most 8 (24 minutes);
-    sitl.yml uses 40."""
-    campaign = [(f"t{i}", 720.0) for i in range(6 * 50)]
-    assert budget_problems(campaign, 37, 4)
-    assert budget_problems(campaign, 38, 4) == []
+def test_search_nightly_campaign_needs_50_shards() -> None:
+    """SK01-SK03 over 50 seeds and SK06 twice over 100, budget_s 720, and SK04 over 50
+    seeds, budget_s 840 (it searches on after the confirmation), on 4 workers: 49 shards
+    leave some worker over 25 minutes, 50 do not; sitl.yml uses 52."""
+    campaign = [(f"t{i}", 720.0) for i in range(3 * 50 + 2 * 100)]
+    campaign += [(f"sk04-{i}", 840.0) for i in range(50)]
+    assert budget_problems(campaign, 49, 4)
+    assert budget_problems(campaign, 50, 4) == []
 
 
 def test_missing_budget_is_a_usage_error(tmp_path: Path) -> None:

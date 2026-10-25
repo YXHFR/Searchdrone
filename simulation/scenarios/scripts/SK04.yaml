@@ -57,6 +57,11 @@ turns:
     when: {skill: survey_sector, status: done}
     say: ["Sektorerna är sökta. Flyger hem och landar."]
     action: {skill: return_home, params: {reason: "Sökningen klar."}}
+  # The nightly campaign asks for more after the confirmation, so the hiker gets seen too.
+  - on: operator_message
+    match: '^Sök vidare\.$'
+    say: ["Söker vidare i sektor A."]
+    action: {skill: survey_sector, params: {sector_id: "A", alt_m: 50, spacing_m: 45, speed_ms: 7}}
   - on: operator_message
     match: '^Flyg hem\.$'
     say: ["Flyger hem och landar."]

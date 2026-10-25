@@ -107,6 +107,18 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
+  SK02's "never in the low list" still passes on a share of at least 0.95 and now also
+  shows its Wilson lower bound. SK04 counts every verdict of the hiker's top that saw it,
+  `conflict` / (`conflict` + `match`) at least 0.80, and needs at least 10 of them over
+  the campaign; with fewer the row says "för få data" and does not pass. To get them, the
+  SK04 runs search on after the confirmation: the operator asks the AI to search sector A
+  again, through the gate as any order, for at most 240 s and never past the scenario's
+  time limit, until the hiker's top has been judged or the drone heads home on its own;
+  then the operator asks the drone home as before. SK06 asks the map for at least 10 %
+  (time with the map at most 0.9 x without, one-sided 95 % bound as before) over seeds
+  1-100 (`sk06_seeds=` in `just test-sitl` and `just ci-sitl`); the nightly job has 52
+  shards.
 - A detector manifest's `input_px` and `tile_px` must be integers. A manifest with, for
   example, `"input_px": 640.0` or `"640"` is now refused when the model is loaded
   ("Manifestets input_px och tile_px ska vara heltal"); write the plain number.
