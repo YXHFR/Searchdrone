@@ -203,6 +203,73 @@ def test_flight_record_is_what_the_grade_reads() -> None:
     assert rec["marks"] == [{"t_s": 100.0, "lat": -35.36, "lon": 149.16, "label": "person"}]
     assert rec["pilot_questions"] == 1 and rec["coverage"] == 1.0
     assert rec["duration_s"] == 360.0 and rec["landed_home"] and rec["turns"] == 9
+    assert rec["candidates"] == []  # no candidate queue on the ground
+
+
+def _card(seq: int, first_seen: str) -> dict[str, Any]:
+    return {
+        "seq": seq,
+        "lat": -35.36,
+        "lon": 149.16,
+        "priority_class": "high",
+        "first_seen_utc": first_seen,
+    }
+
+
+def test_a_candidate_is_raised_when_the_ai_first_names_it_to_the_operator() -> None:
+    commands = [
+        _cmd("1", "takeoff", "done", "2026-10-19T10:00:00Z"),
+        {
+            **_cmd("2", "report", "done", "2026-10-19T10:02:00Z"),
+            "params": {"priority": "urgent", "text_sv": "K1 HÖG: granska bilden."},
+        },
+        {
+            **_cmd("3", "report", "done", "2026-10-19T10:01:00Z", issuer="operator"),
+            "params": {"text_sv": "K2 från piloten"},
+        },
+    ]
+    chat = [
+        {
+            "role": "brain",
+            "text": "K2 HÖG, jag söker vidare.",
+            "created_at": "2026-10-19T10:03:00Z",
+        },
+        {"role": "operator", "text": "Vad är K3?", "created_at": "2026-10-19T10:03:10Z"},
+        # Named before it was seen: not a raise of that candidate.
+        {"role": "brain", "text": "Inget vid K3 än.", "created_at": "2026-10-19T10:00:30Z"},
+        {"role": "brain", "text": "K1 igen.", "created_at": "2026-10-19T10:04:00Z"},
+    ]
+    cards = [
+        _card(1, "2026-10-19T10:01:30Z"),
+        _card(2, "2026-10-19T10:02:30Z"),
+        _card(3, "2026-10-19T10:01:00Z"),
+    ]
+    rec = flight.flight_record(
+        started=0.0,
+        ended=300.0,
+        commands=commands,
+        gates={},
+        finds=[],
+        detections=[],
+        chat=chat,
+        candidates=cards,
+        breaches=0,
+        coverage=0.5,
+        landed_home=True,
+        turns=4,
+        max_time_s=1200.0,
+    )
+    raised = {c["seq"]: (c["t_s"], c["raised_t_s"]) for c in rec["candidates"]}
+    # K1 in the AI's report, K2 in its chat message; K3 only by the operator and too early.
+    assert raised == {1: (90.0, 120.0), 2: (150.0, 180.0), 3: (60.0, None)}
+    assert rec["candidates"][0] == {
+        "seq": 1,
+        "t_s": 90.0,
+        "lat": -35.36,
+        "lon": 149.16,
+        "priority_class": "high",
+        "raised_t_s": 120.0,
+    }
 
 
 def test_script_at_the_rounds_height(tmp_path: Path) -> None:

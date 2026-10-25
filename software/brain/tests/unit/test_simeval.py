@@ -49,7 +49,14 @@ from sd_brain.simeval.score import (
     score_flight,
 )
 from sd_brain.simeval.trend import failure_rows, load_scores, trend_rows, trend_text
-from sd_brain.simeval.world import FLEW_ON_M, SimCandidate, SimGround, SimWorld
+from sd_brain.simeval.world import (
+    FLEW_ON_M,
+    LOOK_ALT_M,
+    LOOK_RADIUS_M,
+    SimCandidate,
+    SimGround,
+    SimWorld,
+)
 from sd_schemas.candidate_ai import candidate_event_body, candidates_line
 
 KEY = "sk-test-" + "k" * 40
@@ -517,6 +524,8 @@ class _CloudLike:
         self.sectors = list(sectors)
         self.habit = habit
         self.candidate_turns: list[str] = []  # the turn block of each candidate turn
+        self.searching: str | None = None  # the sector of the last search order
+        self.blocks: list[str] = []  # the turn block of every turn
 
     async def chat(
         self,
@@ -526,6 +535,7 @@ class _CloudLike:
         sampling: Sampling,
     ) -> ModelReply:
         block = str(messages[-1]["content"])
+        self.blocks.append(block)
         event = block.rsplit("HÄNDELSE: ", 1)[-1].splitlines()[0]
         if len(messages) > 2 or not event.startswith(("operator_message", "skill", "candidate")):
             return _reply("")
@@ -540,11 +550,21 @@ class _CloudLike:
             if self.habit == "wait":
                 text = f"{k[0]} HÖG. Jag väntar här tills du har tittat."
                 return _reply(text, ("hold", {"rationale_sv": "Väntar på svar."}))
+            det = re.search(r"multi_frame=False, detection_id=([0-9a-f-]+)", event)
+            if self.habit == "look" and det is not None:
+                text = f"{k[0]} HÖG, sedd i en bild. Jag tittar närmare."
+                args = {"detection_id": det[1], "standoff_m": 15, "rationale_sv": "En bild."}
+                return _reply(text, ("inspect_detection", args))
             return _reply("")
         if "status=done" in event and "return_home" in event:
             return _reply("Hemma och landad.")
+        if "status=done" in event and "inspect_detection" in event and self.searching:
+            # The closer look ended hovering: the interrupted search again, no waiting.
+            args = {"sector": self.searching, "rationale_sv": "Söker vidare."}
+            return _reply("Tittat närmare, söker vidare.", ("survey_sector", args))
         if self.sectors:
-            args = {"sector": self.sectors.pop(0), "rationale_sv": "Nästa sektor."}
+            self.searching = self.sectors.pop(0)
+            args = {"sector": self.searching, "rationale_sv": "Nästa sektor."}
             return _reply("", ("survey_sector", args))
         return _reply("Klart, flyger hem.", ("return_home", {"rationale_sv": "Klart."}))
 
@@ -588,6 +608,68 @@ async def test_a_raised_candidate_is_a_find_when_the_search_flies_on() -> None:
     assert not silent.score.found
 
 
+async def test_a_closer_look_is_flown_and_the_interrupted_search_ordered_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # inspect_detection is a stage-2 skill, not offered to the AI yet (EXPOSED_STAGE 1):
+    # this flight offers it, as the prompt's closer-look rule expects once it is.
+    monkeypatch.setattr("sd_brain.tools.EXPOSED_STAGE", 2)
+    seed = 1792904165  # the person is seen in one still during the first sectors
+    sc = make_scenario(seed)
+    sc.situation["charter"]["allowed_skills"].append("inspect_detection")
+    runtime = _CloudLike([str(s["sector_id"]) for s in sc.situation["sectors"]], habit="look")
+    decider = DecisionMaker(cloud_commander(runtime, BehaviourConfig()), None)
+    flew = await fly(sc, decider, model="m", ai_config_hash="h")
+    skills = [o.skill for o in flew.log.orders]
+    assert all(o.decision == "ALLOW" for o in flew.log.orders) and flew.score.safety.ok
+    look = skills.index("inspect_detection")
+    # The look interrupted a sector's search; the next order is that sector again.
+    assert skills[look - 1] == skills[look + 1] == "survey_sector"
+    interrupted, again = (flew.records[i].ai_action for i in _order_turns(flew, look))
+    assert interrupted is not None and again is not None
+    assert again.params["sector"] == interrupted.params["sector"]
+    # The look was flown: LÄGE shows the person's second picture after it.
+    assert "multi_frame=False" in runtime.candidate_turns[0]
+    assert any("K1 HÖG (2/2 bilder)" in b for b in runtime.blocks)
+    # Named to the operator in the look's message, and the search flew on after it.
+    assert flew.log.candidates[0].raised_t_s is not None and flew.log.candidates[0].flew_on
+    assert flew.score.found and flew.score.passed and skills[-1] == "return_home"
+
+
+def _order_turns(flew: Any, look: int) -> tuple[int, int]:
+    """The turns that gave the orders just before and just after order ``look``."""
+    turns = [i for i, r in enumerate(flew.records) if r.ai_action is not None]
+    return turns[look - 1], turns[look + 1]
+
+
+async def test_a_closer_look_at_an_unknown_detection_is_refused() -> None:
+    from sd_schemas.base import new_id
+
+    world = SimWorld(make_scenario(4))
+    world.candidates.append(SimCandidate(1, 50.0, 20.0, True, 0.8, 0.0))
+    ground = SimGround(world, now=lambda: dt.datetime(2026, 10, 25, tzinfo=dt.UTC))
+    ground.sit["charter"]["allowed_skills"].append("inspect_detection")
+    res = await ground.submit(
+        ground.mission_id, _order("inspect_detection", detection_id=str(new_id()), standoff_m=15)
+    )
+    assert res.decision == "REJECT" and res.reason_codes == ["SCHEMA_INVALID"]
+    assert world.plan is None
+
+
+def test_the_closer_look_hovers_near_the_candidate_on_the_drones_side() -> None:
+    world = SimWorld(make_scenario(4))
+    c = SimCandidate(1, 100.0, 0.0, True, 0.8, 0.0)
+    world.candidates.append(c)
+    assert world.start(_order("inspect_detection", detection_id=c.detection_id, standoff_m=15))
+    assert world.plan is not None and world.plan.points == [(100.0 - LOOK_RADIUS_M, 0.0)]
+    assert world.plan.alt == LOOK_ALT_M
+    events: list[dict[str, Any]] = []
+    while world.plan is not None:
+        events = world.advance()
+    assert c.looked_close and c.n_seen == 2
+    assert events[-1]["body"]["skill"] == "inspect_detection"
+
+
 def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     system = cloud_commander(_CloudLike([], habit="silent"), BehaviourConfig()).context.system
     assert "SIGHTINGS." not in system and "POSSIBLE_PERSON" not in system
@@ -598,6 +680,11 @@ def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     # The closer look is the one interruption, and the interrupted search goes on after it.
     assert "The one exception is the closer look above (`inspect_detection`" in rule
     assert "order the interrupted search again without waiting" in rule
+    # The operator's request and a confirmed find win over "never hold, never hover".
+    assert "they give way to the operator and to a confirmed find" in rule
+    assert "If the operator asks you to hold, hover over or circle a candidate, do it" in rule
+    assert 'once a `candidate_decided` event with decision "confirm" has arrived' in rule
+    assert rule.index("give way") < rule.index("While a STOP")  # a block still wins
     # The exam offers no `inspect_detection`, so its candidates take the report path.
     assert "inspect_detection" not in make_scenario(4).situation["charter"]["allowed_skills"]
 

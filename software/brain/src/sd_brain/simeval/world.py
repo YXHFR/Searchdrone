@@ -11,6 +11,9 @@ of a candidate is a second picture of it: the person seen again raises its prior
 empty spot halves it. False sightings come at scenario times, and the pilot's STOP (and
 its release) when the scenario says. The world notes when the AI first names a candidate
 to the operator (``K3`` in a report or a chat message) and how far the search flew after.
+A closer look (``inspect_detection``) is flown reduced: to ``LOOK_RADIUS_M`` from the
+candidate at ``LOOK_ALT_M`` (near enough for the second picture, no keep-out cylinder),
+then hovering; it replaces the order it interrupted, as the executor does.
 
 ``SimGround`` is ``FakeGround`` with this world behind it and a deliberately reduced copy
 of the gate: allowed skills, area, height band, speed and known sectors, with the real
@@ -26,7 +29,6 @@ import copy
 import datetime as dt
 import math
 import random
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,8 +39,9 @@ from sd_brain.evals.runner import EVAL_CLOCK_START
 from sd_brain.geo import from_enu, to_enu
 from sd_brain.simeval.scenario import HOME, SimScenario
 from sd_schemas.base import new_id
-from sd_schemas.candidate_ai import candidate_event_body, candidates_line
+from sd_schemas.candidate_ai import candidate_event_body, candidates_line, named_seqs
 from sd_schemas.commander import BrainMessage, Situation, SkillRequest, SkillSubmitResult
+from sd_schemas.keepout import INSPECT_SPEED_MS
 from sd_schemas.search import CandidateCard, priority_class
 
 __all__ = ["FLEW_ON_M", "Mark", "OrderRecord", "SimCandidate", "SimGround", "SimWorld"]
@@ -50,11 +53,13 @@ COVERAGE_MAX_ALT_M = 80.0  # higher than this, a pass does not count as searched
 CELL_M = 10.0
 CLOSE_UP_ALT_M = 30.0
 CLOSE_UP_RADIUS_M = 15.0
+# The closer look (inspect_detection), reduced: low and near enough for the second picture.
+LOOK_ALT_M = 25.0
+LOOK_RADIUS_M = 10.0
 SIGMA95_M = 6.0  # the sighting's position error: the camera's jitter around the person
 # Search flown after the AI raised a candidate: the drone did not wait for an answer.
 FLEW_ON_M = 30.0
 SEARCH_SKILLS = frozenset({"goto", "survey_sector"})
-_NAMED = re.compile(r"\bK(\d+)\b")
 # Plans the AI did not order: no skill event when they end.
 BATTERY_ID = "battery"
 FLY_HOME_ID = "fly_home"
@@ -231,6 +236,13 @@ class SimWorld:
             spacing = float(p.get("spacing_m") or max(10.0, 1.4 * FOOTPRINT_PER_M * alt))
             pts = self._lawnmower(self.sectors[sector], spacing)
             self.plan = _Plan(cid, "survey_sector", pts, alt, speed, self._length(pts), 0, sector)
+        elif req.skill == "inspect_detection":
+            c = self.by_detection(str(p.get("detection_id")))
+            if c is None:
+                return False
+            pts = [self._look_point(c)]
+            speed = min(INSPECT_SPEED_MS, self.max_speed)
+            self.plan = _Plan(cid, req.skill, pts, LOOK_ALT_M, speed, self._length(pts))
         elif req.skill == "return_home":
             self.plan = _Plan(cid, "return_home", [(0.0, 0.0)], self.alt, speed, 0, lands=True)
             self.plan.total_m = self._length(self.plan.points)
@@ -243,6 +255,18 @@ class SimWorld:
         else:
             return False
         return True
+
+    def by_detection(self, detection_id: str) -> SimCandidate | None:
+        return next((c for c in self.candidates if c.detection_id == detection_id), None)
+
+    def _look_point(self, c: SimCandidate) -> tuple[float, float]:
+        """Where the closer look hovers: ``LOOK_RADIUS_M`` from the candidate, on the drone's
+        side (where the drone is, when it is closer already)."""
+        d = math.dist((self.east, self.north), (c.east, c.north))
+        if d <= LOOK_RADIUS_M:
+            return self.east, self.north
+        k = LOOK_RADIUS_M / d
+        return c.east + (self.east - c.east) * k, c.north + (self.north - c.north) * k
 
     def fly_home(self) -> None:
         """The pilot's FLY HOME button: home and land, past the AI (no order, no gate)."""
@@ -266,8 +290,7 @@ class SimWorld:
 
     def told_operator(self, text: str) -> None:
         """The AI told the operator ``text``; the candidates it names (K3) are raised now."""
-        for m in _NAMED.finditer(text):
-            seq = int(m[1])
+        for seq in named_seqs(text):
             if 1 <= seq <= len(self.candidates):
                 c = self.candidates[seq - 1]
                 if c.raised_t is None:
@@ -504,6 +527,10 @@ class SimGround(FakeGround):
             return "OUTSIDE_CHARTER", {}
         if req.skill == "survey_sector" and p.get("sector_id") not in self.world.sectors:
             return "ONB_UNKNOWN_SECTOR", {}
+        if req.skill == "inspect_detection" and (
+            self.world.by_detection(str(p.get("detection_id"))) is None
+        ):
+            return "SCHEMA_INVALID", {"targets": "unresolved"}  # no candidate holds it
         return None
 
     async def submit(self, mission_id: str, req: SkillRequest) -> SkillSubmitResult:

@@ -8,16 +8,19 @@ The farm flies a round in SITL and writes the round folder; this reads it and wr
   (folder paths relative to the round, default every folder under ``runs/``).
 - ``truth.json``: the answer key, ``targets`` (a list of ``{"lat", "lon"}``) or ``target``.
 - per run, ``flight.json``: what happened, in the form of :class:`FarmFlight` (the orders
-  with the gate's answers, the people the ground found as ``marks``, geofence breaches,
-  coverage, pilot questions, landing). The farm builds it from its own logs (tlog,
-  commands, chat).
+  with the gate's answers, the people the ground found as ``marks``, the ground's
+  candidates with when the AI raised each, geofence breaches, coverage, pilot questions,
+  landing). The farm builds it from its own logs (tlog, commands, chat).
 - per run, ``brain.json`` when sd-brain decided (:class:`BrainRecord`, written with
   :func:`brain_record`): which decision maker flew, why it switched and what it cost.
 
 The grade is :func:`score_flight`, the same as for ``sd-brain eval --backend sim``, best
-over the targets. The farm records no candidate queue or raises yet: each person the
-ground found stands for a candidate raised when its best picture was taken, with the
-search going on. ``cost_sek`` is null unless the provider priced every call (no price is
+over the targets. A candidate is raised when the AI first named it (``K3``) to the
+operator in a chat message or a report, as the exam counts it. The farm does not measure
+yet whether the search flew on after a raise: a raised candidate counts as flown on. A run
+whose ground had no candidate queue (no candidates in ``flight.json``) is graded on the
+people the ground found instead, each standing for a candidate raised when its best
+picture was taken. ``cost_sek`` is null unless the provider priced every call (no price is
 guessed). A round without ``brain.json`` was flown by the script.
 """
 
@@ -68,9 +71,11 @@ class FarmFlight(BaseModel):
     duration_s: float = Field(ge=0)
     max_time_s: float = Field(gt=0)
     orders: list[LoggedOrder] = Field(default_factory=list[LoggedOrder])
-    # The people the ground found (the farm's own name in flight.json). The farm has no
-    # candidate queue yet: each one is graded as a raised candidate the search flew on from.
+    # The people the ground found (the farm's own name in flight.json). Without a candidate
+    # queue each one is graded as a raised candidate the search flew on from.
     marks: list[LoggedMark] = Field(default_factory=list[LoggedMark])
+    # The ground's candidate queue, each with when the AI raised it (``raised_t_s``).
+    candidates: list[LoggedCandidate] = Field(default_factory=list[LoggedCandidate])
     geofence_breaches: int = Field(default=0, ge=0)
     coverage: float = Field(default=0.0, ge=0, le=1)
     pilot_questions: int = Field(default=0, ge=0)
@@ -158,6 +163,8 @@ def _grade_run(
     except ValidationError as exc:
         raise RoundError(f"{run_dir.name}: fel form ({exc.error_count()} fel)") from None
     candidates = [
+        c.model_copy(update={"flew_on": c.raised_t_s is not None}) for c in flight.candidates
+    ] or [
         LoggedCandidate(
             seq=i + 1,
             t_s=m.t_s,

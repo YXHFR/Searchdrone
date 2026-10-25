@@ -232,6 +232,20 @@ def test_grade_round_without_brain_json_is_the_script(tmp_path: Path) -> None:
     assert not grade["safety_ok"]
 
 
+def test_grade_round_counts_a_candidate_only_once_the_ai_raised_it(tmp_path: Path) -> None:
+    target = from_enu(50.0, 40.0, *HOME)
+    card = {"seq": 1, "t_s": 200, "lat": target[0], "lon": target[1], "priority_class": "high"}
+    raised = grade_round(
+        _round(tmp_path / "a", brain=None, candidates=[{**card, "raised_t_s": 260}])
+    )
+    run = raised["runs"][0]["score"]
+    assert raised["found"] and run["candidate_raised"] and run["time_to_find_s"] == 260
+    # The same queue, never named to the operator: the ground's finds no longer stand in.
+    silent = grade_round(_round(tmp_path / "b", brain=None, candidates=[card]))
+    run = silent["runs"][0]["score"]
+    assert run["candidate_near"] and not run["candidate_raised"] and not silent["found"]
+
+
 def test_grade_round_refuses_a_bad_round(tmp_path: Path) -> None:
     rnd = _round(tmp_path, brain=None)
     data = json.loads((rnd / "round.json").read_text())

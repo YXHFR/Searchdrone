@@ -13,6 +13,7 @@ person. The AI sees the candidates; only a person confirms a find.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Final
 
@@ -32,10 +33,12 @@ __all__ = [
     "LINE_CANDIDATES_MAX",
     "candidate_event_body",
     "candidates_line",
+    "named_seqs",
     "queue_counts",
 ]
 
 LINE_CANDIDATES_MAX: Final = 3
+_NAMED: Final = re.compile(r"\bK(\d+)\b")
 _S = CandidateState
 _OPEN: Final = (_S.READY, _S.ASSESSING, _S.INSPECTING)
 _CLASS: Final[Mapping[PriorityClass, str]] = {"high": "HÖG", "medium": "medel", "low": "låg"}
@@ -97,6 +100,12 @@ def candidate_event_body(card: Mapping[str, Any]) -> dict[str, Any] | None:
     body["detection_id"] = card.get("thumb_detection_id")
     body["multi_frame"] = int(card.get("n_seen") or 0) >= 2
     return body
+
+
+def named_seqs(text: str) -> list[int]:
+    """The candidates a text names, as this module writes them (``K3``), in order. The AI
+    naming one to the operator, in a report or a chat message, is what raises it."""
+    return [int(m[1]) for m in _NAMED.finditer(text)]
 
 
 def queue_counts(cards: Iterable[CandidateCard]) -> dict[str, int]:

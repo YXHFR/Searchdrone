@@ -6,7 +6,12 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sd_schemas.candidate_ai import candidate_event_body, candidates_line, queue_counts
+from sd_schemas.candidate_ai import (
+    candidate_event_body,
+    candidates_line,
+    named_seqs,
+    queue_counts,
+)
 from sd_schemas.search import CandidateCard, priority_class
 
 T = dt.datetime(2026, 10, 17, 12, 0, tzinfo=dt.UTC)
@@ -68,3 +73,9 @@ def test_queue_counts_and_the_line_leave_out_decided_and_merged() -> None:
     assert candidates_line([card(1, 0.7)], {}, drone) == (
         "Kandidater: K1 HÖG (1/2 bilder) 40 m N | att granska 1, låg 0"
     )
+
+
+def test_a_text_names_the_candidates_it_writes_as_k_and_a_number() -> None:
+    assert named_seqs("K3 HÖG: granska bilden. K12 också, och K3 igen.") == [3, 12, 3]
+    assert named_seqs("Kandidater: inga") == []
+    assert named_seqs("K3a, OK3, sektor K") == []
