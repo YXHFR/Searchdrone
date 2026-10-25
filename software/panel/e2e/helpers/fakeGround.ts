@@ -128,7 +128,7 @@ export class FakeGround {
   } = { approved: null, proposal: null, proposal_id: null, proposed_by: null };
   clearance: Clearance | null = null;
   sectors: unknown = { type: "FeatureCollection", features: [] };
-  /** The newest probability map (null: none yet, 404 like the ground). */
+  /** The newest probability map (null: none yet, answered as null like the ground). */
   probabilityMap: Record<string, unknown> | null = {
     mission_id: MISSION,
     version: 1,
