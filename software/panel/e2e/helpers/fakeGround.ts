@@ -447,11 +447,17 @@ export class FakeGround {
     }
     this.sockets.push(ws);
     ws.onMessage((m) => {
+      let msg: Record<string, unknown>;
       try {
-        this.wsSent.push(JSON.parse(String(m)) as Record<string, unknown>);
+        msg = JSON.parse(String(m)) as Record<string, unknown>;
       } catch {
-        // not JSON: ignored like the real server
+        return; // not JSON: ignored like the real server
       }
+      this.wsSent.push(msg);
+      // Like the real ground: every ping gets a pong. Without it a test that pushes nothing
+      // for the panel's 15 s of silence sees the socket dropped, and what it pushes while
+      // the panel reconnects is lost.
+      if (msg.op === "ping") ws.send(JSON.stringify({ type: "pong" }));
     });
     ws.onClose(() => {
       this.sockets = this.sockets.filter((s) => s !== ws);
