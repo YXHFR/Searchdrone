@@ -6,6 +6,10 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
 * ``test_a_new_cylinder_reroutes_the_search``: a find is confirmed ahead of the drone
   while it flies a survey line. The rest of the survey is planned around the cylinder,
   no track sample lies inside it, and the survey ends ``done``.
+* ``test_overlapping_cylinders_are_passed_as_one_group``: two finds are confirmed close
+  together in the middle of the box, so their cylinders overlap. The rest of the survey
+  goes around both as one group: no hold, no refused reroute, no track sample inside
+  either, and the survey ends ``done``.
 * ``test_a_new_cylinder_holds_a_goto_and_stop_still_works``: a find is confirmed on a
   ``goto``'s way. The drone hovers short of the cylinder (``KEEPOUT_VIOLATION``); STOP
   then brakes and holds as always, and FLY HOME brings it home.
@@ -132,6 +136,42 @@ async def test_a_new_cylinder_reroutes_the_search(
         assert after["status"] == "done", after
         inside = _inside(sc, since, centre)
         assert not inside, inside[:3]
+        await _land(sc)
+
+
+@pytest.mark.budget_s(480)
+async def test_overlapping_cylinders_are_passed_as_one_group(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.airborne()
+        res = await sc.operator_order("survey_sector", {"polygon": survey_box(sc)})
+        assert res["gate"]["decision"] == "ALLOW", res
+        survey = await sc.wait_command("survey_sector", "running", 60)
+        await sc.until(lambda: _executor(sc, "SURVEY"), 120, "in the box")
+        await surveying(sc)
+
+        # Two people 30 m apart in the middle of the box: their cylinders overlap, so a way
+        # around one alone would run into the other.
+        corners = survey_box_enu()
+        ce, cn = sum(e for e, _ in corners) / 4, sum(n for _, n in corners) / 4
+        centres = [sc.at(ce - 15.0, cn), sc.at(ce + 15.0, cn)]
+        assert distance_m(*centres[0], *centres[1]) < 2 * RADIUS_M
+        for c in centres:
+            assert distance_m(sc.tel.lat, sc.tel.lon, *c) >= RADIUS_M + CLEAR_M
+        since = time.monotonic()
+        for c in centres:
+            await sc.confirm_find(*c, sigma95_m=SIGMA_M)
+        await until_event(sc, "keepout_reroute")
+
+        await sc.wait_command("survey_sector", "done", 300)
+        after = await sc.command(survey["id"])
+        assert after["status"] == "done", after
+        assert not await onboard_events(sc, "keepout_reroute_refused")
+        assert not await onboard_events(sc, "keepout_hold")
+        for c in centres:
+            inside = _inside(sc, since, c)
+            assert not inside, inside[:3]
         await _land(sc)
 
 

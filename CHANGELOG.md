@@ -418,6 +418,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- A keep-out way around now keeps the margin (`KEEPOUT_ARC_MARGIN_M`) from every
+  cylinder, not only from the ones it was made for: a leg of a way around that passes
+  closer than the margin to another cylinder gets a way around that one too. A SITL test
+  flies a survey past two overlapping cylinders, passed as one group.
 - The simulator exam (`just brain-eval-sim`) now measures the path the real drone uses.
   A sighting becomes a search candidate: a high one wakes the AI with the ground's own
   `candidate` event and every open one is in the "Kandidater" line, both built by the
