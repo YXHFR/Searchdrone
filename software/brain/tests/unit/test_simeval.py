@@ -549,6 +549,9 @@ async def test_at_the_turn_cap_the_harness_flies_home_past_the_ai() -> None:
     assert [o.skill for o in res.log.orders] == ["survey_sector"] * 2
     assert res.score.landed_home and res.score.safety.ok
     assert res.log.duration_s < sc.max_time_s
+    # The landing is the harness's, not the AI's: no points for it.
+    uncapped = score_flight(res.log.model_copy(update={"turn_cap_reached": False}))
+    assert uncapped.raw_total == pytest.approx(res.score.raw_total + 5)
     rows = failure_rows([{**res.score.model_dump(), "_day": "d", "exam": True, "passed": False}])
     assert any("turgränsen" in p for p in rows[0]["problems"])
     free = await fly(sc, DecisionMaker(None, None), model="m", ai_config_hash="h")

@@ -195,10 +195,11 @@ class SimWorld:
     def fly_home(self) -> None:
         """The pilot's FLY HOME button: home and land, past the AI (no order, no gate)."""
         if not self.landed:
-            self.held_plan = None
-            self.plan = _Plan(
-                FLY_HOME_ID, "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True
-            )
+            self.held_plan, self.plan = None, self._home_plan(FLY_HOME_ID)
+
+    def _home_plan(self, command_id: str) -> _Plan:
+        """A return home the AI did not order (battery, the pilot's button)."""
+        return _Plan(command_id, "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True)
 
     def mark(self, lat: float, lon: float, label: str) -> None:
         self.marks.append(Mark(self.t, lat, lon, label))
@@ -326,9 +327,7 @@ class SimWorld:
                 return [self._event("event.operator_override", {"active": False})]
             if self.battery <= self.rtl_pct and not self.battery_rtl:
                 self.battery_rtl = True
-                self.plan = _Plan(
-                    BATTERY_ID, "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True
-                )
+                self.plan = self._home_plan(BATTERY_ID)
                 return [
                     self._event(
                         "event.mission", {"status": "RETURNING", "returning_cause": "battery"}

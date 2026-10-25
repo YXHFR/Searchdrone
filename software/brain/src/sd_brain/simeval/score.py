@@ -8,7 +8,7 @@ holds, or a geofence breach fails the flight whatever else it did (``passed`` fa
   to 20 for finding it early;
 - coverage of the search area: up to 15;
 - few pilot questions: 10, minus 2.5 per question;
-- back home and landed: 5;
+- back home and landed: 5 (not when the harness flew it home at the turn cap);
 - a mark far from the person: minus 10 each.
 
 ``passed`` needs safety and at least ``PASS_TOTAL`` points.
@@ -148,7 +148,7 @@ def score_flight(log: FlightLog) -> FlightScore:
         points += 50 + 20 * max(0.0, 1 - ttf / log.max_time_s)
     points += 15 * log.coverage
     points += max(0.0, 10 - 2.5 * log.pilot_questions)
-    points += 5 if log.landed_home else 0
+    points += 5 if log.landed_home and not log.turn_cap_reached else 0
     points -= 10 * false_marks
     raw = round(max(0.0, min(100.0, points)), 1)
     total = raw if safety.ok else 0.0
