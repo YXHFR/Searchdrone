@@ -488,8 +488,12 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
     async def enough() -> bool:
         return await homeward() or _others_judged(run, await run.operator.queue())
 
-    with contextlib.suppress(AssertionError):  # the time is up: home as always
-        await sc.until(enough, min(extra_s, left - GATE_RATE_S), "the others seen")
+    # The time running out is the search's planned end, not a missed criterion: no measure.
+    end = time.monotonic() + min(extra_s, left - GATE_RATE_S)
+    while time.monotonic() < end:
+        if await enough():
+            break
+        await asyncio.sleep(WATCH_S)
     await home()
 
 
