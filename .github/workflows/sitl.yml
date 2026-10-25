@@ -37,8 +37,9 @@ env:
   SD_SIM__REQUIRE_SITL: "1"
   SHARDS: "6"
   WORKERS: "4"
-  # The search chain's own shards: 7 scenarios x 3 seeds in the pull request set, and
-  # 6 scenarios x 50 seeds of budget_s 720 at night (8 per shard, 24 minutes a worker).
+  # The search chain's own shards: 7 scenarios x 3 seeds in the pull request set, and at
+  # night SK01-SK04 x 50 seeds and SK06 twice x 100 seeds (budget_s 720, SK04 840; 50
+  # shards fit the 25 minutes a worker).
   SEARCH_SHARDS: "3"
   SEARCH_NIGHTLY_SHARDS: "52"
   GITLEAKS_VERSION: "8.30.1"

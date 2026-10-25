@@ -428,28 +428,37 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
     so the other persons get seen too, until each has a card whose top was judged, for at
     most ``extra_s`` and never past ``limit_s`` from take-off. The orders are the AI's,
     through the gate, so the charter, the geofence and the battery return apply as in any
-    flight; the search ends early when the drone heads home on its own (the AI's own
-    return, a battery return or a landing). True when it does; otherwise the operator
-    asks the drone home, as after any confirmation."""
+    flight. Nothing is searched when the drone was already on its way home or down before
+    (a return ordered earlier, a landing mode, no hold): the operator then asks it home as
+    after any confirmation. The search ends early when the drone heads home on its own
+    after "Sök vidare." (a new return, a landing mode, disarmed). True when it does;
+    otherwise the operator asks the drone home."""
     sc = run.sc
+    before = {c["id"] for c in await sc.commands() if c["skill"] == "return_home"}
 
     async def holding() -> bool:
         return any(c["skill"] == "hold" and c["issuer_kind"] == "brain"
                    and c["status"] == "running" for c in await sc.commands())  # fmt: skip
 
-    await sc.until(holding, HOLD_LIMIT_S, "the AI holds after the confirmation")
-    left = limit_s - (time.monotonic() - (run.lift_t or time.monotonic()))
-    if left <= GATE_RATE_S:
-        return False
-    await asyncio.sleep(GATE_RATE_S)
-    await sc.say("Sök vidare.")
-
     async def homeward() -> bool:
         return (
             not sc.tel.armed
             or sc.mode() in LANDING_MODES
-            or any(c["skill"] == "return_home" for c in await sc.commands())
-        )
+            or any(c["skill"] == "return_home" and c["id"] not in before
+                   for c in await sc.commands())
+        )  # fmt: skip
+
+    if before or await homeward():
+        return False
+    try:
+        await sc.until(holding, HOLD_LIMIT_S, "the AI holds after the confirmation")
+    except AssertionError:
+        return False  # no hold (the drone on its way home or down): home as always
+    left = limit_s - (time.monotonic() - (run.lift_t or time.monotonic()))
+    if left <= GATE_RATE_S or await homeward():
+        return False
+    await asyncio.sleep(GATE_RATE_S)
+    await sc.say("Sök vidare.")
 
     async def enough() -> bool:
         return await homeward() or _others_judged(run, await run.operator.queue())
