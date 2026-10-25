@@ -470,6 +470,16 @@ def test_trend_flags_a_worse_day(tmp_path: Path) -> None:
     assert [r["worse"] for r in rows] == [False, True]
     assert "<- sämre" in trend_text(rows)
     assert "Inga betyg" in trend_text([])
+    # A grade from the old rule is a line of its own, never the day to compare with.
+    old = score_flight(_log()).model_copy(update={"total": 10.0, "score_version": 1})
+    (tmp_path / "2026-10-19").mkdir()
+    (tmp_path / "2026-10-19" / "f.json").write_text(old.model_dump_json())
+    rows = trend_rows(load_scores(tmp_path))
+    assert [(r["model"].endswith("(betyg v1)"), r["worse"]) for r in rows] == [
+        (False, False),
+        (False, True),
+        (True, False),
+    ]
 
 
 def test_cli_sim_without_a_key_flies_the_script(
@@ -583,6 +593,8 @@ def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     assert "SIGHTINGS." not in system and "POSSIBLE_PERSON" not in system
     rule = next(p for p in system.split("\n\n") if p.startswith("CANDIDATES."))
     assert "never pauses the search" in rule and "A closer look as in FINDS is one pass" in rule
+    # The operator always gets the urgent report; a candidate never starts an order by itself.
+    assert '`report` priority "urgent"' in rule and "give the next search order" not in rule
 
 
 async def test_the_situation_and_event_are_the_grounds_own() -> None:
@@ -599,16 +611,44 @@ async def test_the_situation_and_event_are_the_grounds_own() -> None:
     assert not sit.pins and not sit.alerts
 
 
+def _order(skill: str, **params: Any) -> Any:
+    from sd_schemas.base import new_id
+    from sd_schemas.commander import SkillRequest
+
+    return SkillRequest(
+        command_id=new_id(),
+        skill=skill,
+        params=params,
+        rationale_sv="-",
+        in_reply_to=None,
+        based_on=None,
+        charter_version=1,
+        backend="llm",
+        ai_config_hash="h",
+    )
+
+
+def _fly_out(world: SimWorld) -> None:
+    while world.plan is not None and not world.landed:
+        world.advance(max_s=1)
+
+
 def test_a_candidate_is_raised_when_named_and_flown_on_after_the_search_goes_on() -> None:
     world = SimWorld(make_scenario(4))
-    c = SimCandidate(1, 50.0, 20.0, True, 0.8, 0.0)
+    c = SimCandidate(1, 80.0, 0.0, True, 0.8, 0.0)
     world.candidates.append(c)
     world.told_operator("K2 och K10 finns inte; K1 HÖG, granska.")
     assert c.raised_t == world.t and not world.flew_on(c)
-    world.search_m += FLEW_ON_M - 1
-    assert not world.flew_on(c)
-    world.search_m += 1
-    assert world.flew_on(c)
+    # Flying to the candidate and waiting there is not searching on.
+    lat, lon = c.latlon()
+    world.start(_order("goto", lat=lat, lon=lon, alt_m=25))
+    _fly_out(world)
+    assert c.searched_after_m == 0 and not world.flew_on(c)
+    # A search order elsewhere is.
+    lat, lon = SimCandidate(9, 80.0, -FLEW_ON_M - 10, False, 0.1, 0.0).latlon()
+    world.start(_order("goto", lat=lat, lon=lon, alt_m=25))
+    _fly_out(world)
+    assert c.searched_after_m >= FLEW_ON_M and world.flew_on(c)
     later = SimCandidate(2, 0.0, 0.0, False, 0.7, 0.0)
     world.candidates.append(later)
     world.told_operator("K2 HÖG")
@@ -616,27 +656,20 @@ def test_a_candidate_is_raised_when_named_and_flown_on_after_the_search_goes_on(
     assert world.flew_on(later)  # nothing was left to search
 
 
-def test_a_close_pass_is_a_second_picture_and_wakes_with_the_grounds_event() -> None:
-    from sd_schemas.base import new_id
-    from sd_schemas.commander import SkillRequest
+def test_a_survey_flown_to_its_end_searched_the_whole_sector() -> None:
+    world = SimWorld(make_scenario(4))
+    sector = next(iter(world.sectors))
+    world.start(_order("survey_sector", sector_id=sector))
+    _fly_out(world)
+    assert world.sector_progress[sector] == 1.0
 
+
+def test_a_close_pass_is_a_second_picture_and_wakes_with_the_grounds_event() -> None:
     world = SimWorld(make_scenario(4))
     true, false = SimCandidate(1, 60.0, 0.0, True, 0.7, 0.0), SimCandidate(2, 60, 8, False, 0.7, 0)
     world.candidates += [true, false]
     lat, lon = true.latlon()
-    world.start(
-        SkillRequest(
-            command_id=new_id(),
-            skill="goto",
-            params={"lat": lat, "lon": lon, "alt_m": 25},
-            rationale_sv="-",
-            in_reply_to=None,
-            based_on=None,
-            charter_version=1,
-            backend="llm",
-            ai_config_hash="h",
-        )
-    )
+    world.start(_order("goto", lat=lat, lon=lon, alt_m=25))
     events: list[dict[str, Any]] = []
     while not events:
         events = [e for e in world.advance() if e["type"] == "event.candidate"]

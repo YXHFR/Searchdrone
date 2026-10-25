@@ -68,6 +68,8 @@ class FarmFlight(BaseModel):
     duration_s: float = Field(ge=0)
     max_time_s: float = Field(gt=0)
     orders: list[LoggedOrder] = Field(default_factory=list[LoggedOrder])
+    # The people the ground found (the farm's own name in flight.json). The farm has no
+    # candidate queue yet: each one is graded as a raised candidate the search flew on from.
     marks: list[LoggedMark] = Field(default_factory=list[LoggedMark])
     geofence_breaches: int = Field(default=0, ge=0)
     coverage: float = Field(default=0.0, ge=0, le=1)

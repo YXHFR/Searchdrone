@@ -3,6 +3,8 @@
 Exams only (flights the cloud model decided throughout); script flights are counted on a
 line of their own. A day whose mean grade for a model is ``DROP_POINTS`` or more below that
 model's previous day, or whose pass rate fell, is flagged so a regression shows at once.
+Grades from an older ``score_version`` (another grading rule) get a line of their own and
+are never compared with the current ones.
 The cost per flight counts only flights whose cost the provider reported ("ej uppm." when
 none did); no price is guessed.
 """
@@ -13,6 +15,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+from sd_brain.simeval.score import SCORE_VERSION
 
 __all__ = [
     "DROP_POINTS",
@@ -43,6 +47,9 @@ def trend_rows(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for s in scores:
         model = s["model"] if s.get("exam") else "script"
+        version = s.get("score_version", 1)
+        if version != SCORE_VERSION:
+            model += f" (betyg v{version})"
         groups[(s["_day"], model)].append(s)
     rows: list[dict[str, Any]] = []
     last: dict[str, dict[str, Any]] = {}

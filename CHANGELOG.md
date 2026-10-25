@@ -425,8 +425,9 @@ All notable changes to this project are listed here. The format follows
   simulator-only warning `POSSIBLE_PERSON_<pin>`, its map pins and close-up verdicts are
   gone, and so is the prompt's SIGHTINGS rule. A find is a candidate near the person that
   the AI named to the operator (`K3` in a report or a chat message) after which the
-  search flew on; map marks no longer count (grade version 2). The CANDIDATES rule says
-  that raising a candidate never pauses the search.
+  search flew on (a flight to the candidate itself does not count); map marks no longer
+  count (grade version 2, shown apart from older grades in `just brain-scores`). The
+  CANDIDATES rule says that raising a candidate never pauses the search.
 - The nightly SK06 comparison no longer ends a run when the keep-out reflex stops a
   sector's search (`KEEPOUT_VIOLATION`). The test then stopped ordering sectors, the
   drone flew home after one sector and the run counted as not found (900 s): two of the

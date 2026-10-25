@@ -101,7 +101,7 @@ class SimCandidate:
     last_t: float = 0.0
     looked_close: bool = False
     raised_t: float | None = None
-    search_m_at_raise: float = 0.0
+    searched_after_m: float = 0.0  # search flown since the raise, not to this candidate
 
     def latlon(self) -> tuple[float, float]:
         return from_enu(self.east, self.north, *HOME)
@@ -157,7 +157,6 @@ class SimWorld:
     held_plan: _Plan | None = None
     marks: list[Mark] = field(default_factory=list[Mark])
     candidates: list[SimCandidate] = field(default_factory=list[SimCandidate])
-    search_m: float = 0.0  # flown on the AI's search orders (goto, survey_sector)
     geofence_breaches: int = 0
     stop_set_at: float | None = None
     stop_released_at: float | None = None
@@ -272,15 +271,16 @@ class SimWorld:
             if 1 <= seq <= len(self.candidates):
                 c = self.candidates[seq - 1]
                 if c.raised_t is None:
-                    c.raised_t, c.search_m_at_raise = self.t, self.search_m
+                    c.raised_t = self.t
 
     def flew_on(self, c: SimCandidate) -> bool:
         """The search went on after the AI raised ``c`` instead of waiting for an answer:
-        ``FLEW_ON_M`` more of it, or every sector searched by now."""
+        ``FLEW_ON_M`` more of it (a flight to the candidate itself does not count), or every
+        sector searched by now."""
         if c.raised_t is None:
             return False
         searched = min(self.sector_progress.values(), default=1.0) >= 1.0
-        return searched or self.search_m - c.search_m_at_raise >= FLEW_ON_M
+        return searched or c.searched_after_m >= FLEW_ON_M
 
     # --- time ---------------------------------------------------------------------------
 
@@ -348,6 +348,7 @@ class SimWorld:
         """One second along the plan; True when its last point is reached."""
         self.alt += max(-3.0, min(3.0, plan.alt - self.alt))
         left, flown0 = plan.speed, plan.flown_m
+        goal = plan.points[-1] if plan.points else (self.east, self.north)
         while left > 0 and plan.points:
             tx, ty = plan.points[0]
             d = math.dist((self.east, self.north), (tx, ty))
@@ -362,7 +363,10 @@ class SimWorld:
                 plan.flown_m += left
                 left = 0
         if plan.skill in SEARCH_SKILLS:
-            self.search_m += plan.flown_m - flown0
+            for c in self.candidates:
+                away = math.dist(goal, (c.east, c.north)) > CLOSE_UP_RADIUS_M
+                if c.raised_t is not None and away:
+                    c.searched_after_m += plan.flown_m - flown0
         if plan.sector is not None and plan.total_m > 0:
             done_part = 1.0 if not plan.points else plan.flown_m / plan.total_m
             self.sector_progress[plan.sector] = min(1.0, done_part)
