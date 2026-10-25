@@ -663,6 +663,7 @@ def test_the_closer_look_hovers_near_the_candidate_on_the_drones_side() -> None:
     assert world.start(_order("inspect_detection", detection_id=c.detection_id, standoff_m=15))
     assert world.plan is not None and world.plan.points == [(100.0 - LOOK_RADIUS_M, 0.0)]
     assert world.plan.alt == LOOK_ALT_M
+    events: list[dict[str, Any]] = []
     while world.plan is not None:
         events = world.advance()
     assert c.looked_close and c.n_seen == 2
