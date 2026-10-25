@@ -59,6 +59,7 @@ from sd_geo import PinholeCamera
 from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.pipeline import Perception
 from sd_onboard.perception.sources import DirStillSource
+from sd_safety.constants import RATE_ACTION_MIN_GAP_MS
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.probmap import ProbabilityGrid
 from sd_search.app import SearchService
@@ -91,7 +92,8 @@ PERIOD_S = 0.2  # how often perception asks for a still (the source gives one a 
 TRUTH_M = 12.0  # a card or a detection this near a thing is that thing
 LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
 HOLD_LIMIT_S = 60.0  # the AI's hold after a confirmation
-GATE_RATE_S = 3.1  # the gate's rate limit: one AI action per 3 s
+GATE_RATE_S = RATE_ACTION_MIN_GAP_MS / 1000 + 0.1  # the gate's rate limit, and a margin
+HOME_LIMIT_S = 30.0  # the AI's return home after "Flyg hem." under way
 WATCH_S = 0.25
 
 
@@ -430,18 +432,25 @@ def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
     return others <= judged
 
 
-async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
+async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
     """After the confirmation the AI holds (its script); the operator asks it to search on
     so the other persons get seen too, until each has a card whose top was judged, for at
     most ``extra_s`` and never past ``limit_s`` from take-off. The orders are the AI's,
     through the gate, so the charter, the geofence and the battery return apply as in any
     flight. Nothing is searched when the drone was already on its way home or down before
-    (a return ordered earlier, a landing mode, no hold): the operator then asks it home as
-    after any confirmation. The search ends early when the drone heads home on its own
-    after "Sök vidare." (a new return not turned down, a landing mode, disarmed). True
-    when it does; otherwise the operator asks the drone home."""
+    (a return ordered earlier, a landing mode), when the AI does not hold, or when too
+    little time is left. The search ends early when the drone heads home on its own. The
+    flight always ends with the return home: unless the drone is on its way already, the
+    operator asks the AI home once its last order is a rate gap old, and presses RETURN
+    HOME when the AI's return is not under way within ``HOME_LIMIT_S``."""
     sc = run.sc
-    before = {c["id"] for c in await sc.commands() if c["skill"] == "return_home"}
+
+    def live(c: dict[str, Any]) -> bool:  # a return not turned down
+        return c["skill"] == "return_home" and (
+            c["status"] not in TERMINAL or c["status"] == "done"
+        )
+
+    before = {c["id"] for c in await sc.commands() if live(c)}
 
     async def holding() -> bool:
         return any(c["skill"] == "hold" and c["issuer_kind"] == "brain"
@@ -451,20 +460,29 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
         return (
             not sc.tel.armed
             or sc.mode() in LANDING_MODES
-            or any(c["skill"] == "return_home" and c["id"] not in before
-                   and (c["status"] not in TERMINAL or c["status"] == "done")
-                   for c in await sc.commands())
-        )  # fmt: skip
+            or any(live(c) and c["id"] not in before for c in await sc.commands())
+        )
+
+    async def home() -> None:
+        await asyncio.sleep(GATE_RATE_S)  # the AI's last order a rate gap old
+        if await homeward():
+            return
+        await sc.say("Flyg hem.")
+        with contextlib.suppress(AssertionError):
+            await sc.until(homeward, HOME_LIMIT_S, "the AI's return home under way")
+            return
+        if sc.tel.armed and sc.mode() not in LANDING_MODES:
+            assert (await sc.press("return_home")).status_code == 202
 
     if before or await homeward():
-        return False
+        return
     try:
         await sc.until(holding, HOLD_LIMIT_S, "the AI holds after the confirmation")
     except AssertionError:
-        return False  # no hold (the drone on its way home or down): home as always
+        return await home()
     left = limit_s - (time.monotonic() - (run.lift_t or time.monotonic()))
-    if left <= GATE_RATE_S or await homeward():
-        return False
+    if left < 2 * GATE_RATE_S or await homeward():
+        return await home()
     await asyncio.sleep(GATE_RATE_S)
     await sc.say("Sök vidare.")
 
@@ -473,7 +491,7 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> bool:
 
     with contextlib.suppress(AssertionError):  # the time is up: home as always
         await sc.until(enough, min(extra_s, left - GATE_RATE_S), "the others seen")
-    return await homeward()
+    await home()
 
 
 async def search_run(
@@ -492,8 +510,8 @@ async def search_run(
     once airborne (SK06 orders the sectors itself); ``confirm_limit_s`` is how long the
     operator may take to the confirmed find after take-off (the scenario's limit when
     left out). With ``require_found`` the test fails without a confirmed find. With
-    ``search_on_s`` the AI searches on after the confirmation (``_search_on``) before the
-    operator asks the drone home."""
+    ``search_on_s`` the AI searches on after the confirmation (``_search_on``) before it
+    flies home."""
     plane = Plane(*sc.r.home)
     limit = confirm_limit_s or world.limit_s
     holder: list[SearchRun] = []
@@ -542,8 +560,10 @@ async def search_run(
                 if reviewing.done() and reviewing.exception() is not None:
                     raise reviewing.exception()  # type: ignore[misc]
                 if operator.confirmed is not None:
-                    if search_on_s is None or not await _search_on(run, search_on_s, limit):
+                    if search_on_s is None:
                         await sc.say("Flyg hem.")
+                    else:
+                        await _search_on(run, search_on_s, limit)
                 elif sc.tel.armed:
                     assert (await sc.press("return_home")).status_code == 202
             elif fly is None:

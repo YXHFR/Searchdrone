@@ -5,8 +5,9 @@ three when unset), SK06's from ``SD_SK06_SEEDS`` (``sk06_seeds=1-100``; the othe
 unset). Each run is the chain rig's (``chain_rig.search_run``) with the scenario's own
 time limit; a run that does not find the person is a measure, not a failure, as long as
 no invariant breaks and nothing wrong is confirmed. In SK04 the AI searches on after the
-confirmation, at most ``SK04_SEARCH_ON_S`` and within the time limit, until the hiker's
-top has been judged, so the campaign has enough of the hiker's verdicts to count. Every
+confirmation, at most ``SK04_SEARCH_ON_S`` and within the time limit, until every other
+person has a card whose top was judged, so the campaign has enough of the hiker's
+verdicts to count; then it flies home as after any confirmation. Every
 run writes ``search_metrics.json`` and ``search_report.md``; ``python -m
 sd_sim.eval_search aggregate`` checks the campaign's requirements over them. The detector
 and the image model are oracles with modelled profiles: the results are "modellerat, ej
