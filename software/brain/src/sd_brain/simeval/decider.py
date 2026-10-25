@@ -32,6 +32,7 @@ __all__ = ["DecisionMaker", "SearchScript", "cloud_commander", "make_decision_ma
 
 DeciderKind = Literal["cloud", "script"]
 SwitchReason = Literal["key_invalid", "budget", "cloud_error"]
+# A high candidate as sd_schemas.candidate_ai.candidates_line writes it (its _CLASS words).
 _HIGH = re.compile(r"\bK(\d+) HÖG\b")
 
 

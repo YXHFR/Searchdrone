@@ -592,9 +592,14 @@ def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     system = cloud_commander(_CloudLike([], habit="silent"), BehaviourConfig()).context.system
     assert "SIGHTINGS." not in system and "POSSIBLE_PERSON" not in system
     rule = next(p for p in system.split("\n\n") if p.startswith("CANDIDATES."))
-    assert "never pauses the search" in rule and "A closer look as in FINDS is one pass" in rule
-    # The operator always gets the urgent report; a candidate never starts an order by itself.
+    assert "never pauses the search" in rule
+    # The operator always gets the urgent report, and no search order starts for a candidate.
     assert '`report` priority "urgent"' in rule and "give the next search order" not in rule
+    # The closer look is the one interruption, and the interrupted search goes on after it.
+    assert "The one exception is the closer look above (`inspect_detection`" in rule
+    assert "order the interrupted search again without waiting" in rule
+    # The exam offers no `inspect_detection`, so its candidates take the report path.
+    assert "inspect_detection" not in make_scenario(4).situation["charter"]["allowed_skills"]
 
 
 async def test_the_situation_and_event_are_the_grounds_own() -> None:
@@ -660,8 +665,14 @@ def test_a_survey_flown_to_its_end_searched_the_whole_sector() -> None:
     world = SimWorld(make_scenario(4))
     sector = next(iter(world.sectors))
     world.start(_order("survey_sector", sector_id=sector))
+    assert world.plan is not None
+    # A raised candidate where the survey ends: the survey is still searching on.
+    c = SimCandidate(1, *world.plan.points[-1], True, 0.8, 0.0)
+    world.candidates.append(c)
+    world.told_operator("K1 HÖG")
     _fly_out(world)
     assert world.sector_progress[sector] == 1.0
+    assert world.flew_on(c) and c.searched_after_m > FLEW_ON_M
 
 
 def test_a_close_pass_is_a_second_picture_and_wakes_with_the_grounds_event() -> None:

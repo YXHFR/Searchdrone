@@ -279,7 +279,7 @@ class SimWorld:
         sector searched by now."""
         if c.raised_t is None:
             return False
-        searched = min(self.sector_progress.values(), default=1.0) >= 1.0
+        searched = min(self.sector_progress.values(), default=0.0) >= 1.0
         return searched or c.searched_after_m >= FLEW_ON_M
 
     # --- time ---------------------------------------------------------------------------
@@ -364,7 +364,9 @@ class SimWorld:
                 left = 0
         if plan.skill in SEARCH_SKILLS:
             for c in self.candidates:
-                away = math.dist(goal, (c.east, c.north)) > CLOSE_UP_RADIUS_M
+                # A goto to the candidate is waiting there; a survey is searching anyway.
+                to_it = math.dist(goal, (c.east, c.north)) <= CLOSE_UP_RADIUS_M
+                away = plan.skill != "goto" or not to_it
                 if c.raised_t is not None and away:
                     c.searched_after_m += plan.flown_m - flown0
         if plan.sector is not None and plan.total_m > 0:

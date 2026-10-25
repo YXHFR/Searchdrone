@@ -63,3 +63,8 @@ def test_queue_counts_and_the_line_leave_out_decided_and_merged() -> None:
         " | att granska 2, låg 1"
     )
     assert candidates_line([], {}, None) is None
+    # With the drone's position: how far and which way, from the drone.
+    drone = (-35.3615 - 40 / 111_320, 149.1652)
+    assert candidates_line([card(1, 0.7)], {}, drone) == (
+        "Kandidater: K1 HÖG (1/2 bilder) 40 m N | att granska 1, låg 0"
+    )
