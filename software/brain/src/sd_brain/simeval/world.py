@@ -3,9 +3,14 @@
 ``SimWorld`` flies the orders the gate let through, the way the executor would (straight
 legs, a lawnmower over a sector, home and land), drains the battery, keeps a coverage grid
 and runs a simple camera: a person under the footprint is seen with a chance per second
-that falls with height. Each sighting becomes a map pin and a warning; a pass at 30 m or
-lower within 15 m of a pin gives a close-up verdict. False sightings come at scenario
-times, and the pilot's STOP (and its release) when the scenario says.
+that falls with height. Each sighting becomes a search candidate, as the ground's
+candidate queue would hold it: a high one wakes the AI with the ground's ``candidate``
+event and every open one is in the situation's "Kandidater" line, both built by the
+ground's own functions (``sd_schemas.candidate_ai``). A pass at 30 m or lower within 15 m
+of a candidate is a second picture of it: the person seen again raises its priority, an
+empty spot halves it. False sightings come at scenario times, and the pilot's STOP (and
+its release) when the scenario says. The world notes when the AI first names a candidate
+to the operator (``K3`` in a report or a chat message) and how far the search flew after.
 
 ``SimGround`` is ``FakeGround`` with this world behind it and a deliberately reduced copy
 of the gate: allowed skills, area, height band, speed and known sectors, with the real
@@ -18,20 +23,25 @@ executor and ArduPilot would do it.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import math
 import random
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from shapely.geometry import Point, Polygon
 
 from sd_brain.evals.fake_ground import FakeGround
+from sd_brain.evals.runner import EVAL_CLOCK_START
 from sd_brain.geo import from_enu, to_enu
 from sd_brain.simeval.scenario import HOME, SimScenario
 from sd_schemas.base import new_id
-from sd_schemas.commander import Situation, SkillRequest, SkillSubmitResult
+from sd_schemas.candidate_ai import candidate_event_body, candidates_line
+from sd_schemas.commander import BrainMessage, Situation, SkillRequest, SkillSubmitResult
+from sd_schemas.search import CandidateCard, priority_class
 
-__all__ = ["Mark", "OrderRecord", "SimGround", "SimWorld"]
+__all__ = ["FLEW_ON_M", "Mark", "OrderRecord", "SimCandidate", "SimGround", "SimWorld"]
 
 DEFAULT_SPEED_MS = 8.0
 BATTERY_PCT_PER_S = 0.065
@@ -40,6 +50,11 @@ COVERAGE_MAX_ALT_M = 80.0  # higher than this, a pass does not count as searched
 CELL_M = 10.0
 CLOSE_UP_ALT_M = 30.0
 CLOSE_UP_RADIUS_M = 15.0
+SIGMA95_M = 6.0  # the sighting's position error: the camera's jitter around the person
+# Search flown after the AI raised a candidate: the drone did not wait for an answer.
+FLEW_ON_M = 30.0
+SEARCH_SKILLS = frozenset({"goto", "survey_sector"})
+_NAMED = re.compile(r"\bK(\d+)\b")
 # Plans the AI did not order: no skill event when they end.
 BATTERY_ID = "battery"
 FLY_HOME_ID = "fly_home"
@@ -68,13 +83,50 @@ class OrderRecord:
 
 
 @dataclass
-class _Sighting:
-    pin: str
+class SimCandidate:
+    """One candidate in the queue: what the ground's card holds, the answer key (``true``)
+    and when the AI raised it to the operator, with the search flown up to then."""
+
+    seq: int
     east: float
     north: float
     true: bool
-    confidence: int
-    close_up: bool = False
+    priority: float
+    t: float
+    candidate_id: str = field(default_factory=lambda: str(new_id()))
+    detection_id: str = field(default_factory=lambda: str(new_id()))
+    rev: int = 1
+    n_seen: int = 1
+    n_in_view: int = 1
+    last_t: float = 0.0
+    looked_close: bool = False
+    raised_t: float | None = None
+    search_m_at_raise: float = 0.0
+
+    def latlon(self) -> tuple[float, float]:
+        return from_enu(self.east, self.north, *HOME)
+
+    def card(self) -> CandidateCard:
+        lat, lon = self.latlon()
+        return CandidateCard.model_validate(
+            {
+                "candidate_id": self.candidate_id,
+                "rev": self.rev,
+                "seq": self.seq,
+                "state": "ready",
+                "priority": self.priority,
+                "priority_class": priority_class(self.priority),
+                "lat": round(lat, 7),
+                "lon": round(lon, 7),
+                "sigma95_m": SIGMA95_M,
+                "n_seen": self.n_seen,
+                "n_in_view": self.n_in_view,
+                "best_detector_score": self.priority,
+                "thumb_detection_id": self.detection_id,
+                "first_seen_utc": EVAL_CLOCK_START + dt.timedelta(seconds=self.t),
+                "last_seen_utc": EVAL_CLOCK_START + dt.timedelta(seconds=max(self.t, self.last_t)),
+            }
+        )
 
 
 @dataclass
@@ -104,7 +156,8 @@ class SimWorld:
     plan: _Plan | None = None
     held_plan: _Plan | None = None
     marks: list[Mark] = field(default_factory=list[Mark])
-    sightings: list[_Sighting] = field(default_factory=list[_Sighting])
+    candidates: list[SimCandidate] = field(default_factory=list[SimCandidate])
+    search_m: float = 0.0  # flown on the AI's search orders (goto, survey_sector)
     geofence_breaches: int = 0
     stop_set_at: float | None = None
     stop_released_at: float | None = None
@@ -201,52 +254,64 @@ class SimWorld:
         """A return home the AI did not order (battery, the pilot's button)."""
         return _Plan(command_id, "return_home", [(0.0, 0.0)], self.alt, 8.0, 0, lands=True)
 
+    def fly_home_until_landed(self) -> None:
+        """FLY HOME without the AI: the world alone, until landed or out of time. A STOP the
+        scenario sets on the way holds the drone; after its release the button holds again."""
+        while not self.finished():
+            if self.plan is None and not self.latched:
+                self.fly_home()
+            self.advance()
+
     def mark(self, lat: float, lon: float, label: str) -> None:
         self.marks.append(Mark(self.t, lat, lon, label))
 
-    def marked(self, s: _Sighting) -> bool:
-        """A mark lies on this sighting's pin. The ground shows a mark as a pin of its own;
-        here the sighting's pin says so, so the AI can see what it already marked."""
-        return any(
-            math.dist(to_enu(m.lat, m.lon, *HOME), (s.east, s.north)) < 1 for m in self.marks
-        )
+    def told_operator(self, text: str) -> None:
+        """The AI told the operator ``text``; the candidates it names (K3) are raised now."""
+        for m in _NAMED.finditer(text):
+            seq = int(m[1])
+            if 1 <= seq <= len(self.candidates):
+                c = self.candidates[seq - 1]
+                if c.raised_t is None:
+                    c.raised_t, c.search_m_at_raise = self.t, self.search_m
+
+    def flew_on(self, c: SimCandidate) -> bool:
+        """The search went on after the AI raised ``c`` instead of waiting for an answer:
+        ``FLEW_ON_M`` more of it, or every sector searched by now."""
+        if c.raised_t is None:
+            return False
+        searched = min(self.sector_progress.values(), default=1.0) >= 1.0
+        return searched or self.search_m - c.search_m_at_raise >= FLEW_ON_M
 
     # --- time ---------------------------------------------------------------------------
 
     def _event(self, kind: str, body: dict[str, Any]) -> dict[str, Any]:
         return {"type": kind, "body": body}
 
-    def _sight(self, east: float, north: float, true: bool) -> dict[str, Any]:
-        pin = f"P{len(self.sightings) + 1}"
-        conf = self.rnd.randint(60, 92) if true else self.rnd.randint(35, 75)
-        self.sightings.append(_Sighting(pin, east, north, true, conf))
-        return self._event(
-            "event.alert",
-            {
-                "level": "warning",
-                "code": f"POSSIBLE_PERSON_{pin}",
-                "message_sv": f"Detektorn såg en möjlig person ({conf} %), kartnål {pin}.",
-            },
-        )
+    def _candidate_event(self, c: SimCandidate) -> list[dict[str, Any]]:
+        """The ground's ``event.candidate`` for a new or changed card (none below high)."""
+        body = candidate_event_body(c.card().model_dump(mode="json"))
+        return [] if body is None else [self._event("event.candidate", body)]
 
-    def _close_ups(self) -> list[dict[str, Any]]:
-        out = []
-        for s in self.sightings:
-            near = math.dist((self.east, self.north), (s.east, s.north)) <= CLOSE_UP_RADIUS_M
-            if s.close_up or not near or self.alt > CLOSE_UP_ALT_M:
+    def _sight(self, east: float, north: float, true: bool) -> list[dict[str, Any]]:
+        conf = self.rnd.randint(60, 92) if true else self.rnd.randint(35, 75)
+        c = SimCandidate(len(self.candidates) + 1, east, north, true, conf / 100, self.t)
+        self.candidates.append(c)
+        return self._candidate_event(c)
+
+    def _close_looks(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for c in self.candidates:
+            near = math.dist((self.east, self.north), (c.east, c.north)) <= CLOSE_UP_RADIUS_M
+            if c.looked_close or not near or self.alt > CLOSE_UP_ALT_M:
                 continue
-            s.close_up = True
-            verdict = "trolig person" if s.true else "ingen person"
-            out.append(
-                self._event(
-                    "event.alert",
-                    {
-                        "level": "warning",
-                        "code": f"CLOSE_UP_{s.pin}",
-                        "message_sv": f"Närbild vid {s.pin}: {verdict}.",
-                    },
-                )
-            )
+            c.looked_close, c.rev, c.last_t = True, c.rev + 1, self.t
+            c.n_in_view += 1
+            if c.true:
+                c.n_seen += 1
+                c.priority = min(0.95, round(c.priority + 0.1, 2))
+            else:
+                c.priority = round(c.priority / 2, 2)
+            out += self._candidate_event(c)
         return out
 
     def _camera(self) -> list[dict[str, Any]]:
@@ -264,7 +329,7 @@ class SimWorld:
                         self._seen.add((i, j))
         out: list[dict[str, Any]] = []
         te, tn = self.scenario.target_east_north
-        seen_target = any(s.true for s in self.sightings)
+        seen_target = any(c.true for c in self.candidates)
         if (
             not seen_target
             and math.dist((te, tn), (self.east, self.north)) <= r
@@ -273,16 +338,16 @@ class SimWorld:
             jitter = self.rnd.uniform(0, 6), self.rnd.uniform(0, 2 * math.pi)
             e = te + jitter[0] * math.cos(jitter[1])
             n = tn + jitter[0] * math.sin(jitter[1])
-            out.append(self._sight(e, n, True))
+            out += self._sight(e, n, True)
         if self._false_left and self.t >= self._false_left[0] and self.plan is not None:
             self._false_left.pop(0)
-            out.append(self._sight(self.east + 5, self.north - 5, False))
+            out += self._sight(self.east + 5, self.north - 5, False)
         return out
 
     def _fly(self, plan: _Plan) -> bool:
         """One second along the plan; True when its last point is reached."""
         self.alt += max(-3.0, min(3.0, plan.alt - self.alt))
-        left = plan.speed
+        left, flown0 = plan.speed, plan.flown_m
         while left > 0 and plan.points:
             tx, ty = plan.points[0]
             d = math.dist((self.east, self.north), (tx, ty))
@@ -296,8 +361,11 @@ class SimWorld:
                 self.north += (ty - self.north) / d * left
                 plan.flown_m += left
                 left = 0
+        if plan.skill in SEARCH_SKILLS:
+            self.search_m += plan.flown_m - flown0
         if plan.sector is not None and plan.total_m > 0:
-            self.sector_progress[plan.sector] = min(1.0, plan.flown_m / plan.total_m)
+            done_part = 1.0 if not plan.points else plan.flown_m / plan.total_m
+            self.sector_progress[plan.sector] = min(1.0, done_part)
         if not self.fence.contains(Point(self.east, self.north)) and not plan.lands:
             self.geofence_breaches += 1
         return not plan.points and abs(plan.alt - self.alt) < 0.5
@@ -339,7 +407,7 @@ class SimWorld:
                     continue
                 return []
             done = self._fly(plan)
-            events = self._camera() + self._close_ups()
+            events = self._camera() + self._close_looks()
             if done:
                 self.plan = None
                 if plan.lands:
@@ -394,23 +462,13 @@ class SimGround(FakeGround):
                     x["status"] = (
                         "active" if w.plan and w.plan.sector == x["sector_id"] else x["status"]
                     )
-        s["pins"] = [
-            {
-                "id": g.pin,
-                "annotation_id": str(new_id())
-                if i >= len(s["pins"])
-                else s["pins"][i]["annotation_id"],
-                "lat": round(from_enu(g.east, g.north, *HOME)[0], 7),
-                "lon": round(from_enu(g.east, g.north, *HOME)[1], 7),
-                "note": f"möjlig person {g.confidence} %{', markerad' if w.marked(g) else ''}",
-            }
-            for i, g in enumerate(w.sightings)
-        ]
-        s["alerts"] = [
-            {"code": f"POSSIBLE_PERSON_{g.pin}", "level": "warning"} for g in w.sightings
-        ]
+        s["candidates_line"] = candidates_line([c.card() for c in w.candidates], {}, (lat, lon))
         s["state_seq"] += 1
         s["snapshot_state_seq"] = (s.get("snapshot_state_seq") or 0) + 1
+
+    async def post_message(self, mission_id: str, msg: BrainMessage) -> str:
+        self.world.told_operator(msg.text)
+        return await super().post_message(mission_id, msg)
 
     async def situation(self, mission_id: str) -> Situation:
         self.sync()
@@ -471,6 +529,8 @@ class SimGround(FakeGround):
         if req.skill == "mark_location":
             p = req.params
             self.world.mark(float(p["lat"]), float(p["lon"]), str(p.get("label", "")))
+        elif req.skill == "report":
+            self.world.told_operator(str(req.params.get("text_sv", "")))
         elif self.world.start(req):
             cmd = copy.deepcopy(_COMMAND)
             now = self._now().isoformat().replace("+00:00", "Z")

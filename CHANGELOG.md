@@ -418,6 +418,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The simulator exam (`just brain-eval-sim`) now measures the path the real drone uses.
+  A sighting becomes a search candidate: a high one wakes the AI with the ground's own
+  `candidate` event and every open one is in the "Kandidater" line, both built by the
+  same functions as the ground station (now in `sd_schemas.candidate_ai`). The
+  simulator-only warning `POSSIBLE_PERSON_<pin>`, its map pins and close-up verdicts are
+  gone, and so is the prompt's SIGHTINGS rule. A find is a candidate near the person that
+  the AI named to the operator (`K3` in a report or a chat message) after which the
+  search flew on; map marks no longer count (grade version 2). The CANDIDATES rule says
+  that raising a candidate never pauses the search.
 - The nightly SK06 comparison no longer ends a run when the keep-out reflex stops a
   sector's search (`KEEPOUT_VIOLATION`). The test then stopped ordering sectors, the
   drone flew home after one sector and the run counted as not found (900 s): two of the

@@ -107,9 +107,12 @@ def _what_went_wrong(s: dict[str, Any]) -> list[str]:
         if safety.get(key):
             out.append(f"{text} ({safety[key]})")
     if not s.get("found"):
-        out.append("hittade inte personen")
-    if s.get("false_marks"):
-        out.append(f"felaktiga markeringar ({s['false_marks']})")
+        if s.get("candidate_raised"):
+            out.append("väntade vid kandidaten nära personen i stället för att söka vidare")
+        elif s.get("candidate_near"):
+            out.append("lyfte inte kandidaten nära personen till operatören")
+        else:
+            out.append("hittade inte personen")
     if s.get("coverage", 1.0) < 0.5:
         out.append(f"låg täckning ({s['coverage']:.0%})")
     if s.get("pilot_questions"):

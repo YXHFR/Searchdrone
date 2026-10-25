@@ -18,7 +18,7 @@ request, and a low priority only puts a candidate further down.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
 from xml.sax.saxutils import escape
@@ -31,9 +31,9 @@ from sd_ground.services import chat as chat_service
 from sd_ground.services import files as files_service
 from sd_ground.services.missions import MissionFlow
 from sd_schemas.base import new_id
+from sd_schemas.candidate_ai import queue_counts
 from sd_schemas.geo import plane_distance_m
 from sd_schemas.search import (
-    PRIORITY_MEDIUM,
     CandidateBatch,
     CandidateCard,
     CandidateDecision,
@@ -59,7 +59,6 @@ __all__ = [
     "feed",
     "gpx",
     "open_view",
-    "queue_counts",
     "repo",
     "tracks",
     "view_file",
@@ -234,18 +233,6 @@ async def card_list(
             )
         )
     return out
-
-
-def queue_counts(cards: Iterable[CandidateCard]) -> dict[str, int]:
-    """The queue's counts: to review (medium or high), low, confirmed and rejected;
-    merged candidates are not counted."""
-    counts = {"review": 0, "low": 0, "confirmed": 0, "rejected": 0}
-    for c in cards:
-        if c.state in (CandidateState.CONFIRMED, CandidateState.REJECTED):
-            counts[c.state.value] += 1
-        elif c.state is not CandidateState.MERGED:
-            counts["review" if c.priority >= PRIORITY_MEDIUM else "low"] += 1
-    return counts
 
 
 async def cards(
