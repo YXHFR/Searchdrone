@@ -442,8 +442,8 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
     little time is left. The search ends early when the drone heads home on its own. The
     flight always ends with the return home: unless a return is ordered already, the
     operator asks the AI home once its last order is a rate gap old, and presses RETURN
-    HOME when no return is running (or done, or the drone landing or down) within
-    ``HOME_LIMIT_S``."""
+    HOME when the drone is not in a landing mode (or down) within ``HOME_LIMIT_S``: a
+    return's status alone does not count, as it runs before the mode changes."""
     sc = run.sc
 
     def live(c: dict[str, Any]) -> bool:  # a return not turned down
@@ -457,24 +457,15 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
         return any(c["skill"] == "hold" and c["issuer_kind"] == "brain"
                    and c["status"] == "running" for c in await sc.commands())  # fmt: skip
 
-    async def homeward() -> bool:
-        return (
-            not sc.tel.armed
-            or sc.mode() in LANDING_MODES
-            or any(live(c) and c["id"] not in before for c in await sc.commands())
-        )
+    def under_way() -> bool:  # the drone itself flying home or landing, or down
+        return not sc.tel.armed or sc.mode() in LANDING_MODES
 
-    async def under_way() -> bool:  # a return running or done, or the drone landing or down
-        return (
-            not sc.tel.armed
-            or sc.mode() in LANDING_MODES
-            or any(c["skill"] == "return_home" and c["status"] in ("running", "done")
-                   for c in await sc.commands())
-        )  # fmt: skip
+    async def homeward() -> bool:  # that, or a new return ordered and not turned down
+        return under_way() or any(live(c) and c["id"] not in before for c in await sc.commands())
 
     async def home() -> None:
         await asyncio.sleep(GATE_RATE_S)  # the AI's last order a rate gap old
-        if not await homeward() and not await under_way():
+        if not await homeward():
             await sc.say("Flyg hem.")
         with contextlib.suppress(AssertionError):
             await sc.until(under_way, HOME_LIMIT_S, "the return home under way")
