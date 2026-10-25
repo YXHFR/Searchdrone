@@ -30,7 +30,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chain_rig import ChainOnboard, SearchRun, search_run  # pyright: ignore[reportMissingImports]
+from chain_rig import (  # pyright: ignore[reportMissingImports]
+    GATE_RATE_S,
+    ChainOnboard,
+    SearchRun,
+    search_run,
+)
 from scenario_rig import (  # pyright: ignore[reportMissingImports]
     TERMINAL,
     fresh_db,
@@ -104,7 +109,7 @@ def _fly(with_map: bool) -> Any:
         finished: set[str] = set()  # searched, or stopped by the reflex twice
         held: set[str] = set()
         while (sector := await _sector_order(run, with_map, finished)) is not None:
-            await asyncio.sleep(3.1)  # the gate's rate limit: one AI action per 3 s
+            await asyncio.sleep(GATE_RATE_S)  # the gate's rate limit: one AI action per 3 s
             res = await sc.order("survey_sector", {"sector_id": sector, **survey})
             assert res.get("decision") == "ALLOW", res
             cid = str(res["command_id"])
@@ -122,7 +127,7 @@ def _fly(with_map: bool) -> Any:
                 held.add(sector)
             else:
                 return  # stopped or replaced: the operator's or the AI's call
-        await asyncio.sleep(3.1)
+        await asyncio.sleep(GATE_RATE_S)
         await sc.order("return_home", {"reason": "Sektorerna är sökta."})
 
     return fly

@@ -440,9 +440,10 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
     flight. Nothing is searched when the drone was already on its way home or down before
     (a return ordered earlier, a landing mode), when the AI does not hold, or when too
     little time is left. The search ends early when the drone heads home on its own. The
-    flight always ends with the return home: unless the drone is on its way already, the
+    flight always ends with the return home: unless a return is ordered already, the
     operator asks the AI home once its last order is a rate gap old, and presses RETURN
-    HOME when the AI's return is not under way within ``HOME_LIMIT_S``."""
+    HOME when no return is running (or done, or the drone landing or down) within
+    ``HOME_LIMIT_S``."""
     sc = run.sc
 
     def live(c: dict[str, Any]) -> bool:  # a return not turned down
@@ -463,19 +464,26 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
             or any(live(c) and c["id"] not in before for c in await sc.commands())
         )
 
+    async def under_way() -> bool:  # a return running or done, or the drone landing or down
+        return (
+            not sc.tel.armed
+            or sc.mode() in LANDING_MODES
+            or any(c["skill"] == "return_home" and c["status"] in ("running", "done")
+                   for c in await sc.commands())
+        )  # fmt: skip
+
     async def home() -> None:
         await asyncio.sleep(GATE_RATE_S)  # the AI's last order a rate gap old
-        if await homeward():
-            return
-        await sc.say("Flyg hem.")
+        if not await homeward() and not await under_way():
+            await sc.say("Flyg hem.")
         with contextlib.suppress(AssertionError):
-            await sc.until(homeward, HOME_LIMIT_S, "the AI's return home under way")
+            await sc.until(under_way, HOME_LIMIT_S, "the return home under way")
             return
         if sc.tel.armed and sc.mode() not in LANDING_MODES:
             assert (await sc.press("return_home")).status_code == 202
 
     if before or await homeward():
-        return
+        return await home()
     try:
         await sc.until(holding, HOLD_LIMIT_S, "the AI holds after the confirmation")
     except AssertionError:
