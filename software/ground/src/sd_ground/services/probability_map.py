@@ -245,9 +245,13 @@ def _arrays(row: dict[str, Any]) -> tuple[ProbabilityGrid, Floats, Floats]:
     return grid, p, pod
 
 
-async def _row(flow: MissionFlow, mission_id: str) -> dict[str, Any]:
+async def _newest_row(flow: MissionFlow, mission_id: str) -> dict[str, Any] | None:
     await flow.mission(mission_id)
-    row = await repo(flow).latest(mission_id)
+    return await repo(flow).latest(mission_id)
+
+
+async def _row(flow: MissionFlow, mission_id: str) -> dict[str, Any]:
+    row = await _newest_row(flow, mission_id)
     if row is None:
         raise ApiStatusError(404, "MAP_NOT_FOUND", "Ingen sannolikhetskarta ännu.")
     return row
@@ -259,8 +263,7 @@ def _f16(a: Floats) -> str:
 
 async def view(flow: MissionFlow, mission_id: str) -> ProbabilityMapView | None:
     """The newest version, or None before the first."""
-    await flow.mission(mission_id)
-    row = await repo(flow).latest(mission_id)
+    row = await _newest_row(flow, mission_id)
     if row is None:
         return None
     grid, p, pod = _arrays(row)
