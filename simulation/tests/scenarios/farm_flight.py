@@ -239,6 +239,7 @@ async def test_farm_round(
         home_m = sc.from_home_m()
         finds = (await sc.r.panel.get(f"/api/v1/missions/{sc.mid}/finds")).json()
         rows = (await sc.r.panel.get(f"/api/v1/missions/{sc.mid}/detections")).json()
+        queue = (await sc.r.panel.get(f"/api/v1/missions/{sc.mid}/candidates?limit=200")).json()
         commands = await sc.commands()
         gates = {c["id"]: await sc.gate(c["id"]) for c in commands}
         chat = await sc.chat()
@@ -262,6 +263,7 @@ async def test_farm_round(
         finds=finds,
         detections=rows,
         chat=chat,
+        candidates=queue["items"],
         breaches=breaches,
         coverage=coverage,
         landed_home=home_m <= flight.HOME_RADIUS_M,

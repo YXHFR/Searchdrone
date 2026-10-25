@@ -418,6 +418,14 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The simulator farm's grade (`sd-brain eval grade`) now counts a candidate as raised only
+  when the AI named it (`K3`) to the operator in a chat message or a report, as the exam
+  does: `flight.json` carries the ground's candidate queue with when each was raised
+  (`sd_schemas.candidate_ai.named_seqs` is the one rule for both). Without a queue the
+  ground's finds stand in as before. The CANDIDATES rule gives way to an operator who asks
+  the drone to hold, hover or circle a candidate and to a confirmed find. The exam flies
+  the closer look (`inspect_detection`, reduced: near the candidate, low, then hovering),
+  and a test flies the look and the interrupted search ordered again.
 - The simulator exam (`just brain-eval-sim`) now measures the path the real drone uses.
   A sighting becomes a search candidate: a high one wakes the AI with the ground's own
   `candidate` event and every open one is in the "Kandidater" line, both built by the

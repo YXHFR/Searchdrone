@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_detect.classes import ClassRegistry, default_registry
+from sd_schemas.candidate_ai import named_seqs
 
 HOME_RADIUS_M = 3.0  # landed at home: this close to the take-off point
 ASK = "?"  # a message from the AI that asks the pilot something
@@ -59,6 +60,42 @@ def _order(c: Mapping[str, Any], gate: Sequence[Mapping[str, Any]], t0: float) -
     }
 
 
+def _told(
+    commands: Sequence[Mapping[str, Any]], chat: Sequence[Mapping[str, Any]], t0: float
+) -> list[tuple[float, str]]:
+    """What the AI told the operator, oldest first: its chat messages and the text of its
+    reports, each with its time from the first order."""
+    said = [(m.get("created_at"), m.get("text")) for m in chat if m.get("role") == "brain"]
+    said += [
+        (c.get("created_at"), (c.get("params") or {}).get("text_sv"))
+        for c in commands
+        if c.get("issuer_kind") == "brain" and c.get("skill") == "report"
+    ]
+    return sorted((_utc_s(at) - t0, str(text)) for at, text in said if at and text)
+
+
+def _candidates(
+    cards: Sequence[Mapping[str, Any]], told: Sequence[tuple[float, str]], t0: float
+) -> list[dict[str, Any]]:
+    """The ground's candidates, each raised when the AI first named it (``K3``) to the
+    operator after it was seen, as the simulator exam counts a raise."""
+    out = []
+    for c in cards:
+        seen = _utc_s(c["first_seen_utc"]) - t0
+        raised = next((t for t, text in told if t >= seen and c["seq"] in named_seqs(text)), None)
+        out.append(
+            {
+                "seq": int(c["seq"]),
+                "t_s": round(max(0.0, seen), 2),
+                "lat": float(c["lat"]),
+                "lon": float(c["lon"]),
+                "priority_class": c["priority_class"],
+                "raised_t_s": None if raised is None else round(max(0.0, raised), 2),
+            }
+        )
+    return out
+
+
 def flight_record(
     *,
     started: float,
@@ -68,6 +105,7 @@ def flight_record(
     finds: Sequence[Mapping[str, Any]],
     detections: Sequence[Mapping[str, Any]],
     chat: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, Any]] = (),
     breaches: int,
     coverage: float,
     landed_home: bool,
@@ -76,7 +114,8 @@ def flight_record(
 ) -> dict[str, Any]:
     """``flight.json`` from what the ground station recorded: the AI's orders with the
     gate's answers, the people found (a find joins the detections of one person; its time
-    is when its best picture was taken), the pilot questions and the landing. Times are
+    is when its best picture was taken), the ground's candidate queue (``candidates``, its
+    cards) with when the AI raised each, the pilot questions and the landing. Times are
     seconds from the first order."""
     t0 = min((_utc_s(c["created_at"]) for c in commands), default=0.0)
     taken = {str(d.get("detection_id", d.get("id"))): d.get("captured_at") for d in detections}
@@ -102,6 +141,7 @@ def flight_record(
         "max_time_s": max_time_s,
         "orders": orders,
         "marks": marks,
+        "candidates": _candidates(candidates, _told(commands, chat, t0), t0),
         "geofence_breaches": breaches,
         "coverage": round(max(0.0, min(1.0, coverage)), 4),
         "pilot_questions": len(asked),
