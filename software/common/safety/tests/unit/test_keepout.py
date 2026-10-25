@@ -284,6 +284,10 @@ def test_keepout_reroute(route: list[Xy], cyl: list[tuple[Xy, float]]) -> None:
         return  # starting inside: test_reroute_from_inside
     _check_reroute(route, cyl, BOX)
     _check_reroute(route, cyl, None)
+    for area in (BOX, None):
+        out = reroute(route, cyl, area=area)
+        if out is not None:
+            _check_margin(out, route, cyl)
 
 
 def test_reroute_goes_around_on_the_short_side_with_the_margin() -> None:
@@ -444,14 +448,19 @@ def test_reroute_around_overlapping_cylinders_of_one_person() -> None:
         max_size=6,
     ),
     centre=xy,
+    others=st.lists(st.tuples(xy, st.floats(30.5, 50.0)), max_size=2),
 )
 def test_keepout_reroute_overlapping(
-    route: list[Xy], group: list[tuple[float, float, float]], centre: Xy
+    route: list[Xy],
+    group: list[tuple[float, float, float]],
+    centre: Xy,
+    others: list[tuple[Xy, float]],
 ) -> None:
-    """Property: past a group of overlapping cylinders a rerouted route never enters one,
-    keeps the margin on its way around, stays in the area and keeps the corners outside
-    them in order; with room around the group inside the area there always is one."""
-    cyl = [((centre[0] + dx, centre[1] + dy), r) for dx, dy, r in group]
+    """Property: past a group of overlapping cylinders, with other cylinders anywhere, a
+    rerouted route never enters one, keeps the margin from every cylinder on its way
+    around, stays in the area and keeps the corners outside them in order; with room
+    around the group inside the area and no other cylinder there always is one."""
+    cyl = [((centre[0] + dx, centre[1] + dy), r) for dx, dy, r in group] + others
     if any(math.dist(route[0], c) < r for c, r in cyl):
         return  # starting inside: test_keepout_reroute_from_inside
     _check_reroute(route, cyl, BOX)
@@ -460,8 +469,35 @@ def test_keepout_reroute_overlapping(
     if boxed is not None:
         _check_margin(boxed, route, cyl)
     out = reroute(route, cyl)
-    assert out is not None  # no area: always a way around the group
+    if not others:
+        assert out is not None  # no area: always a way around the group
+    if out is not None:
+        _check_margin(out, route, cyl)
+
+
+@pytest.mark.parametrize(
+    ("near", "other"),
+    [
+        ([((0.0, 0.0), 33.0)], ((-56.0, -54.0), 33.0)),  # one cylinder
+        ([((0.0, 0.0), 33.0), ((50.0, 0.0), 33.0)], ((120.0, -50.0), 33.0)),  # a group
+    ],
+)
+def test_a_way_around_keeps_the_margin_from_a_cylinder_it_was_not_made_for(
+    near: list[tuple[Xy, float]], other: tuple[Xy, float]
+) -> None:
+    """The line passes ``other`` 17-21 m off, but the way around the cylinders on it
+    used to cut past ``other``'s edge (0.02-0.09 m) on its side: now it keeps the margin
+    from that one too (going round it, or on the other side)."""
+    route = [(-100.0, 0.0), (160.0, 0.0)]
+    (c, r) = other
+    assert point_segment_distance(c, *route) > r + 15.0
+    assert all(math.dist(c, cn) >= r + rn + 2 * KEEPOUT_ARC_MARGIN_M for cn, rn in near)
+    cyl = [*near, other]
+    out = reroute(route, cyl)
+    assert out is not None and xy_route_violation(out, cyl) is None
     _check_margin(out, route, cyl)
+    closest = min(point_segment_distance(c, p, q) for p, q in pairwise(out))
+    assert closest >= r + KEEPOUT_ARC_MARGIN_M - 1e-6
 
 
 def test_reroute_gives_up_on_too_large_a_group(monkeypatch: pytest.MonkeyPatch) -> None:

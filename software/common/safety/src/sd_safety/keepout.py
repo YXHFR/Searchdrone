@@ -13,10 +13,12 @@ closer. Cylinders whose margins overlap (one person seen again and again) are pa
 one group (``_GROUP_MAX`` at most, ``_GROUP_WORK_MAX`` leg checks in one reroute): the
 shortest way through the corners around each of them along legs that come no closer
 than the margin (an end already inside it: no closer than that end) and stay inside the
-charter. A route that starts inside cylinders first leaves them along a straight leg
-that goes deeper into none of them and enters no other: the given direction (the leg
-being flown), away from their centres, or the nearest direction that works. Pure
-functions in the plane of ``sd_safety.targets.Plane``.
+charter. A leg of a way around that comes closer than the margin to another cylinder
+gets a way around that one too, so every way around keeps the margin from every
+cylinder, not only from the ones it was made for. A route that starts inside cylinders
+first leaves them along a straight leg that goes deeper into none of them and enters no
+other: the given direction (the leg being flown), away from their centres, or the
+nearest direction that works. Pure functions in the plane of ``sd_safety.targets.Plane``.
 """
 
 from __future__ import annotations
@@ -125,12 +127,13 @@ def reroute(
         return None
     out += way_out
     out += [p for p in route[1:] if not any(math.dist(p, c) < r for c, r in cyl)]
+    made = [False] * len(out)  # a corner of a way around (its legs keep the margin)
     start = len(way_out)  # the leg out of the cylinders is clear already (``_exit``)
     i, detours = start, 0
     work = [_GROUP_WORK_MAX]  # what the grouped ways around may still check
     while i < len(out) - 1:
         a, b = out[i], out[i + 1]
-        hit = _first_hit(a, b, cyl)
+        hit = _first_hit(a, b, cyl, margin=made[i] or made[i + 1])
         if hit is None:
             i += 1
             continue
@@ -147,6 +150,7 @@ def reroute(
         if way is None:
             return None
         out[i + 1 : i + 1] = way
+        made[i + 1 : i + 1] = [True] * len(way)
     if len(out) == 1:
         return out  # nothing left to fly
     # Every leg from ``start`` on is now clear of the cylinders (the loop above); the
@@ -212,18 +216,28 @@ def _leave(here: Xy, u: Xy, inside: Sequence[Circle]) -> Xy:
     return (here[0] + far * u[0], here[1] + far * u[1])
 
 
-def _first_hit(a: Xy, b: Xy, cyl: Sequence[Circle]) -> int | None:
-    """The cylinder the leg reaches first (by its closest approach along the leg)."""
+def _first_hit(a: Xy, b: Xy, cyl: Sequence[Circle], *, margin: bool = False) -> int | None:
+    """The cylinder the leg reaches first (by its closest approach along the leg). With
+    ``margin`` (a leg of a way around) a leg that comes closer than the margin to a
+    cylinder (an end already inside it: closer than that end) reaches it too."""
     best: tuple[float, int] | None = None
     dx, dy = b[0] - a[0], b[1] - a[1]
     seg2 = dx * dx + dy * dy
     for i, (c, r) in enumerate(cyl):
-        if not leg_enters(a, b, c, r):
+        if not leg_enters(a, b, c, r) and not (margin and _within_margin(a, b, (c, r))):
             continue
         t = 0.0 if seg2 == 0.0 else -((a[0] - c[0]) * dx + (a[1] - c[1]) * dy) / seg2
         if best is None or t < best[0]:
             best = (t, i)
     return None if best is None else best[1]
+
+
+def _within_margin(p: Xy, q: Xy, circle: Circle) -> bool:
+    """The leg comes closer to the cylinder than the margin, or than an end already
+    inside the margin (a leg along a margin polygon's edge touches it: not closer)."""
+    c, r = circle
+    keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
+    return point_segment_distance(c, p, q) < keep - _MARGIN_EPS_M
 
 
 def _around(a: Xy, b: Xy, circle: Circle, area: Polygon | None) -> list[Xy] | None:
@@ -278,8 +292,7 @@ def _around_group(
     def clear(p: Xy, q: Xy) -> bool:
         work[0] -= len(group)
         for c, r in group:
-            keep = min(r + KEEPOUT_ARC_MARGIN_M, math.dist(p, c), math.dist(q, c))
-            if leg_enters(p, q, c, r) or point_segment_distance(c, p, q) < keep - _MARGIN_EPS_M:
+            if leg_enters(p, q, c, r) or _within_margin(p, q, (c, r)):
                 return False
         return area is None or area.leg_outside_by(p, q) <= 0.0
 
