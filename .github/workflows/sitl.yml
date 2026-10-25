@@ -37,10 +37,11 @@ env:
   SD_SIM__REQUIRE_SITL: "1"
   SHARDS: "6"
   WORKERS: "4"
-  # The search chain's own shards: 7 scenarios x 3 seeds in the pull request set, and
-  # 6 scenarios x 50 seeds of budget_s 720 at night (8 per shard, 24 minutes a worker).
+  # The search chain's own shards: 7 scenarios x 3 seeds in the pull request set, and at
+  # night SK01-SK04 x 50 seeds and SK06 twice x 100 seeds (budget_s 720, SK04 840; 50
+  # shards fit the 25 minutes a worker).
   SEARCH_SHARDS: "3"
-  SEARCH_NIGHTLY_SHARDS: "40"
+  SEARCH_NIGHTLY_SHARDS: "52"
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
@@ -430,8 +431,9 @@ jobs:
       - *logs
 
   sitl-search-nightly:
-    # The search chain's nightly campaign: six scenarios over seeds 1-50. The shard count
-    # keeps every worker within the plugin's SHARD_LIMIT_S (25 minutes).
+    # The search chain's nightly campaign: SK01-SK04 over seeds 1-50, SK06 with and
+    # without the map over seeds 1-100. The shard count keeps every worker within the
+    # plugin's SHARD_LIMIT_S (25 minutes).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'nightly')
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -441,7 +443,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
     steps:
       - *checkout
       - *check-ref
@@ -449,13 +451,13 @@ jobs:
       - *db
       - *image
       - *versions
-      - name: Nightly search campaign (seeds 1-50)
+      - name: Nightly search campaign (seeds 1-50, SK06 1-100)
         timeout-minutes: 35
         env:
           SD_SITL_IMAGE: ${{ steps.image.outputs.image }}
           SHARD: ${{ matrix.shard }}
         run: |
-          just ci-sitl physics=builtin brain=scripted mode=search-nightly seeds=1-50 \
+          just ci-sitl physics=builtin brain=scripted mode=search-nightly seeds=1-50 sk06_seeds=1-100 \
             "shard=$SHARD" "shards=$SEARCH_NIGHTLY_SHARDS" "workers=$WORKERS"
       - *summary
       - *scan

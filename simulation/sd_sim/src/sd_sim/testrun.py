@@ -22,7 +22,9 @@ mode), ``cloud`` (the cloud model with the owner's key, the command mode without
 ``llm`` tests) or
 ``none`` (no commander: only the tests that need none). ``sc=`` and ``variant=`` narrow
 the run by test name. ``seeds=`` (``1-50`` or ``1,2,3``, at most 200 seeds) reaches the
-search tests as ``SD_SEARCH_SEEDS``, which they read when they are collected. Only
+search tests as ``SD_SEARCH_SEEDS``, which they read when they are collected;
+``sk06_seeds=`` (same form) gives the nightly SK06 comparison its own seeds as
+``SD_SK06_SEEDS``. Only
 test-rig failures (``InfraError``) are retried, once.
 ``detector=model`` (with ``model=<manifest .json>`` or ``SD_DETECTOR_MODEL``) flies
 ``mode=e2e-search`` with the owner's trained person detector on Gazebo's stills instead
@@ -63,6 +65,7 @@ ALLOWED_KEYS = (
     "workers",
     "runs",
     "seeds",
+    "sk06_seeds",
     "detector",
     "model",
     "dry",
@@ -77,6 +80,7 @@ MODES = ("pr", "e2e", "nightly", "panel", "search", "search-nightly", "e2e-searc
 # The search chain's sets: mode -> marker. Each runs in its own mode only.
 SEARCH_SETS = {"search": "search", "search-nightly": "search_nightly", "e2e-search": "e2e_search"}
 SEEDS_ENV = "SD_SEARCH_SEEDS"
+SK06_SEEDS_ENV = "SD_SK06_SEEDS"
 
 
 DEMO_TEST = "test_demo_flight"
@@ -118,16 +122,19 @@ def _int(values: dict[str, str], key: str, default: int, low: int, high: int) ->
 
 
 def seeds(values: dict[str, str]) -> dict[str, str]:
-    """``seeds=`` as the environment the search tests read, checked as they read it
-    (``sd_sim.search_world.seeds``)."""
-    raw = values.get("seeds")
-    if raw is None:
-        return {}
-    try:
-        search_world.seeds(raw)
-    except search_world.WorldError as e:
-        _args.fail(f"sd_sim.testrun: seeds= {e}")
-    return {SEEDS_ENV: raw}
+    """``seeds=`` and ``sk06_seeds=`` as the environment the search tests read, checked as
+    they read it (``sd_sim.search_world.seeds``)."""
+    env: dict[str, str] = {}
+    for key, name in (("seeds", SEEDS_ENV), ("sk06_seeds", SK06_SEEDS_ENV)):
+        raw = values.get(key)
+        if raw is None:
+            continue
+        try:
+            search_world.seeds(raw)
+        except search_world.WorldError as e:
+            _args.fail(f"sd_sim.testrun: {key}= {e}")
+        env[name] = raw
+    return env
 
 
 def detector_env(values: dict[str, str]) -> dict[str, str]:

@@ -70,6 +70,8 @@ def test_single_worker_without_xdist_and_names() -> None:
         {"seeds": "1-2-3"},
         {"seeds": ""},
         {"seeds": ",".join(str(i) for i in range(1, 202))},
+        {"sk06_seeds": "0-3"},
+        {"sk06_seeds": "1-201"},
     ],
 )
 def test_bad_values_exit_2(values: dict[str, str]) -> None:
@@ -239,6 +241,13 @@ def test_seeds_reach_pytest_as_env(raw: str, want: str) -> None:
     assert demo_env == {"SD_SEARCH_SEEDS": want}
     assert rest_env == {"SD_SEARCH_SEEDS": want, "SD_SIM__FIRST_INSTANCE": "1"}
     assert testrun.commands({"mode": "search"})[0][1] == {}
+
+
+def test_sk06_seeds_reach_pytest_as_their_own_env() -> None:
+    ((_cmd, env),) = testrun.commands(
+        {"mode": "search-nightly", "seeds": "1-50", "sk06_seeds": "1-100"}
+    )
+    assert env == {"SD_SEARCH_SEEDS": "1-50", "SD_SK06_SEEDS": "1-100"}
 
 
 def test_seeds_env_set_for_the_pytest_run(runs: Path, monkeypatch: pytest.MonkeyPatch) -> None:

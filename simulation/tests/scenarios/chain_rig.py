@@ -46,7 +46,12 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import flow_rig  # pyright: ignore[reportMissingImports]
-from scenario_rig import H, Scenario  # pyright: ignore[reportMissingImports]
+from scenario_rig import (  # pyright: ignore[reportMissingImports]
+    LANDING_MODES,
+    TERMINAL,
+    H,
+    Scenario,
+)
 from test_mission_flow_sitl import SitlOnboard  # pyright: ignore[reportMissingImports]
 from test_onboard_sitl import Sim  # pyright: ignore[reportMissingImports]
 
@@ -54,6 +59,7 @@ from sd_geo import PinholeCamera
 from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.pipeline import Perception
 from sd_onboard.perception.sources import DirStillSource
+from sd_safety.constants import RATE_ACTION_MIN_GAP_MS
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.probmap import ProbabilityGrid
 from sd_search.app import SearchService
@@ -85,6 +91,9 @@ SIM_ENV = {"SD_SIM": "1"}
 PERIOD_S = 0.2  # how often perception asks for a still (the source gives one a second)
 TRUTH_M = 12.0  # a card or a detection this near a thing is that thing
 LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
+HOLD_LIMIT_S = 60.0  # the AI's hold after a confirmation
+GATE_RATE_S = RATE_ACTION_MIN_GAP_MS / 1000 + 0.1  # the gate's rate limit, and a margin
+HOME_LIMIT_S = 30.0  # the AI's return home after "Flyg hem." under way
 WATCH_S = 0.25
 
 
@@ -367,6 +376,9 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
         thing = run.thing_at(c["lat"], c["lon"])[0]
         if thing is not None and thing not in m.fields_by_thing and c.get("fields"):
             m.fields_by_thing[thing] = dict(c["fields"])
+        top = (c.get("fields") or {}).get("garment:0")
+        if thing is not None and top is not None and c["state"] != "merged":
+            m.upper_by_thing.setdefault(thing, []).append(str(top))
         if c["state"] == "confirmed" and target is not None and thing == target.thing_id:
             m.geo_error_m = round(distance_m(c["lat"], c["lon"], *world.where(target)), 2)
     flight = [s for s in sc.track if s.armed]
@@ -407,6 +419,84 @@ async def _metrics(run: SearchRun, broken: list[str]) -> RunMetrics:
     return m.finish()
 
 
+def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
+    """Every person but the missing one has a card whose top the image model saw (the
+    cards ``_metrics`` counts: not merged)."""
+    others = {t.thing_id for t in run.world.people if not t.target}
+    judged = {
+        run.thing_at(c["lat"], c["lon"])[0]
+        for c in queue
+        if c["state"] != "merged"
+        and (c.get("fields") or {}).get("garment:0") in ("conflict", "match")
+    }
+    return others <= judged
+
+
+async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
+    """After the confirmation the AI holds (its script); the operator asks it to search on
+    so the other persons get seen too, until each has a card whose top was judged, for at
+    most ``extra_s`` and never past ``limit_s`` from take-off. The orders are the AI's,
+    through the gate, so the charter, the geofence and the battery return apply as in any
+    flight. Nothing is searched when the drone was already on its way home or down before
+    (a return ordered earlier, a landing mode), when the AI does not hold, or when too
+    little time is left. The search ends early when the drone heads home on its own. The
+    flight always ends with the return home: unless a return is ordered already, the
+    operator asks the AI home once its last order is a rate gap old, and presses RETURN
+    HOME when the drone is not in a landing mode (or down) within ``HOME_LIMIT_S``: a
+    return's status alone does not count, as it runs before the mode changes."""
+    sc = run.sc
+
+    def live(c: dict[str, Any]) -> bool:  # a return not turned down
+        return c["skill"] == "return_home" and (
+            c["status"] not in TERMINAL or c["status"] == "done"
+        )
+
+    before = {c["id"] for c in await sc.commands() if live(c)}
+
+    async def holding() -> bool:
+        return any(c["skill"] == "hold" and c["issuer_kind"] == "brain"
+                   and c["status"] == "running" for c in await sc.commands())  # fmt: skip
+
+    def under_way() -> bool:  # the drone itself flying home or landing, or down
+        return not sc.tel.armed or sc.mode() in LANDING_MODES
+
+    async def homeward() -> bool:  # that, or a new return ordered and not turned down
+        return under_way() or any(live(c) and c["id"] not in before for c in await sc.commands())
+
+    async def home() -> None:
+        await asyncio.sleep(GATE_RATE_S)  # the AI's last order a rate gap old
+        if not await homeward():
+            await sc.say("Flyg hem.")
+        with contextlib.suppress(AssertionError):
+            await sc.until(under_way, HOME_LIMIT_S, "the return home under way")
+            return
+        if sc.tel.armed and sc.mode() not in LANDING_MODES:
+            assert (await sc.press("return_home")).status_code == 202
+
+    if before or await homeward():
+        return await home()
+    try:
+        await sc.until(holding, HOLD_LIMIT_S, "the AI holds after the confirmation")
+    except AssertionError:
+        return await home()
+    left = limit_s - (time.monotonic() - (run.lift_t or time.monotonic()))
+    if left < 2 * GATE_RATE_S or await homeward():
+        return await home()
+    await asyncio.sleep(GATE_RATE_S)
+    await sc.say("Sök vidare.")
+
+    async def enough() -> bool:
+        return await homeward() or _others_judged(run, await run.operator.queue())
+
+    # The time running out is the search's planned end, not a missed criterion: no measure.
+    end = time.monotonic() + min(extra_s, left - GATE_RATE_S)
+    while time.monotonic() < end:
+        if await enough():
+            break
+        await asyncio.sleep(WATCH_S)
+    await home()
+
+
 async def search_run(
     sc: Scenario,
     world: World,
@@ -417,11 +507,14 @@ async def search_run(
     fly: Callable[[SearchRun], Any] | None = None,
     require_found: bool = True,
     with_map: bool | None = None,
+    search_on_s: float | None = None,
 ) -> RunMetrics:
     """One scenario run (see the module's docstring). ``fly`` replaces the AI's search
     once airborne (SK06 orders the sectors itself); ``confirm_limit_s`` is how long the
     operator may take to the confirmed find after take-off (the scenario's limit when
-    left out). With ``require_found`` the test fails without a confirmed find."""
+    left out). With ``require_found`` the test fails without a confirmed find. With
+    ``search_on_s`` the AI searches on after the confirmation (``_search_on``) before it
+    flies home."""
     plane = Plane(*sc.r.home)
     limit = confirm_limit_s or world.limit_s
     holder: list[SearchRun] = []
@@ -470,7 +563,10 @@ async def search_run(
                 if reviewing.done() and reviewing.exception() is not None:
                     raise reviewing.exception()  # type: ignore[misc]
                 if operator.confirmed is not None:
-                    await sc.say("Flyg hem.")
+                    if search_on_s is None:
+                        await sc.say("Flyg hem.")
+                    else:
+                        await _search_on(run, search_on_s, limit)
                 elif sc.tel.armed:
                     assert (await sc.press("return_home")).status_code == 202
             elif fly is None:

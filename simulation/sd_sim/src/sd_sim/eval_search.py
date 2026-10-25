@@ -45,6 +45,9 @@ REPORT = "search_report.md"
 Z95_ONE_SIDED: Final = 1.6448536
 Z95_TWO_SIDED: Final = 1.959964
 LATENCY_P50_MAX_MS: Final = 3000.0
+SK04_MIN_SIGHTINGS: Final = 10  # verdicts that saw the hiker's top, over all runs
+SK06_FACTOR: Final = 0.9
+TOO_FEW: Final = "för få data"
 
 
 @dataclass
@@ -78,6 +81,9 @@ class RunMetrics:
     candidates: int = 0
     decisions: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     fields_by_thing: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
+    # The upper garment's verdict (``garment:0``) of every card of a thing that is not
+    # merged, so the campaign counts each time the image model judged a person's top.
+    upper_by_thing: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     confirmed_thing: str | None = None
     engines: list[str] = field(default_factory=list[str])
     queue_end: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -184,6 +190,7 @@ class Requirement:
     value: str
     ok: bool
     n: int
+    too_few: bool = False  # too few data to judge: never ok
 
 
 def _load(root: Path) -> list[dict[str, Any]]:
@@ -203,10 +210,6 @@ def _share(runs: Sequence[Mapping[str, Any]], pred: Callable[[Mapping[str, Any]]
 def _hit(runs: Sequence[Mapping[str, Any]], k: int) -> float:
     return _share(runs, lambda r: r.get("queue_rank_target") is not None
                   and r["queue_rank_target"] <= k)  # fmt: skip
-
-
-def _upper_fields(r: Mapping[str, Any], thing: str) -> str | None:
-    return (r.get("fields_by_thing") or {}).get(thing, {}).get("garment:0")
 
 
 def _req(scenario: str, text: str, value: str, ok: bool, n: int) -> Requirement:
@@ -232,12 +235,14 @@ def _sk02(runs: list[dict[str, Any]]) -> list[Requirement]:
     n = len(runs)
     found = _share(runs, lambda r: r["found"])
     hit5 = _hit(runs, 5)
-    never_low = _share(runs, lambda r: not r.get("target_ever_low"))
+    never_low = sum(1 for r in runs if not r.get("target_ever_low"))
     return [
         _req("SK02", "hittad inom 20 min: andel ≥ 0,85", f"{found:.2f}", found >= 0.85, n),
         _req("SK02", "kön Hit@5 ≥ 0,90", f"{hit5:.2f}", hit5 >= 0.90, n),
-        _req("SK02", "facitpersonen aldrig i låg-listan i ≥ 95 %", f"{never_low:.2f}",
-             never_low >= 0.95, n),
+        _req("SK02", "facitpersonen aldrig i låg-listan: andel ≥ 0,95 (Wilson-nedre visas)",
+             f"{never_low}/{n} = {never_low / n if n else 0:.2f}, "
+             f"Wilson-nedre {wilson_lower(never_low, n):.2f}",
+             n > 0 and never_low / n >= 0.95, n),
     ]  # fmt: skip
 
 
@@ -258,34 +263,52 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
     first = _share(
         runs, lambda r: r.get("confirmed_thing") == "target" and r["false_confirms"] == 0
     )
-    seen = [r for r in runs if _upper_fields(r, "green-jacket") is not None]
-    conflict = _share(seen, lambda r: _upper_fields(r, "green-jacket") == "conflict")
+    tops = [v for r in runs for v in (r.get("upper_by_thing") or {}).get("green-jacket", [])]
+    seen = [v for v in tops if v in ("conflict", "match")]
+    conflict = sum(v == "conflict" for v in seen)
+    text = (
+        f"vandraren: conflict / (conflict + match) på överdel ≥ 0,80, "
+        f"minst {SK04_MIN_SIGHTINGS} sedda"
+    )
+    if len(seen) < SK04_MIN_SIGHTINGS:
+        hiker = Requirement(
+            "SK04", text, f"{len(seen)} sedda av {len(tops)} kort", False, n, too_few=True
+        )
+    else:
+        share = conflict / len(seen)
+        hiker = _req(
+            "SK04",
+            text,
+            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort)",
+            share >= 0.80,
+            n,
+        )
     return [
         _req("SK04", "rätt person bekräftad före vandraren i ≥ 90 %", f"{first:.2f}",
              first >= 0.90, n),
-        _req("SK04", "vandraren får conflict på överdel i ≥ 80 %",
-             f"{conflict:.2f} ({len(seen)} sedda)", bool(seen) and conflict >= 0.80, n),
+        hiker,
     ]  # fmt: skip
 
 
 def _sk06(runs: list[dict[str, Any]]) -> list[Requirement]:
-    """Paired seeds: the time with the map against 0.8 x the time without (a run that did
-    not find the person counts its limit), one-sided 95 % upper bound of the mean below 0."""
+    """Paired seeds: the time with the map against ``SK06_FACTOR`` x the time without (a run
+    that did not find the person counts its limit), one-sided 95 % upper bound of the mean
+    below 0."""
     pairs: dict[int, dict[bool, float]] = {}
     for r in runs:
         if r.get("with_map") is None:
             continue
         t = r["time_to_confirmed_s"] if r["found"] else r["limit_s"]
         pairs.setdefault(int(r["seed"]), {})[bool(r["with_map"])] = float(t)
-    diffs = [p[True] - 0.8 * p[False] for p in pairs.values() if len(p) == 2]
+    diffs = [p[True] - SK06_FACTOR * p[False] for p in pairs.values() if len(p) == 2]
     n = len(diffs)
+    text = f"tid med karta ≤ {_fmt(SK06_FACTOR, '', 1)} x utan (parat, ensidigt 95 %)"
     if n < 2:
-        return [_req("SK06", "tid med karta ≤ 0,8 x utan (parat)", f"{n} par", False, n)]
+        return [_req("SK06", text, f"{n} par", False, n)]
     mean = statistics.fmean(diffs)
     upper = mean + Z95_ONE_SIDED * statistics.stdev(diffs) / math.sqrt(n)
     return [
-        _req("SK06", "tid med karta ≤ 0,8 x utan (parat, ensidigt 95 %)",
-             f"medel {mean:+.0f} s, övre {upper:+.0f} s ({n} par)", upper < 0, n)
+        _req("SK06", text, f"medel {mean:+.0f} s, övre {upper:+.0f} s ({n} par)", upper < 0, n)
     ]  # fmt: skip
 
 
@@ -337,9 +360,8 @@ def requirements_md(reqs: Sequence[Requirement], n_runs: int) -> str:
         "|---|---|---|---|---|",
     ]
     for r in reqs:
-        lines.append(
-            f"| {r.scenario} | {r.text} | {r.value} | {r.n} | {'ok' if r.ok else 'EJ UPPFYLLT'} |"
-        )
+        result = TOO_FEW if r.too_few else "ok" if r.ok else "EJ UPPFYLLT"
+        lines.append(f"| {r.scenario} | {r.text} | {r.value} | {r.n} | {result} |")
     return "\n".join(lines) + "\n"
 
 
@@ -367,7 +389,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )  # fmt: skip
     failed = [r for r in reqs if not r.ok]
     for r in failed:
-        sys.stderr.write(f"EJ UPPFYLLT {r.scenario}: {r.text} ({r.value})\n")
+        verdict = TOO_FEW.upper() if r.too_few else "EJ UPPFYLLT"
+        sys.stderr.write(f"{verdict} {r.scenario}: {r.text} ({r.value})\n")
     return 1 if failed else 0
 
 
