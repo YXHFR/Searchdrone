@@ -56,6 +56,9 @@ WORLDCOVER = (
 NOT_TRACKS = {"proposed", "construction", "platform", "corridor", "elevator", "abandoned",
               "razed", "bus_stop", "rest_area", "services"}  # fmt: skip
 BUCKET_DEG = 0.05
+# Sweden's outline, for an extract whose header names no area (geo2day.com writes none).
+# Places outside the data have no tracks and are dropped.
+SWEDEN_BOX = (10.9, 55.3, 24.2, 69.1)
 USER_AGENT = "searchdrone-rl-maps (+https://github.com/YXHFR/Searchdrone)"
 GDAL_ENV = {
     "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
@@ -126,12 +129,14 @@ def read_classes(place: grid.Place) -> np.ndarray | None:
 
 
 def osm_area(paths: list[Path]) -> list[tuple[float, float, float, float]]:
-    """west, south, east, north of each extract, from its header."""
+    """west, south, east, north of each extract, from its header (Sweden when it has none)."""
     out = []
     for p in paths:
         box = osmium.io.Reader(str(p), osmium.osm.osm_entity_bits.NOTHING).header().box()
         if not box.valid():
-            _fail(f"{p} säger inte vilket område den täcker.", 1)
+            print(f"    {p.name} säger inte vilket område den täcker; använder Sveriges gränser.")
+            out.append(SWEDEN_BOX)
+            continue
         out.append((box.bottom_left.lon, box.bottom_left.lat, box.top_right.lon, box.top_right.lat))
     return out
 
