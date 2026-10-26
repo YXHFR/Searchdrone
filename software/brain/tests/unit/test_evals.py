@@ -35,6 +35,26 @@ def test_language_check() -> None:
     for ok in ("Startar till 40 m.", "Stoppat. Drönaren står still.", "Sektor A är sökt."):
         assert language_ok(ok), ok
     assert not language_ok("I will fly to P1 now")
+    for ok in (
+        "Det finns ingen godkänd ram än. Vilket område ska vi söka?",
+        "Väntar på ditt klick: sök sektor B.",
+        "Grinden sa nej igen: Punkten ligger utanför ramen. Hur vill du gå vidare?",
+    ):
+        assert language_ok(ok), ok
+    assert not language_ok("The drone will now fly to the search area and look")
+
+
+def test_repair_rate_leaves_out_expected_repairs() -> None:
+    plain = ScenarioResult("EV-01", False, True, turns=10, repairs=0, texts=["Klart."])
+    on_purpose = ScenarioResult("EV-16", False, True, turns=1, repairs=1, expects_repair=True)
+    assert summarize([[plain, on_purpose]])["repair_rate"] == 0.0
+    sloppy = ScenarioResult("EV-02", False, True, turns=10, repairs=1, texts=["Klart."])
+    assert summarize([[plain, sloppy]])["repair_rate"] == 0.05
+
+
+def test_expected_repairs_are_marked() -> None:
+    marked = {load_scenario(p)["id"] for p in PATHS if load_scenario(p).get("expects_repair")}
+    assert marked == {"EV-07", "EV-16", "EV-33"}
 
 
 def test_summarize_rules() -> None:

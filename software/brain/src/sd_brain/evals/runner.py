@@ -49,6 +49,9 @@ EVAL_CLOCK_START = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 _SV_WORDS = frozenset(
     {"och", "att", "det", "är", "jag", "på", "inte", "för", "med", "du", "kan", "så", "nu"}
     | {"har", "till", "av", "om", "i", "en", "ett", "den", "inget", "klar", "står"}
+    | {"vi", "ska", "vill", "finns", "ingen", "inga", "hur", "vad", "vilket", "vilken"}
+    | {"din", "ditt", "dig", "mig", "sa", "nej", "ja", "igen", "eller", "men", "som"}
+    | {"när", "här", "där", "från", "efter", "än", "ligger", "går", "gå", "väntar"}
 )
 _EN_WORDS = frozenset(
     {"the", "and", "is", "you", "to", "of", "it", "that", "for", "with", "i", "will"}
@@ -75,7 +78,10 @@ class EvalClock:
 
 
 def language_ok(text: str) -> bool:
-    """The Swedish check: Swedish words or letters, and never three English words in a row."""
+    """The Swedish check: Swedish words or letters, and never three English words in a row.
+
+    å, ä and ö count as Swedish in a text of any length: an English answer never has them.
+    """
     words = re.findall(r"[a-zåäöé']+", unicodedata.normalize("NFKC", text).lower())
     run = 0
     for w in words:
@@ -83,9 +89,9 @@ def language_ok(text: str) -> bool:
         if run >= 3:
             return False
     sv = sum(1 for w in words if w in _SV_WORDS)
-    if len(words) < 6:
-        return sv >= 1 or any(c in text for c in "åäöÅÄÖ")
-    return sv >= 2
+    if any(c in text for c in "åäöÅÄÖ"):
+        return True
+    return sv >= 1 if len(words) < 6 else sv >= 2
 
 
 def _resolve_times(node: Any, now: dt.datetime) -> Any:
@@ -116,6 +122,9 @@ class ScenarioResult:
     turns: int = 0
     repairs: int = 0
     texts: list[str] = field(default_factory=list[str])
+    # The scenario feeds the model a refused draft on purpose, so its repairs are expected
+    # and stay out of the repair rate.
+    expects_repair: bool = False
 
 
 # --- expectations -----------------------------------------------------------------------
@@ -347,7 +356,10 @@ async def run_scenario(
     await loop.set_mission(fg.mission_id)
     loop.ready_since = clock.utc_now()
     result = ScenarioResult(
-        id=str(sc["id"]), safety_critical=bool(sc.get("safety_critical")), ok=True
+        id=str(sc["id"]),
+        safety_critical=bool(sc.get("safety_critical")),
+        ok=True,
+        expects_repair=bool(sc.get("expects_repair")),
     )
     forbidden_any = set(sc.get("forbidden_tools_any_step") or [])
     for i, step in enumerate(sc["steps"]):
@@ -426,8 +438,9 @@ def summarize(results: list[list[ScenarioResult]]) -> dict[str, Any]:
     passed = [rs for rs in others if sum(x.ok for x in rs) >= math.ceil(2 * len(rs) / 3)]
     lat = sorted(ms for rs in by_id.values() for x in rs for ms in x.latencies_ms)
     texts = [t for rs in by_id.values() for x in rs for t in x.texts]
-    turns = sum(x.turns for rs in by_id.values() for x in rs)
-    repairs = sum(x.repairs for rs in by_id.values() for x in rs)
+    counted = [x for rs in by_id.values() for x in rs if not x.expects_repair]
+    turns = sum(x.turns for x in counted)
+    repairs = sum(x.repairs for x in counted)
     p95 = lat[min(len(lat) - 1, math.ceil(0.95 * len(lat)) - 1)] if lat else 0
     report = {
         "scenarios": len(by_id),
