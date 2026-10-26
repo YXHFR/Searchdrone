@@ -113,13 +113,13 @@ jobs:
         run: python3 tools/check_no_orthophotos.py software/panel/test-results
       - name: Upload the tests' screenshots (mock data only)
         if: always() && steps.ortho.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: panel-screenshots
           path: software/panel/test-results/**/*.png
       - name: Screenshots of the drawn-path flow
         if: always() && steps.ortho.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: panel-e2e-screenshots
           path: software/panel/test-results/path-flow/
@@ -147,7 +147,7 @@ jobs:
         run: python3 tools/check_no_orthophotos.py software/panel/screens
       - name: Upload the screenshots
         if: always() && steps.ortho.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: panel-screens
           path: software/panel/screens/
@@ -225,7 +225,7 @@ jobs:
       - run: just build
       - name: No orthophotos in the build
         run: python3 tools/check_no_orthophotos.py dist software/panel/dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build
           path: |
@@ -257,7 +257,7 @@ jobs:
         run: python3 tools/check_no_orthophotos.py "$RUNNER_TEMP/rl"
       - name: Upload the comparison (no weights)
         if: always() && steps.ortho.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rl-eval
           path: ${{ runner.temp }}/rl/eval.json
