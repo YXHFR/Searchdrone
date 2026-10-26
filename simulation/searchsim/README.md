@@ -18,7 +18,8 @@ just rl-eval size=ci          # 300 scenarios
 ```
 
 Keys: `size=full|ci`, `seed=0..9` (train), `workers=<int>` (default: every core),
-`out=<file>`, `policy=<file>` (eval), `world=synthetic|real`, `sites=<folder>`. The policy is written to `build/rl/policy.json`,
+`out=<file>`, `policy=<file>` (eval), `world=synthetic|real`, `sites=<folder>`,
+`belief_motion=diffuse|lpb` (real only, see below). The policy is written to `build/rl/policy.json`,
 which git ignores; trained weights never go into the repository. Without a policy file
 `rl-eval` compares only the baselines.
 
@@ -61,11 +62,19 @@ statistics. Make the places first with `just rl-maps` (see `tools/rlmaps/README.
   - the distance from the last seen point, as a log-normal fitted to the quartiles;
   - the share found on a road or track, and within 100 m of one.
 
-  The last seen point is on a road or track near the middle. The person stays where
-  they are found, never in water. The belief uses the published numbers. The truth's
-  distance is off by about 1.35x either way.
-- **What is left out:** children (their numbers are only in Koester's book) and movement
-  during the search.
+  The last seen point is on a road or track near the middle. The belief uses the
+  published numbers. The truth's distance is off by about 1.35x either way.
+- **Moving during the search:** the search starts 1-6 h after the person was last seen
+  (a guess). The person starts somewhere on the truth's map and, if still on the move
+  (the category's mobility curve), keeps walking by the motion model (`sd_motion`): on
+  and towards tracks, turning back at water, until they stop or leave the map. Their
+  speed and walking time are off the category's by about 1.35x either way.
+- **The belief's movement** (`belief_motion`): `diffuse` spreads the map with a Gaussian
+  as in the made-up world; `lpb` runs the same motion model as the truth (with the
+  category's numbers), blended 50/50 with the rings at the start. Cells with a canopy of
+  0.5 or more walk like forest; the sites have no shrub or wetland classes, so the
+  dementia "stuck in the bushes" rule does not apply here.
+- **What is left out:** children (their numbers are only in Koester's book).
 
 `rl-eval world=real` also prints the mean score per category.
 

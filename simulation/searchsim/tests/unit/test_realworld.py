@@ -70,12 +70,15 @@ def test_real_scenario_is_sane(sites_dir: Path, seed: int) -> None:
     assert sc.prior.sum() == pytest.approx(1.0)
     assert (sc.prior >= 0).all()
     assert sc.strategy in {c.name for c in CATEGORIES}
-    # The person stays at the find location, which is dry land in the grid.
-    assert (sc.path_m == sc.path_m[0]).all()
+    # The person walks on dry land in the grid, until they leave it (NaN from then on).
     size = cfg.grid_cells * cfg.cell_m
-    assert ((sc.path_m >= 0) & (sc.path_m < size)).all()
+    on_map = ~np.isnan(sc.path_m[:, 0])
+    assert on_map[0]
+    assert not (np.diff(on_map.astype(int)) > 0).any()  # gone means gone
+    assert ((sc.path_m[on_map] >= 0) & (sc.path_m[on_map] < size)).all()
     a, b = make_scenario(seed, cfg), make_scenario(seed, cfg)
-    assert np.array_equal(a.prior, b.prior) and np.array_equal(a.path_m, b.path_m)
+    assert np.array_equal(a.prior, b.prior)
+    assert np.array_equal(a.path_m, b.path_m, equal_nan=True)
     for make in BASELINES.values():
         r = run_episode(sc, make(), cfg)
         assert 0.0 <= r.score <= 1.0
@@ -83,11 +86,49 @@ def test_real_scenario_is_sane(sites_dir: Path, seed: int) -> None:
 
 def test_nobody_in_water(sites_dir: Path) -> None:
     cfg = _cfg(sites_dir)
+    water = np.zeros((N, N), dtype=bool)
+    water[:10, :10] = True  # in every made-up place, turned or mirrored the same way
     for seed in range(10):
         sc = make_scenario(seed, cfg)
         r, c = (sc.path_m[0] // cfg.cell_m).astype(int)[::-1]
-        # Water has no mass in the belief or the truth, so the find location has some.
+        # Water has no mass in the belief or the truth, so the start has some.
         assert sc.prior[r, c] > 0
+        walked = sc.path_m[~np.isnan(sc.path_m[:, 0])]
+        rows, cols = (
+            (walked[:, 1] // cfg.cell_m).astype(int),
+            (walked[:, 0] // cfg.cell_m).astype(int),
+        )
+        assert not water[rows, cols].any()
+
+
+def test_people_walk_off_and_stop(sites_dir: Path) -> None:
+    cfg = _cfg(sites_dir)
+    moved = stopped = 0
+    for seed in range(30):
+        path = make_scenario(seed, cfg).path_m
+        moved += int(not np.array_equal(path[0], path[1], equal_nan=True))
+        stopped += int(np.array_equal(path[-1], path[-2]))
+    assert moved > 0 and stopped > 0
+
+
+def test_lpb_belief_runs_and_repeats(sites_dir: Path) -> None:
+    cfg = SimConfig(world="real", sites_dir=str(sites_dir), belief_motion="lpb")
+    plain = make_scenario(EVAL_SEED_BASE + 3, _cfg(sites_dir))
+    sc = make_scenario(EVAL_SEED_BASE + 3, cfg)
+    assert sc.motion is not None
+    # Same person, same place: only the belief differs.
+    assert np.array_equal(sc.path_m, plain.path_m, equal_nan=True)
+    assert sc.motion.start.total() == pytest.approx(1.0, abs=1e-5)
+    for make in BASELINES.values():
+        a = run_episode(sc, make(), cfg)
+        b = run_episode(make_scenario(EVAL_SEED_BASE + 3, cfg), make(), cfg)
+        assert a == b
+        assert 0.0 <= a.score <= 1.0
+
+
+def test_lpb_needs_the_real_world() -> None:
+    with pytest.raises(ValueError, match="world=real"):
+        SimConfig(belief_motion="lpb")
 
 
 @pytest.mark.parametrize("cat", CATEGORIES, ids=lambda c: c.name)

@@ -219,3 +219,50 @@ def test_a_large_map_is_fast_enough() -> None:
     start_state(terrain, for_category("hiker"), (80, 80), 3 * 3600, rings, 0.1)
     # The spec asks for 1 s on a laptop; CI runners are slower and shared.
     assert time.perf_counter() - t0 < 3.0
+
+
+def test_one_walker_never_wades_and_stops_for_good() -> None:
+    from sd_motion import walk
+
+    shape = (40, 40)
+    water = np.zeros(shape, bool)
+    water[25:, :] = True
+    terrain = Terrain.from_cover(np.zeros(shape, bool), np.zeros(shape, bool), water, CELL_M)
+    params = for_category("despondent")
+    for seed in range(20):
+        path = walk(terrain, params, (15.5, 20.5), 1800, 180, np.random.default_rng(seed))
+        inside = path[~np.isnan(path[:, 0])]
+        assert (inside[:, 0] < 25).all()
+        assert np.array_equal(path[-1], path[-2]) or np.isnan(path[-1, 0])
+    a = walk(terrain, params, (15.5, 20.5), 0, 60, np.random.default_rng(1))
+    b = walk(terrain, params, (15.5, 20.5), 0, 60, np.random.default_rng(1))
+    assert np.array_equal(a, b, equal_nan=True)
+
+
+def test_a_walker_who_does_not_move_stays() -> None:
+    from sd_motion import walk
+
+    terrain = Terrain.open((10, 10), CELL_M)
+    path = walk(terrain, for_category("hiker"), (5.5, 5.5), 0, 30, np.random.default_rng(0),
+                moving=False)  # fmt: skip
+    assert (path == [5.5, 5.5]).all()
+
+
+def test_walkers_spread_like_the_map() -> None:
+    """Many single walkers end up where the map says (same rules, same numbers)."""
+    from sd_motion import walk
+
+    shape = (61, 61)
+    terrain = Terrain.open(shape, CELL_M)
+    params = for_category("despondent")
+    rng = np.random.default_rng(0)
+    ends = []
+    for _ in range(600):
+        path = walk(terrain, params, (30.5, 30.5), 0, 40, rng)
+        if not np.isnan(path[-1, 0]):
+            ends.append(np.hypot(path[-1, 0] - 30.5, path[-1, 1] - 30.5))
+    state = advance(_at(shape, (30, 30)), terrain, params, 2400)
+    rr, cc = np.indices(shape)
+    dist = np.hypot(rr - 30, cc - 30)
+    mean_map = float((state.p * dist).sum() / state.p.sum())
+    assert float(np.mean(ends)) == pytest.approx(mean_map, rel=0.15)

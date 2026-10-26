@@ -8,9 +8,10 @@ only reads them, with numpy.
 Who is missing and where they are found follows the Norwegian search dog statistics
 (Lie & Skår, ICAR 2016; about 400 searches with a find, 2009-2015), the nearest data to
 Sweden: per category the distance from the last seen point (quartiles, fitted with a
-log-normal) and the share found *on* a road or track and within 100 m of one. The person
-stays at the find location: the statistics are of where people were found, not of how
-they walked. Nobody is found in open water. Children are left out: their numbers are
+log-normal) and the share found *on* a road or track and within 100 m of one. When the
+search starts (1-6 h after last seen) the person is somewhere on that map, and from there
+keeps walking by the motion model (``sd_motion``) with their own speed and stamina, or
+has already stopped. Nobody is found in open water. Children are left out: their numbers are
 only in Koester's book (*Lost Person Behavior*), which the project does not have.
 
 The belief uses the category's numbers as published; the truth's distance is off by
@@ -25,13 +26,24 @@ from __future__ import annotations
 import functools
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 
+import sd_motion
+from sd_motion import Params, Terrain
 from sd_searchsim.config import EVAL_SEED_BASE, VAL_SEED_BASE, SimConfig
-from sd_searchsim.scenario import Scenario, _distance_to, _sample_cell, cell_centres, no_fly
+from sd_searchsim.scenario import (
+    MotionBelief,
+    Scenario,
+    _distance_to,
+    _sample_cell,
+    cell_centres,
+    no_fly,
+)
+
+FOREST_CANOPY = 0.5  # canopy share from which a cell walks like forest
 
 _Z75 = 0.6745  # the standard normal's 75th percentile
 
@@ -176,19 +188,48 @@ def make_real_scenario(seed: int, cfg: SimConfig) -> Scenario:
         cfg, ipp, cat, median_m * float(np.exp(rng.normal(0, 0.3))), track_dist, water
     )
     start = _sample_cell(rng, truth, cfg)
-    path = np.repeat(start[None, :], int(cfg.horizon_min) + 1, axis=0)
 
     p_det_true = float(rng.uniform(0.55, 0.9))
+    allowed = no_fly(rng, cfg.n_sectors)
+
+    # The person keeps walking by the motion model's rules, with their own speed and
+    # stamina; the belief's numbers are the category's.
+    terrain = Terrain.from_cover(canopy >= FOREST_CANOPY, track, water, cfg.cell_m)
+    params = sd_motion.for_category(cat.name)
+    lost_s = float(rng.uniform(*cfg.lost_hours)) * 3600.0
+    person = _person(rng, params, cfg.truth_spread)
+    moving = bool(rng.random() < person.still_moving(lost_s / 3600.0))
+    rc = sd_motion.walk(terrain, person, (start[1] / cfg.cell_m, start[0] / cfg.cell_m), lost_s,
+                        int(cfg.horizon_min), rng, moving)  # fmt: skip
+    path = rc[:, ::-1] * cfg.cell_m  # (row, column) cells to (x east, y north) metres
+    motion = None
+    if cfg.belief_motion == "lpb":
+        ipp_rc = (int(ipp[1] // cfg.cell_m), int(ipp[0] // cfg.cell_m))
+        motion = MotionBelief(
+            terrain, params, sd_motion.start_state(terrain, params, ipp_rc, lost_s, prior, 0.0)
+        )
     return Scenario(
         seed=seed,
         canopy=canopy,
         track_dist_m=track_dist,
         prior=prior,
-        allowed=no_fly(rng, cfg.n_sectors),
+        allowed=allowed,
         ipp_m=ipp,
         home_m=home,
         path_m=path,
         pod_true=p_det_true * (1.0 - canopy),
         pod_belief=cfg.belief_p_det * (1.0 - canopy),
         strategy=cat.name,
+        motion=motion,
+    )
+
+
+def _person(rng: np.random.Generator, params: Params, spread: float) -> Params:
+    """This person's own speed and walking time, off the category's by chance."""
+    speed = float(np.exp(rng.normal(0, spread)))
+    stamina = float(np.exp(rng.normal(0, spread)))
+    return replace(
+        params,
+        speed_mps=params.speed_mps * speed,
+        mobility=tuple((h * stamina, s) for h, s in params.mobility),
     )
