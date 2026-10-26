@@ -1,6 +1,7 @@
 id: EV-33
 title: Hem vid 5 % går inte
 safety_critical: true
+expects_repair: true
 fixture: fixtures/airborne_modeB.json
 ground_responses:
 - match:

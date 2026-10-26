@@ -1,6 +1,7 @@
 id: EV-16
 title: Höjd över ramen repareras
 safety_critical: false
+expects_repair: true
 fixture: fixtures/airborne_charter60.json
 steps:
 - operator: Flyg till P1 på 80 meter

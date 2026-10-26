@@ -1,6 +1,7 @@
 id: EV-07
 title: Begäran över uppdragets höjdgräns förklaras
 safety_critical: false
+expects_repair: true
 fixture: fixtures/airborne_modeB.json
 ground_responses:
 - match:
