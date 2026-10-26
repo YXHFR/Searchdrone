@@ -16,15 +16,29 @@ import base64
 import math
 import zlib
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Final
 
 import numpy as np
 
 from sd_schemas.probmap import MapNote, PoaHint, SectorScore
 from sd_schemas.search import SearchProfile
-from sd_search.probmap.bayes import HeadingPrior, MapState, OperatorArea, RingTerrainMap
+from sd_search.probmap.bayes import (
+    HeadingPrior,
+    MapState,
+    OperatorArea,
+    RingTerrainMap,
+    area_weight,
+)
 from sd_search.probmap.grid import Floats, Grid, grid_around
+from sd_search.probmap.motion import (
+    MotionCache,
+    TimedPass,
+    motion_params,
+    motion_terrain,
+    run_motion,
+)
 from sd_search.probmap.pod import DEFAULT_DETECTOR, DETECTORS, Still, pass_pod
 from sd_search.probmap.rings import CHILD_CATEGORIES, rings_for
 from sd_search.probmap.sectors import PlanSector, sector_scores
@@ -56,6 +70,9 @@ class MapInputs:
     candidates: Sequence[MapCandidate]
     alt_m: float
     speed_ms: float
+    # The build's clock. With it (and movement on) the map walks to this moment; without
+    # it the map is the prior and the passes, as if nobody moved.
+    now_utc: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -75,11 +92,21 @@ class _Cache:
     passes: dict[tuple[object, ...], Floats] = field(
         default_factory=dict[tuple[object, ...], Floats]
     )
+    motion: MotionCache = field(default_factory=MotionCache)
 
 
 def encode_f32(a: Floats) -> str:
     """base64 of zlib-compressed little-endian float32."""
     return base64.b64encode(zlib.compress(a.astype("<f4").tobytes(), 6)).decode("ascii")
+
+
+def _middle(stills: Sequence[Still]) -> datetime | None:
+    """The middle of a pass: halfway between its first and last still."""
+    times = [s.captured_utc for s in stills if s.captured_utc is not None]
+    if not times or len(times) < len(stills):
+        return None
+    first, last = min(times), max(times)
+    return first + (last - first) / 2
 
 
 def _resolve(c: MapCandidate, by_id: dict[str, MapCandidate]) -> str:
@@ -92,8 +119,9 @@ def _resolve(c: MapCandidate, by_id: dict[str, MapCandidate]) -> str:
 
 
 class MapBuilder:
-    def __init__(self, terrain: TerrainSource) -> None:
+    def __init__(self, terrain: TerrainSource, *, motion: bool = True) -> None:
         self.terrain = terrain
+        self.motion = motion
         self.model = RingTerrainMap()
         self.detector = DETECTORS[DEFAULT_DETECTOR]
         self._cache = _Cache()
@@ -121,8 +149,10 @@ class MapBuilder:
                     tuple(grid.xy(lat, lon) for lon, lat in s.footprint),
                     s.px_per_m,
                     s.detector_ok,
+                    s.captured_utc,
                 )
             )
+        timed: list[TimedPass] = []
         for pass_id, stills in passes.items():
             ids = {s.still_id for s in stills}
             hold = sorted(
@@ -137,6 +167,9 @@ class MapBuilder:
                 }
                 self._cache.passes[key] = pod
             state = self.model.update_negative(state, pod)
+            timed.append(TimedPass(key, _middle(stills), pod))
+        if self.motion and inputs.now_utc is not None and float(state.p.sum()) > 0:
+            state = self._moving(grid, inputs, inputs.now_utc, canopy, timed, state)
         sectors = sector_scores(
             state,
             [PlanSector(sid, tuple(grid.ring_xy(ring))[:-1]) for sid, ring in inputs.sectors],
@@ -167,6 +200,44 @@ class MapBuilder:
             self._cache = _Cache(prior_key=key, prior=prior, canopy=canopy)
             return prior, canopy
         return cache.prior, cache.canopy
+
+    def _moving(
+        self,
+        grid: Grid,
+        inputs: MapInputs,
+        now_utc: datetime,
+        canopy: Floats,
+        passes: list[TimedPass],
+        still: MapState,
+    ) -> MapState:
+        """The same map with movement: the prior walks through the passes to now. The
+        cumulative POD is the same; only where the person may be changes."""
+        prof = inputs.profile
+        params, moving_now = motion_params(prof)
+        prior, _ = self._prior(grid, inputs)
+        areas = tuple(
+            OperatorArea(hint, tuple(grid.ring_xy(ring))[:-1]) for hint, ring in inputs.areas
+        )
+        ipp = grid.cell_of(0.0, 0.0)
+        if ipp is None:
+            return still
+        key = (self._cache.prior_key, params, moving_now, prof.last_seen.at_utc)
+        m = run_motion(
+            self._cache.motion,
+            key,
+            prior_p=prior.p,
+            prior_row=prior.row,
+            area_weight=area_weight(grid, areas),
+            terrain=motion_terrain(self.terrain, grid, canopy),
+            params=params,
+            moving_now=moving_now,
+            heading_deg=prof.last_seen.heading_deg,
+            last_seen_utc=prof.last_seen.at_utc,
+            passes=passes,
+            now_utc=now_utc,
+            ipp_rc=ipp,
+        )
+        return replace(still, p=m.p, row=m.row, motion=m)
 
     @staticmethod
     def _cells(grid: Grid, c: MapCandidate) -> list[tuple[int, int]]:

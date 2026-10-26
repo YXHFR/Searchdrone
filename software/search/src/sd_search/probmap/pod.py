@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final
 
 import numpy as np
@@ -89,6 +90,7 @@ class Still:
     footprint: tuple[tuple[float, float], ...]  # corners in the grid's plane
     px_per_m: float
     detector_ok: bool
+    captured_utc: datetime | None = None  # when it was taken (the map's clock)
 
 
 def still_pod(

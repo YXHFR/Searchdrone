@@ -96,7 +96,10 @@ async def _run(args: argparse.Namespace, token: str, cfg: SearchConfig, key: str
         SimTerrainSource.from_file(Path(args.terrain_file)) if args.terrain_file else NoTerrain()
     )
     service = SearchService(
-        client, profiles, mapper=MapService(client, profiles, terrain), cascade=cascade
+        client,
+        profiles,
+        mapper=MapService(client, profiles, terrain, motion=cfg.motion.enabled),
+        cascade=cascade,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

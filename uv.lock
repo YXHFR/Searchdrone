@@ -1878,6 +1878,7 @@ dependencies = [
     { name = "pillow" },
     { name = "pydantic" },
     { name = "sd-brain" },
+    { name = "sd-motion" },
     { name = "sd-schemas" },
     { name = "shapely" },
 ]
@@ -1889,6 +1890,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "sd-brain", editable = "software/brain" },
+    { name = "sd-motion", editable = "software/common/motion" },
     { name = "sd-schemas", editable = "software/common/schemas" },
     { name = "shapely", specifier = ">=2.1" },
 ]
@@ -1899,10 +1901,14 @@ version = "0.0.0"
 source = { editable = "simulation/searchsim" }
 dependencies = [
     { name = "numpy" },
+    { name = "sd-motion" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=2.4" }]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.4" },
+    { name = "sd-motion", editable = "software/common/motion" },
+]
 
 [[package]]
 name = "sd-sim"

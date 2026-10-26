@@ -27,6 +27,7 @@ import numpy as np
 import shapely
 from shapely.geometry import Polygon
 
+from sd_motion import MotionState
 from sd_schemas.probmap import PoaHint
 from sd_schemas.search import SubjectCategory
 from sd_search.probmap.grid import Floats, Grid
@@ -67,6 +68,7 @@ class MapState:
     row: float
     pod_cum: Floats  # (ny, nx), the cumulative POD
     frozen: bool = False
+    motion: MotionState | None = None  # the walking map behind ``p``; None: no movement
 
     def total(self) -> float:
         return float(self.p.sum()) + self.row
