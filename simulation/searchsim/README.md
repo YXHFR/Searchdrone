@@ -18,7 +18,7 @@ just rl-eval size=ci          # 300 scenarios
 ```
 
 Keys: `size=full|ci`, `seed=0..9` (train), `workers=<int>` (default: every core),
-`out=<file>`, `policy=<file>` (eval). The policy is written to `build/rl/policy.json`,
+`out=<file>`, `policy=<file>` (eval), `world=synthetic|real`, `sites=<folder>`. The policy is written to `build/rl/policy.json`,
 which git ignores; trained weights never go into the repository. Without a policy file
 `rl-eval` compares only the baselines.
 
@@ -42,6 +42,32 @@ which git ignores; trained weights never go into the repository. Without a polic
   detection chance, so the simulator computes the exact expectation over the coins:
   `p_find`, `expected_minutes` (time to find, counted as 180 when not found) and
   `score = 1 - expected_minutes / 180`.
+
+## Real places (`world=real`)
+
+`world=real` swaps the made-up terrain and the strategy mixture for real places and real
+statistics. Make the places first with `just rl-maps` (see `tools/rlmaps/README.md`):
+
+- **Places:** 2 x 2 km of Swedish forest and open land. ESA WorldCover gives the canopy
+  (trees 0.75, bushes 0.35, built-up 0.3, wetland 0.05; model defaults) and the water,
+  and OpenStreetMap gives the roads and tracks. Each scenario turns or mirrors its place
+  at random (8 ways).
+- **Split by place:** 70 % of the places train, 10 % validate and 20 % are the final
+  comparison. `rl-eval world=real` is therefore on places training never saw.
+- **Who is missing:** a person with dementia (35 %), a despondent person (30 %), a hiker
+  (20 %) or a berry or mushroom picker (15 %). The shares are defaults.
+- **Where they are found:** from the Norwegian search dog statistics (Lie & Skår, ICAR
+  2016), per category:
+  - the distance from the last seen point, as a log-normal fitted to the quartiles;
+  - the share found on a road or track, and within 100 m of one.
+
+  The last seen point is on a road or track near the middle. The person stays where
+  they are found, never in water. The belief uses the published numbers. The truth's
+  distance is off by about 1.35x either way.
+- **What is left out:** children (their numbers are only in Koester's book) and movement
+  during the search.
+
+`rl-eval world=real` also prints the mean score per category.
 
 ## The baselines and the policy
 

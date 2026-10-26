@@ -76,6 +76,7 @@ RECIPES = [
     "brain-scores",
     "rl-train",
     "rl-eval",
+    "rl-maps",
 ]
 ALIASES = ["gen-schemas", "sim-up", "sim-down", "bench"]
 

@@ -99,6 +99,8 @@ exclude = [
   "**/node_modules", "**/.venv", "**/generated", "**/__pycache__",
   "tools/train/vendor", "tools/train/tests", "tools/train/families.py",
   "tools/train/train_detector.py", "tools/train/export_onnx.py",
+  # rasterio and osmium live in tools/rlmaps' own Python (tools/rlmaps/pyproject.toml).
+  "tools/rlmaps/build.py",
 ]
 executionEnvironments = [{ root = "tools", extraPaths = ["tools"] }]
 

@@ -2,6 +2,7 @@
 
 train: size=full|ci (default full), seed=<0..9>, workers=<int>, out=<policy file>
 eval:  size=full|ci (default full), workers=<int>, policy=<policy file>, out=<result file>
+both:  world=synthetic|real (default synthetic), sites=<folder from just rl-maps>
 
 The policy file and the results land in ``build/rl/`` by default, which git ignores:
 trained weights never go into the repository.
@@ -17,12 +18,13 @@ from pathlib import Path
 from typing import NoReturn
 
 from sd_searchsim import evaluate, policies, train
-from sd_searchsim.config import SIZES, SimConfig
+from sd_searchsim.config import SIZES, WORLDS, SimConfig
+from sd_searchsim.realworld import load_sites
 
 DEFAULT_DIR = Path("build/rl")
 KEYS = {
-    "train": {"size", "seed", "workers", "out"},
-    "eval": {"size", "workers", "policy", "out"},
+    "train": {"size", "seed", "workers", "out", "world", "sites"},
+    "eval": {"size", "workers", "policy", "out", "world", "sites"},
 }
 
 
@@ -43,6 +45,8 @@ def _parse(command: str, argv: list[str]) -> dict[str, str]:
         out[key] = value
     if out.get("size", "full") not in SIZES:
         _fail(f"rl-{command}: size ska vara {' eller '.join(SIZES)}.")
+    if out.get("world", "synthetic") not in WORLDS:
+        _fail(f"rl-{command}: world ska vara {' eller '.join(WORLDS)}.")
     return out
 
 
@@ -69,7 +73,16 @@ def main(argv: list[str] | None = None) -> int:
     size_name = args.get("size", "full")
     size = SIZES[size_name]
     workers = _int(args, "workers", os.cpu_count() or 1, command) or 1
-    cfg = SimConfig()
+    cfg = SimConfig(world=args.get("world", "synthetic"))
+    if cfg.world == "real":
+        cfg = dataclasses.replace(cfg, sites_dir=args.get("sites", cfg.sites_dir))
+        try:
+            n_sites = len(load_sites(cfg.sites_dir, cfg.grid_cells))
+        except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            _fail(f"rl-{command}: {exc}")
+        if n_sites < 10:
+            _fail(f"rl-{command}: bara {n_sites} platser i {cfg.sites_dir}; minst 10 behövs.")
+        print(f"Verkliga platser: {n_sites} i {cfg.sites_dir}.", flush=True)
 
     if command == "train":
         seed = _int(args, "seed", 0, command)
@@ -81,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         meta = {
             "size": size_name,
+            "world": cfg.world,
             "seed": seed,
             "run_size": dataclasses.asdict(size),
             "sim_config": dataclasses.asdict(cfg),
@@ -111,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Ingen policy i {policy_path} (kör just rl-train); jämför bara mönstren.")
     result = evaluate.evaluate(size.eval_scenarios, theta, cfg, workers=workers)
     result["size"] = size_name
+    result["world"] = cfg.world
     result["policy_file"] = str(policy_path) if theta is not None else None
     out = Path(args.get("out", DEFAULT_DIR / "eval.json"))
     _write_json(out, result)
@@ -126,6 +141,10 @@ def main(argv: list[str] | None = None) -> int:
             f"policy - {name}: {diff['mean']:+.3f} (95 %: {diff['ci95_low']:+.3f} till "
             f"{diff['ci95_high']:+.3f}), bättre/lika/sämre {d['wins']}/{d['ties']}/{d['losses']}"
         )
+    for cat, row in result.get("by_category", {}).items():
+        best = max(row, key=lambda name: row[name])
+        cells = "  ".join(f"{name} {v:.3f}" for name, v in row.items())
+        print(f"{cat:12s} {cells}  (bäst: {best})")
     print(f"Resultatet ligger i {out}.")
     return 0
 

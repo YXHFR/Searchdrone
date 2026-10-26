@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+WORLDS = ("synthetic", "real")
+
 
 @dataclass(frozen=True)
 class SimConfig:
@@ -29,6 +31,10 @@ class SimConfig:
     belief_p_det: float = 0.75
     belief_diffusion_m: float = 15.0  # Gaussian spread per sqrt(minute)
     track_weight: float = 2.0  # prior weight near a track: 1 + track_weight * exp(-d / 50 m)
+    # "synthetic": made-up terrain (no data needed). "real": places in Sweden from
+    # ``just rl-maps`` and lost-person statistics (``realworld.py``).
+    world: str = "synthetic"
+    sites_dir: str = "build/rl/sites"
 
     @property
     def n_sectors(self) -> int:
@@ -47,6 +53,8 @@ class SimConfig:
     def __post_init__(self) -> None:
         if self.grid_cells % self.sector_cells:
             raise ValueError("grid_cells must be a multiple of sector_cells")
+        if self.world not in WORLDS:
+            raise ValueError(f"world must be one of {WORLDS}")
 
 
 @dataclass(frozen=True)
