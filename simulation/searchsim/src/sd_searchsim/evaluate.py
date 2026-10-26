@@ -30,10 +30,14 @@ def _choosers(theta: np.ndarray | None) -> dict[str, Callable[[], Chooser]]:
     return out
 
 
-def _run_seed(args: tuple[int, np.ndarray | None, SimConfig]) -> dict[str, EpisodeResult]:
+def _run_seed(
+    args: tuple[int, np.ndarray | None, SimConfig],
+) -> tuple[str, dict[str, EpisodeResult]]:
     seed, theta, cfg = args
     sc = make_scenario(seed, cfg)
-    return {name: run_episode(sc, make(), cfg) for name, make in _choosers(theta).items()}
+    return sc.strategy, {
+        name: run_episode(sc, make(), cfg) for name, make in _choosers(theta).items()
+    }
 
 
 def _mean_ci(x: np.ndarray) -> dict[str, float]:
@@ -53,9 +57,11 @@ def evaluate(
     tasks = [(s, theta, cfg) for s in seeds]
     if workers > 1:
         with ProcessPoolExecutor(workers) as pool:
-            rows = list(pool.map(_run_seed, tasks, chunksize=4))
+            done = list(pool.map(_run_seed, tasks, chunksize=4))
     else:
-        rows = [_run_seed(t) for t in tasks]
+        done = [_run_seed(t) for t in tasks]
+    kinds = [k for k, _ in done]
+    rows = [r for _, r in done]
     names = list(rows[0])
     values = {
         name: {m: np.array([getattr(r[name], m) for r in rows]) for m in METRICS} for name in names
@@ -73,6 +79,17 @@ def evaluate(
         "choosers": choosers,
         "ranking_by_score": sorted(names, key=lambda n: -choosers[n]["score"]["mean"]),
     }
+    if cfg.world == "real":
+        # Mean score per lost-person category (who is missing changes where to look).
+        out["by_category"] = {
+            kind: {
+                name: float(
+                    np.mean([values[name]["score"][i] for i, k in enumerate(kinds) if k == kind])
+                )
+                for name in names
+            }
+            for kind in sorted(set(kinds))
+        }
     if "policy" in values:
         paired: dict[str, Any] = {}
         pol = values["policy"]["score"]

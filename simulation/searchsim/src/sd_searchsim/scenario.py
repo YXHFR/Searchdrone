@@ -161,8 +161,29 @@ def _walk(
     return out
 
 
+def no_fly(rng: np.random.Generator, s: int) -> np.ndarray:
+    """Permitted sectors: sometimes a no-fly band (another airspace user, a road
+    closure) along one edge."""
+    allowed = np.ones((s, s), dtype=bool)
+    if rng.random() < 0.4:
+        side = int(rng.integers(4))
+        if side == 0:
+            allowed[0, :] = False
+        elif side == 1:
+            allowed[-1, :] = False
+        elif side == 2:
+            allowed[:, 0] = False
+        else:
+            allowed[:, -1] = False
+    return allowed
+
+
 def make_scenario(seed: int, cfg: SimConfig | None = None) -> Scenario:
     cfg = cfg or SimConfig()
+    if cfg.world == "real":
+        from sd_searchsim.realworld import make_real_scenario  # here: it imports this module
+
+        return make_real_scenario(seed, cfg)
     rng = np.random.default_rng(seed)
     n = cfg.grid_cells
     size = n * cfg.cell_m
@@ -190,19 +211,7 @@ def make_scenario(seed: int, cfg: SimConfig | None = None) -> Scenario:
     pod_true = p_det_true * (1.0 - canopy)
     pod_belief = cfg.belief_p_det * (1.0 - canopy)
 
-    # A no-fly band (another airspace user, a road closure) along one edge, sometimes.
-    s = cfg.n_sectors
-    allowed = np.ones((s, s), dtype=bool)
-    if rng.random() < 0.4:
-        side = int(rng.integers(4))
-        if side == 0:
-            allowed[0, :] = False
-        elif side == 1:
-            allowed[-1, :] = False
-        elif side == 2:
-            allowed[:, 0] = False
-        else:
-            allowed[:, -1] = False
+    allowed = no_fly(rng, cfg.n_sectors)
 
     return Scenario(
         seed=seed,

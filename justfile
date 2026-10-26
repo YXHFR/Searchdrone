@@ -250,11 +250,17 @@ brain-scores:
 
 # --- search policy (2D simulator, advisory only) -----------------------------------
 
-# Train the next-sector search policy on CPU (keys: size=full|ci, seed, workers, out)
+# Pick real places in Sweden (ESA WorldCover, OpenStreetMap) for world=real; to build/rl/sites
+# (keys: osm, n, seed, workers, out, yes; see tools/rlmaps/README.md)
+rl-maps *args:
+    cd tools/rlmaps && uv sync --frozen --quiet
+    cd tools/rlmaps && PYTHONPATH="$PWD/.." uv run --no-sync python build.py "$@"
+
+# Train the next-sector search policy on CPU (keys: size=full|ci, seed, workers, out, world, sites)
 rl-train *args:
     uv run --package sd-searchsim sd-searchsim train "$@"
 
-# Compare the policy with lawnmower, spiral and greedy; writes JSON (keys: size, workers, policy, out)
+# Compare the policy with lawnmower, spiral and greedy; writes JSON (keys: size, workers, policy, out, world, sites)
 rl-eval *args:
     uv run --package sd-searchsim sd-searchsim eval "$@"
 

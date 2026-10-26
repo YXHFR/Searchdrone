@@ -1,0 +1,17 @@
+[project]
+name = "sd-rlmaps"
+version = "0.0.0"
+description = "Real places (ESA WorldCover, OpenStreetMap) for the search policy simulator; `just rl-maps`"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = [
+  "numpy>=2.1,<2.5.4",  # BSD-3-Clause
+  "rasterio>=1.4",  # BSD-3-Clause; reads only the parts of WorldCover it needs
+  "osmium>=4.0",  # BSD-2-Clause (pyosmium)
+]
+
+[tool.uv]
+required-version = ">=0.11,<0.12"
+package = false
+# Only versions at least two weeks old when locked (the repository's rule).
+exclude-newer = "2026-10-12T00:00:00Z"
