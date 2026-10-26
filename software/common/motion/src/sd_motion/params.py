@@ -61,8 +61,10 @@ def _from_row(row: dict[str, Any]) -> Params:
     )
 
 
-def load_all() -> dict[str, Params]:
-    text = files("sd_motion").joinpath("motion.toml").read_text(encoding="utf-8")
+def load_all(text: str | None = None) -> dict[str, Params]:
+    """Every row of ``motion.toml`` (or of ``text`` in the same form)."""
+    if text is None:
+        text = files("sd_motion").joinpath("motion.toml").read_text(encoding="utf-8")
     return {name: _from_row(row) for name, row in tomllib.loads(text).items()}
 
 
