@@ -3,6 +3,7 @@ root_packages =
     sd_schemas
     sd_safety
     sd_geo
+    sd_motion
     sd_mav
     sd_link
     sd_link_testing
@@ -305,3 +306,28 @@ source_modules =
     sd_search
 forbidden_modules =
     sd_searchsim
+
+[importlinter:contract:motion-leaf]
+name = sd_motion is a leaf: numpy only, shared by the map and the simulator
+type = forbidden
+source_modules = sd_motion
+forbidden_modules =
+    sd_schemas
+    sd_safety
+    sd_geo
+    sd_mav
+    sd_link
+    sd_link_testing
+    sd_obs
+    sd_testing
+    sd_detect
+    sd_onboard
+    sd_ground
+    sd_brain
+    sd_search
+    sd_hwcalc
+    sd_sim
+    sd_searchsim
+    httpx
+    socket
+    subprocess

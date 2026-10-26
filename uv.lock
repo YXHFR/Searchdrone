@@ -12,6 +12,7 @@ members = [
     "sd-link",
     "sd-link-testing",
     "sd-mav",
+    "sd-motion",
     "sd-obs",
     "sd-onboard",
     "sd-safety",
@@ -1789,6 +1790,17 @@ requires-dist = [
     { name = "sd-safety", editable = "software/common/safety" },
     { name = "sd-schemas", editable = "software/common/schemas" },
 ]
+
+[[package]]
+name = "sd-motion"
+version = "0.0.0"
+source = { editable = "software/common/motion" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=2.0" }]
 
 [[package]]
 name = "sd-obs"

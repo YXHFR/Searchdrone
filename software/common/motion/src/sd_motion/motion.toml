@@ -1,0 +1,50 @@
+# How each kind of missing person moves (sd_motion.params). Sources and guesses per row;
+# the research is in the private planning repo (docs/research/rorelsemodell-forsvunna-2026-10-26.md).
+#
+# mobility: (hours since last seen, share still moving), piecewise linear in log time.
+#   The first point is at 0 h; a share below 1 there means some never move.
+# speed_kmh: walking speed on a track; terrain slows it (sd_motion.terrain).
+# turn45 / turn_any: share of the walkers per minute who turn by 45 degrees / pick any
+#   heading (direction travel versus random walk, Hashimoto et al. 2022).
+# k_track: share per minute who turn onto a track they stand on or next to (route travel).
+# trap: how much faster walkers stop in shrub and wetland (dementia: "walk until stuck").
+# `just lpb-calibrate` scales turn45, turn_any and the mobility hours so the distances when
+# everyone has stopped match Lie & Skaar (2016); `calibrated` records the last fit.
+
+[dementia]
+# Koester 2008, n = 42: 25 % never move, half stopped by 0.25 h, 25 % moving at 3.8 h,
+# 5 % at 18 h. Speed and turning are guesses; k_track from 64 % found on a track (Lie & Skaar).
+mobility = [[0.0, 0.75], [0.25, 0.5], [3.8, 0.25], [18.0, 0.05]]
+speed_kmh = 3.0
+turn45 = 0.02
+turn_any = 0.005
+k_track = 0.8
+trap = 4.0
+
+[despondent]
+# Guesses: median 0.5 h, 25 % over 3 h; 42 % found on a track (Lie & Skaar).
+mobility = [[0.0, 1.0], [0.5, 0.5], [3.0, 0.25], [12.0, 0.05]]
+speed_kmh = 4.0
+turn45 = 0.05
+turn_any = 0.02
+k_track = 0.5
+trap = 1.0
+
+[hiker]
+# Guesses: median 1.5 h, 25 % over 4 h (Ewers et al. 2024 fit 1.06 h; ISRID mobility is
+# thought short). Tobler's 5 km/h on a track; 33 % found on a track (Lie & Skaar).
+mobility = [[0.0, 1.0], [1.5, 0.5], [4.0, 0.25], [16.0, 0.05]]
+speed_kmh = 5.0
+turn45 = 0.05
+turn_any = 0.02
+k_track = 0.7
+trap = 1.0
+
+[gatherer]
+# Berry and mushroom pickers. Guesses: slow, long, meandering; 15 % found on a track.
+mobility = [[0.0, 1.0], [3.0, 0.5], [6.0, 0.25], [16.0, 0.05]]
+speed_kmh = 4.0
+turn45 = 0.30
+turn_any = 0.15
+k_track = 0.1
+trap = 1.0
