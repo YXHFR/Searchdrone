@@ -167,6 +167,12 @@ def test_negative_sweep_lowers_the_searched_cells_and_keeps_the_sum() -> None:
     assert after.row > state.row
 
 
+def test_a_sweep_certain_to_find_leaves_the_state_as_it_was() -> None:
+    shape = (4, 4)
+    state = MotionState(np.full(shape, 1.0 / 16), np.zeros((8, *shape)), 0.0, 60.0)
+    assert negative(state, np.ones(shape)) is state
+
+
 def test_searched_cells_refill_only_from_walkers() -> None:
     shape = (31, 31)
     terrain = Terrain.open(shape, CELL_M)

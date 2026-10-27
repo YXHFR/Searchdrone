@@ -187,6 +187,8 @@ class SearchService:
                 await mapper.step(await self.api.missions())
             except GroundError as exc:
                 log.warning("markstationen svarar inte (kartan): %s", exc)
+            except Exception:  # the map is advice: a fault is logged and the next round tries again
+                log.exception("kartan kunde inte uppdateras")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), MAP_EVERY_S)
 

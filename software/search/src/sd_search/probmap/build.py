@@ -217,8 +217,7 @@ class MapBuilder:
         cumulative POD is the same; only where the person may be changes."""
         prof = inputs.profile
         params, moving_now = motion_params(prof)
-        self._prior(grid, inputs)  # fills the cache for this grid
-        cache = self._cache
+        cache = self._cache  # build() has filled it for this grid
         areas = tuple(
             OperatorArea(hint, tuple(grid.ring_xy(ring))[:-1]) for hint, ring in inputs.areas
         )

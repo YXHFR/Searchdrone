@@ -173,7 +173,7 @@ def _walk_job(
     key = repr((world, p.speed_mps, p.turn45, p.turn_any, p.k_track, p.trap, turn_scale))
     path = cache / f"{category}-{hashlib.sha256(key.encode()).hexdigest()[:16]}.npz"
     if path.exists():
-        with np.load(path) as f:
+        with np.load(path, allow_pickle=False) as f:
             return category, turn_scale, Walk(f["times_h"], f["shares"], float(f["bin_km"]))
     w = walk(world, params, turn_scale)
     cache.mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,8 @@ from importlib.resources import files
 from itertools import pairwise
 from typing import Any
 
-# Categories without their own row move like the nearest one that has data.
+# Categories without their own row move like the nearest one that has data; the rest
+# (children, autism, other) move like DEFAULT until there is Nordic data for them.
 ALIASES = {"hunter": "hiker", "berry_picker": "gatherer"}
 DEFAULT = "despondent"
 

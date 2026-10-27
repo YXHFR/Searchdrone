@@ -113,7 +113,7 @@ def run_motion(
     """The map at ``now_utc``: started, walked through every pass, then walked to now."""
     # The start is anchored at the first pass (or at now, before any pass), never at
     # when the map was first built: the same inputs give the same map in any builder.
-    first = next((p.at_utc for p in passes if p.at_utc is not None), now_utc)
+    first = min((p.at_utc for p in passes if p.at_utc is not None), default=now_utc)
     t0 = _seconds(min(first, now_utc), last_seen_utc)
     start_key = (*key, t0)
     if cache.start_key != start_key or cache.start is None:
