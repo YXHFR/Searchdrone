@@ -208,6 +208,17 @@ def test_start_state_follows_a_known_heading() -> None:
     assert p[:, 21:].sum() > 1.3 * p[:, :20].sum()  # ahead weighs twice behind
 
 
+def test_weeks_after_last_seen_cost_only_the_days_someone_walks() -> None:
+    shape = (40, 40)
+    terrain = Terrain.open(shape, CELL_M)
+    t0 = time.perf_counter()
+    state = advance(_at(shape, (20, 20)), terrain, for_category("gatherer"), 30 * 86400)
+    assert time.perf_counter() - t0 < 10.0  # 172 800 steps would take minutes
+    assert state.t_s == pytest.approx(30 * 86400)
+    assert state.moving.sum() == 0.0
+    assert state.p.sum() + state.row == pytest.approx(1.0, abs=1e-5)
+
+
 def test_a_large_map_is_fast_enough() -> None:
     shape = (160, 160)
     rng = np.random.default_rng(1)

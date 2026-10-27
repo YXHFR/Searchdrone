@@ -25,6 +25,8 @@ from sd_motion.params import Params
 from sd_motion.terrain import DIRS, Terrain
 
 DT_S = 15.0
+CHECK_STEPS = 240  # how often (in steps) to ask whether anyone still walks
+STILL_EPS = 1e-6  # less moving mass than this (one in a million): nobody walks
 _DIAG = math.sqrt(2.0)
 
 
@@ -240,7 +242,13 @@ def _run(
     state: MotionState, params: Params, k: _Kernel, steps: int, shape: tuple[int, int]
 ) -> MotionState:
     s = _Flat(state)
-    for _ in range(steps):
+    for i in range(steps):
+        if i % CHECK_STEPS == 0 and s.moving.sum(dtype=np.float64) < STILL_EPS:
+            # Nobody is walking any more: the rest of the steps change nothing.
+            s.stopped += s.moving.sum(axis=0, dtype=np.float64)
+            s.moving[...] = 0.0
+            s.t_s += (steps - i) * k.dt_s
+            break
         _step(s, params, k)
     return s.state(shape)
 
