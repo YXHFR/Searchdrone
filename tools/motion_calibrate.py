@@ -45,6 +45,7 @@ TARGETS_KM = {
     "gatherer": (1.26, 1.69, 2.78),
 }
 TOLERANCE = 0.25
+NEAR = 0.02  # fits within this error of the best are as good as the best
 TURN_SCALES = (0.25, 0.5, 1.0, 2.0, 4.0)
 MOBILITY_SCALES = tuple(float(x) for x in np.geomspace(0.125, 8.0, 49))
 SNAPSHOT_S = 600.0
@@ -186,15 +187,26 @@ def calibrate(
     world: World, table: dict[str, Params], workers: int, cache: Path | None = None
 ) -> list[Fit]:
     jobs = [(world, c, table[c], ts, cache) for c in TARGETS_KM for ts in TURN_SCALES]
-    best: dict[str, tuple[float, Fit]] = {}
+    fits: dict[str, list[tuple[float, Fit]]] = {c: [] for c in TARGETS_KM}
     with ProcessPoolExecutor(max_workers=workers) as pool:
         for category, turn_scale, w in pool.map(_walk_job, jobs):
             for ms in MOBILITY_SCALES:
                 q = found_quartiles(w, scale_mobility(table[category], ms))
-                e = error(q, TARGETS_KM[category])
-                if category not in best or e < best[category][0]:
-                    best[category] = (e, Fit(category, turn_scale, ms, q))
-    return [best[c][1] for c in TARGETS_KM]
+                fits[category].append(
+                    (error(q, TARGETS_KM[category]), Fit(category, turn_scale, ms, q))
+                )
+    return [pick(fits[c]) for c in TARGETS_KM]
+
+
+def pick(fits: list[tuple[float, Fit]]) -> Fit:
+    """The fit nearest the written hours among those almost as good as the best.
+
+    Three quartiles cannot tell straight short walks from winding long ones apart; left
+    alone the fit drifts to whichever end is a hair better, such as pickers walking for
+    17 hours. Within ``NEAR`` of the best error, the hours stay closest to the guess."""
+    best = min(e for e, _ in fits)
+    near = [(abs(math.log(f.mobility_scale)), e, f) for e, f in fits if e <= best + NEAR]
+    return min(near, key=lambda x: x[:2])[2]
 
 
 def _fmt(x: float) -> str:

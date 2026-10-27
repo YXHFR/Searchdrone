@@ -51,13 +51,15 @@ def test_write_back_replaces_values_and_keeps_comments() -> None:
     out = mc.write_back(text, table, [fit], date(2026, 10, 26))
     new = load_all(out)
     assert new["hiker"].turn45 == pytest.approx(table["hiker"].turn45 * 2.0)
-    assert new["hiker"].mobility[1][0] == pytest.approx(table["hiker"].mobility[1][0] * 0.5)
+    hours = table["hiker"].mobility[1][0] * 0.5
+    assert new["hiker"].mobility[1][0] == pytest.approx(hours, rel=1e-3)  # 4 digits kept
     assert new["dementia"] == table["dementia"]
     assert "Tobler" in out  # comments kept
     assert 'calibrated = "2026-10-26: found within 0.60/1.70/3.40 km' in out
     again = mc.write_back(out, new, [mc.Fit("hiker", 1.0, 1.0, (0.6, 1.7, 3.4))],
                           date(2026, 10, 27))  # fmt: skip
-    assert again.count("calibrated =") == 1
+    assert again.count("calibrated =") == out.count("calibrated =")
+    assert "2026-10-27: found within 0.60" in again
     assert load_all(again)["hiker"] == new["hiker"]
 
 
@@ -68,3 +70,12 @@ def test_a_finished_walk_is_kept_and_reused(tmp_path) -> None:
     _, _, again = mc._walk_job((SMALL, "hiker", hiker, 1.0, tmp_path))
     assert np.array_equal(first.shares, again.shares)
     assert again.bin_km == first.bin_km
+
+
+def test_among_equal_fits_the_hours_stay_nearest_the_guess() -> None:
+    q = (1.0, 2.0, 3.0)
+    long = mc.Fit("gatherer", 2.0, 5.66, q)
+    short = mc.Fit("gatherer", 0.25, 1.09, q)
+    worse = mc.Fit("gatherer", 1.0, 1.0, q)
+    assert mc.pick([(0.052, long), (0.071, short), (0.5, worse)]) is short
+    assert mc.pick([(0.01, long), (0.071, short)]) is long  # clearly better wins
