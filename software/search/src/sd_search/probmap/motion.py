@@ -18,7 +18,18 @@ from datetime import datetime
 
 import numpy as np
 
-from sd_motion import MotionState, Params, Terrain, advance, for_category, negative, start_state
+from sd_motion import (
+    DT_S,
+    MotionState,
+    Params,
+    Terrain,
+    advance,
+    for_category,
+    negative,
+    start_state,
+    walk_out,
+    walk_params,
+)
 from sd_schemas.search import SearchProfile
 from sd_search.probmap.grid import Floats, Grid
 from sd_search.probmap.terrain import TerrainSource
@@ -39,6 +50,8 @@ class TimedPass:
 class MotionCache:
     start_key: tuple[object, ...] | None = None
     start: MotionState | None = None
+    walk_key: tuple[object, ...] | None = None
+    walked: MotionState | None = None  # the walk out from the last seen point, kept going
     chain: list[tuple[tuple[object, ...], MotionState]] = field(
         default_factory=list[tuple[tuple[object, ...], MotionState]]
     )
@@ -98,14 +111,27 @@ def run_motion(
     ipp_rc: tuple[int, int],
 ) -> MotionState:
     """The map at ``now_utc``: started, walked through every pass, then walked to now."""
+    # The start is anchored at the first pass (or at now, before any pass), never at
+    # when the map was first built: the same inputs give the same map in any builder.
     first = next((p.at_utc for p in passes if p.at_utc is not None), now_utc)
     t0 = _seconds(min(first, now_utc), last_seen_utc)
-    if cache.start_key != key or cache.start is None or cache.start.t_s > t0:
+    start_key = (*key, t0)
+    if cache.start_key != start_key or cache.start is None:
+        # Before the first pass the start moves with now; the walk out from the last
+        # seen point then goes on from where it was instead of starting over.
+        # It is kept at whole steps, the way one long walk would step.
+        whole = math.floor(t0 / DT_S) * DT_S
+        walking = walk_params(params, moving_now)
+        if cache.walk_key != key or cache.walked is None or cache.walked.t_s > whole:
+            cache.walk_key = key
+            cache.walked = walk_out(terrain, params, ipp_rc, whole, heading_deg, moving_now)
+        else:
+            cache.walked = _walk_to(cache.walked, terrain, walking, whole)
         start = start_state(
             terrain, params, ipp_rc, t0, prior_p, prior_row, heading_deg,
-            moving_now=moving_now,
+            moving_now=moving_now, walked=_walk_to(cache.walked, terrain, walking, t0),
         )  # fmt: skip
-        cache.start_key, cache.start = key, _weighted(start, area_weight)
+        cache.start_key, cache.start = start_key, _weighted(start, area_weight)
         cache.chain, cache.now = [], None
     state = cache.start
     if len(cache.chain) > len(passes):

@@ -242,8 +242,9 @@ def _run(
     state: MotionState, params: Params, k: _Kernel, steps: int, shape: tuple[int, int]
 ) -> MotionState:
     s = _Flat(state)
+    first = round(state.t_s / k.dt_s)  # checked on whole steps since last seen, however split
     for i in range(steps):
-        if i % CHECK_STEPS == 0 and s.moving.sum(dtype=np.float64) < STILL_EPS:
+        if (first + i) % CHECK_STEPS == 0 and s.moving.sum(dtype=np.float64) < STILL_EPS:
             # Nobody is walking any more: the rest of the steps change nothing.
             s.stopped += s.moving.sum(axis=0, dtype=np.float64)
             s.moving[...] = 0.0
@@ -273,10 +274,12 @@ def advance(
 
 
 def negative(state: MotionState, pod: np.ndarray) -> MotionState:
-    """A sweep with detection chance ``pod`` per cell found nothing (Bayes)."""
+    """A sweep with detection chance ``pod`` per cell found nothing (Bayes). A sweep
+    certain to find the person leaves the state as it was, like the still map: that
+    cannot happen while the rest of the world holds mass, and it must never divide by 0."""
     seen = float((state.p * pod).sum())
     if seen >= 1.0 - 1e-12:
-        raise ValueError("the sweep was certain to find the person; nothing is left")
+        return state
     scale = 1.0 / (1.0 - seen)
     miss = 1.0 - pod
     return replace(
@@ -295,6 +298,34 @@ def _heading_weights(heading_deg: float | None) -> np.ndarray:
     return w / w.sum()
 
 
+def walk_params(params: Params, moving_now: float | None) -> Params:
+    """The numbers the walk runs on: a known share on the move keeps walking as it is."""
+    if moving_now is None:
+        return params
+    moving0 = min(moving_now, 1.0)
+    return replace(params, mobility=((0.0, moving0), (1e6, moving0)))
+
+
+def walk_out(
+    terrain: Terrain,
+    params: Params,
+    ipp_rc: tuple[int, int],
+    t_s: float,
+    heading_deg: float | None = None,
+    moving_now: float | None = None,
+) -> MotionState:
+    """Everyone starting at the last seen point, walked ``t_s`` seconds on. Walking it
+    further with ``advance(..., walk_params(params, moving_now), ...)`` gives the same as
+    a longer ``walk_out``."""
+    shape = terrain.shape
+    r, c = ipp_rc
+    moving0 = params.still_moving(0.0) if moving_now is None else min(moving_now, 1.0)
+    walked = MotionState(stopped=np.zeros(shape), moving=np.zeros((8, *shape)), row=0.0, t_s=0.0)
+    walked.stopped[r, c] = 1.0 - moving0
+    walked.moving[:, r, c] = moving0 * _heading_weights(heading_deg)
+    return advance(walked, terrain, walk_params(params, moving_now), t_s)
+
+
 def start_state(
     terrain: Terrain,
     params: Params,
@@ -305,25 +336,24 @@ def start_state(
     heading_deg: float | None = None,
     blend: float = 0.5,
     moving_now: float | None = None,
+    walked: MotionState | None = None,
 ) -> MotionState:
     """The map when the search starts, ``t_s`` seconds after the person was last seen.
 
     Half (``blend``) comes from walking the model out from the last seen point, half from
     the distance rings (``rings``, summing to ``1 - rings_row``): one model alone is easily
     wrong. The ring half is split into stopped and moving by the mobility curve, or by
-    ``moving_now`` when the profile says better (someone lying down: 0).
+    ``moving_now`` when the profile says better (someone lying down: 0). ``walked`` is
+    that walk if the caller already has it (``walk_out`` at ``t_s``).
     """
     shape = terrain.shape
     if rings.shape != shape:
         raise ValueError(f"rings {rings.shape} do not match the terrain {shape}")
-    r, c = ipp_rc
+    if walked is None:
+        walked = walk_out(terrain, params, ipp_rc, t_s, heading_deg, moving_now)
+    elif not math.isclose(walked.t_s, t_s, abs_tol=1e-6):
+        raise ValueError(f"the walk is at {walked.t_s} s, the start at {t_s} s")
     moving0 = params.still_moving(0.0) if moving_now is None else min(moving_now, 1.0)
-    walked = MotionState(stopped=np.zeros(shape), moving=np.zeros((8, *shape)), row=0.0, t_s=0.0)
-    walked.stopped[r, c] = 1.0 - moving0
-    walked.moving[:, r, c] = moving0 * _heading_weights(heading_deg)
-    if moving_now is not None:
-        params = replace(params, mobility=((0.0, moving0), (1e6, moving0)))
-    walked = advance(walked, terrain, params, t_s)
     s_now = params.still_moving(t_s / 3600.0) if moving_now is None else moving0
     land = 1.0 - terrain.wall
     ring_p = rings * land

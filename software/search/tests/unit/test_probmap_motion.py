@@ -9,7 +9,10 @@ import numpy as np
 import pytest
 from search_helpers import T0, at, profile  # pyright: ignore[reportMissingImports]
 
+from sd_motion import MotionState, Terrain
+from sd_search.probmap.bayes import HINT_FACTOR
 from sd_search.probmap.build import MapBuilder, MapInputs
+from sd_search.probmap.motion import _weighted, motion_terrain
 from sd_search.probmap.pod import Still
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
 
@@ -167,5 +170,68 @@ def test_a_six_hour_search_on_the_largest_map_fits_the_budget() -> None:
     state = b.build(i).state
     seconds = time.perf_counter() - t0
     assert state.total() == pytest.approx(1.0, abs=1e-4)
-    # The spec's budget is 2 s on a laptop; shared CI runners are slower.
+    # The budget is 2 s on a laptop; shared CI runners are slower.
     assert seconds < 4.0
+
+
+def test_the_map_does_not_depend_on_when_it_was_first_built() -> None:
+    stills = survey(0, 0, 100, start_min=60, order="p1", seq0=1)
+    b = MapBuilder(NoTerrain())
+    b.build(inputs(20))  # built before any pass: the start was at 20 min then
+    b.build(inputs(41))
+    once = b.build(inputs(100, stills=stills)).state
+    fresh = MapBuilder(NoTerrain()).build(inputs(100, stills=stills)).state
+    assert np.array_equal(once.p, fresh.p)
+    assert once.row == fresh.row
+
+
+def test_before_any_pass_the_map_is_the_same_however_often_it_was_built() -> None:
+    b = MapBuilder(NoTerrain())
+    for minute in (10, 25.5, 47):
+        b.build(inputs(minute))
+    again = b.build(inputs(90)).state
+    fresh = MapBuilder(NoTerrain()).build(inputs(90)).state
+    assert np.array_equal(again.p, fresh.p)
+
+
+def test_the_operators_areas_weigh_once() -> None:
+    areas = [("excluded", ring(200, 200, 100)), ("high", ring(-200, 200, 100))]
+    b = MapBuilder(NoTerrain())
+    i = inputs(30, areas=areas)
+    hinted = b.build(i).state
+    plain = MapBuilder(NoTerrain()).build(inputs(30)).state
+    grid = b.grid_for(i)
+    inside, high, neutral = grid.cell_of(200, 200), grid.cell_of(-200, 200), grid.cell_of(0, -300)
+    assert inside is not None and high is not None and neutral is not None
+    assert hinted.p[inside] == 0.0
+    ratio = (hinted.p[high] / plain.p[high]) / (hinted.p[neutral] / plain.p[neutral])
+    assert ratio == pytest.approx(HINT_FACTOR["high"], rel=1e-6)  # not 3 x 3
+
+
+def test_every_cell_excluded_leaves_the_rest_of_the_world() -> None:
+    shape = (4, 4)
+    state = MotionState(np.full(shape, 0.01), np.full((8, *shape), 0.01), 0.2, 60.0)
+    out = _weighted(state, np.zeros(shape))
+    assert out.p.sum() == 0.0
+    assert out.row == 1.0
+
+
+def test_tracks_and_lakes_reach_the_movement() -> None:
+    track = [[lon, lat] for lat, lon in (at(-800, 0), at(800, 0))]
+    corners = [at(200, 100), at(600, 100), at(600, 500), at(200, 500)]
+    lake = [[lon, lat] for lat, lon in [*corners, corners[0]]]
+    terrain = SimTerrainSource(
+        [{"type": "Feature", "properties": {"kind": "path"},
+          "geometry": {"type": "LineString", "coordinates": track}},
+         {"type": "Feature", "properties": {"kind": "lake"},
+          "geometry": {"type": "Polygon", "coordinates": [lake]}}]
+    )  # fmt: skip
+    b = MapBuilder(terrain)
+    grid = b.grid_for(inputs(30))
+    walk = motion_terrain(terrain, grid, np.zeros(grid.shape))
+    assert isinstance(walk, Terrain)
+    on, off = grid.cell_of(0, 0), grid.cell_of(0, -300)
+    wet, beside = grid.cell_of(400, 300), grid.cell_of(400, 700)
+    assert on is not None and off is not None and wet is not None and beside is not None
+    assert walk.track_dir[on] >= 0 and walk.track_dir[off] < 0
+    assert walk.wall[wet] and not walk.wall[beside]

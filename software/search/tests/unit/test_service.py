@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -165,6 +166,30 @@ async def test_heartbeat_every_five_seconds() -> None:
     now[0] += 0.1
     await s.beat()
     assert len(g.beats) == 2
+
+
+async def test_a_slow_map_never_holds_up_the_heartbeat() -> None:
+    g = FakeGround(MISSION)
+    building, release = asyncio.Event(), asyncio.Event()
+
+    class SlowMapper:
+        async def step(self, open_ids: list[str]) -> int:
+            building.set()
+            await release.wait()  # a map build that takes as long as it likes
+            return 0
+
+    now = [0.0]
+    s = SearchService(g, GroundProfileSource(g), mapper=SlowMapper(), monotonic=lambda: now[0])  # type: ignore[arg-type]
+    stop = asyncio.Event()
+    task = asyncio.create_task(s.run(stop, poll_s=0.001))
+    await building.wait()
+    for _ in range(3):
+        now[0] += 5.0
+        await asyncio.sleep(0.01)
+    assert len(g.beats) >= 3  # the loop beat on while the map was building
+    stop.set()
+    release.set()
+    await asyncio.wait_for(task, 1.0)
 
 
 def test_file_profile_only_in_the_simulator(

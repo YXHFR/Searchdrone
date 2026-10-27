@@ -1800,7 +1800,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=2.0" }]
+requires-dist = [{ name = "numpy", specifier = ">=2.4" }]
 
 [[package]]
 name = "sd-obs"

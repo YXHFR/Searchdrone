@@ -22,6 +22,7 @@ from typing import Final
 
 import numpy as np
 
+from sd_motion import Terrain
 from sd_schemas.probmap import MapNote, PoaHint, SectorScore
 from sd_schemas.search import SearchProfile
 from sd_search.probmap.bayes import (
@@ -93,6 +94,8 @@ class _Cache:
         default_factory=dict[tuple[object, ...], Floats]
     )
     motion: MotionCache = field(default_factory=MotionCache)
+    rings: MapState | None = None  # the prior without the operator's areas (movement)
+    walk_terrain: Terrain | None = None  # the movement's terrain for this grid
 
 
 def encode_f32(a: Floats) -> str:
@@ -214,21 +217,28 @@ class MapBuilder:
         cumulative POD is the same; only where the person may be changes."""
         prof = inputs.profile
         params, moving_now = motion_params(prof)
-        prior, _ = self._prior(grid, inputs)
+        self._prior(grid, inputs)  # fills the cache for this grid
+        cache = self._cache
         areas = tuple(
             OperatorArea(hint, tuple(grid.ring_xy(ring))[:-1]) for hint, ring in inputs.areas
         )
         ipp = grid.cell_of(0.0, 0.0)
         if ipp is None:
             return still
-        key = (self._cache.prior_key, params, moving_now, prof.last_seen.at_utc)
+        if cache.rings is None or cache.walk_terrain is None:
+            # The areas weigh the blended start once (run_motion), so the rings go in
+            # without them.
+            subject = HeadingPrior(prof.subject_category, prof.last_seen.heading_deg)
+            cache.rings = self.model.prior(subject, self.terrain, (), grid)
+            cache.walk_terrain = motion_terrain(self.terrain, grid, canopy)
+        key = (cache.prior_key, params, moving_now, prof.last_seen.at_utc)
         m = run_motion(
-            self._cache.motion,
+            cache.motion,
             key,
-            prior_p=prior.p,
-            prior_row=prior.row,
+            prior_p=cache.rings.p,
+            prior_row=cache.rings.row,
             area_weight=area_weight(grid, areas),
-            terrain=motion_terrain(self.terrain, grid, canopy),
+            terrain=cache.walk_terrain,
             params=params,
             moving_now=moving_now,
             heading_deg=prof.last_seen.heading_deg,

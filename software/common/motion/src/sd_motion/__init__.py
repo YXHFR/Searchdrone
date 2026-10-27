@@ -8,7 +8,16 @@ numpy only, so both the flight-side map (``sd_search``) and the simulator use it
 from importlib.metadata import version
 
 from sd_motion.agent import walk
-from sd_motion.model import DT_S, MotionState, advance, negative, start_state, step
+from sd_motion.model import (
+    DT_S,
+    MotionState,
+    advance,
+    negative,
+    start_state,
+    step,
+    walk_out,
+    walk_params,
+)
 from sd_motion.params import Params, for_category
 from sd_motion.terrain import DIRS, Terrain
 
@@ -27,4 +36,6 @@ __all__ = [
     "start_state",
     "step",
     "walk",
+    "walk_out",
+    "walk_params",
 ]

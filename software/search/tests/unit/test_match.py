@@ -426,6 +426,13 @@ def test_data_collection_cannot_be_allowed(tmp_path: Path) -> None:
     assert "data_collection" in str(err.value)
 
 
+def test_movement_is_on_unless_turned_off(tmp_path: Path) -> None:
+    assert load(REPO).motion.enabled is True
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "search.toml").write_text("[motion]\nenabled = false\n")
+    assert load(tmp_path).motion.enabled is False
+
+
 def test_cloud_key(tmp_path: Path) -> None:
     assert cloud_key(tmp_path, {}) is None
     (tmp_path / ".env").write_text("SD_CLOUD_API_KEY=abc\n")
