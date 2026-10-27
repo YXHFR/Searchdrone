@@ -20,7 +20,7 @@ constraint-dependencies = [
 
 [tool.uv.workspace]
 members = [
-  "software/common/schemas", "software/common/safety", "software/common/geo",
+  "software/common/schemas", "software/common/safety", "software/common/geo", "software/common/motion",
   "software/common/mav", "software/common/link", "software/common/link_testing",
   "software/common/obs", "software/common/testing", "software/detector", "software/onboard", "software/ground",
   "software/brain", "software/search", "software/hwcalc", "simulation/sd_sim", "simulation/searchsim",
@@ -30,6 +30,7 @@ members = [
 sd-schemas = { workspace = true }
 sd-safety = { workspace = true }
 sd-geo = { workspace = true }
+sd-motion = { workspace = true }
 sd-mav = { workspace = true }
 sd-link = { workspace = true }
 sd-link-testing = { workspace = true }

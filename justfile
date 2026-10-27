@@ -264,6 +264,10 @@ rl-train *args:
 rl-eval *args:
     uv run --package sd-searchsim sd-searchsim eval "$@"
 
+# Fit the motion model's turning and mobility per category to Lie & Skaar's found distances; writes motion.toml
+lpb-calibrate *args:
+    uv run tools/motion_calibrate.py "$@"
+
 # --- panel ---------------------------------------------------------------------------
 
 # Panel dev server on http://127.0.0.1:5173 (loopback only, proxies to sd-ground)

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from sd_motion import MotionState, advance, negative
 from sd_searchsim.config import SimConfig
 from sd_searchsim.scenario import Scenario
 
@@ -109,6 +110,12 @@ class Episode:
             cfg.transit_speed_mps * 60.0
         )
         self.belief = scenario.prior.copy()
+        self.motion: MotionState | None = None
+        if cfg.belief_motion == "lpb":
+            if scenario.motion is None:
+                raise ValueError("belief_motion=lpb needs a scenario made with it")
+            self.motion = scenario.motion.start
+            self.belief = self.motion.p
         self.pos = scenario.home_m.astype(float).copy()
         self.t = 0.0
         self.battery = cfg.battery_min
@@ -140,16 +147,25 @@ class Episode:
     # --- the map ------------------------------------------------------------------
 
     def _advance(self, minutes: float) -> None:
-        """Move the clock; the belief spreads (variances add, so one blur per call)."""
-        sigma_cells = self.cfg.belief_diffusion_m * np.sqrt(minutes) / self.cfg.cell_m
-        self.belief = diffuse(self.belief, sigma_cells)
+        """Move the clock; the belief spreads (variances add, so one blur per call) or, with
+        ``belief_motion="lpb"``, walks by the motion model."""
+        if self.motion is not None and self.sc.motion is not None:
+            m = self.sc.motion
+            self.motion = advance(self.motion, m.terrain, m.params, minutes * 60.0)
+            self.belief = self.motion.p
+        else:
+            sigma_cells = self.cfg.belief_diffusion_m * np.sqrt(minutes) / self.cfg.cell_m
+            self.belief = diffuse(self.belief, sigma_cells)
         self.t += minutes
 
-    def _true_cell(self, t: float) -> tuple[int, int]:
+    def _true_cell(self, t: float) -> tuple[int, int] | None:
+        """The person's cell at minute ``t``; None once they have left the map."""
         path = self.sc.path_m
         i = min(int(t), len(path) - 2)
         f = min(max(t - i, 0.0), 1.0)
         x, y = path[i] * (1 - f) + path[i + 1] * f
+        if np.isnan(x):
+            return None
         n = self.cfg.grid_cells
         return (
             min(int(y // self.cfg.cell_m), n - 1),
@@ -217,7 +233,7 @@ class Episode:
         # Truth: where the person is in the middle of the survey.
         t_mid = self.t + transit + cfg.sweep_min / 2
         cell = self._true_cell(t_mid)
-        if self._sector_of(cell) == sector:
+        if cell is not None and self._sector_of(cell) == sector:
             q = float(self.sc.pod_true[cell])
             found_now = self.survive * q
             self.expected_minutes += found_now * t_mid
@@ -226,9 +242,15 @@ class Episode:
         # Belief: a sweep that found nothing (Bayes).
         k, s = cfg.sector_cells, cfg.n_sectors
         r0, c0 = (sector // s) * k, (sector % s) * k
-        b = self.belief.copy()
-        b[r0 : r0 + k, c0 : c0 + k] *= 1.0 - self.sc.pod_belief[r0 : r0 + k, c0 : c0 + k]
-        self.belief = b / b.sum()
+        if self.motion is not None:
+            pod = np.zeros_like(self.belief)
+            pod[r0 : r0 + k, c0 : c0 + k] = self.sc.pod_belief[r0 : r0 + k, c0 : c0 + k]
+            self.motion = negative(self.motion, pod)
+            self.belief = self.motion.p
+        else:
+            b = self.belief.copy()
+            b[r0 : r0 + k, c0 : c0 + k] *= 1.0 - self.sc.pod_belief[r0 : r0 + k, c0 : c0 + k]
+            self.belief = b / b.sum()
         self.battery -= transit + cfg.sweep_min
         self.pos = self.centres[sector].copy()
         self.swept[sector] += 1

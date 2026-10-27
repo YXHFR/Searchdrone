@@ -10,6 +10,7 @@ import math
 from dataclasses import dataclass
 
 WORLDS = ("synthetic", "real")
+BELIEF_MOTIONS = ("diffuse", "lpb")
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,13 @@ class SimConfig:
     # ``just rl-maps`` and lost-person statistics (``realworld.py``).
     world: str = "synthetic"
     sites_dir: str = "build/rl/sites"
+    # How the belief expects the person to move: "diffuse" (the Gaussian spread above) or
+    # "lpb" (sd_motion: walkers who stop, keep to tracks and turn back at water; real only).
+    belief_motion: str = "diffuse"
+    # world=real: hours missing when the search starts (a guess), and how far the truth's
+    # speed and walking time are off the category's numbers (log-normal spread).
+    lost_hours: tuple[float, float] = (1.0, 6.0)
+    truth_spread: float = 0.3
 
     @property
     def n_sectors(self) -> int:
@@ -55,6 +63,10 @@ class SimConfig:
             raise ValueError("grid_cells must be a multiple of sector_cells")
         if self.world not in WORLDS:
             raise ValueError(f"world must be one of {WORLDS}")
+        if self.belief_motion not in BELIEF_MOTIONS:
+            raise ValueError(f"belief_motion must be one of {BELIEF_MOTIONS}")
+        if self.belief_motion == "lpb" and self.world != "real":
+            raise ValueError("belief_motion=lpb needs world=real (it needs water and tracks)")
 
 
 @dataclass(frozen=True)

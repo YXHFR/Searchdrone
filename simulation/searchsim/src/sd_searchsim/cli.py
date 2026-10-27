@@ -2,7 +2,8 @@
 
 train: size=full|ci (default full), seed=<0..9>, workers=<int>, out=<policy file>
 eval:  size=full|ci (default full), workers=<int>, policy=<policy file>, out=<result file>
-both:  world=synthetic|real (default synthetic), sites=<folder from just rl-maps>
+both:  world=synthetic|real (default synthetic), sites=<folder from just rl-maps>,
+       belief_motion=diffuse|lpb (default diffuse; lpb walks the map by sd_motion, real only)
 
 The policy file and the results land in ``build/rl/`` by default, which git ignores:
 trained weights never go into the repository.
@@ -18,13 +19,13 @@ from pathlib import Path
 from typing import NoReturn
 
 from sd_searchsim import evaluate, policies, train
-from sd_searchsim.config import SIZES, WORLDS, SimConfig
+from sd_searchsim.config import BELIEF_MOTIONS, SIZES, WORLDS, SimConfig
 from sd_searchsim.realworld import load_sites
 
 DEFAULT_DIR = Path("build/rl")
 KEYS = {
-    "train": {"size", "seed", "workers", "out", "world", "sites"},
-    "eval": {"size", "workers", "policy", "out", "world", "sites"},
+    "train": {"size", "seed", "workers", "out", "world", "sites", "belief_motion"},
+    "eval": {"size", "workers", "policy", "out", "world", "sites", "belief_motion"},
 }
 
 
@@ -47,6 +48,11 @@ def _parse(command: str, argv: list[str]) -> dict[str, str]:
         _fail(f"rl-{command}: size ska vara {' eller '.join(SIZES)}.")
     if out.get("world", "synthetic") not in WORLDS:
         _fail(f"rl-{command}: world ska vara {' eller '.join(WORLDS)}.")
+    belief = out.get("belief_motion", "diffuse")
+    if belief not in BELIEF_MOTIONS:
+        _fail(f"rl-{command}: belief_motion ska vara {' eller '.join(BELIEF_MOTIONS)}.")
+    if belief == "lpb" and out.get("world", "synthetic") != "real":
+        _fail(f"rl-{command}: belief_motion=lpb behöver world=real (vatten och stigar).")
     return out
 
 
@@ -73,7 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     size_name = args.get("size", "full")
     size = SIZES[size_name]
     workers = _int(args, "workers", os.cpu_count() or 1, command) or 1
-    cfg = SimConfig(world=args.get("world", "synthetic"))
+    cfg = SimConfig(
+        world=args.get("world", "synthetic"),
+        belief_motion=args.get("belief_motion", "diffuse"),
+    )
     if cfg.world == "real":
         cfg = dataclasses.replace(cfg, sites_dir=args.get("sites", cfg.sites_dir))
         try:
@@ -126,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     result = evaluate.evaluate(size.eval_scenarios, theta, cfg, workers=workers)
     result["size"] = size_name
     result["world"] = cfg.world
+    result["belief_motion"] = cfg.belief_motion
     result["policy_file"] = str(policy_path) if theta is not None else None
     out = Path(args.get("out", DEFAULT_DIR / "eval.json"))
     _write_json(out, result)

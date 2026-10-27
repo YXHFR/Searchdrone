@@ -24,6 +24,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Final, cast
 
 from sd_schemas.probmap import MapReason, ProbabilityMapInputs, ProbabilityMapWrite, SearchStill
@@ -51,6 +52,7 @@ def map_still(s: SearchStill) -> Still:
         footprint=tuple((p.lon, p.lat) for p in s.footprint),
         px_per_m=s.px_per_m,
         detector_ok=s.detector_ok,
+        captured_utc=s.captured_utc,
     )
 
 
@@ -85,12 +87,16 @@ class MapService:
         profiles: ProfileSource,
         terrain: TerrainSource,
         *,
+        motion: bool = True,
         monotonic: Callable[[], float] = time.monotonic,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.api = api
         self.profiles = profiles
         self.terrain = terrain
+        self.motion = motion
         self.monotonic = monotonic
+        self.clock = clock
         self.missions: dict[str, _Mission] = {}
         self._round_at: float | None = None
 
@@ -117,7 +123,7 @@ class MapService:
         return written
 
     async def _mission_step(self, mission_id: str) -> int:
-        m = self.missions.setdefault(mission_id, _Mission(MapBuilder(self.terrain)))
+        m = self.missions.setdefault(mission_id, _Mission(self._builder()))
         profile = await self.profiles.current(mission_id)
         if profile is None:
             return 0  # no approved profile: no map (the matching waits the same way)
@@ -127,7 +133,7 @@ class MapService:
             if any(t.candidate.state is CandidateState.CONFIRMED for t in tracks):
                 return 0  # the find stands: the map stays as it was
             # The pilot reopened the find: build again from every still, the map unlocks.
-            m = self.missions[mission_id] = _Mission(MapBuilder(self.terrain), reopened=True)
+            m = self.missions[mission_id] = _Mission(self._builder(), reopened=True)
         while True:
             page = await self.api.stills(mission_id, m.cursor, STILLS_PAGE)
             for s in page:
@@ -139,7 +145,7 @@ class MapService:
         candidates = [map_candidate(t) for t in tracks]
         # The numbers run in a worker thread, so the event loop stays free while they run.
         built = await asyncio.to_thread(
-            m.builder.build, _inputs(profile, inputs, m.stills, candidates)
+            m.builder.build, _inputs(profile, inputs, m.stills, candidates, self.clock())
         )
         seen = (m.last_key, m.passes)
         reason = self._reason(m, profile, inputs, built, candidates)
@@ -169,6 +175,9 @@ class MapService:
             raise
         m.written_at = self.monotonic()
         return 1
+
+    def _builder(self) -> MapBuilder:
+        return MapBuilder(self.terrain, motion=self.motion)
 
     def _reason(
         self,
@@ -218,6 +227,7 @@ def _inputs(
     inputs: ProbabilityMapInputs,
     stills: list[Still],
     candidates: list[MapCandidate],
+    now_utc: datetime,
 ) -> MapInputs:
     return MapInputs(
         profile=profile,
@@ -228,4 +238,5 @@ def _inputs(
         candidates=candidates,
         alt_m=inputs.alt_m,
         speed_ms=inputs.speed_ms,
+        now_utc=now_utc,
     )

@@ -50,7 +50,7 @@ from sd_schemas.search import (
 from sd_search.client import ConflictError, GroundError, SearchApi
 from sd_search.color import CROPS_MAX, CropView, assess_colors, box_in_crop
 from sd_search.fusion import Fusion, Sighting, Track
-from sd_search.mapper import MapService
+from sd_search.mapper import MAP_EVERY_S, MapService
 from sd_search.match.cascade import Cascade, skip_cloud
 from sd_search.match.engines import CROPS_FAST, Crop, MatchRequest
 from sd_search.priority import priority
@@ -161,14 +161,36 @@ class SearchService:
     # --- the loop --------------------------------------------------------------------
 
     async def run(self, stop: asyncio.Event, poll_s: float = 0.25) -> None:
+        # The map runs in its own task: a long build never holds up the heartbeat or
+        # the matching of candidates.
+        maps = None
+        if self.mapper is not None:
+            maps = asyncio.create_task(self._map_loop(self.mapper, stop))
+        try:
+            while not stop.is_set():
+                try:
+                    await self.beat()
+                    await self.match()
+                except GroundError as exc:
+                    log.warning("markstationen svarar inte: %s", exc)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), poll_s)
+        finally:
+            if maps is not None:
+                maps.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await maps
+
+    async def _map_loop(self, mapper: MapService, stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
-                await self.beat()
-                await self.step()
+                await mapper.step(await self.api.missions())
             except GroundError as exc:
-                log.warning("markstationen svarar inte: %s", exc)
+                log.warning("markstationen svarar inte (kartan): %s", exc)
+            except Exception:  # the map is advice: a fault is logged and the next round tries again
+                log.exception("kartan kunde inte uppdateras")
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), poll_s)
+                await asyncio.wait_for(stop.wait(), MAP_EVERY_S)
 
     async def beat(self, *, force: bool = False) -> None:
         now = self.monotonic()
@@ -179,7 +201,16 @@ class SearchService:
             self._beat_at = now
 
     async def step(self) -> int:
-        """One round over the open missions; the number of new sightings fused."""
+        """One round over the open missions, the map included; the number of new
+        sightings fused."""
+        fused = await self.match()
+        if self.mapper is not None:
+            await self.mapper.step(await self.api.missions())  # handles its own ground errors
+        return fused
+
+    async def match(self) -> int:
+        """One round of candidate matching over the open missions; the number of new
+        sightings fused."""
         open_ids = await self.api.missions()
         for gone in set(self.missions) - set(open_ids):
             del self.missions[gone]
@@ -202,8 +233,6 @@ class SearchService:
                 # fused but maybe not written: read it back; the other missions go on
                 log.warning("uppdraget %s: %s", mid, exc)
                 self.missions.pop(mid, None)
-        if self.mapper is not None:
-            await self.mapper.step(open_ids)  # handles its own ground errors
         return fused
 
     async def _load(self, mission_id: str) -> _Mission:

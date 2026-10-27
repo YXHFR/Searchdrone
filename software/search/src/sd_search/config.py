@@ -17,7 +17,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sd_brain.config import CloudConfig, ProviderConfig
 
-__all__ = ["CloudMatchConfig", "SearchConfig", "SearchConfigError", "cloud_key", "load"]
+__all__ = [
+    "CloudMatchConfig",
+    "MotionConfig",
+    "SearchConfig",
+    "SearchConfigError",
+    "cloud_key",
+    "load",
+]
 
 KEY_ENV = "SD_CLOUD_API_KEY"
 
@@ -65,8 +72,13 @@ class CloudMatchConfig(_Section):
         )
 
 
+class MotionConfig(_Section):
+    enabled: bool = True  # false: the map as if the person stood still (the old map)
+
+
 class SearchConfig(_Section):
     cloud: CloudMatchConfig = CloudMatchConfig()
+    motion: MotionConfig = MotionConfig()
 
 
 def _merge(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:

@@ -20,10 +20,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from sd_motion import MotionState, Params, Terrain
 from sd_searchsim.config import SimConfig
 
 STRATEGIES = ("stay", "random_walk", "route", "direction")
 _STRATEGY_P = np.array([0.25, 0.35, 0.25, 0.15])
+
+
+@dataclass(frozen=True)
+class MotionBelief:
+    """The belief's motion model (``belief_motion="lpb"``), built once per scenario."""
+
+    terrain: Terrain
+    params: Params
+    start: MotionState
 
 
 @dataclass(frozen=True)
@@ -35,10 +45,11 @@ class Scenario:
     allowed: np.ndarray  # (s, s) bool, sectors inside the permitted search area
     ipp_m: np.ndarray  # (2,) last seen point (x east, y north)
     home_m: np.ndarray  # (2,) take-off and landing point
-    path_m: np.ndarray  # (horizon + 1, 2) true position at each whole minute
+    path_m: np.ndarray  # (horizon + 1, 2) true position at each whole minute; NaN: gone
     pod_true: np.ndarray  # (n, n) real chance a sweep sees a person in the cell
     pod_belief: np.ndarray  # (n, n) what the searcher believes that chance is
     strategy: str
+    motion: MotionBelief | None = None
 
 
 def cell_centres(cfg: SimConfig) -> tuple[np.ndarray, np.ndarray]:

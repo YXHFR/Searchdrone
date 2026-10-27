@@ -70,8 +70,16 @@ def add_still(g: FakeGround, east: float, north: float, command_id: str) -> Sear
     return s
 
 
-def mapper(g: FakeGround, clock: Clock) -> MapService:
-    return MapService(g, GroundProfileSource(g), NoTerrain(), monotonic=clock)
+def mapper(g: FakeGround, clock: Clock, *, motion: bool = True) -> MapService:
+    # Wall time follows the monotonic clock, ten minutes after last seen at the start.
+    return MapService(
+        g,
+        GroundProfileSource(g),
+        NoTerrain(),
+        motion=motion,
+        monotonic=clock,
+        clock=lambda: utc(600 + clock.t),
+    )
 
 
 def p_of(g: FakeGround) -> np.ndarray:
@@ -258,3 +266,23 @@ async def test_a_pending_candidate_keeps_its_cell_until_rejected() -> None:
     await s.step()
     assert g.maps[-1].reason == "candidate"
     assert p_of(g).min() >= 0 and (p_of(g) < first).any()
+
+
+async def first_map(*, motion: bool, start_s: float) -> np.ndarray:
+    g = ground()
+    clock = Clock()
+    clock.t = start_s
+    await mapper(g, clock, motion=motion).step([MISSION])
+    return p_of(g)
+
+
+async def test_the_map_walks_to_the_clock_when_movement_is_on() -> None:
+    early = await first_map(motion=True, start_s=0)
+    late = await first_map(motion=True, start_s=3 * 3600)
+    assert not np.allclose(early, late)
+
+
+async def test_with_movement_off_the_clock_does_not_matter() -> None:
+    early = await first_map(motion=False, start_s=0)
+    late = await first_map(motion=False, start_s=3 * 3600)
+    assert np.array_equal(early, late)

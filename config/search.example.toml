@@ -19,3 +19,9 @@ retry_after_s = 60                      # after a failure or a refused budget
 data_collection = "deny"                # fixed: no provider that stores or trains on the data
 require_parameters = true               # only providers that support the answer schema
 # zdr: zero-data-retention endpoints only. On unless set to false here.
+
+[motion]
+# The probability map lets the person keep walking while the search goes on (sd_motion):
+# along tracks, never into water, most stopping after a while. Searched cells fill up
+# again only from people still on the move. false: the map as if they stood still.
+enabled = true
