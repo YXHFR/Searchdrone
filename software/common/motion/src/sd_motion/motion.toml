@@ -1,5 +1,4 @@
-# How each kind of missing person moves (sd_motion.params). Sources and guesses per row;
-# the research is in the private planning repo (docs/research/rorelsemodell-forsvunna-2026-10-26.md).
+# How each kind of missing person moves (sd_motion.params). Sources and guesses per row.
 #
 # mobility: (hours since last seen, share still moving), piecewise linear in log time.
 #   The first point is at 0 h; a share below 1 there means some never move.
