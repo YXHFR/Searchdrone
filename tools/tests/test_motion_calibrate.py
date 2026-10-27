@@ -59,3 +59,12 @@ def test_write_back_replaces_values_and_keeps_comments() -> None:
                           date(2026, 10, 27))  # fmt: skip
     assert again.count("calibrated =") == 1
     assert load_all(again)["hiker"] == new["hiker"]
+
+
+def test_a_finished_walk_is_kept_and_reused(tmp_path) -> None:
+    hiker = load_all()["hiker"]
+    _, _, first = mc._walk_job((SMALL, "hiker", hiker, 1.0, tmp_path))
+    assert len(list(tmp_path.glob("hiker-*.npz"))) == 1
+    _, _, again = mc._walk_job((SMALL, "hiker", hiker, 1.0, tmp_path))
+    assert np.array_equal(first.shares, again.shares)
+    assert again.bin_km == first.bin_km

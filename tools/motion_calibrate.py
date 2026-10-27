@@ -12,11 +12,14 @@ weighted by how many stop then. One walk without stopping per turning scale ther
 serves every mobility scale: the walk is the slow part, the mix is cheap.
 
 Running it again starts from the written values, so a second run moves them little.
+Each finished walk is kept under ``--cache``, so a run that was cut off picks up where it
+stopped.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import re
 import sys
@@ -30,7 +33,9 @@ import numpy as np
 from sd_motion import MotionState, Params, Terrain, advance
 from sd_motion.params import load_all
 
-TOML = Path(__file__).resolve().parents[1] / "software/common/motion/src/sd_motion/motion.toml"
+ROOT = Path(__file__).resolve().parents[1]
+TOML = ROOT / "software/common/motion/src/sd_motion/motion.toml"
+CACHE = ROOT / "build/motion-calibrate"
 
 # Lie & Skaar (2016), found distance in km at 25/50/75 %.
 TARGETS_KM = {
@@ -156,13 +161,31 @@ class Fit:
         ]
 
 
-def _walk_job(args: tuple[World, str, Params, float]) -> tuple[str, float, Walk]:
-    world, category, params, turn_scale = args
-    return category, turn_scale, walk(world, params, turn_scale)
+def _walk_job(
+    args: tuple[World, str, Params, float, Path | None],
+) -> tuple[str, float, Walk]:
+    world, category, params, turn_scale, cache = args
+    if cache is None:
+        return category, turn_scale, walk(world, params, turn_scale)
+    # The walk ignores the mobility curve, so it is not part of the key.
+    p = params
+    key = repr((world, p.speed_mps, p.turn45, p.turn_any, p.k_track, p.trap, turn_scale))
+    path = cache / f"{category}-{hashlib.sha256(key.encode()).hexdigest()[:16]}.npz"
+    if path.exists():
+        with np.load(path) as f:
+            return category, turn_scale, Walk(f["times_h"], f["shares"], float(f["bin_km"]))
+    w = walk(world, params, turn_scale)
+    cache.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp.npz")
+    np.savez(tmp, times_h=w.times_h, shares=w.shares, bin_km=w.bin_km)
+    tmp.replace(path)
+    return category, turn_scale, w
 
 
-def calibrate(world: World, table: dict[str, Params], workers: int) -> list[Fit]:
-    jobs = [(world, c, table[c], ts) for c in TARGETS_KM for ts in TURN_SCALES]
+def calibrate(
+    world: World, table: dict[str, Params], workers: int, cache: Path | None = None
+) -> list[Fit]:
+    jobs = [(world, c, table[c], ts, cache) for c in TARGETS_KM for ts in TURN_SCALES]
     best: dict[str, tuple[float, Fit]] = {}
     with ProcessPoolExecutor(max_workers=workers) as pool:
         for category, turn_scale, w in pool.map(_walk_job, jobs):
@@ -224,10 +247,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hours", type=float, default=World.hours)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--dry-run", action="store_true", help="print the fit, write nothing")
+    ap.add_argument("--cache", type=Path, default=CACHE, help="where finished walks are kept")
     args = ap.parse_args(argv)
     world = World(size_km=args.size_km, cell_m=args.cell_m, hours=args.hours)
     table = load_all(args.toml.read_text(encoding="utf-8"))
-    fits = calibrate(world, table, args.workers)
+    fits = calibrate(world, table, args.workers, args.cache)
     for f in fits:
         q = "/".join(f"{x:.2f}" for x in f.quartiles_km)
         t = "/".join(f"{x:.2f}" for x in TARGETS_KM[f.category])
