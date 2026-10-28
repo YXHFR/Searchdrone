@@ -1653,7 +1653,14 @@ class Executor:
             return
         run = survey_run(active.handler)
         if active.skill in REROUTABLE and run is not None:
-            if entry_m([here, *rest], cyl) is not None and not self._reroute(active, run, charter):
+            entry = entry_m([here, *rest], cyl)
+            if entry is None:
+                return
+            # A cylinder ahead, closer than the drone can turn away from at this speed: it
+            # stops first, and the way around is planned again from where it stopped. Inside
+            # one already (it came around the drone), the way out starts at once.
+            stop_first = not inside and entry <= stop_m(v.groundspeed_ms)
+            if not self._reroute(active, run, charter, stop_first=stop_first):
                 self._keepout_hold()
             return
         # Any other order leaves a new cylinder it is inside along its current leg (rather
@@ -1789,8 +1796,12 @@ class Executor:
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
 
-    def _reroute(self, active: _Active, run: SurveyRun, charter: MissionCharter) -> bool:
-        """The rest of a search around the cylinders, as a new mission for the same order."""
+    def _reroute(
+        self, active: _Active, run: SurveyRun, charter: MissionCharter, *, stop_first: bool
+    ) -> bool:
+        """The rest of a search around the cylinders, as a new mission for the same order.
+        With ``stop_first`` the drone stops before the rest is planned again from there
+        (``SurveyHandler.rerouted``)."""
         rest = run.waypoints[run.next_index :]
         new = SurveyRun(
             active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
@@ -1814,11 +1825,18 @@ class Executor:
                 {"command_id": str(active.command_id), "codes": decision.reason_codes},
             )
             return False
-        handler = SurveyHandler.rerouted(new, charter.home)
+        handler = SurveyHandler.rerouted(
+            new, charter.home, stop_first=(list(rest), ctx) if stop_first else None
+        )
         self._drop_active(stage=None, save_resume=False)
         self.emit(
             "keepout_reroute",
-            {"command_id": str(active.command_id), "skill": active.skill, "points": len(route) - 1},
+            {
+                "command_id": str(active.command_id),
+                "skill": active.skill,
+                "points": len(route) - 1,
+                "stop_first": stop_first,
+            },
         )
         self._start_active(
             _Active(active.command_id, active.skill, handler, plan, active.origin, cmd=active.cmd)
