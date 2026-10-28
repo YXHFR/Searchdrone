@@ -70,7 +70,8 @@ _CLOSE: Final = None  # in the queue: the last item
 class TlogWriter:
     """Append-only writer for ``<path>`` and ``<path stem>.idx.jsonl``. ``write`` and
     ``flush`` only queue; the writer thread does the file work in order, so a stalled
-    disk never holds up the caller. ``close`` waits until everything is on file."""
+    disk never holds up the caller. ``close`` waits until everything is on file. A write
+    that fails stops the thread; the next call (or ``close``) raises that error."""
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,11 +79,13 @@ class TlogWriter:
         self._tlog: IO[bytes] = path.open("ab")
         self._idx: IO[str] = path.with_suffix(".idx.jsonl").open("a", encoding="utf-8")
         self._count = 0
+        self._error: Exception | None = None
         self._queue: queue.SimpleQueue[tuple[bytes, str] | bytes | None] = queue.SimpleQueue()
         self._thread = threading.Thread(target=self._drain, name=f"tlog-{path.name}", daemon=True)
         self._thread.start()
 
     def write(self, data: bytes, direction: str, *, dropped: bool = False) -> None:
+        self._raise_failed()
         mono = time.monotonic_ns()
         wall_us = time.time_ns() // 1000
         for frame in split_frames(data):
@@ -100,6 +103,7 @@ class TlogWriter:
             self._count += 1
 
     def flush(self) -> None:
+        self._raise_failed()
         self._queue.put(_FLUSH)
 
     def close(self) -> None:
@@ -108,13 +112,21 @@ class TlogWriter:
             self._thread.join()
         self._tlog.close()
         self._idx.close()
+        self._raise_failed()
+
+    def _raise_failed(self) -> None:
+        if self._error is not None:
+            raise self._error
 
     def _drain(self) -> None:
-        while (item := self._queue.get()) is not _CLOSE:
-            if item == _FLUSH:
-                self._tlog.flush()
-                self._idx.flush()
-            elif isinstance(item, tuple):
-                record, line = item
-                self._tlog.write(record)
-                self._idx.write(line)
+        try:
+            while (item := self._queue.get()) is not _CLOSE:
+                if item == _FLUSH:
+                    self._tlog.flush()
+                    self._idx.flush()
+                elif isinstance(item, tuple):
+                    record, line = item
+                    self._tlog.write(record)
+                    self._idx.write(line)
+        except Exception as exc:  # the caller sees it on its next write, flush or close
+            self._error = exc

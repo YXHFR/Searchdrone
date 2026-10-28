@@ -163,3 +163,25 @@ def test_a_cylinder_farther_than_the_stop_gets_no_braking() -> None:
     assert broken and broken[0].startswith("E8")
     slow = _track([(0, 68, 0), (1, 72, 0)], speed=0.5)  # 2 m ahead, still: no excuse either
     assert keepout_never_entered([_cyl()], slow)
+
+
+def test_braked_into_a_cylinder_the_drone_may_not_go_deeper_after_the_stop() -> None:
+    stays = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (5, 71.5, 0), (20, 71.8, 0)])
+    assert keepout_never_entered([_cyl()], stays) == []  # stopped in it, hovers there
+    deeper = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (5, 71.5, 0), (9, 90, 0)])
+    broken = keepout_never_entered([_cyl()], deeper)
+    assert broken and broken[0].startswith("E8") and "inbromsningen" in broken[0]
+
+
+def test_only_the_speed_towards_the_cylinder_is_braked() -> None:
+    """5 m outside the edge at 5 m/s, but flying along it: no braking takes it in."""
+    track = _track([(0, 65, 0), (1, 65, 4), (2, 72, 4)])
+    broken = keepout_never_entered([_cyl()], track)
+    assert broken and broken[0].startswith("E8")
+
+
+def test_braking_counts_only_from_when_the_cylinder_came() -> None:
+    braked = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (6, 71.5, 0)])
+    assert keepout_never_entered([_cyl()], braked) == []
+    broken = keepout_never_entered([_cyl(since=-5.0)], braked)  # came long before this
+    assert broken and broken[0].startswith("E8")

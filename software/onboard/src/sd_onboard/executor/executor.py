@@ -804,9 +804,14 @@ class Executor:
         target = self.target_of(key)
         if isinstance(target, Refusal):
             return
+        # No way around the cylinders from where a search stopped: the same keep-out hold
+        # as when the reflex finds none while it flies (``_keepout_hold``).
+        keepout = exc.code == "KEEPOUT_VIOLATION"
+        if keepout:
+            self.emit("keepout_hold", {"command_id": str(active.command_id), "skill": active.skill})
         self._enter(
             target,
-            hold_reason="skill_done" if target == S.HOLD else None,
+            hold_reason=("limit" if keepout else "skill_done") if target == S.HOLD else None,
             cause=f"{active.skill} failed: {exc.code}",
         )
         if target == S.HOLD and is_airborne(self.vehicle_state()):

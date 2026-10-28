@@ -11,8 +11,8 @@
   around a person under the drone) may leave it, but never come back in. A cylinder can
   also come with its edge closer than the drone can stop from at its speed (a person seen
   just ahead): no reaction keeps it out, so the drone may brake into it by what the stop
-  (``stop_distance_m``) leaves, while braking, and then leave it as above; any deeper is
-  an entry.
+  (``stop_distance_m``, at its speed towards the cylinder) leaves; never deeper than that
+  until it is out again, and after that never back in.
   ``keepout_min_distance_m`` is the smallest horizontal distance from the track to an
   active cylinder's edge after the drone was outside it (negative: inside).
 
@@ -49,10 +49,16 @@ CLEAR_M: Final = 5.0
 # How far a drone goes on from the moment a cylinder is in force on board until LOITER has
 # stopped it: the reflex's tick (0.1 s), the mode change and LOITER's braking ramp, then
 # ArduCopter's LOITER braking (LOIT_BRK_ACCEL, 2.5 m/s²). The time it takes, with
-# ``STOP_SETTLE_S`` for the jerk-limited ramp and the position controller settling.
+# ``STOP_SETTLE_S`` for the jerk-limited ramp and the position controller settling. This is
+# what the flight controller does; the onboard reflex plans with a wider margin on purpose
+# (``sd_onboard.executor.keepout_reflex.stop_m``), and a change to either is a change to E8.
 STOP_REACT_S: Final = 0.5
 STOP_DECEL_MS2: Final = 2.5
 STOP_SETTLE_S: Final = 1.0
+# The allowance is for the moment a cylinder comes: the track's first sample in force must
+# be this close to it (cylinders are sampled every 0.25 s).
+ARRIVAL_S: Final = 1.0
+MOVED_M: Final = 0.5  # the direction from the first sample that moved this far
 # FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
 # straight home and lands, so E8 skips those samples. LAND counts as the way home only
 # after SMART_RTL or RTL: it is also the end of STOP, which is not exempt.
@@ -165,11 +171,11 @@ def stop_distance_m(speed_ms: float) -> float:
     return v * STOP_REACT_S + v * v / (2.0 * STOP_DECEL_MS2)
 
 
-def _edge_distances(k: SeenKeepout, track: Sequence[Sample]) -> list[tuple[float, float, float]]:
-    """(t, distance outside the edge, ground speed) for the armed samples while ``k`` was
-    in force, except those on the way home."""
+def _edge_distances(k: SeenKeepout, track: Sequence[Sample]) -> list[tuple[float, float, Sample]]:
+    """(t, distance outside the edge, sample) for the armed samples while ``k`` was in
+    force, except those on the way home."""
     return [
-        (s.t, distance_m(k.lat, k.lon, s.lat, s.lon) - k.radius_m, s.groundspeed_ms)
+        (s.t, distance_m(k.lat, k.lon, s.lat, s.lon) - k.radius_m, s)
         for s in _searching(track)
         if s.armed and k.since <= s.t <= k.until
     ]
@@ -190,6 +196,29 @@ def keepout_distances(keepouts: Iterable[SeenKeepout], track: Sequence[Sample]) 
     return best
 
 
+def _brake_allowance(
+    k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]]
+) -> tuple[float, float]:
+    """(how far braking may take the drone in, until when it brakes) for a cylinder that
+    came with its edge closer than the drone can stop from; (0, -inf) otherwise. Only the
+    speed towards the cylinder counts (the ground speed times the share of the next
+    movement that heads in), and only when the track has a sample from when it came."""
+    t0, d0, s0 = rows[0]
+    v0 = s0.groundspeed_ms
+    if d0 < 0.0 or t0 - k.since > ARRIVAL_S:
+        return 0.0, -math.inf
+    closing = v0
+    for _, d1, s1 in rows[1:]:
+        moved = distance_m(s0.lat, s0.lon, s1.lat, s1.lon)
+        if moved >= MOVED_M:
+            closing = v0 * min(1.0, max(0.0, (d0 - d1) / moved))
+            break
+    brake_m = stop_distance_m(closing) - d0
+    if brake_m <= 0.0:
+        return 0.0, -math.inf
+    return brake_m, t0 + STOP_REACT_S + v0 / STOP_DECEL_MS2 + STOP_SETTLE_S
+
+
 def keepout_never_entered(
     keepouts: Iterable[SeenKeepout],
     track: Sequence[Sample],
@@ -200,28 +229,24 @@ def keepout_never_entered(
         rows = _edge_distances(k, track)
         if not rows:
             continue
-        # Came with its edge within the stop: braking may take the drone this far in.
-        t0, d0, v0 = rows[0]
-        stop = stop_distance_m(v0)
-        brake_m = stop - d0 if 0.0 <= d0 < stop else 0.0
-        braking_until = t0 + STOP_REACT_S + v0 / STOP_DECEL_MS2 + STOP_SETTLE_S
+        brake_m, braking_until = _brake_allowance(k, rows)
         out = False
         for t, d, _ in rows:
-            if brake_m > 0.0 and t <= braking_until:
-                if d < -(brake_m + tolerance_m):
-                    broken.append(
-                        f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} "
-                        f"({t - k.since:.0f} s efter att den kom, {d0:.1f} m bort i "
-                        f"{v0:.1f} m/s: inbromsningen tar den {brake_m:.1f} m in)"
-                    )
-                    break
-                continue
             if d >= 0:
-                out = True
-            elif out and d < -tolerance_m:
+                # Outside once it has stopped: from then on it may not come in.
+                out = out or t > braking_until
+                continue
+            if out:
+                deepest = tolerance_m
+            elif brake_m > 0.0:
+                deepest = brake_m + tolerance_m  # braked in: never deeper, until it is out
+            else:
+                continue  # inside since it came (made around a person under the drone)
+            if -d > deepest:
+                why = f": inbromsningen tar den {brake_m:.1f} m in" if not out else ""
                 broken.append(
                     f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} "
-                    f"({t - k.since:.0f} s efter att den kom)"
+                    f"({t - k.since:.0f} s efter att den kom{why})"
                 )
                 break
     return broken

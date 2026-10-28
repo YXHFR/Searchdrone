@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mavlink2
 
 from sd_sim import launch
@@ -71,6 +72,29 @@ def test_tlog_writer_does_not_wait_for_the_disk(tmp_path: Path) -> None:
     assert len(path.read_bytes()) == 50 * (8 + len(frame))
     idx = path.with_suffix(".idx.jsonl").read_text().splitlines()
     assert [json.loads(line)["i"] for line in idx] == list(range(50))
+
+
+def test_tlog_writer_reports_a_failed_write(tmp_path: Path) -> None:
+    writer = TlogWriter(tmp_path / "radio.tlog")
+    real = writer._tlog
+
+    class FullDisk:
+        def write(self, data: bytes) -> int:
+            raise OSError(28, "No space left on device")
+
+        def flush(self) -> None:
+            real.flush()
+
+        def close(self) -> None:
+            real.close()
+
+    writer._tlog = FullDisk()  # type: ignore[assignment]
+    writer.write(heartbeat(250, 190), "to_vehicle")
+    writer._thread.join(timeout=5)
+    with pytest.raises(OSError):
+        writer.write(heartbeat(250, 190), "to_vehicle")
+    with pytest.raises(OSError):
+        writer.close()
 
 
 def test_write_secret_modes(tmp_path: Path) -> None:
