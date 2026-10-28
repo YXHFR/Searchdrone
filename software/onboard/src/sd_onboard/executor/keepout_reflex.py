@@ -5,11 +5,14 @@ executor checks the rest of the running order's route against every cylinder in 
 Nothing changes when it stays clear. A search mission (``survey_sector``, ``follow_path``
 and ``resume``: a ``SurveyRun``) is planned again around the cylinders, through the same
 ``SurveyRun.plan`` as a new order, and checked once more: the whole new route must stay
-clear of every cylinder and inside the charter. Anything else, or a search with no way
-around, hovers (``KEEPOUT_VIOLATION``). A drone inside a cylinder whose leg already
-leads out of it flies on; one whose leg leads deeper first leaves straight away from the
-centre (``sd_safety.keepout.reroute``). The link-loss find move never ends in a hover
-inside a cylinder while a way out exists (:func:`way_out`).
+clear of every cylinder and inside the charter. When the drone is outside every cylinder
+and the route enters one within the stop distance (:func:`stop_m`), it cannot turn away
+at its speed: it stops in LOITER first, and the rest is planned again from where it
+stopped, the same way. Anything else, or a search with no way around, hovers
+(``KEEPOUT_VIOLATION``). A drone inside a cylinder whose leg already leads out of it
+flies on; one whose leg leads deeper first leaves straight away from the centre
+(``sd_safety.keepout.reroute``). The link-loss find move never ends in a hover inside a
+cylinder while a way out exists (:func:`way_out`).
 
 A handler that flies one straight leg at a time (``Replans``: ``inspect_detection``) is
 checked from where the drone is on every tick while it flies, every cylinder counted

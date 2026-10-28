@@ -68,23 +68,71 @@ AREA = square(200.0)
 
 class AutoFc(FakeFlightController):
     """The fake flight controller, plus AUTO missions, MISSION_CURRENT and
-    MISSION_ITEM_REACHED, and a battery that can be set."""
+    MISSION_ITEM_REACHED, and a battery that can be set. With ``accel_ms2`` it carries its
+    speed (:meth:`_carry`) instead of turning and stopping at once, and, as ArduCopter
+    does, starts the first leg after switching to AUTO from its stopping point."""
 
-    def __init__(self, clock: FakeClock, **kw: Any) -> None:
+    def __init__(self, clock: FakeClock, *, accel_ms2: float | None = None, **kw: Any) -> None:
         super().__init__(clock, **kw)
         self.loiter_until: float | None = None
         self.track: list[tuple[float, float, float]] = []  # lat, lon, alt while armed
+        self.accel_ms2 = accel_ms2
+        self.vel = (0.0, 0.0)  # east, north m/s (with ``accel_ms2``)
+        self._origin: tuple[float, float] | None = None  # the first AUTO leg's start
+        self._was_auto = False
 
     def step(self, dt: float) -> None:
-        if self.armed and self.mode == CopterMode.AUTO:
+        auto = self.armed and self.mode == CopterMode.AUTO
+        if auto and not self._was_auto and self.accel_ms2 is not None:
+            self._origin = self._stopping_point(self.accel_ms2)
+        self._was_auto = auto
+        if auto:
             self._auto(dt)
         elif self.mode == CopterMode.LOITER and self.armed:
             self.target = None
-        super().step(dt)
+        homing = self.mode in (CopterMode.RTL, CopterMode.SMART_RTL, CopterMode.LAND)
+        if self.accel_ms2 is None or homing or not self.armed:
+            super().step(dt)
+        else:
+            self._carry(dt, self.accel_ms2)
         if self.armed:
             self.track.append((self.lat, self.lon, self.alt_rel))
         if self.missions[MISSION]:
             self._send(mavlink.MAVLink_mission_current_message(self.mission_current))
+
+    def _carry(self, dt: float, accel: float) -> None:
+        """A point mass that speeds up, turns and stops (LOITER: no target) at no more than
+        ``accel``, slowing so that it can stop at the target; the climb as before."""
+        cos = math.cos(math.radians(self.lat))
+        want = (0.0, 0.0)
+        if self.target is not None:
+            north = (self.target[0] - self.lat) * _M_PER_DEG
+            east = (self.target[1] - self.lon) * _M_PER_DEG * cos
+            dist = math.hypot(east, north)
+            if dist > 0:
+                speed = min(self.speed_ms, math.sqrt(2 * accel * dist))
+                want = (east / dist * speed, north / dist * speed)
+        dv = (want[0] - self.vel[0], want[1] - self.vel[1])
+        scale = min(1.0, accel * dt / max(math.hypot(*dv), 1e-9))
+        self.vel = (self.vel[0] + dv[0] * scale, self.vel[1] + dv[1] * scale)
+        self.lat += self.vel[1] * dt / _M_PER_DEG
+        self.lon += self.vel[0] * dt / (_M_PER_DEG * cos)
+        target = self.target
+        alt = self.alt_rel if target is None else target[2]
+        self.target = (self.lat, self.lon, alt)  # the parent only climbs
+        super().step(dt)
+        self.target = target
+
+    def _stopping_point(self, accel: float) -> tuple[float, float]:
+        ve, vn = self.vel
+        ahead = math.hypot(ve, vn) / (2 * accel)  # v * |v| / 2a, as a vector
+        cos = math.cos(math.radians(self.lat))
+        return self.lat + vn * ahead / _M_PER_DEG, self.lon + ve * ahead / (_M_PER_DEG * cos)
+
+    def _position(self) -> Any:
+        msg = super()._position()
+        msg.vx, msg.vy = round(self.vel[1] * 100), round(self.vel[0] * 100)  # north, east cm/s
+        return msg
 
     def _auto(self, dt_s: float) -> None:
         items = self.missions[MISSION]
@@ -100,6 +148,13 @@ class AutoFc(FakeFlightController):
             self.mode = CopterMode.RTL
             return
         lat, lon = item.x / 1e7, item.y / 1e7
+        if self._origin is not None:
+            north = (self._origin[0] - self.lat) * _M_PER_DEG
+            east = (self._origin[1] - self.lon) * _M_PER_DEG * math.cos(math.radians(self.lat))
+            if math.hypot(north, east) > GOTO_ARRIVE_RADIUS_M:
+                self.target = (*self._origin, float(item.z))
+                return
+            self._origin = None
         self.target = (lat, lon, float(item.z))
         north = (lat - self.lat) * _M_PER_DEG
         east = (lon - self.lon) * _M_PER_DEG * math.cos(math.radians(self.lat))
@@ -317,9 +372,10 @@ async def rig(
     link_up: bool = True,
     options: dict[str, Any] | None = None,
     start: bool = True,
+    fc_options: dict[str, Any] | None = None,
 ) -> AsyncIterator[Rig]:
     clock = FakeClock()
-    fc = AutoFc(clock)
+    fc = AutoFc(clock, **(fc_options or {}))
     fc.params.update({"FENCE_ALT_MAX": 125.0, "FENCE_RADIUS": 530.0, "LOIT_SPEED_MS": 15.0})
     up = Uplink()
     holder: list[Executor] = []

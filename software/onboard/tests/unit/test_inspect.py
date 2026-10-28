@@ -414,6 +414,47 @@ async def test_a_new_cylinder_reroutes_the_search() -> None:
         assert "superseded" not in r.up.stages(cmd.command_id)
 
 
+BRAKE_MS2 = 2.5  # ArduCopter's LOITER braking (LOIT_BRK_ACCEL)
+
+
+async def test_a_cylinder_closer_than_the_turn_stops_the_search_first() -> None:
+    """A cylinder ahead on the leg, too close to go around at the drone's speed but farther
+    than braking takes: it stops in LOITER first and goes around from where it stopped.
+    ArduCopter starts a new AUTO leg from its stopping point, so a way around planned from
+    where the drone was when the cylinder came would be flown from a point past that."""
+    box = square(60, east=0, north=120)
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        cmd = await r.send(
+            r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
+        )
+
+        def on_a_long_leg() -> bool:  # at full speed along it, 60 m or more to go
+            ahead = r.fc.missions[MISSION][r.fc.mission_current]
+            to, here = PLANE.xy(ahead.x / 1e7, ahead.y / 1e7), xy(r)
+            d, speed = math.dist(here, to), math.hypot(*r.fc.vel)
+            along = (r.fc.vel[0] * (to[0] - here[0]) + r.fc.vel[1] * (to[1] - here[1])) / d
+            return r.fc.mission_current >= 3 and d > 60 and speed > 7.9 and along > 0.999 * speed
+
+        await r.until(on_a_long_leg, 300)
+        here, (ve, vn) = xy(r), r.fc.vel
+        speed = math.hypot(ve, vn)
+        # The edge 17 m ahead on the leg: too close to go around at this speed, inside the
+        # reflex's stop distance, but farther than braking takes.
+        assert stop_m(speed) > 17 > speed**2 / (2 * BRAKE_MS2) + speed * 0.5
+        k = keepout(here[0] + 37 * ve / speed, here[1] + 37 * vn / speed, 20, source="detection")
+        start = len(r.fc.track)
+        install(r, k)
+        await r.run(0.5)
+        reroutes = [d for t, _, d in r.up.events if t == "executor.keepout_reroute"]
+        assert reroutes and reroutes[-1]["stop_first"] is True
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        assert "executor.keepout_reroute_stopped" in r.up.kinds()
+        assert "superseded" not in r.up.stages(cmd.command_id)
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+
+
 async def test_a_new_cylinder_on_a_goto_hovers() -> None:
     async with rig() as r:
         await r.install(charter(allowed_skills=SKILLS))
