@@ -469,7 +469,7 @@ async def test_no_way_around_from_where_the_search_stopped_is_a_keepout_hold(
     async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
         cmd, k, start = await _close_cylinder_ahead(r)
         if refused_by == "gate":
-            r.ex.path_allowed = lambda active, path: False  # type: ignore[method-assign]
+            r.ex.path_refusal = lambda active, path: ("KEEPOUT_VIOLATION",)  # type: ignore[method-assign]
         else:
 
             def no_way(self: survey_sector.SurveyRun, ctx: Any) -> Any:
@@ -481,6 +481,19 @@ async def test_no_way_around_from_where_the_search_stopped_is_a_keepout_hold(
         assert "executor.keepout_hold" in r.up.kinds()
         assert "executor.keepout_reroute_stopped" not in r.up.kinds()
         assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+
+
+async def test_a_way_around_the_gate_refuses_for_another_reason_says_that_reason() -> None:
+    """The way around from the stop clears the cylinder but the gate says no for the
+    battery: the order fails with the gate's reason, not as a keep-out hold."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, k, start = await _close_cylinder_ahead(r)
+        r.ex.path_refusal = lambda active, path: ("BATTERY_RESERVE",)  # type: ignore[method-assign]
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        assert r.up.codes(cmd.command_id) == ("BATTERY_RESERVE",)
+        assert "executor.keepout_hold" not in r.up.kinds()
+        assert r.ex.hold_reason == "skill_done" and r.fc.mode == CopterMode.LOITER
         assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
 
 

@@ -14,7 +14,7 @@ A drone inside cylinders first leaves them along a straight leg that goes deeper
 none and enters no other (``sd_safety.keepout.reroute``), ``EXIT_CLEAR_M`` past the last
 edge, and stops there. Only then is the point worked out and the leg there checked, from
 where the drone is and against the cylinders in force at that moment, through the
-executor's whole gate (``ExecutorIO.leg_allowed``); at most ``EXITS_MAX`` times, then the
+executor's whole gate (``ExecutorIO.leg_refusal``); at most ``EXITS_MAX`` times, then the
 order fails (``ONB_INSPECT_GEOMETRY``). The keep-out reflex plans the leg being flown
 again the same way (:meth:`InspectHandler.replan`).
 """
@@ -154,7 +154,7 @@ class InspectHandler:
             # cylinders in force now, through the whole gate.
             ctx = replace(self._ctx, vehicle=io.vehicle, keepouts=io.keepouts)
             nxt = self._next(ctx)
-            if nxt is None or not io.leg_allowed(self._path(ctx, nxt)):
+            if nxt is None or io.leg_refusal(self._path(ctx, nxt)):
                 raise SkillFailedError(
                     "ONB_INSPECT_GEOMETRY", "Ingen säker väg till inspektionspunkten."
                 )

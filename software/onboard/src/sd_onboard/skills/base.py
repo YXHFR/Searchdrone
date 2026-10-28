@@ -159,6 +159,8 @@ class ExecutorIO(Protocol):
     # Whether this order may fly ``path`` (current position first) from where the drone is
     # now: clear of every cylinder, inside the charter and through the whole gate.
     def leg_allowed(self, path: list[LatLonAlt]) -> bool: ...
+    # The same check, with why not: the refusal's reason codes, empty when allowed.
+    def leg_refusal(self, path: list[LatLonAlt]) -> tuple[str, ...]: ...
 
 
 class SkillHandler(Protocol):

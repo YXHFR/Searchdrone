@@ -293,9 +293,11 @@ class SurveyHandler:
         try:
             plan = run.plan(replace(ctx, vehicle=io.vehicle, keepouts=io.keepouts))
         except PlanError as exc:
-            raise SkillFailedError(exc.code, "Ingen väg runt förbudscylindrarna.") from exc
-        if not io.leg_allowed(plan.path):
-            raise SkillFailedError("KEEPOUT_VIOLATION", "Ingen väg runt förbudscylindrarna.")
+            no_way = exc.code == "KEEPOUT_VIOLATION"
+            detail = "Ingen väg runt förbudscylindrarna." if no_way else exc.detail
+            raise SkillFailedError(exc.code, detail) from exc
+        if refusal := io.leg_refusal(plan.path):  # the gate's own reason, keep-out or not
+            raise SkillFailedError(refusal[0], "Vägen runt förbudscylindrarna nekades.")
         self.run = run
         io.emit_event(
             "keepout_reroute_stopped",

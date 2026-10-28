@@ -82,6 +82,12 @@ def _track(
     return [Sample(t, *plane.latlon(e, n), 40.0, speed, mode, True) for t, e, n in points]
 
 
+def _flown(points: list[tuple[float, float, float, float]]) -> list[Sample]:
+    """A track with each sample's own ground speed: (t, east, north, speed)."""
+    plane = Plane(*HOME)
+    return [Sample(t, *plane.latlon(e, n), 40.0, v, "GUIDED", True) for t, e, n, v in points]
+
+
 def _cyl(since: float = 0.0, until: float = float("inf")) -> SeenKeepout:
     lat, lon = Plane(*HOME).latlon(100.0, 0.0)
     return SeenKeepout("k1", lat, lon, 30.0, since, until)
@@ -185,3 +191,18 @@ def test_braking_counts_only_from_when_the_cylinder_came() -> None:
     assert keepout_never_entered([_cyl()], braked) == []
     broken = keepout_never_entered([_cyl(since=-5.0)], braked)  # came long before this
     assert broken and broken[0].startswith("E8")
+
+
+def test_a_fast_drone_that_never_brakes_breaks_e8() -> None:
+    """At 14 m/s with the edge 5 m ahead, the stop may take it past the middle of the
+    cylinder (41 m in, the radius is 30), so the depth alone allows the whole crossing:
+    flying straight through without slowing down is still an entry."""
+    assert stop_distance_m(14.0) - 5.0 > 30.0
+    through = _flown([(0, 65, 0, 14), (1, 79, 0, 14), (2, 93, 0, 14), (3, 107, 0, 14),
+                      (4, 121, 0, 14)])  # fmt: skip
+    broken = keepout_never_entered([_cyl()], through)
+    assert broken and broken[0].startswith("E8") and "m/s" in broken[0]
+    braking = _flown([(0, 65, 0, 14), (1, 78, 0, 12.5), (2, 88, 0, 10.5), (3, 96, 0, 8),
+                      (4, 102, 0, 5.5), (5, 105, 0, 3), (6, 106, 0, 0.5),
+                      (9, 106, 0, 0.2)])  # fmt: skip
+    assert keepout_never_entered([_cyl()], braking) == []

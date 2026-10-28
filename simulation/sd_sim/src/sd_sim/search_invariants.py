@@ -59,6 +59,10 @@ STOP_SETTLE_S: Final = 1.0
 # be this close to it (cylinders are sampled every 0.25 s).
 ARRIVAL_S: Final = 1.0
 MOVED_M: Final = 0.5  # the direction from the first sample that moved this far
+# Going deeper while braking, the drone must be slowing down: between two samples at most
+# this much faster than braking from its speed when the cylinder came, after the reaction
+# and settling.
+BRAKE_SLACK_MS: Final = 1.0
 # FLYG HEM goes past every cylinder (``sd_safety.policy.KEEPOUT_EXEMPT``): ArduPilot flies
 # straight home and lands, so E8 skips those samples. LAND counts as the way home only
 # after SMART_RTL or RTL: it is also the end of STOP, which is not exempt.
@@ -196,6 +200,13 @@ def keepout_distances(keepouts: Iterable[SeenKeepout], track: Sequence[Sample]) 
     return best
 
 
+def _braking_speed_ms(rows: Sequence[tuple[float, float, Sample]], t: float) -> float:
+    """The fastest the drone may still be at ``t`` if it brakes from the first row on."""
+    t0, _, s0 = rows[0]
+    slowed = STOP_DECEL_MS2 * max(0.0, t - t0 - STOP_REACT_S - STOP_SETTLE_S)
+    return max(0.0, s0.groundspeed_ms - slowed) + BRAKE_SLACK_MS
+
+
 def _brake_allowance(
     k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]]
 ) -> tuple[float, float]:
@@ -231,7 +242,14 @@ def keepout_never_entered(
             continue
         brake_m, braking_until = _brake_allowance(k, rows)
         out = False
-        for t, d, _ in rows:
+        last_t, last_d, last_s = rows[0]
+        for t, d, sample in rows:
+            # Measured from the track, never faster than the drone flew between samples.
+            dt = t - last_t
+            moved = distance_m(last_s.lat, last_s.lon, sample.lat, sample.lon)
+            speed = moved / dt if dt > 0.0 else 0.0
+            deeper = d < last_d
+            last_t, last_d, last_s = t, d, sample
             if d >= 0:
                 # Outside once it has stopped: from then on it may not come in.
                 out = out or t > braking_until
@@ -240,6 +258,16 @@ def keepout_never_entered(
                 deepest = tolerance_m
             elif brake_m > 0.0:
                 deepest = brake_m + tolerance_m  # braked in: never deeper, until it is out
+                # The depth alone misses a fast drone that never brakes (its allowance can
+                # be the whole cylinder): going deeper, it must be slowing down.
+                fastest = _braking_speed_ms(rows, t)
+                if deeper and t <= braking_until and speed > fastest:
+                    broken.append(
+                        f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} i "
+                        f"{speed:.1f} m/s ({t - k.since:.0f} s efter att den "
+                        f"kom: inbromsningen tillåter högst {fastest:.1f} m/s)"
+                    )
+                    break
             else:
                 continue  # inside since it came (made around a person under the drone)
             if -d > deepest:

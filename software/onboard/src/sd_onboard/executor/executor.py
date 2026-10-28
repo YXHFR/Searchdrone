@@ -363,10 +363,13 @@ class _IO:
         return self._ex.keepouts_in_force()
 
     def leg_allowed(self, path: list[LatLonAlt]) -> bool:
+        return not self.leg_refusal(path)
+
+    def leg_refusal(self, path: list[LatLonAlt]) -> tuple[str, ...]:
         active = self._ex.active
         if active is None or active.command_id != self._command_id:
-            return False  # no longer this order's to fly
-        return self._ex.path_allowed(active, path)
+            return ("ONB_STALE_ORDER",)  # no longer this order's to fly
+        return self._ex.path_refusal(active, path)
 
 
 class Executor:
@@ -1715,16 +1718,20 @@ class Executor:
         self._keepout_hold()
 
     def path_allowed(self, active: _Active, path: list[LatLonAlt]) -> bool:
-        """Whether the running order may fly ``path`` (current position first) from here:
-        clear of every cylinder, inside the charter, and through the whole gate (battery
-        and return reserve included), judged on the state it is flown from."""
+        return not self.path_refusal(active, path)
+
+    def path_refusal(self, active: _Active, path: list[LatLonAlt]) -> tuple[str, ...]:
+        """Why the running order may not fly ``path`` (current position first) from here,
+        empty when it may: clear of every cylinder, inside the charter, and through the
+        whole gate (battery and return reserve included), judged on the state it is flown
+        from."""
         charter = self.charter
         if active.cmd is None or charter is None or self.active is not active:
-            return False
+            return ("ONB_STALE_ORDER",)
         ctx = self._plan_context(active.command_id)
         route = [ctx.plane.xy(p.lat, p.lon) for p in path]
         if not route_clear(route, ctx.keepouts, ctx.plane, charter):
-            return False
+            return ("KEEPOUT_VIOLATION",)
         now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
         cmd = active.cmd.model_copy(update={"based_on": now})
         plan = active.plan.model_copy(update={"path": path})
@@ -1734,8 +1741,8 @@ class Executor:
                 "keepout_replan_refused",
                 {"command_id": str(active.command_id), "codes": decision.reason_codes},
             )
-            return False
-        return True
+            return tuple(decision.reason_codes) or ("ONB_GATE_DISAGREEMENT",)
+        return ()
 
     def _find_move_reflex(self) -> None:
         """The link-loss find move meets a cylinder that came on the way (a person the
