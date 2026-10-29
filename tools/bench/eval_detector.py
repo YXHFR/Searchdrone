@@ -270,7 +270,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             cls = row["by_class"]
             say(
                 f"  {name}: recall {row['recall']} över {row['n']} personer "
-                f"(16-32 px {cls['16to32']['recall']}, > 32 px {cls['gt32']['recall']})"
+                f"(16-32 px {cls['16to32']['recall']}, > 32 px {cls['gt32']['recall']}; "
+                f"egen tröskel {row['threshold']}, {row['fp_per_12mp']} falsklarm per 12 MP)"
             )
         if args.get("compare"):
             why = compare(body, Path(args["compare"]))

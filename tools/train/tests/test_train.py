@@ -285,11 +285,11 @@ def test_init_starts_from_earlier_weights_and_keeps_their_credit(
     assert [t["dataset"] for t in manifest["trained_on"]] == ["heridal"]
     assert manifest["pretrained_on"] == ["simfarm"]  # the earlier run's, credited still
     assert set(manifest["val_ap50_by_dataset"]) == {"heridal"}
-    assert manifest["val_ap50_rule"] == "mean_over_datasets"
+    assert manifest["val_ap50_rule"] == "min_over_datasets"
     # where it started is named and pinned, but the owner's local path never leaves
-    assert manifest["started_from"]["file"] == "heridal_run/best.pt"
+    assert manifest["started_from"]["file"] == "best.pt"
     assert len(manifest["started_from"]["sha256"]) == 64
-    assert manifest["base_weights"].startswith("heridal_run/best.pt (sha256 ")
+    assert manifest["base_weights"].startswith("best.pt (sha256 ")
     assert manifest["settings"]["init"] == "best.pt"
     assert str(tmp_path) not in manifest_path.read_text(encoding="utf-8")
 
@@ -298,6 +298,27 @@ def test_measure_only_sets_are_never_credited_as_trained_on() -> None:
     measure_only = [d.name for d in load_register().values() if "train" not in d.use]
     assert measure_only  # WiSARD, until its data licence is confirmed
     assert train_detector.trained_sets(["heridal", *measure_only]) == ["heridal"]
+    # a set gone from the register stays, so the export refuses it instead of dropping it
+    assert train_detector.trained_sets(["heridal", "gone"]) == ["heridal", "gone"]
+
+
+def test_export_of_old_weights_credits_only_what_was_trained_on(bank: Path, tmp_path: Path) -> None:
+    """Weights from before ``trained_on`` was saved fall back on their settings' sets,
+    filtered the way the training filters them: a measure-only set is never credited."""
+    measure_only = [d.name for d in load_register().values() if "train" not in d.use]
+    best = tmp_path / "old" / "best.pt"
+    best.parent.mkdir()
+    _earlier_best(best)
+    ck = torch.load(best, weights_only=True)
+    ck.pop("trained_on", None)
+    ck["settings"] = {
+        **train_detector.Settings("yolox_s").key(),
+        "sets": ["heridal", *measure_only],
+    }
+    torch.save(ck, best)
+    _, manifest_path = export(best, tmp_path / "models", "person_x", check_images=1)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert [d["dataset"] for d in manifest["trained_on"]] == ["heridal"]
 
 
 def test_export_refuses_weights_trained_on_an_unregistered_set(bank: Path, tmp_path: Path) -> None:
@@ -329,7 +350,7 @@ def test_a_run_without_init_keeps_its_old_settings_key() -> None:
     assert train_detector.Settings("yolox_s", init="/x/best.pt").key()["init"] == "/x/best.pt"
 
 
-def test_val_ap50_is_given_per_dataset_and_the_best_epoch_by_their_mean(
+def test_val_ap50_is_given_per_dataset_and_the_best_epoch_by_the_weakest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     truth = torch.tensor([[10.0, 10.0, 20.0, 20.0]])
@@ -350,5 +371,5 @@ def test_val_ap50_is_given_per_dataset_and_the_best_epoch_by_their_mean(
         ["a", "a", "b"],  # type: ignore[arg-type]
     )
     assert per_set == {"a": pytest.approx(1.0), "b": 0.0}
-    assert train_detector.val_score(per_set) == pytest.approx(0.5)
+    assert train_detector.val_score(per_set) == 0.0  # the weakest set, not the mean
     assert train_detector.val_score({}) == 0.0

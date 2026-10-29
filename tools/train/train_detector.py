@@ -17,8 +17,8 @@ Stops and goes on: the state is saved to ``last.pt`` every few minutes and after
 epoch. Run the same command again and it carries on from there (a different command,
 say another ``batch``, starts afresh in a new folder with ``fresh=1``). The best epoch
 on the val part goes to ``best.pt``; ``just export-detector`` makes the ONNX file from it.
-The val AP50 is printed per dataset; the best epoch is the one with the highest mean of
-them, so the set with the most people does not decide alone.
+The val AP50 is printed per dataset; the best epoch is the one whose lowest dataset AP50
+is highest, so a gain on the set with the most people never hides a loss on another.
 
 Never trained on: the test part (locked in ``tools/bench/splits/``) and every set whose
 licence allows measuring only. The weights stay on this computer.
@@ -162,8 +162,9 @@ def evaluate_val(
 
 
 def val_score(per_set: dict[str, float]) -> float:
-    """The best epoch's measure: the mean of the per-dataset AP50."""
-    return sum(per_set.values()) / len(per_set) if per_set else 0.0
+    """The best epoch's measure: the lowest per-dataset AP50, so a gain on one set never
+    makes up for a loss on another (``pick-detector`` ranks models the same way)."""
+    return min(per_set.values()) if per_set else 0.0
 
 
 def save(path: Path, state: dict[str, Any]) -> None:
@@ -397,17 +398,18 @@ def _available(data: Path, sets: Sequence[str]) -> list[str]:
 
 def trained_sets(sets: Sequence[str]) -> list[str]:
     """The sets of ``sets`` that are really trained on: measure-only ones are left out,
-    as ``tiles.pictures`` leaves them out, so they are never credited as seen."""
+    as ``tiles.pictures`` leaves them out, so they are never credited as seen. A set no
+    longer in the register stays, so the export refuses it rather than drop its credit."""
     from bench.datasets import load_register
 
     register = load_register()
-    return [s for s in sets if s in register and "train" in register[s].use]
+    return [s for s in sets if s not in register or "train" in register[s].use]
 
 
 def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     """Start from an earlier run's best weights (its EMA) instead of COCO's. Returns what
     those weights have seen (``trained_on``, ``pretrained_on``), so their credit stays,
-    and ``started_from``: the file's name, SHA-256 and epoch (never its local path)."""
+    and ``started_from``: the file's name, SHA-256 and epoch (never its path or folder)."""
     if not path.is_file():
         raise BenchError(f"init={path} finns inte.", 2)
     ck: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
@@ -421,7 +423,7 @@ def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
             ck.get("pretrained_on", ["simfarm"] if earlier.get("simfarm_epochs") else [])
         ),
         "started_from": {
-            "file": f"{path.parent.name}/{path.name}",
+            "file": path.name,
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "epoch": ck.get("epoch"),
             "base_weights": ck.get("base_weights", f"COCO {model} (Apache-2.0)"),

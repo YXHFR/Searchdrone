@@ -572,9 +572,14 @@ def test_a_wrong_labels_archive_unpacks_nothing(
 
 @pytest.mark.usefixtures("kios_split")
 @pytest.mark.parametrize(
-    # the same file, and the same file spelt another way: both land on one path
+    # the same file, and the same file spelt another way: each lands on one path (the
+    # last only on a case-insensitive disk, which a data folder under /mnt/c is)
     "name",
-    ["Images/Train/1_people_0007_0.jpg", "./Images/Train/1_people_0007_0.jpg"],
+    [
+        "Images/Train/1_people_0007_0.jpg",
+        "./Images/Train/1_people_0007_0.jpg",
+        "images/train/1_people_0007_0.JPG",
+    ],
 )
 def test_a_member_in_both_archives_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str

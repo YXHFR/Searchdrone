@@ -94,7 +94,7 @@ def test_kios_takes_its_pictures_with_their_yolo_labels() -> None:
         "Images/Valid/7_ppl_00001_crop.jpg",
         "Images/Test/4_ppl_4_00001.jpg",
         "Images/Other/9_ppl_4_00002.jpg",  # not one of the archive's parts
-        "Images/Train/notes.jpg",  # not a frame
+        "Images/Train/notes.txt",  # not a picture
         "Annotations/Yolo/Train/12_people_0042_390.txt",
         "Annotations/Yolo/Valid/7_ppl_00001_crop.txt",
         "Annotations/Yolo/Test/4_ppl_4_00001.txt",
@@ -148,6 +148,16 @@ def test_kios_refuses_a_picture_without_labels() -> None:
     an empty picture (it would turn real people into false alarms)."""
     with pytest.raises(BenchError, match="saknar etikettfil"):
         LAYOUTS["kios_yolo"].members(["Images/Train/1_people_0050_0.jpg"])
+
+
+@pytest.mark.parametrize(
+    "name", ["Images/Train/notes.jpg", "Images/Test/4_PPL_00001.jpg", "Images/Valid/ppl_1.jpg"]
+)
+def test_kios_refuses_a_picture_with_an_unknown_name(name: str) -> None:
+    """A name of another form could be a recording the site list has never seen; it
+    would be left out of the split without a word, so the set is refused instead."""
+    with pytest.raises(BenchError, match="okänt namn"):
+        LAYOUTS["kios_yolo"].members([name, _kios_label(name)])
 
 
 @pytest.mark.parametrize("layout", ["heridal_voc", "wisard_vis", "kios_yolo", "simfarm"])

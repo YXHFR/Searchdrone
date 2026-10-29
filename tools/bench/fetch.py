@@ -181,11 +181,13 @@ def fetch_archive(ds: Dataset, data: Path, keep: bool) -> int:
     with contextlib.ExitStack() as stack:
         zips = [stack.enter_context(zipfile.ZipFile(a[3])) for a in archives]
         owner: dict[str, zipfile.ZipFile] = {}
-        written: set[str] = set()  # where each file lands, so "./a" and "a" are one
+        # where each file lands: "./a" and "a" are one, and so are "a" and "A" on a
+        # case-insensitive disk (a data folder under /mnt/c)
+        written: set[str] = set()
         for zf in zips:
             for name in zf.namelist():
                 if not name.endswith("/"):
-                    where = PurePosixPath(name).as_posix()
+                    where = PurePosixPath(name).as_posix().casefold()
                     if where in written:
                         raise BenchError(f"{ds.name}: {name} finns i två arkiv")
                     written.add(where)

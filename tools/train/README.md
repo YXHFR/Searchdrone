@@ -114,9 +114,11 @@ home internet line.
    ```
 
    Use the name `pick-detector` chose. The numbers to report are the per-dataset
-   lines it prints (or `sets=heridal` and `sets=kios` runs), HERIDAL first, not the
-   pooled one. The result is written to `build/bench/det_<model>_test.json`. To make the simulator's profile from
-   it, see `tools/bench/README.md`.
+   lines it prints, HERIDAL first, not the pooled one. Each dataset is measured at its
+   own threshold, so `sets=heridal` and `sets=kios` runs give the same numbers. The
+   result is written to `build/bench/det_<model>_test.json`. The simulator's profile is
+   made from a result on one dataset only: run `just bench-detector
+   model=person_yolox_s sets=heridal` for it, and see `tools/bench/README.md`.
 
 9. **Use it.** The on-board computer (`sd_onboard`) loads the model when
    `SD_DETECTOR_MODEL` in its environment points at the `.json` file that
@@ -141,9 +143,10 @@ just export-detector model=yolox_s train="$(just data-dir)/train/yolox_s_mix" na
 ```
 
 After each epoch the val AP50 is printed per dataset (`heridal 0.61; kios 0.55`). The
-epoch kept is the one with the highest mean of them, so KIOS, which has many more
-people, does not decide alone. The manifest lists every set the weights were trained
-on, including those of the `init=` run, with their credit.
+epoch kept is the one whose lowest dataset AP50 is highest, so a gain on KIOS, which has
+many more people, never makes up for a loss on HERIDAL. The manifest lists every set
+the weights were trained on, including those of the `init=` run, with their credit, and
+the `init=` file's name and SHA-256 (not its folder).
 
 Measure it on the val part next to the old model. Both must be measured on the same
 split: re-measure the old model too, because a result from before KIOS was added was

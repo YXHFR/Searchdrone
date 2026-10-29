@@ -27,6 +27,7 @@ import numpy as np
 import torch
 from bench.common import BenchError, parse_args, say, warn
 from bench.datasets import load_register
+from train_detector import trained_sets
 
 KEYS = ("model", "data", "train", "name", "out")
 MANIFEST_SCHEMA = "sd.detector-model/v1"
@@ -43,7 +44,7 @@ def export(
     register = load_register()
     # what the weights have seen in all: a run started from earlier weights (init=)
     # carries their sets too, so every one of them is credited
-    sets = list(ck.get("trained_on", settings["sets"]))
+    sets = list(ck["trained_on"]) if "trained_on" in ck else trained_sets(settings["sets"])
     pretrained = list(
         ck.get("pretrained_on", ["simfarm"] if settings.get("simfarm_epochs") else [])
     )
@@ -102,7 +103,7 @@ def export(
         "val_ap50": ck.get("val_ap50"),
         "val_ap50_by_dataset": ck.get("val_ap50_by_dataset"),
         # how val_ap50 was made: the mean of each dataset's AP50, or (older runs) pooled
-        "val_ap50_rule": "mean_over_datasets" if ck.get("val_ap50_by_dataset") else "pooled",
+        "val_ap50_rule": "min_over_datasets" if ck.get("val_ap50_by_dataset") else "pooled",
         "epoch": ck.get("epoch"),
         "settings": shown,
         "exported": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),

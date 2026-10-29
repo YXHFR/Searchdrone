@@ -47,17 +47,24 @@ one class: person.
   - Flips, 90° turns and brightness changes (seen from above, every way up is a way a
     person lies).
   - Defaults: 20 epochs, batch 8, which fits in 8 GB.
-- **Kept epoch.** The highest mean, over the datasets, of the AP50 on each dataset's
-  `val` tiles (each set's AP50 is printed and kept in the manifest).
+- **Kept epoch.** The one whose lowest dataset AP50 on the `val` tiles is highest, so a
+  gain on KIOS never makes up for a loss on HERIDAL (each set's AP50 is printed and kept
+  in the manifest).
 
 ## Choosing one (`just pick-detector`)
 
 All candidates are measured with `just bench-detector ... part=val` on whole pictures,
-the same way the drone sees them. The threshold is set so that false alarms stay at
-0.5 per 12 MP picture. Every recall below is taken per dataset, and a model's recall is
-its **lowest** dataset's recall, never the recall pooled over all people: KIOS's val
-site has far more people than HERIDAL's val part, so a pooled number would be almost
-all KIOS and could hide a model getting worse on HERIDAL's wilderness. Then, in order:
+the same way the drone sees them. Each dataset is measured on its own: its threshold is
+set from its own false alarms so that they stay at 0.5 per 12 MP picture, and its
+recall is taken at that threshold. These are the same numbers a run on that dataset
+alone (`sets=heridal`) gives, and `just bench-detector` prints each dataset's threshold
+and false-alarm rate next to its recall. A model's recall is its **lowest** dataset's
+recall, never the recall pooled over all people: KIOS's val site has far more people
+than HERIDAL's val part, so a pooled number would be almost all KIOS and could hide a
+model getting worse on HERIDAL's wilderness. Each dataset's val part is a single site
+(HERIDAL's GOR, KIOS's Pegia coast), and the smaller it is the noisier its recall, so
+read the Wilson intervals in the result file before trusting a close call. Then, in
+order:
 
 1. The highest recall on people over 32 px wins.
 2. Every model within 2 percentage points of that recall is as good on it. Among those,
@@ -65,8 +72,9 @@ all KIOS and could hide a model getting worse on HERIDAL's wilderness. Then, in 
 3. Among the models still level, the fastest (median time per picture) wins.
 
 The choice is made on the `val` part only. The `test` part is measured once, on the
-chosen model, and the numbers reported are **per dataset** (`just bench-detector
-sets=heridal`, `sets=kios`), HERIDAL first; a pooled test number is not reported. The
+chosen model, and the numbers reported are **per dataset**, measured the same way as
+on val (the per-dataset lines of one run, or `sets=heridal` and `sets=kios` runs, which
+give the same numbers), HERIDAL first; a pooled test number is not reported. The
 targets, to be revisited after the first measurement, are recall ≥ 0.85 over 32 px and
 ≥ 0.60 at 16–32 px, and each dataset must meet them on its own.
 

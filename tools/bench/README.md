@@ -98,7 +98,9 @@ Targets (to be tightened after the first measurement): recall ≥ 0.85 over 32 p
 ≥ 0.60 at 16–32 px.
 
 `profiles.py` turns a result into `profiles/det_<model>_v<N>.json`, the file the
-simulator's detector stand-in reads. `profiles/det_oracle_v0.json` is the start profile
+simulator's detector stand-in reads. It takes a result measured on one dataset only
+(`sets=heridal`): a result pooled over several is refused, because its recall would be
+mostly that of the set with the most people. `profiles/det_oracle_v0.json` is the start profile
 until a real measurement exists: anything built on it is modelled, not measured.
 Run `just fmt` before committing a new profile or split file: the repository formats
 JSON with Biome, and `just lint` checks it.

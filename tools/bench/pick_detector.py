@@ -13,10 +13,11 @@ percentage points of it is as good on that, and among those the higher recall at
 wins. When the val part holds several datasets, each recall is the lowest of the
 datasets' own recalls for that size, never the pooled one: the datasets differ a lot in
 size (KIOS has far more people than HERIDAL), and a model that gets worse on one of
-them must not win on the strength of another. Picked on the val part, never on test:
-the test part is only measured once, on the chosen model. Every result must come from
-the same pictures (the same ``source`` and picture count); a quick look with ``limit=``
-is never ranked against a full run.
+them must not win on the strength of another. Each dataset's recall is taken at its
+own threshold (``bench.metrics``), as a run on that dataset alone gives it. Picked on
+the val part, never on test: the test part is only measured once, on the chosen model.
+Every result must come from the same pictures (the same ``source`` and picture count);
+a quick look with ``limit=`` is never ranked against a full run.
 Prints the setting that makes the on-board computer use it.
 """
 
@@ -47,9 +48,13 @@ def _recall(body: dict[str, Any], cls: str) -> float:
     return min(float(r["recall"]) for r in rows)
 
 
+def _cell(row: dict[str, Any]) -> str:
+    return f"{row['recall']:.3f}" if row["n"] else "-"  # no people of that size
+
+
 def _per_set(body: dict[str, Any]) -> str:
     parts = [
-        f"{name} {row['by_class']['gt32']['recall']:.3f}/{row['by_class']['16to32']['recall']:.3f}"
+        f"{name} {_cell(row['by_class']['gt32'])}/{_cell(row['by_class']['16to32'])}"
         for name, row in sorted((body.get("recall_by_dataset") or {}).items())
         if "by_class" in row
     ]

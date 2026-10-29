@@ -5,7 +5,9 @@ detector stand-in reads (``tools/bench/profiles/det_<model>_v<N>.json``).
 
 A profile holds recall per size class at the fixed false-alarm rate, the false-alarm
 rate, the score distributions of hits and false alarms (Beta, fitted by the method of
-moments) and the time per picture. ``occlusion_factor`` cannot be measured on the bank
+moments) and the time per picture. It is made from a result measured on one dataset
+(``sets=heridal``): a result pooled over several is refused, since its recall would be
+mostly that of the set with the most people. ``occlusion_factor`` cannot be measured on the bank
 (the boxes say nothing of cover); it is carried over from the start profile and listed
 under ``not_measured``. ``det_oracle_v0.json`` is the start profile from the published
 HERIDAL figures, used until a measurement exists; anything built on it is modelled,
@@ -34,6 +36,15 @@ def build_profile(
 ) -> dict[str, object]:
     if result.get("schema") != "bench.detector/v1":
         raise BenchError("Resultatfilen har fel format (väntat bench.detector/v1).", 2)
+    sets = result.get("recall_by_dataset") or {}
+    assert isinstance(sets, dict)  # noqa: S101 - schema above
+    if len(sets) > 1:
+        # a pooled recall is mostly the set with the most people, not the terrain searched
+        raise BenchError(
+            f"Resultatet är mätt på flera datamängder ({', '.join(sorted(sets))}); en profil "
+            "görs av en mätning på en enda (sets=heridal).",
+            2,
+        )
     recall = result["recall"]
     latency = result["latency_ms"]
     assert isinstance(recall, dict) and isinstance(latency, dict)  # noqa: S101 - schema above

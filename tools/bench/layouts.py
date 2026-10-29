@@ -20,7 +20,8 @@ in one part, so no near-copy of a test picture is ever trained on.
   are one sequence, and so are recordings that move between sites: ``people_0042``
   starts at the civil-defence exercise and goes on over the campus, so the campus and
   the exercise are one sequence. Every KIOS picture shows people, so a picture without
-  its YOLO file, or of a recording with no site, refuses the whole set.
+  its YOLO file, of a recording with no site, or with a name of another form refuses
+  the whole set.
 * ``simfarm``: the sim farm's rounds (``<round>/images/<stem>.png`` with
   ``<round>/labels/<stem>.txt``, YOLO class 0). The id is ``<round>/<stem>``, the
   sequence the round. Only for pre-training, never measured on.
@@ -192,8 +193,11 @@ def _kios(names: list[str]) -> list[Member]:
         p = PurePosixPath(name)
         if len(p.parts) != 3 or p.parts[0] != "Images" or p.parts[1] not in _KIOS_PARTS:
             continue
-        if p.suffix.lower() != ".jpg" or not _KIOS_STEM.fullmatch(p.stem):
+        if p.suffix.lower() != ".jpg":
             continue
+        if not _KIOS_STEM.fullmatch(p.stem):
+            # a picture named in a way not seen before could be a new recording
+            raise BenchError(f"kios: {name} har ett okänt namn")
         label = f"Annotations/Yolo/{p.parts[1]}/{p.stem}.txt"
         try:
             seq = sequence_of("kios_yolo", p.stem)
