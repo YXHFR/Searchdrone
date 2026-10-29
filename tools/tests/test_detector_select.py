@@ -67,6 +67,28 @@ def test_still_level_the_faster_one_wins() -> None:
     assert chosen["model"] == "b"
 
 
+def _mixed(model: str, pooled: float, heridal: float, kios: float) -> dict[str, Any]:
+    def row(recall: float, n: int) -> dict[str, Any]:
+        cls = {"recall": recall, "n": n}
+        return {"recall": recall, "n": n, "by_class": {"lt16": cls, "16to32": cls, "gt32": cls}}
+
+    body = _body(model, pooled, pooled, 10, source="splits/v2 val (heridal, kios)")
+    body["recall_by_dataset"] = {"heridal": row(heridal, 300), "kios": row(kios, 12000)}
+    return body
+
+
+def test_a_big_dataset_never_hides_a_drop_on_a_small_one() -> None:
+    # pooled recall is almost all KIOS; "b" pools higher but loses HERIDAL
+    a = _mixed("a", pooled=0.80, heridal=0.78, kios=0.80)
+    b = _mixed("b", pooled=0.88, heridal=0.40, kios=0.90)
+    assert pd.pick([a, b])["model"] == "a"
+
+
+def test_the_weakest_dataset_gives_the_recall() -> None:
+    assert pd._recall(_mixed("a", 0.8, heridal=0.6, kios=0.9), "gt32") == 0.6
+    assert pd._recall(_body("old", 0.7, 0.5, 10), "gt32") == 0.7  # no per-set rows
+
+
 def test_nothing_to_pick_from_is_an_error() -> None:
     with pytest.raises(BenchError):
         pd.pick([])

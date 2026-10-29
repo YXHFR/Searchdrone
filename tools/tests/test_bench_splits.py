@@ -1,23 +1,28 @@
-"""The locked split (tools/bench/splits/v1.json) and the mini bank."""
+"""The locked splits (tools/bench/splits/v1.json, v2.json) and the mini bank."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from bench.common import BenchError
 from bench.layouts import LAYOUTS, sequence_of
 from bench.splits import (
+    CURRENT,
     PARTS,
     RATIOS,
     SPLITS,
     Split,
+    extend_split_file,
     ids_digest,
     load_mini,
     load_split,
     make_split,
 )
+
+VERSIONS = ("v1", "v2")
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -26,13 +31,15 @@ def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return dict(pairs)
 
 
-def test_split_no_leakage() -> None:
+@pytest.mark.parametrize("version", VERSIONS)
+def test_split_no_leakage(version: str) -> None:
     """A picture's part is its sequence's part, and each sequence is listed once with one
     part: so no sequence has pictures in both train and test."""
     body = json.loads(
-        (SPLITS / "v1.json").read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys
+        (SPLITS / f"{version}.json").read_text(encoding="utf-8"),
+        object_pairs_hook=_no_duplicate_keys,
     )
-    split = load_split("v1")
+    split = load_split(version)
     for ds, entry in body["datasets"].items():
         train = {s for s, r in entry["sequences"].items() if r["part"] == "train"}
         test = {s for s, r in entry["sequences"].items() if r["part"] == "test"}
@@ -75,9 +82,10 @@ def test_split_check_refuses_other_pictures() -> None:
         split.check("d", [("a", "s"), ("c", "s")])
 
 
-def test_split_covers_every_part_near_its_share() -> None:
-    split = load_split("v1")
-    for ds in ("heridal", "wisard"):
+@pytest.mark.parametrize("version", VERSIONS)
+def test_split_covers_every_part_near_its_share(version: str) -> None:
+    split = load_split(version)
+    for ds in {d for d, _ in split.sequences}:
         n = dict.fromkeys(PARTS, 0)
         for (d, _), part in split.sequences.items():
             if d == ds:
@@ -88,11 +96,12 @@ def test_split_covers_every_part_near_its_share() -> None:
             assert abs(n[part] / total - RATIOS[part]) < 0.15, (ds, part, n)
 
 
-def test_split_is_reproducible_from_its_sizes() -> None:
-    body = json.loads((SPLITS / "v1.json").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("version", VERSIONS)
+def test_split_is_reproducible_from_its_sizes(version: str) -> None:
+    body = json.loads((SPLITS / f"{version}.json").read_text(encoding="utf-8"))
     for ds, entry in body["datasets"].items():
         sizes = {s: [f"{s}/{i}" for i in range(r["images"])] for s, r in entry["sequences"].items()}
-        again = make_split(sizes, f"{body['seed']}/{ds}")
+        again = make_split(sizes, entry.get("seed", f"{body['seed']}/{ds}"))
         assert again == {s: r["part"] for s, r in entry["sequences"].items()}
 
 
@@ -128,3 +137,84 @@ def test_pick_mini_spreads_by_sequence_size() -> None:
     assert counts == {"A": 6, "B": 3, "C": 0}  # 5.93, 2.97, 0.10 by largest remainder
     assert pick_mini(ids, 9) == picked  # the same every time
     assert pick_mini(ids, 500) == sorted(i for v in ids.values() for i in v)
+
+
+# --- v2: v1 as it was, plus KIOS by site -------------------------------------------------
+
+
+def test_v2_keeps_every_v1_dataset_as_it_was() -> None:
+    """HERIDAL's test part (and WiSARD's) is locked: numbers measured on v1 stay
+    comparable."""
+    v1 = json.loads((SPLITS / "v1.json").read_text(encoding="utf-8"))
+    v2 = json.loads((SPLITS / "v2.json").read_text(encoding="utf-8"))
+    assert v2["base"] == "v1"
+    for ds, entry in v1["datasets"].items():
+        kept = {k: v for k, v in v2["datasets"][ds].items() if k != "seed"}
+        assert kept == entry, ds
+        assert v2["datasets"][ds]["seed"] == f"{v1['seed']}/{ds}"
+    old, new = load_split("v1"), load_split("v2")
+    for key, part in old.sequences.items():
+        assert new.sequences[key] == part
+
+
+def test_the_current_split_is_v2_with_kios_by_site() -> None:
+    from bench.layouts import KIOS_SITES
+
+    assert CURRENT == "v2"
+    split = load_split()
+    sites = {seq: part for (ds, seq), part in split.sequences.items() if ds == "kios"}
+    assert set(sites) == set(KIOS_SITES.values())  # a site is a sequence: never cut
+    assert set(sites.values()) == set(PARTS)
+    assert sum(split.counts[("kios", s)] for s in sites) == 3136  # the record's 3,136 pictures
+
+
+def test_extend_never_redraws_a_locked_dataset() -> None:
+    base = json.loads((SPLITS / "v1.json").read_text(encoding="utf-8"))
+    with pytest.raises(BenchError, match="låst"):
+        extend_split_file("v9", "v9", base, {"heridal": {"TRS": ["test_TRS_0001"]}})
+
+
+def test_extend_draws_only_the_new_dataset() -> None:
+    base = {
+        "schema": "bench.split/v1",
+        "version": "v1",
+        "seed": "v1",
+        "datasets": {"a": {"sequences": {"s": {"part": "test", "images": 1, "ids_sha256": "x"}}}},
+    }
+    sites = {f"site{i}": [f"site{i}/{j}" for j in range(10 * (i + 1))] for i in range(6)}
+    body = extend_split_file("v2", "v2", base, {"b": sites})
+    assert body["datasets"]["a"] == {"seed": "v1/a", **base["datasets"]["a"]}  # type: ignore[index]
+    drawn = body["datasets"]["b"]  # type: ignore[index]
+    assert drawn["seed"] == "v2/b"
+    assert {s: r["part"] for s, r in drawn["sequences"].items()} == make_split(sites, "v2/b")
+    for s, r in drawn["sequences"].items():
+        assert r["images"] == len(sites[s]) and r["ids_sha256"] == ids_digest(sites[s])
+
+
+def test_extend_from_the_command_line_needs_the_labels_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``make_splits extend`` reads the pictures' and the labels' archive listings; with
+    the pictures alone every KIOS picture lacks its labels and nothing is written."""
+    from bench import make_splits
+
+    pictures = ["Images/Train/1_people_0007_0.jpg", "Images/Test/2_ppl_4_00001.jpg"]
+    labels = [
+        f"Annotations/Yolo/{p.split('/')[1]}/{p.split('/')[2].removesuffix('.jpg')}.txt"
+        for p in pictures
+    ]
+    (tmp_path / "kios.txt").write_text("\n".join(pictures) + "\n", encoding="utf-8")
+    (tmp_path / "labels.txt").write_text("\n".join(labels) + "\n", encoding="utf-8")
+    out = tmp_path / "splits"
+    out.mkdir()
+    (out / "v1.json").write_text((SPLITS / "v1.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(make_splits, "SPLITS", out)
+    base = ["extend", "version=v9", "base=v1", f"kios={tmp_path / 'kios.txt'}"]
+    assert make_splits.main(base) != 0
+    assert not (out / "v9.json").exists()
+    assert make_splits.main([*base, f"kios_labels={tmp_path / 'labels.txt'}"]) == 0
+    body = json.loads((out / "v9.json").read_text(encoding="utf-8"))
+    assert body["base"] == "v1" and body["datasets"]["heridal"] == json.loads(
+        (SPLITS / "v1.json").read_text(encoding="utf-8")
+    )["datasets"]["heridal"] | {"seed": "v1/heridal"}
+    assert set(body["datasets"]["kios"]["sequences"]) == {"campus_exercise", "meadow"}

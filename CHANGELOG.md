@@ -8,6 +8,21 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- The image bank's second open dataset: KIOS Small Object Aerial Person Detection
+  (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
+  fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures
+  and labels) and split by site in the new locked split `tools/bench/splits/v2.json`.
+  v2 keeps HERIDAL's and WiSARD's parts from v1 unchanged, so HERIDAL numbers stay
+  comparable. `just train-detector` mixes every fetched set that may be trained on,
+  prints the val AP50 per dataset and keeps the epoch whose weakest dataset is best;
+  `init=<best.pt>` starts from an earlier run's weights, and the manifest credits every
+  set those weights saw. `just bench-detector` prints the recall per dataset and size,
+  each at that dataset's own false-alarm threshold, and `just pick-detector` ranks each
+  model by its weakest dataset's recall, so KIOS's many people cannot hide a model
+  getting worse on HERIDAL. A detector profile for the simulator is made only from a
+  result measured on one dataset. `just data-dir` prints the
+  data folder. JKU's Airborne Optical Sectioning data is not added:
+  it has no person boxes for single colour pictures (`tools/bench/README.md`).
 - `detector=model` for `just sim-headless`, `just demo`, `just demo-search` and `just
   e2e-search`: the simulator runs the owner's trained person detector
   (`SD_DETECTOR_MODEL` or `model=<manifest .json>`) instead of the stand-in, and passes it

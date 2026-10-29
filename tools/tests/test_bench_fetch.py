@@ -479,3 +479,122 @@ def test_the_sim_farm_is_indexed_in_place(tmp_path: Path, monkeypatch: pytest.Mo
     index.write_text(json.dumps(body), encoding="utf-8")
     with pytest.raises(BenchError, match="utanför repot"):
         datasets.image_root(data, "simfarm")
+
+
+# --- a set published as pictures and labels apart (KIOS) -------------------------------
+
+
+def _kios_zips(extra_labels: dict[str, bytes] | None = None) -> tuple[bytes, bytes]:
+    pictures, labels = io.BytesIO(), io.BytesIO()
+    with zipfile.ZipFile(pictures, "w") as zf:
+        zf.writestr("Images/Train/1_people_0007_0.jpg", _jpeg(100, 50))
+        zf.writestr("Images/Test/2_ppl_4_00001.jpg", _jpeg(100, 50))
+    with zipfile.ZipFile(labels, "w") as zf:
+        zf.writestr("Annotations/Yolo/Train/1_people_0007_0.txt", b"0 0.5 0.5 0.1 0.2\n")
+        zf.writestr("Annotations/Yolo/Test/2_ppl_4_00001.txt", b"")
+        zf.writestr("Annotations/VOC/Train/1_people_0007_0.xml", b"<annotation/>")
+        zf.writestr("Annotations/COCO/Train/Train.json", b"{}")
+        for name, body in (extra_labels or {}).items():
+            zf.writestr(name, body)
+    return pictures.getvalue(), labels.getvalue()
+
+
+class TwoFiles:
+    """Serves each archive at its own address."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.servers = {url: FakeServer(body) for url, body in files.items()}
+
+    def __call__(self, req: urllib.request.Request) -> FakeResponse:
+        return self.servers[req.full_url](req)
+
+
+def _kios_row(pictures: bytes, labels: bytes) -> Any:
+    return dataclasses.replace(
+        load_register()["kios"],
+        url="https://example.test/Images.zip",
+        size_bytes=len(pictures),
+        sha256=_sha(pictures),
+        labels_url="https://example.test/Annotations.zip",
+        labels_size_bytes=len(labels),
+        labels_sha256=_sha(labels),
+    )
+
+
+@pytest.fixture
+def kios_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    seqs = {("kios", "campus_exercise"): ["1_people_0007_0"], ("kios", "meadow"): ["2_ppl_4_00001"]}
+    split = Split(
+        "v2",
+        {("kios", "campus_exercise"): "train", ("kios", "meadow"): "test"},
+        {k: len(v) for k, v in seqs.items()},
+        {k: ids_digest(v) for k, v in seqs.items()},
+    )
+    monkeypatch.setattr(fetch, "load_split", lambda: split)
+
+
+@pytest.mark.usefixtures("kios_split")
+def test_fetch_takes_pictures_and_labels_from_their_two_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pictures, labels = _kios_zips()
+    ds = _kios_row(pictures, labels)
+    server = TwoFiles({ds.url: pictures, ds.labels_url: labels})
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))
+    assert fetch.fetch_archive(ds, tmp_path, keep=False) == 0
+    images = {i.image_id: i for i in read_index(tmp_path, "kios")}
+    assert set(images) == {"kios:1_people_0007_0", "kios:2_ppl_4_00001"}
+    one = images["kios:1_people_0007_0"]
+    assert (one.seq, one.width, one.height) == ("campus_exercise", 100, 50)
+    assert one.boxes == ((45.0, 20.0, 55.0, 30.0),)
+    assert images["kios:2_ppl_4_00001"].boxes == ()
+    raw = tmp_path / "datasets" / "kios" / "raw"
+    assert not (raw / "Annotations" / "VOC").exists()
+    assert not (raw / "Annotations" / "COCO").exists()
+    assert not list((tmp_path / "datasets" / "kios").glob("*.zip"))
+    # a second run finds it done and downloads nothing
+    monkeypatch.setattr(fetch, "download", lambda *a, **k: pytest.fail("downloaded twice"))
+    assert fetch.fetch_archive(ds, tmp_path, keep=False) == 0
+
+
+@pytest.mark.usefixtures("kios_split")
+def test_a_wrong_labels_archive_unpacks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pictures, labels = _kios_zips()
+    ds = dataclasses.replace(_kios_row(pictures, labels), labels_sha256="2" * 64)
+    server = TwoFiles({ds.url: pictures, ds.labels_url: labels})
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))
+    with pytest.raises(BenchError, match="Kontrollsumman"):
+        fetch.fetch_archive(ds, tmp_path, keep=False)
+    assert not (tmp_path / "datasets" / "kios" / "raw").exists()
+
+
+@pytest.mark.usefixtures("kios_split")
+@pytest.mark.parametrize(
+    # the same file, and the same file spelt another way: each lands on one path (the
+    # last only on a case-insensitive disk, which a data folder under /mnt/c is)
+    "name",
+    [
+        "Images/Train/1_people_0007_0.jpg",
+        "./Images/Train/1_people_0007_0.jpg",
+        "images/train/1_people_0007_0.JPG",
+    ],
+)
+def test_a_member_in_both_archives_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    pictures, labels = _kios_zips({name: _jpeg(100, 50)})
+    ds = _kios_row(pictures, labels)
+    server = TwoFiles({ds.url: pictures, ds.labels_url: labels})
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))
+    with pytest.raises(BenchError, match="två arkiv"):
+        fetch.fetch_archive(ds, tmp_path, keep=False)
+
+
+def test_a_set_is_pinned_only_with_its_labels_archive() -> None:
+    pictures, labels = _kios_zips()
+    ds = _kios_row(pictures, labels)
+    assert fetch.pinned(ds)
+    assert not fetch.pinned(dataclasses.replace(ds, labels_sha256="PENDING"))
+    assert not fetch.pinned(dataclasses.replace(ds, sha256="PENDING"))

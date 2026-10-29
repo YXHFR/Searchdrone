@@ -49,10 +49,18 @@ class Dataset:
     # True only when the licence is known to cover the pictures; a set is never trained
     # on without it (a row that leaves it out is not confirmed)
     licence_confirmed: bool = False
+    # a second archive with the labels, for a set published as pictures and labels apart
+    labels_url: str | None = None
+    labels_size_bytes: int | None = None
+    labels_sha256: str | None = None
 
     @property
     def archive_name(self) -> str:
         return f"{self.name}.zip"
+
+    @property
+    def labels_archive_name(self) -> str:
+        return f"{self.name}-labels.zip"
 
 
 def licence_problems(ds: Dataset) -> list[str]:
@@ -74,6 +82,10 @@ def licence_problems(ds: Dataset) -> list[str]:
         problems.append(f"{ds.name}: neither url nor local_path")
     if ds.url is not None and not ds.url.startswith("https://"):
         problems.append(f"{ds.name}: url must be https")
+    if ds.labels_url is not None and (
+        ds.url is None or not ds.labels_url.startswith("https://") or not ds.labels_size_bytes
+    ):
+        problems.append(f"{ds.name}: labels_url must be https, with url and labels_size_bytes")
     return problems
 
 
@@ -98,6 +110,9 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             source_page=row.get("source_page"),
             checked=row.get("checked"),
             licence_confirmed=bool(row.get("licence_confirmed", False)),
+            labels_url=row.get("labels_url"),
+            labels_size_bytes=row.get("labels_size_bytes"),
+            labels_sha256=row.get("labels_sha256"),
         )
     except (KeyError, TypeError) as exc:
         raise BenchError(f"datasets.toml: felaktig rad ({exc})", 2) from exc

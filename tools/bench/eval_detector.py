@@ -43,7 +43,7 @@ from bench.common import (
 )
 from bench.datasets import Image, image_root, index_path, load_register, read_index
 from bench.metrics import FP_PER_12MP, PictureResult, Summary, match_picture, summarise
-from bench.splits import MINI_VERSION, load_mini, load_split
+from bench.splits import CURRENT, MINI_VERSION, load_mini, load_split
 
 from sd_detect.api import BBox, Detection, Detector, Frame
 from sd_detect.fake import NullDetector
@@ -106,7 +106,7 @@ def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
         part = args.get("part", "test")
         if part not in ("test", "val"):
             raise BenchError("part ska vara test eller val", 2)
-        split = load_split("v1")
+        split = load_split(CURRENT)
         register = load_register()
         measured = [n for n, ds in register.items() if "measure" in ds.use]
         if args.get("sets"):
@@ -124,7 +124,7 @@ def pictures(args: dict[str, str], data: Path) -> tuple[str, list[Picture]]:
             index = read_index(data, name)
             split.check(name, [(i.local_id, i.seq) for i in index])
             images += [i for i in index if split.part_of(name, i.seq) == part]
-        source = f"splits/v1 {part} ({', '.join(names)})"
+        source = f"splits/{split.version} {part} ({', '.join(names)})"
         if args.get("limit"):
             source += f" limit={int(args['limit'])}"  # never compared with a full run
         out = [Picture(i, inside(roots[i.dataset], safe_relpath(i.file))) for i in images]
@@ -264,6 +264,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"recall < 16 px {rec['lt16']['recall']}, 16-32 px {rec['16to32']['recall']}, "
             f"> 32 px {rec['gt32']['recall']}; AP50 {body['ap50']}; skrivet till {out}"
         )
+        by_set = body["recall_by_dataset"]
+        assert isinstance(by_set, dict)  # noqa: S101 - built just above
+        for name, row in by_set.items():
+            cls = row["by_class"]
+            say(
+                f"  {name}: recall {row['recall']} över {row['n']} personer "
+                f"(16-32 px {cls['16to32']['recall']}, > 32 px {cls['gt32']['recall']}; "
+                f"egen tröskel {row['threshold']}, {row['fp_per_12mp']} falsklarm per 12 MP)"
+            )
         if args.get("compare"):
             why = compare(body, Path(args["compare"]))
             if why:

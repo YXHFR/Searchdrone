@@ -28,16 +28,18 @@ one class: person.
 
 ## Training
 
-- **Data.** The `train` part of the image bank's locked split (`tools/bench/splits/v1.json`),
+- **Data.** The `train` part of the image bank's locked split (`tools/bench/splits/v2.json`),
   from every set whose licence allows training and is confirmed (today: HERIDAL,
-  CC BY 3.0).
+  CC BY 3.0, and KIOS, CC BY 4.0), mixed. The split is by site: no site has pictures in
+  two parts.
   - Each picture is cut into 640 px tiles with 15 % overlap.
   - A person is kept in a tile when at least half of their box is in it.
   - Every tile with a person is kept, plus a quarter of the empty tiles.
   - Optional first stage: the simulator's own pictures (`simfarm=1`), for pre-training
     only.
 - **Start.** The authors' COCO weights. The one-class head starts from COCO's person
-  channel.
+  channel. Or (`init=`) an earlier run's best weights, for example the HERIDAL-only
+  model; the manifest then credits every set those weights were trained on too.
 - **Recipe.**
   - Optimiser: SGD with momentum 0.9 (Nesterov) and weight decay 5e-4.
   - Learning rate: 0.01 per 64 tiles, with a warm-up (a tenth of the run, at most three epochs) and a cosine decay.
@@ -45,13 +47,24 @@ one class: person.
   - Flips, 90° turns and brightness changes (seen from above, every way up is a way a
     person lies).
   - Defaults: 20 epochs, batch 8, which fits in 8 GB.
-- **Kept epoch.** The highest AP50 on the `val` tiles.
+- **Kept epoch.** The one whose lowest dataset AP50 on the `val` tiles is highest, so a
+  gain on KIOS never makes up for a loss on HERIDAL (each set's AP50 is printed and kept
+  in the manifest).
 
 ## Choosing one (`just pick-detector`)
 
 All candidates are measured with `just bench-detector ... part=val` on whole pictures,
-the same way the drone sees them. The threshold is set so that false alarms stay at
-0.5 per 12 MP picture. Then, in order:
+the same way the drone sees them. Each dataset is measured on its own: its threshold is
+set from its own false alarms so that they stay at 0.5 per 12 MP picture, and its
+recall is taken at that threshold. These are the same numbers a run on that dataset
+alone (`sets=heridal`) gives, and `just bench-detector` prints each dataset's threshold
+and false-alarm rate next to its recall. A model's recall is its **lowest** dataset's
+recall, never the recall pooled over all people: KIOS's val site has far more people
+than HERIDAL's val part, so a pooled number would be almost all KIOS and could hide a
+model getting worse on HERIDAL's wilderness. Each dataset's val part is a single site
+(HERIDAL's GOR, KIOS's Pegia coast), and the smaller it is the noisier its recall, so
+read the Wilson intervals in the result file before trusting a close call. Then, in
+order:
 
 1. The highest recall on people over 32 px wins.
 2. Every model within 2 percentage points of that recall is as good on it. Among those,
@@ -59,13 +72,19 @@ the same way the drone sees them. The threshold is set so that false alarms stay
 3. Among the models still level, the fastest (median time per picture) wins.
 
 The choice is made on the `val` part only. The `test` part is measured once, on the
-chosen model, and that is the number reported. The targets, to be revisited after the
-first measurement, are recall ≥ 0.85 over 32 px and ≥ 0.60 at 16–32 px.
+chosen model, and the numbers reported are **per dataset**, measured the same way as
+on val (the per-dataset lines of one run, or `sets=heridal` and `sets=kios` runs, which
+give the same numbers), HERIDAL first; a pooled test number is not reported. The
+targets, to be revisited after the first measurement, are recall ≥ 0.85 over 32 px and
+≥ 0.60 at 16–32 px, and each dataset must meet them on its own.
 
 ## Known limits
 
-- **Few places and seasons.** HERIDAL is Croatian hillsides in summer, so other ground
-  (snow, dense forest, water) is not covered. WiSARD (Washington wilderness) is
+- **Few places and seasons.** HERIDAL is Croatian hillsides in summer; KIOS adds five
+  Cypriot sites (campus and an exercise ground, coast, shore, yard, meadow), mostly
+  open ground. Snow and dense forest are not covered: the one open dense-forest set we
+  know (JKU's Airborne Optical Sectioning data) has person boxes only for thermal and
+  for combined (integral) pictures, not for single colour pictures. WiSARD (Washington wilderness) is
   measured on only once its archive's checksum is pinned, and trained on only once its
   data licence is confirmed.
 - **Small people are hard.** People under 16 px are reported but not targeted. Expect
@@ -82,6 +101,7 @@ first measurement, are recall ≥ 0.85 over 32 px and ≥ 0.60 at 16–32 px.
 | YOLOX code and weights | Apache-2.0 | Ge, Liu, Wang, Li and Sun, "YOLOX: Exceeding YOLO Series in 2021", Megvii |
 | DAMO-YOLO code and weights | Apache-2.0 | Xu, Jiang, Chen, Huang, Zhang and Sun, "DAMO-YOLO: A Report on Real-Time Object Detection Design", Alibaba Group |
 | HERIDAL | CC BY 3.0 | Božić-Štulić, Marušić and Gotovac, IJCV 2019, University of Split (FESB) |
+| KIOS Small Object Aerial Person Detection | CC BY 4.0 | Makrigiorgis, Kyrkou and Kolios, KIOS CoE, University of Cyprus, Zenodo record 7740081 (2023) |
 | WiSARD (measuring only) | MIT for the software; the data licence is not confirmed | Broyles, Hayner and Leung, IROS 2022, University of Washington |
 | COCO, which the starting weights were trained on | CC BY 4.0 (annotations) | Lin et al., "Microsoft COCO", ECCV 2014 |
 

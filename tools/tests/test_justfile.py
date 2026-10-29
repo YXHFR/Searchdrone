@@ -78,6 +78,7 @@ RECIPES = [
     "rl-eval",
     "rl-maps",
     "lpb-calibrate",
+    "data-dir",
 ]
 ALIASES = ["gen-schemas", "sim-up", "sim-down", "bench"]
 

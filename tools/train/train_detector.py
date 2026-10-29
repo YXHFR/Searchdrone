@@ -2,25 +2,31 @@
 
     just train-detector model=yolox_s          # or model=damoyolo_s
     just train-detector model=yolox_s simfarm=1   # first a few epochs on the sim farm
+    just train-detector model=yolox_s init=<old>/best.pt out=<new folder>   # go on from
+                                                  # earlier weights, in a new folder
 
 Keys: ``model`` (yolox_s, damoyolo_s), ``epochs`` (default 20), ``batch`` (default 8,
-fits an 8 GB graphics card), ``sets`` (default heridal,wisard: the fetched ones that
-may be trained on), ``simfarm`` (1: pre-train on the synthetic pictures first,
-``simfarm_epochs`` of them, default 3), ``device`` (auto, cuda, cpu), ``data``, ``out``
-(default ``<data>/train/<model>``), ``limit`` (only the first pictures: for trying it
-out), ``workers`` (picture loaders, default 4), ``seed``.
+fits an 8 GB graphics card), ``sets`` (default heridal,kios,wisard: the fetched ones
+that may be trained on, mixed), ``init`` (a ``best.pt`` of the same model to start from
+instead of the COCO weights; it must lie outside ``out``), ``simfarm`` (1: pre-train on
+the synthetic pictures first, ``simfarm_epochs`` of them, default 3), ``device`` (auto,
+cuda, cpu), ``data``, ``out`` (default ``<data>/train/<model>``), ``limit`` (only the
+first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``seed``.
 
 Stops and goes on: the state is saved to ``last.pt`` every few minutes and after every
 epoch. Run the same command again and it carries on from there (a different command,
 say another ``batch``, starts afresh in a new folder with ``fresh=1``). The best epoch
 on the val part goes to ``best.pt``; ``just export-detector`` makes the ONNX file from it.
+The val AP50 is printed per dataset; the best epoch is the one whose lowest dataset AP50
+is highest, so a gain on the set with the most people never hides a loss on another.
 
-Never trained on: the test part (locked in ``tools/bench/splits/v1.json``) and every
-set whose licence allows measuring only. The weights stay on this computer.
+Never trained on: the test part (locked in ``tools/bench/splits/``) and every set whose
+licence allows measuring only. The weights stay on this computer.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
@@ -41,7 +47,7 @@ from torch.utils.data import DataLoader, Dataset
 
 KEYS = (
     "model", "epochs", "batch", "sets", "simfarm", "simfarm_epochs", "device", "data",
-    "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile",
+    "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile", "init",
 )  # fmt: skip
 SAVE_MINUTES = 10.0
 
@@ -51,15 +57,19 @@ class Settings:
     model: str
     epochs: int = 20
     batch: int = 8
-    sets: tuple[str, ...] = ("heridal", "wisard")
+    sets: tuple[str, ...] = ("heridal", "kios", "wisard")
     simfarm_epochs: int = 0
     lr: float = 0.01  # per 64 pictures, as YOLOX
     seed: int = 0
     limit: int = 0
     tile: int = TILE_PX
+    init: str = ""  # a best.pt to start from instead of COCO ("": COCO)
 
     def key(self) -> dict[str, Any]:
-        return json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
+        body = json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
+        if not self.init:
+            del body["init"]  # a run started before init= existed carries on
+        return body
 
 
 class TileSet(Dataset[tuple[np.ndarray, np.ndarray]]):
@@ -125,8 +135,13 @@ def lr_at(step: int, total: int, warmup: int, base: float) -> float:
 
 
 def evaluate_val(
-    net: torch.nn.Module, model: str, loader: DataLoader[Any], device: torch.device
-) -> float:
+    net: torch.nn.Module,
+    model: str,
+    loader: DataLoader[Any],
+    device: torch.device,
+    datasets: Sequence[str],
+) -> dict[str, float]:
+    """AP50 per dataset (``datasets``: each val tile's, in the loader's order)."""
     net.eval()
     results = []
     with torch.no_grad():
@@ -138,7 +153,18 @@ def evaluate_val(
             ):
                 keep = ps >= 0.01
                 results.append((pb[keep].numpy(), ps[keep].numpy(), truth.numpy()))
-    return ap50(results)
+    if len(results) != len(datasets):
+        raise BenchError("val-rutorna och deras datamängder stämmer inte överens", 1)
+    return {
+        name: ap50([r for r, d in zip(results, datasets, strict=True) if d == name])
+        for name in sorted(set(datasets))
+    }
+
+
+def val_score(per_set: dict[str, float]) -> float:
+    """The best epoch's measure: the lowest per-dataset AP50, so a gain on one set never
+    makes up for a loss on another (``pick-detector`` ranks models the same way)."""
+    return min(per_set.values()) if per_set else 0.0
 
 
 def save(path: Path, state: dict[str, Any]) -> None:
@@ -161,8 +187,13 @@ def run_stage(
     workers: int,
     save_minutes: float,
     resume: dict[str, Any] | None,
+    lineage: dict[str, Any] | None = None,
 ) -> None:
+    """``lineage``: what the weights have seen in all, ``init`` included (``trained_on``,
+    ``pretrained_on``, ``base_weights``, ``started_from``); saved in ``best.pt`` for the
+    manifest's credits."""
     fam = families.FAMILIES[settings.model]
+    lineage = lineage or {}
     folder, tiles = train_tiles
     if not tiles:
         raise BenchError("Inga träningsrutor. Är bilderna hämtade? Kör: just bench-fetch yes=1", 2)
@@ -259,9 +290,12 @@ def run_stage(
                 save(out / "last.pt", snapshot(epoch, step_in_epoch))
                 last_save = time.monotonic()
         epoch, step_in_epoch = epoch + 1, 0
-        score = None
+        score, per_set = None, {}
         if val_loader is not None:
-            score = evaluate_val(ema.net, settings.model, val_loader, device)
+            assert val_tiles is not None  # noqa: S101 - val_loader is made from it
+            sets = [t.source.split(":", 1)[0] for t in val_tiles[1]]
+            per_set = evaluate_val(ema.net, settings.model, val_loader, device, sets)
+            score = val_score(per_set)
             if score > best:
                 best = score
                 save(
@@ -271,14 +305,17 @@ def run_stage(
                         "settings": settings.key(),
                         "ema": ema.net.state_dict(),
                         "val_ap50": score,
+                        "val_ap50_by_dataset": per_set,
                         "epoch": epoch,
                         "stage": stage,
+                        **lineage,
                     },
                 )
         mean = np.mean(losses) if losses else float("nan")
         say(
             f"{stage} epok {epoch}/{epochs} klar: förlust {mean:.3f}"
             + (f", val AP50 {score:.3f} (bäst {best:.3f})" if score is not None else "")
+            + "".join(f"; {name} {ap:.3f}" for name, ap in per_set.items())
         )
         save(out / "last.pt", snapshot(epoch, 0))
         last_save = time.monotonic()
@@ -292,6 +329,7 @@ def run_stage(
                 "val_ap50": None,
                 "epoch": epoch,
                 "stage": stage,
+                **lineage,
             },
         )
 
@@ -310,16 +348,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=model,
             epochs=int(args.get("epochs", "20")),
             batch=int(args.get("batch", "8")),
-            sets=tuple(s for s in args.get("sets", "heridal,wisard").split(",") if s),
+            sets=tuple(s for s in args.get("sets", "heridal,kios,wisard").split(",") if s),
             simfarm_epochs=int(args.get("simfarm_epochs", "3")) if simfarm else 0,
             lr=float(args.get("lr", "0.01")),
             seed=int(args.get("seed", "0")),
             limit=int(args.get("limit", "0")),
             tile=int(args.get("tile", str(TILE_PX))),
+            init=str(Path(args["init"]).expanduser().resolve()) if args.get("init") else "",
         )
         if settings.tile % 32 or not 64 <= settings.tile <= 1280:
             raise BenchError("tile= ska vara delbart med 32 och mellan 64 och 1280", 2)
         out = Path(args.get("out") or data / "train" / model).expanduser().resolve()
+        if settings.init and Path(settings.init).is_relative_to(out):
+            raise BenchError(
+                f"init= ligger i out-mappen ({out}) och skulle skrivas över. Ange en annan "
+                f"out=, till exempel out={data / 'train' / (model + '_mix')}",
+                2,
+            )
         out.mkdir(parents=True, exist_ok=True)
         device = pick_device(args.get("device", "auto"))
         say(f"Tränar på {'grafikkortet (cuda)' if device.type == 'cuda' else 'processorn (cpu)'}.")
@@ -349,6 +394,44 @@ def _available(data: Path, sets: Sequence[str]) -> list[str]:
         if s not in have:
             warn(f"{s} är inte hämtad och tränas inte på (just bench-fetch yes=1 sets={s}).")
     return have
+
+
+def trained_sets(sets: Sequence[str]) -> list[str]:
+    """The sets of ``sets`` that are really trained on: measure-only ones are left out,
+    as ``tiles.pictures`` leaves them out, so they are never credited as seen. A set no
+    longer in the register stays, so the export refuses it rather than drop its credit."""
+    from bench.datasets import load_register
+
+    register = load_register()
+    return [s for s in sets if s not in register or "train" in register[s].use]
+
+
+def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
+    """Start from an earlier run's best weights (its EMA) instead of COCO's. Returns what
+    those weights have seen (``trained_on``, ``pretrained_on``), so their credit stays,
+    and ``started_from``: the file's name, SHA-256 and epoch (never its path or folder)."""
+    if not path.is_file():
+        raise BenchError(f"init={path} finns inte.", 2)
+    ck: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
+    if ck.get("model") != model or "ema" not in ck:
+        raise BenchError(f"init={path} är inte en best.pt för {model}.", 2)
+    net.load_state_dict(ck["ema"])
+    earlier = ck.get("settings", {})
+    seen: dict[str, Any] = {
+        "trained_on": list(ck.get("trained_on", trained_sets(earlier.get("sets", [])))),
+        "pretrained_on": list(
+            ck.get("pretrained_on", ["simfarm"] if earlier.get("simfarm_epochs") else [])
+        ),
+        "started_from": {
+            "file": path.name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "epoch": ck.get("epoch"),
+            "base_weights": ck.get("base_weights", f"COCO {model} (Apache-2.0)"),
+        },
+    }
+    trained = ", ".join(seen["trained_on"])
+    say(f"{model}: startar från {path} (tränad på {trained or 'okänt'}, epok {ck.get('epoch')})")
+    return seen
 
 
 def train(
@@ -386,6 +469,23 @@ def train(
     net = families.build(settings.model)
     person = families.load_coco(net, settings.model, weights)
     say(f"{settings.model}: COCO-vikter inlästa, personklassen startar från {len(person)} lager")
+    seen: dict[str, Any] = {"trained_on": [], "pretrained_on": []}
+    if settings.init:
+        seen = load_init(net, settings.model, Path(settings.init))
+    lineage: dict[str, Any] = {
+        "trained_on": sorted({*seen["trained_on"], *trained_sets(settings.sets)}),
+        "pretrained_on": sorted(
+            {*seen["pretrained_on"], *(["simfarm"] if settings.simfarm_epochs else [])}
+        ),
+        "base_weights": f"COCO {settings.model} (Apache-2.0)",
+    }
+    if "started_from" in seen:
+        start = seen["started_from"]
+        lineage["started_from"] = start
+        lineage["base_weights"] = (
+            f"{start['file']} (sha256 {start['sha256'][:12]}, epoch {start['epoch']}), "
+            f"itself from {start['base_weights']}"
+        )
     ema = Ema(net)
     if resume is not None:
         net.load_state_dict(resume["net"])
@@ -438,6 +538,7 @@ def train(
             workers=workers,
             save_minutes=save_minutes,
             resume=stage_resume,
+            lineage=lineage,
         )
         resume = None
     say(

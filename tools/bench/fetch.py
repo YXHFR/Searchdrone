@@ -19,6 +19,7 @@ lands in ``<data_dir>/datasets-mini/``. The nightly CI run uses it and keeps not
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import re
@@ -26,7 +27,7 @@ import shutil
 import sys
 import zipfile
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from bench.common import (
     ROOT,
@@ -134,9 +135,27 @@ def _progress(name: str):
     return show
 
 
+def _is_sha256(value: str | None) -> bool:
+    return re.fullmatch(r"[0-9a-f]{64}", value or "") is not None
+
+
 def pinned(ds: Dataset) -> bool:
-    """Whether the archive's SHA-256 is known (only then is it ever downloaded)."""
-    return re.fullmatch(r"[0-9a-f]{64}", ds.sha256 or "") is not None
+    """Whether the archive's SHA-256 is known, and the labels archive's if it has one
+    (only then is it ever downloaded)."""
+    return _is_sha256(ds.sha256) and (ds.labels_url is None or _is_sha256(ds.labels_sha256))
+
+
+def _archives(ds: Dataset, folder: Path) -> list[tuple[str, int, str, Path]]:
+    """``(url, size, sha256, local file)`` of the set's archives: the pictures, then the
+    labels when they are published apart."""
+    assert ds.url and ds.size_bytes and ds.sha256  # noqa: S101 - checked by the caller
+    out = [(ds.url, ds.size_bytes, ds.sha256, folder / ds.archive_name)]
+    if ds.labels_url:
+        assert ds.labels_size_bytes and ds.labels_sha256  # noqa: S101 - checked by pinned()
+        out.append(
+            (ds.labels_url, ds.labels_size_bytes, ds.labels_sha256, folder / ds.labels_archive_name)
+        )
+    return out
 
 
 def fetch_archive(ds: Dataset, data: Path, keep: bool) -> int:
@@ -148,25 +167,43 @@ def fetch_archive(ds: Dataset, data: Path, keep: bool) -> int:
             2,
         )
     source = f"{ds.url}#sha256={ds.sha256}"
+    if ds.labels_url:
+        source += f"+{ds.labels_url}#sha256={ds.labels_sha256}"
     if read_source(data, ds.name) == source:
         say(f"{ds.name}: redan hämtad och indexerad.")
         return 0
     folder = dataset_dir(data, ds.name)
-    archive = folder / ds.archive_name
-    say(f"{ds.name}: hämtar {_gb(ds.size_bytes)} ({ds.licence}) till {archive}")
-    download(ds.url, archive, ds.size_bytes, ds.sha256, progress=_progress(ds.name))
+    archives = _archives(ds, folder)
+    for url, size, sha, archive in archives:
+        say(f"{ds.name}: hämtar {_gb(size)} ({ds.licence}) till {archive}")
+        download(url, archive, size, sha, progress=_progress(archive.name))
     raw = raw_dir(data, ds.name)
-    with zipfile.ZipFile(archive) as zf:
-        members, files = _wanted(ds, zf.namelist())
+    with contextlib.ExitStack() as stack:
+        zips = [stack.enter_context(zipfile.ZipFile(a[3])) for a in archives]
+        owner: dict[str, zipfile.ZipFile] = {}
+        # where each file lands: "./a" and "a" are one, and so are "a" and "A" on a
+        # case-insensitive disk (a data folder under /mnt/c)
+        written: set[str] = set()
+        for zf in zips:
+            for name in zf.namelist():
+                if not name.endswith("/"):
+                    where = PurePosixPath(name).as_posix().casefold()
+                    if where in written:
+                        raise BenchError(f"{ds.name}: {name} finns i två arkiv")
+                    written.add(where)
+                owner[name] = zf
+        members, files = _wanted(ds, list(owner))
         say(f"{ds.name}: packar upp {len(files)} filer till {raw}")
-        _extract(zf, files, raw)
+        for zf in zips:
+            _extract(zf, [f for f in files if owner[f] is zf], raw)
     images = _index_members(ds, members, raw)
     if "measure" in ds.use:  # the archive must hold exactly the pictures the split was drawn from
         load_split().check(ds.name, [(i.local_id, i.seq) for i in images])
     path = write_index(data, ds, images, source)
     say(f"{ds.name}: {len(images)} bilder, {sum(len(i.boxes) for i in images)} personer -> {path}")
     if not keep:
-        archive.unlink()
+        for *_, archive in archives:
+            archive.unlink()
     return 0
 
 
@@ -251,7 +288,7 @@ def plan(register: dict[str, Dataset], names: list[str], mini: bool) -> str:
     for name in names:
         ds = register[name]
         if ds.url:
-            what = _gb(ds.size_bytes or 0)
+            what = _gb((ds.size_bytes or 0) + (ds.labels_size_bytes or 0))
         else:
             what = f"lokala bilder i {ds.local_path}, inget hämtas"
         lines.append(f"  {name}: {what}, licens {ds.licence}")

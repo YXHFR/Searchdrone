@@ -8,9 +8,19 @@ from pathlib import Path
 
 import pytest
 from bench import eval_detector as ev
+from bench import pick_detector
 from bench.common import BenchError
 from bench.datasets import Image
-from bench.metrics import MP12, ap50, match_picture, size_class, summarise, threshold_for, wilson
+from bench.metrics import (
+    MP12,
+    PictureResult,
+    ap50,
+    match_picture,
+    size_class,
+    summarise,
+    threshold_for,
+    wilson,
+)
 from bench.profiles import START, build_profile
 from PIL import Image as PILImage
 
@@ -169,6 +179,79 @@ def test_profile_has_the_oracle_format() -> None:
     assert set(p["recall"]) == {"lt16", "16to32", "gt32"}  # type: ignore[arg-type]
     assert p["score_hit"] == {"a": 5.0, "b": 2.0}
     assert p["not_measured"] == ["occlusion_factor", "score_fp"]
+
+
+def test_profile_refuses_a_result_pooled_over_datasets() -> None:
+    """The simulator's profile must describe one kind of terrain, not mostly KIOS."""
+    row = {"recall": 0.5, "n": 10}
+    result = {
+        "schema": "bench.detector/v1",
+        "recall": dict.fromkeys(("lt16", "16to32", "gt32", "all"), row),
+        "recall_by_dataset": {"heridal": row, "kios": row},
+        "latency_ms": {"p50": 800.0, "p95": 1200.0},
+    }
+    start = json.loads(START.read_text(encoding="utf-8"))
+    with pytest.raises(BenchError, match="flera datamängder"):
+        build_profile("yolox_s", 1, result, start)
+
+
+# --- per dataset ----------------------------------------------------------------------
+
+
+def _person(dataset: str, side: float, score: float | None, fps: list[float]) -> PictureResult:
+    """A 12 MP picture with one person of ``side`` px, hit at ``score`` (None: missed)."""
+    return PictureResult(dataset, MP12, [size_class((0, 0, side, side))], [score], fps)
+
+
+def _two_sets() -> list[PictureResult]:
+    # "a": two big people (one hit at 0.9, one at 0.4), one small one at 0.5, and a false
+    # alarm at 0.8 in each of its 2 pictures. "b": four pictures with no false alarm.
+    a = [
+        _person("a", 40, 0.9, [0.8]),
+        _person("a", 40, 0.4, [0.8]),
+        _person("a", 20, 0.5, []),
+    ]
+    b = [_person("b", 40, 0.3, []), _person("b", 40, 0.2, []), _person("b", 20, None, [])]
+    b.append(PictureResult("b", MP12, [], [], []))
+    return a + b
+
+
+def test_each_dataset_is_measured_at_its_own_threshold() -> None:
+    """Pooled, the 7 pictures allow 3 false alarms and the threshold falls to 0; "a"
+    alone allows 1 of its 2, so it must keep only what scores above 0.8."""
+    s = summarise(_two_sets())
+    assert s.threshold == 0.0
+    a, b = s.recall_by_dataset["a"], s.recall_by_dataset["b"]
+    assert a["threshold"] == pytest.approx(0.8)
+    assert a["fp_per_12mp"] == 0.0
+    assert a["by_class"] == {
+        "lt16": {"n": 0, "hits": 0, "recall": 0.0, "lo": 0.0, "hi": 1.0},
+        "16to32": pytest.approx({"n": 1, "hits": 0, "recall": 0.0, "lo": 0.0, "hi": 0.7935}),
+        "gt32": pytest.approx({"n": 2, "hits": 1, "recall": 0.5, "lo": 0.0945, "hi": 0.9055}),
+    }
+    assert (a["n"], a["hits"]) == (3, 1)
+    assert b["threshold"] == 0.0
+    b_class = b["by_class"]
+    assert isinstance(b_class, dict)
+    assert (b_class["gt32"]["hits"], b_class["16to32"]["hits"]) == (2, 0)
+    # each row is what a run on that dataset alone gives
+    for name in ("a", "b"):
+        alone = summarise([r for r in _two_sets() if r.dataset == name])
+        assert s.recall_by_dataset[name]["by_class"] == {
+            c: alone.recall[c] for c in ("lt16", "16to32", "gt32")
+        }
+        assert s.recall_by_dataset[name]["threshold"] == alone.as_dict()["threshold"]
+
+
+def test_pick_ranks_on_what_summarise_writes() -> None:
+    """The picker reads the rows summarise writes: the weakest dataset, and a size class
+    with nobody in it is left out."""
+    body = summarise(_two_sets()).as_dict()
+    assert pick_detector._recall(body, "gt32") == 0.5  # "a" at its own threshold
+    assert pick_detector._recall(body, "16to32") == 0.0
+    assert pick_detector._per_set(body) == " (a 0.500/0.000, b 1.000/0.000)"
+    body["recall_by_dataset"]["b"]["by_class"]["16to32"]["n"] = 0  # type: ignore[index]
+    assert "b 1.000/-" in pick_detector._per_set(body)
 
 
 # --- the locked test part ------------------------------------------------------------

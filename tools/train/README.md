@@ -35,7 +35,8 @@ No graphics card? Put `SD_TORCH=cpu` before every `just train-detector` and
 Run these in WSL from the repository folder. The times are rough, for an RTX 3070 and a
 home internet line.
 
-1. **Download the image bank** (15–45 minutes; see `tools/bench/README.md`):
+1. **Download the image bank** (HERIDAL and KIOS, about 12 GB, 20–60 minutes; see
+   `tools/bench/README.md`):
 
    ```bash
    just bench-fetch yes=1
@@ -99,6 +100,9 @@ home internet line.
    - Models within 2 percentage points of the best count as equal. Among them, the one
      with the higher recall at 16–32 px wins.
    - If they are still within 2 points of each other, the faster one wins.
+   - Each recall is the model's lowest over the datasets in the val part, not the
+     recall pooled over all people, so a model that gets worse on HERIDAL cannot win on
+     KIOS's many people. The per-dataset numbers are printed next to each model.
 
    It prints the chosen model and the line `SD_DETECTOR_MODEL=<path to its .json>`.
 
@@ -109,9 +113,12 @@ home internet line.
    just bench-detector model=person_yolox_s
    ```
 
-   Use the name `pick-detector` chose. This is the number to report. The result is
-   written to `build/bench/det_<model>_test.json`. To make the simulator's profile from
-   it, see `tools/bench/README.md`.
+   Use the name `pick-detector` chose. The numbers to report are the per-dataset
+   lines it prints, HERIDAL first, not the pooled one. Each dataset is measured at its
+   own threshold, so `sets=heridal` and `sets=kios` runs give the same numbers. The
+   result is written to `build/bench/det_<model>_test.json`. The simulator's profile is
+   made from a result on one dataset only: run `just bench-detector
+   model=person_yolox_s sets=heridal` for it, and see `tools/bench/README.md`.
 
 9. **Use it.** The on-board computer (`sd_onboard`) loads the model when
    `SD_DETECTOR_MODEL` in its environment points at the `.json` file that
@@ -121,6 +128,36 @@ home internet line.
    detection is off. Flying goes on. When the variable is not set, no model is
    loaded. The simulator keeps its stand-in detector unless you ask for yours (next
    section).
+
+## Go on from a model you already trained
+
+The training mixes every fetched set that may be trained on (today HERIDAL and KIOS).
+If you already have a HERIDAL-only model, you can start from its weights instead of
+COCO's with `init=`. Give the new run its own folder with `out=`: `init=` may not lie in
+the folder the run writes to.
+
+```bash
+just bench-fetch yes=1 sets=kios
+just train-detector model=yolox_s init="$(just data-dir)/train/yolox_s/best.pt" out="$(just data-dir)/train/yolox_s_mix" epochs=12
+just export-detector model=yolox_s train="$(just data-dir)/train/yolox_s_mix" name=person_yolox_s_mix
+```
+
+After each epoch the val AP50 is printed per dataset (`heridal 0.61; kios 0.55`). The
+epoch kept is the one whose lowest dataset AP50 is highest, so a gain on KIOS, which has
+many more people, never makes up for a loss on HERIDAL. The manifest lists every set
+the weights were trained on, including those of the `init=` run, with their credit, and
+the `init=` file's name and SHA-256 (not its folder).
+
+Measure it on the val part next to the old model. Both must be measured on the same
+split: re-measure the old model too, because a result from before KIOS was added was
+measured on HERIDAL's val part only, and `just pick-detector` refuses to compare
+results measured on different pictures.
+
+```bash
+just bench-detector model=person_yolox_s part=val
+just bench-detector model=person_yolox_s_mix part=val
+just pick-detector
+```
 
 ## Try your trained detector in the simulator
 
@@ -174,6 +211,9 @@ Useful keys for `just train-detector`:
 |---|---|
 | `epochs=20` | Passes over the training tiles. |
 | `batch=8` | Tiles per step; 8 fits in 8 GB. |
+| `sets=heridal,kios` | Which fetched sets to train on (default: every one that may be trained on). |
+| `init=<best.pt>` | Start from an earlier run's weights instead of COCO's; use with a new `out=`. |
+| `out=<folder>` | Where the run is saved (default `<data_dir>/train/<model>`). |
 | `simfarm=1` | First pre-trains for `simfarm_epochs=3` epochs on the simulator's pictures (`just sim-farm`, then `just bench-fetch yes=1 sets=simfarm`). Those pictures are never measured on. |
 | `limit=20` | Only the first 20 pictures, to try it out quickly. |
 | `device=cpu` | Train on the processor. |
@@ -183,6 +223,10 @@ Useful keys for `just train-detector`:
 
 - **HERIDAL** (CC BY 3.0) is trained on. Weights trained on it may be published if
   HERIDAL is credited.
+- **KIOS** (CC BY 4.0, University of Cyprus) is trained on. Weights trained on it may be
+  published if KIOS is credited (the manifest carries the credit).
+- **AOS** (JKU Linz, CC BY 4.0) is not used: it has no person boxes for single colour
+  pictures (see `tools/bench/README.md`).
 - **WiSARD** is only measured on for now, never trained on, because its data licence is
   not confirmed. It is not fetched at all until its archive's SHA-256 is pinned in
   `tools/bench/datasets.toml`.
