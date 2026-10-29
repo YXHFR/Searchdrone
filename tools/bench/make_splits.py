@@ -2,11 +2,16 @@
 
     python -m bench.make_splits split version=v1 seed=v1 heridal=<listing> wisard=<listing>
     python -m bench.make_splits mini version=mini_v1 split=v1 n=64
+    python -m bench.make_splits extend version=v2 base=v1 kios=<listing> kios_labels=<listing>
 
 ``split`` reads each archive's member list (``<name>\\t<size>\\t<crc>`` per line, as
 ``list`` writes it) and writes ``splits/<version>.json``. ``list`` writes such a listing
 straight from the server with byte ranges (``python -m bench.make_splits list
 heridal > heridal.txt``), without downloading the archive.
+
+``extend`` writes a new version that keeps every dataset of ``base`` exactly as it was
+and draws only the datasets given (for a set published as two archives, the second
+listing is ``<name>_labels``).
 
 ``mini`` picks ``n`` pictures of the HERIDAL test part, spread evenly over its
 sequences, reads each picture and label out of the archive on the server and writes
@@ -28,7 +33,7 @@ from pathlib import Path
 from bench.common import BenchError, RangeFile, parse_args, say, warn
 from bench.datasets import load_register
 from bench.layouts import LAYOUTS
-from bench.splits import MINI_SCHEMA, SPLITS, build_split_file, load_split
+from bench.splits import MINI_SCHEMA, SPLITS, build_split_file, extend_split_file, load_split
 
 
 def _listing(path: Path) -> list[str]:
@@ -44,30 +49,51 @@ def _write(path: Path, body: object) -> None:
     say(f"skrev {path}")
 
 
-def cmd_list(name: str) -> int:
+def cmd_list(name: str, labels: bool = False) -> int:
     ds = load_register()[name]
-    if not ds.url or not ds.ranges:
+    url = ds.labels_url if labels else ds.url
+    if not url or not ds.ranges:
         raise BenchError(f"{name} kan inte listas med byte-intervall", 2)
-    with zipfile.ZipFile(io.BufferedReader(RangeFile(ds.url), 1 << 20)) as zf:
+    with zipfile.ZipFile(io.BufferedReader(RangeFile(url), 1 << 20)) as zf:
         for info in zf.infolist():
             say(f"{info.filename}\t{info.file_size}\t{info.CRC}")
     return 0
 
 
-def cmd_split(args: dict[str, str]) -> int:
-    register = load_register()
+def _sequences(args: dict[str, str]) -> dict[str, dict[str, list[str]]]:
+    """Dataset -> sequence -> image ids, for every measured dataset given a listing."""
     listing: dict[str, dict[str, list[str]]] = {}
-    for name, ds in register.items():
+    for name, ds in load_register().items():
         if name not in args or "measure" not in ds.use:
             continue
+        names = _listing(Path(args[name]))
+        if args.get(f"{name}_labels"):
+            names += _listing(Path(args[f"{name}_labels"]))
         seqs: dict[str, list[str]] = defaultdict(list)
-        for m in LAYOUTS[ds.layout].members(_listing(Path(args[name]))):
+        for m in LAYOUTS[ds.layout].members(names):
             seqs[m.seq].append(m.image_id)
         listing[name] = dict(seqs)
         say(f"{name}: {sum(len(v) for v in seqs.values())} bilder i {len(seqs)} sekvenser")
+    return listing
+
+
+def cmd_split(args: dict[str, str]) -> int:
+    listing = _sequences(args)
     version = args.get("version", "v1")
     body = build_split_file(version, args.get("seed", version), listing)
     _write(SPLITS / f"{version}.json", body)
+    return 0
+
+
+def cmd_extend(args: dict[str, str]) -> int:
+    base = args.get("base", "v1")
+    load_split(base)  # a published, well-formed file
+    body = json.loads((SPLITS / f"{base}.json").read_text(encoding="utf-8"))
+    version = args.get("version", "v2")
+    _write(
+        SPLITS / f"{version}.json",
+        extend_split_file(version, args.get("seed", version), body, _sequences(args)),
+    )
     return 0
 
 
@@ -138,13 +164,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         if not argv:
-            raise BenchError("ange split, mini eller list", 2)
+            raise BenchError("ange split, extend, mini eller list", 2)
         cmd, rest = argv[0], argv[1:]
-        if cmd == "list" and len(rest) == 1:
-            return cmd_list(rest[0])
+        if cmd == "list" and len(rest) in (1, 2):
+            if rest[1:] not in ([], ["labels=1"]):
+                raise BenchError("list <set> [labels=1]", 2)
+            return cmd_list(rest[0], labels=rest[1:] == ["labels=1"])
+        names = tuple(load_register())
+        sets = (*names, *(f"{n}_labels" for n in names))
         if cmd == "split":
-            names = tuple(load_register())
-            return cmd_split(parse_args(rest, ("version", "seed", *names), "make_splits split"))
+            return cmd_split(parse_args(rest, ("version", "seed", *sets), "make_splits split"))
+        if cmd == "extend":
+            keys = ("version", "seed", "base", *sets)
+            return cmd_extend(parse_args(rest, keys, "make_splits extend"))
         if cmd == "mini":
             return cmd_mini(parse_args(rest, ("version", "split", "n"), "make_splits mini"))
         raise BenchError(f"okänt kommando {cmd!r}", 2)

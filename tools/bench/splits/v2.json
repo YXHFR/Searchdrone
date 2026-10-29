@@ -1,0 +1,204 @@
+{
+  "schema": "bench.split/v1",
+  "version": "v2",
+  "seed": "v2",
+  "base": "v1",
+  "ratios": {
+    "train": 0.7,
+    "val": 0.1,
+    "test": 0.2
+  },
+  "rule": "whole sequences per part, largest first, to the part furthest below its share; the datasets of v1 as they were",
+  "datasets": {
+    "heridal": {
+      "sequences": {
+        "BLA": {
+          "part": "test",
+          "images": 13,
+          "ids_sha256": "fe782c0823fe69f1a53d710f1b92bc68d0e7bd5deda4f2c93009a78d879154d9"
+        },
+        "BLI": {
+          "part": "train",
+          "images": 9,
+          "ids_sha256": "4c316340e8a7c71529f00669301651e3e5badc231eae8e3a776f5b8d7706e276"
+        },
+        "BRA": {
+          "part": "train",
+          "images": 84,
+          "ids_sha256": "edcaa9b42c08f159fd8349882a9405f1d111807b153ffb0242cc89e61f4dbf99"
+        },
+        "BRK": {
+          "part": "train",
+          "images": 168,
+          "ids_sha256": "e8ce56fcbc1e479552b74999a985d2d2087b852cc59791688523c26affb0b0cb"
+        },
+        "BRS": {
+          "part": "train",
+          "images": 77,
+          "ids_sha256": "f596f70bd82d6e2d8a1f5ff87258f18007f9b1e99b2e9f00cdda0963e155e7c8"
+        },
+        "CAB": {
+          "part": "train",
+          "images": 8,
+          "ids_sha256": "1fa6f4d0d560dce2c9a98cc25c1de3d8ac72341f022f8616b65a1bf17cf9bd21"
+        },
+        "CAP": {
+          "part": "train",
+          "images": 68,
+          "ids_sha256": "42b780dc14d1444c8ba9901c8d475e791ad9db5d4be178ce44eef08527bb8e15"
+        },
+        "GOR": {
+          "part": "val",
+          "images": 221,
+          "ids_sha256": "ec982d5357c7dc8b228c382f3e65a04df6d647cf0792cbb362088715f5d1b5c6"
+        },
+        "GRO": {
+          "part": "train",
+          "images": 10,
+          "ids_sha256": "a67cc4891c1bed8dfffce00ec0af1df48268c2c70c2cc2e39e1eed459b1220b3"
+        },
+        "JAS": {
+          "part": "test",
+          "images": 186,
+          "ids_sha256": "7ab6bb743b36df2d56043bfa9924680844db692001464b3cd205504296b68e0a"
+        },
+        "MED": {
+          "part": "train",
+          "images": 182,
+          "ids_sha256": "d359fe52701dcf3bb2eccbb083f90d4a433bfd3f0c9fb464009e7dba79b5dff0"
+        },
+        "MOB": {
+          "part": "train",
+          "images": 5,
+          "ids_sha256": "d2a2fb6efaa282d334bb065fa97d606418f74ea630b63470b9cd2d03175a0a80"
+        },
+        "RAK": {
+          "part": "train",
+          "images": 80,
+          "ids_sha256": "d1f825f3bd6e2b010cb1d86c106b874310a4589887c131416c119905a0982ec0"
+        },
+        "SB": {
+          "part": "train",
+          "images": 50,
+          "ids_sha256": "ce54020fadecabe16c5c24ac197a552232735771300d2d0dca4c687e44f208b6"
+        },
+        "TRS": {
+          "part": "train",
+          "images": 55,
+          "ids_sha256": "eeba1af25429e59955a3a8923386b3c6019818f1f443b2da4842f906bcffbda0"
+        },
+        "VRD": {
+          "part": "train",
+          "images": 340,
+          "ids_sha256": "1d85133723d871a7be6c9762abede4bfab81079c26f9d1817e551e479e63657d"
+        },
+        "ZRI": {
+          "part": "test",
+          "images": 128,
+          "ids_sha256": "85ecbbf53c8cfe2a3d508f13304e20d989837ea05e81fa1c3ce90684151d7d5b"
+        }
+      },
+      "seed": "v1/heridal"
+    },
+    "kios": {
+      "seed": "v2/kios",
+      "sequences": {
+        "campus_exercise": {
+          "part": "train",
+          "images": 2131,
+          "ids_sha256": "63f59d3a87348a74cf247603361414b72300986b7a7b9f47c0f64f46f1880035"
+        },
+        "meadow": {
+          "part": "test",
+          "images": 118,
+          "ids_sha256": "f70cc0530b569e5323d346a536fd9e0e16a8e58c71bc81871fbec9e7ae934940"
+        },
+        "pegia_coast": {
+          "part": "val",
+          "images": 608,
+          "ids_sha256": "6f41978e6e04feea1f88b337ca9aa43612b154aacc93d1f2d0d75f8e3c064c6c"
+        },
+        "shore": {
+          "part": "test",
+          "images": 151,
+          "ids_sha256": "d1115c65be5a830c20edb9061422c5c9ae9dea06e00588c3d1a85c07c8d88c6c"
+        },
+        "yard": {
+          "part": "test",
+          "images": 128,
+          "ids_sha256": "b27bdb00d112d17323256ed393343b6bd473ba10a8a046e17c5c0e5f3ad14278"
+        }
+      }
+    },
+    "wisard": {
+      "sequences": {
+        "200321_Baker": {
+          "part": "train",
+          "images": 517,
+          "ids_sha256": "4a4a1a08bbeafa94492d5876aad58bb1691705d28e9fbf5db8a8b7f23c9607bc"
+        },
+        "200402_Carnation": {
+          "part": "train",
+          "images": 544,
+          "ids_sha256": "3e20448e3dd8605773e20b5b6d7fc782f2bd50c2cdf4b83f474d0608deff8f02"
+        },
+        "200402_Karen": {
+          "part": "test",
+          "images": 2226,
+          "ids_sha256": "9e8a92bdd30d009eebc0ea1b0a12518ab602bf9bf3d833422eda8a13a019f00b"
+        },
+        "200426_SkookumCreek": {
+          "part": "val",
+          "images": 2803,
+          "ids_sha256": "52a0bfe89f8e8c744a4d87293eec4a153de9dca384f32a4d476253c866e3b9fb"
+        },
+        "200505_Bellingham": {
+          "part": "train",
+          "images": 757,
+          "ids_sha256": "3d731c36837cc4eb53aa95f1c632352fd5706da7f0b16b6ccd6dd69558fe6c76"
+        },
+        "200528_Everson": {
+          "part": "train",
+          "images": 1473,
+          "ids_sha256": "712738ff6273a8783732e542b4d854b0b4709e735856d3c32075df34b474569a"
+        },
+        "200614_SuddenValley": {
+          "part": "train",
+          "images": 1105,
+          "ids_sha256": "9dc4523bbc69b74049c4fa809b51173a26f07823eba2acf0b0e5486a6c301538"
+        },
+        "200717_Mission": {
+          "part": "test",
+          "images": 363,
+          "ids_sha256": "44e63c59d0dbf0a261f531f5efd1f0a6f959b25da9abc73223fdf048213e230d"
+        },
+        "210327_Airfield": {
+          "part": "test",
+          "images": 1620,
+          "ids_sha256": "2740cb40706f88c89fecff7483da552f45c34afe22dc6a3c8406ea5353e6f813"
+        },
+        "210417_MtErie": {
+          "part": "train",
+          "images": 708,
+          "ids_sha256": "0199e4895f7eb697333c6083477049a6b9034d4ba73bb4663f5663c10179efc6"
+        },
+        "210529_Carnation": {
+          "part": "train",
+          "images": 2054,
+          "ids_sha256": "07ef2da8d6f4db0741b55e7e3bbb5f6e483629eaae5ae05c0e81fd1da3ffdd38"
+        },
+        "210924_FHL": {
+          "part": "train",
+          "images": 4154,
+          "ids_sha256": "b2004ec08e09dfd7f4589caf8982115bff87733e6d4ae7982c16bc5aff224309"
+        },
+        "220109_Baker": {
+          "part": "train",
+          "images": 2180,
+          "ids_sha256": "7edba70619f23519058665bd2f24fa106b12c6134f34580117f445cac4a4820d"
+        }
+      },
+      "seed": "v1/wisard"
+    }
+  }
+}

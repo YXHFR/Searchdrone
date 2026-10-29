@@ -237,3 +237,94 @@ def test_ap50_is_one_for_a_perfect_tile_and_zero_for_a_miss() -> None:
     truth = np.array([[10, 10, 20, 20]], dtype=np.float32)
     assert ap50([(truth.copy(), np.array([0.9]), truth)]) == pytest.approx(1.0)
     assert ap50([(truth + 50, np.array([0.9]), truth)]) == 0.0
+
+
+# --- going on from earlier weights, and val per dataset ------------------------------------
+
+
+def _earlier_best(path: Path, model: str = "yolox_s") -> dict[str, torch.Tensor]:
+    torch.manual_seed(7)
+    net = families.build(model)
+    state = net.state_dict()
+    torch.save(
+        {
+            "model": model,
+            "settings": {"sets": ["heridal"], "simfarm_epochs": 3},
+            "ema": state,
+            "epoch": 12,
+        },
+        path,
+    )
+    return state
+
+
+def test_init_starts_from_earlier_weights_and_keeps_their_credit(
+    bank: Path, tmp_path: Path
+) -> None:
+    init = tmp_path / "heridal_run" / "best.pt"
+    init.parent.mkdir()
+    earlier = _earlier_best(init)
+    net = families.build("yolox_s")
+    seen = train_detector.load_init(net, "yolox_s", init)
+    for k, v in net.state_dict().items():
+        assert torch.equal(v, earlier[k]), k
+    assert seen == {"trained_on": ["heridal"], "pretrained_on": ["simfarm"]}
+
+    out = tmp_path / "mix"
+    argv = [
+        "model=yolox_s", f"data={bank}", f"out={out}", "epochs=1", "batch=2", f"tile={TILE}",
+        "device=cpu", "workers=0", f"init={init}",
+    ]  # fmt: skip
+    assert train_detector.main(argv) == 0
+    best = torch.load(out / "best.pt", weights_only=True)
+    assert best["trained_on"] == ["heridal"] and best["pretrained_on"] == ["simfarm"]
+    assert json.loads((out / "settings.json").read_text())["init"] == str(init)
+    _, manifest_path = export(out / "best.pt", tmp_path / "models", "person_mix", check_images=1)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert [t["dataset"] for t in manifest["trained_on"]] == ["heridal"]
+    assert manifest["pretrained_on"] == ["simfarm"]  # the earlier run's, credited still
+    assert set(manifest["val_ap50_by_dataset"]) == {"heridal"}
+
+
+def test_init_inside_out_or_of_another_model_is_refused(bank: Path, tmp_path: Path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    _earlier_best(out / "best.pt")
+    base = ["model=yolox_s", f"data={bank}", "epochs=1", "batch=2", "device=cpu"]
+    # the run would write over the weights it starts from
+    assert train_detector.main([*base, f"out={out}", f"init={out / 'best.pt'}"]) == 2
+    assert train_detector.main([*base, f"out={tmp_path / 'x'}", f"init={tmp_path / 'no.pt'}"]) == 2
+    with pytest.raises(BenchError, match="damoyolo_s"):
+        train_detector.load_init(families.build("damoyolo_s"), "damoyolo_s", out / "best.pt")
+
+
+def test_a_run_without_init_keeps_its_old_settings_key() -> None:
+    """A run started before init= existed carries on: its saved settings have no init."""
+    key = train_detector.Settings("yolox_s").key()
+    assert "init" not in key
+    assert train_detector.Settings("yolox_s", init="/x/best.pt").key()["init"] == "/x/best.pt"
+
+
+def test_val_ap50_is_given_per_dataset_and_the_best_epoch_by_their_mean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truth = torch.tensor([[10.0, 10.0, 20.0, 20.0]])
+    batches = [(torch.zeros(2, 3, 8, 8), [truth, truth]), (torch.zeros(1, 3, 8, 8), [truth])]
+    # tiles of set "a" are found, the one of set "b" is missed
+    answers = iter([torch.stack([truth, truth]), torch.stack([truth + 50])])
+
+    def predict(net: Any, model: str, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        boxes = next(answers)
+        return boxes, torch.full(boxes.shape[:2], 0.9)
+
+    monkeypatch.setattr(families, "predict", predict)
+    per_set = train_detector.evaluate_val(
+        torch.nn.Identity(),
+        "yolox_s",
+        batches,
+        torch.device("cpu"),
+        ["a", "a", "b"],  # type: ignore[arg-type]
+    )
+    assert per_set == {"a": pytest.approx(1.0), "b": 0.0}
+    assert train_detector.val_score(per_set) == pytest.approx(0.5)
+    assert train_detector.val_score({}) == 0.0

@@ -4,7 +4,7 @@ person boxes in their labels."""
 from __future__ import annotations
 
 import pytest
-from bench.layouts import LAYOUTS, PERSON, sequence_of, voc_boxes, yolo_boxes
+from bench.layouts import KIOS_SITES, LAYOUTS, PERSON, sequence_of, voc_boxes, yolo_boxes
 
 
 def test_yolo_boxes_are_fractions_of_the_picture() -> None:
@@ -81,11 +81,68 @@ def test_heridal_members_carry_the_place_as_sequence() -> None:
     assert members[0].label == "h/Annotations/train_TRS_0001.xml" and members[1].label is None
 
 
-@pytest.mark.parametrize("layout", ["heridal_voc", "wisard_vis", "simfarm"])
+def test_kios_takes_its_pictures_with_their_yolo_labels() -> None:
+    names = [
+        "Images/",
+        "Images/Train/12_people_0042_390.jpg",
+        "Images/Valid/7_ppl_00001_crop.jpg",
+        "Images/Test/4_ppl_4_00001.jpg",
+        "Images/Test/5_ppl_2_00051_crop.jpg",  # no label: nobody in it
+        "Images/Other/9_ppl_4_00002.jpg",  # not one of the archive's parts
+        "Images/Train/notes.jpg",  # not a frame
+        "Annotations/Yolo/Train/12_people_0042_390.txt",
+        "Annotations/Yolo/Valid/7_ppl_00001_crop.txt",
+        "Annotations/Yolo/Test/4_ppl_4_00001.txt",
+        "Annotations/VOC/Test/5_ppl_2_00051_crop.xml",  # VOC is never read
+    ]
+    members = LAYOUTS["kios_yolo"].members(names)
+    assert [(m.image_id, m.seq, m.label) for m in members] == [
+        ("12_people_0042_390", "campus_exercise", "Annotations/Yolo/Train/12_people_0042_390.txt"),
+        ("7_ppl_00001_crop", "shore", "Annotations/Yolo/Valid/7_ppl_00001_crop.txt"),
+        ("4_ppl_4_00001", "meadow", "Annotations/Yolo/Test/4_ppl_4_00001.txt"),
+        ("5_ppl_2_00051_crop", "shore", None),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        # the archive's own train and test folders hold frames of one recording
+        ("Images/Train/1_people_0007_0.jpg", "Images/Test/2_people_0007_15.jpg"),
+        # two recordings at one site
+        ("Images/Train/1_ppl_00001_crop.jpg", "Images/Test/2_ppl_2_00001_crop.jpg"),
+        # a recording that moves from the exercise to the campus joins them
+        ("Images/Train/1_people_0042_0.jpg", "Images/Test/2_people_0043_3855.jpg"),
+        ("Images/Train/1_people_0042_8160.jpg", "Images/Test/2_people_0049_160.jpg"),
+    ],
+)
+def test_kios_near_copies_share_a_site(a: str, b: str) -> None:
+    one, two = LAYOUTS["kios_yolo"].members([a, b])
+    assert one.seq == two.seq
+
+
+def test_kios_sites_are_apart() -> None:
+    sites = {
+        sequence_of("kios_yolo", f"1_{rec}_0")
+        for rec in ("people_0007", "peoplepegia", "ppl", "ppl_3", "ppl_4")
+    }
+    assert len(sites) == 5
+    assert set(KIOS_SITES.values()) == sites
+
+
+def test_kios_refuses_an_unknown_recording() -> None:
+    """A recording added to the archive later has no site yet: it never lands in a part
+    by accident."""
+    with pytest.raises(ValueError, match="unknown recording"):
+        LAYOUTS["kios_yolo"].members(["Images/Train/1_people_0099_0.jpg"])
+
+
+@pytest.mark.parametrize("layout", ["heridal_voc", "wisard_vis", "kios_yolo", "simfarm"])
 def test_members_use_the_one_sequence_rule(layout: str) -> None:
     names = {
         "heridal_voc": ["h/JPEGImages/test_ABC_0001.jpg"],
         "wisard_vis": ["200402_Karen_VIS_1/a.jpg", "200402_Karen_VIS_1/a.txt"],
+        "kios_yolo": ["Images/Valid/3_peoplepegia_105.jpg"],
         "simfarm": ["r9/images/a.png"],
     }[layout]
     for m in LAYOUTS[layout].members(names):

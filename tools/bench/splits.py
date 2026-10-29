@@ -1,18 +1,24 @@
 """The locked split of the image bank into train, val and test, by sequence.
 
-``splits/v1.json`` (schema ``bench.split/v1``) lists, per dataset, every sequence with
-its part, its number of pictures and a SHA-256 of their sorted ids (so an archive that
-changed under us is noticed, ``Split.check``). A picture's part is its sequence's part;
-its sequence follows from its id (``tools/bench/layouts.py``). A sequence (one flight,
-or one place on one day) is never cut: all its pictures are in the same part, so no
-near-copy of a test picture is trained on. The test part is locked: a change is a new
-file (``v2``) and every number is measured again.
+``splits/<version>.json`` (schema ``bench.split/v1``; the one in use is ``CURRENT``)
+lists, per dataset, every sequence with its part, its number of pictures and a SHA-256
+of their sorted ids (so an archive that changed under us is noticed, ``Split.check``).
+A picture's part is its sequence's part; its sequence follows from its id
+(``tools/bench/layouts.py``). A sequence (one flight, one place on one day, or one
+site) is never cut: all its pictures are in the same part, so no near-copy of a test
+picture is trained on. A test part is locked: a change is a new file and every number
+is measured again.
 
-``make_split`` is how v1 was drawn (and how a v2 would be): sequences, largest first,
-in an order fixed by a SHA-256 of the seed and the name, each to the part furthest
-below its target share of pictures (70/10/20). ``splits/mini_v1.json`` (schema
-``bench.mini/v1``) is the small, fixed test set for the nightly CPU run: picture and
-label members with their SHA-256, read straight out of the archive with byte ranges.
+``make_split`` is how each dataset's part was drawn: sequences, largest first, in an
+order fixed by a SHA-256 of the seed and the name, each to the part furthest below its
+target share of pictures (70/10/20). ``v2`` adds KIOS: it keeps every dataset of ``v1``
+exactly as it was (``extend_split_file``; so HERIDAL's test part, and every number
+measured on it, stays comparable) and draws only the new one. A dataset's own ``seed``
+says how it was drawn.
+
+``splits/mini_v1.json`` (schema ``bench.mini/v1``) is the small, fixed test set for the
+nightly CPU run: picture and label members with their SHA-256, read straight out of the
+archive with byte ranges. It was drawn from v1's HERIDAL test part, which v2 keeps.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from typing import Literal
 from bench.common import BENCH, BenchError
 
 SPLITS = BENCH / "splits"
+CURRENT = "v2"
 SPLIT_SCHEMA = "bench.split/v1"
 MINI_SCHEMA = "bench.mini/v1"
 Part = Literal["train", "val", "test"]
@@ -112,7 +119,42 @@ def build_split_file(
     }
 
 
-def load_split(version: str = "v1", path: Path | None = None) -> Split:
+def extend_split_file(
+    version: str,
+    seed: str,
+    base: Mapping[str, object],
+    listing: Mapping[str, Mapping[str, list[str]]],
+) -> dict[str, object]:
+    """A new split version: every dataset of ``base`` (a published split file) as it
+    was, plus ``listing``'s datasets drawn afresh. A dataset already in ``base`` is never
+    redrawn: its test part is locked."""
+    old = base["datasets"]
+    assert isinstance(old, dict)  # noqa: S101 - a published split file
+    again = sorted(set(old) & set(listing))
+    if again:
+        raise BenchError(f"redan i {base['version']}: {', '.join(again)}; den delen är låst", 2)
+    datasets: dict[str, object] = {}
+    for name in sorted(old):
+        entry = dict(old[name])
+        entry.setdefault("seed", f"{base['seed']}/{name}")
+        datasets[name] = entry
+    added = build_split_file(version, seed, listing)["datasets"]
+    assert isinstance(added, dict)  # noqa: S101 - built just above
+    for name in sorted(added):
+        datasets[name] = {"seed": f"{seed}/{name}", **added[name]}
+    return {
+        "schema": SPLIT_SCHEMA,
+        "version": version,
+        "seed": seed,
+        "base": base["version"],
+        "ratios": dict(RATIOS),
+        "rule": "whole sequences per part, largest first, to the part furthest below its "
+        f"share; the datasets of {base['version']} as they were",
+        "datasets": {k: datasets[k] for k in sorted(datasets)},
+    }
+
+
+def load_split(version: str = CURRENT, path: Path | None = None) -> Split:
     path = path or SPLITS / f"{version}.json"
     body = json.loads(path.read_text(encoding="utf-8"))
     if body.get("schema") != SPLIT_SCHEMA or body.get("version") != version:

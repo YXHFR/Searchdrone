@@ -66,7 +66,10 @@ def export(
     tmp.replace(onnx_path)
     digest = hashlib.sha256(onnx_path.read_bytes()).hexdigest()
     register = load_register()
-    sets = [s for s in settings["sets"] if s in register]
+    # what the weights have seen in all: a run started from earlier weights (init=)
+    # carries their sets too, so every one of them is credited
+    sets = [s for s in ck.get("trained_on", settings["sets"]) if s in register]
+    pretrained = ck.get("pretrained_on", ["simfarm"] if settings.get("simfarm_epochs") else [])
     manifest = {
         "schema": MANIFEST_SCHEMA,
         "name": name,
@@ -82,9 +85,10 @@ def export(
             {"dataset": s, "licence": register[s].licence, "attribution": register[s].attribution}
             for s in sets
         ],
-        "pretrained_on": ["simfarm"] if settings.get("simfarm_epochs") else [],
+        "pretrained_on": list(pretrained),
         "base_weights": f"COCO {model} (Apache-2.0)",
         "val_ap50": ck.get("val_ap50"),
+        "val_ap50_by_dataset": ck.get("val_ap50_by_dataset"),
         "epoch": ck.get("epoch"),
         "settings": settings,
         "exported": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),

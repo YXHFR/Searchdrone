@@ -503,11 +503,15 @@ bench-fetch *args:
 bench-detector *args:
     PYTHONPATH=tools uv run --no-sync python -m bench.eval_detector "$@"
 
+# Print the data folder the bank, the weights and the training runs live in (keys: data)
+data-dir *args:
+    @PYTHONPATH=tools uv run --no-sync --quiet python -m bench.datadir "$@"
+
 # Fetch the published detector weights to <data_dir>/models/ (keys: yes, only, data)
 detector-fetch *args:
     PYTHONPATH=tools uv run --no-sync python tools/train/fetch_weights.py "$@"
 
-# Train the person detector on this computer's graphics card (keys: model, epochs, batch, simfarm, ...; see tools/train/README.md)
+# Train the person detector on this computer's graphics card (keys: model, epochs, batch, sets, init, out, simfarm, ...; see tools/train/README.md)
 train-detector *args:
     @just _train train_detector.py "$@"
 
