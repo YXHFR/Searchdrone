@@ -9,6 +9,8 @@
 #                 test split) and "pretrain" (synthetic pictures, never measured on)
 #   layout        how the archive is read (tools/bench/layouts.py)
 #   url, size_bytes, sha256   the archive
+#   labels_url, labels_size_bytes, labels_sha256   the labels' own archive, for a set
+#                 published as pictures and labels apart (both are checked and unpacked)
 #   ranges        the host serves byte ranges (single files can be read without the
 #                 whole archive; the CI mini bank needs it)
 #   publish_weights  whether weights trained on it may be published (false until the
@@ -29,6 +31,26 @@ url = "https://zenodo.org/api/records/5662351/files/heridal_keras_retinanet_voc.
 size_bytes = 8311735812
 sha256 = "63ea51b29d67f9b95cc600674c6ccfa719688594404b5311a9164fb41a0448a3"
 layout = "heridal_voc"
+use = ["train", "measure"]
+licence_confirmed = true  # the Zenodo record licenses the dataset itself
+ranges = true
+publish_weights = true
+local_only = false
+
+[[dataset]]
+name = "kios"
+title = "KIOS Small Object Aerial Person Detection (University of Cyprus)"
+licence = "CC-BY-4.0"
+checked = "2026-10-29"
+attribution = "Small Object Aerial Person Detection Dataset, Makrigiorgis, Kyrkou and Kolios, KIOS Research and Innovation Center of Excellence, University of Cyprus; Zenodo record 7740081 (doi:10.5281/zenodo.7740081), CC BY 4.0"
+source_page = "https://zenodo.org/records/7740081"
+url = "https://zenodo.org/api/records/7740081/files/Images.zip/content"
+size_bytes = 3717717721
+sha256 = "d87cd40e81de631e236d0e48d271f0d9902938c458ac20147df1f5d2c874a89e"
+labels_url = "https://zenodo.org/api/records/7740081/files/Annotations.zip/content"
+labels_size_bytes = 4092244
+labels_sha256 = "9ea8b52d83a34dd8dee85a0b5f18a780c164482a8ea0b91ebed446e5b2ca2bf3"
+layout = "kios_yolo"
 use = ["train", "measure"]
 licence_confirmed = true  # the Zenodo record licenses the dataset itself
 ranges = true

@@ -43,6 +43,16 @@ def test_every_downloaded_archive_is_pinned_by_size() -> None:
             assert ds.sha256 is not None
 
 
+def test_kios_is_open_credited_and_pinned_with_its_labels() -> None:
+    kios = load_register()["kios"]
+    assert kios.licence == "CC-BY-4.0" and kios.licence_confirmed
+    assert set(kios.use) == {"train", "measure"} and kios.publish_weights
+    assert "Makrigiorgis" in kios.attribution and "7740081" in kios.attribution
+    for url in (kios.url, kios.labels_url, kios.source_page):
+        assert url and url.startswith("https://zenodo.org/")  # the authors' record, no mirror
+    assert kios.labels_size_bytes and kios.labels_sha256 and len(kios.labels_sha256) == 64
+
+
 def test_sim_farm_is_only_for_pre_training() -> None:
     simfarm = load_register()["simfarm"]
     assert simfarm.use == ("pretrain",)
@@ -64,6 +74,8 @@ def test_sim_farm_is_only_for_pre_training() -> None:
         (_row(licence_confirmed=False), "data licence is confirmed"),
         (_row(url="http://example.org/x.zip"), "https"),
         (_row(attribution=" "), "attribution"),
+        (_row(labels_url="http://example.org/l.zip", labels_size_bytes=1), "labels_url"),
+        (_row(labels_url="https://example.org/l.zip"), "labels_url"),
     ],
 )
 def test_licence_rule_refuses(row: Dataset, why: str) -> None:

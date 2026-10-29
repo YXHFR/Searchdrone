@@ -11,6 +11,15 @@ in one part, so no near-copy of a test picture is ever trained on.
 * ``wisard_vis``: the visible-light folders (``<date>_<place>_..._VIS...``), one
   ``<stem>.jpg`` with a YOLO ``<stem>.txt`` each; folders without labels are left out.
   The id is ``<folder>/<stem>``, the sequence ``<date>_<place>``.
+* ``kios_yolo``: KIOS's two archives side by side, ``Images/<part>/<stem>.jpg`` with
+  ``Annotations/Yolo/<part>/<stem>.txt`` (YOLO, class 0 = people; the VOC files are not
+  read: some name another picture in their ``<filename>``). The archive's own
+  Train/Valid/Test folders are ignored: they hold frames of the same videos. The stem is
+  ``<n>_<recording>_<frame>[_crop]`` and is the id; the sequence is the **site** of the
+  recording (``KIOS_SITES``, read off the pictures). Recordings that show the same site
+  are one sequence, and so are recordings that move between sites: ``people_0042``
+  starts at the civil-defence exercise and goes on over the campus, so the campus and
+  the exercise are one sequence.
 * ``simfarm``: the sim farm's rounds (``<round>/images/<stem>.png`` with
   ``<round>/labels/<stem>.txt``, YOLO class 0). The id is ``<round>/<stem>``, the
   sequence the round. Only for pre-training, never measured on.
@@ -153,6 +162,41 @@ def _wisard(names: list[str]) -> list[Member]:
     return out
 
 
+# KIOS recording -> site. Read off the pictures; a recording not listed here is refused
+# (``sequence_of``), so a changed archive can never slip a new site into a part unseen.
+KIOS_SITES: dict[str, str] = {
+    "people_0007": "campus_exercise",
+    "people_0008": "campus_exercise",
+    "people_0042": "campus_exercise",  # the exercise first, then the campus
+    "people_0043": "campus_exercise",
+    "people_0049": "campus_exercise",
+    "people_0050": "campus_exercise",
+    "people_0085": "campus_exercise",
+    "peoplepegia": "pegia_coast",
+    "ppl": "shore",
+    "ppl_2": "shore",
+    "ppl_3": "yard",
+    "ppl_4": "meadow",
+}
+_KIOS_STEM = re.compile(r"\d+_(?P<rec>[a-z]+(?:_\d+)?)_\d+(?:_crop)?")
+_KIOS_PARTS = ("Train", "Valid", "Test")
+
+
+def _kios(names: list[str]) -> list[Member]:
+    present = set(names)
+    out: list[Member] = []
+    for name in names:
+        p = PurePosixPath(name)
+        if len(p.parts) != 3 or p.parts[0] != "Images" or p.parts[1] not in _KIOS_PARTS:
+            continue
+        if p.suffix.lower() != ".jpg" or not _KIOS_STEM.fullmatch(p.stem):
+            continue
+        label = f"Annotations/Yolo/{p.parts[1]}/{p.stem}.txt"
+        seq = sequence_of("kios_yolo", p.stem)
+        out.append(Member(p.stem, seq, name, label if label in present else None))
+    return out
+
+
 def _simfarm(names: list[str]) -> list[Member]:
     present = set(names)
     out: list[Member] = []
@@ -172,6 +216,7 @@ PERSON = frozenset({0})
 LAYOUTS: dict[str, Layout] = {
     "heridal_voc": Layout("heridal_voc", _heridal, voc_boxes),
     "wisard_vis": Layout("wisard_vis", _wisard, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
+    "kios_yolo": Layout("kios_yolo", _kios, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
     "simfarm": Layout("simfarm", _simfarm, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
 }
 
@@ -182,6 +227,11 @@ def sequence_of(layout: str, image_id: str) -> str:
         return image_id.split("_")[1]
     if layout == "wisard_vis":
         return "_".join(image_id.split("/")[0].split("_")[:2])
+    if layout == "kios_yolo":
+        m = _KIOS_STEM.fullmatch(image_id)
+        if m is None or m["rec"] not in KIOS_SITES:
+            raise ValueError(f"KIOS picture of an unknown recording: {image_id!r}")
+        return KIOS_SITES[m["rec"]]
     if layout == "simfarm":
         return image_id.split("/")[0]
     raise KeyError(layout)

@@ -22,6 +22,6 @@ def test_no_forbidden_detector_licenses() -> None:
 
 def test_the_model_card_credits_every_measured_set() -> None:
     card = (ROOT / "software" / "detector" / "MODEL_CARD.md").read_text(encoding="utf-8")
-    for name, licence in (("HERIDAL", "CC BY 3.0"), ("WiSARD", "MIT")):
+    for name, licence in (("HERIDAL", "CC BY 3.0"), ("KIOS", "CC BY 4.0"), ("WiSARD", "MIT")):
         line = next(x for x in card.splitlines() if x.startswith(f"| {name}"))
         assert licence in line

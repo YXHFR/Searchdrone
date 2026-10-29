@@ -28,6 +28,8 @@ byt = "byt"
 vill = "vill"
 objekt = "objekt"
 tak = "tak"
+exempel = "exempel"
+linz = "linz"  # JKU Linz, the AOS dataset's university
 # Swedish (sd_ground: CLI help and error texts, B1-05)
 lokal = "lokal"
 adress = "adress"
