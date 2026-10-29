@@ -14,6 +14,7 @@ from sd_sim.search_invariants import (
     keepout_distances,
     keepout_never_entered,
     no_confirm_without_human,
+    stop_distance_m,
 )
 
 T0 = dt.datetime(2026, 10, 23, 10, 0, tzinfo=dt.UTC)
@@ -74,9 +75,17 @@ def test_a_vanished_or_older_candidate_breaks_e2() -> None:
     assert len(w.broken) == 2
 
 
-def _track(points: list[tuple[float, float, float]], mode: str = "GUIDED") -> list[Sample]:
+def _track(
+    points: list[tuple[float, float, float]], mode: str = "GUIDED", speed: float = 5.0
+) -> list[Sample]:
     plane = Plane(*HOME)
-    return [Sample(t, *plane.latlon(e, n), 40.0, 5.0, mode, True) for t, e, n in points]
+    return [Sample(t, *plane.latlon(e, n), 40.0, speed, mode, True) for t, e, n in points]
+
+
+def _flown(points: list[tuple[float, float, float, float]]) -> list[Sample]:
+    """A track with each sample's own ground speed: (t, east, north, speed)."""
+    plane = Plane(*HOME)
+    return [Sample(t, *plane.latlon(e, n), 40.0, v, "GUIDED", True) for t, e, n, v in points]
 
 
 def _cyl(since: float = 0.0, until: float = float("inf")) -> SeenKeepout:
@@ -132,3 +141,68 @@ def test_a_cylinder_counts_only_while_it_is_in_force() -> None:
     assert keepout_never_entered([_cyl(since=2.5)], track) == []
     assert keepout_never_entered([_cyl(until=0.5)], track) == []
     assert keepout_never_entered([_cyl()], track)
+
+
+def test_a_cylinder_closer_than_the_stop_may_be_braked_into_by_the_stop() -> None:
+    """The edge 5 m ahead at 5 m/s, closer than the 7.5 m the drone needs to stop: braking
+    in by what the stop leaves (2.5 m) is no entry, deeper is."""
+    assert stop_distance_m(5.0) == pytest.approx(7.5)
+    braked = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (3, 72.2, 0), (6, 72.2, 0)])
+    assert keepout_never_entered([_cyl()], braked) == []
+    deeper = _track([(0, 65, 0), (1, 69, 0), (2, 74, 0)])
+    broken = keepout_never_entered([_cyl()], deeper)
+    assert broken and broken[0].startswith("E8") and "inbromsningen" in broken[0]
+
+
+def test_after_braking_into_a_cylinder_the_drone_may_leave_but_not_come_back() -> None:
+    leave = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (5, 71.5, 0), (7, 60, 0)])
+    assert keepout_never_entered([_cyl()], leave) == []
+    back = [*leave, *_track([(9, 72, 0)])]
+    broken = keepout_never_entered([_cyl()], back)
+    assert broken and broken[0].startswith("E8") and "inbromsningen" not in broken[0]
+
+
+def test_a_cylinder_farther_than_the_stop_gets_no_braking() -> None:
+    """The edge 20 m ahead at 5 m/s: room to stop, so 2 m in is an entry."""
+    track = _track([(0, 50, 0), (1, 65, 0), (2, 72, 0)])
+    broken = keepout_never_entered([_cyl()], track)
+    assert broken and broken[0].startswith("E8")
+    slow = _track([(0, 68, 0), (1, 72, 0)], speed=0.5)  # 2 m ahead, still: no excuse either
+    assert keepout_never_entered([_cyl()], slow)
+
+
+def test_braked_into_a_cylinder_the_drone_may_not_go_deeper_after_the_stop() -> None:
+    stays = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (5, 71.5, 0), (20, 71.8, 0)])
+    assert keepout_never_entered([_cyl()], stays) == []  # stopped in it, hovers there
+    deeper = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (5, 71.5, 0), (9, 90, 0)])
+    broken = keepout_never_entered([_cyl()], deeper)
+    assert broken and broken[0].startswith("E8") and "inbromsningen" in broken[0]
+
+
+def test_only_the_speed_towards_the_cylinder_is_braked() -> None:
+    """5 m outside the edge at 5 m/s, but flying along it: no braking takes it in."""
+    track = _track([(0, 65, 0), (1, 65, 4), (2, 72, 4)])
+    broken = keepout_never_entered([_cyl()], track)
+    assert broken and broken[0].startswith("E8")
+
+
+def test_braking_counts_only_from_when_the_cylinder_came() -> None:
+    braked = _track([(0, 65, 0), (1, 69, 0), (2, 71.5, 0), (6, 71.5, 0)])
+    assert keepout_never_entered([_cyl()], braked) == []
+    broken = keepout_never_entered([_cyl(since=-5.0)], braked)  # came long before this
+    assert broken and broken[0].startswith("E8")
+
+
+def test_a_fast_drone_that_never_brakes_breaks_e8() -> None:
+    """At 14 m/s with the edge 5 m ahead, the stop may take it past the middle of the
+    cylinder (41 m in, the radius is 30), so the depth alone allows the whole crossing:
+    flying straight through without slowing down is still an entry."""
+    assert stop_distance_m(14.0) - 5.0 > 30.0
+    through = _flown([(0, 65, 0, 14), (1, 79, 0, 14), (2, 93, 0, 14), (3, 107, 0, 14),
+                      (4, 121, 0, 14)])  # fmt: skip
+    broken = keepout_never_entered([_cyl()], through)
+    assert broken and broken[0].startswith("E8") and "m/s" in broken[0]
+    braking = _flown([(0, 65, 0, 14), (1, 78, 0, 12.5), (2, 88, 0, 10.5), (3, 96, 0, 8),
+                      (4, 102, 0, 5.5), (5, 105, 0, 3), (6, 106, 0, 0.5),
+                      (9, 106, 0, 0.2)])  # fmt: skip
+    assert keepout_never_entered([_cyl()], braking) == []

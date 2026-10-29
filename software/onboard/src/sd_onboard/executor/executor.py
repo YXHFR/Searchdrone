@@ -363,10 +363,13 @@ class _IO:
         return self._ex.keepouts_in_force()
 
     def leg_allowed(self, path: list[LatLonAlt]) -> bool:
+        return not self.leg_refusal(path)
+
+    def leg_refusal(self, path: list[LatLonAlt]) -> tuple[str, ...]:
         active = self._ex.active
         if active is None or active.command_id != self._command_id:
-            return False  # no longer this order's to fly
-        return self._ex.path_allowed(active, path)
+            return ("ONB_STALE_ORDER",)  # no longer this order's to fly
+        return self._ex.path_refusal(active, path)
 
 
 class Executor:
@@ -804,9 +807,14 @@ class Executor:
         target = self.target_of(key)
         if isinstance(target, Refusal):
             return
+        # No way around the cylinders from where a search stopped: the same keep-out hold
+        # as when the reflex finds none while it flies (``_keepout_hold``).
+        keepout = exc.code == "KEEPOUT_VIOLATION"
+        if keepout:
+            self.emit("keepout_hold", {"command_id": str(active.command_id), "skill": active.skill})
         self._enter(
             target,
-            hold_reason="skill_done" if target == S.HOLD else None,
+            hold_reason=("limit" if keepout else "skill_done") if target == S.HOLD else None,
             cause=f"{active.skill} failed: {exc.code}",
         )
         if target == S.HOLD and is_airborne(self.vehicle_state()):
@@ -1653,7 +1661,14 @@ class Executor:
             return
         run = survey_run(active.handler)
         if active.skill in REROUTABLE and run is not None:
-            if entry_m([here, *rest], cyl) is not None and not self._reroute(active, run, charter):
+            entry = entry_m([here, *rest], cyl)
+            if entry is None:
+                return
+            # A cylinder ahead, closer than the drone can turn away from at this speed: it
+            # stops first, and the way around is planned again from where it stopped. Inside
+            # one already (it came around the drone), the way out starts at once.
+            stop_first = not inside and entry <= stop_m(v.groundspeed_ms)
+            if not self._reroute(active, run, charter, stop_first=stop_first):
                 self._keepout_hold()
             return
         # Any other order leaves a new cylinder it is inside along its current leg (rather
@@ -1703,16 +1718,20 @@ class Executor:
         self._keepout_hold()
 
     def path_allowed(self, active: _Active, path: list[LatLonAlt]) -> bool:
-        """Whether the running order may fly ``path`` (current position first) from here:
-        clear of every cylinder, inside the charter, and through the whole gate (battery
-        and return reserve included), judged on the state it is flown from."""
+        return not self.path_refusal(active, path)
+
+    def path_refusal(self, active: _Active, path: list[LatLonAlt]) -> tuple[str, ...]:
+        """Why the running order may not fly ``path`` (current position first) from here,
+        empty when it may: clear of every cylinder, inside the charter, and through the
+        whole gate (battery and return reserve included), judged on the state it is flown
+        from."""
         charter = self.charter
         if active.cmd is None or charter is None or self.active is not active:
-            return False
+            return ("ONB_STALE_ORDER",)
         ctx = self._plan_context(active.command_id)
         route = [ctx.plane.xy(p.lat, p.lon) for p in path]
         if not route_clear(route, ctx.keepouts, ctx.plane, charter):
-            return False
+            return ("KEEPOUT_VIOLATION",)
         now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
         cmd = active.cmd.model_copy(update={"based_on": now})
         plan = active.plan.model_copy(update={"path": path})
@@ -1722,8 +1741,8 @@ class Executor:
                 "keepout_replan_refused",
                 {"command_id": str(active.command_id), "codes": decision.reason_codes},
             )
-            return False
-        return True
+            return tuple(decision.reason_codes) or ("ONB_GATE_DISAGREEMENT",)
+        return ()
 
     def _find_move_reflex(self) -> None:
         """The link-loss find move meets a cylinder that came on the way (a person the
@@ -1789,8 +1808,12 @@ class Executor:
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
 
-    def _reroute(self, active: _Active, run: SurveyRun, charter: MissionCharter) -> bool:
-        """The rest of a search around the cylinders, as a new mission for the same order."""
+    def _reroute(
+        self, active: _Active, run: SurveyRun, charter: MissionCharter, *, stop_first: bool
+    ) -> bool:
+        """The rest of a search around the cylinders, as a new mission for the same order.
+        With ``stop_first`` the drone stops before the rest is planned again from there
+        (``SurveyHandler.rerouted``)."""
         rest = run.waypoints[run.next_index :]
         new = SurveyRun(
             active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
@@ -1814,11 +1837,18 @@ class Executor:
                 {"command_id": str(active.command_id), "codes": decision.reason_codes},
             )
             return False
-        handler = SurveyHandler.rerouted(new, charter.home)
+        handler = SurveyHandler.rerouted(
+            new, charter.home, stop_first=(list(rest), ctx) if stop_first else None
+        )
         self._drop_active(stage=None, save_resume=False)
         self.emit(
             "keepout_reroute",
-            {"command_id": str(active.command_id), "skill": active.skill, "points": len(route) - 1},
+            {
+                "command_id": str(active.command_id),
+                "skill": active.skill,
+                "points": len(route) - 1,
+                "stop_first": stop_first,
+            },
         )
         self._start_active(
             _Active(active.command_id, active.skill, handler, plan, active.origin, cmd=active.cmd)

@@ -1,7 +1,10 @@
 import json
 import struct
+import threading
+import time
 from pathlib import Path
 
+import pytest
 from pymavlink.dialects.v20 import ardupilotmega as mavlink2
 
 from sd_sim import launch
@@ -36,6 +39,62 @@ def test_tlog_writer(tmp_path: Path) -> None:
     idx = [json.loads(line) for line in path.with_suffix(".idx.jsonl").read_text().splitlines()]
     assert idx[0]["dir"] == "to_vehicle" and idx[0]["sysid"] == 250 and "dropped" not in idx[0]
     assert idx[1]["dropped"] is True
+
+
+def test_tlog_writer_does_not_wait_for_the_disk(tmp_path: Path) -> None:
+    # The relays write every datagram to their tap before they forward it: a disk that
+    # stalls must not stall the link.
+    path = tmp_path / "radio.tlog"
+    writer = TlogWriter(path)
+    real, disk_free = writer._tlog, threading.Event()
+
+    class StalledDisk:
+        def write(self, data: bytes) -> int:
+            disk_free.wait()
+            return real.write(data)
+
+        def flush(self) -> None:
+            real.flush()
+
+        def close(self) -> None:
+            real.close()
+
+    writer._tlog = StalledDisk()  # type: ignore[assignment]
+    frame = heartbeat(250, 190)
+    threading.Timer(2.0, disk_free.set).start()  # the stall ends, even when it would block
+    start = time.monotonic()
+    for _ in range(50):
+        writer.write(frame, "to_vehicle")
+    writer.flush()
+    assert time.monotonic() - start < 0.5
+    disk_free.set()
+    writer.close()
+    assert len(path.read_bytes()) == 50 * (8 + len(frame))
+    idx = path.with_suffix(".idx.jsonl").read_text().splitlines()
+    assert [json.loads(line)["i"] for line in idx] == list(range(50))
+
+
+def test_tlog_writer_reports_a_failed_write(tmp_path: Path) -> None:
+    writer = TlogWriter(tmp_path / "radio.tlog")
+    real = writer._tlog
+
+    class FullDisk:
+        def write(self, data: bytes) -> int:
+            raise OSError(28, "No space left on device")
+
+        def flush(self) -> None:
+            real.flush()
+
+        def close(self) -> None:
+            real.close()
+
+    writer._tlog = FullDisk()  # type: ignore[assignment]
+    writer.write(heartbeat(250, 190), "to_vehicle")
+    writer._thread.join(timeout=5)
+    with pytest.raises(OSError):
+        writer.write(heartbeat(250, 190), "to_vehicle")
+    with pytest.raises(OSError):
+        writer.close()
 
 
 def test_write_secret_modes(tmp_path: Path) -> None:

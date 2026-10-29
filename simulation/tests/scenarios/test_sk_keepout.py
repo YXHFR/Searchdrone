@@ -10,6 +10,11 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
   together in the middle of the box, so their cylinders overlap. The rest of the survey
   goes around both as one group: no hold, no refused reroute, no track sample inside
   either, and the survey ends ``done``.
+* ``test_a_person_seen_close_ahead_stops_the_search_first``: the drone sees a person
+  ahead on a long survey line, closer than it can turn away from at its speed but farther
+  than braking takes it. It stops in LOITER first, plans the rest again from where it
+  stopped, never comes inside the cylinder, and the survey ends ``done`` (or in the
+  keep-out hover, when no way around is left from there).
 * ``test_a_new_cylinder_holds_a_goto_and_stop_still_works``: a find is confirmed on a
   ``goto``'s way. The drone hovers short of the cylinder (``KEEPOUT_VIOLATION``); STOP
   then brakes and holds as always, and FLY HOME brings it home.
@@ -73,12 +78,14 @@ from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
     person,
 )
 
+from sd_onboard.executor.keepout_reflex import stop_m
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_safety.constants import FIND_MOVE_DEADLINE_S, LINK_LOSS_DETECT_S, PERSON_KEEPOUT_M
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.base import new_id
 from sd_schemas.keepout import Keepout
 from sd_schemas.link import KeepoutInstall
+from sd_sim.search_invariants import stop_distance_m
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
 __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
@@ -214,6 +221,69 @@ async def test_own_detections_under_the_drone_during_a_search(
         assert not inside[-1]
         first_out = inside.index(False)
         assert not any(inside[first_out:]), "back into a cylinder"
+        await _land(sc)
+
+
+@pytest.mark.budget_s(480)
+async def test_a_person_seen_close_ahead_stops_the_search_first(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.airborne()
+        res = await sc.operator_order("survey_sector", {"polygon": survey_box(sc)})
+        assert res["gate"]["decision"] == "ALLOW", res
+        survey = await sc.wait_command("survey_sector", "running", 60)
+        await sc.until(lambda: _executor(sc, "SURVEY"), 120, "in the box")
+        await surveying(sc)
+        ex = sc.r.onboard.ex
+        plane = Plane(*sc.r.home)
+        line: list[tuple[float, float, float, float, float]] = []
+
+        def on_a_long_line() -> bool:
+            """Straight along a survey line at speed, with room on it for the cylinder:
+            where the drone is, which way it flies and how fast."""
+            now = sc.track[-1]
+            before = next((s for s in reversed(sc.track) if s.t <= now.t - 1.0), None)
+            if before is None or now.groundspeed_ms < 4.0:
+                return False
+            (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
+            step = math.dist((e, n), (e0, n0))
+            if step < 0.9 * now.groundspeed_ms * (now.t - before.t):
+                return False  # still turning or speeding up
+            de, dn = (e - e0) / step, (n - n0) / step
+            run = getattr(ex.active.handler, "run", None) if ex.active is not None else None
+            room = stop_m(now.groundspeed_ms) + 2 * RADIUS_M + 20.0
+            for w in [] if run is None else run.waypoints:
+                we, wn = plane.xy(w.lat, w.lon)
+                d = math.dist((e, n), (we, wn))
+                if d > room and (de * (we - e) + dn * (wn - n)) > 0.999 * d:
+                    line[:] = [(e, n, de, dn, now.groundspeed_ms)]
+                    return True
+            return False
+
+        await sc.until(on_a_long_line, 120, "on a long survey line")
+        ((e, n, de, dn, speed),) = line
+        # The edge between where braking alone stops the drone and the reflex's stop
+        # distance: too close to turn away, far enough to stop outside.
+        edge = (stop_distance_m(speed) + stop_m(speed)) / 2
+        assert stop_distance_m(speed) + 3.0 < edge < stop_m(speed), (speed, edge)
+        centre = plane.latlon(e + (edge + RADIUS_M) * de, n + (edge + RADIUS_M) * dn)
+        since = time.monotonic()
+        ex.on_detections([person(centre)])
+        ((k, _),) = ex.local_keepouts.values()
+
+        reroutes = await until_event(sc, "keepout_reroute")
+        assert reroutes[-1]["payload"].get("stop_first") is True, reroutes[-1]
+        await until_event(sc, "keepout_reroute_stopped", 30.0)
+        await sc.until(lambda: _status(sc, survey["id"], "done", "failed"), 300, "the survey ended")
+        after = await sc.command(survey["id"])
+        if after["status"] == "failed":  # no way around from where it stopped
+            assert await onboard_events(sc, "keepout_hold"), after
+        else:
+            assert after["status"] == "done", after
+        track = [s for s in sc.track if s.t >= since and s.armed]
+        nearest = min(distance_m(s.lat, s.lon, k.lat, k.lon) for s in track)
+        assert nearest >= k.radius_m - NOISE_M, (nearest, k.radius_m)
         await _land(sc)
 
 

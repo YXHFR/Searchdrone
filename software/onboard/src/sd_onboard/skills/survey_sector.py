@@ -7,12 +7,15 @@ mission from the point where the search was interrupted.
 
 Every mission goes around the keep-out cylinders in force when it is planned
 (``sd_safety.keepout.reroute``); when a new cylinder comes during the flight the
-executor plans the rest again the same way (the reflex).
+executor plans the rest again the same way (the reflex). A cylinder that comes closer
+than the drone can turn away from at its speed: the drone first stops in LOITER, and the
+rest is planned again from where it stopped, through the whole gate.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from itertools import pairwise
 from typing import Any, ClassVar, Final
 
@@ -22,6 +25,7 @@ from sd_geo import PatternError, lawnmower
 from sd_mav.mission import last_nav_seq, survey_mission
 from sd_mav.modes import CopterMode
 from sd_onboard.skills import register_handler
+from sd_onboard.skills._common import still
 from sd_onboard.skills.base import (
     ExecutorIO,
     MavAction,
@@ -45,6 +49,9 @@ __all__ = ["SurveyHandler", "SurveyRun", "next_index", "progress_pct"]
 
 DEFAULT_SPEED_MS: Final = 7.0
 TICK_S: Final = 0.1
+# A reroute that stops first waits at most this long for LOITER to stop the drone (from
+# 15 m/s at ArduCopter's braking: about 6 s), then plans from wherever it is.
+STOP_WAIT_S: Final = 12.0
 FIRST_SEARCH_SEQ: Final = 2  # seq 0 = home, seq 1 = speed
 
 
@@ -225,13 +232,25 @@ class SurveyHandler:
         self.run: SurveyRun | None = None
         self._home: LatLonAlt | None = None
         self._brake = False  # a reroute: stop in LOITER before the new mission goes up
+        # A reroute that stops first: the rest as it was before the way around, and the
+        # context it is planned again in, from where the drone stopped.
+        self._stop_first: tuple[list[LatLon], PlanContext] | None = None
 
     @classmethod
-    def rerouted(cls, run: SurveyRun, home: LatLonAlt) -> SurveyHandler:
+    def rerouted(
+        cls,
+        run: SurveyRun,
+        home: LatLonAlt,
+        *,
+        stop_first: tuple[list[LatLon], PlanContext] | None = None,
+    ) -> SurveyHandler:
         """The keep-out reflex's handler: the rest of a running order (``survey_sector``,
-        ``follow_path`` or ``resume``) as an already planned ``run``."""
+        ``follow_path`` or ``resume``) as an already planned ``run``. With ``stop_first``
+        (the rest still to fly and the context it was planned in) the drone stops before
+        the rest is planned again from there (:meth:`_from_stop`)."""
         handler = cls()
         handler.run, handler._home, handler._brake = run, home, True
+        handler._stop_first = stop_first
         return handler
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
@@ -254,7 +273,37 @@ class SurveyHandler:
             raise RuntimeError("planned before running")
         if self._brake and not await io.set_mode(CopterMode.LOITER):
             raise mode_failed(CopterMode.LOITER)
+        if self._stop_first is not None:
+            plan = await self._from_stop(io, *self._stop_first)
         await self.run.fly(plan, io, self._home)
+
+    async def _from_stop(self, io: ExecutorIO, rest: list[LatLon], ctx: PlanContext) -> SkillPlan:
+        """Wait in LOITER until the drone stands still, then plan ``rest`` again from
+        there against the cylinders in force now, through the whole gate. The way around
+        planned while it was moving started where it no longer is."""
+        old = self.run
+        if old is None:
+            raise RuntimeError("planned before running")
+        deadline = io.clock.monotonic() + STOP_WAIT_S
+        while not still(io.vehicle) and io.clock.monotonic() < deadline:
+            await io.sleep(TICK_S)
+        run = SurveyRun(
+            old.command_id, list(rest), old.alt_m, old.speed_ms, target_state=old.target_state
+        )
+        try:
+            plan = run.plan(replace(ctx, vehicle=io.vehicle, keepouts=io.keepouts))
+        except PlanError as exc:
+            no_way = exc.code == "KEEPOUT_VIOLATION"
+            detail = "Ingen väg runt förbudscylindrarna." if no_way else exc.detail
+            raise SkillFailedError(exc.code, detail) from exc
+        if refusal := io.leg_refusal(plan.path):  # the gate's own reason, keep-out or not
+            raise SkillFailedError(refusal[0], "Vägen runt förbudscylindrarna nekades.")
+        self.run = run
+        io.emit_event(
+            "keepout_reroute_stopped",
+            {"command_id": str(run.command_id), "points": len(plan.path) - 1},
+        )
+        return plan
 
     def on_tick(self, ctx: TickContext) -> SkillStatus:
         return SkillStatus(stage="running", progress_pct=self.run.progress() if self.run else None)

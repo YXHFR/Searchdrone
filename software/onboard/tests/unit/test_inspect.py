@@ -12,6 +12,7 @@ import pytest
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
+from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import (
     LOCAL_KEEPOUTS_MAX,
@@ -22,6 +23,7 @@ from sd_onboard.executor.keepout_reflex import (
     way_out,
 )
 from sd_onboard.skills import survey_sector
+from sd_onboard.skills.base import PlanError
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
@@ -30,7 +32,7 @@ from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.gate import GateContext, GateDecision, GateRequest
 from sd_schemas.keepout import INSPECT_AIM_DEG, INSPECT_VIEW_DEG, Keepout
-from sd_schemas.link import BBox, GeoDetectionMsg, KeepoutInstall
+from sd_schemas.link import BBox, GeoDetectionMsg, KeepoutInstall, SkillCommand
 
 SKILLS = [*ONBOARD_SKILLS, "orbit", "capture_stills", "inspect_detection"]
 
@@ -412,6 +414,102 @@ async def test_a_new_cylinder_reroutes_the_search() -> None:
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
         assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
         assert "superseded" not in r.up.stages(cmd.command_id)
+
+
+BRAKE_MS2 = 2.5  # ArduCopter's LOITER braking (LOIT_BRK_ACCEL)
+
+
+async def _close_cylinder_ahead(r: Rig) -> tuple[SkillCommand, Keepout, int]:
+    """A search at 8 m/s on a long leg, then a cylinder whose edge is 17 m ahead on it: too
+    close to go around at this speed, inside the reflex's stop distance, but farther than
+    braking takes. The order, the cylinder and where the track was when it came."""
+    box = square(60, east=0, north=120)
+    await r.install(charter(allowed_skills=SKILLS))
+    await r.takeoff()
+    cmd = await r.send(
+        r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
+    )
+
+    def on_a_long_leg() -> bool:  # at full speed along it, 60 m or more to go
+        ahead = r.fc.missions[MISSION][r.fc.mission_current]
+        to, here = PLANE.xy(ahead.x / 1e7, ahead.y / 1e7), xy(r)
+        d, speed = math.dist(here, to), math.hypot(*r.fc.vel)
+        along = (r.fc.vel[0] * (to[0] - here[0]) + r.fc.vel[1] * (to[1] - here[1])) / d
+        return r.fc.mission_current >= 3 and d > 60 and speed > 7.9 and along > 0.999 * speed
+
+    await r.until(on_a_long_leg, 300)
+    here, (ve, vn) = xy(r), r.fc.vel
+    speed = math.hypot(ve, vn)
+    assert stop_m(speed) > 17 > speed**2 / (2 * BRAKE_MS2) + speed * 0.5
+    k = keepout(here[0] + 37 * ve / speed, here[1] + 37 * vn / speed, 20, source="detection")
+    start = len(r.fc.track)
+    install(r, k)
+    await r.run(0.5)
+    reroutes = [d for t, _, d in r.up.events if t == "executor.keepout_reroute"]
+    assert reroutes and reroutes[-1]["stop_first"] is True
+    return cmd, k, start
+
+
+async def test_a_cylinder_closer_than_the_turn_stops_the_search_first() -> None:
+    """It stops in LOITER first and goes around from where it stopped. ArduCopter starts a
+    new AUTO leg from its stopping point, so a way around planned from where the drone was
+    when the cylinder came would be flown from a point past that."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, k, start = await _close_cylinder_ahead(r)
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        assert "executor.keepout_reroute_stopped" in r.up.kinds()
+        assert "superseded" not in r.up.stages(cmd.command_id)
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+
+
+@pytest.mark.parametrize("refused_by", ["gate", "planner"])
+async def test_no_way_around_from_where_the_search_stopped_is_a_keepout_hold(
+    monkeypatch: pytest.MonkeyPatch, refused_by: str
+) -> None:
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, k, start = await _close_cylinder_ahead(r)
+        if refused_by == "gate":
+            r.ex.path_refusal = lambda active, path: ("KEEPOUT_VIOLATION",)  # type: ignore[method-assign]
+        else:
+
+            def no_way(self: survey_sector.SurveyRun, ctx: Any) -> Any:
+                raise PlanError("KEEPOUT_VIOLATION", "ingen väg")
+
+            monkeypatch.setattr(survey_sector.SurveyRun, "plan", no_way)
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
+        assert "executor.keepout_hold" in r.up.kinds()
+        assert "executor.keepout_reroute_stopped" not in r.up.kinds()
+        assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+
+
+async def test_a_way_around_the_gate_refuses_for_another_reason_says_that_reason() -> None:
+    """The way around from the stop clears the cylinder but the gate says no for the
+    battery: the order fails with the gate's reason, not as a keep-out hold."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, k, start = await _close_cylinder_ahead(r)
+        r.ex.path_refusal = lambda active, path: ("BATTERY_RESERVE",)  # type: ignore[method-assign]
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        assert r.up.codes(cmd.command_id) == ("BATTERY_RESERVE",)
+        assert "executor.keepout_hold" not in r.up.kinds()
+        assert r.ex.hold_reason == "skill_done" and r.fc.mode == CopterMode.LOITER
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+
+
+async def test_a_drone_that_never_stands_still_is_planned_from_where_it_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flight controller never reports the drone still: the rest is planned from where
+    it is once ``STOP_WAIT_S`` has passed, through the same gate."""
+    monkeypatch.setattr(survey_sector, "still", lambda vehicle: False)
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, k, start = await _close_cylinder_ahead(r)
+        came = r.clock.monotonic()
+        await r.until(lambda: "executor.keepout_reroute_stopped" in r.up.kinds(), 60)
+        assert r.clock.monotonic() - came >= survey_sector.STOP_WAIT_S - 1.0
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
 
 
 async def test_a_new_cylinder_on_a_goto_hovers() -> None:
