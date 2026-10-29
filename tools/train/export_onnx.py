@@ -40,6 +40,22 @@ def export(
 ) -> tuple[Path, Path]:
     ck: dict[str, Any] = torch.load(best, map_location="cpu", weights_only=True)
     model, settings = ck["model"], ck["settings"]
+    register = load_register()
+    # what the weights have seen in all: a run started from earlier weights (init=)
+    # carries their sets too, so every one of them is credited
+    sets = list(ck.get("trained_on", settings["sets"]))
+    pretrained = list(
+        ck.get("pretrained_on", ["simfarm"] if settings.get("simfarm_epochs") else [])
+    )
+    unknown = [s for s in (*sets, *pretrained) if s not in register]
+    if unknown:
+        # a set dropped or renamed since: its credit and licence would silently vanish
+        raise BenchError(
+            f"Vikterna är tränade på {', '.join(unknown)}, som inte finns i registret.", 2
+        )
+    shown = dict(settings)
+    if shown.get("init"):
+        shown["init"] = Path(shown["init"]).name  # the run's local path stays local
     fam = families.FAMILIES[model]
     tile = int(settings["tile"])
     net = families.build(model)
@@ -65,11 +81,6 @@ def export(
         raise BenchError("ONNX-filen är större än den inbyggda datorn tar emot (128 MB).", 1)
     tmp.replace(onnx_path)
     digest = hashlib.sha256(onnx_path.read_bytes()).hexdigest()
-    register = load_register()
-    # what the weights have seen in all: a run started from earlier weights (init=)
-    # carries their sets too, so every one of them is credited
-    sets = [s for s in ck.get("trained_on", settings["sets"]) if s in register]
-    pretrained = ck.get("pretrained_on", ["simfarm"] if settings.get("simfarm_epochs") else [])
     manifest = {
         "schema": MANIFEST_SCHEMA,
         "name": name,
@@ -86,11 +97,14 @@ def export(
             for s in sets
         ],
         "pretrained_on": list(pretrained),
-        "base_weights": f"COCO {model} (Apache-2.0)",
+        "base_weights": ck.get("base_weights", f"COCO {model} (Apache-2.0)"),
+        "started_from": ck.get("started_from"),
         "val_ap50": ck.get("val_ap50"),
         "val_ap50_by_dataset": ck.get("val_ap50_by_dataset"),
+        # how val_ap50 was made: the mean of each dataset's AP50, or (older runs) pooled
+        "val_ap50_rule": "mean_over_datasets" if ck.get("val_ap50_by_dataset") else "pooled",
         "epoch": ck.get("epoch"),
-        "settings": settings,
+        "settings": shown,
         "exported": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "publish": all(register[s].publish_weights for s in sets),
     }

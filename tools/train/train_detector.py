@@ -26,6 +26,7 @@ licence allows measuring only. The weights stay on this computer.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
@@ -185,10 +186,11 @@ def run_stage(
     workers: int,
     save_minutes: float,
     resume: dict[str, Any] | None,
-    lineage: dict[str, list[str]] | None = None,
+    lineage: dict[str, Any] | None = None,
 ) -> None:
     """``lineage``: what the weights have seen in all, ``init`` included (``trained_on``,
-    ``pretrained_on``); saved in ``best.pt`` for the manifest's credits."""
+    ``pretrained_on``, ``base_weights``, ``started_from``); saved in ``best.pt`` for the
+    manifest's credits."""
     fam = families.FAMILIES[settings.model]
     lineage = lineage or {}
     folder, tiles = train_tiles
@@ -393,9 +395,19 @@ def _available(data: Path, sets: Sequence[str]) -> list[str]:
     return have
 
 
-def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, list[str]]:
+def trained_sets(sets: Sequence[str]) -> list[str]:
+    """The sets of ``sets`` that are really trained on: measure-only ones are left out,
+    as ``tiles.pictures`` leaves them out, so they are never credited as seen."""
+    from bench.datasets import load_register
+
+    register = load_register()
+    return [s for s in sets if s in register and "train" in register[s].use]
+
+
+def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     """Start from an earlier run's best weights (its EMA) instead of COCO's. Returns what
-    those weights have seen (``trained_on``, ``pretrained_on``), so their credit stays."""
+    those weights have seen (``trained_on``, ``pretrained_on``), so their credit stays,
+    and ``started_from``: the file's name, SHA-256 and epoch (never its local path)."""
     if not path.is_file():
         raise BenchError(f"init={path} finns inte.", 2)
     ck: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
@@ -403,11 +415,17 @@ def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, list[st
         raise BenchError(f"init={path} är inte en best.pt för {model}.", 2)
     net.load_state_dict(ck["ema"])
     earlier = ck.get("settings", {})
-    seen = {
-        "trained_on": list(ck.get("trained_on", earlier.get("sets", []))),
+    seen: dict[str, Any] = {
+        "trained_on": list(ck.get("trained_on", trained_sets(earlier.get("sets", [])))),
         "pretrained_on": list(
             ck.get("pretrained_on", ["simfarm"] if earlier.get("simfarm_epochs") else [])
         ),
+        "started_from": {
+            "file": f"{path.parent.name}/{path.name}",
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "epoch": ck.get("epoch"),
+            "base_weights": ck.get("base_weights", f"COCO {model} (Apache-2.0)"),
+        },
     }
     trained = ", ".join(seen["trained_on"])
     say(f"{model}: startar från {path} (tränad på {trained or 'okänt'}, epok {ck.get('epoch')})")
@@ -449,15 +467,23 @@ def train(
     net = families.build(settings.model)
     person = families.load_coco(net, settings.model, weights)
     say(f"{settings.model}: COCO-vikter inlästa, personklassen startar från {len(person)} lager")
-    seen: dict[str, list[str]] = {"trained_on": [], "pretrained_on": []}
+    seen: dict[str, Any] = {"trained_on": [], "pretrained_on": []}
     if settings.init:
         seen = load_init(net, settings.model, Path(settings.init))
-    lineage = {
-        "trained_on": sorted({*seen["trained_on"], *settings.sets}),
+    lineage: dict[str, Any] = {
+        "trained_on": sorted({*seen["trained_on"], *trained_sets(settings.sets)}),
         "pretrained_on": sorted(
             {*seen["pretrained_on"], *(["simfarm"] if settings.simfarm_epochs else [])}
         ),
+        "base_weights": f"COCO {settings.model} (Apache-2.0)",
     }
+    if "started_from" in seen:
+        start = seen["started_from"]
+        lineage["started_from"] = start
+        lineage["base_weights"] = (
+            f"{start['file']} (sha256 {start['sha256'][:12]}, epoch {start['epoch']}), "
+            f"itself from {start['base_weights']}"
+        )
     ema = Ema(net)
     if resume is not None:
         net.load_state_dict(resume["net"])

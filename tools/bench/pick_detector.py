@@ -10,9 +10,13 @@ Keys: ``results`` (result files, comma separated; default every
 The rule, in order: the highest recall on people over 32 px wins; a model within 2
 percentage points of it is as good on that, and among those the higher recall at
 16-32 px wins; within 2 points there too, the faster one (median time per picture)
-wins. Picked on the val part, never on test: the test part is only measured once, on
-the chosen model. Every result must come from the same pictures (the same ``source``
-and picture count); a quick look with ``limit=`` is never ranked against a full run.
+wins. When the val part holds several datasets, each recall is the lowest of the
+datasets' own recalls for that size, never the pooled one: the datasets differ a lot in
+size (KIOS has far more people than HERIDAL), and a model that gets worse on one of
+them must not win on the strength of another. Picked on the val part, never on test:
+the test part is only measured once, on the chosen model. Every result must come from
+the same pictures (the same ``source`` and picture count); a quick look with ``limit=``
+is never ranked against a full run.
 Prints the setting that makes the on-board computer use it.
 """
 
@@ -32,7 +36,24 @@ BUILT_IN = frozenset({"null", "facit"})
 
 
 def _recall(body: dict[str, Any], cls: str) -> float:
-    return float(body["recall"][cls]["recall"])
+    """The weakest dataset's recall for ``cls``; the pooled one for older results."""
+    rows = [
+        row["by_class"][cls]
+        for row in (body.get("recall_by_dataset") or {}).values()
+        if "by_class" in row and row["by_class"][cls]["n"]
+    ]
+    if not rows:
+        return float(body["recall"][cls]["recall"])
+    return min(float(r["recall"]) for r in rows)
+
+
+def _per_set(body: dict[str, Any]) -> str:
+    parts = [
+        f"{name} {row['by_class']['gt32']['recall']:.3f}/{row['by_class']['16to32']['recall']:.3f}"
+        for name, row in sorted((body.get("recall_by_dataset") or {}).items())
+        if "by_class" in row
+    ]
+    return f" ({', '.join(parts)})" if len(parts) > 1 else ""
 
 
 def _fields(body: dict[str, Any]) -> tuple[str, float, float, float]:
@@ -89,7 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for b in sorted(bodies, key=lambda b: b["model"]):
             say(
                 f"  {b['model']}: > 32 px {_recall(b, 'gt32'):.3f}, 16-32 px "
-                f"{_recall(b, '16to32'):.3f}, {b['latency_ms']['p50']} ms"
+                f"{_recall(b, '16to32'):.3f}, {b['latency_ms']['p50']} ms{_per_set(b)}"
             )
         manifest = data_dir(args) / "models" / "detector" / f"{chosen['model']}.json"
         say(f"Vald: {chosen['model']}.")

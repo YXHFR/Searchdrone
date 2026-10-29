@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -188,3 +189,32 @@ def test_extend_draws_only_the_new_dataset() -> None:
     assert {s: r["part"] for s, r in drawn["sequences"].items()} == make_split(sites, "v2/b")
     for s, r in drawn["sequences"].items():
         assert r["images"] == len(sites[s]) and r["ids_sha256"] == ids_digest(sites[s])
+
+
+def test_extend_from_the_command_line_needs_the_labels_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``make_splits extend`` reads the pictures' and the labels' archive listings; with
+    the pictures alone every KIOS picture lacks its labels and nothing is written."""
+    from bench import make_splits
+
+    pictures = ["Images/Train/1_people_0007_0.jpg", "Images/Test/2_ppl_4_00001.jpg"]
+    labels = [
+        f"Annotations/Yolo/{p.split('/')[1]}/{p.split('/')[2].removesuffix('.jpg')}.txt"
+        for p in pictures
+    ]
+    (tmp_path / "kios.txt").write_text("\n".join(pictures) + "\n", encoding="utf-8")
+    (tmp_path / "labels.txt").write_text("\n".join(labels) + "\n", encoding="utf-8")
+    out = tmp_path / "splits"
+    out.mkdir()
+    (out / "v1.json").write_text((SPLITS / "v1.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(make_splits, "SPLITS", out)
+    base = ["extend", "version=v9", "base=v1", f"kios={tmp_path / 'kios.txt'}"]
+    assert make_splits.main(base) != 0
+    assert not (out / "v9.json").exists()
+    assert make_splits.main([*base, f"kios_labels={tmp_path / 'labels.txt'}"]) == 0
+    body = json.loads((out / "v9.json").read_text(encoding="utf-8"))
+    assert body["base"] == "v1" and body["datasets"]["heridal"] == json.loads(
+        (SPLITS / "v1.json").read_text(encoding="utf-8")
+    )["datasets"]["heridal"] | {"seed": "v1/heridal"}
+    assert set(body["datasets"]["kios"]["sequences"]) == {"campus_exercise", "meadow"}

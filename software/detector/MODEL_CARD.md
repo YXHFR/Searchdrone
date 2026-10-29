@@ -54,7 +54,10 @@ one class: person.
 
 All candidates are measured with `just bench-detector ... part=val` on whole pictures,
 the same way the drone sees them. The threshold is set so that false alarms stay at
-0.5 per 12 MP picture. Then, in order:
+0.5 per 12 MP picture. Every recall below is taken per dataset, and a model's recall is
+its **lowest** dataset's recall, never the recall pooled over all people: KIOS's val
+site has far more people than HERIDAL's val part, so a pooled number would be almost
+all KIOS and could hide a model getting worse on HERIDAL's wilderness. Then, in order:
 
 1. The highest recall on people over 32 px wins.
 2. Every model within 2 percentage points of that recall is as good on it. Among those,
@@ -62,8 +65,10 @@ the same way the drone sees them. The threshold is set so that false alarms stay
 3. Among the models still level, the fastest (median time per picture) wins.
 
 The choice is made on the `val` part only. The `test` part is measured once, on the
-chosen model, and that is the number reported. The targets, to be revisited after the
-first measurement, are recall ≥ 0.85 over 32 px and ≥ 0.60 at 16–32 px.
+chosen model, and the numbers reported are **per dataset** (`just bench-detector
+sets=heridal`, `sets=kios`), HERIDAL first; a pooled test number is not reported. The
+targets, to be revisited after the first measurement, are recall ≥ 0.85 over 32 px and
+≥ 0.60 at 16–32 px, and each dataset must meet them on its own.
 
 ## Known limits
 

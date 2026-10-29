@@ -571,10 +571,15 @@ def test_a_wrong_labels_archive_unpacks_nothing(
 
 
 @pytest.mark.usefixtures("kios_split")
+@pytest.mark.parametrize(
+    # the same file, and the same file spelt another way: both land on one path
+    "name",
+    ["Images/Train/1_people_0007_0.jpg", "./Images/Train/1_people_0007_0.jpg"],
+)
 def test_a_member_in_both_archives_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
-    pictures, labels = _kios_zips({"Images/Train/1_people_0007_0.jpg": _jpeg(100, 50)})
+    pictures, labels = _kios_zips({name: _jpeg(100, 50)})
     ds = _kios_row(pictures, labels)
     server = TwoFiles({ds.url: pictures, ds.labels_url: labels})
     monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))

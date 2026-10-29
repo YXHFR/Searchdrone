@@ -267,7 +267,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         by_set = body["recall_by_dataset"]
         assert isinstance(by_set, dict)  # noqa: S101 - built just above
         for name, row in by_set.items():
-            say(f"  {name}: recall {row['recall']} över {row['n']} personer")
+            cls = row["by_class"]
+            say(
+                f"  {name}: recall {row['recall']} över {row['n']} personer "
+                f"(16-32 px {cls['16to32']['recall']}, > 32 px {cls['gt32']['recall']})"
+            )
         if args.get("compare"):
             why = compare(body, Path(args["compare"]))
             if why:

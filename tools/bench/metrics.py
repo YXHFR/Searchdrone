@@ -6,7 +6,8 @@ alarm. The score threshold is then the lowest one at which the false alarms stay
 below ``fp_per_12mp`` per 12 megapixels of picture area (a picture of another size
 counts by its area). Recall is given at that threshold, per size class of the person
 box's longest side (``lt16`` < 16 px, ``16to32`` 16-32 px, ``gt32`` > 32 px) and per
-dataset, each with a 95 % Wilson interval.
+dataset (all sizes, and per size class under ``by_class``), each with a 95 % Wilson
+interval.
 """
 
 from __future__ import annotations
@@ -141,7 +142,7 @@ class Summary:
     area_12mp: float
     fp_per_12mp: float  # achieved at the threshold
     recall: dict[str, dict[str, float]]  # size class -> n, hits, recall, lo, hi
-    recall_by_dataset: dict[str, dict[str, float]]
+    recall_by_dataset: dict[str, dict[str, object]]
     ap50: float
     precision_at_score_min: float | None
     latency_ms: dict[str, float]
@@ -183,11 +184,11 @@ def summarise(results: Sequence[PictureResult], fp_per_12mp: float = FP_PER_12MP
         return score is not None and score >= t
 
     per_class: dict[str, list[int]] = {c: [0, 0] for c in (*SIZE_CLASSES, "all")}
-    per_ds: dict[str, list[int]] = {}
+    per_ds: dict[str, dict[str, list[int]]] = {}
     for r in results:
-        ds = per_ds.setdefault(r.dataset, [0, 0])
+        ds = per_ds.setdefault(r.dataset, {c: [0, 0] for c in (*SIZE_CLASSES, "all")})
         for cls, score in zip(r.truth_class, r.truth_hit_score, strict=True):
-            for row in (per_class[cls], per_class["all"], ds):
+            for row in (per_class[cls], per_class["all"], ds[cls], ds["all"]):
                 row[1] += 1
                 row[0] += int(kept(score))
     fp_kept = sum(1 for r in results for s in r.fp_scores if s >= t)
@@ -202,7 +203,13 @@ def summarise(results: Sequence[PictureResult], fp_per_12mp: float = FP_PER_12MP
         area_12mp=area,
         fp_per_12mp=fp_kept / area if area else 0.0,
         recall={c: _recall_row(h, n) for c, (h, n) in per_class.items()},
-        recall_by_dataset={d: _recall_row(h, n) for d, (h, n) in sorted(per_ds.items())},
+        recall_by_dataset={
+            d: {
+                **_recall_row(*rows["all"]),
+                "by_class": {c: _recall_row(*rows[c]) for c in SIZE_CLASSES},
+            }
+            for d, rows in sorted(per_ds.items())
+        },
         ap50=ap50(results),
         precision_at_score_min=round(tp_min / (tp_min + fp_min), 4) if tp_min + fp_min else None,
         latency_ms={"p50": round(_pct(lat, 50), 1), "p95": round(_pct(lat, 95), 1)},

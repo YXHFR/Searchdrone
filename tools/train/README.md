@@ -100,6 +100,9 @@ home internet line.
    - Models within 2 percentage points of the best count as equal. Among them, the one
      with the higher recall at 16–32 px wins.
    - If they are still within 2 points of each other, the faster one wins.
+   - Each recall is the model's lowest over the datasets in the val part, not the
+     recall pooled over all people, so a model that gets worse on HERIDAL cannot win on
+     KIOS's many people. The per-dataset numbers are printed next to each model.
 
    It prints the chosen model and the line `SD_DETECTOR_MODEL=<path to its .json>`.
 
@@ -110,8 +113,9 @@ home internet line.
    just bench-detector model=person_yolox_s
    ```
 
-   Use the name `pick-detector` chose. This is the number to report. The result is
-   written to `build/bench/det_<model>_test.json`. To make the simulator's profile from
+   Use the name `pick-detector` chose. The numbers to report are the per-dataset
+   lines it prints (or `sets=heridal` and `sets=kios` runs), HERIDAL first, not the
+   pooled one. The result is written to `build/bench/det_<model>_test.json`. To make the simulator's profile from
    it, see `tools/bench/README.md`.
 
 9. **Use it.** The on-board computer (`sd_onboard`) loads the model when

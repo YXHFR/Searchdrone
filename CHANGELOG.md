@@ -16,8 +16,10 @@ All notable changes to this project are listed here. The format follows
   comparable. `just train-detector` mixes every fetched set that may be trained on,
   prints the val AP50 per dataset and keeps the epoch with the best mean of them;
   `init=<best.pt>` starts from an earlier run's weights, and the manifest credits every
-  set those weights saw. `just bench-detector` prints the recall per dataset. `just
-  data-dir` prints the data folder. JKU's Airborne Optical Sectioning data is not added:
+  set those weights saw. `just bench-detector` prints the recall per dataset and size,
+  and `just pick-detector` ranks each model by its weakest dataset's recall, so KIOS's
+  many people cannot hide a model getting worse on HERIDAL. `just data-dir` prints the
+  data folder. JKU's Airborne Optical Sectioning data is not added:
   it has no person boxes for single colour pictures (`tools/bench/README.md`).
 - `detector=model` for `just sim-headless`, `just demo`, `just demo-search` and `just
   e2e-search`: the simulator runs the owner's trained person detector

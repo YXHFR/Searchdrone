@@ -27,7 +27,7 @@ import shutil
 import sys
 import zipfile
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from bench.common import (
     ROOT,
@@ -181,10 +181,14 @@ def fetch_archive(ds: Dataset, data: Path, keep: bool) -> int:
     with contextlib.ExitStack() as stack:
         zips = [stack.enter_context(zipfile.ZipFile(a[3])) for a in archives]
         owner: dict[str, zipfile.ZipFile] = {}
+        written: set[str] = set()  # where each file lands, so "./a" and "a" are one
         for zf in zips:
             for name in zf.namelist():
-                if name in owner and not name.endswith("/"):
-                    raise BenchError(f"{ds.name}: {name} finns i två arkiv")
+                if not name.endswith("/"):
+                    where = PurePosixPath(name).as_posix()
+                    if where in written:
+                        raise BenchError(f"{ds.name}: {name} finns i två arkiv")
+                    written.add(where)
                 owner[name] = zf
         members, files = _wanted(ds, list(owner))
         say(f"{ds.name}: packar upp {len(files)} filer till {raw}")

@@ -268,7 +268,8 @@ def test_init_starts_from_earlier_weights_and_keeps_their_credit(
     seen = train_detector.load_init(net, "yolox_s", init)
     for k, v in net.state_dict().items():
         assert torch.equal(v, earlier[k]), k
-    assert seen == {"trained_on": ["heridal"], "pretrained_on": ["simfarm"]}
+    assert (seen["trained_on"], seen["pretrained_on"]) == (["heridal"], ["simfarm"])
+    assert seen["started_from"]["epoch"] == 12
 
     out = tmp_path / "mix"
     argv = [
@@ -284,6 +285,29 @@ def test_init_starts_from_earlier_weights_and_keeps_their_credit(
     assert [t["dataset"] for t in manifest["trained_on"]] == ["heridal"]
     assert manifest["pretrained_on"] == ["simfarm"]  # the earlier run's, credited still
     assert set(manifest["val_ap50_by_dataset"]) == {"heridal"}
+    assert manifest["val_ap50_rule"] == "mean_over_datasets"
+    # where it started is named and pinned, but the owner's local path never leaves
+    assert manifest["started_from"]["file"] == "heridal_run/best.pt"
+    assert len(manifest["started_from"]["sha256"]) == 64
+    assert manifest["base_weights"].startswith("heridal_run/best.pt (sha256 ")
+    assert manifest["settings"]["init"] == "best.pt"
+    assert str(tmp_path) not in manifest_path.read_text(encoding="utf-8")
+
+
+def test_measure_only_sets_are_never_credited_as_trained_on() -> None:
+    measure_only = [d.name for d in load_register().values() if "train" not in d.use]
+    assert measure_only  # WiSARD, until its data licence is confirmed
+    assert train_detector.trained_sets(["heridal", *measure_only]) == ["heridal"]
+
+
+def test_export_refuses_weights_trained_on_an_unregistered_set(bank: Path, tmp_path: Path) -> None:
+    best = tmp_path / "old" / "best.pt"
+    best.parent.mkdir()
+    _earlier_best(best)
+    ck = torch.load(best, weights_only=True)
+    torch.save({**ck, "trained_on": ["heridal", "gone"]}, best)
+    with pytest.raises(BenchError, match="gone"):
+        export(best, tmp_path / "models", "person_x", check_images=1)
 
 
 def test_init_inside_out_or_of_another_model_is_refused(bank: Path, tmp_path: Path) -> None:

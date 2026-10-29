@@ -19,7 +19,8 @@ in one part, so no near-copy of a test picture is ever trained on.
   recording (``KIOS_SITES``, read off the pictures). Recordings that show the same site
   are one sequence, and so are recordings that move between sites: ``people_0042``
   starts at the civil-defence exercise and goes on over the campus, so the campus and
-  the exercise are one sequence.
+  the exercise are one sequence. Every KIOS picture shows people, so a picture without
+  its YOLO file, or of a recording with no site, refuses the whole set.
 * ``simfarm``: the sim farm's rounds (``<round>/images/<stem>.png`` with
   ``<round>/labels/<stem>.txt``, YOLO class 0). The id is ``<round>/<stem>``, the
   sequence the round. Only for pre-training, never measured on.
@@ -34,6 +35,8 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+
+from bench.common import BenchError
 
 Box = tuple[float, float, float, float]
 
@@ -192,8 +195,14 @@ def _kios(names: list[str]) -> list[Member]:
         if p.suffix.lower() != ".jpg" or not _KIOS_STEM.fullmatch(p.stem):
             continue
         label = f"Annotations/Yolo/{p.parts[1]}/{p.stem}.txt"
-        seq = sequence_of("kios_yolo", p.stem)
-        out.append(Member(p.stem, seq, name, label if label in present else None))
+        try:
+            seq = sequence_of("kios_yolo", p.stem)
+        except ValueError as exc:
+            raise BenchError(f"kios: {name} hör till en inspelning utan plats ({exc})") from exc
+        # every KIOS picture has people and a YOLO file; one without would count as empty
+        if label not in present:
+            raise BenchError(f"kios: {name} saknar etikettfil {label}")
+        out.append(Member(p.stem, seq, name, label))
     return out
 
 

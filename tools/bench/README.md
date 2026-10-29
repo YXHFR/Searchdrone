@@ -180,5 +180,6 @@ m="env PYTHONPATH=tools uv run --no-sync python -m bench.make_splits"
 $m list kios > /tmp/kios.txt
 $m list kios labels=1 > /tmp/kios_labels.txt
 $m extend version=v2 base=v1 kios=/tmp/kios.txt kios_labels=/tmp/kios_labels.txt
-``` Archive checksums in `datasets.toml` are filled
-in by downloading the archive once and running `sha256sum` on it.
+```
+
+Archive checksums in `datasets.toml` are filled in by downloading the archive once and running `sha256sum` on it.
