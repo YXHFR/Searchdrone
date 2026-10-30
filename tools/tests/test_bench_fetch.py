@@ -5,15 +5,17 @@ from __future__ import annotations
 import dataclasses
 import functools
 import hashlib
+import http.client
 import io
 import json
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
-from bench import fetch
+from bench import common, fetch
 from bench.common import BenchError, RangeFile, download, safe_relpath
 from bench.datasets import load_register, read_index
 from bench.splits import Split, ids_digest
@@ -249,6 +251,122 @@ def test_range_file_reads_a_member_without_the_whole_archive() -> None:
     ) as zf:
         assert zf.read(f"{ROOT_DIR}/Annotations/test_TRS_0001.xml").startswith(b"<annotation>")
     assert all(r and r.startswith("bytes=") for r in server.requests)
+
+
+class Flaky:
+    """Fails the first ``fails`` requests with ``exc`` (raised by a factory), then hands
+    them to ``server``."""
+
+    def __init__(self, server: FakeServer, fails: int, exc: Any) -> None:
+        self.server = server
+        self.fails = fails
+        self.exc = exc
+        self.calls = 0
+
+    def __call__(self, req: urllib.request.Request) -> FakeResponse:
+        self.calls += 1
+        if self.calls <= self.fails:
+            raise self.exc()
+        return self.server(req)
+
+
+def _handshake_timeout() -> Exception:
+    return urllib.error.URLError(TimeoutError("_ssl.c:983: The handshake operation timed out"))
+
+
+def _not_found() -> Exception:
+    return urllib.error.HTTPError("https://example.test/h.zip", 404, "Not Found", {}, None)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def no_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(common, "RETRY_WAITS_S", (0, 0, 0))
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_range_file_retries_a_passing_network_fault() -> None:
+    body = bytes(range(256)) * 40
+    server = FakeServer(body)
+    rf = RangeFile("https://example.test/h.zip", server)
+    flaky = Flaky(server, 1, _handshake_timeout)
+    rf._opener = flaky
+    rf.seek(100)
+    assert rf.read(50) == body[100:150]
+    assert flaky.calls == 2
+
+
+@pytest.mark.usefixtures("no_waits")
+@pytest.mark.parametrize("exc", [_handshake_timeout, ConnectionResetError, TimeoutError])
+def test_range_file_gives_up_after_four_tries(exc: Any) -> None:
+    flaky = Flaky(FakeServer(b"x" * 10), 99, exc)
+    with pytest.raises((urllib.error.URLError, OSError)):
+        RangeFile("https://example.test/h.zip", flaky)
+    assert flaky.calls == 4
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_range_file_does_not_retry_a_404_or_a_web_page() -> None:
+    flaky = Flaky(FakeServer(b"x" * 10), 99, _not_found)
+    with pytest.raises(urllib.error.HTTPError):
+        RangeFile("https://example.test/h.zip", flaky)
+    assert flaky.calls == 1
+    page = FakeServer(b"<html></html>", ctype="text/html")
+    with pytest.raises(BenchError, match="webbsida"):
+        RangeFile("https://example.test/h.zip", page)
+    assert len(page.requests) == 1
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_download_retries_a_passing_network_fault(tmp_path: Path) -> None:
+    body = bytes(range(256)) * 40
+    flaky = Flaky(FakeServer(body), 2, ConnectionResetError)
+    dest = tmp_path / "a.zip"
+    download("https://example.test/a.zip", dest, len(body), _sha(body), opener=flaky)
+    assert dest.read_bytes() == body
+    assert flaky.calls == 3
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_download_resumes_a_read_cut_mid_range(tmp_path: Path) -> None:
+    body = bytes(range(256)) * 40
+
+    class CutResponse(FakeResponse):
+        def read(self, size: int | None = -1) -> bytes:
+            if self.tell() >= 100:
+                raise http.client.IncompleteRead(b"")
+            return super().read(min(100 - self.tell(), size if size and size > 0 else 100))
+
+    server = FakeServer(body)
+    first = True
+
+    def opener(req: urllib.request.Request) -> FakeResponse:
+        nonlocal first
+        resp = server(req)
+        if first:
+            first = False
+            return CutResponse(resp.getvalue(), resp.status, resp.headers)
+        return resp
+
+    dest = tmp_path / "a.zip"
+    download("https://example.test/a.zip", dest, len(body), _sha(body), opener=opener)
+    assert dest.read_bytes() == body
+    assert server.requests == ["bytes=0-10239", "bytes=100-10239"]
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_download_gives_up_after_four_tries(tmp_path: Path) -> None:
+    flaky = Flaky(FakeServer(b"x" * 10), 99, _handshake_timeout)
+    with pytest.raises(BenchError, match="Kör samma kommando igen"):
+        download("https://example.test/a.zip", tmp_path / "a.zip", 10, "0" * 64, opener=flaky)
+    assert flaky.calls == 4
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_download_does_not_retry_a_404(tmp_path: Path) -> None:
+    flaky = Flaky(FakeServer(b"x" * 10), 99, _not_found)
+    with pytest.raises(BenchError, match="404"):
+        download("https://example.test/a.zip", tmp_path / "a.zip", 10, "0" * 64, opener=flaky)
+    assert flaky.calls == 1
 
 
 # --- names -------------------------------------------------------------------------------
