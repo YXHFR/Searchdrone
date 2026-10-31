@@ -3,7 +3,8 @@
 # pr-title.yml came in PR #2. tools/check_merged_pr_gates.py skips these SHAs; every
 # later commit must come from a pull request with green gates. Regenerate with:
 #   git log --first-parent --reverse --format='%H  # %s' main | sed '/^1a64a280/q'
-# Only ever append history from before the gates; never list a later commit here.
+# A later commit belongs here only when the owner accepts it, with the reason after #
+# (a pull request that changes this file needs owner-ok, check_owner_gate.PROTECTED).
 81a52821bba915c94d7b83ae03603b9e51d15ead  # Initial README and gitignore
 746b084703d8e98d0bd177ef3daafdd1902653a3  # Add Apache-2.0 license
 0a84976ee1d87cd2227c6d4597338e2c0e90766b  # Keep internal planning out of the repo, allow public docs

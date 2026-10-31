@@ -27,6 +27,7 @@ jobs:
       contents: read
       pull-requests: read # check_merged_pr_gates: the PR behind each commit
       issues: read # and its review comments and owner-ok label events
+      checks: read # and when its head commit reached GitHub (the first check suite)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,6 +83,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          # The tag must still name the commit the build job checked and built.
+          tagged=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "$TAG pekar nu på $tagged, inte $GITHUB_SHA som byggdes" >&2
+            exit 1
+          fi
           prerelease=()
           case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$TAG" --verify-tag --title "$TAG" \

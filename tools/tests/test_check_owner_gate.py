@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,9 @@ def test_no_protected_path_is_success() -> None:
         "hardware/a/b.step",
         "Hardware/x.step",
         ".github/CODEOWNERS",
+        "tools/accept/pr_gate_exceptions.txt",
+        "tools/check_merged_pr_gates.py",
+        "tools/workflow_rules.py",
     ],
 )
 def test_protected_paths_need_approval(name: str) -> None:
@@ -169,3 +173,46 @@ def test_cli_reads_paginated_files(tmp_path: Path, capsys: pytest.CaptureFixture
     text = out.read_text("utf-8")
     assert "state=success\n" in text
     assert "remove_label=false\n" in text
+
+
+def at(hour: int) -> datetime:
+    return datetime(2026, 10, 1, hour, tzinfo=UTC)
+
+
+def label_event(event: str, hour: int, login: str = "Owner", kind: str = "User") -> dict[str, Any]:
+    return {
+        "event": event,
+        "label": {"name": cog.LABEL},
+        "actor": {"login": login, "type": kind},
+        "created_at": at(hour).isoformat(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("events", "ok"),
+    [
+        ([label_event("labeled", 10)], True),
+        ([label_event("labeled", 10), label_event("unlabeled", 11, "github-actions[bot]")], False),
+        ([label_event("labeled", 8)], False),  # before the head reached GitHub
+        ([label_event("labeled", 13)], False),  # after ``until``
+        ([label_event("labeled", 10, "Mallory")], False),
+        ([label_event("labeled", 10, kind="Bot")], False),
+        (
+            [
+                label_event("labeled", 10),
+                {"event": "base_ref_changed", "created_at": at(11).isoformat()},
+            ],
+            False,
+        ),
+        (
+            [
+                {"event": "head_ref_force_pushed", "created_at": at(9).isoformat()},
+                label_event("labeled", 10),
+            ],
+            True,
+        ),
+        ([], False),
+    ],
+)
+def test_approval_worked_out_from_label_events(events: list[dict[str, Any]], ok: bool) -> None:
+    assert cog.approved_by_label_events(events, "Owner", at(9), at(12)) is ok

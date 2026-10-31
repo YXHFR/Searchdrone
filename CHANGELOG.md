@@ -18,17 +18,19 @@ All notable changes to this project are listed here. The format follows
   do not shorten it) is the merge commit of a pull request into `main` whose gates pass
   when worked out again, since any workflow can write a status: `gate/review` with
   `check_review_comments.evaluate` over the comments written before the merge,
-  `gate/owner` from the merge commit's own files (local git) and the newest `owner-ok`
-  label event, which must be the owner's and after the head commit, and `gate/pr-title`
-  from the title. Workflow files the merge added or changed are read as YAML: none may be
-  able to write a gate (a job without `permissions` at either level counts, since it gets
-  the default token), and the gate workflows may only run on
-  `pull_request_target`/`issue_comment` (`tools/workflow_rules.py`, shared with
-  `tools/tests/test_workflows.py`).
+  `gate/owner` from the merge commit's own files (local git) and
+  `check_owner_gate.approved_by_label_events` (the owner's newest `owner-ok`, added after
+  the head commit's first check suite and after any base change, force push or
+  reopening), and `gate/pr-title` from the title at the merge. Workflow files the merge
+  added or changed are read as YAML: none may be able to write a gate (a job without
+  `permissions` at either level counts, since it gets the default token), and the gate
+  workflows may only run on `pull_request_target`/`issue_comment`
+  (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`). The exceptions
+  file and both scripts need the owner's `owner-ok` (`check_owner_gate.PROTECTED`).
   `.github/workflows/release.yml` refuses a tag that is not on main before any repository
   code runs, runs both checks on a pushed `v[0-9]*` tag, builds the packages and the panel
-  and publishes the GitHub release; only its publish job can write. `just showcase` is
-  still not built.
+  and publishes the GitHub release only if the tag still names the commit it built; only
+  its publish job can write. `just showcase` is still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
   `write-all` (at the top or in a job), leaves a job without `permissions` or names a job

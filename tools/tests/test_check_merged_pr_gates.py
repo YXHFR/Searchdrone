@@ -50,12 +50,20 @@ def label(event: str = "labeled", at: str = "2026-10-01T10:30:00Z", actor: Any =
 
 
 class FakeGitHub:
-    """Merge commit -> PR; PR -> comments and issue events; head -> commit date."""
+    """Merge commit -> PR; PR -> comments and issue events; head -> commit date and check
+    suites. Any other request fails the test."""
+
+    ROUTES = re.compile(
+        r"repos/o/r/(?:issues/(?P<n>\d+)/(?P<kind>comments|events)"
+        r"|commits/(?P<sha>\w+)(?P<rest>/pulls|/check-suites)?)(?:\?per_page=100)?"
+    )
 
     def __init__(self) -> None:
         self.prs: dict[str, dict[str, Any]] = {}
         self.comments: dict[int, list[dict[str, Any]]] = {}
         self.events: dict[int, list[dict[str, Any]]] = {}
+        self.suites: dict[str, list[str]] = {}
+        self.committed: dict[str, str] = {}
 
     def merged(
         self, sha: str, number: int, head: str, comments: list[dict[str, Any]] | None = None
@@ -71,14 +79,20 @@ class FakeGitHub:
         self.comments[number] = approvals(head) if comments is None else comments
 
     def __call__(self, path: str) -> Any:
-        parts = path.split("?")[0].split("/")
-        if parts[3] == "issues":
-            store = self.comments if parts[5] == "comments" else self.events
-            return store.get(int(parts[4]), [])
-        sha = parts[4]
-        if parts[-1] == "pulls":
+        m = self.ROUTES.fullmatch(path)
+        if m is None:
+            raise AssertionError(f"unexpected request {path}")
+        if m["kind"]:
+            store = self.comments if m["kind"] == "comments" else self.events
+            return store.get(int(m["n"]), [])
+        sha = m["sha"]
+        if m["rest"] == "/pulls":
             return [pr for pr in self.prs.values() if pr["merge_commit_sha"] == sha]
-        return [{"sha": sha, "commit": {"committer": {"date": HEAD_TIME}}}]
+        if m["rest"] == "/check-suites":
+            suites = [{"created_at": at} for at in self.suites.get(sha, [])]
+            return [{"total_count": len(suites), "check_suites": suites}]
+        date = self.committed.get(sha, HEAD_TIME)
+        return [{"sha": sha, "commit": {"committer": {"date": date}}}]
 
 
 class FakeGit:
@@ -100,7 +114,7 @@ class FakeGit:
 
 
 def run(gh: FakeGitHub, sha: str, git: FakeGit | None = None) -> list[str]:
-    return [f.message for f in cmg.check(gh, REPO, [sha], local=git or FakeGit())]  # type: ignore[arg-type]
+    return [f.message for f in cmg.check(gh, REPO, [sha], local=git or FakeGit())]
 
 
 def test_green_gates_pass() -> None:
@@ -192,6 +206,12 @@ def test_review_is_worked_out_again_from_the_comments(
         ([label("unlabeled", "2026-10-01T09:30:00Z", {"login": "x"}, 2), label()], True),
         # Same second: the newer event id decides.
         ([label(i=5), label("unlabeled", actor={"login": "x"}, i=4)], True),
+        # A new base, force push or reopening after the label voids it.
+        *(
+            ([label(), {"id": 9, "event": e, "created_at": "2026-10-01T10:45:00Z"}], False)
+            for e in ("base_ref_changed", "head_ref_force_pushed", "reopened")
+        ),
+        ([{"id": 9, "event": "reopened", "created_at": "2026-10-01T09:10:00Z"}, label()], True),
     ],
 )
 def test_owner_is_worked_out_again_from_the_label_events(
@@ -211,6 +231,27 @@ def test_owner_is_worked_out_again_from_the_label_events(
             "PR #4: gate/owner: ändrar hardware/board.kicad_pcb utan ägarens owner-ok "
             "efter head-commiten"
         )
+
+
+@pytest.mark.parametrize(
+    ("suites", "ok"),
+    [
+        ([], True),  # no suite: the committer date stands
+        (["2026-10-01T09:05:00Z", "2026-10-01T10:50:00Z"], True),  # the first suite counts
+        # Backdated head: committed 09:00, but it reached GitHub at 10:40, after the label.
+        (["2026-10-01T10:40:00Z"], False),
+    ],
+)
+def test_the_owner_label_must_follow_the_push_not_the_committer_date(
+    suites: list[str], ok: bool
+) -> None:
+    gh = FakeGitHub()
+    gh.merged("1" * 40, 4, H4)
+    gh.events[4] = [label()]
+    gh.suites[H4] = suites
+    git = FakeGit()
+    git.add("1" * 40, "hardware/board.kicad_pcb", status="modified")
+    assert (run(gh, "1" * 40, git) == []) is ok
 
 
 @pytest.mark.parametrize(
@@ -252,6 +293,8 @@ def test_local_git_lists_renames_and_deletes(tmp_path: Path) -> None:
         {"status": "added", "filename": "new.yml"},
     ]
     assert local.show("HEAD", "new.yml") == "on: push\n"
+    with pytest.raises(subprocess.CalledProcessError):
+        local.files(cmg.git(tmp_path, "rev-list", "--max-parents=0", "HEAD"))
 
 
 FORGER = """on: pull_request
@@ -337,11 +380,40 @@ def test_a_workflow_from_the_merge_that_can_write_a_gate_fails(
         assert message.startswith(f"PR #7: {path}") and expected in message, message
 
 
-def test_a_bad_title_fails() -> None:
+def rename(old: str, new: str, at: str, i: int = 1) -> dict[str, Any]:
+    return {"id": i, "event": "renamed", "rename": {"from": old, "to": new}, "created_at": at}
+
+
+@pytest.mark.parametrize(
+    ("title", "events", "ok"),
+    [
+        ("Update stuff", [], False),
+        # Fixed after the merge: the title at the merge decides.
+        (TITLE, [rename("Update stuff", TITLE, "2026-10-01T12:00:00Z")], False),
+        (
+            "Later",
+            [
+                rename(TITLE, "x", "2026-10-01T12:00:00Z", 1),
+                rename("x", "Later", "2026-10-01T13:00:00Z", 2),
+            ],
+            True,
+        ),
+        (TITLE, [rename("Update stuff", TITLE, "2026-10-01T10:00:00Z")], True),
+    ],
+)
+def test_the_title_at_the_merge_must_pass(
+    title: str, events: list[dict[str, Any]], ok: bool
+) -> None:
     gh = FakeGitHub()
     gh.merged("7" * 40, 8, H8)
-    gh.prs["7" * 40]["title"] = "Update stuff"
-    assert run(gh, "7" * 40) == ["PR #8: gate/pr-title: titeln följer inte regeln i pr-title.yml"]
+    gh.prs["7" * 40]["title"] = title
+    gh.events[8] = events
+    expected = (
+        []
+        if ok
+        else ["PR #8: gate/pr-title: titeln vid sammanslagningen följer inte regeln i pr-title.yml"]
+    )
+    assert run(gh, "7" * 40) == expected
 
 
 def test_the_title_rule_is_the_one_in_pr_title_yml() -> None:
@@ -400,7 +472,26 @@ def test_main_reports_and_fails(capsys: pytest.CaptureFixture[str]) -> None:
     assert cmg.main(["--sha", head, "--since", parent, "--repo", REPO], api=gh) == 1
     assert f"{head[:12]}: kom inte från" in capsys.readouterr().out
     gh.merged(head, 9, H9)
+    gh.events[9] = [label()]  # in case HEAD changes a protected path
     assert cmg.main(["--sha", head, "--since", parent, "--repo", REPO], api=gh) == 0
+
+
+@pytest.mark.parametrize(
+    "since",
+    [
+        "HEAD",  # nothing to check is not a pass
+        "--output=/tmp/x",  # never read as an option
+        "no-such-rev",
+    ],
+)
+def test_a_bad_range_exits_2(since: str, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cmg.main(["--sha", "HEAD", f"--since={since}", "--repo", REPO], api=FakeGitHub()) == 2
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_since_must_be_an_ancestor() -> None:
+    root = cmg.git(cmg.REPO, "rev-list", "--max-parents=0", "HEAD").splitlines()[0]
+    assert cmg.main(["--sha", root, "--since", "HEAD", "--repo", REPO], api=FakeGitHub()) == 2
 
 
 def test_github_errors_exit_2() -> None:

@@ -11,23 +11,30 @@ local clone:
   a direct push;
 * ``gate/review``: ``check_review_comments.evaluate`` (the gate's own rule) over the
   comments written before the merge gives ``success``: the owner's unedited
-  ``review/<role>: approve`` for all three roles, naming the head commit;
-* ``gate/owner``: if the merge changed a path in ``check_owner_gate.PROTECTED``, the
-  newest ``owner-ok`` label event before the merge is the owner's account adding it
-  after the head commit;
-* ``gate/pr-title``: the title follows ``PR_TITLE_RE``, the rule in ``pr-title.yml``
-  (kept equal by a test);
+  ``review/<role>: approve`` for all three roles, naming the head commit. A comment
+  deleted after the merge leaves no trace, so this trusts that verdicts are not deleted
+  (the gate's own assumption);
+* ``gate/owner``: if the merge changed a path in ``check_owner_gate.PROTECTED``,
+  ``check_owner_gate.approved_by_label_events``: the newest ``owner-ok`` event before
+  the merge is the owner adding it after the head commit reached GitHub (its first check
+  suite) and after any base change, force push or reopening;
+* ``gate/pr-title``: the title at the merge (later renames undone) follows
+  ``PR_TITLE_RE``, the rule in ``pr-title.yml`` (kept equal by a test);
 * no workflow file the merge adds or changes can write a gate, read as YAML
   (``tools/workflow_rules.py``): outside the three gate workflows no ``statuses: write``,
   ``checks: write``, ``write-all``, missing ``permissions`` or job named like a gate; the
   gate workflows only on ``pull_request_target`` and ``issue_comment``.
 
 Tags and releases do not shorten the default range, since anyone who can push a tag
-could then hide older commits. It costs about four API calls per commit.
+could then hide older commits. Old pull requests are judged by today's rules; when a rule
+changes, the owner lists the merges it would newly fail in the exceptions file. It costs
+three API calls per commit, plus one when protected paths changed: about 300 for 100
+commits, within the token's 1000 requests an hour until main has about 300 commits.
 
 ``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
 commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
-before the gates existed and for commits the owner has accepted. Exit code 1 prints every
+before the gates existed and for commits the owner has accepted. The file needs the
+owner's ``owner-ok`` to change (``check_owner_gate.PROTECTED``). Exit code 1 prints every
 finding as ``<sha12>: message``; 2 means GitHub could not be asked.
 
 Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R-09).
@@ -43,8 +50,9 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import check_owner_gate
 import check_review_comments
@@ -61,7 +69,7 @@ PR_TITLE_RE = re.compile(
 )
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # git diff --name-status letters -> the status names of the GitHub files API.
-GIT_STATUS = {"A": "added", "D": "removed", "R": "renamed", "C": "copied"}
+GIT_STATUS = {"A": "added", "D": "removed"}
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
 
 # GitHub, read-only: the API path -> parsed JSON. Tests pass a fake.
@@ -99,13 +107,14 @@ def gh_api(path: str) -> Any:
     return out
 
 
-def git(root: Path, *args: str) -> str:
-    return subprocess.run(  # noqa: S603 - fixed git arguments, no shell
+def git(root: Path, *args: str, strip: bool = True) -> str:
+    out = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
         ["git", "-C", str(root), *args],  # noqa: S607 - git from PATH
         capture_output=True,
         text=True,
         check=True,
-    ).stdout.strip()
+    ).stdout
+    return out.strip() if strip else out
 
 
 def commits(root: Path, since: str | None, sha: str) -> list[str]:
@@ -138,45 +147,42 @@ def merged_pull(api: Api, repo: str, sha: str) -> dict[str, Any] | None:
     return None
 
 
+class Clone(Protocol):
+    """The merge commits' changes and files (the local clone; tests pass a fake)."""
+
+    def files(self, sha: str) -> list[dict[str, Any]]: ...
+
+    def show(self, sha: str, path: str) -> str: ...
+
+
 class LocalGit:
-    """What a merge commit changed, read from the local clone (no API file-list cap)."""
+    """``Clone`` over the local clone: no API cap on the file list."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
 
     def files(self, sha: str) -> list[dict[str, Any]]:
         """``git diff --name-status`` against the first parent, as API-style dicts."""
-        out = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-            ["git", "-C", str(self.root), "diff", "--name-status", "-M", "-z", f"{sha}^1", sha],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.split("\0")
+        out = git(self.root, "diff", "--name-status", "-M", "-z", f"{sha}^1", sha, strip=False)
+        parts = out.split("\0")
         files: list[dict[str, Any]] = []
         i = 0
-        while i < len(out) and out[i]:
-            code = out[i][0]
-            if code in "RC":
-                files.append(
-                    {
-                        "status": GIT_STATUS[code],
-                        "previous_filename": out[i + 1],
-                        "filename": out[i + 2],
-                    }
-                )
+        while i < len(parts) and parts[i]:
+            code = parts[i][0]
+            if code == "R":
+                old, new = parts[i + 1], parts[i + 2]
+                files.append({"status": "renamed", "previous_filename": old, "filename": new})
+                i += 3
+            elif code == "C":  # the source is unchanged; only the copy is new
+                files.append({"status": "added", "filename": parts[i + 2]})
                 i += 3
             else:
-                files.append({"status": GIT_STATUS.get(code, "modified"), "filename": out[i + 1]})
+                files.append({"status": GIT_STATUS.get(code, "modified"), "filename": parts[i + 1]})
                 i += 2
         return files
 
     def show(self, sha: str, path: str) -> str:
-        return subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-            ["git", "-C", str(self.root), "show", f"{sha}:{path}"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
+        return git(self.root, "show", f"{sha}:{path}", strip=False)
 
 
 def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> list[str]:
@@ -194,35 +200,27 @@ def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> 
     return [] if result.state == "success" else [f"gate/review: {result.description}"]
 
 
+def pushed_at(api: Api, repo: str, head: str, committer_date: str) -> datetime:
+    """When the head commit reached GitHub: its first check suite, which GitHub dates
+    (the committer date is the author's to set), and never before the committer date."""
+    parse = check_review_comments.parse_time
+    pages = api(f"repos/{repo}/commits/{head}/check-suites?per_page=100")
+    suites = [parse(str(s["created_at"])) for p in pages for s in p.get("check_suites", [])]
+    return max([parse(committer_date), *([min(suites)] if suites else [])])
+
+
 def owner_problems(
-    api: Api, repo: str, pr: dict[str, Any], head_time: str, files: list[dict[str, Any]]
+    repo: str,
+    pr: dict[str, Any],
+    events: list[dict[str, Any]],
+    since: datetime,
+    files: list[dict[str, Any]],
 ) -> list[str]:
     """gate/owner worked out again: protected paths need the owner's newest ``owner-ok``."""
     protected = check_owner_gate.protected_files(files)
-    if not protected:
-        return []
+    merged = check_review_comments.parse_time(str(pr["merged_at"]))
     owner = repo.split("/", 1)[0]
-    parse = check_review_comments.parse_time
-    merged = parse(str(pr["merged_at"]))
-    events = [
-        e
-        for e in api(f"repos/{repo}/issues/{pr['number']}/events?per_page=100")
-        if e.get("event") in ("labeled", "unlabeled")
-        and (e.get("label") or {}).get("name") == check_owner_gate.LABEL
-        and e.get("created_at")
-        and parse(str(e["created_at"])) <= merged
-    ]
-    last = max(
-        events, key=lambda e: (parse(str(e["created_at"])), int(e.get("id") or 0)), default=None
-    )
-    actor = (last or {}).get("actor") or {}
-    if (
-        last is not None
-        and last.get("event") == "labeled"
-        and actor.get("login") == owner
-        and actor.get("type") == "User"
-        and parse(str(last["created_at"])) > parse(head_time)
-    ):
+    if not protected or check_owner_gate.approved_by_label_events(events, owner, since, merged):
         return []
     return [
         f"gate/owner: ändrar {', '.join(protected)} utan ägarens "
@@ -230,7 +228,24 @@ def owner_problems(
     ]
 
 
-def workflow_problems(local: LocalGit, sha: str, files: list[dict[str, Any]]) -> list[str]:
+def title_at_merge(pr: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    """The title when the pull request was merged: undo renames made after the merge."""
+    parse = check_review_comments.parse_time
+    merged = parse(str(pr["merged_at"]))
+    later = [
+        e
+        for e in events
+        if e.get("event") == "renamed"
+        and e.get("created_at")
+        and parse(str(e["created_at"])) > merged
+    ]
+    if not later:
+        return str(pr.get("title", ""))
+    first = min(later, key=lambda e: (parse(str(e["created_at"])), int(e.get("id") or 0)))
+    return str((first.get("rename") or {}).get("from", ""))
+
+
+def workflow_problems(local: Clone, sha: str, files: list[dict[str, Any]]) -> list[str]:
     """Workflow files the merge adds or changes that could write a gate status."""
     out = []
     for f in files:
@@ -253,19 +268,25 @@ def workflow_problems(local: LocalGit, sha: str, files: list[dict[str, Any]]) ->
     return out
 
 
-def check_commit(api: Api, repo: str, sha: str, local: LocalGit) -> list[Finding]:
+def check_commit(api: Api, repo: str, sha: str, local: Clone) -> list[Finding]:
     pr = merged_pull(api, repo, sha)
     if pr is None:
         return [
             Finding(sha, f"kom inte från en pull request sammanslagen till {MAIN} (direkt push?)")
         ]
     head = str(pr["head"]["sha"])
-    head_time = str(api(f"repos/{repo}/commits/{head}")[0]["commit"]["committer"]["date"])
+    (commit,) = api(f"repos/{repo}/commits/{head}")
+    head_time = str(commit["commit"]["committer"]["date"])
+    events = api(f"repos/{repo}/issues/{pr['number']}/events?per_page=100")
     files = local.files(sha)
     problems = review_problems(api, repo, pr, head_time)
-    problems += owner_problems(api, repo, pr, head_time, files)
-    if not PR_TITLE_RE.match(str(pr.get("title", ""))):
-        problems.append("gate/pr-title: titeln följer inte regeln i pr-title.yml")
+    if check_owner_gate.protected_files(files):
+        since = pushed_at(api, repo, head, head_time)
+        problems += owner_problems(repo, pr, events, since, files)
+    if not PR_TITLE_RE.match(title_at_merge(pr, events)):
+        problems.append(
+            "gate/pr-title: titeln vid sammanslagningen följer inte regeln i pr-title.yml"
+        )
     problems += workflow_problems(local, sha, files)
     return [Finding(sha, f"PR #{pr.get('number')}: {p}") for p in problems]
 
@@ -275,7 +296,7 @@ def check(
     repo: str,
     shas: Iterable[str],
     exceptions: set[str] | None = None,
-    local: LocalGit | None = None,
+    local: Clone | None = None,
 ) -> list[Finding]:
     local = local or LocalGit(REPO)
     out: list[Finding] = []
@@ -285,6 +306,11 @@ def check(
     return out
 
 
+def resolve(rev: str) -> str:
+    """A commit SHA; ``rev`` is never read as an option."""
+    return git(REPO, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
+
+
 def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--sha", default="HEAD", help="the commit to release (default HEAD)")
@@ -292,17 +318,20 @@ def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO_SLUG))
     parser.add_argument("--exceptions", type=Path, default=EXCEPTIONS)
     args = parser.parse_args(argv)
-    sha = git(REPO, "rev-parse", f"{args.sha}^{{commit}}")
     try:
+        sha = resolve(args.sha)
+        since = resolve(args.since) if args.since else None
+        if since and since != sha:
+            git(REPO, "merge-base", "--is-ancestor", since, sha)
         exceptions = read_exceptions(args.exceptions)
-    except ValueError as exc:
-        print(exc, file=sys.stderr)
-        return 2
-    try:
-        since = args.since
         shas = commits(REPO, since, sha)
+        if not shas:
+            raise ValueError(f"inga commits mellan {args.since} och {args.sha}")
         findings = check(api, args.repo, shas, exceptions)
-    except GitHubError as exc:
+    except subprocess.CalledProcessError as exc:
+        print(f"git {' '.join(exc.cmd[3:])}: {exc.stderr.strip()}", file=sys.stderr)
+        return 2
+    except (GitHubError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 2
     for finding in findings:

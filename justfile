@@ -628,7 +628,7 @@ check-traceability:
 showcase STAGE *args:
     uv run --no-sync python tools/just_args.py showcase stage="$1" "${@:2}"
 
-# Before a release: check the gates since the last tag, set one version everywhere and
+# Before a release: check every merge's gates on main, set one version everywhere and
 # write the changelog with git-cliff; never commits or tags (keys: gates=0 skips the gates)
 release-prep VERSION *args:
     #!/usr/bin/env bash
