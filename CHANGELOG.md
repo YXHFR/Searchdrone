@@ -29,11 +29,11 @@ All notable changes to this project are listed here. The format follows
   attribute first, or with `:=`), mavfile helpers such as `reboot_autopilot` or `set_mode`, called, only
   referenced or as a `getattr` string). Tests outside `src/` packages are not read; of
   the denied messages only the simulator harness may send `PARAM_SET`: from a
-  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name (if it is
-  never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a literal `SIM_*` name
-  (a `param_set_send` on an owner not known to be a `mav` needs it both first, as
-  mavfile's, and third, as the dialect's). The
-  mavfile helpers that send denied traffic themselves (`reboot_autopilot`, `set_servo`,
+  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name (if
+  it is never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a
+  literal `SIM_*` name (a `param_set_send` on any owner but a literal `<x>.mav` needs it
+  in every place it may sit: first, as mavfile's, and third, as the dialect's; a
+  `*args`/`**kwargs` that may fill it is refused). The mavfile helpers that send denied traffic themselves (`reboot_autopilot`, `set_servo`,
   `calibrate_level` ...) are refused everywhere outside the gate. Names built at run
   time (f-strings, arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`

@@ -223,8 +223,6 @@ def test_the_gate_is_allowed() -> None:
         # mavfile's own param_set_send(parm_name, parm_value).
         "self._conn.param_set_send('SIM_WIND_DIR', 90)",
         "self._conn.param_set_send(parm_name=b'SIM_WIND_SPD', parm_value=3)",
-        # A mav taken into another name is still the dialect's: the name is third.
-        "m = self._conn.mav\nm.param_set_send(1, 1, b'SIM_RC_FAIL', 1, 9)",
         # The guarded name, sent as is.
         "def set_sim_param(self, name, v):\n"
         "    if not name.startswith('SIM_'):\n"
@@ -298,7 +296,11 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "self._conn.mav.param_set_send(1, 1, b'SIM_X', **extra)",
         "c.param_set_send(b'SIM_X', *rest)",
         "c.param_set_send(b'SIM_X', **k)",
-        # A name that is a mav in one place and a connection in another is unknown.
+        # Any owner but a literal <x>.mav is unknown: both places must be SIM_.
+        "m = self._conn.mav\nm.param_set_send(1, 1, b'SIM_RC_FAIL', 1, 9)",
+        "def a(self):\n    m = self._conn.mav\n\n\ndef b(self, m):\n"
+        "    m.param_set_send('FS_THR_ENABLE', 0, b'SIM_X')",
+        "import pymavlink.mavutil as m\nm.param_set_send('FS_THR_ENABLE', 0, b'SIM_X')",
         "def a(self):\n    m = self._conn.mav\n"
         "def b(self):\n    m = self._conn\n    m.param_set_send('FS_THR_ENABLE', 0, b'SIM_X')",
         # mavfile's three-argument form: the third (parm_type) is not a SIM_ name.
