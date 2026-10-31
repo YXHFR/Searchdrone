@@ -45,3 +45,34 @@ sha256 = "5f9b7ae7f8b8bab290c75310f70163c0765e10f587844151fdf7bb2da6a3127a"
 [[pinned]]
 path = "software/common/safety/src/sd_safety/constants.py"
 sha256 = "00861380f06add8eaca1d44f2332f7695bdbd74c009e7672e3fe1f56d1101b0f"
+
+# What enforces the rules: the gate (Vehicle.send, its connection, its run-time
+# allowlist), SITL's layer order, the sim
+# layers' allowlist check and the checks themselves (the list they must keep pinned).
+[[pinned]]
+path = "software/common/mav/src/sd_mav/vehicle.py"
+sha256 = "2bb4f8beca236a393ef8494ea51631b3886f74823d4c01dd9b19f68b1cb5a5d2"
+
+[[pinned]]
+path = "software/common/mav/src/sd_mav/connection.py"
+sha256 = "05e5aa96667595fdea8c98c6da89e6d663e47b97ba77a35f26f1ebd417e12ce3"
+
+[[pinned]]
+path = "software/common/mav/src/sd_mav/allowlist.py"
+sha256 = "b092740ad0a4ec725e34b718530bc41c01b9d59a73b79dfa595cfcba2ac63e76"
+
+[[pinned]]
+path = "simulation/sd_sim/src/sd_sim/sitl.py"
+sha256 = "67a750e0ff7705be0a75f014ccf288310271e32bee8539528cff07d5690dc2d9"
+
+[[pinned]]
+path = "tools/params_check.py"
+sha256 = "f9221f62a258663aedf88605ede5ae134222ed6b65d6917814f213a5b15d3fc7"
+
+[[pinned]]
+path = "tools/check_forbidden_mavlink.py"
+sha256 = "67cb3bb2c6a96f3233b80c752600206fcf6aff31f526a7533e9237b9f7a656bf"
+
+[[pinned]]
+path = "tools/check_safety_manifest.py"
+sha256 = "f466cc69318e84955a69c1eab8c5258d57ba2c565863054ff2e7f207b8b328f1"
