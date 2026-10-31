@@ -297,6 +297,13 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "def set_sim_param(self, name, v):\n"
         "    if not name.startswith('SIM_'):\n"
         "        raise ValueError(name)",
+        # A function nested in the writer is not covered, even with its own `name`.
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    def inner(name):\n"
+        "        self._conn.mav.param_set_send(1, 1, name, 0, 9)\n"
+        "    inner(b'FENCE_ENABLE')",
         # A bare param_set_send (a bound method passed in) is of unknown kind.
         "def f(param_set_send):\n    param_set_send('FS_THR_ENABLE', 0, b'SIM_X')",
         # A *args or **kwargs may fill the name's place.

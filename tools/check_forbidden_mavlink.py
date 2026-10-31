@@ -362,12 +362,15 @@ def _own_calls(fn: ast.AST) -> Iterator[ast.Call]:
 def _bound_names(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     """Every name bound anywhere in a function's body (its parameters not counted):
     assignment, ``for``, ``with``/``except``/``match``/``import`` ``as``, ``global``,
-    ``nonlocal`` and nested ``def``/``class``, also in functions nested inside it."""
+    ``nonlocal``, nested ``def``/``class`` and their parameters, also in functions
+    nested inside it."""
     out: set[str] = set()
     for stmt in fn.body:
         for n in ast.walk(stmt):
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store | ast.Del):
                 out.add(n.id)
+            elif isinstance(n, ast.arg):
+                out.add(n.arg)
             elif isinstance(n, ast.Global | ast.Nonlocal):
                 out |= set(n.names)
             elif isinstance(
@@ -412,9 +415,10 @@ def _sim_param_sets(tree: ast.Module, writers: frozenset[str]) -> set[int]:
             # A guarded parameter that is bound again in the writer is not trusted.
             rebound = guarded in _bound_names(defs[0])
             # Only the body: decorators, defaults and annotations run at definition
-            # time, where the parameter's name means an outer one.
-            body = (n for stmt in defs[0].body for n in _own_calls(stmt))
-            for n in body:
+            # time, where the parameter's name means an outer one. Functions and
+            # classes nested in the body stay out, as everywhere in _own_calls.
+            body = ast.Module(body=defs[0].body, type_ignores=[])
+            for n in _own_calls(body):
                 if _call_name(n.func) in PARAM_SET_CALLS and all(
                     (not rebound and isinstance(arg, ast.Name) and arg.id == guarded)
                     or _sim_literal(arg)
