@@ -106,6 +106,7 @@ class FakeOnboard:
     clearances: list[ClearanceConfirmation] = field(default_factory=list[ClearanceConfirmation])
     notices: list[Any] = field(default_factory=list[Any])
     keepouts: list[KeepoutInstall] = field(default_factory=list[KeepoutInstall])
+    keepout_seq: int = -1  # as the executor: a lower install_seq is refused (stale)
     position: tuple[float, float] | None = None  # None: at home
     alt_rel_home_m: float = 0.0
     active_command_id: Any = None
@@ -233,6 +234,12 @@ class FakeOnboard:
                 )
             )
         elif isinstance(body, KeepoutInstall):
+            if body.install_seq < self.keepout_seq:
+                await session.ack(
+                    inbound.envelope.msg_id, "rejected", reason_codes=["ONB_STALE_ORDER"]
+                )
+                return
+            self.keepout_seq = body.install_seq
             self.keepouts.append(body)
             await session.ack(inbound.envelope.msg_id, "done")
         elif isinstance(body, ClearanceConfirmation):

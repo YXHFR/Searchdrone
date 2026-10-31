@@ -1,5 +1,7 @@
-// Alerts the panel words itself (GPS, the link coming back, the link-down codes) and the log
+// Alerts the panel words itself (GPS, the link coming back, the link-down codes, the keep-out
+// list on board or not, the keep-out hover) and the log
 // line for a find-hold that ended without the link. Pure: keys and values, no i18next.
+import type { KeepoutHoldField } from "@searchdrone/schemas";
 import { mmss } from "../lib/useNow";
 import {
   findLabel,
@@ -23,6 +25,9 @@ export const isSticky = (v: AlertView): boolean => v.tone === "red";
 
 const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
 const round = (x: unknown): number => Math.round(num(x) ?? 0);
+// The KEEPOUT_HOLD details the ground passes on (sd_schemas.api.KeepoutHoldField).
+const INSIDE: KeepoutHoldField = "inside";
+const CLIMB_TO_M: KeepoutHoldField = "climb_to_m";
 
 /** The link-down codes: the stage banner shows them for as long as they last. */
 export const LINK_DOWN_CODES: ReadonlySet<string> = new Set<LinkDownCode>([
@@ -48,6 +53,19 @@ export function alertView(
     case "LINK_BACK_HOLD":
     case "LINK_BACK_HOME":
       return { key: `linkDown.${code}`, vars: {}, tone: "yellow" };
+    case "KEEPOUTS_NOT_INSTALLED":
+      return { key: "keepouts.NOT_INSTALLED", vars: {}, tone: "red" };
+    case "KEEPOUTS_INSTALLED":
+      return { key: "keepouts.INSTALLED", vars: {}, tone: "info" };
+    case "KEEPOUT_HOLD":
+      if (details[INSIDE] !== true) return { key: "keepouts.HOLD", vars: {}, tone: "orange" };
+      if (num(details[CLIMB_TO_M]) !== null)
+        return {
+          key: "keepouts.HOLD_CLIMB",
+          vars: { alt: round(details[CLIMB_TO_M]) },
+          tone: "red",
+        };
+      return { key: "keepouts.HOLD_INSIDE", vars: {}, tone: "red" };
     case "GPS_WEAK":
       return { key: "gnss.GPS_WEAK", vars: { sats: round(details.satellites) }, tone: "yellow" };
     case "GPS_LOST":

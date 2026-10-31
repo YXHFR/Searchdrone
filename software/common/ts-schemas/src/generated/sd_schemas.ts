@@ -30,6 +30,9 @@ export type AlertCode =
   | "FIND_HOLD_ALL"
   | "LINK_BACK_HOLD"
   | "LINK_BACK_HOME"
+  | "KEEPOUTS_NOT_INSTALLED"
+  | "KEEPOUTS_INSTALLED"
+  | "KEEPOUT_HOLD"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"
@@ -91,6 +94,14 @@ export type CommandStatus =
  */
 export type ExecutorState =
   "IDLE" | "PREFLIGHT" | "TAKEOFF" | "TRANSIT" | "SURVEY" | "HOLD" | "RTL" | "LAND" | "LANDED" | "HELD" | "FAILSAFE";
+/**
+ * The fields of the onboard ``executor.keepout_hold`` data that the ground's
+ * ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "KeepoutHoldField".
+ */
+export type KeepoutHoldField = "inside" | "climb_to_m";
 /**
  * Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
  *
