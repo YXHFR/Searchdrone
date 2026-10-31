@@ -284,8 +284,12 @@ def test_any_protected_path_needs_the_owner(change: dict[str, Any]) -> None:
         ('PROTECTED = (re.compile(r"^docs/keys\\.md$"),)\n', False),
         ('PROTECTED = (re.compile(r"^DOCS/", re.IGNORECASE),)\n', False),
         ('PROTECTED = (re.compile(r"^other/"),)\n', True),
-        ("PROTECTED = (re.compile(PATTERN),)\n", True),  # not a literal: left out
-        ("not python (\n", True),
+        ('PROTECTED = (re.compile(pattern=r"^docs/", flags=re.I | re.X),)\n', False),
+        # A list this check cannot read in full: every changed path needs the owner.
+        ("PROTECTED = (re.compile(PATTERN),)\n", False),
+        ('PROTECTED = tuple(map(re.compile, ["^a/"]))\n', False),
+        ('PROTECTED = (re.compile(r"^a/", 2), *MORE)\n', False),
+        ("not python (\n", False),
     ],
 )
 def test_the_parents_protected_paths_apply(parent_rules: str | None, ok: bool) -> None:
@@ -299,6 +303,10 @@ def test_the_parents_protected_paths_apply(parent_rules: str | None, ok: bool) -
         git.contents[("3" * 40 + "^1", cmg.OWNER_GATE)] = parent_rules
     messages = run(gh, "3" * 40, git)
     assert (messages == []) is ok
+    # This copy's own list applies whatever the parent's says.
+    git.add("3" * 40, "hardware/board.kicad_pcb", status="modified")
+    assert any("hardware/board.kicad_pcb" in m for m in run(gh, "3" * 40, git))
+    git.changed["3" * 40].pop()
     if not ok:
         assert messages == [
             "PR #6: gate/owner: ändrar docs/keys.md utan ägarens owner-ok efter head-commiten"
@@ -427,7 +435,7 @@ GATE = "on:\n  pull_request_target:\n  issue_comment:\npermissions:\n  statuses:
             "permissions: {}\njobs:\n  a:\n    permissions: {}\n    env:\n"
             "      GH_TOKEN: ${{ secrets.PAT }}\n",
             "modified",
-            "kan godkänna i ägarens ställe (token a)",
+            "kan godkänna i ägarens ställe (secret a)",
         ),
         # A gate workflow may change, but must still run only from the base branch.
         (".github/workflows/review-gate.yml", FORGER, "modified", "trigger pull_request"),
@@ -605,3 +613,126 @@ def test_the_pre_gate_history_is_excepted_by_default(capsys: pytest.CaptureFixtu
     head = cmg.git(cmg.REPO, "rev-parse", "HEAD")
     assert cmg.main(["--sha", head, "--since", f"{head}~1", "--repo", REPO], api=FakeGitHub()) == 1
     assert "0 commits" not in capsys.readouterr().out
+
+
+GIT_ENV = ["-c", "user.name=t", "-c", "user.email=1+t@users.noreply.github.com"]
+GIT_ENV += ["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"]
+BOT = {"login": "github-actions[bot]"}
+
+
+def tagged_repo(tmp_path: Path) -> dict[str, str]:
+    """main: c1 (v0.1.0) - c2 (v0.2.0) - c3 (released now); side: s1 (v0.9.0), off main."""
+    cmg.git(tmp_path, "init", "-q", "-b", "main")
+    out: dict[str, str] = {}
+    for name in ("c1", "c2", "c3"):
+        cmg.git(tmp_path, *GIT_ENV, "commit", "-q", "--allow-empty", "-m", name)
+        out[name] = cmg.git(tmp_path, "rev-parse", "HEAD")
+    cmg.git(tmp_path, "tag", "v0.1.0", out["c1"])
+    cmg.git(tmp_path, "tag", "v0.2.0", out["c2"])
+    cmg.git(tmp_path, "tag", "v0.3.0", out["c3"])
+    cmg.git(tmp_path, "checkout", "-q", "-b", "side", out["c1"])
+    cmg.git(tmp_path, *GIT_ENV, "commit", "-q", "--allow-empty", "-m", "s1")
+    out["s1"] = cmg.git(tmp_path, "rev-parse", "HEAD")
+    cmg.git(tmp_path, "tag", "v0.9.0", out["s1"])
+    return out
+
+
+class FakeReleases:
+    def __init__(self) -> None:
+        self.releases: list[dict[str, Any]] = []
+        self.runs: dict[str, list[dict[str, Any]]] = {}
+
+    def release(self, tag: str, commit: str, author: Any = BOT, run: bool = True, **kw: Any):
+        self.releases.append({"tag_name": tag, "draft": False, "author": author, **kw})
+        if run:
+            self.runs.setdefault(commit, []).append(
+                {
+                    "head_branch": tag,
+                    "head_sha": commit,
+                    "conclusion": "success",
+                    "path": ".github/workflows/release.yml",
+                }
+            )
+
+    def __call__(self, path: str) -> Any:
+        if path == "repos/o/r/releases?per_page=100":
+            return self.releases
+        m = re.fullmatch(
+            r"repos/o/r/actions/workflows/release\.yml/runs"
+            r"\?event=push&status=success&head_sha=(\w+)&per_page=100",
+            path,
+        )
+        if m is None:
+            raise AssertionError(f"unexpected request {path}")
+        return [{"workflow_runs": self.runs.get(m[1], [])}]
+
+
+def anchor(gh: FakeReleases, root: Path, c: dict[str, str]) -> str | None:
+    return cmg.release_anchor(gh, REPO, root, c["c3"], "v0.3.0")
+
+
+def test_the_first_release_has_no_anchor(tmp_path: Path) -> None:
+    c = tagged_repo(tmp_path)
+    gh = FakeReleases()
+    assert anchor(gh, tmp_path, c) is None
+    # Not releases on this line: another pattern, a draft, the tag itself, another branch.
+    gh.release("x", c["c2"])
+    gh.release("v0.2.0", c["c2"], draft=True)
+    gh.release("v0.3.0", c["c3"])
+    gh.release("v0.9.0", c["s1"])
+    assert anchor(gh, tmp_path, c) is None
+
+
+def test_the_anchor_is_the_newest_release_made_by_release_yml(tmp_path: Path) -> None:
+    c = tagged_repo(tmp_path)
+    gh = FakeReleases()
+    gh.release("v0.2.0", c["c2"])
+    gh.release("v0.1.0", c["c1"])
+    assert anchor(gh, tmp_path, c) == c["c2"]
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"author": {"login": "mallory"}}, "skapades av mallory"),
+        ({"run": False}, "ingen lyckad release.yml-körning"),
+        ({"head_branch": "v0.1.0"}, "ingen lyckad release.yml-körning"),
+        ({"path": ".github/workflows/other.yml"}, "ingen lyckad release.yml-körning"),
+        ({"conclusion": "failure"}, "ingen lyckad release.yml-körning"),
+    ],
+)
+def test_a_release_not_made_by_release_yml_stops_the_release(
+    tmp_path: Path, change: dict[str, Any], error: str
+) -> None:
+    # A hand-made release (or one whose run failed) must not shorten the check or pick
+    # its rules, and must not quietly fall back to the tagged commit's own rules either.
+    c = tagged_repo(tmp_path)
+    gh = FakeReleases()
+    gh.release("v0.1.0", c["c1"])
+    author = change.pop("author", BOT)
+    gh.release("v0.2.0", c["c2"], author=author, run=change.pop("run", True))
+    for run in gh.runs.get(c["c2"], []):
+        run.update(change)
+    with pytest.raises(ValueError, match=error):
+        anchor(gh, tmp_path, c)
+
+
+def test_a_release_without_its_tag_stops_the_release(tmp_path: Path) -> None:
+    c = tagged_repo(tmp_path)
+    gh = FakeReleases()
+    gh.release("v0.4.0", c["c2"])
+    with pytest.raises(ValueError, match=r"v0\.4\.0 finns inte i klonen"):
+        anchor(gh, tmp_path, c)
+
+
+def test_main_prints_the_anchor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    c = tagged_repo(tmp_path)
+    gh = FakeReleases()
+    argv = ["--root", str(tmp_path), "--sha", c["c3"], "--repo", REPO]
+    assert cmg.main([*argv, "--anchor-for-tag", "v0.3.0"], api=gh) == 0
+    assert capsys.readouterr().out == "\n"
+    gh.release("v0.2.0", c["c2"])
+    assert cmg.main([*argv, "--anchor-for-tag", "v0.3.0"], api=gh) == 0
+    assert capsys.readouterr().out == c["c2"] + "\n"
+    gh.releases[0]["author"] = {"login": "mallory"}
+    assert cmg.main([*argv, "--anchor-for-tag", "v0.3.0"], api=gh) == 2

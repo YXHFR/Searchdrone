@@ -4,7 +4,9 @@
    ``X.Y.Z-(alpha|beta|rc).N``, and a version whose tag ``vX.Y.Z`` already exists.
 2. Runs ``tools/check_merged_pr_gates.py``: every commit on main came from a pull
    request whose gates pass when worked out again from its comments, label events,
-   title and files (read-only ``gh`` and local git).
+   title and files (read-only ``gh`` and local git). Here the whole history with this
+   checkout's rules, so it can be stricter than the release workflow, which starts
+   after the newest release ``release.yml`` made and uses that release's rules.
 3. Sets ``[project] version`` in every ``pyproject.toml`` (PEP 440: ``0.1.0rc1``) and
    ``version`` in every ``package.json`` (SemVer: ``0.1.0-rc.1``), refreshes the uv lock
    files, and runs ``tools/check_versions.py --expect``.

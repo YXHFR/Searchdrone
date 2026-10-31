@@ -5,9 +5,12 @@ protection and ``tools/check_merged_pr_gates.py`` trust, and every workflow writ
 ``github-actions[bot]``. So only the three gate workflows may write statuses or check
 runs or name a job like a gate, and they may only run from the base branch
 (``pull_request_target``, ``issue_comment``), never from a pull request's own code.
-Nor may any other workflow approve on the owner's behalf (``docs/security.md``): no
-``pull-requests: write`` or ``issues: write`` (labels and comments are the gates'
-evidence) and no token from a secret (a personal access token acts as its owner).
+Nor may any other workflow approve on the owner's behalf (``.github/review/security.md``):
+no ``pull-requests: write`` or ``issues: write`` (labels and comments are the gates'
+evidence) and no secret other than ``ALLOWED_SECRETS``, whatever it is passed as, nor
+``secrets: inherit`` (a personal access token acts as its owner). Adding a secret to
+that list needs the owner, since this file is protected. A workflow that only lives on a
+branch is never merged and never read here: keep owner tokens out of repository secrets.
 ``tools/tests/test_workflows.py`` holds main to these rules; ``check_merged_pr_gates.py``
 applies them to the workflow files each merged pull request changed (A18).
 """
@@ -23,11 +26,13 @@ GATE_NAME_PREFIXES = ("gate/", "review/")
 GATE_TRIGGERS = frozenset({"pull_request_target", "issue_comment"})
 # Scopes that can comment, label or review: what the gates read as the owner's word.
 APPROVAL_SCOPES = ("pull-requests", "issues")
-# A key that passes a token (token, github-token, GH_TOKEN, repo-token ...).
-TOKEN_KEY_RE = re.compile(r"(^|[-_])token$", re.IGNORECASE)
+# Secrets a workflow outside the gates may read: none that can act on GitHub.
+ALLOWED_SECRETS = frozenset({"GITHUB_TOKEN", "OPENROUTER_API_KEY"})
 SECRET_RE = re.compile(r"\bsecrets\b", re.IGNORECASE)
-WORKFLOW_TOKEN_RE = re.compile(
-    r"secrets\s*\.\s*github_token\b|secrets\s*\[\s*'github_token'", re.IGNORECASE
+EXPRESSION_RE = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+SECRET_NAME_RE = re.compile(
+    r"\bsecrets\s*(?:\.\s*(?P<dot>[A-Za-z_][\w-]*)|\[\s*['\"](?P<key>[^'\"]+)['\"]\s*\])",
+    re.IGNORECASE,
 )
 
 
@@ -83,41 +88,48 @@ def gate_trigger_problems(doc: dict[Any, Any]) -> list[str]:
     return [f"trigger {t}" for t in sorted(map(str, on)) if t not in GATE_TRIGGERS]
 
 
-def _secret_tokens(node: Any) -> bool:
-    """Somewhere under ``node`` a token key takes a secret other than ``GITHUB_TOKEN``."""
+def _strings(node: Any) -> list[str]:
     if isinstance(node, dict):
-        for key, value in node.items():
-            if (
-                TOKEN_KEY_RE.search(str(key))
-                and SECRET_RE.search(str(value))
-                and not WORKFLOW_TOKEN_RE.fullmatch(
-                    str(value).replace("${{", "").replace("}}", "").strip()
-                )
-            ):
-                return True
-            if _secret_tokens(value):
-                return True
-    elif isinstance(node, list):
-        return any(_secret_tokens(v) for v in node)
-    return False
+        return [s for k, v in node.items() for s in (*_strings(k), *_strings(v))]
+    if isinstance(node, list):
+        return [s for v in node for s in _strings(v)]
+    return [node] if isinstance(node, str) else []
+
+
+def _other_secrets(node: Any) -> bool:
+    """``node`` names a secret outside ``ALLOWED_SECRETS``, reads ``secrets`` some other
+    way (``toJSON(secrets)``), or passes ``secrets: inherit``."""
+    if isinstance(node, dict) and str(node.get("secrets", "")).strip() == "inherit":
+        return True
+    # Secrets exist only inside ${{ }}: "No secrets in ..." and a job named secrets do not.
+    for text in (e for s in _strings(node) for e in EXPRESSION_RE.findall(s)):
+        if not SECRET_RE.search(text):
+            continue
+        names = [m["dot"] or m["key"] for m in SECRET_NAME_RE.finditer(text)]
+        if len(names) != len(SECRET_RE.findall(text)):
+            return True
+        if any(n.upper() not in ALLOWED_SECRETS for n in names):
+            return True
+    return any(_other_secrets(v) for v in (node.values() if isinstance(node, dict) else []))
 
 
 def approval_writers(doc: dict[Any, Any]) -> list[str]:
     """Where a workflow could speak for the owner: ``pull-requests: write`` or
     ``issues: write`` (``write-all`` is already a status writer) at ``top`` or
-    ``job <id>``, or a token taken from a secret (``token top``, ``token <id>``)."""
+    ``job <id>``, or a secret outside ``ALLOWED_SECRETS`` or ``secrets: inherit``
+    (``secret top``, ``secret <id>``)."""
 
     def grants(perms: Any) -> bool:
         return isinstance(perms, dict) and any(perms.get(s) == "write" for s in APPROVAL_SCOPES)
 
     out = ["top"] if grants(doc.get("permissions")) else []
-    if _secret_tokens({k: v for k, v in doc.items() if k != "jobs"}):
-        out.append("token top")
+    if _other_secrets({k: v for k, v in doc.items() if k != "jobs"}):
+        out.append("secret top")
     for name, job in (doc.get("jobs") or {}).items():
         if not isinstance(job, dict):
             continue
         if grants(job.get("permissions")):
             out.append(f"job {name}")
-        if _secret_tokens(job):
-            out.append(f"token {name}")
+        if _other_secrets(job):
+            out.append(f"secret {name}")
     return out

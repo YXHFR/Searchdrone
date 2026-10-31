@@ -34,6 +34,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -91,11 +92,14 @@ def flatten(pages: Any) -> list[dict[str, Any]]:
     return flat
 
 
-def protected_files(files: list[dict[str, Any]]) -> list[str]:
+def protected_files(
+    files: list[dict[str, Any]], rules: Sequence[re.Pattern[str]] = PROTECTED
+) -> list[str]:
+    """The changed paths (old and new names) that one of ``rules`` matches."""
     hits = []
     for f in files:
         for name in (f.get("filename"), f.get("previous_filename")):
-            if isinstance(name, str) and any(p.search(name) for p in PROTECTED):
+            if isinstance(name, str) and any(p.search(name) for p in rules):
                 hits.append(name)
     return sorted(set(hits))
 

@@ -55,13 +55,21 @@ All notable changes to this project are listed here. The format follows
   file, the gate scripts and the gate and release workflows now need the owner's
   `owner-ok` (`check_owner_gate.PROTECTED`).
   Each merge is judged by the protected paths in force before it (its first parent's
-  `PROTECTED` as well as the checker's own), and no merged workflow outside the gates
-  may hold `pull-requests: write`, `issues: write` or a token from a secret.
+  `PROTECTED` as well as the checker's own; a parent list it cannot read in full makes
+  every changed path need `owner-ok`), and no merged workflow outside the gates may hold
+  `pull-requests: write`, `issues: write`, `secrets: inherit` or any secret other than
+  `GITHUB_TOKEN` and `OPENROUTER_API_KEY` (`workflow_rules.ALLOWED_SECRETS`).
   `.github/workflows/release.yml`, on a pushed `v[0-9]*` tag, first runs a job that
   refuses a tag that is not on main and runs the gate check from a clean copy of the
   protected scripts, with PyYAML pinned by hash (Python 3.12), so no other repository
-  code runs before it. The scripts come from the newest published release on the tag's
-  line, and the check starts after it; the first release uses the tagged commit's own. Then it checks the versions, builds the packages and the panel and publishes the
+  code runs before it. The scripts come from the newest published release (rc included)
+  on the tag's line that `release.yml` itself made, with a successful run for that tag
+  and commit, and the check starts after it; a release that fails that test, or any
+  error, stops the job, and only the first release checks the whole history with the
+  tagged commit's own copy. New rules therefore apply from the release after the one
+  that ships them. A deleted release and a `release.yml` without its gates job are left
+  to the owner's ruleset on `v*` tags and immutable releases. Then it checks the
+  versions, builds the packages and the panel and publishes the
   GitHub release only if the tag still names the commit it built; only its publish job
   can write. `just showcase` is still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,

@@ -71,16 +71,26 @@ def test_only_the_gate_workflows_can_approve(path: Path) -> None:
         (
             "jobs:\n  a:\n    steps:\n      - uses: x/y@1\n        with:\n"
             "          github-token: ${{ secrets.OWNER_PAT }}\n",
-            ["token a"],
+            ["secret a"],
         ),
-        ("env:\n  GH_TOKEN: ${{ secrets.BOT }}\njobs: {}\n", ["token top"]),
-        ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n", []),
-        ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ github.token }}\n", []),
+        ("env:\n  GH_TOKEN: ${{ secrets.BOT }}\njobs: {}\n", ["secret top"]),
+        # Whatever the key, or straight in a run line.
+        ("jobs:\n  a:\n    env:\n      GH_PAT: ${{ secrets.OWNER_PAT }}\n", ["secret a"]),
+        ("jobs:\n  a:\n    steps:\n      - run: echo ${{ secrets['PAT'] }}\n", ["secret a"]),
+        ("jobs:\n  a:\n    steps:\n      - run: echo ${{ toJSON(secrets) }}\n", ["secret a"]),
+        (
+            "jobs:\n  a:\n    uses: o/r/.github/workflows/x.yml@1\n    secrets: inherit\n",
+            ["secret a"],
+        ),
         (
             "jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN || secrets.PAT }}\n",
-            ["token a"],
+            ["secret a"],
         ),
-        ("jobs:\n  a:\n    env:\n      API_KEY: ${{ secrets.KEY }}\n", []),
+        # Allowed: the workflow token, the listed API key, and the word outside ${{ }}.
+        ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n", []),
+        ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ github.token }}\n", []),
+        ("jobs:\n  a:\n    env:\n      K: ${{ secrets.OPENROUTER_API_KEY != '' }}\n", []),
+        ("jobs:\n  secrets:\n    name: No secrets in the image\n", []),
     ],
 )
 def test_approval_writers(text: str, expected: list[str]) -> None:
@@ -621,18 +631,17 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     ]
     assert str(gates[0]["uses"]).startswith("actions/checkout@")
     run = str(gates[2]["run"])
-    # Copied from the newest earlier release on the tag's line, or the tag for the first.
-    assert 'git show "$rules:tools/$f" > "$gate/$f"' in run
-    assert '--since "$since"' in run and "gh release list --exclude-drafts" in run
-    loop = re.search(r"for f in ([^;]+); do", run.replace("\\\n", " "))
+    # The tagged commit's copy only names the anchor (an error stops the step, since it
+    # is an assignment); the check runs with the anchor's copy and starts after it.
+    assert 'git show "$GITHUB_SHA:tools/$f" > "$gate/tagged/$f"' in run
+    assert "since=$(venv/bin/python -E -s tagged/check_merged_pr_gates.py" in run
+    assert '--anchor-for-tag "$GITHUB_REF_NAME")' in run
+    assert 'rules="${since:-$GITHUB_SHA}"' in run
+    assert 'git -C "$GITHUB_WORKSPACE" show "$rules:tools/$f" > "$gate/$f"' in run
+    assert '${since:+--since "$since"}' in run
+    loop = re.search(r'scripts="([^"]+)"', run)
     assert loop is not None
     copied = {f"tools/{name}" for name in loop[1].split()}
-    assert copied == {
-        "tools/check_merged_pr_gates.py",
-        "tools/workflow_rules.py",
-        "tools/check_owner_gate.py",
-        "tools/check_review_comments.py",
-    }
     # A change to any of them needs owner-ok, and so does a change to this workflow.
     paths = [*copied, ".github/workflows/release.yml"]
     assert check_owner_gate.protected_files([{"filename": p} for p in paths]) == sorted(paths)

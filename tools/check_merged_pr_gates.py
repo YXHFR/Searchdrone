@@ -24,7 +24,9 @@ local clone:
   ``check_owner_gate.PROTECTED`` together with the list in the merge's first parent
   (read from ``tools/check_owner_gate.py`` there, never run), so a merge is judged by
   the rules in force before it: a pull request that shortens the list, makes this check
-  pass everything or edits the exceptions file still needs ``owner-ok`` itself;
+  pass everything or edits the exceptions file still needs ``owner-ok`` itself. A parent
+  list that is not plain ``re.compile(<literal>[, <re flags>])`` entries cannot be read
+  in full, and then every path the merge changed needs ``owner-ok``;
 * ``gate/pr-title``: the title at the merge (later renames undone) follows
   ``PR_TITLE_RE``, the rule in ``pr-title.yml`` (kept equal by a test);
 * no workflow file the merge adds or changes can write a gate, read as YAML
@@ -34,14 +36,23 @@ local clone:
   them with ``pull-requests: write``, ``issues: write`` or a token from a secret.
 
 Tags do not shorten the default range, since anyone who can push a tag could then hide
-older commits. The release workflow instead starts after the newest published release
-on the tag's line (``--since``; that release passed this check) and runs this check and
-its rules from that release, not from the commit being released; only the first release
-checks the whole history with the tagged commit's own copy. Old pull requests are judged
-by today's rules; when a rule changes, the owner lists the merges it would newly fail in
-the exceptions file. It costs four API calls per commit (five when protected paths
-changed, more past 100 comments or events), about 450 for 100 commits; past the token's
-1000 requests an hour ``gh`` fails and so does the check (exit 2).
+older commits. The release workflow instead asks this check for an anchor
+(``--anchor-for-tag``, ``release_anchor``): the newest published ``vX.Y.Z[-rc.N]``
+release on the tag's line that ``release.yml`` itself made (author ``github-actions[bot]``,
+a successful ``release.yml`` run for that tag and commit), so its gates passed. It then
+runs this check and its rules from that release, not from the commit being released, and
+starts after it (``--since``). A newest release that fails that test, or a GitHub that
+cannot be asked, stops the release; only when no release is on the line at all (the
+first release) does the whole history get checked with the tagged commit's own copy.
+Rules added since the anchor therefore apply from the release after the one that ships
+them. What this cannot see, the owner covers with a ruleset on ``v*`` tags and immutable
+releases: a deleted release (the check falls back to the first-release case) and a
+``release.yml`` whose gates job a merge removed (the workflow that runs is the tagged
+commit's own). Old pull requests are judged by today's rules; when a rule changes, the
+owner lists the merges it would newly fail in the exceptions file. It costs four API
+calls per commit (five when protected paths changed, more past 100 comments or events),
+about 450 for 100 commits; past the token's 1000 requests an hour ``gh`` fails and so
+does the check (exit 2).
 
 ``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
 commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
@@ -91,6 +102,11 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 GIT_STATUS = {"A": "added", "D": "removed"}
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
 OWNER_GATE = "tools/check_owner_gate.py"
+# The parent's PROTECTED could not be read in full: every changed path needs the owner.
+ANY_PATH = re.compile("")
+RELEASE_TAG_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$")
+RELEASE_WORKFLOW = ".github/workflows/release.yml"
+RELEASE_BOT = "github-actions[bot]"
 
 # GitHub, read-only: the API path -> parsed JSON. Tests pass a fake.
 Api = Callable[[str], Any]
@@ -205,47 +221,66 @@ class LocalGit:
         return git(self.root, "show", f"{sha}:{path}", strip=False)
 
 
+class UnreadableRulesError(ValueError):
+    """A ``PROTECTED`` list this check cannot read in full."""
+
+
+def _flags(node: ast.expr) -> int:
+    """``re.X`` / ``re.IGNORECASE | re.X`` as a number; anything else is unreadable."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _flags(node.left) | _flags(node.right)
+    flag = getattr(re, node.attr, None) if isinstance(node, ast.Attribute) else None
+    if isinstance(flag, re.RegexFlag):
+        return int(flag)
+    raise UnreadableRulesError(ast.unparse(node))
+
+
 def read_protected(text: str) -> list[re.Pattern[str]]:
-    """``PROTECTED`` from the text of a ``check_owner_gate.py``, read and never run:
-    each ``re.compile("...")``, with ``re.IGNORECASE`` if given. Anything else in the
-    tuple is left out; this copy's own list applies as well."""
+    """``PROTECTED`` from the text of a ``check_owner_gate.py``, read and never run.
+    Every entry must be ``re.compile(<string literal>[, <re flags>])`` (positional or
+    by keyword); any other form raises ``UnreadableRulesError`` rather than being skipped."""
+    lists = [
+        node.value
+        for node in ast.parse(text).body
+        if isinstance(node, ast.Assign | ast.AnnAssign)
+        and any(
+            isinstance(t, ast.Name) and t.id == "PROTECTED"
+            for t in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        )
+    ]
+    if len(lists) != 1 or not isinstance(lists[0], ast.Tuple | ast.List):
+        raise UnreadableRulesError("PROTECTED är inte en enda tuple eller lista")
     out: list[re.Pattern[str]] = []
-    for node in ast.parse(text).body:
-        target = node.targets[0] if isinstance(node, ast.Assign) else None
-        if isinstance(node, ast.AnnAssign):
-            target = node.target
-        value = getattr(node, "value", None)
-        if not (isinstance(target, ast.Name) and target.id == "PROTECTED"):
-            continue
-        for item in value.elts if isinstance(value, (ast.Tuple, ast.List)) else []:
-            if not (isinstance(item, ast.Call) and item.args):
-                continue
-            pattern, *flags = item.args
-            if not (isinstance(pattern, ast.Constant) and isinstance(pattern.value, str)):
-                continue
-            ignore = any(
-                isinstance(f, ast.Attribute) and f.attr in ("IGNORECASE", "I") for f in flags
-            )
-            try:
-                out.append(re.compile(pattern.value, re.IGNORECASE if ignore else 0))
-            except re.error:
-                continue
+    for item in lists[0].elts:
+        if not (isinstance(item, ast.Call) and ast.unparse(item.func) == "re.compile"):
+            raise UnreadableRulesError(ast.unparse(item))
+        kw = {k.arg: k.value for k in item.keywords}
+        if None in kw or set(kw) - {"pattern", "flags"} or len(item.args) + len(kw) > 2:
+            raise UnreadableRulesError(ast.unparse(item))
+        args = [*item.args, *([kw["pattern"]] if "pattern" in kw else [])]
+        pattern = args[0] if args else None
+        flag_node = item.args[1] if len(item.args) > 1 else kw.get("flags")
+        if not (isinstance(pattern, ast.Constant) and isinstance(pattern.value, str)):
+            raise UnreadableRulesError(ast.unparse(item))
+        try:
+            out.append(re.compile(pattern.value, _flags(flag_node) if flag_node else 0))
+        except re.error as exc:
+            raise UnreadableRulesError(ast.unparse(item)) from exc
     return out
 
 
-def parent_protected(local: Clone, sha: str) -> list[re.Pattern[str]]:
-    """The protected paths in force before the merge: its first parent's list."""
+def parent_protected(local: Clone, sha: str) -> list[re.Pattern[str]] | None:
+    """The protected paths in force before the merge: its first parent's list. ``[]``
+    when the parent has no ``check_owner_gate.py``; ``None`` when it has one this check
+    cannot read in full (then every path the merge changed needs the owner)."""
     try:
-        return read_protected(local.show(f"{sha}^1", OWNER_GATE))
-    except (KeyError, SyntaxError, ValueError, subprocess.CalledProcessError):
+        text = local.show(f"{sha}^1", OWNER_GATE)
+    except (KeyError, subprocess.CalledProcessError):
         return []
-
-
-def protected_files(files: list[dict[str, Any]], rules: Iterable[re.Pattern[str]]) -> list[str]:
-    """The changed paths (old and new names) that one of ``rules`` matches."""
-    rules = list(rules)
-    names = (f.get(k) for f in files for k in ("filename", "previous_filename"))
-    return sorted({n for n in names if isinstance(n, str) and any(r.search(n) for r in rules)})
+    try:
+        return read_protected(text)
+    except (SyntaxError, UnreadableRulesError):
+        return None
 
 
 def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> list[str]:
@@ -352,8 +387,9 @@ def check_commit(api: Api, repo: str, sha: str, local: Clone) -> list[Finding]:
     events = api(f"repos/{repo}/issues/{pr['number']}/events?per_page=100")
     files = local.files(sha)
     problems = review_problems(api, repo, pr, head_time)
-    rules = [*check_owner_gate.PROTECTED, *parent_protected(local, sha)]
-    if protected := protected_files(files, rules):
+    parent = parent_protected(local, sha)
+    rules = [*check_owner_gate.PROTECTED, *(parent or [])] if parent is not None else [ANY_PATH]
+    if protected := check_owner_gate.protected_files(files, rules):
         since = pushed_at(api, repo, head, head_time)
         problems += owner_problems(repo.split("/", 1)[0], pr, events, since, protected)
     if not PR_TITLE_RE.match(title_at_merge(pr, events)):
@@ -384,6 +420,56 @@ def resolve(root: Path, rev: str) -> str:
     return git(root, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
 
 
+def is_ancestor(root: Path, older: str, newer: str) -> bool:
+    proc = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", older, newer],  # noqa: S607
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str | None:
+    """The commit of the newest published release on ``sha``'s line, other than ``tag``,
+    once GitHub shows that ``release.yml`` itself made it: the release's author is
+    ``github-actions[bot]`` and a ``release.yml`` run for that tag and commit, started
+    by the tag's push, succeeded (its gates job passed). ``None`` only when no published
+    ``vX.Y.Z[-rc.N]`` release is on the line (the first release). A newest release that
+    fails these checks, or a release tag missing from the clone, is an error: the
+    caller then stops instead of falling back to the tagged commit's own rules."""
+    line: list[tuple[int, str, str, dict[str, Any]]] = []
+    for rel in api(f"repos/{repo}/releases?per_page=100"):
+        name = str(rel.get("tag_name", ""))
+        if rel.get("draft") or name == tag or not RELEASE_TAG_RE.match(name):
+            continue
+        try:
+            commit = resolve(root, f"refs/tags/{name}")
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"releasen {name}: {name} finns inte i klonen") from exc
+        if commit != sha and is_ancestor(root, commit, sha):
+            depth = int(git(root, "rev-list", "--count", commit))
+            line.append((depth, name, commit, rel))
+    if not line:
+        return None
+    _, name, commit, rel = max(line, key=lambda x: (x[0], x[1]))
+    author = str((rel.get("author") or {}).get("login", ""))
+    if author != RELEASE_BOT:
+        raise ValueError(f"releasen {name} skapades av {author or '?'}, inte av release.yml")
+    pages = api(
+        f"repos/{repo}/actions/workflows/release.yml/runs"
+        f"?event=push&status=success&head_sha={commit}&per_page=100"
+    )
+    runs = [run for page in pages for run in page.get("workflow_runs") or []]
+    if not any(
+        run.get("head_branch") == name
+        and run.get("head_sha") == commit
+        and run.get("conclusion") == "success"
+        and str(run.get("path", "")).split("@", 1)[0] == RELEASE_WORKFLOW
+        for run in runs
+    ):
+        raise ValueError(f"releasen {name}: ingen lyckad release.yml-körning för {commit[:12]}")
+    return commit
+
+
 def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--sha", default="HEAD", help="the commit to release (default HEAD)")
@@ -398,18 +484,21 @@ def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser.add_argument(
         "--exceptions", type=Path, help="default: <root>/" + str(EXCEPTIONS.relative_to(REPO))
     )
+    parser.add_argument(
+        "--anchor-for-tag",
+        metavar="TAG",
+        help="only print the commit of the release to start after (release_anchor), or ''",
+    )
     args = parser.parse_args(argv)
     root = args.root
     try:
         sha = resolve(root, args.sha)
+        if args.anchor_for_tag:
+            print(release_anchor(api, args.repo, root, sha, args.anchor_for_tag) or "")
+            return 0
         since = resolve(root, args.since) if args.since else None
-        if since and since != sha:
-            ancestor = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-                ["git", "-C", str(root), "merge-base", "--is-ancestor", since, sha],  # noqa: S607
-                check=False,
-            )
-            if ancestor.returncode != 0:
-                raise ValueError(f"--since {args.since} är inte en förfader till --sha {args.sha}")
+        if since and since != sha and not is_ancestor(root, since, sha):
+            raise ValueError(f"--since {args.since} är inte en förfader till --sha {args.sha}")
         exceptions = read_exceptions(args.exceptions or root / EXCEPTIONS.relative_to(REPO))
         shas = commits(root, since, sha)
         if not shas:
