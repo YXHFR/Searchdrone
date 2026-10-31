@@ -469,6 +469,31 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
+  the ground station's profile from its `server.hello`, not the brain's own: on until the
+  ground station has said it, off only against a `sim` ground station, and on again while
+  the stream is down. The offline evaluations count as `sim`. The AI configuration hash is
+  computed again after the hello. The brain logs a line when the ground station's
+  profile turns zero retention off.
+- `sd-brain bank export-golden` and `eval-profiles record=1` refuse answers holding the
+  value of any key the AI reads (`SD_JEV_API_KEY` and `SD_OPENAI_API_KEY` were missing);
+  the list is built from the brain's own key list, and the keys in `.env` are checked too,
+  `SD_BRAIN_TOKEN` and the `SD_BANK_R2_*` keys included.
+- The cloud matcher refuses a crop larger than 512 px instead of scaling it down: the
+  link caps crops at 512 px, so a larger image is not a crop.
+- The cloud image policy passes a text part on with its text only, no other keys.
+- The probability map is frozen only with a confirmed find checked under the map's write
+  lock, and a sector's `psr` is at most 100 (`PSR_MAX`); a sector stored before that is
+  read with its `psr` clamped.
+- Simulator exams: the closer look flies inside the charter's height band, the farm grade
+  takes `flew_on` from the track flown on a search order after the raise (the exam's
+  rule, from `sd_schemas.simfarm`) instead of counting every raised candidate as flown
+  on, and the scripted decider raises the ground's high candidates from their
+  `event.candidate` bodies instead of reading the situation's text.
+- The sim farm moves a round flown over the orthophoto from `rounds/` to `draped/` once
+  instead of trying to upload it on every turn. `ROUND_SCHEMA` has one home
+  (`sd_schemas.simfarm`), the workflow test fails a storing step without a `path`, and
+  `PerceptionLoop` takes prebuilt detector sources (`sources=`).
 - The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) and
   the detector weights' (`just detector-fetch`, `tools/train/fetch_weights.py`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a

@@ -260,9 +260,11 @@ class GroundClient:
         *,
         on_resync: Callable[[], Awaitable[None]],
         on_connect: Callable[[bool], Awaitable[None]] | None = None,
+        on_lost: Callable[[], None] | None = None,
         heartbeat_s: float = 1.0,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Events for ever; reconnects after 1, 2, 5, 5 … s with the last epoch and seq."""
+        """Events for ever; reconnects after 1, 2, 5, 5 … s with the last epoch and seq.
+        ``on_lost`` runs each time the stream is down, before the wait to reconnect."""
         attempt = 0
         while True:
             try:
@@ -287,6 +289,8 @@ class GroundClient:
             except (OSError, websockets.InvalidHandshake, TimeoutError) as exc:
                 log.warning("kan inte ansluta till sd-ground (%s)", type(exc).__name__)
             self.stream.connected = False
+            if on_lost is not None:
+                on_lost()
             delay = RECONNECT_DELAYS_S[min(attempt, len(RECONNECT_DELAYS_S) - 1)]
             attempt += 1
             await asyncio.sleep(delay)

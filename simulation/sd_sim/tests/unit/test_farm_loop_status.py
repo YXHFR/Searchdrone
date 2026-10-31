@@ -17,7 +17,7 @@ from sd_sim.farm import loop, status
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.config import FarmConfig
 from sd_sim.farm.host import Gate, Limits
-from sd_sim.farm.store import Ledger, R2Config, UploadError
+from sd_sim.farm.store import DrapedRoundError, Ledger, R2Config, UploadError
 
 # A stand-in for ``python -m sd_sim.farm round``: the next mode from a list decides
 # what the round does.
@@ -205,6 +205,8 @@ class FakeStore:
         self.fail_on = fail_on
 
     def upload_round(self, d: Path) -> bool:
+        if (d / "draped").exists():
+            raise DrapedRoundError(f"{d.name} flögs över ortofotot och stannar på din dator")
         if d.name == self.fail_on:
             raise UploadError("R2 svarar inte")
         self.sent.append(d.name)
@@ -227,6 +229,30 @@ def test_upload_backlog_in_order_and_waits_on_an_error(
     f.stop.requested = True
     f.upload_backlog()
     assert len(fake.sent) == 4
+
+
+def test_a_draped_round_is_set_aside_once_and_the_backlog_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = farm(tmp_path, [], r2=R2)
+    for name in ("r1", "r2", "r3"):
+        (f.rounds_dir / name).mkdir(parents=True)
+    (f.rounds_dir / "r2" / "draped").write_text("")
+    fake = FakeStore()
+    monkeypatch.setattr(f, "store", lambda: fake)
+    f.upload_backlog()
+    assert fake.sent == ["r1", "r3"]  # not a wait like an R2 error
+    assert sorted(p.name for p in f.rounds_dir.iterdir()) == ["r1", "r3"]
+    assert (f.base / "draped" / "r2" / "draped").is_file()  # kept on the computer
+    assert "flyttat till" in capsys.readouterr().out
+    f.upload_backlog()
+    assert fake.sent == ["r1", "r3", "r1", "r3"]  # never tried again
+    # A second draped round of the same name goes beside the first, not over it.
+    (f.rounds_dir / "r2").mkdir()
+    (f.rounds_dir / "r2" / "draped").write_text("")
+    f.upload_backlog()
+    assert not (f.rounds_dir / "r2").exists()
+    assert (f.base / "draped" / "r2").is_dir() and (f.base / "draped" / "r2-2").is_dir()
 
 
 def test_round_command_runs_under_nice_from_the_worktree(tmp_path: Path) -> None:

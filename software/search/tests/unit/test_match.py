@@ -33,6 +33,7 @@ from search_helpers import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_brain.runtime.base import ModelError
+from sd_brain.runtime.images import CloudImageRejected
 from sd_schemas.base import new_id
 from sd_schemas.link import BBox
 from sd_search.app import SearchService, merge_fields
@@ -142,13 +143,24 @@ def test_answer_format_has_only_the_model_fields() -> None:
     assert answer_format([])["json_schema"]["schema"]["properties"]["fields"]["properties"] == {}
 
 
+async def test_a_crop_larger_than_512_px_is_refused_not_scaled() -> None:
+    """The link caps a crop at 512 px; a larger image is not a crop and never leaves."""
+    p, _ = _full_profile()
+    cloud, budget = FakeCloud(reply=answer()), FakeBudget()
+    engine = CloudMatchEngine(runtime(cloud, budget))
+    with pytest.raises(CloudImageRejected, match="640 x 640 px, högst 512"):
+        await engine.assess(_request(p, n=2, size=640))
+    assert cloud.requests == []
+    assert budget.reserved == []
+
+
 async def test_the_request_on_the_wire() -> None:
     """Fast tier: temperature 0, 300 tokens, no reasoning, the answer schema, two clean
     crops (the largest), and never data collection."""
     p, marker = _full_profile()
     cloud, budget = FakeCloud(reply=answer(fields={"garment:0": "match"})), FakeBudget()
     engine = CloudMatchEngine(runtime(cloud, budget))
-    a = await engine.assess(_request(p, n=3, size=640))  # too large: scaled to fit 512
+    a = await engine.assess(_request(p, n=3, size=512))
     (body,) = cloud.requests
     assert body["provider"]["data_collection"] == "deny"
     assert body["temperature"] == 0 and body["max_tokens"] == 300

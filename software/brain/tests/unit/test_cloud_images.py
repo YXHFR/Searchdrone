@@ -132,6 +132,18 @@ def test_text_only_messages_pass() -> None:
     check_messages([{"role": "system", "content": "regler"}, {"role": "user", "content": []}])
 
 
+def test_a_text_part_goes_on_with_its_text_only() -> None:
+    part = {"type": "text", "text": "titta", "image_url": {"url": "https://x"}, "cache": 1}
+    (msg,) = check_messages([{"role": "user", "content": [part]}])
+    assert msg["content"] == [{"type": "text", "text": "titta"}]
+
+
+@pytest.mark.parametrize("part", [{"type": "text"}, {"type": "text", "text": ["a"]}])
+def test_a_text_part_without_text_is_refused(part: dict[str, object]) -> None:
+    with pytest.raises(CloudImageRejected):
+        check_messages([{"role": "user", "content": [part]}])
+
+
 def _app0(payload: bytes) -> bytes:
     """A JPEG whose APP0 segment is followed by a second, free-form APP0."""
     data = _jpeg(64, 64)

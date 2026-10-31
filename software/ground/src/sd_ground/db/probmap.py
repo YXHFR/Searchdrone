@@ -103,16 +103,26 @@ class ProbabilityMapRepo:
         row: float,
         frozen: bool,
         event_seq: int,
+        needs_confirmed: bool = False,
     ) -> bool:
         """Store the next version: ``version`` must be the newest + 1, and nothing comes
-        after a frozen version while a candidate is still confirmed. True when this version
-        follows a frozen one (the find was reopened and the map is unlocked)."""
+        after a frozen version while a candidate is still confirmed. With
+        ``needs_confirmed`` (a version that freezes the map or is about a find) a candidate
+        must be confirmed. True when this version follows a frozen one (the find was
+        reopened and the map is unlocked)."""
         async with self.engine.begin() as conn:
             await conn.execute(text(_LOCK), {"m": mission_id})
             head = (await conn.execute(text(_HEAD), {"m": mission_id})).mappings().first()
             newest = 0 if head is None else int(head["version"])
             after_frozen = head is not None and bool(head["frozen"])
-            if after_frozen and (await conn.execute(text(_CONFIRMED), {"m": mission_id})).scalar():
+            confirmed = None
+            if needs_confirmed or after_frozen:
+                confirmed = bool((await conn.execute(text(_CONFIRMED), {"m": mission_id})).scalar())
+            if needs_confirmed and not confirmed:
+                raise MapWriteError(
+                    "MAP_NOT_CONFIRMED", "Kartan låses bara när en person har bekräftat ett fynd."
+                )
+            if after_frozen and confirmed:
                 raise MapWriteError(
                     "MAP_FROZEN", "Kartan är låst: en kandidat är bekräftad som funnen."
                 )

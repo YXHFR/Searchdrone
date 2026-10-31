@@ -44,15 +44,21 @@ BRAIN_KEYS = (
 _ENV_LINE = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$")
 
 
-def brain_env(env: Mapping[str, str] | None = None, dotenv: Path | None = None) -> dict[str, str]:
-    """The AI's own keys: from ``env`` first, else from ``.env``. Nothing else is read."""
+def brain_env(
+    env: Mapping[str, str] | None = None,
+    dotenv: Path | None = None,
+    keys: Iterable[str] = BRAIN_KEYS,
+) -> dict[str, str]:
+    """The AI's own keys (or ``keys``): from ``env`` first, else from ``.env``. Nothing
+    else is read."""
     environ = os.environ if env is None else env
-    out = {k: environ[k] for k in BRAIN_KEYS if environ.get(k)}
+    keys = tuple(keys)
+    out = {k: environ[k] for k in keys if environ.get(k)}
     path = dotenv if dotenv is not None else Path(".env")
     if path.is_file() and not path.is_symlink():
         for line in path.read_text(encoding="utf-8").splitlines():
             m = _ENV_LINE.match(line)
-            if m and m.group(1) in BRAIN_KEYS and m.group(1) not in out:
+            if m and m.group(1) in keys and m.group(1) not in out:
                 out[m.group(1)] = m.group(2).strip().strip('"').strip("'")
     return out
 
