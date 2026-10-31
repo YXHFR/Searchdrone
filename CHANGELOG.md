@@ -14,13 +14,18 @@ All notable changes to this project are listed here. The format follows
   `check_versions --expect` and turns `[Unreleased]` into the release's section, with
   the commit list from git-cliff (`cliff.toml`, pinned in `simulation/versions.lock`).
   It never commits or tags. `tools/check_merged_pr_gates.py` checks that every commit on
-  main since the previous `v*` tag is a merged pull request's commit whose `gate/review`,
-  `gate/owner` and `gate/pr-title` were green and written by `github-actions[bot]`, and
-  whose own workflow changes cannot write a gate (`github-actions[bot]` writes for every
-  workflow). `.github/workflows/release.yml` refuses a tag that is not on main, runs both
-  checks on a pushed `v*` tag, builds the
-  packages and the panel and publishes the GitHub release; only its publish job can
-  write. `just showcase` is still not built.
+  main since the previous `v*` tag with a published release is the merge commit of a
+  pull request into `main` whose `gate/review`, `gate/owner` and `gate/pr-title` were
+  green and written by `github-actions[bot]`. `gate/review` and `gate/owner` must link to
+  a run of their own gate workflow from main (`pull_request_target` on the head commit, or
+  `issue_comment`); `gate/pr-title` has no link, so the title is checked again. Workflow
+  files the pull request changed are read as YAML: none may be able to write a gate, and
+  the gate workflows may only run on `pull_request_target`/`issue_comment`
+  (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`).
+  `.github/workflows/release.yml` refuses a tag that is not on main before any repository
+  code runs, runs both checks on a pushed `v[0-9]*` tag, builds the packages and the panel
+  and publishes the GitHub release; only its publish job can write. `just showcase` is
+  still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
   `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no

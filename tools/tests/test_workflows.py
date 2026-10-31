@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 import yaml
+from workflow_rules import GATE_WORKFLOWS, gate_trigger_problems, status_writers
 
 ROOT = Path(__file__).resolve().parents[2]
 # GitHub runs both extensions; a rule that only read *.yml could be dodged with *.yaml.
@@ -34,32 +35,9 @@ def steps(doc: dict[Any, Any]) -> list[dict[str, Any]]:
     return doc["runs"].get("steps", [])
 
 
-# The gate statuses (gate/review, gate/owner, gate/pr-title) are what branch protection
-# and check_merged_pr_gates.py trust. Only the three gate workflows may write statuses or
-# check runs, or name a job like a gate; any other workflow that could would be able to
-# paint a gate green (A18).
-STATUS_WRITERS = frozenset({"review-gate.yml", "owner-gate.yml", "pr-title.yml"})
-GATE_NAME_PREFIXES = ("gate/", "review/")
-
-
-def status_writers(doc: dict[Any, Any]) -> list[str]:
-    """Where a workflow could write a gate: ``statuses: write``, ``checks: write`` or
-    ``write-all`` (``top`` or ``job <id>``), or a job named like a gate (``name <id>``)."""
-
-    def grants(perms: Any) -> bool:
-        if perms == "write-all":
-            return True
-        return isinstance(perms, dict) and "write" in (perms.get("statuses"), perms.get("checks"))
-
-    out = ["top"] if grants(doc.get("permissions")) else []
-    for name, job in (doc.get("jobs") or {}).items():
-        if not isinstance(job, dict):
-            continue
-        if grants(job.get("permissions")):
-            out.append(f"job {name}")
-        if any(str(n).startswith(GATE_NAME_PREFIXES) for n in (name, job.get("name", ""))):
-            out.append(f"name {name}")
-    return out
+# Only the three gate workflows may write statuses or check runs or name a job like a
+# gate, and they may only run from the base branch; see tools/workflow_rules.py (A18).
+STATUS_WRITERS = GATE_WORKFLOWS
 
 
 def test_workflows_include_yaml_files() -> None:
@@ -83,6 +61,26 @@ def test_the_gate_workflows_exist_and_write_statuses() -> None:
         assert status_writers(load(path)), f"{name} no longer writes statuses"
 
 
+@pytest.mark.parametrize("name", sorted(GATE_WORKFLOWS))
+def test_the_gate_workflows_run_only_from_the_base_branch(name: str) -> None:
+    # A pull_request (or push) trigger would run the pull request's own copy of the gate.
+    problems = gate_trigger_problems(load(ROOT / ".github" / "workflows" / name))
+    assert not problems, f"{name}: {', '.join(problems)}"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("on:\n  pull_request_target:\n  issue_comment:\n", []),
+        ("on: [pull_request_target, pull_request]\n", ["trigger pull_request"]),
+        ("on: push\n", ["trigger push"]),
+        ("jobs: {}\n", ["inga triggers"]),
+    ],
+)
+def test_gate_trigger_problems(text: str, expected: list[str]) -> None:
+    assert gate_trigger_problems(yaml.safe_load(text)) == expected
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -98,6 +96,13 @@ def test_the_gate_workflows_exist_and_write_statuses() -> None:
         ("permissions: {}\njobs:\n  review/x:\n    runs-on: x\n", ["name review/x"]),
         ("permissions:\n  statuses: read\njobs:\n  a:\n    permissions: read-all\n", []),
         ("permissions: {}\njobs:\n  a:\n    name: lint\n", []),
+        ("permissions: {}\njobs:\n  a:\n    name: Gate/Review\n", ["name a"]),
+        ("permissions: {}\njobs:\n  a:\n    name: ${{ matrix.n }}\n", ["name a"]),
+        ("permissions: {}\njobs:\n  a:\n    name: gat${{ matrix.n }}\n", ["name a"]),
+        ("permissions: {}\njobs:\n  a:\n    name: codeql (${{ matrix.l }})\n", []),
+        ('{"permissions": {"statuses": "write"}, "jobs": {}}\n', ["top"]),
+        ("x: &w write\npermissions:\n  checks: *w\njobs: {}\n", ["top"]),
+        ('permissions:\n  "\\x73tatuses": write\njobs: {}\n', ["top"]),
     ],
 )
 def test_status_writers_finds_every_grant(text: str, expected: list[str]) -> None:
@@ -537,3 +542,24 @@ def test_the_coverage_rules_see_a_gap() -> None:
         "${{ runner.temp }}/site",
         "a",
     ]
+
+
+def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> None:
+    doc = load(ROOT / ".github" / "workflows" / "release.yml")
+    assert triggers(doc) == {"push": {"tags": ["v[0-9]*"]}}
+    assert doc["permissions"] == {"contents": "read"}
+    writers = {
+        name: job["permissions"]
+        for name, job in doc["jobs"].items()
+        if "write" in (job.get("permissions") or {}).values()
+    }
+    assert writers == {"publish": {"contents": "write"}}
+    for step in doc["jobs"]["publish"]["steps"]:
+        uses = str(step.get("uses", ""))
+        assert not uses or uses.startswith("actions/download-artifact@"), uses
+        run = str(step.get("run", ""))
+        assert not re.search(r"\b(tools/|just|uv|python3?|pnpm|bash \S+\.sh)\b", run), run
+    names = [s.get("name") or s.get("uses") for s in doc["jobs"]["build"]["steps"]]
+    # The tag is refused before any repository code (the setup action) runs.
+    assert names[1] == "The tagged commit is on main"
+    assert str(names[2]).startswith("./.github/actions/setup")

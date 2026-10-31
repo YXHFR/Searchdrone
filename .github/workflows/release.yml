@@ -1,14 +1,15 @@
 # Publishes a GitHub release when the owner pushes a tag vX.Y.Z (after `just release-prep`
-# and its pull request are merged). The build job checks the tag against every version,
-# checks that every commit since the previous tag came from a pull request with green
-# gates, builds the Python packages and the panel and writes the release notes from
+# and its pull request are merged). The build job first refuses a tag that is not on
+# main, then checks the tag against every version and that every commit since the
+# previous tag with a published release came from a pull request with green gates,
+# builds the Python packages and the panel and writes the release notes from
 # CHANGELOG.md. Only the publish job can write, and it runs no repository code: it
 # uploads what the build job made. Nothing here creates or moves a tag.
 name: release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*"]
 
 permissions:
   contents: read
@@ -25,16 +26,17 @@ jobs:
       contents: read
       pull-requests: read # check_merged_pr_gates: the PR behind each commit
       statuses: read # and the gate statuses on its head
+      actions: read # and the gate workflow run behind each status
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
       - name: The tagged commit is on main
         run: |
           git fetch -q --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
       - name: The tag matches every version
         env:
           TAG: ${{ github.ref_name }}
@@ -42,7 +44,7 @@ jobs:
       - name: Every commit since the previous tag came from a pull request with green gates
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 tools/check_merged_pr_gates.py --sha "$GITHUB_SHA"
+        run: uv run --no-sync python tools/check_merged_pr_gates.py --sha "$GITHUB_SHA"
       - name: Build
         run: just build
       - name: Release notes and assets
