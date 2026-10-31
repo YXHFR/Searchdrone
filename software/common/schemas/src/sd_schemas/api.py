@@ -122,6 +122,12 @@ class AlertCode(StrEnum):
     FIND_HOLD_ALL = "FIND_HOLD_ALL"  # hovering at a confirmed find; MAVLink down too
     LINK_BACK_HOLD = "LINK_BACK_HOLD"  # the link is back, the drone hovers
     LINK_BACK_HOME = "LINK_BACK_HOME"  # the link is back, the drone flies home
+    # The keep-out list (KeepoutInstall) was refused or not answered; and in again
+    KEEPOUTS_NOT_INSTALLED = "KEEPOUTS_NOT_INSTALLED"
+    KEEPOUTS_INSTALLED = "KEEPOUTS_INSTALLED"
+    # The drone hovers short of a keep-out cylinder, or inside one over a person (climbing
+    # first when it can): onboard executor.keepout_hold
+    KEEPOUT_HOLD = "KEEPOUT_HOLD"
     # The GPS, from the ground's own MAVLink (sd_safety.gnss) and the flight controller's texts
     GPS_WEAK = "GPS_WEAK"
     GPS_LOST = "GPS_LOST"
@@ -129,6 +135,14 @@ class AlertCode(StrEnum):
     GPS_GLITCH = "GPS_GLITCH"
     GPS_SPOOF = "GPS_SPOOF"
     GPS_OK = "GPS_OK"
+
+
+class KeepoutHoldField(StrEnum):
+    """The fields of the onboard ``executor.keepout_hold`` data that the ground's
+    ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text."""
+
+    INSIDE = "inside"  # bool: inside a cylinder over a person, not short of one
+    CLIMB_TO_M = "climb_to_m"  # number: the altitude (m) it climbs straight up to first
 
 
 class CommandStatus(StrEnum):
@@ -267,16 +281,23 @@ WindReason = Literal["TILT_MARGIN", "ENERGY_HOME", "WIND_LIMIT"]
 
 
 class WindCheck(SdModel):
-    """The ground station's "too windy" warning. A warning only: nothing on board or on
-    the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
-    calibrated against flight logs, so ``calibrated`` is always false for now.
+    """The ground station's "too windy" warning. ``TILT_MARGIN`` and ``WIND_LIMIT`` are
+    warnings only. ``ENERGY_HOME`` warns on the strictest estimate, and starts the ground
+    station's battery FLY HOME (``battery_rtl``) only when the estimate with the flight
+    controller's own numbers is short, or the wind estimate is short with a measured drag;
+    that can only make the flight home earlier. Its thresholds are not yet calibrated
+    against flight logs, so ``calibrated`` is always false for now.
 
     * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
-      the flight controller's lean limit (ATC_ANGLE_MAX).
-    * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
-      margin, would leave less than the flight controller's low-battery reserve.
-    * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
-      when EK3_DRAG_* are set) is over the configured wind limit.
+      the flight controller's lean limit (ATC_ANGLE_MAX, read from the flight controller).
+    * ``ENERGY_HOME``: flying home now would leave less than the flight controller's
+      low-battery reserve, or the wind is too strong to get home at all. The strictest of
+      the estimate at RTL speed and the measured current with a 30 % margin (with the
+      constants and with the flight controller's BATT_CAPACITY, BATT_LOW_MAH and
+      RTL_SPEED_MS), and (with WIND) the same against the measured headwind and crosswind
+      on the way home. Too strong to get home only warns.
+    * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND; the EKF
+      estimates wind only with drag fusion, EK3_DRAG_*) is over the configured wind limit.
     """
 
     warning: bool
@@ -289,7 +310,8 @@ class WindCheck(SdModel):
     wind_from_deg: float | None
     wind_limit_ms: float
     wind_gust_limit_ms: float | None  # None: no gust limit at this stage
-    home_mah: float | None  # estimated cost of flying home now, margin included
+    home_mah: float | None  # cost of flying home now, margin included; None: no
+    # estimate, or (with ENERGY_HOME) the wind is too strong to get home
     left_mah: float | None
     reserve_mah: float
 

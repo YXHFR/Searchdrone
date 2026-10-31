@@ -38,13 +38,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from sd_schemas.simfarm import ROUND_SCHEMA
 from sd_sim import _args
 from sd_sim.farm import labels, qc
 from sd_sim.farm.camera import CameraPose, Intrinsics
 from sd_sim.farm.people import BY_ID
 
 SPEC_SCHEMA = "simfarm.spec/v1"
-ROUND_SCHEMA = "simfarm.round/v1"
 COMMANDERS = ("script", "sd-brain")
 EXIT_OK, EXIT_QC, EXIT_ERROR = 0, 1, 3
 EXIT_NOT_BUILT = _args.NOT_BUILT_EXIT

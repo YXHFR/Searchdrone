@@ -8,11 +8,15 @@
   and the revisions of a candidate only grow.
 * ``keepout_never_entered`` (E8): after a keep-out cylinder is in force, the flown track
   never comes inside it. A drone already inside when the cylinder is made (it was made
-  around a person under the drone) may leave it, but never come back in. A cylinder can
+  around a person under the drone) may leave it, never deeper than it was then (the way
+  out never goes deeper), and never come back in. A cylinder can
   also come with its edge closer than the drone can stop from at its speed (a person seen
   just ahead): no reaction keeps it out, so the drone may brake into it by what the stop
   (``stop_distance_m``, at its speed towards the cylinder) leaves; never deeper than that
-  until it is out again, and after that never back in.
+  until it is out again, and after that never back in. A cylinder that changes shape
+  under the same id (the ground moves a candidate's as its position firms up) is a new
+  shape with the same rules, but the braking allowance counts only from when the id first
+  came (``SeenKeepout.came``): a new shape is no new grace.
   ``keepout_min_distance_m`` is the smallest horizontal distance from the track to an
   active cylinder's edge after the drone was outside it (negative: inside).
 
@@ -33,6 +37,7 @@ from sd_safety.targets import distance_m
 from sd_sim.invariants import Sample
 
 __all__ = [
+    "FC_BRAKE",
     "KEEPOUT_TOLERANCE_M",
     "CandidateWatch",
     "SeenKeepout",
@@ -48,13 +53,24 @@ KEEPOUT_TOLERANCE_M: Final = 1.0
 CLEAR_M: Final = 5.0
 # How far a drone goes on from the moment a cylinder is in force on board until LOITER has
 # stopped it: the reflex's tick (0.1 s), the mode change and LOITER's braking ramp, then
-# ArduCopter's LOITER braking (LOIT_BRK_ACCEL, 2.5 m/s²). The time it takes, with
-# ``STOP_SETTLE_S`` for the jerk-limited ramp and the position controller settling. This is
+# ArduCopter's LOITER braking (LOIT_BRK_ACC_M). The time it takes, with ``STOP_SETTLE_S``
+# for the jerk-limited ramp (LOIT_BRK_JRK_M) and the position controller settling. This is
 # what the flight controller does; the onboard reflex plans with a wider margin on purpose
 # (``sd_onboard.executor.keepout_reflex.stop_m``), and a change to either is a change to E8.
+# The flight controller's values are pinned in searchdrone-safety.parm (``FC_BRAKE``);
+# test_search_invariants fails when the file and this model drift apart.
 STOP_REACT_S: Final = 0.5
 STOP_DECEL_MS2: Final = 2.5
 STOP_SETTLE_S: Final = 1.0
+STOP_JERK_MS3: Final = 5.0  # the braking reaches STOP_DECEL_MS2 in 0.5 s, inside settling
+# LOITER brakes this long after the last stick input. The AI flies without sticks, so it
+# brakes at once; after a pilot's stick the delay still fits the reaction and settling.
+STOP_BRAKE_DELAY_S: Final = 1.0
+FC_BRAKE: Final = {
+    "LOIT_BRK_ACC_M": STOP_DECEL_MS2,
+    "LOIT_BRK_JRK_M": STOP_JERK_MS3,
+    "LOIT_BRK_DELAY": STOP_BRAKE_DELAY_S,
+}
 # The allowance is for the moment a cylinder comes: the track's first sample in force must
 # be this close to it (cylinders are sampled every 0.25 s).
 ARRIVAL_S: Final = 1.0
@@ -152,6 +168,14 @@ class SeenKeepout:
     radius_m: float
     since: float  # monotonic seconds, the clock of the track's samples
     until: float = math.inf  # when it was no longer in force
+    # When the id first came, for a later shape of it (``since`` is when this shape came);
+    # None: this is its first shape.
+    came: float | None = None
+
+    @property
+    def arrival(self) -> float:
+        """When the cylinder (its id) first came: the braking allowance counts from then."""
+        return self.since if self.came is None else self.came
 
 
 def _searching(track: Sequence[Sample]) -> list[Sample]:
@@ -207,24 +231,31 @@ def _braking_speed_ms(rows: Sequence[tuple[float, float, Sample]], t: float) -> 
     return max(0.0, s0.groundspeed_ms - slowed) + BRAKE_SLACK_MS
 
 
+def _closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
+    """The drone's speed deeper into the cylinder at the first row: the ground speed times
+    the share of the next movement that heads in (all of it until the drone has moved)."""
+    _, d0, s0 = rows[0]
+    v0 = s0.groundspeed_ms
+    for _, d1, s1 in rows[1:]:
+        moved = distance_m(s0.lat, s0.lon, s1.lat, s1.lon)
+        if moved >= MOVED_M:
+            return v0 * min(1.0, max(0.0, (d0 - d1) / moved))
+    return v0
+
+
 def _brake_allowance(
     k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]]
 ) -> tuple[float, float]:
     """(how far braking may take the drone in, until when it brakes) for a cylinder that
     came with its edge closer than the drone can stop from; (0, -inf) otherwise. Only the
     speed towards the cylinder counts (the ground speed times the share of the next
-    movement that heads in), and only when the track has a sample from when it came."""
+    movement that heads in), and only when the track has a sample from when it came (the
+    id, not a later shape of it)."""
     t0, d0, s0 = rows[0]
     v0 = s0.groundspeed_ms
-    if d0 < 0.0 or t0 - k.since > ARRIVAL_S:
+    if d0 < 0.0 or t0 - k.arrival > ARRIVAL_S:
         return 0.0, -math.inf
-    closing = v0
-    for _, d1, s1 in rows[1:]:
-        moved = distance_m(s0.lat, s0.lon, s1.lat, s1.lon)
-        if moved >= MOVED_M:
-            closing = v0 * min(1.0, max(0.0, (d0 - d1) / moved))
-            break
-    brake_m = stop_distance_m(closing) - d0
+    brake_m = stop_distance_m(_closing_ms(rows)) - d0
     if brake_m <= 0.0:
         return 0.0, -math.inf
     return brake_m, t0 + STOP_REACT_S + v0 / STOP_DECEL_MS2 + STOP_SETTLE_S
@@ -241,6 +272,15 @@ def keepout_never_entered(
         if not rows:
             continue
         brake_m, braking_until = _brake_allowance(k, rows)
+        # Inside when it came (made around a person under the drone): on its way out, never
+        # deeper than then, plus what braking takes it on when it was heading deeper (only
+        # with a sample from when the id came, as for a cylinder ahead).
+        came_in = -rows[0][1] if rows[0][1] < 0.0 else None
+        came_brake_m = (
+            stop_distance_m(_closing_ms(rows))
+            if came_in is not None and rows[0][0] - k.arrival <= ARRIVAL_S
+            else 0.0
+        )
         out = False
         last_t, last_d, last_s = rows[0]
         for t, d, sample in rows:
@@ -254,7 +294,8 @@ def keepout_never_entered(
                 # Outside once it has stopped: from then on it may not come in.
                 out = out or t > braking_until
                 continue
-            if out:
+            why = ""
+            if out or (brake_m <= 0.0 and came_in is None):
                 deepest = tolerance_m
             elif brake_m > 0.0:
                 deepest = brake_m + tolerance_m  # braked in: never deeper, until it is out
@@ -268,10 +309,15 @@ def keepout_never_entered(
                         f"kom: inbromsningen tillåter högst {fastest:.1f} m/s)"
                     )
                     break
+                why = f": inbromsningen tar den {brake_m:.1f} m in"
             else:
-                continue  # inside since it came (made around a person under the drone)
+                depth = came_in or 0.0
+                deepest = depth + came_brake_m + tolerance_m  # inside since it came: out
+                why = (
+                    f": den var {depth:.1f} m inne när den kom, inbromsningen tar den "
+                    f"{came_brake_m:.1f} m till, och får inte gå djupare"
+                )
             if -d > deepest:
-                why = f": inbromsningen tar den {brake_m:.1f} m in" if not out else ""
                 broken.append(
                     f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} "
                     f"({t - k.since:.0f} s efter att den kom{why})"

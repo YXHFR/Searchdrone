@@ -24,12 +24,15 @@ from typing import Any
 from sd_brain.config import BehaviourConfig
 from sd_brain.runtime.base import ModelError, ModelReply, Sampling
 from sd_brain.runtime.replay import load_golden_rows
+from sd_brain.secrets import BRAIN_KEYS
+from sd_brain.simeval.bank import R2_ENV
 from sd_brain.simeval.decider import DecisionMaker, cloud_commander
 from sd_brain.simeval.runner import fly
 from sd_brain.simeval.scenario import make_scenario
 
 __all__ = [
     "GOLDEN_SCHEMA",
+    "SECRET_ENV",
     "GoldenError",
     "export_golden",
     "load_fixture",
@@ -40,13 +43,8 @@ __all__ = [
 GOLDEN_SCHEMA = "sd-brain-golden-sim/1"
 # Points below the recorded grade a replay may land before it counts as a regression.
 TOTAL_SLACK = 10.0
-SECRET_ENV = (
-    "SD_CLOUD_API_KEY",
-    "OPENROUTER_API_KEY",
-    "SD_BRAIN_TOKEN",
-    "SD_BANK_R2_ACCESS_KEY_ID",
-    "SD_BANK_R2_SECRET_ACCESS_KEY",
-)
+# Built from the lists the keys are read by, so a new key the AI reads is refused here too.
+SECRET_ENV = (*BRAIN_KEYS, *R2_ENV, "OPENROUTER_API_KEY", "SD_BRAIN_TOKEN")
 _LOOKS_SECRET = (
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._-]{12,}"),

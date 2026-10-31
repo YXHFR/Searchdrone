@@ -30,6 +30,9 @@ export type AlertCode =
   | "FIND_HOLD_ALL"
   | "LINK_BACK_HOLD"
   | "LINK_BACK_HOME"
+  | "KEEPOUTS_NOT_INSTALLED"
+  | "KEEPOUTS_INSTALLED"
+  | "KEEPOUT_HOLD"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"
@@ -91,6 +94,14 @@ export type CommandStatus =
  */
 export type ExecutorState =
   "IDLE" | "PREFLIGHT" | "TAKEOFF" | "TRANSIT" | "SURVEY" | "HOLD" | "RTL" | "LAND" | "LANDED" | "HELD" | "FAILSAFE";
+/**
+ * The fields of the onboard ``executor.keepout_hold`` data that the ground's
+ * ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "KeepoutHoldField".
+ */
+export type KeepoutHoldField = "inside" | "climb_to_m";
 /**
  * Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
  *
@@ -2664,7 +2675,8 @@ export interface ProbabilityMapView {
  * ``covered_pct``: the share of its cells seen with a POD of at least 0.1.
  * ``mean_pod``: the mean cumulative POD over its cells.
  * ``pos_plan``: the chance of finding the person if the sector is surveyed once more as
- * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).
+ * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first); with
+ * ``est_min`` in hundredths of a minute it is at most ``PSR_MAX`` (1 / 0.01).
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SectorScore".
@@ -3297,16 +3309,23 @@ export interface Telemetry {
   wind?: WindCheck | null;
 }
 /**
- * The ground station's "too windy" warning. A warning only: nothing on board or on
- * the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
- * calibrated against flight logs, so ``calibrated`` is always false for now.
+ * The ground station's "too windy" warning. ``TILT_MARGIN`` and ``WIND_LIMIT`` are
+ * warnings only. ``ENERGY_HOME`` warns on the strictest estimate, and starts the ground
+ * station's battery FLY HOME (``battery_rtl``) only when the estimate with the flight
+ * controller's own numbers is short, or the wind estimate is short with a measured drag;
+ * that can only make the flight home earlier. Its thresholds are not yet calibrated
+ * against flight logs, so ``calibrated`` is always false for now.
  *
  * * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
- *   the flight controller's lean limit (ATC_ANGLE_MAX).
- * * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
- *   margin, would leave less than the flight controller's low-battery reserve.
- * * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
- *   when EK3_DRAG_* are set) is over the configured wind limit.
+ *   the flight controller's lean limit (ATC_ANGLE_MAX, read from the flight controller).
+ * * ``ENERGY_HOME``: flying home now would leave less than the flight controller's
+ *   low-battery reserve, or the wind is too strong to get home at all. The strictest of
+ *   the estimate at RTL speed and the measured current with a 30 % margin (with the
+ *   constants and with the flight controller's BATT_CAPACITY, BATT_LOW_MAH and
+ *   RTL_SPEED_MS), and (with WIND) the same against the measured headwind and crosswind
+ *   on the way home. Too strong to get home only warns.
+ * * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND; the EKF
+ *   estimates wind only with drag fusion, EK3_DRAG_*) is over the configured wind limit.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "WindCheck".

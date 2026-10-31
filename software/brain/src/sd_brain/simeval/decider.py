@@ -15,8 +15,7 @@ no longer counts as an exam (``exam`` false); it is still good image data for th
 
 from __future__ import annotations
 
-import re
-from typing import Literal
+from typing import Any, Literal
 
 from sd_brain.backends.base import ToolExecutor
 from sd_brain.backends.llm import LlmCommander
@@ -32,8 +31,19 @@ __all__ = ["DecisionMaker", "SearchScript", "cloud_commander", "make_decision_ma
 
 DeciderKind = Literal["cloud", "script"]
 SwitchReason = Literal["key_invalid", "budget", "cloud_error"]
-# A high candidate as sd_schemas.candidate_ai.candidates_line writes it (its _CLASS words).
-_HIGH = re.compile(r"\bK(\d+) HÖG\b")
+
+
+def _high_seqs(events: list[dict[str, Any]]) -> list[int]:
+    """The high candidates in the ground's ``event.candidate`` bodies (structured data, not
+    the situation's text), in order."""
+    out: list[int] = []
+    for evt in events:
+        body = evt.get("body") or {}
+        if evt.get("type") == "event.candidate" and body.get("priority_class") == "high":
+            seq = body.get("seq")
+            if isinstance(seq, int) and not isinstance(seq, bool) and seq not in out:
+                out.append(seq)
+    return out
 
 
 class SearchScript:
@@ -43,15 +53,17 @@ class SearchScript:
     name = "scripted"
 
     def __init__(self) -> None:
-        self.raised: set[str] = set()
+        self.high: list[int] = []  # every high candidate the ground announced, in order
+        self.raised: set[int] = set()
 
     async def decide(self, turn: TurnInput, tools: ToolExecutor) -> TurnOutput:
         s = turn.situation
         out = TurnOutput(diagnostics=TurnDiagnostics(backend="scripted"))
         offered = {t.name for t in turn.tools}
+        self.high += [seq for seq in _high_seqs(turn.events) if seq not in self.high]
         if motion_block(s) is not None or not s.vehicle.airborne:
             return out
-        for seq in _HIGH.findall(s.candidates_line or ""):
+        for seq in self.high:
             if seq not in self.raised and "report" in offered:
                 self.raised.add(seq)
                 out.action = AiAction(

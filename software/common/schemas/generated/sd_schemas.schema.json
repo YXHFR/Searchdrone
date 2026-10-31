@@ -358,6 +358,9 @@
         "FIND_HOLD_ALL",
         "LINK_BACK_HOLD",
         "LINK_BACK_HOME",
+        "KEEPOUTS_NOT_INSTALLED",
+        "KEEPOUTS_INSTALLED",
+        "KEEPOUT_HOLD",
         "GPS_WEAK",
         "GPS_LOST",
         "DEAD_RECKONING",
@@ -5404,6 +5407,15 @@
       "title": "Keepout",
       "type": "object"
     },
+    "KeepoutHoldField": {
+      "description": "The fields of the onboard ``executor.keepout_hold`` data that the ground's\n``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.",
+      "enum": [
+        "inside",
+        "climb_to_m"
+      ],
+      "title": "KeepoutHoldField",
+      "type": "string"
+    },
     "KeepoutInstall": {
       "additionalProperties": false,
       "description": "Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.\n\n``install_seq`` grows with every list; a lower one than the last seen is ignored, so a\nlate resend never brings back a removed cylinder or drops a new one. The installed\nlist stays in force until a list with a higher ``install_seq`` arrives: the envelope's\n``ttl_ms`` only limits how late the message may be delivered, never how long the\ncylinders apply.",
@@ -8400,7 +8412,7 @@
     },
     "SectorScore": {
       "additionalProperties": false,
-      "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+      "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first); with\n``est_min`` in hundredths of a minute it is at most ``PSR_MAX`` (1 / 0.01).",
       "properties": {
         "covered_pct": {
           "maximum": 100,
@@ -8428,6 +8440,7 @@
           "type": "number"
         },
         "psr": {
+          "maximum": 100.0,
           "minimum": 0,
           "type": "number"
         },
@@ -10586,7 +10599,7 @@
     },
     "WindCheck": {
       "additionalProperties": false,
-      "description": "The ground station's \"too windy\" warning. A warning only: nothing on board or on\nthe ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet\ncalibrated against flight logs, so ``calibrated`` is always false for now.\n\n* ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of\n  the flight controller's lean limit (ATC_ANGLE_MAX).\n* ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %\n  margin, would leave less than the flight controller's low-battery reserve.\n* ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent\n  when EK3_DRAG_* are set) is over the configured wind limit.",
+      "description": "The ground station's \"too windy\" warning. ``TILT_MARGIN`` and ``WIND_LIMIT`` are\nwarnings only. ``ENERGY_HOME`` warns on the strictest estimate, and starts the ground\nstation's battery FLY HOME (``battery_rtl``) only when the estimate with the flight\ncontroller's own numbers is short, or the wind estimate is short with a measured drag;\nthat can only make the flight home earlier. Its thresholds are not yet calibrated\nagainst flight logs, so ``calibrated`` is always false for now.\n\n* ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of\n  the flight controller's lean limit (ATC_ANGLE_MAX, read from the flight controller).\n* ``ENERGY_HOME``: flying home now would leave less than the flight controller's\n  low-battery reserve, or the wind is too strong to get home at all. The strictest of\n  the estimate at RTL speed and the measured current with a 30 % margin (with the\n  constants and with the flight controller's BATT_CAPACITY, BATT_LOW_MAH and\n  RTL_SPEED_MS), and (with WIND) the same against the measured headwind and crosswind\n  on the way home. Too strong to get home only warns.\n* ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND; the EKF\n  estimates wind only with drag fusion, EK3_DRAG_*) is over the configured wind limit.",
       "properties": {
         "calibrated": {
           "const": false,

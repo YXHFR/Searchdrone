@@ -164,6 +164,7 @@ async def _start_with_decider(sc: Scenario, height_m: float) -> Exam:
     brain = await sc.start_brain(SCRIPT)
     local = ROOT / "config" / "brain.toml"
     cfg = load_config(local if local.is_file() else None)  # the owner's cloud model
+    cfg.cloud.provider.follow_ground("sim")  # the exam flies against the SITL ground
     key = optional_secret("SD_CLOUD_API_KEY", brain_env().get("SD_CLOUD_API_KEY"))
     meter = client = None
     if key is not None and cfg.cloud.model:
@@ -249,6 +250,7 @@ async def test_farm_round(
         coverage = sc.coverage(search_from, alt_m=height, spacing_m=SPACING_M)
         turns = len(sc.brain_turns())
         track = [s for s in sc.track if s.armed]
+        utc_offset = time.time() - time.monotonic()  # the track's clock to the orders' UTC
         stats = onboard[0].perception.stats
     if exam is not None and exam.client is not None:
         await exam.client.aclose()
@@ -264,6 +266,7 @@ async def test_farm_round(
         detections=rows,
         chat=chat,
         candidates=queue["items"],
+        track=[(s.t + utc_offset, s.lat, s.lon) for s in track],
         breaches=breaches,
         coverage=coverage,
         landed_home=home_m <= flight.HOME_RADIUS_M,

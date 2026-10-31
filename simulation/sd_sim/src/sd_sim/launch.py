@@ -76,7 +76,7 @@ ALLOWED_KEYS = (
     "model",
 )
 COMMANDS = ("up", "down", "status")
-FLAGS = ("--demo", "--with-db")
+FLAGS = ("--demo", "--with-db", "--dev")
 # The database and the ground station start BEFORE SITL, so that they stop after it
 # (processes stop in reverse start order and the ground station's heartbeat must end
 # last); the onboard computer and the AI start after SITL.
@@ -87,6 +87,10 @@ HEALTH_GROUND_S = 30.0
 HEALTH_ONBOARD_S = 30.0
 HEALTH_BRAIN_S = 30.0
 HEALTH_SEARCH_S = 30.0
+HEALTH_PANEL_DEV_S = 60.0
+# `just dev` (--dev): what it starts unless a key says otherwise. A fake flight controller
+# and the scripted commander, so it starts without ArduPilot, Gazebo or a cloud key.
+DEV_DEFAULTS = {"physics": "mock", "brain": "scripted", "world": "sd_lake_forest"}
 DEMO_SCRIPT = "simulation/scenarios/scripts/SC01.yaml"
 # detector=model with Gazebo: the persons of this search world stand in the world.
 PEOPLE_WORLD = ("SK01", 1)
@@ -149,8 +153,11 @@ class Stack:
         light: Mapping[str, Any] | None = None,
         stills_archive: Path | None = None,
         detector: DetectorChoice = detector_choice.ORACLE,
+        panel_dev: bool = False,
     ) -> None:
         self.cfg = cfg
+        # panel_dev: also the panel's Vite dev server (hot reload) in front of sd-ground.
+        self.panel_dev = panel_dev
         # detector: the person detector sd-onboard runs (detector=model: the owner's).
         self.detector = detector
         # scene: a search scenario's objects in the Gazebo world, the vehicle's stills
@@ -246,6 +253,8 @@ class Stack:
         ]
         if self.observer:  # otherwise the caller's own harness already holds the port
             names.append("harness_mavlink")
+        if self.panel_dev:
+            names.append("panel_dev")
         busy = busy_ports(self.ports, names)
         if busy:
             ports_text = ", ".join(str(p) for p in busy)
@@ -462,6 +471,8 @@ class Stack:
         return build_sitl_argv(opts, self.ports, layout)
 
     def start_sitl(self) -> procs.Proc:
+        if self.cfg.physics == "mock":
+            return self.start_mock_fc()
         argv = self.sitl_argv()
         if not Path(argv[0]).is_file():
             raise InfraError(f"{argv[0]} finns inte. Kör just sim-setup först.")
@@ -471,6 +482,42 @@ class Stack:
             self.sitl_layout().stage_frame(work, self.cfg.vehicle)
         self.sitl_layout().stage_scripts(work)
         return self.group.start("arducopter", argv, env=procs.clean_env(), cwd=work)
+
+    def start_mock_fc(self) -> procs.Proc:
+        """``physics=mock``: sd_mav's fake flight controller on SITL's ports, with the
+        safety layer's parameters (no ArduPilot, no flight model, no failsafes)."""
+        safety = self.sitl_layout().project_layers(self.cfg.vehicle)[0]
+        argv = [sys.executable, "-m", "sd_sim.mockfc", "--instance", str(self.cfg.instance)]
+        argv += ["--params", str(safety)]
+        return self.group.start("mockfc", argv, env=procs.clean_env())
+
+    def start_panel_dev(self) -> str:
+        """The panel's Vite dev server on this instance's ``panel_dev`` port, proxying to
+        sd-ground; returns the login link through it."""
+        pnpm = shutil.which("pnpm")
+        if pnpm is None:
+            raise InfraError(
+                "pnpm saknas: panelens utvecklingsserver kan inte starta. Kör just setup."
+            )
+        port = self.ports["panel_dev"]
+        env = procs.clean_env(
+            {
+                "SD_GROUND_URL": f"http://127.0.0.1:{self.ports['ground_panel']}",
+                "SD_PANEL_PORT": str(port),
+            },
+            passthrough=("PNPM_HOME", "NODE_OPTIONS"),
+        )
+        proc = self.group.start(
+            "panel-dev", [pnpm, "--filter", "@searchdrone/panel", "dev"], env=env, cwd=self.repo
+        )
+        self._wait(
+            "panel-dev",
+            proc,
+            HEALTH_PANEL_DEV_S,
+            lambda: services.tcp_open(port, host="127.0.0.1"),
+            "Panelens utvecklingsserver svarar inte. Kör just setup (pnpm install).",
+        )
+        return panel_dev_link(self.login_url, port)
 
     def wait_vehicle_observed(self, sitl: procs.Proc) -> None:
         self._wait(
@@ -856,7 +903,11 @@ class Stack:
             self.provision()
             say("==> sd-ground")
             ground = self.start_ground()
-        say("==> arducopter (SITL)")
+        say(
+            "==> låtsad flygkontroll (physics=mock)"
+            if self.cfg.physics == "mock"
+            else "==> arducopter (SITL)"
+        )
         sitl = self.start_sitl()
         if self.observer:
             self.wait_vehicle_observed(sitl)
@@ -873,6 +924,9 @@ class Stack:
         if ground is not None:
             self.wait_ready()
             self.login_url = self.make_login_link()
+            if self.panel_dev:
+                say("==> panelens utvecklingsserver")
+                self.login_url = self.start_panel_dev()
 
     def down(self) -> None:
         self.group.stop_all()
@@ -904,7 +958,7 @@ def _run_foreground(stack: Stack) -> int:
         if stack.login_url:
             took = time.monotonic() - started
             say(f"Allt är redo efter {took:.0f} s. Öppna panelen: {stack.login_url}")
-            if stack.cfg.open_browser and stack.cfg.gui:
+            if stack.cfg.open_browser and (stack.cfg.gui or stack.panel_dev):
                 open_browser(stack.login_url)
         say("Stoppa med Ctrl-C eller just stop.")
         while True:
@@ -927,6 +981,12 @@ def _run_foreground(stack: Stack) -> int:
         stack.down()
 
 
+def panel_dev_link(login_url: str, port: int) -> str:
+    """The ground station's login link, opened through the panel's dev server instead."""
+    _, sep, fragment = login_url.partition("#")
+    return f"http://127.0.0.1:{port}/{sep}{fragment}"
+
+
 def default_world_for(*, demo: bool) -> str:
     """`just sim` gets the terrain world; the demo keeps the flat world its script is for."""
     return config.TEST_WORLD if demo else config.LAUNCH_WORLD
@@ -942,13 +1002,20 @@ def main(argv: list[str] | None = None) -> int:
         if flag not in FLAGS:
             _args.fail(f"sd_sim.launch: okänd flagga '{flag}'. Inställningar skrivs nyckel=värde.")
     values = _args.parse([a for a in rest if not a.startswith("--")], ALLOWED_KEYS, "sd_sim.launch")
+    dev = "--dev" in flags
+    if dev and "--demo" in flags:
+        _args.fail("sd_sim.launch: --dev och --demo går inte ihop.")
+    if dev:
+        values = {**DEV_DEFAULTS, **values}
     if "record" in values and "--demo" not in flags:
         _args.fail("sd_sim.launch: record= fungerar bara med just demo.")
     demo = "--demo" in flags
     dry = values.pop("dry", "") == "1" or os.environ.get("SD_SIM__DRY_RUN") == "1"
     values.pop("record", None)
     try:
-        cfg = config.load(values, demo=demo, default_world=default_world_for(demo=demo))
+        cfg = config.load(
+            values, demo=demo, default_world=default_world_for(demo=demo), allow_mock=dev
+        )
     except config.DemoHomeError as exc:
         print(str(exc), file=sys.stderr)
         return 3
@@ -980,9 +1047,14 @@ def main(argv: list[str] | None = None) -> int:
     except detector_choice.DetectorError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    run_dir = new_run_dir(cfg.instance, "demo" if demo else "sim")
+    run_dir = new_run_dir(cfg.instance, "demo" if demo else "dev" if dev else "sim")
     stack = Stack(
-        cfg, run_dir, services=True, scene=people_scene_for(cfg, detector), detector=detector
+        cfg,
+        run_dir,
+        services=True,
+        scene=people_scene_for(cfg, detector),
+        detector=detector,
+        panel_dev=dev,
     )
     return _run_foreground(stack)
 

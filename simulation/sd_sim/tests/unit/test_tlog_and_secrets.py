@@ -74,6 +74,51 @@ def test_tlog_writer_does_not_wait_for_the_disk(tmp_path: Path) -> None:
     assert [json.loads(line)["i"] for line in idx] == list(range(50))
 
 
+def test_tlog_writer_queue_has_a_cap(tmp_path: Path) -> None:
+    # A disk that stays slow must not eat the memory: past the cap new frames are dropped
+    # and counted, the caller never waits, and records and index lines stay in step.
+    path = tmp_path / "radio.tlog"
+    writer = TlogWriter(path, queue_max=10)
+    real, disk_free = writer._tlog, threading.Event()
+
+    class StalledDisk:
+        def write(self, data: bytes) -> int:
+            disk_free.wait()
+            return real.write(data)
+
+        def flush(self) -> None:
+            real.flush()
+
+        def close(self) -> None:
+            real.close()
+
+    writer._tlog = StalledDisk()  # type: ignore[assignment]
+    frame = heartbeat(250, 190)
+    threading.Timer(5.0, disk_free.set).start()  # the stall ends, even when it would block
+    start = time.monotonic()
+    for _ in range(100):
+        writer.write(frame, "to_vehicle")
+        writer.flush()
+    assert time.monotonic() - start < 0.5
+    assert writer._queue.qsize() <= 12  # the cap plus the flush and close markers
+    assert 88 <= writer.lost <= 91  # a flush marker takes a place; one frame may be in hand
+    disk_free.set()
+    writer.close()
+    written = len(path.read_bytes()) // (8 + len(frame))
+    assert written + writer.lost == 100
+    idx = [json.loads(line) for line in path.with_suffix(".idx.jsonl").read_text().splitlines()]
+    assert len(idx) == written and idx[0]["i"] == 0
+    assert json.loads(path.with_suffix(".lost.json").read_text()) == {"lost_frames": writer.lost}
+
+
+def test_tlog_writer_writes_no_lost_file_when_nothing_was_lost(tmp_path: Path) -> None:
+    path = tmp_path / "radio.tlog"
+    writer = TlogWriter(path)
+    writer.write(heartbeat(250, 190), "to_vehicle")
+    writer.close()
+    assert writer.lost == 0 and not path.with_suffix(".lost.json").exists()
+
+
 def test_tlog_writer_reports_a_failed_write(tmp_path: Path) -> None:
     writer = TlogWriter(tmp_path / "radio.tlog")
     real = writer._tlog

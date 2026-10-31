@@ -8,6 +8,36 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `just dev`: one command for the local development stack. It starts the database,
+  `sd-ground`, `sd-onboard`, `sd-search`, the scripted AI commander and the panel's Vite
+  dev server (hot reload), then prints the login link. The default `physics=mock`
+  replaces ArduPilot with the new `sd_sim.mockfc`, sd_mav's fake flight controller on
+  SITL's ports, so it needs no simulator build and no API key. Only `just dev` accepts
+  `physics=mock`, so no smoke flight, demo or test can pass without ArduPilot;
+  `physics=builtin` or `gz` flies SITL as `just sim` does. The panel's dev server port follows the instance
+  (`SD_PANEL_PORT`, 5173 + 10N).
+- `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
+  fails when code outside the MAVLink gate `sd_mav` names a message or command from its
+  deny list (parameter writes, switching off the fence, flight termination, forced
+  arming with 21196 ...), also under an import alias or as a `getattr` string, or when
+  production code could write on a pymavlink connection itself instead of through
+  `Vehicle.send` (`pymavlink.mavutil`, `mavlink_connection`, a raw `MAVLink` encoder,
+  `<conn>.mav.*_send`, mavfile helpers such as `reboot_autopilot`). Tests are not read;
+  the simulator harness may set `SIM_*` parameters.
+- The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
+  (in `just test-contract`): the manifest names the safety parameter layers of the
+  simulator and real-flight profiles and pins the content of the safety files, the Lua
+  script, the deny list, the parameter allowlist and the safety rules themselves
+  (`sd_sim/params.py`, `sd_safety/constants.py`). The check fails when a pinned file
+  changes without the manifest, when a failsafe, fence, battery, arming, RTL or
+  scripting line in either profile has no rule, when a profile breaks the safety rules or the values the
+  ground station reads back, when SITL or `sd-onboard` load other layers than the
+  manifest names, or when a sim-only layer (or the allowlist) could set a safety
+  parameter. `--update` writes the new digests after a reviewed change.
+- `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
+  `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
+  `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no
+  other workflow can write a gate (A18). The workflow rules now read `*.yaml` files too.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
   fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures
@@ -123,6 +153,60 @@ All notable changes to this project are listed here. The format follows
   `OPENROUTER_API_KEY` secret and uploads the grades as an artifact.
 
 ### Changed
+
+- Flight safety: arming needs exactly `sd_gcs_loiter_cap.lua` loaded and running
+  (`SCR_LD_CHECKSUM` / `SCR_RUN_CHECKSUM` in `searchdrone-safety.parm`); a unit test
+  fails when the script changes without a new checksum. LOITER's braking
+  (`LOIT_BRK_ACC_M`, `LOIT_BRK_JRK_M`, `LOIT_BRK_DELAY`) is set explicitly to the stop
+  model E8 assumes, and a test fails when they drift apart.
+- The ground waits for the onboard executor's answer to every `KeepoutInstall`. A
+  refused, failed, expired or unanswered keep-out list is sent again (above a stale
+  sequence number when the executor holds a newer one), and the operator gets one red,
+  sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+- A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
+  orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
+  whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
+  delivered after its mission closed is only logged.
+- The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
+  new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
+- The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
+  when it came may leave it but never go deeper, and a cylinder's new shape gives no new
+  grace. FLY HOME pressed in a chain run must be under way within its limit, and the
+  drone must land at home. New SITL tests fly the margin case from #96 and require the
+  inspection's `keepout_replan`.
+- The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
+  `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
+  connection, with the fence check's parameter reading. A parameter that cannot be read
+  keeps its constant from `sd_safety.constants`, and `wind.param_fallback` is logged.
+  `ENERGY_HOME` now also counts the wind on the way home: with a fresh MAVLink WIND the
+  ground speed home is the airspeed minus the headwind, with the crosswind crabbed out,
+  and the current comes from the hover current scaled to the lean that airspeed needs
+  (the drag is measured while the drone holds position; until then, full lean at
+  `RTL_SPEED_MS` through the air). The 1.3 margin stays. The strictest of the estimate
+  as before, the same with the flight controller's numbers and the one with the wind
+  decides the warning, so the warning never comes later than before, and a wind too
+  strong to get home in (once the drag is measured) warns at once. The wind used is the
+  mean over the last 60 s, direction and speed from the same samples, so one gust does
+  not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
+  `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
+  from the estimate with the flight controller's numbers, or from the wind estimate once
+  the drag is measured, and both only with `BATT_CAPACITY` read from the flight
+  controller (with the constant 10000 mAh, before the read, after a reconnect or when it
+  is not answered, they only warn); an uncalibrated drag and a wind too strong to get
+  home in only warn. Not while the pilot flies by hand. A ground speed of 0 or NaN does
+  not count as holding position for the drag. Parameters outside ArduCopter's ranges
+  (`RTL_SPEED_MS` and `WP_SPD` 0.1-20 m/s), a capacity outside 100-1,000,000 mAh and a
+  `BATT_LOW_MAH` not below the capacity keep their constants; parameters not answered
+  are asked for again on the same connection. A reconnect or a reboot of the flight
+  controller (`FcTelemetry.fc_link_epoch`, also counting ATTITUDE's `time_boot_ms` going
+  back) forgets the parameters and the measured drag. The guard's percentage level and the flight
+  controller's failsafes are unchanged: an energy flight home under a STOP blocks only
+  the energy trigger, so the percentage level still flies home after STOP and "Ta över".
+  Resume's refusal and the alarm say when the wind and the battery sent the drone home.
+  SITL W5 shows the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35; W6 has
+  `ENERGY_HOME` fly home (reason `energy_home`, Resume refused, STOP and "Ta över" leave
+  the drone in LOITER).
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also
@@ -447,11 +531,36 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
-- `hardware/drone.yaml` uses the measured 0.913 kg for the 10 000 mAh 6S2P pack (was
-  0.87 kg), as the fpv7 CAD already does. `just hw-check` now gives 2.343 kg in all,
+- `hardware/drone.yaml` uses the retailer's listed 0.913 kg for the 10 000 mAh 6S2P pack
+  (was 0.87 kg), as the fpv7 CAD already does. `just hw-check` now gives 2.343 kg in all,
   291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
   `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
   file instead of repeating it.
+- The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
+  the ground station's profile from its `server.hello`, not the brain's own: on until the
+  ground station has said it, off only against a `sim` ground station, and on again while
+  the stream is down. The offline evaluations count as `sim`. The AI configuration hash is
+  computed again after the hello. The brain logs a line when the ground station's
+  profile turns zero retention off.
+- `sd-brain bank export-golden` and `eval-profiles record=1` refuse answers holding the
+  value of any key the AI reads (`SD_JEV_API_KEY` and `SD_OPENAI_API_KEY` were missing);
+  the list is built from the brain's own key list, and the keys in `.env` are checked too,
+  `SD_BRAIN_TOKEN` and the `SD_BANK_R2_*` keys included.
+- The cloud matcher refuses a crop larger than 512 px instead of scaling it down: the
+  link caps crops at 512 px, so a larger image is not a crop.
+- The cloud image policy passes a text part on with its text only, no other keys.
+- The probability map is frozen only with a confirmed find checked under the map's write
+  lock, and a sector's `psr` is at most 100 (`PSR_MAX`); a sector stored before that is
+  read with its `psr` clamped.
+- Simulator exams: the closer look flies inside the charter's height band, the farm grade
+  takes `flew_on` from the track flown on a search order after the raise (the exam's
+  rule, from `sd_schemas.simfarm`) instead of counting every raised candidate as flown
+  on, and the scripted decider raises the ground's high candidates from their
+  `event.candidate` bodies instead of reading the situation's text.
+- The sim farm moves a round flown over the orthophoto from `rounds/` to `draped/` once
+  instead of trying to upload it on every turn. `ROUND_SCHEMA` has one home
+  (`sd_schemas.simfarm`), the workflow test fails a storing step without a `path`, and
+  `PerceptionLoop` takes prebuilt detector sources (`sources=`).
 - The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) and
   the detector weights' (`just detector-fetch`, `tools/train/fetch_weights.py`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a

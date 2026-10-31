@@ -83,6 +83,8 @@ _ARMED_FLAG: Final = mavlink.MAV_MODE_FLAG_SAFETY_ARMED
 # window as the executor's classification of a mode change (a failsafe signal up to
 # this long around the change counts), so both agree on what "new" means.
 _SIGNAL_QUIET_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
+# ATTITUDE's time_boot_ms this much back counts as a reboot (not a reordered packet).
+_REBOOT_BACK_MS: Final = 1000
 # Landed states that count as "in the air" (the flight controller's own words).
 _AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
 # Commands that move the vehicle; their retries stop when the flight controller decided.
@@ -134,7 +136,7 @@ GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 500_000,
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,
     mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
-    mavlink.MAVLINK_MSG_ID_WIND: 1_000_000,  # sent only with EK3_DRAG_* set
+    mavlink.MAVLINK_MSG_ID_WIND: 1_000_000,  # a real estimate only with EK3_DRAG_* set
 }
 
 
@@ -197,6 +199,11 @@ class FcTelemetry:
 
     fc_connected: bool = False
     fc_heartbeat_mono_ms: int | None = None
+    # Counts the flight controller's connections: one more at each new connection and at
+    # a reboot seen without a lost connection (ATTITUDE's time_boot_ms going back).
+    # Readers that keep something per flight controller start over when it changes.
+    fc_link_epoch: int = 0
+    fc_boot_ms: int | None = None  # ATTITUDE's time_boot_ms, the newest
     gcs_mavlink_seen_mono_ms: int | None = None  # HEARTBEAT from the ground station
     onboard_seen_mono_ms: int | None = None  # HEARTBEAT from the onboard computer
     armed: bool = False
@@ -222,8 +229,9 @@ class FcTelemetry:
     battery_charge_state: int | None = None
     battery_voltage_v: float | None = None
     battery_current_a: float | None = None  # BATTERY_STATUS; None when not measured
-    # MAVLink WIND: the EKF's wind estimate (direction it blows from, deg). ArduCopter only
-    # sends it when EK3_DRAG_* are set; None until the first one.
+    # MAVLink WIND: the EKF's wind estimate (direction it blows from, deg). ArduCopter
+    # sends it either way, but the EKF estimates wind only with drag fusion (EK3_DRAG_*);
+    # without it the speed stays near 0. None until the first one.
     wind_mono_ms: int | None = None
     wind_from_deg: float = 0.0
     wind_speed_ms: float = 0.0
@@ -867,6 +875,7 @@ class Vehicle:
                 )
                 notify = True
                 if not was_connected:
+                    t = replace(t, fc_link_epoch=t.fc_link_epoch + 1, fc_boot_ms=None)
                     self._t = t
                     self._connected_event.set()
                     self._event("mav.fc_connected", {"mode": t.fc_mode})
@@ -892,6 +901,10 @@ class Vehicle:
                 # No notify: the panel and perception read the latest. A non-finite sample
                 # is dropped and the previous one ages out instead of being shown as a
                 # made-up horizon.
+                boot_ms = int(msg.time_boot_ms)
+                if t.fc_boot_ms is not None and boot_ms + _REBOOT_BACK_MS < t.fc_boot_ms:
+                    t = replace(t, fc_link_epoch=t.fc_link_epoch + 1)  # a reboot
+                t = replace(t, fc_boot_ms=boot_ms)
                 rpy = (float(msg.roll), float(msg.pitch), float(msg.yaw))
                 if all(map(math.isfinite, rpy)):
                     roll, pitch, yaw = map(math.degrees, rpy)
@@ -916,7 +929,8 @@ class Vehicle:
                     battery_current_a=None if centiamps < 0 else centiamps / 100.0,
                 )
             case "WIND":
-                # Display and the ground's wind warning only, so no notify. A non-finite
+                # Read by the ground station's wind check (the warning, and ENERGY_HOME's
+                # estimate once the drag is measured); no notify. A non-finite
                 # or negative sample is dropped; the previous one ages out.
                 speed, frm = float(msg.speed), float(msg.direction)
                 if math.isfinite(speed) and math.isfinite(frm) and speed >= 0.0:

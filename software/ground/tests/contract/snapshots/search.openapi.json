@@ -1559,7 +1559,7 @@
       },
       "SectorScore": {
         "additionalProperties": false,
-        "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).",
+        "description": "One sector of the charter on the current map.\n\n``poa``: the chance the person is in the sector now (cells whose centre lies in it).\n``covered_pct``: the share of its cells seen with a POD of at least 0.1.\n``mean_pod``: the mean cumulative POD over its cells.\n``pos_plan``: the chance of finding the person if the sector is surveyed once more as\nplanned. ``psr``: ``pos_plan`` per minute of planned flight (higher first); with\n``est_min`` in hundredths of a minute it is at most ``PSR_MAX`` (1 / 0.01).",
         "properties": {
           "covered_pct": {
             "maximum": 100.0,
@@ -1592,6 +1592,7 @@
             "type": "number"
           },
           "psr": {
+            "maximum": 100.0,
             "minimum": 0.0,
             "title": "Psr",
             "type": "number"

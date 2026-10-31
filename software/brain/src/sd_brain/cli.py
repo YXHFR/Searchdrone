@@ -41,6 +41,14 @@ def _config(args: argparse.Namespace) -> BrainConfig:
     return load_config(args.config, os.environ)
 
 
+def _eval_config(args: argparse.Namespace) -> BrainConfig:
+    """The config for an evaluation: no ground station, the simulator is its own, so the
+    cloud's zero-data-retention default is that of the sim profile."""
+    cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+    cfg.cloud.provider.follow_ground("sim")
+    return cfg
+
+
 def _git_sha(root: Path) -> str | None:
     head = root / ".git" / "HEAD"
     if not head.is_file():
@@ -161,7 +169,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     paths = sorted(Path(args.scenarios).glob("*.yaml"))
     if args.only:
         paths = [p for p in paths if any(o in p.name for o in args.only.split(","))]
-    cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+    cfg = _eval_config(args)
     report = asyncio.run(_eval(args, paths, cfg))
     if args.backend == "replay" and args.golden:
         from sd_brain.simeval.golden import load_fixture
@@ -226,12 +234,13 @@ def cmd_eval_profiles(args: argparse.Namespace) -> int:
     if args.backend == "replay":
         report = asyncio.run(run_profiles(cases, replay_for(load_profile_golden(golden_path))))
     else:
-        cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+        cfg = _eval_config(args)
         report, recorder = asyncio.run(_eval_profiles_cloud(cfg, _cloud_key(), cases))
     if recorder is not None and args.record:
-        from sd_brain.simeval.golden import refuse_secrets
+        from sd_brain.simeval.golden import SECRET_ENV, refuse_secrets
 
-        refuse_secrets([r["reply"] for r in recorder.rows], os.environ)
+        secrets = {**os.environ, **brain_env(keys=SECRET_ENV)}
+        refuse_secrets([r["reply"] for r in recorder.rows], secrets)
         lines = [json.dumps(r, ensure_ascii=False, sort_keys=True) for r in recorder.rows]
         golden_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         _out(f"Golden: {golden_path}")
@@ -343,7 +352,7 @@ def cmd_eval_sim(args: argparse.Namespace) -> int:
     """Random search flights with an answer key; the cloud model decides under the cap."""
     from sd_brain.simeval.budget import CostLedger
 
-    cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+    cfg = _eval_config(args)
     if args.model:
         cfg.cloud = cfg.cloud.model_copy(update={"model": args.model})
     scores = asyncio.run(_eval_sim(args, cfg))
@@ -394,7 +403,7 @@ def cmd_bank(args: argparse.Namespace) -> int:
     """``bank export-golden``: a good exam to a replay fixture; ``bank failures``: the list."""
     import gzip
 
-    from sd_brain.simeval.golden import GoldenError, export_golden
+    from sd_brain.simeval.golden import SECRET_ENV, GoldenError, export_golden
     from sd_brain.simeval.trend import failure_rows, failure_text, load_scores
 
     if args.bank_cmd == "failures":
@@ -404,7 +413,9 @@ def cmd_bank(args: argparse.Namespace) -> int:
     src = Path(args.flight)
     try:
         raw = gzip.decompress(src.read_bytes()) if src.suffix == ".gz" else src.read_bytes()
-        fixture = export_golden(json.loads(raw), args.name, {**os.environ, **brain_env()})
+        fixture = export_golden(
+            json.loads(raw), args.name, {**os.environ, **brain_env(keys=SECRET_ENV)}
+        )
     except (OSError, ValueError, KeyError) as exc:
         _err(str(exc) if isinstance(exc, GoldenError) else f"kan inte läsa {src}: {exc!r}")
         return 1
@@ -424,7 +435,7 @@ def cmd_perf_cloud(args: argparse.Namespace) -> int:
 
     from sd_brain.perf import measure_cloud, skip_line
 
-    cfg = load_config(args.config if Path(args.config).is_file() else None, os.environ)
+    cfg = _eval_config(args)
     key = optional_secret("SD_CLOUD_API_KEY", brain_env().get("SD_CLOUD_API_KEY"))
     if key is None or not cfg.cloud.model:
         _out(skip_line())

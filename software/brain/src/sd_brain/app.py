@@ -7,6 +7,7 @@ import contextlib
 import logging
 import signal
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +31,7 @@ from sd_brain.runtime.fallback import BestAvailableRuntime
 from sd_brain.secrets import Secrets
 from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry, SkillSpecPublic
 
-__all__ = ["Brain", "StartError", "build", "registry_mismatch", "run"]
+__all__ = ["Brain", "StartError", "build", "follow_ground_profile", "registry_mismatch", "run"]
 
 log = logging.getLogger("sd_brain")
 
@@ -49,6 +50,7 @@ class Brain:
     http: httpx.AsyncClient
     cloud_http: httpx.AsyncClient | None
     budget: HttpBudgetClient
+    ai_hash_of: Callable[[], str]  # again once the ground station's profile is known
 
 
 def sampling_of(cfg: BrainConfig) -> Sampling:
@@ -96,7 +98,11 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
         cloud, retry_after_s=cfg.cloud.retry_after_s or CLOUD_RETRY_AFTER_S
     )
     sampling = sampling_of(cfg)
-    ai_hash = ai_config_hash(reg, sampling, cloud=cfg.cloud if cloud.configured else None)
+
+    def ai_hash_of() -> str:
+        return ai_config_hash(reg, sampling, cloud=cfg.cloud if cloud.configured else None)
+
+    ai_hash = ai_hash_of()
     context = ContextBuilder(
         reg,
         takeoff_policy=cfg.behaviour.takeoff_policy,
@@ -142,7 +148,7 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
     loop_ref.append(loop)
     if cfg.backend.kind == "cloud" and not cloud.configured:
         log.warning("ingen molnnyckel (SD_CLOUD_API_KEY) eller modell: kommandoläget svarar")
-    return Brain(cfg, ground, loop, runtime, health, http, cloud_http, budget)
+    return Brain(cfg, ground, loop, runtime, health, http, cloud_http, budget, ai_hash_of)
 
 
 def registry_mismatch(local: SkillRegistry, remote: list[SkillSpecPublic]) -> list[str]:
@@ -182,6 +188,19 @@ async def _idle_ticker(b: Brain) -> None:
         b.loop.idle_tick()
 
 
+def follow_ground_profile(b: Brain, profile: str | None) -> None:
+    """The cloud's zero-data-retention default follows the ground station's profile, not
+    the brain's own: a real flight is the ground station's call."""
+    provider = b.cfg.cloud.provider
+    was_on = provider.zdr_on
+    provider.follow_ground(profile)
+    if was_on and not provider.zdr_on:
+        log.info("markstationens profil är %s: zdr av för molnets turer", profile)
+    b.loop.ai_hash = b.ai_hash_of()
+    if warning := b.cfg.zdr_warning(profile):
+        log.warning(warning)
+
+
 async def _stream(b: Brain) -> None:
     async def resync() -> None:
         mission = await b.ground.active_mission(b.cfg.ground.vehicle_id)
@@ -200,6 +219,8 @@ async def _stream(b: Brain) -> None:
         b.loop.heartbeat,
         on_resync=resync,
         on_connect=b.loop.connected,
+        # Until the next hello the ground's profile is unknown: zdr back on.
+        on_lost=lambda: follow_ground_profile(b, None),
         heartbeat_s=BRAIN_HEARTBEAT_S,
     ):
         if evt.get("type") == "server.hello":
@@ -208,6 +229,7 @@ async def _stream(b: Brain) -> None:
                 raise StartError(
                     "manuset (scripted) får bara köras mot en sd-ground i profilen sim"
                 )
+            follow_ground_profile(b, profile if isinstance(profile, str) else None)
             continue
         b.loop.handle_event(evt)
 
