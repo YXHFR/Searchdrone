@@ -81,6 +81,28 @@ def test_compare_flags_a_drop_over_two_points(tmp_path: Path) -> None:
     assert ev.compare(body(0.87), old) is not None
 
 
+def test_compare_reads_the_weakest_dataset_as_pick_detector_does(tmp_path: Path) -> None:
+    """A pooled gain carried by KIOS never hides a drop on HERIDAL: ``compare=`` fails
+    exactly when ``pick-detector`` would rank the new result lower by more than 2 points."""
+
+    def body(pooled: float, heridal: float, kios: float) -> dict[str, object]:
+        def row(r: float) -> dict[str, object]:
+            return {"by_class": {"gt32": {"recall": r, "n": 50}}}
+
+        return {
+            "recall": {"gt32": {"recall": pooled}},
+            "recall_by_dataset": {"heridal": row(heridal), "kios": row(kios)},
+        }
+
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps(body(0.80, heridal=0.78, kios=0.80)), encoding="utf-8")
+    worse = body(0.88, heridal=0.70, kios=0.90)  # pooled up 8 points, HERIDAL down 8
+    assert pick_detector.weakest_recall(worse, "gt32") == 0.70
+    why = ev.compare(worse, old)
+    assert why is not None and "svagaste" in why
+    assert ev.compare(body(0.70, heridal=0.77, kios=0.77), old) is None  # pooled down only
+
+
 @pytest.mark.parametrize(
     ("box", "cls"),
     [
@@ -247,8 +269,8 @@ def test_pick_ranks_on_what_summarise_writes() -> None:
     """The picker reads the rows summarise writes: the weakest dataset, and a size class
     with nobody in it is left out."""
     body = summarise(_two_sets()).as_dict()
-    assert pick_detector._recall(body, "gt32") == 0.5  # "a" at its own threshold
-    assert pick_detector._recall(body, "16to32") == 0.0
+    assert pick_detector.weakest_recall(body, "gt32") == 0.5  # "a" at its own threshold
+    assert pick_detector.weakest_recall(body, "16to32") == 0.0
     assert pick_detector._per_set(body) == " (a 0.500/0.000, b 1.000/0.000)"
     body["recall_by_dataset"]["b"]["by_class"]["16to32"]["n"] = 0  # type: ignore[index]
     assert "b 1.000/-" in pick_detector._per_set(body)

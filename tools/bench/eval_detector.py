@@ -11,7 +11,8 @@ Keys: ``model`` (``null``, ``facit``, ``selfcheck``, or a trained model by name 
 every measured set that is fetched), ``mini=1`` (the small CI bank instead), ``limit``
 (first N pictures, for a quick look), ``data``,
 ``out`` (result file; default ``build/bench/det_<model>_<part>.json``), ``compare``
-(an earlier result: fails when recall over 32 px drops more than 2 points).
+(an earlier result: fails when recall over 32 px drops more than 2 points; the recall
+is the weakest dataset's, as ``just pick-detector`` ranks, never the pooled one).
 
 The detector sees one picture at a time as the drone's camera would give it; the
 result file holds only numbers (no picture, no file name, no box).
@@ -43,6 +44,7 @@ from bench.common import (
 )
 from bench.datasets import Image, image_root, index_path, load_register, read_index
 from bench.metrics import FP_PER_12MP, PictureResult, Summary, match_picture, summarise
+from bench.pick_detector import weakest_recall
 from bench.splits import CURRENT, MINI_VERSION, load_mini, load_split
 
 from sd_detect.api import BBox, Detection, Detector, Frame
@@ -211,12 +213,16 @@ def result_body(model: str, source: str, summary: Summary) -> dict[str, object]:
 
 
 def compare(body: dict[str, object], earlier: Path) -> str | None:
-    """Why ``body`` is worse than ``earlier`` (``None``: it is not)."""
+    """Why ``body`` is worse than ``earlier`` (``None``: it is not). Both are read as
+    ``pick-detector`` ranks them: the weakest dataset's recall over 32 px, each dataset at
+    its own threshold, so the two never disagree on which is better."""
     old = json.loads(earlier.read_text(encoding="utf-8"))
-    get = lambda b: float(b["recall"]["gt32"]["recall"])  # noqa: E731
-    drop = get(old) - get(body)
+    drop = weakest_recall(old, "gt32") - weakest_recall(body, "gt32")
     if drop > COMPARE_DROP:
-        return f"recall över 32 px sjönk {drop * 100:.1f} procentenheter mot {earlier.name}"
+        return (
+            f"recall över 32 px (svagaste datamängden) sjönk {drop * 100:.1f} "
+            f"procentenheter mot {earlier.name}"
+        )
     return None
 
 
