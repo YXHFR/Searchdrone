@@ -567,6 +567,44 @@ def test_gh_api_joins_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
         cmg.gh_api("repos/o/r/x")
 
 
+@pytest.mark.parametrize(
+    ("answer", "wait"),
+    [
+        ("0\t1100\n", 105.0),  # spent: until the reset, plus a margin
+        ("0\t900\n", 5.0),  # a reset already past: only the margin
+        ("0\t99999\n", 99004.0),  # far off: gh_api caps it
+        ("12\t1100\n", 60.0),  # not spent: a secondary limit, a minute
+        ("", 60.0),  # unreadable
+        ("x\ty\n", 60.0),
+    ],
+)
+def test_rate_limit_wait(monkeypatch: pytest.MonkeyPatch, answer: str, wait: float) -> None:
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, answer, "")
+
+    monkeypatch.setattr(cmg.subprocess, "run", fake_run)
+    assert cmg.rate_limit_wait(1000.0) == wait
+
+
+def test_gh_api_caps_a_wait_at_just_over_an_hour(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = [
+        (1, "", "API rate limit exceeded"),
+        (0, "0\t99999\n", ""),
+        (0, json.dumps([[]]), ""),
+    ]
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        code, out, err = answers.pop(0)
+        return subprocess.CompletedProcess(argv, code, out, err)
+
+    slept: list[float] = []
+    monkeypatch.setattr(cmg.subprocess, "run", fake_run)
+    monkeypatch.setattr(cmg.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(cmg.time, "sleep", slept.append)
+    assert cmg.gh_api("repos/o/r/x") == []
+    assert slept == [3700.0]
+
+
 def test_gh_api_waits_out_the_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     # A long range runs out of the token's hourly requests: wait for the reset, go on.
     calls: list[list[str]] = []
@@ -600,12 +638,17 @@ def test_gh_api_waits_out_the_rate_limit(monkeypatch: pytest.MonkeyPatch) -> Non
         cmg.gh_api("repos/o/r/x")
 
 
-def release_loop(root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: str) -> str:
+def release_loop(
+    root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: str, grep_fails: bool = False
+) -> str:
     """release.yml's own shell, up to where the anchor is known, run for real: ``gh`` is
     a stub that prints what the workflow's ``--jq`` would. Returns ``$since`` or raises
     with the step's error."""
     doc = yaml.safe_load((cmg.REPO / ".github" / "workflows" / "release.yml").read_text())
-    run = str(doc["jobs"]["gates"]["steps"][2]["run"])
+    step = doc["jobs"]["gates"]["steps"][2]
+    # The step's own shell (GitHub's "bash" is bash --noprofile --norc -eo pipefail).
+    assert step["shell"] == "bash"
+    run = str(step["run"])
     body = run[run.index('gate="$RUNNER_TEMP/gate"') : run.index('rules="${since')]
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -615,6 +658,9 @@ def release_loop(root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: st
     tsv = tmp_path / "releases.tsv"
     stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{args}"\ncat "{tsv}"\n')
     stub.chmod(0o755)
+    if grep_fails:
+        (bin_dir / "grep").write_text("#!/bin/sh\necho 'grep: broken' >&2\nexit 2\n")
+        (bin_dir / "grep").chmod(0o755)
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "GITHUB_WORKSPACE": str(root),
@@ -959,3 +1005,14 @@ def test_release_yml_stops_when_git_cannot_list_the_tags(tmp_path: Path) -> None
     untag(root, "v0.1.0", "v0.2.0")
     with pytest.raises(ValueError, match="must point to a commit"):
         release_loop(root, tmp_path, FakeReleases(), "0" * 40, "v0.3.0")
+
+
+def test_release_yml_stops_when_grep_fails(tmp_path: Path) -> None:
+    # grep's 1 means "no tags"; its 2 is an error, not a first release.
+    root = tmp_path / "repo"
+    root.mkdir()
+    c = tagged_repo(root)
+    untag(root, "v0.1.0", "v0.2.0")
+    assert release_loop(root, tmp_path, FakeReleases(), c["c3"], "v0.3.0") == ""
+    with pytest.raises(ValueError, match="grep: broken"):
+        release_loop(root, tmp_path, FakeReleases(), c["c3"], "v0.3.0", grep_fails=True)
