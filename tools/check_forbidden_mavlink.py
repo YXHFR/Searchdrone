@@ -14,7 +14,10 @@ so a forbidden message is caught at review time and not only when it is sent:
   when imported under another name;
 * ``forbidden-command``: a denied command (``MAV_CMD_DO_FENCE_ENABLE``,
   ``MAV_CMD_DO_FLIGHTTERMINATION`` ...) by name, or by number in the command position of
-  a ``COMMAND_LONG``, ``COMMAND_INT`` or ``MISSION_ITEM_INT``;
+  a ``COMMAND_LONG``, ``COMMAND_INT`` or ``MISSION_ITEM_INT``.
+  The mavfile helpers that send denied traffic themselves (``reboot_autopilot``,
+  ``set_servo``, ``calibrate_level``, ``set_mode_*`` ...) are refused everywhere
+  outside ``sd_mav`` as ``forbidden-command`` when named;
 * ``forced-arming``: the number 21196 (``COMPONENT_ARM_DISARM`` param2 that skips every
   arming check);
 * ``raw-send``: production code under ``software/`` that could write on a pymavlink
@@ -34,7 +37,10 @@ so a forbidden message is caught at review time and not only when it is sent:
 The check is a static net on top of ``Vehicle.send``, not a proof: a command number
 that only exists at run time (``cmd = 207`` passed on) is not seen, which is why
 production code may not own a connection at all. Names built at run time (an f-string,
-``21195 + 1``) are not seen either.
+``21195 + 1``) are not seen either, nor a mavfile helper spelled as a ``getattr`` string
+outside production. The harness's ``set_sim_param`` is trusted to send the name it
+checked: the guard proves the first parameter starts with ``SIM_``, not that this is
+the name the ``PARAM_SET`` carries.
 
 Test code (``tests/`` and ``e2e/`` folders and ``conftest.py`` outside a ``src/``
 package) is not read: tests build forbidden messages on purpose to see them refused.

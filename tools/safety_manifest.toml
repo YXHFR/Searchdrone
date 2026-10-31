@@ -71,7 +71,7 @@ sha256 = "f9221f62a258663aedf88605ede5ae134222ed6b65d6917814f213a5b15d3fc7"
 
 [[pinned]]
 path = "tools/check_forbidden_mavlink.py"
-sha256 = "05042a95fada1e92992f2ef4b8255b0eb03a7163199bd429a8f62e4f3f979d4a"
+sha256 = "67cb3bb2c6a96f3233b80c752600206fcf6aff31f526a7533e9237b9f7a656bf"
 
 [[pinned]]
 path = "tools/check_safety_manifest.py"
