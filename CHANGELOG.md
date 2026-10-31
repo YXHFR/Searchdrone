@@ -49,9 +49,49 @@ All notable changes to this project are listed here. The format follows
   `MOT_SAFE_`, `RCn_OPTION` ..., in any case); Python files are pinned byte for byte,
   so a comment change needs `--update` too. `--update` writes the new digests after
   a reviewed change and prints which pinned files changed.
+- Release tools. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) refuses a dirty tree or an
+  existing tag, runs `tools/check_merged_pr_gates.py`, sets the version in every
+  `pyproject.toml` (PEP 440) and `package.json`, refreshes the uv lock files, runs
+  `check_versions --expect` and turns `[Unreleased]` into the release's section, with
+  the commit list from git-cliff (`cliff.toml`, pinned in `simulation/versions.lock`).
+  It never commits or tags. `tools/check_merged_pr_gates.py` checks that every commit on
+  main (the whole first-parent history minus `tools/accept/pr_gate_exceptions.txt`; tags
+  do not shorten it) is the merge commit of a pull request into `main` whose gates pass
+  when worked out again, since any workflow can write a status: `gate/review` with
+  `check_review_comments.evaluate` over the comments written before the merge,
+  `gate/owner` from the merge commit's own files (local git) and
+  `check_owner_gate.approved_by_label_events` (the owner's newest `owner-ok`, added after
+  the head commit's first check suite, so a head without one fails, and after any base
+  change, force push or reopening), and `gate/pr-title` from the title at the merge. Workflow files the merge
+  added or changed are read as YAML: none may be able to write a gate (a job without
+  `permissions` at either level counts, since it gets the default token), and the gate
+  workflows may only run on `pull_request_target`/`issue_comment`
+  (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`). The exceptions
+  file, the gate scripts and the gate and release workflows now need the owner's
+  `owner-ok` (`check_owner_gate.PROTECTED`).
+  Each merge is judged by the protected paths in force before it (its first parent's
+  `PROTECTED` as well as the checker's own; a parent list it cannot read in full makes
+  every changed path need `owner-ok`), and no merged workflow outside the gates may hold
+  `pull-requests: write`, `issues: write`, `secrets: inherit` or any secret other than
+  `GITHUB_TOKEN` and `OPENROUTER_API_KEY` (`workflow_rules.ALLOWED_SECRETS`).
+  `.github/workflows/release.yml`, on a pushed `v[0-9]*` tag, first runs a job that
+  refuses a tag that is not on main and runs the gate check from a clean copy of the
+  protected scripts, with PyYAML pinned by hash (Python 3.12), so no other repository
+  code runs before it. The workflow finds the newest published release (rc included)
+  on the tag's line with `gh` and git alone; the scripts come from that release, first
+  confirm that `release.yml` itself made it, with a successful run for that tag and
+  commit, and the check starts after it. A different answer, or any error, stops the
+  job, and only the first release checks the whole history with the tagged commit's
+  own copy. New rules therefore apply from the release after the one
+  that ships them. A deleted release and a `release.yml` without its gates job are left
+  to the owner's ruleset on `v*` tags and immutable releases. Then it checks the
+  versions, builds the packages and the panel and publishes the
+  GitHub release only if the tag still names the commit it built; only its publish job
+  can write. `just showcase` is still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
-  `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no
+  `write-all` (at the top or in a job), leaves a job without `permissions` or names a job
+  `gate/...` or `review/...`, so no
   other workflow can write a gate (A18). The workflow rules now read `*.yaml` files too.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),

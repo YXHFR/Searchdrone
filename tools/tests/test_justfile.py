@@ -97,16 +97,17 @@ def test_all_recipes_listed() -> None:
         assert alias in listing, alias
 
 
-@pytest.mark.parametrize(
-    ("recipe", "ticket"),
-    [
-        (("release-prep", "0.1.0"), "B1-18"),
-    ],
-)
-def test_direct_unbuilt_recipe_exits_2(recipe: tuple[str, ...], ticket: str) -> None:
-    res = just(*recipe)
+def test_not_built_helper_exits_2() -> None:
+    # No recipe is unbuilt now; the helper a new one would use still has to work.
+    res = just("_not-built", "B9-99")
     assert res.returncode == 2
-    assert f"inte byggt än ({ticket})" in res.stdout
+    assert "inte byggt än (B9-99)" in res.stdout
+
+
+def test_release_prep_refuses_unknown_settings() -> None:
+    res = just("release-prep", "0.1.0", "foo=1")
+    assert res.returncode == 2
+    assert "okänd inställning 'foo=1'" in res.stdout
 
 
 def test_composite_skips_unbuilt() -> None:
