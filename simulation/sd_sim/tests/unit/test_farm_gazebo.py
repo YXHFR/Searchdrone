@@ -284,7 +284,7 @@ def test_flew_on_is_the_search_flown_after_the_raise_not_to_the_candidate() -> N
     }
     away = _card(1, "2026-10-19T10:01:00Z")
     # K2 is 300 m south: legs there end far from it as well, so only K1 needs care.
-    cards = [away, {**_card(2, "2026-10-19T10:01:00Z"), "lat": lat - 0.0027}]
+    cards = [away, {**_card(2, "2026-10-19T10:01:00Z"), "lat": lat - 300 * deg_m}]
     north = [(130, lat, lon + 0.001), (140, lat + 40 * deg_m, lon + 0.001)]
 
     def rec(
