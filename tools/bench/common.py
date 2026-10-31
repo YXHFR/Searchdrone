@@ -9,10 +9,12 @@ repository, never committed, uploaded or cached in CI); results go to ``build/be
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
@@ -28,6 +30,8 @@ CHUNK = 1 << 20
 # One request asks for at most this much: some hosts (Google Drive) answer an open-ended
 # request for a big file with a quota page but serve bounded ranges.
 RANGE_SPAN = 256 << 20
+# Waits before each new try after a passing network fault (four tries in all). Tests set 0.
+RETRY_WAITS_S: tuple[float, ...] = (2, 4, 8)
 
 
 class BenchError(Exception):
@@ -121,6 +125,31 @@ def inside(base: Path, rel: PurePosixPath) -> Path:
 Opener = Callable[[urllib.request.Request], BinaryIO]
 
 
+def _transient(exc: BaseException) -> bool:
+    """A fault that may pass on its own: a timed-out handshake, a dropped connection, a
+    5xx. A 4xx or a BenchError will not."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return isinstance(
+        exc,
+        urllib.error.URLError | TimeoutError | ConnectionError | http.client.IncompleteRead,
+    )
+
+
+def _retry[T](attempt: Callable[[], T]) -> T:
+    """``attempt()``, tried again after each wait in ``RETRY_WAITS_S`` while it fails
+    with a transient network fault."""
+    for wait in RETRY_WAITS_S:
+        try:
+            return attempt()
+        except Exception as exc:
+            if not _transient(exc):
+                raise
+            warn(f"Nätverksfel ({exc}); försöker igen om {wait:g} s.")
+            time.sleep(wait)
+    return attempt()
+
+
 class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
     """Follows a redirect only to another https address (hosts move files to storage)."""
 
@@ -175,6 +204,40 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _fetch_range(
+    url: str,
+    part: Path,
+    size: int,
+    span: int,
+    opener: Opener,
+    progress: Callable[[int, int], None] | None,
+) -> tuple[int, int]:
+    """Append the next range of ``url`` to ``part``; return its size before and after.
+    The start is read from ``part`` so a retry after a cut read resumes where it stopped."""
+    have = part.stat().st_size if part.is_file() else 0
+    end = min(have + span, size) - 1
+    with opener(request(url, {"Range": f"bytes={have}-{end}"})) as resp:
+        _refuse_html(resp, url)
+        status = getattr(resp, "status", 206)
+        if status == 200 and have:
+            part.unlink()  # the server ignored the range: start over
+            have = 0
+        start = have
+        got = getattr(resp, "headers", {}).get("Content-Range")
+        if status == 206 and not (got or "").startswith(f"bytes {have}-"):
+            raise BenchError(f"Servern svarade inte med den begärda delen av filen: {url}")
+        total = _content_range_total(got)
+        if total is not None and total != size:
+            raise BenchError(f"Filen på servern är {total} byte, väntat {size}: {url}")
+        with part.open("ab") as fh:
+            while have <= size and (chunk := resp.read(CHUNK)):
+                fh.write(chunk)
+                have += len(chunk)
+                if progress:
+                    progress(have, size)
+    return start, have
+
+
 def download(
     url: str,
     dest: Path,
@@ -196,32 +259,12 @@ def download(
         part.unlink()
         have = 0
     while have < size:
-        before = have
         try:
-            end = min(have + span, size) - 1
-            resp = opener(request(url, {"Range": f"bytes={have}-{end}"}))
-        except (urllib.error.URLError, OSError) as exc:
+            before, have = _retry(lambda: _fetch_range(url, part, size, span, opener, progress))
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise BenchError(
                 f"Nedladdningen avbröts ({exc}). Kör samma kommando igen: den fortsätter."
             ) from exc
-        with resp:
-            _refuse_html(resp, url)
-            if getattr(resp, "status", 206) == 200 and have:
-                part.unlink()  # the server ignored the range: start over
-                have = before = 0
-            got = getattr(resp, "headers", {}).get("Content-Range")
-            status = getattr(resp, "status", 206)
-            if status == 206 and not (got or "").startswith(f"bytes {have}-"):
-                raise BenchError(f"Servern svarade inte med den begärda delen av filen: {url}")
-            total = _content_range_total(got)
-            if total is not None and total != size:
-                raise BenchError(f"Filen på servern är {total} byte, väntat {size}: {url}")
-            with part.open("ab") as fh:
-                while have <= size and (chunk := resp.read(CHUNK)):
-                    fh.write(chunk)
-                    have += len(chunk)
-                    if progress:
-                        progress(have, size)
         if have == before:
             raise BenchError(f"Servern skickade inget mer efter {have} byte: {url}")
     got = sha256_file(part)
@@ -244,12 +287,15 @@ class RangeFile(io.RawIOBase):
         self.url = url
         self._opener = opener
         self._pos = 0
-        with opener(request(url, {"Range": "bytes=0-0"})) as resp:
-            _refuse_html(resp, url)
-            total = _content_range_total(getattr(resp, "headers", {}).get("Content-Range"))
+        total = _retry(self._probe)
         if total is None:
             raise BenchError(f"Servern ger inte delar av filen (HTTP range): {url}")
         self.size = total
+
+    def _probe(self) -> int | None:
+        with self._opener(request(self.url, {"Range": "bytes=0-0"})) as resp:
+            _refuse_html(resp, self.url)
+            return _content_range_total(getattr(resp, "headers", {}).get("Content-Range"))
 
     def readable(self) -> bool:
         return True
@@ -269,13 +315,16 @@ class RangeFile(io.RawIOBase):
         n = min(len(buffer), self.size - self._pos, RANGE_SPAN)
         if n <= 0:
             return 0
-        req = request(self.url, {"Range": f"bytes={self._pos}-{self._pos + n - 1}"})
-        with self._opener(req) as resp:
-            _refuse_html(resp, self.url)
-            got = getattr(resp, "headers", {}).get("Content-Range") or ""
-            if getattr(resp, "status", 206) != 206 or not got.startswith(f"bytes {self._pos}-"):
-                raise BenchError(f"Servern svarade inte med den begärda delen av filen: {self.url}")
-            data = resp.read(n)
+        data = _retry(lambda: self._read_range(self._pos, n))
         buffer[: len(data)] = data
         self._pos += len(data)
         return len(data)
+
+    def _read_range(self, start: int, n: int) -> bytes:
+        req = request(self.url, {"Range": f"bytes={start}-{start + n - 1}"})
+        with self._opener(req) as resp:
+            _refuse_html(resp, self.url)
+            got = getattr(resp, "headers", {}).get("Content-Range") or ""
+            if getattr(resp, "status", 206) != 206 or not got.startswith(f"bytes {start}-"):
+                raise BenchError(f"Servern svarade inte med den begärda delen av filen: {self.url}")
+            return resp.read(n)
