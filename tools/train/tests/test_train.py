@@ -286,6 +286,7 @@ def test_init_starts_from_earlier_weights_and_keeps_their_credit(
     assert manifest["pretrained_on"] == ["simfarm"]  # the earlier run's, credited still
     assert set(manifest["val_ap50_by_dataset"]) == {"heridal"}
     assert manifest["val_ap50_rule"] == "min_over_datasets"
+    assert "own threshold" in manifest["recall_rule"]
     # where it started is named and pinned, but the owner's local path never leaves
     assert manifest["started_from"]["file"] == "best.pt"
     assert len(manifest["started_from"]["sha256"]) == 64
@@ -300,6 +301,17 @@ def test_measure_only_sets_are_never_credited_as_trained_on() -> None:
     assert train_detector.trained_sets(["heridal", *measure_only]) == ["heridal"]
     # a set gone from the register stays, so the export refuses it instead of dropping it
     assert train_detector.trained_sets(["heridal", "gone"]) == ["heridal", "gone"]
+
+
+def test_old_checkpoints_get_their_credit_from_their_settings() -> None:
+    """One rule for a ``best.pt`` from before ``trained_on``/``pretrained_on`` were saved,
+    used by both ``init=`` and the export."""
+    measure_only = [d.name for d in load_register().values() if "train" not in d.use]
+    old = {"settings": {"sets": ["heridal", *measure_only], "simfarm_epochs": 2}}
+    assert train_detector.seen_by(old) == (["heridal"], ["simfarm"])
+    assert train_detector.seen_by({"settings": {"sets": ["heridal"]}}) == (["heridal"], [])
+    new = {**old, "trained_on": ["kios"], "pretrained_on": []}
+    assert train_detector.seen_by(new) == (["kios"], [])
 
 
 def test_export_of_old_weights_credits_only_what_was_trained_on(bank: Path, tmp_path: Path) -> None:

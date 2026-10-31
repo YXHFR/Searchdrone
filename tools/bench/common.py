@@ -13,6 +13,7 @@ import http.client
 import io
 import os
 import re
+import ssl
 import sys
 import time
 import urllib.error
@@ -127,9 +128,13 @@ Opener = Callable[[urllib.request.Request], BinaryIO]
 
 def _transient(exc: BaseException) -> bool:
     """A fault that may pass on its own: a timed-out handshake, a dropped connection, a
-    5xx. A 4xx or a BenchError will not."""
+    5xx. A 4xx, a certificate that does not verify, or a BenchError will not."""
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code >= 500
+    if isinstance(exc, urllib.error.URLError) and isinstance(
+        exc.reason, ssl.SSLCertVerificationError
+    ):
+        return False  # a wrong certificate stays wrong; trying again only hides it
     return isinstance(
         exc,
         urllib.error.URLError | TimeoutError | ConnectionError | http.client.IncompleteRead,
