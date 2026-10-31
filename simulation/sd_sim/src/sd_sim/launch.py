@@ -1013,7 +1013,9 @@ def main(argv: list[str] | None = None) -> int:
     dry = values.pop("dry", "") == "1" or os.environ.get("SD_SIM__DRY_RUN") == "1"
     values.pop("record", None)
     try:
-        cfg = config.load(values, demo=demo, default_world=default_world_for(demo=demo))
+        cfg = config.load(
+            values, demo=demo, default_world=default_world_for(demo=demo), allow_mock=dev
+        )
     except config.DemoHomeError as exc:
         print(str(exc), file=sys.stderr)
         return 3

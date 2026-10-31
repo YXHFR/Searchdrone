@@ -41,8 +41,13 @@ def test_dev_defaults_need_no_simulator_and_no_key(monkeypatch: pytest.MonkeyPat
     assert seen[-1]["brain"] == "none"
 
 
-def test_mock_physics_is_a_choice() -> None:
-    cfg = config.load({"physics": "mock", "brain": "scripted"}, environ={})
+def test_mock_physics_is_only_for_dev() -> None:
+    # Without ArduPilot a smoke flight, demo or test could pass against the fake.
+    with pytest.raises(config.ConfigError):
+        config.load({"physics": "mock"}, environ={})
+    with pytest.raises(SystemExit):
+        launch.main(["up", "physics=mock", "dry=1"])
+    cfg = config.load({"physics": "mock", "brain": "scripted"}, environ={}, allow_mock=True)
     assert cfg.physics == "mock"
     assert cfg.gui is False  # no Gazebo window
     assert cfg.video == "test"  # no camera without Gazebo
@@ -54,7 +59,7 @@ def test_panel_dev_link() -> None:
 
 
 def test_mock_starts_the_fake_instead_of_arducopter(tmp_path: Path) -> None:
-    cfg = config.load({"physics": "mock", "brain": "scripted"}, environ={})
+    cfg = config.load({"physics": "mock", "brain": "scripted"}, environ={}, allow_mock=True)
     stack = Stack(cfg, tmp_path, panel_dev=True)
     started: list[list[str]] = []
     stack.group.start = lambda name, argv, **kw: started.append([name, *argv])  # type: ignore[method-assign]
