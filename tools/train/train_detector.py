@@ -406,6 +406,16 @@ def trained_sets(sets: Sequence[str]) -> list[str]:
     return [s for s in sets if s not in register or "train" in register[s].use]
 
 
+def seen_by(ck: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """What a ``best.pt``'s weights have seen: (``trained_on``, ``pretrained_on``). A
+    checkpoint from before those fields gets them from its settings: the sets that may be
+    trained on, and the simulator's pictures when it had simfarm epochs."""
+    settings = ck.get("settings", {})
+    trained_on = ck["trained_on"] if "trained_on" in ck else trained_sets(settings.get("sets", []))
+    pretrained_on = ck.get("pretrained_on", ["simfarm"] if settings.get("simfarm_epochs") else [])
+    return list(trained_on), list(pretrained_on)
+
+
 def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     """Start from an earlier run's best weights (its EMA) instead of COCO's. Returns what
     those weights have seen (``trained_on``, ``pretrained_on``), so their credit stays,
@@ -416,12 +426,10 @@ def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     if ck.get("model") != model or "ema" not in ck:
         raise BenchError(f"init={path} är inte en best.pt för {model}.", 2)
     net.load_state_dict(ck["ema"])
-    earlier = ck.get("settings", {})
+    trained_on, pretrained_on = seen_by(ck)
     seen: dict[str, Any] = {
-        "trained_on": list(ck.get("trained_on", trained_sets(earlier.get("sets", [])))),
-        "pretrained_on": list(
-            ck.get("pretrained_on", ["simfarm"] if earlier.get("simfarm_epochs") else [])
-        ),
+        "trained_on": trained_on,
+        "pretrained_on": pretrained_on,
         "started_from": {
             "file": path.name,
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
