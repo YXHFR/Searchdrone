@@ -175,6 +175,14 @@ All notable changes to this project are listed here. The format follows
   grace. FLY HOME pressed in a chain run must be under way within its limit, and the
   drone must land at home. New SITL tests fly the margin case from #96 and require the
   inspection's `keepout_replan`.
+- Flight safety: an inspection inside a cylinder over a person with every way out
+  refused climbs straight up to the cylinder's top plus a margin, never above the
+  geofence or the charter's height, then hovers and alarms; when it cannot climb it
+  hovers and alarms. An inspection plans its way at most `REPLANS_MAX` times, and a
+  goto's deadline runs from its first target, so replans cannot keep it flying. A way
+  out planned again gets its own deadline, `goto.start` can no longer overwrite a
+  renewed one, and every keep-out hover tells the ground whether the drone is inside a
+  cylinder. STOP and FLY HOME still go past the AI and the reflex.
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also
