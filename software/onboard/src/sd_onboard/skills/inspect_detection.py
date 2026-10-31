@@ -14,9 +14,12 @@ A drone inside cylinders first leaves them along a straight leg that goes deeper
 none and enters no other (``sd_safety.keepout.reroute``), ``EXIT_CLEAR_M`` past the last
 edge, and stops there. Only then is the point worked out and the leg there checked, from
 where the drone is and against the cylinders in force at that moment, through the
-executor's whole gate (``ExecutorIO.leg_refusal``); at most ``EXITS_MAX`` times, then the
-order fails (``ONB_INSPECT_GEOMETRY``). The keep-out reflex plans the leg being flown
-again the same way (:meth:`InspectHandler.replan`).
+executor's whole gate (``ExecutorIO.leg_refusal``); at most ``EXITS_MAX`` ways out in a
+row (a leg to the point starts the count again), then the order fails
+(``ONB_INSPECT_GEOMETRY``). The keep-out reflex plans the leg being flown again the same
+way (:meth:`InspectHandler.replan`), at most ``REPLANS_MAX`` times in one order. Inside a
+cylinder with no way out it may instead climb straight up (:meth:`InspectHandler.climb`);
+the order then ends there in the keep-out hover (``KEEPOUT_VIOLATION``).
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ __all__ = [
     "EXIT_CLEAR_M",
     "INSPECT_STILLS",
     "INSPECT_STILL_INTERVAL_S",
+    "REPLANS_MAX",
     "SETTLE_S",
     "InspectHandler",
 ]
@@ -61,6 +65,8 @@ INSPECT_STILLS: Final = 5
 INSPECT_STILL_INTERVAL_S: Final = 1.0
 EXIT_CLEAR_M: Final = 5.0  # a way out ends this far past the last edge: goto stops within 2 m
 EXITS_MAX: Final = 3  # ways out in a row (cylinders that keep coming): then the order fails
+REPLANS_MAX: Final = 6  # legs the keep-out reflex plans again in one order: then it hovers
+CLIMBED_SV: Final = "Ingen säker väg ut ur förbudszonen: drönaren steg rakt upp och svävar."
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +79,7 @@ class _Leg:
     speed_ms: float
     yaw_deg: float | None
     exit: bool
+    climb: bool = False  # straight up out of reach (``InspectHandler.climb``)
 
 
 def _way_out(here: Xy, cyl: Sequence[tuple[Xy, float]], area: Polygon) -> Xy | None:
@@ -107,6 +114,7 @@ class InspectHandler:
         self._leg: _Leg | None = None
         self._leg_plan: SkillPlan | None = None
         self._exits = 0
+        self._replans = 0
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
         if not isinstance(params, InspectDetectionParams):
@@ -148,6 +156,8 @@ class InspectHandler:
             leg = self._leg
             if leg is None or self.goto.target != (leg.lat, leg.lon, leg.alt_m):
                 continue  # the reflex planned the leg again as it ended: fly that one
+            if leg.climb:  # up out of reach: the order ends in the keep-out hover
+                raise SkillFailedError("KEEPOUT_VIOLATION", CLIMBED_SV)
             if not leg.exit:
                 break
             # Out of the cylinders and stopped: the next leg from here, against the
@@ -181,14 +191,32 @@ class InspectHandler:
     def exiting(self) -> bool:
         return self._leg is not None and self._leg.exit
 
+    def climbing(self) -> bool:
+        return self._leg is not None and self._leg.climb
+
+    def climb(self, ctx: PlanContext, alt_m: float) -> bool:
+        """Straight up from where the drone is in ``ctx`` to ``alt_m``, flown from the next
+        tick; the order then ends in the keep-out hover. False when no leg is flown."""
+        if self._leg is None or self._at_point:
+            return False
+        v = ctx.vehicle
+        speed = min(INSPECT_SPEED_MS, ctx.charter.max_speed_ms)
+        leg = _Leg(v.lat, v.lon, alt_m, speed, None, exit=False, climb=True)
+        self._ctx, self._leg, self._leg_plan = ctx, leg, self._plan_of(ctx, leg)
+        self.goto.retarget(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, renew_deadline=True)
+        return True
+
     def replan(self, ctx: PlanContext, allowed: Callable[[list[LatLonAlt]], bool]) -> bool:
         """The leg again from ``ctx`` (a way out when inside a cylinder, else the point),
         flown from the next tick if ``allowed`` takes its path."""
-        if self._leg is None or self._at_point:
+        if self._leg is None or self._at_point or self._leg.climb:
+            return False
+        if self._replans >= REPLANS_MAX:
             return False
         leg = self._next(ctx)
         if leg is None or not allowed(self._path(ctx, leg)):
             return False
+        self._replans += 1
         self._fly(ctx, leg, retarget=True)
         return True
 
@@ -232,8 +260,7 @@ class InspectHandler:
 
     def _fly(self, ctx: PlanContext, leg: _Leg, *, retarget: bool) -> None:
         self._ctx, self._leg, self._leg_plan = ctx, leg, self._plan_of(ctx, leg)
-        if leg.exit:
-            self._exits += 1
+        self._exits = self._exits + 1 if leg.exit else 0  # ways out in a row
         set_leg = self.goto.retarget if retarget else self.goto.prepare
         set_leg(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, yaw_deg=leg.yaw_deg)
 
