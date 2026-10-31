@@ -191,6 +191,36 @@ def test_extend_draws_only_the_new_dataset() -> None:
         assert r["images"] == len(sites[s]) and r["ids_sha256"] == ids_digest(sites[s])
 
 
+@pytest.mark.parametrize(
+    ("argv", "called"),
+    [
+        (["list", "kios"], ("kios", False)),
+        (["list", "kios", "labels=1"], ("kios", True)),
+        (["list", "kios", "labels=0"], None),
+        (["list", "kios", "yes"], None),
+        (["list"], None),
+        (["list", "kios", "labels=1", "extra"], None),
+    ],
+)
+def test_list_takes_a_set_and_an_optional_labels_flag(
+    argv: list[str], called: tuple[str, bool] | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``make_splits list <set> [labels=1]``: anything else is refused before any
+    archive is opened."""
+    from bench import make_splits
+
+    calls: list[tuple[str, bool]] = []
+
+    def fake_list(name: str, labels: bool = False) -> int:
+        calls.append((name, labels))
+        return 0
+
+    monkeypatch.setattr(make_splits, "cmd_list", fake_list)
+    code = make_splits.main(argv)
+    assert calls == ([called] if called else [])
+    assert (code == 0) == (called is not None)
+
+
 def test_extend_from_the_command_line_needs_the_labels_listing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

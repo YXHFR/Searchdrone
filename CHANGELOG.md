@@ -21,6 +21,10 @@ All notable changes to this project are listed here. The format follows
   checks on a pushed `v*` tag, builds the
   packages and the panel and publishes the GitHub release; only its publish job can
   write. `just showcase` is still not built.
+- `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
+  `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
+  `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no
+  other workflow can write a gate (A18). The workflow rules now read `*.yaml` files too.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
   fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures
@@ -32,7 +36,9 @@ All notable changes to this project are listed here. The format follows
   set those weights saw. `just bench-detector` prints the recall per dataset and size,
   each at that dataset's own false-alarm threshold, and `just pick-detector` ranks each
   model by its weakest dataset's recall, so KIOS's many people cannot hide a model
-  getting worse on HERIDAL. A detector profile for the simulator is made only from a
+  getting worse on HERIDAL; `compare=` in `just bench-detector` fails when that
+  weakest-dataset recall or any one dataset's drops more than 2 points, or a dataset is
+  no longer measured. A detector profile for the simulator is made only from a
   result measured on one dataset. `just data-dir` prints the
   data folder. JKU's Airborne Optical Sectioning data is not added:
   it has no person boxes for single colour pictures (`tools/bench/README.md`).
@@ -458,10 +464,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
-- The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) try a
+- The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) and
+  the detector weights' (`just detector-fetch`, `tools/train/fetch_weights.py`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a
-  timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer or a
-  refused file stops at once, as before.
+  timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer, a
+  certificate that does not verify or a refused file stops at once, as before.
 - The simulator farm's grade (`sd-brain eval grade`) now counts a candidate as raised only
   when the AI named it (`K3`) to the operator in a chat message or a report, as the exam
   does: `flight.json` carries the ground's candidate queue with when each was raised

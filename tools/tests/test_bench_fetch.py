@@ -8,6 +8,7 @@ import hashlib
 import http.client
 import io
 import json
+import ssl
 import urllib.error
 import urllib.request
 import zipfile
@@ -278,6 +279,14 @@ def _not_found() -> Exception:
     return urllib.error.HTTPError("https://example.test/h.zip", 404, "Not Found", {}, None)  # type: ignore[arg-type]
 
 
+def _unavailable() -> Exception:
+    return urllib.error.HTTPError("https://example.test/h.zip", 503, "Unavailable", {}, None)  # type: ignore[arg-type]
+
+
+def _bad_certificate() -> Exception:
+    return urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+
+
 @pytest.fixture
 def no_waits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(common, "RETRY_WAITS_S", (0, 0, 0))
@@ -359,6 +368,31 @@ def test_download_gives_up_after_four_tries(tmp_path: Path) -> None:
     with pytest.raises(BenchError, match="Kör samma kommando igen"):
         download("https://example.test/a.zip", tmp_path / "a.zip", 10, "0" * 64, opener=flaky)
     assert flaky.calls == 4
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_a_5xx_is_tried_again_and_a_4xx_is_not(tmp_path: Path) -> None:
+    body = bytes(range(256)) * 40
+    flaky = Flaky(FakeServer(body), 2, _unavailable)
+    dest = tmp_path / "a.zip"
+    download("https://example.test/a.zip", dest, len(body), _sha(body), opener=flaky)
+    assert dest.read_bytes() == body
+    assert flaky.calls == 3
+    for code, again in ((500, True), (503, True), (599, True), (400, False), (403, False)):
+        err = urllib.error.HTTPError("https://example.test/a.zip", code, "x", {}, None)  # type: ignore[arg-type]
+        assert common._transient(err) is again, code
+
+
+@pytest.mark.usefixtures("no_waits")
+def test_a_certificate_that_does_not_verify_is_not_tried_again(tmp_path: Path) -> None:
+    flaky = Flaky(FakeServer(b"x" * 10), 99, _bad_certificate)
+    with pytest.raises(urllib.error.URLError):
+        RangeFile("https://example.test/h.zip", flaky)
+    assert flaky.calls == 1
+    flaky = Flaky(FakeServer(b"x" * 10), 99, _bad_certificate)
+    with pytest.raises(BenchError):
+        download("https://example.test/a.zip", tmp_path / "a.zip", 10, "0" * 64, opener=flaky)
+    assert flaky.calls == 1
 
 
 @pytest.mark.usefixtures("no_waits")
