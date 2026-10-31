@@ -203,11 +203,14 @@ All notable changes to this project are listed here. The format follows
   refused, failed, expired or unanswered keep-out list is sent again (above a stale
   sequence number when the executor holds a newer one), and the operator gets one red,
   sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
-  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`, logged once
+  per run of refusals.
 - A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
   orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
   whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
-  delivered after its mission closed is only logged.
+  delivered after its mission closed is only logged. Every such alarm carries the
+  drone's `sent_utc` in its details, so its record shows when a late one was sent (the
+  panel does not show it yet).
 - The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
   new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
 - The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
@@ -215,6 +218,17 @@ All notable changes to this project are listed here. The format follows
   grace. FLY HOME pressed in a chain run must be under way within its limit, and the
   drone must land at home. New SITL tests fly the margin case from #96 and require the
   inspection's `keepout_replan`.
+- Flight safety: an inspection inside a cylinder over a person with every way out
+  refused climbs straight up to the cylinder's top plus a margin, never above the
+  geofence or the charter's height, then hovers and alarms; when it cannot climb it
+  hovers and alarms. An inspection plans its way at most `REPLANS_MAX` times, and a
+  goto's deadline runs from its first target, so replans cannot keep it flying. A way
+  out planned again gets its own deadline, `goto.start` can no longer overwrite a
+  renewed one, and every keep-out hover tells the ground whether the drone is inside a
+  cylinder. The AI's next order after such a hover waits for the onboard snapshot after
+  it also when the hover's red alarm names the turn (before, it was refused onboard as
+  `STATE_CHANGED` and the drone kept hovering). STOP and FLY HOME still go past the AI
+  and the reflex.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read
