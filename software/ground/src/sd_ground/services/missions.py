@@ -104,6 +104,27 @@ _PANEL_EVENTS: Final = frozenset(
 log = get_logger("sd_ground.missions")
 
 
+def keepout_hold_text(details: dict[str, Any]) -> str:
+    """The operator's Swedish text for a keep-out hover (the panel's ``keepouts.HOLD*``)."""
+    if not details.get("inside"):
+        return (
+            "Drönaren svävar för att inte flyga in i en förbudszon runt en person. "
+            "Ge en ny order eller tryck FLYG HEM."
+        )
+    climb = details.get("climb_to_m")
+    if climb is not None:
+        return (
+            "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den "
+            f"stiger rakt upp till {climb:.0f} m och svävar där. Ta över med RC, ge en ny "
+            "order eller tryck FLYG HEM."
+        )
+    return (
+        "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den kan "
+        "inte stiga högre och svävar där den är. Ta över med RC, ge en ny order eller tryck "
+        "FLYG HEM."
+    )
+
+
 class FlowError(ApiStatusError):
     """A refusal the routes return as is (status, code, Swedish text, optional items)."""
 
@@ -197,6 +218,23 @@ class MissionFlow:
     ) -> None:
         self.g.bus.publish(
             topic, type_, data, ts=self.now(), vehicle_id=vehicle_id, mission_id=mission_id
+        )
+
+    def _keepout_hold_alert(self, vehicle_id: str, mission: Any, data: dict[str, Any]) -> None:
+        """The drone hovers for a keep-out cylinder (``executor.keepout_hold``): short of
+        one (orange), or inside one over a person with no safe way out (red), after
+        climbing straight up when it could (``climb_to_m``)."""
+        details: dict[str, Any] = {"inside": bool(data.get("inside", False))}
+        climb = data.get("climb_to_m")
+        if isinstance(climb, int | float) and not isinstance(climb, bool):
+            details["climb_to_m"] = float(climb)
+        self.alert(
+            "KEEPOUT_HOLD",
+            "critical" if details["inside"] else "warning",
+            keepout_hold_text(details),
+            vehicle_id=vehicle_id,
+            mission_id=None if mission is None else str(mission.id),
+            details=details,
         )
 
     def alert(
@@ -617,6 +655,8 @@ class MissionFlow:
                 vehicle_id=vehicle_id,
                 payload={"source": "onboard", **body.data},
             )
+            if body.type == "executor.keepout_hold":
+                self._keepout_hold_alert(vehicle_id, mission, body.data)
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",

@@ -1,5 +1,5 @@
 // Alerts the panel words itself (GPS, the link coming back, the link-down codes, the keep-out
-// list on board or not) and the log
+// list on board or not, the keep-out hover) and the log
 // line for a find-hold that ended without the link. Pure: keys and values, no i18next.
 import { mmss } from "../lib/useNow";
 import {
@@ -53,6 +53,15 @@ export function alertView(
       return { key: "keepouts.NOT_INSTALLED", vars: {}, tone: "red" };
     case "KEEPOUTS_INSTALLED":
       return { key: "keepouts.INSTALLED", vars: {}, tone: "info" };
+    case "KEEPOUT_HOLD":
+      if (details.inside !== true) return { key: "keepouts.HOLD", vars: {}, tone: "orange" };
+      if (typeof details.climb_to_m === "number")
+        return {
+          key: "keepouts.HOLD_CLIMB",
+          vars: { alt: round(details.climb_to_m) },
+          tone: "red",
+        };
+      return { key: "keepouts.HOLD_INSIDE", vars: {}, tone: "red" };
     case "GPS_WEAK":
       return { key: "gnss.GPS_WEAK", vars: { sats: round(details.satellites) }, tone: "yellow" };
     case "GPS_LOST":

@@ -125,6 +125,9 @@ class AlertCode(StrEnum):
     # The keep-out list (KeepoutInstall) was refused or not answered; and in again
     KEEPOUTS_NOT_INSTALLED = "KEEPOUTS_NOT_INSTALLED"
     KEEPOUTS_INSTALLED = "KEEPOUTS_INSTALLED"
+    # The drone hovers short of a keep-out cylinder, or inside one over a person (climbing
+    # first when it can): onboard executor.keepout_hold
+    KEEPOUT_HOLD = "KEEPOUT_HOLD"
     # The GPS, from the ground's own MAVLink (sd_safety.gnss) and the flight controller's texts
     GPS_WEAK = "GPS_WEAK"
     GPS_LOST = "GPS_LOST"
