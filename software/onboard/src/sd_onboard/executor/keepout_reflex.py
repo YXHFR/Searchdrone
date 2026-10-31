@@ -17,7 +17,10 @@ cylinder while a way out exists (:func:`way_out`).
 A handler that flies one straight leg at a time (``Replans``: ``inspect_detection``) is
 checked from where the drone is on every tick while it flies, every cylinder counted
 (none it may cross): its leg is planned again from there when it would enter one within
-the stop distance, through the whole gate, and held when there is no such leg.
+the stop distance, through the whole gate, and held when there is no such leg. Inside a
+cylinder over a person with no such leg (the gate refuses every way out), it climbs
+straight up to above the cylinder (:func:`climb_alt`) within the charter's height, then
+hovers; when it cannot climb it hovers where it is. Either way the operator is alarmed.
 
 Local cylinders (from the drone's own detections) give way once a ground install at
 least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
@@ -37,18 +40,20 @@ from typing import Final, Protocol, runtime_checkable
 from sd_onboard.skills.base import PlanContext, SkillHandler, SkillPlan
 from sd_onboard.skills.survey_sector import SurveyRun
 from sd_safety.keepout import Circle, circles, reroute, xy_route_violation
-from sd_safety.targets import Plane, Polygon, Xy, polygon_from_geojson
+from sd_safety.targets import Plane, Polygon, Xy, point_segment_distance, polygon_from_geojson
 from sd_schemas.base import LatLonAlt, new_id
 from sd_schemas.charter import MissionCharter
 from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M, Keepout, leg_enters
 
 __all__ = [
+    "KEEPOUT_CLIMB_MARGIN_M",
     "LOCAL_KEEPOUTS_MAX",
     "LOCAL_KEEPOUT_HANDOVER_MS",
     "REROUTABLE",
     "FliesSurveyRun",
     "Replans",
     "blocks_find_move",
+    "climb_alt",
     "contained",
     "entry_m",
     "leg_entry_m",
@@ -65,6 +70,9 @@ __all__ = [
 REROUTABLE: Final = frozenset({"survey_sector", "follow_path", "resume"})
 LOCAL_KEEPOUT_HANDOVER_MS: Final = 60_000  # a ground install this much later replaces it
 LOCAL_KEEPOUTS_MAX: Final = 100
+# A cylinder has no height of its own; over a person with no safe way out the drone
+# takes its top as its radius above home (as far up as out) and climbs this much above.
+KEEPOUT_CLIMB_MARGIN_M: Final = 10.0
 _NOTHING_LEFT_M: Final = 2.0  # closer to the end than this: hovering, not flying
 _STOP_MARGIN_M: Final = 5.0  # an order is held this far (plus its stop) short of a cylinder
 _STOP_REACT_S: Final = 1.5  # the reflex's tick, the link to the flight controller, LOITER
@@ -100,6 +108,15 @@ class Replans(Protocol):
     def replan(self, ctx: PlanContext, allowed: Callable[[list[LatLonAlt]], bool]) -> bool:
         """Plan the leg again from ``ctx`` and fly it if ``allowed`` takes its path;
         False (nothing changed) when there is no such leg."""
+        ...
+
+    def climbing(self) -> bool:
+        """Whether the leg being flown is the climb out of reach (:meth:`climb`)."""
+        ...
+
+    def climb(self, ctx: PlanContext, alt_m: float) -> bool:
+        """Climb straight up from where the drone is to ``alt_m`` (above home), then end
+        the order in the keep-out hover; False when no leg is being flown."""
         ...
 
 
@@ -179,19 +196,11 @@ def leg_entry_m(here: Xy, end: Xy, cyl: list[Circle]) -> float | None:
     for c, r in cyl:
         now = math.dist(here, c)
         if now < r:
-            if math.dist(end, c) < r or _closest(here, end, c) < now - _DEEPER_TOL_M:
+            if math.dist(end, c) < r or point_segment_distance(c, here, end) < now - _DEEPER_TOL_M:
                 hits.append(0.0)
         elif leg_enters(here, end, c, r):
             hits.append(_leg_entry(here, end, c, r) * length)
     return min(hits, default=None)
-
-
-def _closest(a: Xy, b: Xy, c: Xy) -> float:
-    """The leg a -> b's closest approach to ``c``."""
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    seg2 = dx * dx + dy * dy
-    t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / seg2))
-    return math.dist((a[0] + t * dx, a[1] + t * dy), c)
 
 
 def _leg_entry(a: Xy, b: Xy, c: Xy, r: float) -> float:
@@ -204,6 +213,21 @@ def _leg_entry(a: Xy, b: Xy, c: Xy, r: float) -> float:
     if seg2 == 0.0 or disc <= 0.0 or math.hypot(ax, ay) < r:
         return 0.0
     return max(0.0, (-half - math.sqrt(disc)) / seg2)
+
+
+def climb_alt(here: Xy, cyl: Sequence[Circle], alt_m: float, alt_max_m: float) -> float | None:
+    """How high (above home) a drone at ``here``, ``alt_m`` up, climbs over the cylinders
+    it is inside: their top (the largest radius) plus ``KEEPOUT_CLIMB_MARGIN_M``, at most
+    ``alt_max_m``; where it is when it is that high already; None when it is inside none,
+    or lower than that and cannot climb (``alt_max_m`` is no higher than it is)."""
+    over = [r for c, r in cyl if math.dist(here, c) < r]
+    if not over:
+        return None
+    want = max(over) + KEEPOUT_CLIMB_MARGIN_M
+    if alt_m >= want:
+        return alt_m
+    top = min(want, alt_max_m)
+    return top if top > alt_m else None
 
 
 def stop_m(speed_ms: float) -> float:
