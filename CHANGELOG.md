@@ -19,7 +19,9 @@ All notable changes to this project are listed here. The format follows
   set those weights saw. `just bench-detector` prints the recall per dataset and size,
   each at that dataset's own false-alarm threshold, and `just pick-detector` ranks each
   model by its weakest dataset's recall, so KIOS's many people cannot hide a model
-  getting worse on HERIDAL. A detector profile for the simulator is made only from a
+  getting worse on HERIDAL; `compare=` in `just bench-detector` fails when that
+  weakest-dataset recall or any one dataset's drops more than 2 points, or a dataset is
+  no longer measured. A detector profile for the simulator is made only from a
   result measured on one dataset. `just data-dir` prints the
   data folder. JKU's Airborne Optical Sectioning data is not added:
   it has no person boxes for single colour pictures (`tools/bench/README.md`).
@@ -450,10 +452,11 @@ All notable changes to this project are listed here. The format follows
   291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
   `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
   file instead of repeating it.
-- The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) try a
+- The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) and
+  the detector weights' (`just detector-fetch`, `tools/train/fetch_weights.py`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a
-  timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer or a
-  refused file stops at once, as before.
+  timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer, a
+  certificate that does not verify or a refused file stops at once, as before.
 - The simulator farm's grade (`sd-brain eval grade`) now counts a candidate as raised only
   when the AI named it (`K3`) to the operator in a chat message or a report, as the exam
   does: `flight.json` carries the ground's candidate queue with when each was raised

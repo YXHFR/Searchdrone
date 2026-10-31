@@ -17,8 +17,9 @@ what a run on that dataset alone (``sets=``) gives.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -233,3 +234,21 @@ def summarise(results: Sequence[PictureResult], fp_per_12mp: float = FP_PER_12MP
         score_hit=_beta_moments(hit_scores),
         score_fp=_beta_moments(fp_scores),
     )
+
+
+def recall_by_set(body: Mapping[str, Any], cls: str) -> dict[str, float]:
+    """Each dataset's own recall for ``cls`` in a result, for the sets with people of that
+    size; empty for an older result without per-dataset rows."""
+    return {
+        name: float(row["by_class"][cls]["recall"])
+        for name, row in (body.get("recall_by_dataset") or {}).items()
+        if "by_class" in row and row["by_class"][cls]["n"]
+    }
+
+
+def weakest_recall(body: Mapping[str, Any], cls: str) -> float:
+    """The weakest dataset's recall for ``cls``; the pooled one for older results."""
+    per_set = recall_by_set(body, cls)
+    if not per_set:
+        return float(body["recall"][cls]["recall"])
+    return min(per_set.values())
