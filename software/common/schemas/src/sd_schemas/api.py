@@ -122,6 +122,9 @@ class AlertCode(StrEnum):
     FIND_HOLD_ALL = "FIND_HOLD_ALL"  # hovering at a confirmed find; MAVLink down too
     LINK_BACK_HOLD = "LINK_BACK_HOLD"  # the link is back, the drone hovers
     LINK_BACK_HOME = "LINK_BACK_HOME"  # the link is back, the drone flies home
+    # The keep-out list (KeepoutInstall) was refused or not answered; and in again
+    KEEPOUTS_NOT_INSTALLED = "KEEPOUTS_NOT_INSTALLED"
+    KEEPOUTS_INSTALLED = "KEEPOUTS_INSTALLED"
     # The GPS, from the ground's own MAVLink (sd_safety.gnss) and the flight controller's texts
     GPS_WEAK = "GPS_WEAK"
     GPS_LOST = "GPS_LOST"

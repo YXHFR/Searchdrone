@@ -30,6 +30,8 @@ export type AlertCode =
   | "FIND_HOLD_ALL"
   | "LINK_BACK_HOLD"
   | "LINK_BACK_HOME"
+  | "KEEPOUTS_NOT_INSTALLED"
+  | "KEEPOUTS_INSTALLED"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"

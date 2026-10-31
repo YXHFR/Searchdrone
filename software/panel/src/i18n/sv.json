@@ -342,6 +342,10 @@
       "link_restored": "länken kom tillbaka"
     }
   },
+  "keepouts": {
+    "NOT_INSTALLED": "Drönaren har inte tagit emot de senaste förbudszonerna runt fynden. Den kan flyga över en person som den inte vet om. Marken skickar dem igen. Håll uppsikt och tryck STOPP om det behövs.",
+    "INSTALLED": "Förbudszonerna runt fynden är nu inlagda i drönaren igen."
+  },
   "gnss": {
     "GPS_WEAK": "GPS är svag ({{sats}} satelliter). Drönaren flyger vidare men kan bli osäker på var den är.",
     "GPS_LOST": "GPS är borta. Drönaren gissar sin position och flyger mot hem i högst {{dr}} s, sedan landar den. Ta över med RC om du kan.",
