@@ -276,20 +276,21 @@ def test_a_candidate_is_raised_when_the_ai_first_names_it_to_the_operator() -> N
 
 def test_flew_on_is_the_search_flown_after_the_raise_not_to_the_candidate() -> None:
     t0 = flight._utc_s("2026-10-19T10:00:00Z")
-    commands = [
-        _cmd("1", "takeoff", "done", "2026-10-19T10:00:00Z"),
-        {
-            **_cmd("2", "report", "done", "2026-10-19T10:02:00Z"),
-            "params": {"priority": "urgent", "text_sv": "K1 HÖG, K2 HÖG"},
-        },
-    ]
     lat, lon = -35.36, 149.16
+    deg_m = 1 / 111_000
+    report = {
+        **_cmd("2", "report", "done", "2026-10-19T10:02:00Z"),
+        "params": {"priority": "urgent", "text_sv": "K1 HÖG, K2 HÖG"},
+    }
     away = _card(1, "2026-10-19T10:01:00Z")
     # K2 is 300 m south: legs there end far from it as well, so only K1 needs care.
     cards = [away, {**_card(2, "2026-10-19T10:01:00Z"), "lat": lat - 0.0027}]
-    deg_m = 1 / 111_000
+    north = [(130, lat, lon + 0.001), (140, lat + 40 * deg_m, lon + 0.001)]
 
-    def rec(track: Sequence[tuple[float, float, float]]) -> list[bool]:
+    def rec(
+        orders: list[dict[str, Any]], track: Sequence[tuple[float, float, float]]
+    ) -> list[bool]:
+        commands = [_cmd("1", "takeoff", "done", "2026-10-19T10:00:00Z"), report, *orders]
         out = flight.flight_record(
             started=0.0,
             ended=300.0,
@@ -308,13 +309,24 @@ def test_flew_on_is_the_search_flown_after_the_raise_not_to_the_candidate() -> N
         )
         return [c["flew_on"] for c in out["candidates"]]
 
-    # 40 m north, away from both, after the raise at 120 s: the search flew on.
-    assert rec([(130, lat, lon + 0.001), (140, lat + 40 * deg_m, lon + 0.001)]) == [True, True]
+    survey = _cmd("3", "survey_sector", "running", "2026-10-19T10:00:30Z")
+    # 40 m north on the survey, away from both, after the raise at 120 s: it flew on.
+    assert rec([survey], north) == [True, True]
     # The same flight before the raise does not count.
-    assert rec([(100, lat, lon + 0.001), (110, lat + 40 * deg_m, lon + 0.001)]) == [False, False]
-    # Flying to K1 (ending on it) is no search for K1, but is for the far K2.
-    to_k1 = [(130, lat + 40 * deg_m, lon), (140, lat + 5 * deg_m, lon), (150, lat, lon)]
-    assert rec(to_k1) == [False, True]
+    early = [(100, lat, lon + 0.001), (110, lat + 40 * deg_m, lon + 0.001)]
+    assert rec([survey], early) == [False, False]
+    # Flying home, or a survey that had ended, is waiting: no search order was flying.
+    home = _cmd("4", "return_home", "done", "2026-10-19T10:02:05Z", issuer="operator")
+    assert rec([survey, home], north) == [False, False]
+    ended = {**survey, "status": "done", "updated_at": "2026-10-19T10:02:05Z"}
+    assert rec([ended], north) == [False, False]
+    # A goto onto K1 is no search for K1, but is for the far K2.
+    to_k1 = {
+        **_cmd("5", "goto", "done", "2026-10-19T10:02:05Z"),
+        "params": {"lat": lat, "lon": lon, "alt_m": 30},
+    }
+    path = [(130, lat + 40 * deg_m, lon), (140, lat + 5 * deg_m, lon), (150, lat, lon)]
+    assert rec([to_k1], path) == [False, True]
 
 
 def test_script_at_the_rounds_height(tmp_path: Path) -> None:

@@ -285,9 +285,10 @@ class Farm:
         ``rounds/`` to ``draped/``, so it is not tried again every turn or counted in the
         rounds' disk budget. Only the owner removes it."""
         dest = self.base / "draped" / d.name
-        if dest.exists():
-            say(f"laddas inte upp: {exc}; {dest} finns redan, {d} ligger kvar")
-            return
+        n = 1
+        while dest.exists():  # never over an earlier one with the same name
+            n += 1
+            dest = self.base / "draped" / f"{d.name}-{n}"
         dest.parent.mkdir(parents=True, exist_ok=True)
         d.rename(dest)
         say(f"laddas inte upp: {exc}; flyttat till {dest}")

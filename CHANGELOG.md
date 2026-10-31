@@ -447,8 +447,9 @@ All notable changes to this project are listed here. The format follows
 
 - The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
   the ground station's profile from its `server.hello`, not the brain's own: on until the
-  ground station has said it, off only against a `sim` ground station. The offline
-  evaluations count as `sim`. The AI configuration hash is computed again after the hello.
+  ground station has said it, off only against a `sim` ground station, and on again while
+  the stream is down. The offline evaluations count as `sim`. The AI configuration hash is
+  computed again after the hello.
 - `sd-brain bank export-golden` and `eval-profiles record=1` refuse answers holding the
   value of any key the AI reads (`SD_JEV_API_KEY` and `SD_OPENAI_API_KEY` were missing);
   the list is built from the brain's own key list, and the keys in `.env` are checked too.
@@ -456,10 +457,11 @@ All notable changes to this project are listed here. The format follows
   link caps crops at 512 px, so a larger image is not a crop.
 - The cloud image policy passes a text part on with its text only, no other keys.
 - The probability map is frozen only with a confirmed find checked under the map's write
-  lock, and a sector's `psr` is at most 100 (`PSR_MAX`).
+  lock, and a sector's `psr` is at most 100 (`PSR_MAX`); a sector stored before that is
+  read with its `psr` clamped.
 - Simulator exams: the closer look flies inside the charter's height band, the farm grade
-  takes `flew_on` from the flown track after the raise instead of counting every raised
-  candidate as flown on, and the scripted decider raises the ground's high candidates
+  takes `flew_on` from the track flown on a search order after the raise (the exam's
+  rule, from `sd_schemas.simfarm`) instead of counting every raised candidate as flown on, and the scripted decider raises the ground's high candidates
   from their `event.candidate` bodies instead of reading the situation's text.
 - The sim farm moves a round flown over the orthophoto from `rounds/` to `draped/` once
   instead of trying to upload it on every turn. `ROUND_SCHEMA` has one home

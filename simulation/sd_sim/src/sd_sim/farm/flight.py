@@ -16,14 +16,17 @@ from typing import Any
 from sd_detect.classes import ClassRegistry, default_registry
 from sd_safety.targets import distance_m
 from sd_schemas.candidate_ai import named_seqs
+from sd_schemas.simfarm import CLOSE_UP_RADIUS_M, FLEW_ON_M, SEARCH_SKILLS
 
 HOME_RADIUS_M = 3.0  # landed at home: this close to the take-off point
-# The search flew on from a raised candidate: this much flown after the raise, not to the
-# candidate (legs ending this close to it). The simulator exam's rule (sd_brain.simeval).
-FLEW_ON_M = 30.0
-CLOSE_UP_RADIUS_M = 15.0
 ASK = "?"  # a message from the AI that asks the pilot something
 PENDING = frozenset({"pending_approval", "approval_expired", "rejected_by_operator"})
+# Orders that never flew, and orders that do not move the drone (they leave a plan running).
+NOT_FLOWN = PENDING | {"rejected_by_gate", "rejected_onboard", "expired"}
+NO_PLAN = frozenset(
+    {"report", "mark_location", "propose_charter_change", "set_camera_tilt", "capture_stills"}
+)
+ENDED = frozenset({"done", "failed", "superseded", "cancelled"})
 _ALT = re.compile(r"\balt_m: 40\b")
 _FIXTURE = re.compile(r"^fixture: (.+)$", re.MULTILINE)
 
@@ -80,17 +83,59 @@ def _told(
     return sorted((_utc_s(at) - t0, str(text)) for at, text in said if at and text)
 
 
+Window = tuple[float, float, float | None, float | None]  # start, end, goto lat, lon
+
+
+def _search_windows(commands: Sequence[Mapping[str, Any]], t0: float) -> list[Window]:
+    """When a search order (goto, survey_sector) was flying, in seconds from the first
+    order: from its creation until the next order that moves the drone, or until it
+    ended. A goto keeps its target, so a flight to a candidate can be left out."""
+    flown = sorted(
+        (c for c in commands if c["status"] not in NOT_FLOWN and c["skill"] not in NO_PLAN),
+        key=lambda c: _utc_s(c["created_at"]),
+    )
+    out: list[Window] = []
+    for c, after in itertools.zip_longest(flown, flown[1:]):
+        if c["skill"] not in SEARCH_SKILLS:
+            continue
+        end = float("inf") if after is None else _utc_s(after["created_at"]) - t0
+        if c["status"] in ENDED and c.get("updated_at"):
+            end = min(end, _utc_s(c["updated_at"]) - t0)
+        p = c.get("params") or {}
+        goto = c["skill"] == "goto"
+        out.append(
+            (
+                _utc_s(c["created_at"]) - t0,
+                end,
+                p.get("lat") if goto else None,
+                p.get("lon") if goto else None,
+            )
+        )
+    return out
+
+
 def _flew_on(
-    lat: float, lon: float, raised: float | None, track: Sequence[tuple[float, float, float]]
+    lat: float,
+    lon: float,
+    raised: float | None,
+    track: Sequence[tuple[float, float, float]],
+    windows: Sequence[Window],
 ) -> bool:
-    """``FLEW_ON_M`` flown after the raise (seconds from the first order), legs that end
-    near the candidate not counted. ``track``: (seconds from the first order, lat, lon)."""
+    """``FLEW_ON_M`` flown on a search order after the raise (seconds from the first
+    order), as the simulator exam counts it: a goto that ends near the candidate is not
+    searching for it, and neither is a return home or a closer look. ``track``: (seconds
+    from the first order, lat, lon)."""
     if raised is None:
         return False
+    away = [
+        (start, end)
+        for start, end, g_lat, g_lon in windows
+        if g_lat is None or g_lon is None or distance_m(g_lat, g_lon, lat, lon) > CLOSE_UP_RADIUS_M
+    ]
     flown = 0.0
     after = [p for p in track if p[0] >= raised]
-    for (_, a_lat, a_lon), (_, b_lat, b_lon) in itertools.pairwise(after):
-        if distance_m(b_lat, b_lon, lat, lon) > CLOSE_UP_RADIUS_M:
+    for (_, a_lat, a_lon), (t, b_lat, b_lon) in itertools.pairwise(after):
+        if any(start <= t <= end for start, end in away):
             flown += distance_m(a_lat, a_lon, b_lat, b_lon)
     return flown >= FLEW_ON_M
 
@@ -100,6 +145,7 @@ def _candidates(
     told: Sequence[tuple[float, str]],
     t0: float,
     track: Sequence[tuple[float, float, float]],
+    windows: Sequence[Window],
 ) -> list[dict[str, Any]]:
     """The ground's candidates, each raised when the AI first named it (``K3``) to the
     operator after it was seen, as the simulator exam counts a raise, and whether the
@@ -116,7 +162,7 @@ def _candidates(
                 "lon": float(c["lon"]),
                 "priority_class": c["priority_class"],
                 "raised_t_s": None if raised is None else round(max(0.0, raised), 2),
-                "flew_on": _flew_on(float(c["lat"]), float(c["lon"]), raised, track),
+                "flew_on": _flew_on(float(c["lat"]), float(c["lon"]), raised, track, windows),
             }
         )
     return out
@@ -170,7 +216,11 @@ def flight_record(
         "orders": orders,
         "marks": marks,
         "candidates": _candidates(
-            candidates, _told(commands, chat, t0), t0, [(t - t0, la, lo) for t, la, lo in track]
+            candidates,
+            _told(commands, chat, t0),
+            t0,
+            [(t - t0, la, lo) for t, la, lo in track],
+            _search_windows(commands, t0),
         ),
         "geofence_breaches": breaches,
         "coverage": round(max(0.0, min(1.0, coverage)), 4),

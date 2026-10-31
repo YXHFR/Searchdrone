@@ -44,6 +44,7 @@ from sd_schemas.candidate_ai import candidate_event_body, candidates_line, named
 from sd_schemas.commander import BrainMessage, Situation, SkillRequest, SkillSubmitResult
 from sd_schemas.keepout import INSPECT_SPEED_MS
 from sd_schemas.search import CandidateCard, priority_class
+from sd_schemas.simfarm import CLOSE_UP_RADIUS_M, FLEW_ON_M, SEARCH_SKILLS
 
 __all__ = ["FLEW_ON_M", "Mark", "OrderRecord", "SimCandidate", "SimGround", "SimWorld"]
 
@@ -53,14 +54,10 @@ FOOTPRINT_PER_M = 0.7  # half-width of the camera footprint per metre of height
 COVERAGE_MAX_ALT_M = 80.0  # higher than this, a pass does not count as searched
 CELL_M = 10.0
 CLOSE_UP_ALT_M = 30.0
-CLOSE_UP_RADIUS_M = 15.0
 # The closer look (inspect_detection), reduced: low and near enough for the second picture.
 LOOK_ALT_M = 25.0
 LOOK_RADIUS_M = 10.0
 SIGMA95_M = 6.0  # the sighting's position error: the camera's jitter around the person
-# Search flown after the AI raised a candidate: the drone did not wait for an answer.
-FLEW_ON_M = 30.0
-SEARCH_SKILLS = frozenset({"goto", "survey_sector"})
 # Plans the AI did not order: no skill event when they end.
 BATTERY_ID = "battery"
 FLY_HOME_ID = "fly_home"

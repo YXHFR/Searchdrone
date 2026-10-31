@@ -215,6 +215,8 @@ async def _stream(b: Brain) -> None:
         b.loop.heartbeat,
         on_resync=resync,
         on_connect=b.loop.connected,
+        # Until the next hello the ground's profile is unknown: zdr back on.
+        on_lost=lambda: follow_ground_profile(b, None),
         heartbeat_s=BRAIN_HEARTBEAT_S,
     ):
         if evt.get("type") == "server.hello":

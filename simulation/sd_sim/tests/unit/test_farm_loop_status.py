@@ -247,11 +247,12 @@ def test_a_draped_round_is_set_aside_once_and_the_backlog_goes_on(
     assert "flyttat till" in capsys.readouterr().out
     f.upload_backlog()
     assert fake.sent == ["r1", "r3", "r1", "r3"]  # never tried again
-    # A second draped round of the same name stays where it is, with a word.
+    # A second draped round of the same name goes beside the first, not over it.
     (f.rounds_dir / "r2").mkdir()
     (f.rounds_dir / "r2" / "draped").write_text("")
     f.upload_backlog()
-    assert (f.rounds_dir / "r2").is_dir() and "finns redan" in capsys.readouterr().out
+    assert not (f.rounds_dir / "r2").exists()
+    assert (f.base / "draped" / "r2").is_dir() and (f.base / "draped" / "r2-2").is_dir()
 
 
 def test_round_command_runs_under_nice_from_the_worktree(tmp_path: Path) -> None:
