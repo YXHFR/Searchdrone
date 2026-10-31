@@ -812,7 +812,7 @@ class Executor:
             # climb out of reach the operator was told as it began (``_keepout_climb``).
             if not (isinstance(active.handler, Replans) and active.handler.climbing()):
                 data = {"command_id": str(active.command_id), "skill": active.skill}
-                self.emit("keepout_hold", {**data, "inside": False})
+                self.emit("keepout_hold", {**data, "inside": self._over_a_keepout()})
             hold_reason = "limit"
         self._enter(
             target,
@@ -1671,7 +1671,7 @@ class Executor:
             # one already (it came around the drone), the way out starts at once.
             stop_first = not inside and entry <= stop_m(v.groundspeed_ms)
             if not self._reroute(active, run, charter, stop_first=stop_first):
-                self._keepout_hold()
+                self._keepout_hold(inside=bool(inside))
             return
         # Any other order leaves a new cylinder it is inside along its current leg (rather
         # than hover over the person) and flies on until it is its stop short of the next
@@ -1685,7 +1685,7 @@ class Executor:
         if entry > stop_m(v.groundspeed_ms):
             self._keepout_watch = True
             return
-        self._keepout_hold()
+        self._keepout_hold(inside=bool(inside))
 
     def _replan_reflex(
         self,
@@ -1817,6 +1817,15 @@ class Executor:
         action = LimitAction("L-FIND", "hold", "find_hold", "find_move_keepout", {})
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
+
+    def _over_a_keepout(self) -> bool:
+        """Whether the drone is inside a cylinder in force now (over a person)."""
+        plane = self.plane()
+        if plane is None:
+            return False
+        v = self.vehicle_state()
+        here = plane.xy(v.lat, v.lon)
+        return any(math.dist(here, c) < r for c, r in circles(self.keepouts_in_force(), plane))
 
     def _keepout_hold(self, *, inside: bool = False) -> None:
         """Stop a moving order in a hover (``KEEPOUT_VIOLATION``; ``inside`` a cylinder,

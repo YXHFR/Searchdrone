@@ -124,8 +124,9 @@ class GotoHandler:
     ) -> None:
         """A new end for the leg being flown, from ``ctx``: sent on the next tick. The
         deadline still runs from the first end (a leg planned again and again does not
-        get more time each time), unless ``renew_deadline`` (once, for the climb out of
-        a keep-out cylinder) or the leg has not started yet."""
+        get more time each time), unless ``renew_deadline`` (a way out of a keep-out
+        cylinder or the climb above one, at most ``inspect_detection.REPLANS_MAX`` + 1
+        times in one inspection) or the leg has not started yet."""
         self.prepare(ctx, lat, lon, alt_m, speed_ms, yaw_deg=yaw_deg)
         self._resend = True
         if renew_deadline or self._deadline == math.inf:
@@ -136,12 +137,14 @@ class GotoHandler:
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None:
         if self.target is None or self._plane is None:
             raise RuntimeError("planned before running")
+        # The deadline first: an end set again while the modes below are awaited
+        # (``retarget``, e.g. the climb out of a cylinder) keeps the deadline it set.
+        self._deadline = self._deadline_for(io.clock.monotonic(), plan)
         if io.vehicle.fc_mode != CopterMode.GUIDED.name and not await io.set_mode(
             CopterMode.GUIDED
         ):
             raise mode_failed(CopterMode.GUIDED)
         await io.change_speed(self.speed_ms)
-        self._deadline = self._deadline_for(io.clock.monotonic(), plan)
         if abs(io.vehicle.alt_rel_home_m - self.target[2]) > ALT_STEP_FIRST_M:
             # Climb or sink on the spot first.
             v = io.vehicle

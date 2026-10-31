@@ -65,7 +65,9 @@ INSPECT_STILLS: Final = 5
 INSPECT_STILL_INTERVAL_S: Final = 1.0
 EXIT_CLEAR_M: Final = 5.0  # a way out ends this far past the last edge: goto stops within 2 m
 EXITS_MAX: Final = 3  # ways out in a row (cylinders that keep coming): then the order fails
-REPLANS_MAX: Final = 6  # legs the keep-out reflex plans again in one order: then it hovers
+# Legs the keep-out reflex plans again in one order. Past it the reflex plans none: inside
+# a cylinder the drone climbs straight up when it can (``climb``), else it hovers.
+REPLANS_MAX: Final = 6
 CLIMBED_SV: Final = "Ingen säker väg ut ur förbudszonen: drönaren steg rakt upp och svävar."
 
 
@@ -261,8 +263,20 @@ class InspectHandler:
     def _fly(self, ctx: PlanContext, leg: _Leg, *, retarget: bool) -> None:
         self._ctx, self._leg, self._leg_plan = ctx, leg, self._plan_of(ctx, leg)
         self._exits = self._exits + 1 if leg.exit else 0  # ways out in a row
-        set_leg = self.goto.retarget if retarget else self.goto.prepare
-        set_leg(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, yaw_deg=leg.yaw_deg)
+        if retarget:
+            # A way out planned again gets the time it needs: the drone is over a person
+            # until it is out (and the replans have a cap).
+            self.goto.retarget(
+                ctx,
+                leg.lat,
+                leg.lon,
+                leg.alt_m,
+                leg.speed_ms,
+                yaw_deg=leg.yaw_deg,
+                renew_deadline=leg.exit,
+            )
+        else:
+            self.goto.prepare(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, yaw_deg=leg.yaw_deg)
 
     def on_tick(self, ctx: TickContext) -> SkillStatus:
         if not self._at_point:

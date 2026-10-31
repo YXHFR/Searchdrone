@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 from itertools import pairwise
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +13,8 @@ import pytest
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
-from sd_mav.modes import CopterMode
+from sd_mav.modes import HOME_MODES, CopterMode
+from sd_mav.vehicle import SendOrigin
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import (
     KEEPOUT_CLIMB_MARGIN_M,
@@ -26,7 +28,7 @@ from sd_onboard.executor.keepout_reflex import (
 )
 from sd_onboard.skills import inspect_detection, survey_sector
 from sd_onboard.skills.base import PlanError
-from sd_onboard.skills.goto import GotoHandler
+from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
@@ -466,6 +468,136 @@ async def test_stop_during_the_climb_brakes_and_holds(monkeypatch: pytest.Monkey
         await r.run(5)
         assert r.fc.mode == CopterMode.BRAKE  # the executor no longer steers
         assert r.ex.vehicle_state().alt_rel_home_m <= alt + 1.0
+
+
+async def test_the_climb_stops_at_the_charter_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cylinder's top lies above what the charter allows: the drone climbs only to the
+    charter's height less the altitude limit's margin, says so, and hovers there."""
+    async with rig() as r:
+        await _over_a_person_with_no_way_out(r, monkeypatch)
+        alt = r.ex.vehicle_state().alt_rel_home_m
+        cap = alt + 8.0
+        assert cap < 90.0 + KEEPOUT_CLIMB_MARGIN_M - 1.5  # under the cylinder's top
+        ceiling = r.ex.charter.alt_max_agl_m  # pyright: ignore[reportOptionalMemberAccess]
+        monkeypatch.setattr(executor_module, "_ALT_GOTO_BELOW_M", ceiling - cap)
+        highest, t0 = alt, r.clock.monotonic()
+        while r.ex.state != S.HOLD:
+            await r.run(0.5)
+            highest = max(highest, r.ex.vehicle_state().alt_rel_home_m)
+            assert r.clock.monotonic() - t0 < 120, "never hovered"
+        holds = _holds(r)
+        assert len(holds) == 1 and holds[0]["inside"] is True, holds
+        assert holds[0]["climb_to_m"] == pytest.approx(round(cap, 1))
+        await r.run(10)
+        highest = max(highest, r.ex.vehicle_state().alt_rel_home_m)
+        assert highest <= cap + 1.5, (highest, cap)
+        assert abs(r.ex.vehicle_state().alt_rel_home_m - cap) <= 1.5
+
+
+async def test_fly_home_during_the_climb_flies_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FLY HOME goes past the AI and the reflex as always, also while it climbs."""
+    async with rig() as r:
+        await _over_a_person_with_no_way_out(r, monkeypatch)
+        await r.until(lambda: len(_holds(r)) == 1, 30)
+        assert r.ex.state == S.TRANSIT  # climbing
+        r.ex.on_override(r.notice("return_home"))
+        await r.ground.set_mode(CopterMode.SMART_RTL, origin=SendOrigin.GROUND)
+        await r.run(1)
+        assert r.ex.held_by == "operator_home"
+        before = len(r.vehicle.sent)
+        await r.run(10)
+        assert r.fc.mode in HOME_MODES  # the climb does not take it back
+        assert r.steering_sent(before) == []
+
+
+async def test_the_battery_limit_during_the_climb_flies_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with rig() as r:
+        await _over_a_person_with_no_way_out(r, monkeypatch)
+        await r.until(lambda: len(_holds(r)) == 1, 30)
+        assert r.ex.state == S.TRANSIT  # climbing
+        r.fc.battery_pct = r.ex.charter.battery_rtl_pct - 1  # pyright: ignore[reportOptionalMemberAccess]
+        await r.until(lambda: r.ex.state == S.RTL, 30)
+        await r.run(5)
+        assert r.ex.state == S.RTL and r.fc.mode in HOME_MODES
+        assert "executor.limit_battery_rtl" in r.up.kinds()
+
+
+async def test_a_way_out_planned_again_gets_a_new_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cylinder comes around the drone on an inspection's leg and the gate takes the way
+    out: that leg gets the time it needs (the drone is over a person until it is out)."""
+    renewed: list[bool] = []
+    retarget = GotoHandler.retarget
+
+    def spy(self: GotoHandler, *a: Any, **kw: Any) -> None:
+        renewed.append(bool(kw.get("renew_deadline", False)))
+        retarget(self, *a, **kw)
+
+    monkeypatch.setattr(GotoHandler, "retarget", spy)
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        target = keepout(150, 0, 10)
+        install(r, target)
+        camera(r)
+        await r.send(r.order("inspect_detection", inspect(150, 0, 10)), 0.5)
+        await r.until(lambda: xy(r)[0] >= 15.0, 60)
+        here = xy(r)
+        install(r, target, keepout(here[0] + 10.0, here[1], 30.0, source="candidate"))
+        await r.until(lambda: "executor.keepout_replan" in r.up.kinds(), 10)
+        assert renewed and renewed[0] is True
+
+
+async def test_a_new_end_while_goto_starts_keeps_its_deadline() -> None:
+    """``retarget(renew_deadline=True)`` while ``start`` awaits the flight controller (the
+    climb set as the leg begins): ``start`` does not put the old leg's deadline back."""
+
+    class _StopError(Exception):
+        pass
+
+    now = [0.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        ctx = r.ex._plan_context(new_id())  # pyright: ignore[reportPrivateUsage]
+        ctx = ctx.__class__(**{**_fields(ctx), "clock": clock})
+        goto = GotoHandler()
+        lat, lon = at(100, 0)
+        goto.prepare(ctx, lat, lon, 40.0, 5.0)
+        plan = goto_plan(ctx, lat, lon, 40.0, 5.0)
+        seen = [0]
+
+        def vehicle() -> Any:
+            seen[0] += 1
+            if seen[0] > 1:
+                raise _StopError
+            return SimpleNamespace(fc_mode=CopterMode.GUIDED.name)
+
+        async def change_speed(_speed: float) -> None:
+            now[0] = 100.0  # later, as the reflex sets the climb
+            goto.retarget(ctx, lat, lon, 90.0, 5.0, renew_deadline=True)
+
+        renewed = 100.0 + goto_plan(ctx, lat, lon, 90.0, 5.0).expected_duration_s * 2 + 30
+
+        class _IO:
+            clock: Any = None
+
+            @property
+            def vehicle(self) -> Any:
+                return vehicle()
+
+            async def change_speed(self, speed: float) -> None:
+                await change_speed(speed)
+
+        io = _IO()
+        io.clock = clock
+        with pytest.raises(_StopError):
+            await goto.start(plan, io)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        assert goto._deadline == pytest.approx(renewed)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_replans_of_one_inspection_have_a_cap(monkeypatch: pytest.MonkeyPatch) -> None:
