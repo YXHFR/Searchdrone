@@ -19,8 +19,9 @@ All notable changes to this project are listed here. The format follows
   set those weights saw. `just bench-detector` prints the recall per dataset and size,
   each at that dataset's own false-alarm threshold, and `just pick-detector` ranks each
   model by its weakest dataset's recall, so KIOS's many people cannot hide a model
-  getting worse on HERIDAL; `compare=` in `just bench-detector` reads that same
-  weakest-dataset recall. A detector profile for the simulator is made only from a
+  getting worse on HERIDAL; `compare=` in `just bench-detector` fails when that
+  weakest-dataset recall or any one dataset's drops more than 2 points, or a dataset is
+  no longer measured. A detector profile for the simulator is made only from a
   result measured on one dataset. `just data-dir` prints the
   data folder. JKU's Airborne Optical Sectioning data is not added:
   it has no person boxes for single colour pictures (`tools/bench/README.md`).

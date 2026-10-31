@@ -19,6 +19,7 @@ from bench.metrics import (
     size_class,
     summarise,
     threshold_for,
+    weakest_recall,
     wilson,
 )
 from bench.profiles import START, build_profile
@@ -81,26 +82,51 @@ def test_compare_flags_a_drop_over_two_points(tmp_path: Path) -> None:
     assert ev.compare(body(0.87), old) is not None
 
 
-def test_compare_reads_the_weakest_dataset_as_pick_detector_does(tmp_path: Path) -> None:
-    """A pooled gain carried by KIOS never hides a drop on HERIDAL: ``compare=`` fails
-    exactly when ``pick-detector`` would rank the new result lower by more than 2 points."""
+def _per_set_body(pooled: float, **sets: float) -> dict[str, object]:
+    def row(r: float) -> dict[str, object]:
+        return {"by_class": {"gt32": {"recall": r, "n": 50}}}
 
-    def body(pooled: float, heridal: float, kios: float) -> dict[str, object]:
-        def row(r: float) -> dict[str, object]:
-            return {"by_class": {"gt32": {"recall": r, "n": 50}}}
+    return {
+        "recall": {"gt32": {"recall": pooled}},
+        "recall_by_dataset": {name: row(r) for name, r in sets.items()},
+    }
 
-        return {
-            "recall": {"gt32": {"recall": pooled}},
-            "recall_by_dataset": {"heridal": row(heridal), "kios": row(kios)},
-        }
 
+def test_compare_fails_when_the_weakest_dataset_drops(tmp_path: Path) -> None:
+    """A pooled gain carried by KIOS never hides a drop on HERIDAL, the set
+    ``pick-detector`` ranks on."""
     old = tmp_path / "old.json"
-    old.write_text(json.dumps(body(0.80, heridal=0.78, kios=0.80)), encoding="utf-8")
-    worse = body(0.88, heridal=0.70, kios=0.90)  # pooled up 8 points, HERIDAL down 8
-    assert pick_detector.weakest_recall(worse, "gt32") == 0.70
+    old.write_text(json.dumps(_per_set_body(0.80, heridal=0.78, kios=0.80)), encoding="utf-8")
+    worse = _per_set_body(0.88, heridal=0.70, kios=0.90)  # pooled up 8 points
+    assert weakest_recall(worse, "gt32") == 0.70
     why = ev.compare(worse, old)
-    assert why is not None and "svagaste" in why
-    assert ev.compare(body(0.70, heridal=0.77, kios=0.77), old) is None  # pooled down only
+    assert why is not None and "svagaste" in why and "heridal sjönk" in why
+    assert ev.compare(_per_set_body(0.70, heridal=0.77, kios=0.79), old) is None
+
+
+def test_compare_fails_when_any_one_dataset_drops(tmp_path: Path) -> None:
+    """KIOS losing 20 points fails although HERIDAL stays the weakest and holds."""
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps(_per_set_body(0.90, heridal=0.70, kios=0.95)), encoding="utf-8")
+    why = ev.compare(_per_set_body(0.75, heridal=0.70, kios=0.75), old)
+    assert why is not None and "kios sjönk 20.0" in why and "svagaste" not in why
+
+
+def test_compare_fails_when_a_dataset_was_not_measured(tmp_path: Path) -> None:
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps(_per_set_body(0.80, heridal=0.78, kios=0.80)), encoding="utf-8")
+    why = ev.compare(_per_set_body(0.95, kios=0.95), old)
+    assert why is not None and "heridal saknas" in why
+
+
+def test_compare_against_an_older_pooled_result_is_pooled_and_says_so(tmp_path: Path) -> None:
+    """An earlier result without per-dataset rows: pooled against pooled, never the rule
+    change mistaken for a drop."""
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"recall": {"gt32": {"recall": 0.80}}}), encoding="utf-8")
+    assert ev.compare(_per_set_body(0.80, heridal=0.60, kios=0.82), old) is None
+    why = ev.compare(_per_set_body(0.75, heridal=0.75, kios=0.75), old)
+    assert why is not None and "sammanslagen" in why
 
 
 @pytest.mark.parametrize(
@@ -269,8 +295,8 @@ def test_pick_ranks_on_what_summarise_writes() -> None:
     """The picker reads the rows summarise writes: the weakest dataset, and a size class
     with nobody in it is left out."""
     body = summarise(_two_sets()).as_dict()
-    assert pick_detector.weakest_recall(body, "gt32") == 0.5  # "a" at its own threshold
-    assert pick_detector.weakest_recall(body, "16to32") == 0.0
+    assert weakest_recall(body, "gt32") == 0.5  # "a" at its own threshold
+    assert weakest_recall(body, "16to32") == 0.0
     assert pick_detector._per_set(body) == " (a 0.500/0.000, b 1.000/0.000)"
     body["recall_by_dataset"]["b"]["by_class"]["16to32"]["n"] = 0  # type: ignore[index]
     assert "b 1.000/-" in pick_detector._per_set(body)

@@ -18,6 +18,7 @@ from bench import eval_detector as ev
 from bench import pick_detector as pd
 from bench.common import BenchError
 from bench.datasets import Image
+from bench.metrics import weakest_recall
 from PIL import Image as PILImage
 
 from sd_detect.onnx import MANIFEST_SCHEMA, MAX_MODEL_BYTES, load_model
@@ -85,8 +86,8 @@ def test_a_big_dataset_never_hides_a_drop_on_a_small_one() -> None:
 
 
 def test_the_weakest_dataset_gives_the_recall() -> None:
-    assert pd.weakest_recall(_mixed("a", 0.8, heridal=0.6, kios=0.9), "gt32") == 0.6
-    assert pd.weakest_recall(_body("old", 0.7, 0.5, 10), "gt32") == 0.7  # no per-set rows
+    assert weakest_recall(_mixed("a", 0.8, heridal=0.6, kios=0.9), "gt32") == 0.6
+    assert weakest_recall(_body("old", 0.7, 0.5, 10), "gt32") == 0.7  # no per-set rows
 
 
 def test_nothing_to_pick_from_is_an_error() -> None:

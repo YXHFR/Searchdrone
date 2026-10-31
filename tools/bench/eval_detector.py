@@ -11,8 +11,9 @@ Keys: ``model`` (``null``, ``facit``, ``selfcheck``, or a trained model by name 
 every measured set that is fetched), ``mini=1`` (the small CI bank instead), ``limit``
 (first N pictures, for a quick look), ``data``,
 ``out`` (result file; default ``build/bench/det_<model>_<part>.json``), ``compare``
-(an earlier result: fails when recall over 32 px drops more than 2 points; the recall
-is the weakest dataset's, as ``just pick-detector`` ranks, never the pooled one).
+(an earlier result: fails when recall over 32 px drops more than 2 points, for the
+weakest dataset, as ``just pick-detector`` ranks, or for any one dataset, or when a
+dataset of the earlier result is missing; see ``compare``).
 
 The detector sees one picture at a time as the drone's camera would give it; the
 result file holds only numbers (no picture, no file name, no box).
@@ -24,11 +25,11 @@ import json
 import re
 import sys
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 from bench.common import (
@@ -43,8 +44,15 @@ from bench.common import (
     warn,
 )
 from bench.datasets import Image, image_root, index_path, load_register, read_index
-from bench.metrics import FP_PER_12MP, PictureResult, Summary, match_picture, summarise
-from bench.pick_detector import weakest_recall
+from bench.metrics import (
+    FP_PER_12MP,
+    PictureResult,
+    Summary,
+    match_picture,
+    recall_by_set,
+    summarise,
+    weakest_recall,
+)
 from bench.splits import CURRENT, MINI_VERSION, load_mini, load_split
 
 from sd_detect.api import BBox, Detection, Detector, Frame
@@ -212,17 +220,39 @@ def result_body(model: str, source: str, summary: Summary) -> dict[str, object]:
     }
 
 
+def _pooled_gt32(body: Mapping[str, Any]) -> float:
+    return float(body["recall"]["gt32"]["recall"])
+
+
 def compare(body: dict[str, object], earlier: Path) -> str | None:
-    """Why ``body`` is worse than ``earlier`` (``None``: it is not). Both are read as
-    ``pick-detector`` ranks them: the weakest dataset's recall over 32 px, each dataset at
-    its own threshold, so the two never disagree on which is better."""
+    """Why ``body`` is worse than ``earlier`` (``None``: it is not), on recall over 32 px.
+    It fails when the weakest dataset's recall (what ``pick-detector`` ranks on) drops
+    more than 2 points, when any dataset in both drops more than 2 points, or when a
+    dataset of the earlier result is missing from the new one. An earlier result without
+    per-dataset rows is compared pooled against pooled, and the message says so."""
     old = json.loads(earlier.read_text(encoding="utf-8"))
+    was, now = recall_by_set(old, "gt32"), recall_by_set(body, "gt32")
+    if not was:
+        drop = _pooled_gt32(old) - _pooled_gt32(body)
+        if drop > COMPARE_DROP:
+            return (
+                f"recall över 32 px (sammanslagen; {earlier.name} har ingen per datamängd) "
+                f"sjönk {drop * 100:.1f} procentenheter"
+            )
+        return None
+    why = []
+    missing = sorted(set(was) - set(now))
+    if missing:
+        why.append(f"{', '.join(missing)} saknas i den nya mätningen")
     drop = weakest_recall(old, "gt32") - weakest_recall(body, "gt32")
     if drop > COMPARE_DROP:
-        return (
-            f"recall över 32 px (svagaste datamängden) sjönk {drop * 100:.1f} "
-            f"procentenheter mot {earlier.name}"
-        )
+        why.append(f"svagaste datamängden sjönk {drop * 100:.1f} procentenheter")
+    for name in sorted(set(was) & set(now)):
+        drop = was[name] - now[name]
+        if drop > COMPARE_DROP:
+            why.append(f"{name} sjönk {drop * 100:.1f} procentenheter")
+    if why:
+        return f"recall över 32 px mot {earlier.name}: {'; '.join(why)}"
     return None
 
 

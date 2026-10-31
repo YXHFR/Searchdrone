@@ -30,22 +30,11 @@ from pathlib import Path
 from typing import Any
 
 from bench.common import RESULTS, BenchError, data_dir, parse_args, say, warn
+from bench.metrics import weakest_recall
 
 KEYS = ("results", "data")
 TIE = 0.02
 BUILT_IN = frozenset({"null", "facit"})
-
-
-def weakest_recall(body: dict[str, Any], cls: str) -> float:
-    """The weakest dataset's recall for ``cls``; the pooled one for older results."""
-    rows = [
-        row["by_class"][cls]
-        for row in (body.get("recall_by_dataset") or {}).values()
-        if "by_class" in row and row["by_class"][cls]["n"]
-    ]
-    if not rows:
-        return float(body["recall"][cls]["recall"])
-    return min(float(r["recall"]) for r in rows)
 
 
 def _cell(row: dict[str, Any]) -> str:
