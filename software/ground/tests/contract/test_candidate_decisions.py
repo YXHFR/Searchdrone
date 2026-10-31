@@ -274,7 +274,10 @@ async def test_candidate_transitions(r: Rig) -> None:
         await view(pilot, new_det)
         res = await decide(pilot, new_cid, "confirm")
         assert res.status_code == 409 and res.json()["code"] == "TRANSITION_NOT_ALLOWED"
-        assert (await decide(pilot, new_cid, "unsure")).status_code == 200
+        # "unsure" is a note: the candidate stays where it is (here new), it never moves.
+        res = await decide(pilot, new_cid, "unsure")
+        assert res.status_code == 200, res.text
+        assert res.json()["card"]["state"] == "new"
 
     async with r.flow.repo.engine.connect() as conn:
         found = (
