@@ -29,7 +29,6 @@ APPROVAL_SCOPES = ("pull-requests", "issues")
 # Secrets a workflow outside the gates may read: none that can act on GitHub.
 ALLOWED_SECRETS = frozenset({"GITHUB_TOKEN", "OPENROUTER_API_KEY"})
 SECRET_RE = re.compile(r"\bsecrets\b", re.IGNORECASE)
-EXPRESSION_RE = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 SECRET_NAME_RE = re.compile(
     r"\bsecrets\s*(?:\.\s*(?P<dot>[A-Za-z_][\w-]*)|\[\s*['\"](?P<key>[^'\"]+)['\"]\s*\])",
     re.IGNORECASE,
@@ -96,13 +95,30 @@ def _strings(node: Any) -> list[str]:
     return [node] if isinstance(node, str) else []
 
 
+def _expressions(text: str) -> list[str]:
+    """The ``${{ ... }}`` bodies in ``text``. A ``}}`` inside a quoted string does not end
+    one (GitHub's strings are single-quoted, ``''`` escapes a quote); an expression left
+    open runs to the end of the text."""
+    out = []
+    start = text.find("${{")
+    while start >= 0:
+        i, quoted = start + 3, False
+        while i < len(text) and (quoted or not text.startswith("}}", i)):
+            if text[i] == "'":
+                quoted = not quoted
+            i += 1
+        out.append(text[start + 3 : i])
+        start = text.find("${{", i + 2)
+    return out
+
+
 def _other_secrets(node: Any) -> bool:
     """``node`` names a secret outside ``ALLOWED_SECRETS``, reads ``secrets`` some other
     way (``toJSON(secrets)``), or passes ``secrets: inherit``."""
     if isinstance(node, dict) and str(node.get("secrets", "")).strip() == "inherit":
         return True
     # Secrets exist only inside ${{ }}: "No secrets in ..." and a job named secrets do not.
-    for text in (e for s in _strings(node) for e in EXPRESSION_RE.findall(s)):
+    for text in (e for s in _strings(node) for e in _expressions(s)):
         if not SECRET_RE.search(text):
             continue
         names = [m["dot"] or m["key"] for m in SECRET_NAME_RE.finditer(text)]

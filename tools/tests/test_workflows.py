@@ -86,11 +86,22 @@ def test_only_the_gate_workflows_can_approve(path: Path) -> None:
             "jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN || secrets.PAT }}\n",
             ["secret a"],
         ),
+        # A }} inside a quoted string does not end the expression, nor does an escaped quote.
+        (
+            "jobs:\n  a:\n    env:\n      T: ${{ format('}}') || secrets.PAT }}\n",
+            ["secret a"],
+        ),
+        (
+            "jobs:\n  a:\n    env:\n      T: ${{ format('it''s }}') || secrets.PAT }}\n",
+            ["secret a"],
+        ),
+        ("jobs:\n  a:\n    env:\n      T: ${{ secrets.PAT\n", ["secret a"]),
         # Allowed: the workflow token, the listed API key, and the word outside ${{ }}.
         ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n", []),
         ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ github.token }}\n", []),
         ("jobs:\n  a:\n    env:\n      K: ${{ secrets.OPENROUTER_API_KEY != '' }}\n", []),
         ("jobs:\n  secrets:\n    name: No secrets in the image\n", []),
+        ("jobs:\n  a:\n    steps:\n      - run: echo ${{ 'x' }} secrets.PAT ${{ 'y' }}\n", []),
     ],
 )
 def test_approval_writers(text: str, expected: list[str]) -> None:
@@ -631,14 +642,19 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     ]
     assert str(gates[0]["uses"]).startswith("actions/checkout@")
     run = str(gates[2]["run"])
-    # The tagged commit's copy only names the anchor (an error stops the step, since it
-    # is an assignment); the check runs with the anchor's copy and starts after it.
-    assert 'git show "$GITHUB_SHA:tools/$f" > "$gate/tagged/$f"' in run
-    assert "since=$(venv/bin/python -E -s tagged/check_merged_pr_gates.py" in run
-    assert '--anchor-for-tag "$GITHUB_REF_NAME")' in run
+    # The anchor comes from GitHub and git, never from repository code: only published
+    # release tags on the line count. The anchor's own scripts confirm it (an error stops
+    # the step, since it is an assignment), then check everything after it.
+    assert "tagged" not in run
+    assert "--jq '.[] | select(.draft | not) | .tag_name'" in run
+    assert 'git rev-parse -q --verify "refs/tags/$name^{commit}"' in run
+    assert 'git merge-base --is-ancestor "$c" "$GITHUB_SHA"' in run
     assert 'rules="${since:-$GITHUB_SHA}"' in run
-    assert 'git -C "$GITHUB_WORKSPACE" show "$rules:tools/$f" > "$gate/$f"' in run
+    assert 'git show "$rules:tools/$f" > "$gate/$f"' in run
+    assert '--anchor-for-tag "$GITHUB_REF_NAME")' in run
+    assert '[ "$anchor" = "$since" ]' in run
     assert '${since:+--since "$since"}' in run
+    assert run.index('cd "$gate"') < run.index("anchor=$(")
     loop = re.search(r'scripts="([^"]+)"', run)
     assert loop is not None
     copied = {f"tools/{name}" for name in loop[1].split()}

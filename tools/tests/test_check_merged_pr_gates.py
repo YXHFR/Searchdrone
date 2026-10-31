@@ -370,6 +370,13 @@ def test_local_git_lists_renames_and_deletes(tmp_path: Path) -> None:
     assert local.show("HEAD", "new.yml") == "on: push\n"
     with pytest.raises(subprocess.CalledProcessError):
         local.files(cmg.git(tmp_path, "rev-list", "--max-parents=0", "HEAD"))
+    # A missing file is KeyError (the parent had no list); any other git error is not.
+    with pytest.raises(KeyError):
+        local.show("HEAD", "gone.txt")
+    assert cmg.parent_protected(local, "HEAD") == []
+    with pytest.raises(subprocess.CalledProcessError):
+        local.show("0" * 40, "new.yml")
+    assert cmg.parent_protected(local, "0" * 40) is None
 
 
 FORGER = """on: pull_request

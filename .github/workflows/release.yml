@@ -21,14 +21,16 @@ concurrency:
 
 jobs:
   # First and alone: nothing from the repository runs here except the four gate scripts,
-  # which check_owner_gate.PROTECTED keeps behind owner-ok. The tagged commit's copy only
-  # names the anchor: the newest release on the tag's line that this workflow made and
-  # whose run succeeded (check_merged_pr_gates.release_anchor; none for the first
-  # release). The check then runs with the anchor's scripts and starts after it, so a
-  # later merge that loosened them is judged by the rules before it. Any error stops the
-  # release. They run from a clean directory (no other tools/*.py can shadow an import)
-  # with PyYAML pinned by hash for Python 3.12. A release.yml without this job is the
-  # owner's to stop: a ruleset on v* tags and immutable releases (see the checker).
+  # which check_owner_gate.PROTECTED keeps behind owner-ok. The anchor, the release to
+  # start after, comes from GitHub and git alone: the newest published vX.Y.Z[-rc.N]
+  # release whose tag is on the tagged commit's line (none for the first release). The
+  # check runs with the anchor's scripts, which first confirm that release.yml made the
+  # anchor and that its run succeeded (check_merged_pr_gates.release_anchor), and starts
+  # after it, so a later merge that loosened them is judged by the rules before it. Any
+  # error stops the release. They run from a clean directory (no other tools/*.py can
+  # shadow an import) with PyYAML pinned by hash for Python 3.12. A release.yml without
+  # this job, or a deleted release, is the owner's to stop: a ruleset on v* tags and
+  # immutable releases (see the checker).
   gates:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -57,10 +59,27 @@ jobs:
             exit 1
           }
           gate="$RUNNER_TEMP/gate"
-          mkdir -p "$gate/tagged"
+          mkdir -p "$gate"
+          cd "$GITHUB_WORKSPACE"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft | not) | .tag_name' > "$gate/releases.txt"
+          since="" best=-1
+          while read -r name; do
+            [[ "$name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || continue
+            [ "$name" != "$GITHUB_REF_NAME" ] || continue
+            c=$(git rev-parse -q --verify "refs/tags/$name^{commit}") || {
+              echo "releasen $name finns inte i klonen" >&2
+              exit 1
+            }
+            [ "$c" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$c" "$GITHUB_SHA" || continue
+            n=$(git rev-list --count "$c")
+            if [ "$n" -gt "$best" ]; then best=$n since=$c; fi
+          done < "$gate/releases.txt"
+          rules="${since:-$GITHUB_SHA}"
+          echo "Regler från $rules, kontroll efter ${since:-början av historiken}"
           scripts="check_merged_pr_gates.py workflow_rules.py check_owner_gate.py check_review_comments.py"
           for f in $scripts; do
-            git show "$GITHUB_SHA:tools/$f" > "$gate/tagged/$f"
+            git show "$rules:tools/$f" > "$gate/$f"
           done
           # Out of the clone and isolated (-I): no repository file can stand in for a module.
           cd "$gate"
@@ -69,14 +88,15 @@ jobs:
             > requirements.txt
           venv/bin/python -I -m pip install -q --no-deps --only-binary :all: --require-hashes \
             -r requirements.txt
-          # An assignment fails the step when the command does (exit 2 on any error).
-          since=$(venv/bin/python -E -s tagged/check_merged_pr_gates.py --root "$GITHUB_WORKSPACE" \
-            --sha "$GITHUB_SHA" --anchor-for-tag "$GITHUB_REF_NAME")
-          rules="${since:-$GITHUB_SHA}"
-          echo "Regler från $rules, kontroll efter ${since:-början av historiken}"
-          for f in $scripts; do
-            git -C "$GITHUB_WORKSPACE" show "$rules:tools/$f" > "$gate/$f"
-          done
+          if [ -n "$since" ]; then
+            # An assignment fails the step when the command does (exit 2 on any error).
+            anchor=$(venv/bin/python -E -s check_merged_pr_gates.py --root "$GITHUB_WORKSPACE" \
+              --sha "$GITHUB_SHA" --anchor-for-tag "$GITHUB_REF_NAME")
+            [ "$anchor" = "$since" ] || {
+              echo "ankaret $since bekräftas inte av sina egna skript (${anchor:-inget})" >&2
+              exit 1
+            }
+          fi
           venv/bin/python -E -s check_merged_pr_gates.py \
             --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA" ${since:+--since "$since"}
 

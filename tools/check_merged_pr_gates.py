@@ -36,19 +36,22 @@ local clone:
   them with ``pull-requests: write``, ``issues: write`` or a token from a secret.
 
 Tags do not shorten the default range, since anyone who can push a tag could then hide
-older commits. The release workflow instead asks this check for an anchor
-(``--anchor-for-tag``, ``release_anchor``): the newest published ``vX.Y.Z[-rc.N]``
-release on the tag's line that ``release.yml`` itself made (author ``github-actions[bot]``,
-a successful ``release.yml`` run for that tag and commit), so its gates passed. It then
-runs this check and its rules from that release, not from the commit being released, and
-starts after it (``--since``). A newest release that fails that test, or a GitHub that
-cannot be asked, stops the release; only when no release is on the line at all (the
-first release) does the whole history get checked with the tagged commit's own copy.
-Rules added since the anchor therefore apply from the release after the one that ships
-them. What this cannot see, the owner covers with a ruleset on ``v*`` tags and immutable
-releases: a deleted release (the check falls back to the first-release case) and a
-``release.yml`` whose gates job a merge removed (the workflow that runs is the tagged
-commit's own). Old pull requests are judged by today's rules; when a rule changes, the
+older commits. The release workflow instead finds the anchor itself, with ``gh`` and
+git and no repository code: the newest published ``vX.Y.Z[-rc.N]`` release whose tag is
+on the tagged commit's line. It then runs this check and its rules from that release,
+not from the commit being released. That copy first confirms the anchor
+(``--anchor-for-tag``, ``release_anchor``: the same release, made by ``release.yml``
+itself, author ``github-actions[bot]`` and a successful run for that tag and commit, so
+its gates passed) and then checks everything after it (``--since``). Any difference or
+error stops the release; only when no release is on the line at all (the first release)
+does the whole history get checked with the tagged commit's own copy. Rules added since
+the anchor therefore apply from the release after the one that ships them. What this
+cannot see, the owner covers with a ruleset on ``v*`` tags and immutable releases: a
+deleted release (the check falls back to the first-release case) and a ``release.yml``
+whose gates job a merge removed (the workflow that runs is the tagged commit's own). If
+the anchor's own copy can no longer run (say GitHub's API changed), the way out is the
+owner's: delete that release, so the next one is checked from the start with the tagged
+commit's copy. Old pull requests are judged by today's rules; when a rule changes, the
 owner lists the merges it would newly fail in the exceptions file. It costs four API
 calls per commit (five when protected paths changed, more past 100 comments or events),
 about 450 for 100 commits; past the token's 1000 requests an hour ``gh`` fails and so
@@ -218,6 +221,10 @@ class LocalGit:
         return files
 
     def show(self, sha: str, path: str) -> str:
+        """The file at ``sha``; ``KeyError`` when the commit has no such file, and a git
+        error for anything else (a missing commit, a broken clone)."""
+        if not git(self.root, "ls-tree", "--name-only", sha, "--", path):
+            raise KeyError(path)
         return git(self.root, "show", f"{sha}:{path}", strip=False)
 
 
@@ -272,11 +279,14 @@ def read_protected(text: str) -> list[re.Pattern[str]]:
 def parent_protected(local: Clone, sha: str) -> list[re.Pattern[str]] | None:
     """The protected paths in force before the merge: its first parent's list. ``[]``
     when the parent has no ``check_owner_gate.py``; ``None`` when it has one this check
-    cannot read in full (then every path the merge changed needs the owner)."""
+    cannot read in full, or git cannot say (then every path the merge changed needs
+    the owner)."""
     try:
         text = local.show(f"{sha}^1", OWNER_GATE)
-    except (KeyError, subprocess.CalledProcessError):
+    except KeyError:
         return []
+    except subprocess.CalledProcessError:
+        return None
     try:
         return read_protected(text)
     except (SyntaxError, UnreadableRulesError):
@@ -435,7 +445,9 @@ def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str |
     by the tag's push, succeeded (its gates job passed). ``None`` only when no published
     ``vX.Y.Z[-rc.N]`` release is on the line (the first release). A newest release that
     fails these checks, or a release tag missing from the clone, is an error: the
-    caller then stops instead of falling back to the tagged commit's own rules."""
+    caller then stops instead of falling back to the tagged commit's own rules.
+    release.yml finds the same release without repository code and stops on a
+    different answer."""
     line: list[tuple[int, str, str, dict[str, Any]]] = []
     for rel in api(f"repos/{repo}/releases?per_page=100"):
         name = str(rel.get("tag_name", ""))
