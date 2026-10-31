@@ -66,6 +66,8 @@ forst = "forst"
 [default.extend-identifiers]
 # ArduPilot throttle failsafe (B1-07)
 FS_THR_ENABLE = "FS_THR_ENABLE"
+fs_thr_enable = "fs_thr_enable"
+PILOT_THR_ = "PILOT_THR_"  # pilot-throttle parameter family (check_safety_manifest)
 # ArduPilot parameter and SITL frame names
 MOT_THST_HOVER = "MOT_THST_HOVER"
 hoverThrOut = "hoverThrOut"
