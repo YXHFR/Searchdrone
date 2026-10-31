@@ -11,6 +11,9 @@ Rules:
   latch stays underneath: STOP during a battery flight home gives ``stop`` with
   ``underlying = "battery_rtl"``, so after Resume the battery guard starts the flight
   home again if the battery is still low.
+* The ground's battery latch remembers why it was set (``battery_reason``): the
+  percentage level (``battery_level``) or the wind check's ``energy_home``. Only kept in
+  memory: a latch read back after a restart has no reason and counts as the level.
 * ``action_seq`` never goes back. It starts at ``max(saved, now in UTC milliseconds)``
   and every new action gets the next number, so even a restart without the database
   hands out larger numbers than before.
@@ -30,12 +33,28 @@ from typing import Final, Literal
 from sd_obs.clock import Clock
 from sd_schemas.mission import LatchAction, OperatorLatch
 
-__all__ = ["ADOPTED_BY", "HOME_LATCHES", "LatchChange", "LatchRefusedError", "Latches"]
+__all__ = [
+    "ADOPTED_BY",
+    "BATTERY_LOW_SV",
+    "ENERGY_HOME_SV",
+    "HOME_LATCHES",
+    "BatteryReason",
+    "LatchChange",
+    "LatchRefusedError",
+    "Latches",
+]
 
 HOME_LATCHES: Final = frozenset({"return_home", "watchdog_rtl"})
 # set_by of a latch taken over from the onboard Hello (the ground's own system latches,
 # battery and watchdog, use "system:ground").
 ADOPTED_BY: Final = "system:onboard"
+
+BatteryReason = Literal["battery_level", "energy_home"]
+BATTERY_LOW_SV: Final = "Batteriet är lågt och drönaren flyger hem. Tryck STOPP om vägen är farlig."
+ENERGY_HOME_SV: Final = (
+    "Batteriet räcker inte hem mot vinden och drönaren flyger hem nu. "
+    "Tryck STOPP om vägen är farlig."
+)
 
 
 class LatchRefusedError(Exception):
@@ -60,6 +79,7 @@ class Latches:
         self._latch: dict[str, OperatorLatch] = {}
         self._seq: dict[str, int] = {}
         self._override: dict[str, int] = {}
+        self._battery_reason: dict[str, BatteryReason] = {}
         self.changes: queue.SimpleQueue[LatchChange] = queue.SimpleQueue()
 
     # --- action numbers ---------------------------------------------------------------
@@ -95,6 +115,17 @@ class Latches:
         with self._lock:
             return self._latch.get(vehicle_id)
 
+    def set_battery_reason(self, vehicle_id: str, reason: BatteryReason) -> None:
+        """Why the ground's battery guard is about to set ``battery_rtl``."""
+        with self._lock:
+            self._battery_reason[vehicle_id] = reason
+
+    def battery_reason(self, vehicle_id: str) -> BatteryReason:
+        """Why the battery latch (or the one under a STOP) was set; ``battery_level``
+        when unknown (adopted after a restart)."""
+        with self._lock:
+            return self._battery_reason.get(vehicle_id, "battery_level")
+
     def start(self, vehicle_id: str, action: LatchAction, by: str) -> OperatorLatch:
         """Take the next number and set the latch, in one step (any thread)."""
         with self._lock:
@@ -104,6 +135,8 @@ class Latches:
             under_battery = old is not None and "battery_rtl" in (old.action, old.underlying)
             if action != "battery_rtl" and under_battery:
                 underlying = "battery_rtl"
+            elif action != "battery_rtl":
+                self._battery_reason.pop(vehicle_id, None)  # no battery latch any more
             latch = OperatorLatch(
                 vehicle_id=vehicle_id,
                 action=action,
@@ -121,8 +154,10 @@ class Latches:
 
     def check_release(self, vehicle_id: str) -> OperatorLatch | None:
         """The latch Resume would lift; ``LatchRefusedError`` while flying home."""
-        latch = self.get(vehicle_id)
-        _refuse_while_home(latch)
+        with self._lock:
+            latch = self._latch.get(vehicle_id)
+            reason = self._battery_reason.get(vehicle_id)
+        _refuse_while_home(latch, reason)
         return latch
 
     def release(self, vehicle_id: str) -> tuple[int, OperatorLatch | None]:
@@ -130,9 +165,10 @@ class Latches:
         ``LatchRefusedError`` while flying home."""
         with self._lock:
             latch = self._latch.get(vehicle_id)
-            _refuse_while_home(latch)
+            _refuse_while_home(latch, self._battery_reason.get(vehicle_id))
             seq = self._take(vehicle_id)
             self._latch.pop(vehicle_id, None)
+            self._battery_reason.pop(vehicle_id, None)
             self._override[vehicle_id] = seq
             self.changes.put(LatchChange("released", vehicle_id, latch, seq))
         return seq, latch
@@ -140,6 +176,7 @@ class Latches:
     def landed(self, vehicle_id: str) -> OperatorLatch | None:
         with self._lock:
             latch = self._latch.pop(vehicle_id, None)
+            self._battery_reason.pop(vehicle_id, None)
         if latch is not None:
             self.changes.put(LatchChange("landed", vehicle_id, latch, latch.action_seq))
         return latch
@@ -148,10 +185,11 @@ class Latches:
         """A latch read back after a restart (database or the onboard ``Hello``)."""
         with self._lock:
             self._latch[latch.vehicle_id] = latch
+            self._battery_reason.pop(latch.vehicle_id, None)  # unknown: counts as the level
             self._seq[latch.vehicle_id] = max(self._seq.get(latch.vehicle_id, 0), latch.action_seq)
 
 
-def _refuse_while_home(latch: OperatorLatch | None) -> None:
+def _refuse_while_home(latch: OperatorLatch | None, reason: BatteryReason | None = None) -> None:
     if latch is None:
         return
     if latch.action in HOME_LATCHES:
@@ -162,5 +200,5 @@ def _refuse_while_home(latch: OperatorLatch | None) -> None:
     if latch.action == "battery_rtl":
         raise LatchRefusedError(
             "BATTERY_RTL_ACTIVE",
-            "Batteriet är lågt och drönaren flyger hem. Tryck STOPP om vägen är farlig.",
+            ENERGY_HOME_SV if reason == "energy_home" else BATTERY_LOW_SV,
         )
