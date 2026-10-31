@@ -25,6 +25,7 @@ their own loop with a fake flight controller and a fake clock.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import datetime as dt
 import math
@@ -37,11 +38,12 @@ from typing import Any, Final, Literal
 
 from sd_ground.liveness import LoopLiveness
 from sd_ground.logging import get_logger
+from sd_ground.mav import fence as mav_fence
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.mav.gnss_watch import GnssWatch, text_alarm
 from sd_ground.services.latches import HOME_LATCHES, Latches
-from sd_ground.services.wind import WindStage, WindWatch
+from sd_ground.services.wind import WIND_PARAMS, WindStage, WindWatch, fc_params
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.failsafe_signals import text_signal
@@ -64,7 +66,9 @@ from sd_schemas.mission import LatchAction
 
 __all__ = [
     "BATTERY_CONFIRM_S",
+    "ENERGY_FRESH_S",
     "TICK_S",
+    "WIND_PARAMS_RETRY_S",
     "ActionReport",
     "GroundMav",
     "HeartbeatGate",
@@ -79,6 +83,10 @@ TICK_S: Final = 0.05
 STICK_RESEND_S: Final = 0.1  # 10 Hz while the panel's values are fresh
 TAKEOVER_POLL_S: Final = 0.01  # how often a waiting take-over looks for its notice's ack
 BATTERY_CONFIRM_S: Final = 0.5  # two BATTERY_STATUS at 2 Hz
+# The wind check's ENERGY_HOME (computed at 5 Hz outside this thread) counts this long;
+# an older one, from callers that stopped, never starts FLY HOME.
+ENERGY_FRESH_S: Final = 2.0
+WIND_PARAMS_RETRY_S: Final = 30.0  # the flight controller did not answer: read again
 ATTITUDE_FRESH_S: Final = 1.0  # ATTITUDE is streamed at 4 Hz
 ATTITUDE_EDGE_DEG: Final = 0.01  # float rounding of +-pi and +-pi/2 radians
 _IN_AIR: Final = frozenset({"in_air", "takeoff", "landing"})
@@ -289,6 +297,7 @@ class GroundMav:
         self._airborne_since: dt.datetime | None = None
         self._flown = False
         self._battery_low_since: float | None = None
+        self._energy_short_at: float | None = None  # monotonic s of the last ENERGY_HOME
         self._was_connected = False
         self.sticks_sent = 0
         self._closed = False
@@ -606,11 +615,22 @@ class GroundMav:
             self._on_event("vehicle.onboard_silent_rtl", "critical", {})
             self._system_action(self.vehicle_id, action)
 
+    def energy_short(self, short: bool) -> None:
+        """The wind check's ``ENERGY_HOME`` (``sd_ground.services.wind``): the battery
+        will not last the way home against the wind. Called in this loop through
+        ``ThreadSafeMav``; it only adds a reason to fly home, never removes one."""
+        self._energy_short_at = self.clock.monotonic() if short else None
+
     def _battery(self, snap: MavSnapshot) -> None:
         t = snap.telemetry
         latch = self.latches.get(self.vehicle_id)
         mode = snap.fc_mode
-        low = t.battery_pct is not None and t.battery_pct <= self._rtl_pct()
+        at_level = t.battery_pct is not None and t.battery_pct <= self._rtl_pct()
+        energy = (
+            self._energy_short_at is not None
+            and self.clock.monotonic() - self._energy_short_at <= ENERGY_FRESH_S
+        )
+        low = at_level or energy
         blocked = (
             not snap.connected
             or not snap.in_flight
@@ -630,7 +650,11 @@ class GroundMav:
         self._on_event(
             "vehicle.battery_rtl",
             "critical",
-            {"battery_pct": t.battery_pct, "alarm": "BATTERY_RTL"},
+            {
+                "battery_pct": t.battery_pct,
+                "alarm": "BATTERY_RTL",
+                "reason": "battery_level" if at_level else "energy_home",
+            },
         )
         self._system_action(self.vehicle_id, "battery_rtl")
 
@@ -651,6 +675,11 @@ class ThreadSafeMav:
         # MAVLink thread, so it can never slow the emergency path).
         self.wind = WindWatch() if wind is None else wind
         self._wind_lock = threading.Lock()
+        # The flight controller's own lean limit, RTL speed and battery numbers for the
+        # wind check, read once per connection (the fence check's parameter reading).
+        self._params_read: concurrent.futures.Future[dict[str, float | None]] | None = None
+        self._params_done = False
+        self._params_retry_at: float = -math.inf
 
     def _call(self, fn: Callable[..., None], *args: Any) -> bool:
         try:
@@ -714,12 +743,50 @@ class ThreadSafeMav:
 
     def telemetry(self, vehicle_id: str) -> Telemetry | None:
         snap = self.snapshot()
+        if snap is not None and not snap.connected:
+            self._params_done = False  # read again after the next connect (a reboot)
         if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
             return None
+        self._read_wind_params()
         with self._wind_lock:
             self.wind.observe(snap.telemetry, snap.now_mono_ms)
             wind = self.wind.check(snap.telemetry, snap.now_mono_ms)
+        self._call(self.core.energy_short, "ENERGY_HOME" in wind.reasons)
         return to_telemetry(snap, self.core.clock.utc_now(), wind)
+
+    def _read_wind_params(self) -> None:
+        """Start reading ``WIND_PARAMS`` in the MAVLink thread's loop unless they are read
+        for this connection or a read is under way. Until they are, the wind check uses
+        the constants (``FcParams()``)."""
+        now = self.core.clock.monotonic()
+        if self._params_done or self._params_read is not None or now < self._params_retry_at:
+            return
+
+        async def read(vehicle: Vehicle) -> dict[str, float | None]:
+            return await mav_fence.read_params(vehicle, WIND_PARAMS)
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(_run(read, self.core.vehicle), self.loop)
+        except RuntimeError:  # the loop is closed
+            return
+        self._params_read = future
+        future.add_done_callback(self._wind_params_read)
+
+    def _wind_params_read(self, future: concurrent.futures.Future[dict[str, float | None]]) -> None:
+        self._params_read = None
+        values: dict[str, float | None] = {}
+        if not future.cancelled() and future.exception() is None:
+            values = future.result()
+        else:
+            error = "cancelled" if future.cancelled() else type(future.exception()).__name__
+            log.warning("wind.params_failed", error=error)
+        if not any(v is not None for v in values.values()):
+            self._params_retry_at = self.core.clock.monotonic() + WIND_PARAMS_RETRY_S
+        else:
+            self._params_done = True
+        params = fc_params(values)  # logs every constant it falls back to
+        with self._wind_lock:
+            self.wind.set_params(params)
 
 
 def to_telemetry(snap: MavSnapshot, now: dt.datetime, wind: WindCheck | None = None) -> Telemetry:
