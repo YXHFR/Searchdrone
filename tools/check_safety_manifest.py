@@ -21,10 +21,12 @@ Checks (each finding is printed as ``rule: message``, exit code 1):
 * ``loaded``: SITL loads the simulator profile's first layer as its safety layer for every
   vehicle and stages every pinned Lua script; the onboard computer's default and example
   config (``expected_param_files``) read back exactly the simulator profile's layers.
-* ``shadow``: no sim-only layer sets a name a safety layer sets or any name with a
-  safety prefix (``sd_sim.params.RULED_PREFIXES``: ``FS_``, ``FENCE_``, ``BATT_``,
-  ``ARMING_`` ...), and ``tools/params_allowlist.toml`` lets no sim-only layer do so
-  either.
+* ``shadow``: no sim-only layer sets a name a safety layer sets or any safety-relevant
+  name (``sd_sim.params.RULED_PREFIXES`` such as ``FS_``, ``FENCE_``, ``BATT_``,
+  ``ARMING_``, and ``SHADOW_PREFIXES``: the second battery, flight modes, EKF sources,
+  GPS, motor and board safety, terrain, landing, ``RCn_OPTION`` ...), and
+  ``tools/params_allowlist.toml`` lets no sim-only layer do so either. Names are
+  compared in upper case.
 
 ``uv run tools/check_safety_manifest.py`` checks; ``--update`` writes the current digests
 into the manifest and prints the pinned files whose digest changed (do that only for a
@@ -49,8 +51,9 @@ ONBOARD_EXAMPLE = "config/onboard.example.toml"
 PARAMS_ALLOWLIST = "tools/params_allowlist.toml"
 DIGEST_LINE = re.compile(r'^(sha256\s*=\s*)"[0-9a-f]*"', re.M)
 # Files that must stay pinned whatever the manifest says: the rules, the deny list, the
-# allowlist and the safety layers. The profiles' layers and SITL's Lua scripts are
-# required on top of these (``pinned_problems``, ``loaded_problems``).
+# allowlist, the safety layers and the Lua script. Any other layer a profile names, and
+# any other Lua script SITL stages, must be pinned too (``pinned_problems``,
+# ``loaded_problems``).
 REQUIRED_PINS = (
     "software/common/mav/src/sd_mav/denylist.py",
     "tools/params_allowlist.toml",
@@ -59,7 +62,32 @@ REQUIRED_PINS = (
     "simulation/sitl/params/searchdrone-safety.parm",
     "simulation/sitl/params/searchdrone-safety.field.parm",
     "simulation/sitl/scripts/sd_gcs_loiter_cap.lua",
+    # What enforces them: the gate's run-time allowlist, SITL's layer order, the check
+    # that holds sim layers to the allowlist, and these checks themselves.
+    "software/common/mav/src/sd_mav/allowlist.py",
+    "simulation/sd_sim/src/sd_sim/sitl.py",
+    "tools/params_check.py",
+    "tools/check_forbidden_mavlink.py",
+    "tools/check_safety_manifest.py",
 )
+# Safety-relevant parameter families on top of RULED_PREFIXES that no sim-only layer may
+# set (the safety layers may, without a rule).
+SHADOW_PREFIXES = (
+    "BATT2_",
+    "FLTMODE",
+    "EK3_SRC",
+    "EK3_ENABLE",
+    "AHRS_EKF_TYPE",
+    "AHRS_GPS_",
+    "GPS_",
+    "MOT_SAFE_",
+    "BRD_SAFETY",
+    "TERRAIN_",
+    "LAND_",
+    "PILOT_THR_",
+    "RCMAP_",
+)
+RC_OPTION = re.compile(r"RC\d+_OPTION$")
 
 
 @dataclass(frozen=True)
@@ -195,8 +223,15 @@ def shadow_problems(root: Path, manifest: Manifest) -> list[str]:
     for layers in manifest.profiles.values():
         safety |= set(merged(root, layers))
 
+    prefixes = RULED_PREFIXES + SHADOW_PREFIXES
+    upper = {n.upper() for n in safety}
+
     def unsafe(names: Iterable[str]) -> list[str]:
-        return sorted(n for n in names if n in safety or n.startswith(RULED_PREFIXES))
+        return sorted(
+            n
+            for n in names
+            if n.upper() in upper or n.upper().startswith(prefixes) or RC_OPTION.match(n.upper())
+        )
 
     out = []
     params = root / "simulation" / "sitl" / "params"
@@ -263,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--update", action="store_true", help="write the current digests")
     args = parser.parse_args(argv)
+    # REPO and MANIFEST are passed, not left to the defaults, so a test can point them
+    # at a copy.
     if args.update:
         changed = update(MANIFEST, REPO)
         for rel in changed:

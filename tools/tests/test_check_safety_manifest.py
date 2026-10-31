@@ -19,6 +19,11 @@ COPY = (
     "software/common/mav/src/sd_mav/denylist.py",
     "simulation/sd_sim/src/sd_sim/params.py",
     "software/common/safety/src/sd_safety/constants.py",
+    "software/common/mav/src/sd_mav/allowlist.py",
+    "simulation/sd_sim/src/sd_sim/sitl.py",
+    "tools/params_check.py",
+    "tools/check_forbidden_mavlink.py",
+    "tools/check_safety_manifest.py",
 )
 SAFETY = "simulation/sitl/params/searchdrone-safety.parm"
 FIELD = "simulation/sitl/params/searchdrone-safety.field.parm"
@@ -113,7 +118,22 @@ def test_a_sim_layer_may_not_set_a_safety_parameter(root: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["FS_VIBE_ENABLE", "FENCE_AUTOENABLE", "ARMING_CHECK", "RC_OPTIONS"]
+    "name",
+    [
+        "FS_VIBE_ENABLE",
+        "FENCE_AUTOENABLE",
+        "ARMING_CHECK",
+        "RC_OPTIONS",
+        "RC7_OPTION",
+        "BATT2_FS_LOW_ACT",
+        "FLTMODE1",
+        "EK3_SRC1_POSXY",
+        "GPS_AUTO_SWITCH",
+        "MOT_SAFE_DISARM",
+        "BRD_SAFETY_DEFLT",
+        "LAND_SPEED",
+        "fs_thr_enable",
+    ],
 )
 def test_a_sim_layer_may_set_no_safety_prefixed_parameter(root: Path, name: str) -> None:
     # Also a name the safety layers do not set themselves.
@@ -124,7 +144,10 @@ def test_a_sim_layer_may_set_no_safety_prefixed_parameter(root: Path, name: str)
 
 def test_a_sim_layer_may_set_other_parameters(root: Path) -> None:
     sim = root / "simulation/sitl/params/sd_quad14-sim.parm"
-    sim.write_text(sim.read_text(encoding="utf-8") + "SIM_WIND_SPD 3\n", encoding="utf-8")
+    sim.write_text(
+        sim.read_text(encoding="utf-8") + "SIM_WIND_SPD 3\nEK3_DRAG_BCOEF_X 20\nRC7_TRIM 1500\n",
+        encoding="utf-8",
+    )
     assert csm.check(root) == []
 
 

@@ -29,6 +29,7 @@ def rules(text: str, path: str = GROUND) -> list[str]:
         "i = mavlink.MAVLINK_MSG_ID_PARAM_SET",
         "i = getattr(mavlink, 'MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE')",
         "cls = mavlink.mavlink_map[23]",
+        "cls = mavlink.mavlink_map.get(23)",
     ],
 )
 def test_denied_messages_fail(line: str) -> None:
@@ -58,7 +59,7 @@ def test_forced_arming_fails() -> None:
 
 def test_raw_send_in_production_fails_but_not_in_the_simulator() -> None:
     line = "self._conn.mav.heartbeat_send(6, 8, 0, 0, 0)"
-    assert set(rules(line)) == {"raw-send"}
+    assert rules(line) == ["raw-send"] * 3  # _conn, heartbeat_send, and the send on mav
     assert rules(line, SIM) == []
 
 
@@ -88,6 +89,13 @@ def test_raw_send_in_production_fails_but_not_in_the_simulator() -> None:
         "switch = conn.set_mode",
         "boot = conn.reboot_autopilot",
         "send = conn.write_message",
+        # Any message's send method, also on a mav taken into another name, and the
+        # helpers spelled as getattr strings.
+        "conn.param_request_read_send(1, 1, b'FENCE_ENABLE', -1)",
+        "m = conn.mav\nm.heartbeat_send(6, 8, 0, 0, 0)",
+        "c = getattr(vehicle._transport, '_conn')",
+        "getattr(conn, 'reboot_autopilot')()",
+        "getattr(conn, 'write_message')(msg)",
     ],
 )
 def test_owning_a_connection_in_production_fails(line: str) -> None:
@@ -125,13 +133,16 @@ def test_renamed_or_spelled_out_denied_names_fail(line: str, rule: str) -> None:
         "i = mavlink.MAVLINK_MSG_ID_HEARTBEAT",
         "skills = importlib.import_module('sd_onboard.skills')",
         "self._connection.close()",
+        "await v.set_mode(mode=CopterMode.GUIDED, origin=SendOrigin.GROUND)",
+        "pkg = __import__('sd_onboard.skills')",
         "m = mavlink.MAVLink_command_long_message(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)",
         "m = mavlink.MAVLink_command_long_message(1, 1, mavlink.MAV_CMD_DO_SET_MODE, 0, 1, 4)",
         "m = mavlink.MAVLink_mission_count_message(1, 1, 3, mavlink.MAV_MISSION_TYPE_FENCE)",
         "await vehicle.send(m, origin=SendOrigin.GROUND)",
         "name = 'FENCE_ENABLE'  # read back with PARAM_REQUEST_READ",
-        "conn.param_request_read_send(1, 1, b'FENCE_ENABLE', -1)",
         "event = 'mav.forbidden_mavlink_blocked'",
+        "MavAction(kind='set_mode', params={'mode': 'GUIDED'})",
+        "await self.mav.submit(action)",
         "self.mav.submit(action)",
         "limit = 21195",
     ],
@@ -145,8 +156,26 @@ def test_docstrings_are_prose() -> None:
     assert rules(text) == []
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Outside production the simulator and tools may own a connection.
+        "self._conn.write_message(m)",
+        "send = conn.write_message",
+        "boot = conn.reboot_autopilot",
+        "conn.set_mode('GUIDED')",
+        "conn.param_request_read_send(1, 1, b'FENCE_ENABLE', -1)",
+        "getattr(conn, 'reboot_autopilot')()",
+    ],
+)
+def test_connection_helpers_pass_in_the_simulator(line: str) -> None:
+    assert "raw-send" in rules(line)
+    assert rules(line, SIM) == []
+
+
 def test_mavlink_map_outside_production_only_for_allowed_ids() -> None:
     assert rules("cls = mavlink.mavlink_map[0]", SIM) == []
+    assert rules("cls = mavlink.mavlink_map.get(0)", SIM) == []
     assert rules("cls = mavlink.mavlink_map[23]", SIM) == ["forbidden-message"]
 
 
@@ -162,8 +191,12 @@ def test_the_gate_is_allowed() -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        # set_sim_param refuses any name but SIM_* at run time.
+        "def set_sim_param(self, name, v):\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
         "self._conn.mav.param_set_send(1, 1, b'SIM_RC_FAIL', 1, 9)",
+        "self._conn.mav.param_set_send(1, 1, 'SIM_WIND_DIR'.encode(), 90, 9)",
+        "self._conn.mav.param_set_send(1, 1, param_id=b'SIM_WIND_SPD', param_value=3)",
         "self._conn.mav.heartbeat_send(6, 8, 0, 0, 0)",
     ],
 )
@@ -177,6 +210,12 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         # PARAM_SET of a literal non-SIM_ name, and every other denied message or command.
         "self._conn.mav.param_set_send(1, 1, b'FENCE_ENABLE', 0, 9)",
         "m = mavlink.MAVLink_param_set_message(1, 1, 'ARMING_SKIPCHK', 1, 9)",
+        "self._conn.mav.param_set_send(1, 1, param_id=b'FENCE_ENABLE', param_value=0)",
+        "self._conn.mav.param_set_send(1, 1, 'FENCE_ENABLE'.encode(), 0, 9)",
+        "self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        "self._conn.param_set_send('FS_THR_ENABLE', 0)",
+        "self._conn.mav.send(mavlink.mavlink_map[23](1, 1, b'FENCE_ENABLE', 0, 9))",
+        "cls = mavlink.mavlink_map.get(23)",
         "self._conn.mav.param_ext_set_send(1, 1, b'SIM_RC_FAIL', b'1', 9)",
         "self._conn.mav.rc_channels_override_send(1, 1, *([1500] * 8))",
         "m = mavlink.MAVLink_set_mode_message(1, 1, 4)",
@@ -230,3 +269,9 @@ def test_the_repository_is_clean() -> None:
     files = cfm.candidate_files(ROOT)
     assert "software/ground/src/sd_ground/mav/gcs.py" in files
     assert [str(f) for f in cfm.check_files(ROOT, files)] == []
+
+
+def test_this_check_may_name_param_set_only() -> None:
+    me = "tools/check_forbidden_mavlink.py"
+    assert rules("CALLS = {'param_set_send', 'MAVLink_param_set_message'}", me) == []
+    assert rules("kind = 'RC_CHANNELS_OVERRIDE'", me) == ["forbidden-message"]
