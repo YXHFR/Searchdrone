@@ -10,6 +10,8 @@ QGroundControl link therefore uses serial5.
 from __future__ import annotations
 
 import json
+import zlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +45,26 @@ BUILTIN_MODELS = {"sd_quad14": f"quad:{FRAME_FILE}", fpv7.MODEL_NAME: f"x:{FPV7_
 # script in ``scripts/`` under its working directory; on a real flight controller they go
 # to the SD card's ``APM/scripts/``. A missing script stops the start.
 LUA_SCRIPTS = ("sd_gcs_loiter_cap.lua",)
+# SCR_LD_CHECKSUM / SCR_RUN_CHECKSUM keep any other script set from arming: ArduPilot XORs
+# the CRC32 of every loaded (running) script file and compares the low 23 bits with the
+# parameter (AP_Scripting::arming_checks, Copter-4.7.1). Its CRC32 is the plain table
+# loop from 0 with no final inversion (crc_crc32 in AP_Math/crc.cpp, through
+# AP_Filesystem::crc32), not zlib's.
+SCRIPT_CHECKSUM_MASK = 0x007FFFFF
+
+
+def script_crc32(data: bytes) -> int:
+    """ArduPilot's ``crc_crc32(0, data)``: zlib's CRC32 without its two inversions."""
+    return zlib.crc32(data, 0xFFFFFFFF) ^ 0xFFFFFFFF
+
+
+def scripts_checksum(files: Iterable[Path]) -> int:
+    """The value SCR_LD_CHECKSUM and SCR_RUN_CHECKSUM must hold when exactly ``files``
+    are loaded and running."""
+    out = 0
+    for path in files:
+        out ^= script_crc32(path.read_bytes())
+    return out & SCRIPT_CHECKSUM_MASK
 
 
 @dataclass(frozen=True)

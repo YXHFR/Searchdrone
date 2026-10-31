@@ -110,6 +110,38 @@ async def test_keepout_install_confirmed(r: Rig) -> None:
     assert [str(x.source_id) for x in again.keepouts] == [cid]
 
 
+async def test_refused_keepout_list_alarms_and_gets_in(r: Rig) -> None:
+    """The onboard computer kept a higher ``install_seq`` than the ground's clock gives
+    (ONB_STALE_ORDER): the operator gets the red alarm at once, the ground sends the list
+    again with a higher number until it is in, and says so."""
+    rig_ = r
+    rig_.onboard.keepout_seq = int(rig_.flow.now().timestamp() * 1000) + 5 * 3_600_000
+    mid = await rig_.ready_mission()
+    lat, lon = rig_.at(60.0, 0.0)
+    cid = await candidate(rig_, mid, lat, lon, state="confirmed", rev=1)
+
+    def alerted(code: str) -> Callable[[], bool]:
+        def check() -> bool:
+            events = rig_.g.bus.replay(rig_.g.bus.server_epoch, 0) or []
+            return any(e.data.get("code") == code for e in events)
+
+        return check
+
+    await rig_.until(alerted("KEEPOUTS_NOT_INSTALLED"), 10, "the red alarm")
+
+    def in_force() -> bool:
+        last = installs(rig_)[-1] if installs(rig_) else None
+        return last is not None and [str(k.source_id) for k in last.keepouts] == [cid]
+
+    await rig_.until(in_force, 30, "the list in force on board")
+    assert installs(rig_)[-1].install_seq >= rig_.onboard.keepout_seq
+    await rig_.until(alerted("KEEPOUTS_INSTALLED"), 10, "the all-clear")
+    events = rig_.g.bus.replay(rig_.g.bus.server_epoch, 0) or []
+    red = [e for e in events if e.data.get("code") == "KEEPOUTS_NOT_INSTALLED"]
+    assert len(red) == 1 and red[0].data["severity"] == "critical"
+    assert "förbudszonerna" in red[0].data["message_sv"]
+
+
 async def test_ground_plan_matches_onboard(r: Rig) -> None:
     """The forecast is ``choose_mode`` on the last snapshot and the installed list: the
     same function and inputs as the onboard rule."""

@@ -588,18 +588,22 @@ class MissionFlow:
 
     async def on_expired(self, vehicle_id: str, expired: Expired) -> None:
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import link_loss as link_loss_service
 
         await commands_service.on_expired(self, vehicle_id, expired)
+        link_loss_service.on_expired(self, vehicle_id, expired)
 
     async def on_inbound(self, vehicle_id: str, inbound: Inbound) -> None:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import link_loss as link_loss_service
         from sd_ground.services import perception as perception_service
         from sd_schemas.link import Ack, CharterAck, CropData, OnboardEvent, PerceptionReport
 
         body = inbound.body
         if isinstance(body, Ack):
             await commands_service.on_ack(self, vehicle_id, body)
+            await link_loss_service.on_ack(self, vehicle_id, body)
         elif isinstance(body, CharterAck):
             await approvals_service.on_charter_ack(self, vehicle_id, body)
         elif isinstance(body, OnboardEvent):

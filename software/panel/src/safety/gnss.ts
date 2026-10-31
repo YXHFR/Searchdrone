@@ -1,4 +1,5 @@
-// Alerts the panel words itself (GPS, the link coming back, the link-down codes) and the log
+// Alerts the panel words itself (GPS, the link coming back, the link-down codes, the keep-out
+// list on board or not) and the log
 // line for a find-hold that ended without the link. Pure: keys and values, no i18next.
 import { mmss } from "../lib/useNow";
 import {
@@ -48,6 +49,10 @@ export function alertView(
     case "LINK_BACK_HOLD":
     case "LINK_BACK_HOME":
       return { key: `linkDown.${code}`, vars: {}, tone: "yellow" };
+    case "KEEPOUTS_NOT_INSTALLED":
+      return { key: "keepouts.NOT_INSTALLED", vars: {}, tone: "red" };
+    case "KEEPOUTS_INSTALLED":
+      return { key: "keepouts.INSTALLED", vars: {}, tone: "info" };
     case "GPS_WEAK":
       return { key: "gnss.GPS_WEAK", vars: { sats: round(details.satellites) }, tone: "yellow" };
     case "GPS_LOST":

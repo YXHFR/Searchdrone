@@ -80,6 +80,15 @@ describe("alertView", () => {
     expect(alertView("FIND_HOLD", {}, T0)).toBeNull(); // no times: the ground's own text
   });
 
+  it("keep-out list not on board: red and sticky; back on board: info", () => {
+    const v = alertView("KEEPOUTS_NOT_INSTALLED", { stage: "rejected" }, T0);
+    expect(v && isSticky(v)).toBe(true);
+    expect(say(v)).toContain("förbudszonerna");
+    const ok = alertView("KEEPOUTS_INSTALLED", {}, T0);
+    expect(ok?.tone).toBe("info");
+    expect(say(ok)).toBe("Förbudszonerna runt fynden är nu inlagda i drönaren igen.");
+  });
+
   it("is null for codes the panel has no text for", () => {
     expect(alertView("BATTERY_RTL", {}, T0)).toBeNull();
   });
