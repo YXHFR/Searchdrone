@@ -406,6 +406,8 @@ def rename(old: str, new: str, at: str, i: int = 1) -> dict[str, Any]:
             True,
         ),
         (TITLE, [rename("Update stuff", TITLE, "2026-10-01T10:00:00Z")], True),
+        # A rename in the merge's own second counts as after it.
+        (TITLE, [rename("Update stuff", TITLE, MERGED)], False),
     ],
 )
 def test_the_title_at_the_merge_must_pass(
@@ -496,9 +498,21 @@ def test_a_bad_range_exits_2(since: str, capsys: pytest.CaptureFixture[str]) -> 
     assert "Traceback" not in capsys.readouterr().err
 
 
-def test_since_must_be_an_ancestor() -> None:
+def test_since_must_be_an_ancestor(capsys: pytest.CaptureFixture[str]) -> None:
     root = cmg.git(cmg.REPO, "rev-list", "--max-parents=0", "HEAD").splitlines()[0]
     assert cmg.main(["--sha", root, "--since", "HEAD", "--repo", REPO], api=FakeGitHub()) == 2
+    assert "--since HEAD är inte en förfader till --sha" in capsys.readouterr().err
+
+
+def test_a_copy_outside_the_repo_checks_root(tmp_path: Path) -> None:
+    # release.yml runs the protected scripts from a clean directory against --root.
+    head = cmg.git(cmg.REPO, "rev-parse", "HEAD")
+    gh = FakeGitHub()
+    gh.merged(head, 9, H9)
+    gh.events[9] = [label()]
+    argv = ["--root", str(cmg.REPO), "--sha", head, "--since", f"{head}~1", "--repo", REPO]
+    assert cmg.main(argv, api=gh) == 0
+    assert cmg.main([*argv[:2], "--root", str(tmp_path)], api=gh) == 2  # not a clone
 
 
 def test_github_errors_exit_2() -> None:

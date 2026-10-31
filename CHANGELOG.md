@@ -28,10 +28,12 @@ All notable changes to this project are listed here. The format follows
   (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`). The exceptions
   file, the gate scripts and the gate and release workflows now need the owner's
   `owner-ok` (`check_owner_gate.PROTECTED`).
-  `.github/workflows/release.yml` refuses a tag that is not on main before any repository
-  code runs, runs both checks on a pushed `v[0-9]*` tag, builds the packages and the panel
-  and publishes the GitHub release only if the tag still names the commit it built; only
-  its publish job can write. `just showcase` is still not built.
+  `.github/workflows/release.yml`, on a pushed `v[0-9]*` tag, first runs a job that
+  refuses a tag that is not on main and runs the gate check from a clean copy of the
+  protected scripts, with PyYAML pinned by hash, so no other repository code runs before
+  it. Then it checks the versions, builds the packages and the panel and publishes the
+  GitHub release only if the tag still names the commit it built; only its publish job
+  can write. `just showcase` is still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
   `write-all` (at the top or in a job), leaves a job without `permissions` or names a job

@@ -316,9 +316,9 @@ def check(
     return out
 
 
-def resolve(rev: str) -> str:
+def resolve(root: Path, rev: str) -> str:
     """A commit SHA; ``rev`` is never read as an option."""
-    return git(REPO, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
+    return git(root, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}")
 
 
 def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
@@ -326,23 +326,32 @@ def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser.add_argument("--sha", default="HEAD", help="the commit to release (default HEAD)")
     parser.add_argument("--since", help="older end, excluded (default: the whole history)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO_SLUG))
-    parser.add_argument("--exceptions", type=Path, default=EXCEPTIONS)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=REPO,
+        help="the clone to check (default: this script's; release.yml runs a copy elsewhere)",
+    )
+    parser.add_argument(
+        "--exceptions", type=Path, help="default: <root>/" + str(EXCEPTIONS.relative_to(REPO))
+    )
     args = parser.parse_args(argv)
+    root = args.root
     try:
-        sha = resolve(args.sha)
-        since = resolve(args.since) if args.since else None
+        sha = resolve(root, args.sha)
+        since = resolve(root, args.since) if args.since else None
         if since and since != sha:
             ancestor = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-                ["git", "-C", str(REPO), "merge-base", "--is-ancestor", since, sha],  # noqa: S607
+                ["git", "-C", str(root), "merge-base", "--is-ancestor", since, sha],  # noqa: S607
                 check=False,
             )
             if ancestor.returncode != 0:
                 raise ValueError(f"--since {args.since} är inte en förfader till --sha {args.sha}")
-        exceptions = read_exceptions(args.exceptions)
-        shas = commits(REPO, since, sha)
+        exceptions = read_exceptions(args.exceptions or root / EXCEPTIONS.relative_to(REPO))
+        shas = commits(root, since, sha)
         if not shas:
             raise ValueError(f"inga commits mellan {args.since} och {args.sha}")
-        findings = check(api, args.repo, shas, exceptions)
+        findings = check(api, args.repo, shas, exceptions, LocalGit(root))
     except subprocess.CalledProcessError as exc:
         print(f"git {' '.join(exc.cmd[3:])}: {exc.stderr.strip()}", file=sys.stderr)
         return 2

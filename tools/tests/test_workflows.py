@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import check_owner_gate
 import pytest
 import yaml
 from workflow_rules import GATE_WORKFLOWS, gate_trigger_problems, status_writers
@@ -559,7 +560,25 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
         assert not uses or uses.startswith("actions/download-artifact@"), uses
         run = str(step.get("run", ""))
         assert not re.search(r"\b(tools/|just|uv|python3?|pnpm|bash \S+\.sh)\b", run), run
-    names = [s.get("name") or s.get("uses") for s in doc["jobs"]["build"]["steps"]]
-    # The tag is refused before any repository code (the setup action) runs.
-    assert names[1] == "The tagged commit is on main"
-    assert str(names[2]).startswith("./.github/actions/setup")
+    # The gate check runs first, in its own job, and nothing else from the repository
+    # runs there: only the protected gate scripts, copied out, with PyYAML pinned by hash.
+    assert doc["jobs"]["build"]["needs"] == "gates"
+    gates = doc["jobs"]["gates"]["steps"]
+    assert [s.get("name") or s.get("uses") for s in gates][1:] == [
+        "The tagged commit is on main",
+        "Every commit on main came from a pull request with green gates",
+    ]
+    assert str(gates[0]["uses"]).startswith("actions/checkout@")
+    run = str(gates[2]["run"])
+    copied = set(re.findall(r"tools/[\w./]+", run))
+    assert copied == {
+        "tools/check_merged_pr_gates.py",
+        "tools/workflow_rules.py",
+        "tools/check_owner_gate.py",
+        "tools/check_review_comments.py",
+    }
+    # A change to any of them needs owner-ok, and so does a change to this workflow.
+    paths = [*copied, ".github/workflows/release.yml"]
+    assert check_owner_gate.protected_files([{"filename": p} for p in paths]) == sorted(paths)
+    assert "--require-hashes" in run and "--root" in run
+    assert not re.search(r"\b(just|uv|pnpm)\b|\./", run), run

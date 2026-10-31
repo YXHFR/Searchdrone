@@ -1,9 +1,9 @@
 # Publishes a GitHub release when the owner pushes a tag vX.Y.Z (after `just release-prep`
-# and its pull request are merged). The build job first refuses a tag that is not on
-# main, then checks the tag against every version and that every commit on main came
-# from a pull request whose gates, worked out again from its comments, label events,
-# title and files, were green (check_merged_pr_gates.py),
-# builds the Python packages and the panel and writes the release notes from
+# and its pull request are merged). The gates job first refuses a tag that is not on
+# main and checks that every commit on main came from a pull request whose gates, worked
+# out again from its comments, label events, title and files, were green
+# (check_merged_pr_gates.py). Only then does the build job check the tag against every
+# version, build the Python packages and the panel and write the release notes from
 # CHANGELOG.md. Only the publish job can write, and it runs no repository code: it
 # uploads what the build job made. Nothing here creates or moves a tag.
 name: release
@@ -20,7 +20,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # First and alone: nothing from the repository runs here except the four gate scripts,
+  # which check_owner_gate.PROTECTED keeps behind owner-ok. They run from a clean
+  # directory (no other tools/*.py can shadow an import) with PyYAML pinned by hash here.
+  gates:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -37,15 +40,37 @@ jobs:
         run: |
           git fetch -q --no-tags origin +refs/heads/main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Every commit on main came from a pull request with green gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gate="$RUNNER_TEMP/gate"
+          mkdir -p "$gate"
+          cp tools/check_merged_pr_gates.py tools/workflow_rules.py \
+            tools/check_owner_gate.py tools/check_review_comments.py "$gate/"
+          /usr/bin/python3 -m venv "$gate/venv"
+          printf '%s\n' 'pyyaml==6.0.3 --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc' \
+            > "$gate/requirements.txt"
+          "$gate/venv/bin/pip" install -q --no-deps --only-binary :all: --require-hashes \
+            -r "$gate/requirements.txt"
+          "$gate/venv/bin/python" -E -s "$gate/check_merged_pr_gates.py" \
+            --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA"
+
+  build:
+    needs: gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
       - name: The tag matches every version
         env:
           TAG: ${{ github.ref_name }}
         run: python3 tools/check_versions.py --expect "${TAG#v}"
-      - name: Every commit on main came from a pull request with green gates
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: uv run --no-sync python tools/check_merged_pr_gates.py --sha "$GITHUB_SHA"
       - name: Build
         run: just build
       - name: Release notes and assets
