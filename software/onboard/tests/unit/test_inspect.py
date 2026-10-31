@@ -15,15 +15,18 @@ from sd_mav.mission import MISSION
 from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import (
+    KEEPOUT_CLIMB_MARGIN_M,
     LOCAL_KEEPOUTS_MAX,
+    climb_alt,
     entry_m,
     leg_entry_m,
     merge_local,
     stop_m,
     way_out,
 )
-from sd_onboard.skills import survey_sector
+from sd_onboard.skills import inspect_detection, survey_sector
 from sd_onboard.skills.base import PlanError
+from sd_onboard.skills.goto import GotoHandler
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
@@ -354,6 +357,166 @@ async def test_cylinders_that_keep_coming_under_an_inspection_stop_it() -> None:
         assert r.ex.state == S.HOLD
         codes = [c for ref, _, c in r.up.acks if ref == cmd.command_id][-1]
         assert codes in (("ONB_INSPECT_GEOMETRY",), ("KEEPOUT_VIOLATION",))
+
+
+# --- no way out over a person (B1), and the caps on planning again (B2) -----------------
+
+
+def test_climb_alt_is_the_top_of_the_cylinders_plus_the_margin_within_the_charter() -> None:
+    cyl = [((0.0, 0.0), 33.0), ((10.0, 0.0), 50.0), ((300.0, 0.0), 90.0)]
+    top = 50.0 + KEEPOUT_CLIMB_MARGIN_M  # only the ones it is inside count
+    assert climb_alt((5.0, 0.0), cyl, 40.0, 115.0) == top
+    assert climb_alt((5.0, 0.0), cyl, 40.0, 50.0) == 50.0  # as high as the charter lets it
+    assert climb_alt((5.0, 0.0), cyl, 70.0, 115.0) == 70.0  # above already: stays there
+    assert climb_alt((5.0, 0.0), cyl, 40.0, 40.0) is None  # no higher allowed: no climb
+    assert climb_alt((150.0, 0.0), cyl, 40.0, 115.0) is None  # inside none
+
+
+def _refused(req: GateRequest, ctx: GateContext) -> GateDecision:
+    return evaluate(req, ctx).model_copy(
+        update={"decision": "REJECT", "reason_codes": ["ROUTE_BATTERY"]}
+    )
+
+
+async def _over_a_person_with_no_way_out(
+    r: Rig, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SkillCommand, Keepout, tuple[float, float], int]:
+    """On an inspection's leg a cylinder comes around the drone, its leg heading deeper,
+    and the gate refuses every way out: the order, the cylinder, where the drone was and
+    where the track was then."""
+    await r.install(charter(allowed_skills=SKILLS))
+    await r.takeoff()
+    target = keepout(150, 0, 10)  # a small one: the inspection flies low
+    install(r, target)
+    camera(r)
+    cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 10)), 0.5)
+    assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+    await r.until(lambda: xy(r)[0] >= 15.0, 60)
+    monkeypatch.setattr(executor_module, "evaluate", _refused)
+    here = xy(r)
+    # A wide one, so that its top and the margin lie above the drone and under the charter's.
+    person = keepout(here[0] + 10.0, here[1], 90.0, source="candidate")
+    assert r.ex.vehicle_state().alt_rel_home_m < person.radius_m + KEEPOUT_CLIMB_MARGIN_M - 1.5
+    start = len(r.fc.track)
+    install(r, target, person)
+    return cmd, person, here, start
+
+
+def _holds(r: Rig) -> list[dict[str, Any]]:
+    return [d for t, _, d in r.up.events if t == "executor.keepout_hold"]
+
+
+async def test_no_way_out_over_a_person_climbs_straight_up_then_hovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default for B1: straight up to the cylinder's top and the margin, inside the
+    charter's height; there the order ends in the keep-out hover. The operator is told
+    once, as the climb begins (``inside``, ``climb_to_m``)."""
+    async with rig() as r:
+        cmd, person, here, start = await _over_a_person_with_no_way_out(r, monkeypatch)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
+        holds = _holds(r)
+        assert len(holds) == 1, holds
+        assert holds[0]["inside"] is True and holds[0]["climb_to_m"] == pytest.approx(want)
+        assert "executor.keepout_replan" not in r.up.kinds()
+        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
+        assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
+        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+        c = PLANE.xy(person.lat, person.lon)
+        d0 = math.dist(here, c)
+        track = track_xy(r, start)
+        # Straight up: no deeper than braking from the leg's speed, and no farther off.
+        assert min(_dists(track, c)) >= d0 - 8.0, (d0, min(_dists(track, c)))
+        assert math.dist(track[-1], here) <= 10.0
+        await r.run(10)
+        assert len(_holds(r)) == 1  # hovering there: told once
+        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+
+
+async def test_no_way_out_and_no_room_to_climb_hovers_where_it_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No higher allowed (here the charter's ceiling less the altitude limit's margin is
+    below the drone): it hovers where it is, and the operator is told it cannot climb."""
+    monkeypatch.setattr(executor_module, "_ALT_GOTO_BELOW_M", 200.0)
+    async with rig() as r:
+        cmd, _, _, _ = await _over_a_person_with_no_way_out(r, monkeypatch)
+        alt = r.ex.vehicle_state().alt_rel_home_m
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        holds = _holds(r)
+        assert len(holds) == 1 and holds[0]["inside"] is True, holds
+        assert "climb_to_m" not in holds[0]
+        assert ("KEEPOUT_VIOLATION",) in [c for ref, _, c in r.up.acks if ref == cmd.command_id]
+        assert r.ex.hold_reason == "limit"
+        await r.run(5)
+        assert r.ex.vehicle_state().alt_rel_home_m <= alt + 1.5
+
+
+async def test_stop_during_the_climb_brakes_and_holds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """STOP goes past the AI and the reflex as always, also while it climbs."""
+    async with rig() as r:
+        await _over_a_person_with_no_way_out(r, monkeypatch)
+        await r.until(lambda: len(_holds(r)) == 1, 30)
+        r.fc.set_mode_external(CopterMode.BRAKE)  # the ground's STOP, as MAVLink first
+        await r.run(0.3)
+        r.ex.on_override(r.notice("stop"))
+        assert r.ex.state == S.HELD and r.ex.held_by == "operator_stop"
+        alt = r.ex.vehicle_state().alt_rel_home_m
+        await r.run(5)
+        assert r.fc.mode == CopterMode.BRAKE  # the executor no longer steers
+        assert r.ex.vehicle_state().alt_rel_home_m <= alt + 1.0
+
+
+async def test_replans_of_one_inspection_have_a_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Past ``REPLANS_MAX`` the reflex plans the leg no more: the order hovers short of the
+    cylinder (the drone is outside it) instead."""
+    monkeypatch.setattr(inspect_detection, "REPLANS_MAX", 0)
+    async with rig() as r:
+        cmd, moved, start = await _inspect_with_a_cylinder_moved_onto_the_leg(r)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert "executor.keepout_replan" not in r.up.kinds()
+        holds = _holds(r)
+        assert len(holds) == 1 and holds[0]["inside"] is False, holds
+        assert ("KEEPOUT_VIOLATION",) in [c for ref, _, c in r.up.acks if ref == cmd.command_id]
+        assert xy_route_violation(track_xy(r, start), circles([moved], PLANE)) is None
+
+
+async def test_a_goto_planned_again_keeps_its_first_deadline() -> None:
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        ctx = r.ex._plan_context(new_id())  # pyright: ignore[reportPrivateUsage]
+        goto = GotoHandler()
+        lat, lon = at(100, 0)
+        goto.prepare(ctx, lat, lon, 40.0, 5.0)
+        goto.retarget(ctx, lat, lon, 40.0, 5.0)  # not started yet: the deadline is set
+        first = goto._deadline  # pyright: ignore[reportPrivateUsage]
+        assert math.isfinite(first)
+        await r.run(5)
+        far = at(400, 0)
+        goto.retarget(ctx.__class__(**{**_fields(ctx), "clock": r.clock}), *far, 40.0, 5.0)
+        assert goto._deadline == first  # pyright: ignore[reportPrivateUsage]
+        goto.retarget(ctx, *far, 40.0, 5.0, renew_deadline=True)
+        assert goto._deadline > first  # pyright: ignore[reportPrivateUsage]
+
+
+def _fields(ctx: Any) -> dict[str, Any]:
+    return {f: getattr(ctx, f) for f in ctx.__slots__}
+
+
+def test_a_leg_to_the_point_starts_the_ways_out_count_again() -> None:
+    h = inspect_detection.InspectHandler()
+    h._exits = EXITS_MAX - 1  # pyright: ignore[reportPrivateUsage]
+    leg = inspect_detection._Leg(0.0, 0.0, 40.0, 5.0, None, exit=False)  # pyright: ignore[reportPrivateUsage]
+
+    class _Goto:
+        def prepare(self, *a: Any, **k: Any) -> None: ...
+
+    h.goto = _Goto()  # type: ignore[assignment]
+    h._plan_of = lambda ctx, leg: None  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+    h._fly(None, leg, retarget=False)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    assert h._exits == 0  # pyright: ignore[reportPrivateUsage]
 
 
 # --- orbit ------------------------------------------------------------------------------
