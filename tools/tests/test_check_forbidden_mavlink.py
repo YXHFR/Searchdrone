@@ -272,6 +272,38 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "        raise ValueError(name)\n"
         "    for name in ['FENCE_ENABLE']:\n"
         "        self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        # Bound again by import, match or with.
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    from consts import FENCE as name\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    match b'FENCE_ENABLE':\n"
+        "        case name:\n"
+        "            self._conn.mav.param_set_send(1, 1, name, v, 9)",
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    with open(p) as name:\n"
+        "        self._conn.mav.param_set_send(1, 1, name, v, 9)",
+        # A *args or **kwargs may fill the name's place.
+        "self._conn.mav.param_set_send(1, *[1, b'ARMING_CHECK'], b'SIM_X', 0, 9)",
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    self._conn.mav.param_set_send(1, *[1, b'FENCE_ENABLE'], name, v, 9)",
+        "self._conn.mav.param_set_send(1, 1, b'SIM_X', **extra)",
+        "c.param_set_send(b'SIM_X', *rest)",
+        "c.param_set_send(b'SIM_X', **k)",
+        # A name that is a mav in one place and a connection in another is unknown.
+        "def a(self):\n    m = self._conn.mav\n"
+        "def b(self):\n    m = self._conn\n    m.param_set_send('FS_THR_ENABLE', 0, b'SIM_X')",
+        # mavfile's three-argument form: the third (parm_type) is not a SIM_ name.
+        "self._conn.param_set_send('SIM_WIND_DIR', 90, 9)",
+        "(m := self._conn.mav).param_set_send(b'SIM_X', 1, b'FENCE_ENABLE', 0, 9)",
         "self._conn.mav.send(mavlink.mavlink_map[23](1, 1, b'FENCE_ENABLE', 0, 9))",
         "cls = mavlink.mavlink_map.get(23)",
         "self._conn.mav.param_ext_set_send(1, 1, b'SIM_RC_FAIL', b'1', 9)",
