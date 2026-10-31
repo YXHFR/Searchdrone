@@ -28,6 +28,10 @@ just check
 - Every pull request is reviewed by three AI reviewers (architecture, IT security, flight safety) and the automated checks. The reviewers follow the instructions in [`.github/review/`](.github/review/) and post one comment each, starting with `review/<role>: approve` or `review/<role>: request_changes` and naming the reviewed commit; the check `gate/review` is green only when all three approved the latest commit. Changes under `hardware/` also need the maintainer's approval (`gate/owner`).
 - Squash merge only.
 
+## Releases
+
+Only the maintainer releases. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) checks that every commit since the previous tag came through a pull request with green gates, sets the version everywhere and writes the release's section in `CHANGELOG.md` from `[Unreleased]` and the commit list (git-cliff, `cliff.toml`). It never commits or tags. The maintainer merges that change as `chore(release): vX.Y.Z` and then pushes the tag `vX.Y.Z` on the merge commit; `.github/workflows/release.yml` checks it again, builds and publishes the GitHub release.
+
 ## Reporting bugs
 
 Use the issue templates. Security problems go through private vulnerability reporting, see [SECURITY.md](SECURITY.md).

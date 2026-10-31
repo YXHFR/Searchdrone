@@ -628,8 +628,20 @@ check-traceability:
 showcase STAGE *args:
     uv run --no-sync python tools/just_args.py showcase stage="$1" "${@:2}"
 
-# Set one version everywhere before a release
-release-prep VERSION: (_not-built "B1-18")
+# Before a release: check the gates since the last tag, set one version everywhere and
+# write the changelog with git-cliff; never commits or tags (keys: gates=0 skips the gates)
+release-prep VERSION *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    opts=()
+    for arg in "${@:2}"; do
+        case "$arg" in
+            gates=0) opts+=(--no-gates) ;;
+            gates=1) ;;
+            *) echo "just release-prep: okänd inställning '$arg' (gates=0 eller gates=1)"; exit 2 ;;
+        esac
+    done
+    uv run --no-sync python tools/release_prep.py "$1" ${opts[@]+"${opts[@]}"}
 
 # --- helpers -------------------------------------------------------------------------
 

@@ -8,6 +8,17 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Release tools. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) refuses a dirty tree or an
+  existing tag, runs `tools/check_merged_pr_gates.py`, sets the version in every
+  `pyproject.toml` (PEP 440) and `package.json`, refreshes the uv lock files, runs
+  `check_versions --expect` and turns `[Unreleased]` into the release's section, with
+  the commit list from git-cliff (`cliff.toml`, pinned in `simulation/versions.lock`).
+  It never commits or tags. `tools/check_merged_pr_gates.py` checks that every commit on
+  main since the previous `v*` tag is a merged pull request's commit whose `gate/review`,
+  `gate/owner` and `gate/pr-title` were green and written by `github-actions[bot]`.
+  `.github/workflows/release.yml` runs both checks on a pushed `v*` tag, builds the
+  packages and the panel and publishes the GitHub release; only its publish job can
+  write. `just showcase` is still not built.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
   fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures
