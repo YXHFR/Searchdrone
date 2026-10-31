@@ -51,6 +51,7 @@ from sd_onboard.executor.keepout_reflex import (
     REROUTABLE,
     Replans,
     blocks_find_move,
+    climb_alt,
     contained,
     entry_m,
     leg_entry_m,
@@ -361,9 +362,6 @@ class _IO:
     @property
     def keepouts(self) -> tuple[Keepout, ...]:
         return self._ex.keepouts_in_force()
-
-    def leg_allowed(self, path: list[LatLonAlt]) -> bool:
-        return not self.leg_refusal(path)
 
     def leg_refusal(self, path: list[LatLonAlt]) -> tuple[str, ...]:
         active = self._ex.active
@@ -807,14 +805,18 @@ class Executor:
         target = self.target_of(key)
         if isinstance(target, Refusal):
             return
-        # No way around the cylinders from where a search stopped: the same keep-out hold
-        # as when the reflex finds none while it flies (``_keepout_hold``).
-        keepout = exc.code == "KEEPOUT_VIOLATION"
-        if keepout:
-            self.emit("keepout_hold", {"command_id": str(active.command_id), "skill": active.skill})
+        hold_reason = "skill_done"
+        if exc.code == "KEEPOUT_VIOLATION":
+            # No way around the cylinders from where a search stopped: the same keep-out
+            # hold as when the reflex finds none while it flies (``_keepout_hold``). After a
+            # climb out of reach the operator was told as it began (``_keepout_climb``).
+            if not (isinstance(active.handler, Replans) and active.handler.climbing()):
+                data = {"command_id": str(active.command_id), "skill": active.skill}
+                self.emit("keepout_hold", {**data, "inside": False})
+            hold_reason = "limit"
         self._enter(
             target,
-            hold_reason=("limit" if keepout else "skill_done") if target == S.HOLD else None,
+            hold_reason=hold_reason if target == S.HOLD else None,
             cause=f"{active.skill} failed: {exc.code}",
         )
         if target == S.HOLD and is_airborne(self.vehicle_state()):
@@ -1698,10 +1700,12 @@ class Executor:
         is on every tick while it flies, against every cylinder (none it may cross: a
         cylinder that comes around the drone is left on a way out of its own, and a way
         out never goes deeper, ``leg_entry_m``). One it would enter within the stop
-        distance: the leg is planned again from here, through the whole gate, or the
-        order hovers."""
-        if not rest:
-            return
+        distance: the leg is planned again from here, through the whole gate. When there
+        is no such leg and the drone is inside a cylinder (over a person), it climbs
+        straight up to above it within the charter's height (``_keepout_climb``) and the
+        order ends in the keep-out hover there; otherwise the order hovers at once."""
+        if not rest or handler.climbing():
+            return  # straight up: deeper into nothing
         self._keepout_watch = True
         if not handler.exiting() and any(math.dist(here, c) < r for c, r in cyl):
             entry: float | None = 0.0  # a cylinder came around the drone: out of it first
@@ -1715,31 +1719,63 @@ class Executor:
                 "keepout_replan", {"command_id": str(active.command_id), "skill": active.skill}
             )
             return
-        self._keepout_hold()
+        inside = any(math.dist(here, c) < r for c, r in cyl)
+        if not (inside and self._keepout_climb(active, handler, ctx, here, cyl)):
+            self._keepout_hold(inside=inside)
+
+    def _keepout_climb(
+        self, active: _Active, handler: Replans, ctx: PlanContext, here: Xy, cyl: list[Circle]
+    ) -> bool:
+        """Over a person with no safe way out: straight up to the cylinder's top and its
+        margin (``climb_alt``), never above the charter's height less the altitude
+        limit's margin, then the keep-out hover there; the operator is told at once
+        (``keepout_hold`` with ``climb_to_m``). False when it cannot climb."""
+        v = ctx.vehicle
+        alt = climb_alt(here, cyl, v.alt_rel_home_m, ctx.charter.alt_max_agl_m - _ALT_GOTO_BELOW_M)
+        if alt is None or not handler.climb(ctx, alt):
+            return False
+        self.emit(
+            "keepout_hold",
+            {
+                "command_id": str(active.command_id),
+                "skill": active.skill,
+                "inside": True,
+                "climb_to_m": round(alt, 1),
+            },
+        )
+        return True
 
     def path_allowed(self, active: _Active, path: list[LatLonAlt]) -> bool:
         return not self.path_refusal(active, path)
 
     def path_refusal(self, active: _Active, path: list[LatLonAlt]) -> tuple[str, ...]:
         """Why the running order may not fly ``path`` (current position first) from here,
-        empty when it may: clear of every cylinder, inside the charter, and through the
-        whole gate (battery and return reserve included), judged on the state it is flown
-        from."""
-        charter = self.charter
-        if active.cmd is None or charter is None or self.active is not active:
+        empty when it may (``_route_refusal``)."""
+        if self.active is not active:
             return ("ONB_STALE_ORDER",)
         ctx = self._plan_context(active.command_id)
-        route = [ctx.plane.xy(p.lat, p.lon) for p in path]
+        plan = active.plan.model_copy(update={"path": path})
+        return self._route_refusal(active, ctx, plan, refused="keepout_replan_refused")
+
+    def _route_refusal(
+        self, active: _Active, ctx: PlanContext, plan: SkillPlan, *, refused: str
+    ) -> tuple[str, ...]:
+        """Why ``active`` may not fly ``plan``'s path, empty when it may: clear of every
+        cylinder, inside the charter, and through the whole gate (battery and return
+        reserve included). The order was accepted already: the new path is judged on the
+        state it is flown from. A gate refusal is told as the event ``refused``."""
+        charter = self.charter
+        if active.cmd is None or charter is None:
+            return ("ONB_STALE_ORDER",)
+        route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
         if not route_clear(route, ctx.keepouts, ctx.plane, charter):
             return ("KEEPOUT_VIOLATION",)
         now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
         cmd = active.cmd.model_copy(update={"based_on": now})
-        plan = active.plan.model_copy(update={"path": path})
         decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
         if decision.decision != "ALLOW":
             self.emit(
-                "keepout_replan_refused",
-                {"command_id": str(active.command_id), "codes": decision.reason_codes},
+                refused, {"command_id": str(active.command_id), "codes": decision.reason_codes}
             )
             return tuple(decision.reason_codes) or ("ONB_GATE_DISAGREEMENT",)
         return ()
@@ -1782,9 +1818,10 @@ class Executor:
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
 
-    def _keepout_hold(self) -> None:
-        """Stop a moving order in a hover (``KEEPOUT_VIOLATION``). Internal orders, return
-        home and take-off go on; the link-loss find move ends in its hover here."""
+    def _keepout_hold(self, *, inside: bool = False) -> None:
+        """Stop a moving order in a hover (``KEEPOUT_VIOLATION``; ``inside`` a cylinder,
+        over a person, with no way out and no climb). Internal orders, return home and
+        take-off go on; the link-loss find move ends in its hover here."""
         active = self.active
         if active is not None and active.skill == INTERNAL_FIND_GOTO:
             if self.state == S.TRANSIT:
@@ -1803,7 +1840,7 @@ class Executor:
             kind="hold",
             hold_reason="limit",
             event="keepout_hold",
-            data={"command_id": str(active.command_id), "skill": active.skill},
+            data={"command_id": str(active.command_id), "skill": active.skill, "inside": inside},
         )
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
@@ -1823,19 +1860,7 @@ class Executor:
             plan = new.plan(ctx)
         except PlanError:
             return False
-        route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
-        if active.cmd is None or not route_clear(route, ctx.keepouts, ctx.plane, charter):
-            return False
-        # The whole gate on the new route (battery and return reserve included). The order
-        # was accepted already: the new route is judged on the state it is flown from.
-        now = StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq)
-        cmd = active.cmd.model_copy(update={"based_on": now})
-        decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
-        if decision.decision != "ALLOW":
-            self.emit(
-                "keepout_reroute_refused",
-                {"command_id": str(active.command_id), "codes": decision.reason_codes},
-            )
+        if self._route_refusal(active, ctx, plan, refused="keepout_reroute_refused"):
             return False
         handler = SurveyHandler.rerouted(
             new, charter.home, stop_first=(list(rest), ctx) if stop_first else None
@@ -1846,7 +1871,7 @@ class Executor:
             {
                 "command_id": str(active.command_id),
                 "skill": active.skill,
-                "points": len(route) - 1,
+                "points": len(plan.path) - 1,
                 "stop_first": stop_first,
             },
         )
