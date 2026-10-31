@@ -20,13 +20,14 @@ All notable changes to this project are listed here. The format follows
   `check_review_comments.evaluate` over the comments written before the merge,
   `gate/owner` from the merge commit's own files (local git) and
   `check_owner_gate.approved_by_label_events` (the owner's newest `owner-ok`, added after
-  the head commit's first check suite and after any base change, force push or
-  reopening), and `gate/pr-title` from the title at the merge. Workflow files the merge
+  the head commit's first check suite, so a head without one fails, and after any base
+  change, force push or reopening), and `gate/pr-title` from the title at the merge. Workflow files the merge
   added or changed are read as YAML: none may be able to write a gate (a job without
   `permissions` at either level counts, since it gets the default token), and the gate
   workflows may only run on `pull_request_target`/`issue_comment`
   (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`). The exceptions
-  file and both scripts need the owner's `owner-ok` (`check_owner_gate.PROTECTED`).
+  file, the gate scripts and the gate and release workflows now need the owner's
+  `owner-ok` (`check_owner_gate.PROTECTED`).
   `.github/workflows/release.yml` refuses a tag that is not on main before any repository
   code runs, runs both checks on a pushed `v[0-9]*` tag, builds the packages and the panel
   and publishes the GitHub release only if the tag still names the commit it built; only

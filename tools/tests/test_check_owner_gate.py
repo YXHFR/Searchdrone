@@ -56,6 +56,10 @@ def test_no_protected_path_is_success() -> None:
         "tools/accept/pr_gate_exceptions.txt",
         "tools/check_merged_pr_gates.py",
         "tools/workflow_rules.py",
+        "tools/check_owner_gate.py",
+        "tools/check_review_comments.py",
+        ".github/workflows/review-gate.yml",
+        ".github/workflows/release.yml",
     ],
 )
 def test_protected_paths_need_approval(name: str) -> None:

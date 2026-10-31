@@ -46,9 +46,13 @@ MAX_FILES = 3000  # GitHub lists at most this many files of a pull request
 PROTECTED = (
     re.compile(r"^hardware/", re.IGNORECASE),
     re.compile(r"^\.github/CODEOWNERS$"),
-    # What decides which merged commits a release accepts (check_merged_pr_gates.py).
+    # The gates and what a release accepts (check_merged_pr_gates.py), so that loosening
+    # any of their rules, this list included, needs the owner too.
     re.compile(r"^tools/accept/pr_gate_exceptions\.txt$"),
-    re.compile(r"^tools/(check_merged_pr_gates|workflow_rules)\.py$"),
+    re.compile(
+        r"^tools/(check_merged_pr_gates|workflow_rules|check_owner_gate|check_review_comments)\.py$"
+    ),
+    re.compile(r"^\.github/workflows/(review-gate|owner-gate|pr-title|release)\.yml$"),
 )
 # Issue events after which an earlier owner-ok no longer covers the pull request.
 RESETS = ("base_ref_changed", "head_ref_force_pushed", "reopened")

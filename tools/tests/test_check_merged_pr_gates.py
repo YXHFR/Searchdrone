@@ -89,7 +89,7 @@ class FakeGitHub:
         if m["rest"] == "/pulls":
             return [pr for pr in self.prs.values() if pr["merge_commit_sha"] == sha]
         if m["rest"] == "/check-suites":
-            suites = [{"created_at": at} for at in self.suites.get(sha, [])]
+            suites = [{"created_at": at} for at in self.suites.get(sha, [HEAD_TIME])]
             return [{"total_count": len(suites), "check_suites": suites}]
         date = self.committed.get(sha, HEAD_TIME)
         return [{"sha": sha, "commit": {"committer": {"date": date}}}]
@@ -236,7 +236,7 @@ def test_owner_is_worked_out_again_from_the_label_events(
 @pytest.mark.parametrize(
     ("suites", "ok"),
     [
-        ([], True),  # no suite: the committer date stands
+        ([], False),  # no suite: nothing GitHub recorded dates the push
         (["2026-10-01T09:05:00Z", "2026-10-01T10:50:00Z"], True),  # the first suite counts
         # Backdated head: committed 09:00, but it reached GitHub at 10:40, after the label.
         (["2026-10-01T10:40:00Z"], False),
@@ -251,7 +251,13 @@ def test_the_owner_label_must_follow_the_push_not_the_committer_date(
     gh.suites[H4] = suites
     git = FakeGit()
     git.add("1" * 40, "hardware/board.kicad_pcb", status="modified")
-    assert (run(gh, "1" * 40, git) == []) is ok
+    messages = run(gh, "1" * 40, git)
+    assert (messages == []) is ok
+    if not suites:
+        assert messages == [
+            "PR #4: gate/owner: ändrar hardware/board.kicad_pcb, men head-commitens push "
+            "går inte att datera"
+        ]
 
 
 @pytest.mark.parametrize(
@@ -372,6 +378,7 @@ def test_a_workflow_from_the_merge_that_can_write_a_gate_fails(
     gh.merged("9" * 40, 7, H7)
     git = FakeGit()
     git.add("9" * 40, path, text, status)
+    gh.events[7] = [label()]  # the gate workflows are protected paths
     messages = run(gh, "9" * 40, git)
     if expected is None:
         assert messages == []

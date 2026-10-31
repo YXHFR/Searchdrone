@@ -17,7 +17,10 @@ local clone:
 * ``gate/owner``: if the merge changed a path in ``check_owner_gate.PROTECTED``,
   ``check_owner_gate.approved_by_label_events``: the newest ``owner-ok`` event before
   the merge is the owner adding it after the head commit reached GitHub (its first check
-  suite) and after any base change, force push or reopening;
+  suite; a head without one fails) and after any base change, force push or reopening.
+  Issue events do not record ordinary pushes, so a label set before new commits counts
+  only if the live gate's ``synchronize`` run failed to remove it; and a head pushed
+  earlier to another branch dates from that push;
 * ``gate/pr-title``: the title at the merge (later renames undone) follows
   ``PR_TITLE_RE``, the rule in ``pr-title.yml`` (kept equal by a test);
 * no workflow file the merge adds or changes can write a gate, read as YAML
@@ -28,8 +31,9 @@ local clone:
 Tags and releases do not shorten the default range, since anyone who can push a tag
 could then hide older commits. Old pull requests are judged by today's rules; when a rule
 changes, the owner lists the merges it would newly fail in the exceptions file. It costs
-three API calls per commit, plus one when protected paths changed: about 300 for 100
-commits, within the token's 1000 requests an hour until main has about 300 commits.
+four API calls per commit (five when protected paths changed, more past 100 comments or
+events): about 450 for 100 commits, within the token's 1000 requests an hour until main
+has about 200 commits.
 
 ``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
 commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
@@ -200,32 +204,38 @@ def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> 
     return [] if result.state == "success" else [f"gate/review: {result.description}"]
 
 
-def pushed_at(api: Api, repo: str, head: str, committer_date: str) -> datetime:
+def pushed_at(api: Api, repo: str, head: str, committer_date: str) -> datetime | None:
     """When the head commit reached GitHub: its first check suite, which GitHub dates
-    (the committer date is the author's to set), and never before the committer date."""
+    (the committer date is the author's to set), and never before the committer date.
+    ``None`` when the head has no check suite: then nothing GitHub recorded dates it."""
     parse = check_review_comments.parse_time
     pages = api(f"repos/{repo}/commits/{head}/check-suites?per_page=100")
-    suites = [parse(str(s["created_at"])) for p in pages for s in p.get("check_suites", [])]
-    return max([parse(committer_date), *([min(suites)] if suites else [])])
+    suites = [
+        parse(str(s["created_at"]))
+        for p in pages
+        for s in p.get("check_suites") or []
+        if s.get("created_at")
+    ]
+    if not suites:
+        return None
+    return max(parse(committer_date), min(suites))
 
 
 def owner_problems(
-    repo: str,
+    owner: str,
     pr: dict[str, Any],
     events: list[dict[str, Any]],
-    since: datetime,
-    files: list[dict[str, Any]],
+    since: datetime | None,
+    protected: list[str],
 ) -> list[str]:
-    """gate/owner worked out again: protected paths need the owner's newest ``owner-ok``."""
-    protected = check_owner_gate.protected_files(files)
+    """gate/owner worked out again for a merge that changed the ``protected`` paths."""
+    paths = ", ".join(protected)
+    if since is None:
+        return [f"gate/owner: ändrar {paths}, men head-commitens push går inte att datera"]
     merged = check_review_comments.parse_time(str(pr["merged_at"]))
-    owner = repo.split("/", 1)[0]
-    if not protected or check_owner_gate.approved_by_label_events(events, owner, since, merged):
+    if check_owner_gate.approved_by_label_events(events, owner, since, merged):
         return []
-    return [
-        f"gate/owner: ändrar {', '.join(protected)} utan ägarens "
-        f"{check_owner_gate.LABEL} efter head-commiten"
-    ]
+    return [f"gate/owner: ändrar {paths} utan ägarens {check_owner_gate.LABEL} efter head-commiten"]
 
 
 def title_at_merge(pr: dict[str, Any], events: list[dict[str, Any]]) -> str:
@@ -237,7 +247,7 @@ def title_at_merge(pr: dict[str, Any], events: list[dict[str, Any]]) -> str:
         for e in events
         if e.get("event") == "renamed"
         and e.get("created_at")
-        and parse(str(e["created_at"])) > merged
+        and parse(str(e["created_at"])) >= merged
     ]
     if not later:
         return str(pr.get("title", ""))
@@ -280,9 +290,9 @@ def check_commit(api: Api, repo: str, sha: str, local: Clone) -> list[Finding]:
     events = api(f"repos/{repo}/issues/{pr['number']}/events?per_page=100")
     files = local.files(sha)
     problems = review_problems(api, repo, pr, head_time)
-    if check_owner_gate.protected_files(files):
+    if protected := check_owner_gate.protected_files(files):
         since = pushed_at(api, repo, head, head_time)
-        problems += owner_problems(repo, pr, events, since, files)
+        problems += owner_problems(repo.split("/", 1)[0], pr, events, since, protected)
     if not PR_TITLE_RE.match(title_at_merge(pr, events)):
         problems.append(
             "gate/pr-title: titeln vid sammanslagningen följer inte regeln i pr-title.yml"
@@ -322,7 +332,12 @@ def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
         sha = resolve(args.sha)
         since = resolve(args.since) if args.since else None
         if since and since != sha:
-            git(REPO, "merge-base", "--is-ancestor", since, sha)
+            ancestor = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
+                ["git", "-C", str(REPO), "merge-base", "--is-ancestor", since, sha],  # noqa: S607
+                check=False,
+            )
+            if ancestor.returncode != 0:
+                raise ValueError(f"--since {args.since} är inte en förfader till --sha {args.sha}")
         exceptions = read_exceptions(args.exceptions)
         shas = commits(REPO, since, sha)
         if not shas:
