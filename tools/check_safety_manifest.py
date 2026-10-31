@@ -23,8 +23,9 @@ Checks (each finding is printed as ``rule: message``, exit code 1):
   config (``expected_param_files``) read back exactly the simulator profile's layers.
 * ``shadow``: no sim-only layer sets a name a safety layer sets or any safety-relevant
   name (``sd_sim.params.RULED_PREFIXES`` such as ``FS_``, ``FENCE_``, ``BATT_``,
-  ``ARMING_``, and ``SHADOW_PREFIXES``: the second battery, flight modes, EKF sources,
-  GPS, motor and board safety, terrain, landing, ``RCn_OPTION`` ...), and
+  ``ARMING_``, ``SHADOW_PREFIXES`` and ``SHADOW_PATTERN``: flight modes, EKF sources,
+  motor and board safety, terrain, landing, every GPS and battery instance,
+  ``RCn_OPTION`` ...), and
   ``tools/params_allowlist.toml`` lets no sim-only layer do so either. Names are
   compared in upper case.
 
@@ -62,8 +63,11 @@ REQUIRED_PINS = (
     "simulation/sitl/params/searchdrone-safety.parm",
     "simulation/sitl/params/searchdrone-safety.field.parm",
     "simulation/sitl/scripts/sd_gcs_loiter_cap.lua",
-    # What enforces them: the gate's run-time allowlist, SITL's layer order, the check
-    # that holds sim layers to the allowlist, and these checks themselves.
+    # What enforces them: the gate (Vehicle.send, its connection and run-time allowlist),
+    # SITL's layer order, the check that holds sim layers to the allowlist, and these
+    # checks themselves.
+    "software/common/mav/src/sd_mav/vehicle.py",
+    "software/common/mav/src/sd_mav/connection.py",
     "software/common/mav/src/sd_mav/allowlist.py",
     "simulation/sd_sim/src/sd_sim/sitl.py",
     "tools/params_check.py",
@@ -73,13 +77,11 @@ REQUIRED_PINS = (
 # Safety-relevant parameter families on top of RULED_PREFIXES that no sim-only layer may
 # set (the safety layers may, without a rule).
 SHADOW_PREFIXES = (
-    "BATT2_",
     "FLTMODE",
     "EK3_SRC",
     "EK3_ENABLE",
     "AHRS_EKF_TYPE",
     "AHRS_GPS_",
-    "GPS_",
     "MOT_SAFE_",
     "BRD_SAFETY",
     "TERRAIN_",
@@ -87,7 +89,8 @@ SHADOW_PREFIXES = (
     "PILOT_THR_",
     "RCMAP_",
 )
-RC_OPTION = re.compile(r"RC\d+_OPTION$")
+# Families with an instance number: RCn_OPTION, GPS_/GPS1_/GPS2_, BATT2_ ... BATTG_.
+SHADOW_PATTERN = re.compile(r"RC\d+_OPTION$|GPS\d*_|BATT[2-9A-G]_")
 
 
 @dataclass(frozen=True)
@@ -230,7 +233,9 @@ def shadow_problems(root: Path, manifest: Manifest) -> list[str]:
         return sorted(
             n
             for n in names
-            if n.upper() in upper or n.upper().startswith(prefixes) or RC_OPTION.match(n.upper())
+            if n.upper() in upper
+            or n.upper().startswith(prefixes)
+            or SHADOW_PATTERN.match(n.upper())
         )
 
     out = []

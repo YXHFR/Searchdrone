@@ -18,23 +18,28 @@ All notable changes to this project are listed here. The format follows
   raw `MAVLink` encoder, `mavlink_map`, any `_conn` attribute, `write_message`,
   any message's `*_send`/`*_encode` method, mavfile helpers such as `reboot_autopilot`
   or `set_mode`, called, only referenced or as a `getattr` string). Tests outside
-  `src/` packages are not read; the simulator harness may send only `PARAM_SET`, from
-  `set_sim_param` (which refuses any name but `SIM_*`) or with a literal `SIM_*` name.
-  Names built at run time (f-strings, arithmetic) are not seen.
+  `src/` packages are not read; of the denied messages the simulator harness may send
+  only `PARAM_SET`, from a `set_sim_param` that first refuses any name but `SIM_*`, or
+  with a literal `SIM_*` name.
+  mavfile helpers that send denied traffic themselves (`reboot_autopilot`, `set_servo`,
+  `calibrate_level` ...) are refused everywhere outside the gate. Names built at run
+  time (f-strings, arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
   (in `just test-contract`): the manifest names the safety parameter layers of the
   simulator and real-flight profiles and pins the content of the safety files, the Lua
   script, the deny list, the parameter allowlist, the safety rules themselves
   (`sd_sim/params.py`, `sd_safety/constants.py`) and what enforces them (the gate's
-  `allowlist.py`, `sd_sim/sitl.py`, `tools/params_check.py` and both checks); these
+  `vehicle.py`, `connection.py` and `allowlist.py`, `sd_sim/sitl.py`,
+  `tools/params_check.py` and both checks); these
   files must stay pinned, so changing one needs `--update` in the same PR. The check
   fails when a pinned file changes without the manifest, when a failsafe, fence,
   battery, arming, RTL or scripting line in either profile has no rule, when a profile
   breaks the safety rules or the values the ground station reads back, when SITL or
   `sd-onboard` load other layers than the manifest names, or when a sim-only layer (or
   the allowlist) sets a parameter the safety layers set or any safety-relevant name
-  (`FS_`, `FENCE_`, `BATT_`, `BATT2_`, `ARMING_`, `FLTMODE`, `EK3_SRC`, `GPS_`,
-  `MOT_SAFE_`, `RCn_OPTION` ..., in any case). `--update` writes the new digests after
+  (`FS_`, `FENCE_`, every `BATTn_` and `GPSn_`, `ARMING_`, `FLTMODE`, `EK3_SRC`,
+  `MOT_SAFE_`, `RCn_OPTION` ..., in any case); Python files are pinned byte for byte,
+  so a comment change needs `--update` too. `--update` writes the new digests after
   a reviewed change and prints which pinned files changed.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or

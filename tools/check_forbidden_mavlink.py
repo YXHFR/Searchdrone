@@ -82,7 +82,9 @@ ALLOWED_MESSAGES: dict[str, frozenset[str]] = {
     "tools/check_forbidden_mavlink.py": frozenset({"PARAM_SET"}),
 }
 # Path -> the functions in it that may send PARAM_SET because they refuse any name but
-# SIM_* at run time. Elsewhere in the file a PARAM_SET needs a literal SIM_* name.
+# SIM_* at run time: their first statement must be ``if not <name>.startswith("SIM_"):
+# raise ...``, or they get no exemption. Elsewhere in the file a PARAM_SET needs a
+# literal SIM_* name.
 SIM_PARAM_WRITERS: dict[str, frozenset[str]] = {
     # The harness injects faults (SIM_RC_FAIL, the wind ...) through set_sim_param only.
     "simulation/sd_sim/src/sd_sim/harness.py": frozenset({"set_sim_param"}),
@@ -112,6 +114,9 @@ MAVFILE_HELPERS = frozenset(
         "write_message",
     }
 )
+# The helpers that send a denied command or message themselves (reboot, servo, mode,
+# calibration ...): refused everywhere outside the gate, not only in production.
+DENIED_HELPERS = MAVFILE_HELPERS - {"write_message"}
 # Names that open or are a connection, a raw encoder or the gate's own connection.
 CONNECTION_NAMES = frozenset(
     {"mavutil", "mavlink_connection", "mavfile", "MAVLink", "mavlink_map", "_conn"}
@@ -240,15 +245,58 @@ def _param_name(node: ast.Call) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _sim_param_sets(tree: ast.AST, writers: frozenset[str]) -> set[int]:
-    """ids of the PARAM_SET call functions allowed in a SIM_PARAM_WRITERS file."""
+def _guards_sim_name(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """The function opens with ``if not <first parameter>.startswith("SIM_"): raise``."""
+    params = [a.arg for a in fn.args.args if a.arg not in ("self", "cls")]
+    body = fn.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    if not params or not body or not isinstance(body[0], ast.If):
+        return False
+    guard = body[0]
+    test = guard.test
+    return (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and isinstance(test.operand, ast.Call)
+        and isinstance(test.operand.func, ast.Attribute)
+        and test.operand.func.attr == "startswith"
+        and isinstance(test.operand.func.value, ast.Name)
+        and test.operand.func.value.id == params[0]
+        and len(test.operand.args) == 1
+        and isinstance(test.operand.args[0], ast.Constant)
+        and test.operand.args[0].value == SIM_PARAM_PREFIX
+        and isinstance(guard.body[0], ast.Raise)
+    )
+
+
+def _own_calls(fn: ast.AST) -> Iterator[ast.Call]:
+    """The calls in a function's own body, not in a function or class defined inside it."""
+    for child in ast.iter_child_nodes(fn):
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            continue
+        if isinstance(child, ast.Call):
+            yield child
+        yield from _own_calls(child)
+
+
+def _sim_param_sets(tree: ast.Module, writers: frozenset[str]) -> set[int]:
+    """ids of the PARAM_SET call functions allowed in a SIM_PARAM_WRITERS file.
+
+    A writer is a module-level function or a method, defined once under its name, that
+    opens with the SIM_ guard; calls in functions nested inside it are not covered."""
+    found: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    scopes: list[ast.Module | ast.ClassDef] = [tree]
+    scopes += [n for n in tree.body if isinstance(n, ast.ClassDef)]
+    for scope in scopes:
+        for fn in scope.body:
+            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) and fn.name in writers:
+                found.setdefault(fn.name, []).append(fn)
     out: set[int] = set()
-    for fn in ast.walk(tree):
-        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) and fn.name in writers:
+    for defs in found.values():
+        if len(defs) == 1 and _guards_sim_name(defs[0]):
             out |= {
-                id(n.func)
-                for n in ast.walk(fn)
-                if isinstance(n, ast.Call) and _call_name(n.func) in PARAM_SET_CALLS
+                id(n.func) for n in _own_calls(defs[0]) if _call_name(n.func) in PARAM_SET_CALLS
             }
     for n in ast.walk(tree):
         if isinstance(n, ast.Call) and _call_name(n.func) in PARAM_SET_CALLS:
@@ -285,7 +333,9 @@ def check_source(text: str, path: str) -> list[Finding]:
     sim_param_sets = _sim_param_sets(tree, SIM_PARAM_WRITERS.get(path, frozenset()))
 
     def add(node: ast.AST, rule: str, message: str, denied: str | None = None) -> None:
-        if rule in exempt or denied in may_name or id(node) in sim_param_sets:
+        if rule in exempt or denied in may_name:
+            return
+        if denied == "PARAM_SET" and id(node) in sim_param_sets:
             return
         out.append(Finding(path, getattr(node, "lineno", 0), rule, message))
 
@@ -302,7 +352,7 @@ def check_source(text: str, path: str) -> list[Finding]:
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom):
-            module = node.module or "" if isinstance(node, ast.ImportFrom) else ""
+            module = (node.module or "") if isinstance(node, ast.ImportFrom) else ""
             for alias in node.names:
                 full = f"{module}.{alias.name}" if module else alias.name
                 if production and any(n in CONNECTION_NAMES for n in full.split(".")):
@@ -328,6 +378,11 @@ def check_source(text: str, path: str) -> list[Finding]:
                     raw(node, f'"{name}"')
             elif (name in MAVFILE_HELPERS or name == "set_mode") and id(node) not in called:
                 raw(node, f"{name} (utan anrop)")
+        if not production and isinstance(node, ast.Attribute | ast.Name):
+            name = node.attr if isinstance(node, ast.Attribute) else node.id
+            if name in DENIED_HELPERS:
+                text = f"{name}: mavfile-hjälparen skickar förbjuden MAVLink förbi grinden"
+                add(node, "forbidden-command", text)
         if isinstance(node, ast.Attribute | ast.Name):
             name = node.attr if isinstance(node, ast.Attribute) else node.id
             if name in DENIED_COMMAND_NAMES:

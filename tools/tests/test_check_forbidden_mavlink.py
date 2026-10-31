@@ -162,15 +162,29 @@ def test_docstrings_are_prose() -> None:
         # Outside production the simulator and tools may own a connection.
         "self._conn.write_message(m)",
         "send = conn.write_message",
-        "boot = conn.reboot_autopilot",
-        "conn.set_mode('GUIDED')",
+        "harness.set_mode('GUIDED')",
         "conn.param_request_read_send(1, 1, b'FENCE_ENABLE', -1)",
-        "getattr(conn, 'reboot_autopilot')()",
     ],
 )
 def test_connection_helpers_pass_in_the_simulator(line: str) -> None:
-    assert "raw-send" in rules(line)
+    assert set(rules(line)) == {"raw-send"}
     assert rules(line, SIM) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Helpers that send denied traffic themselves: refused everywhere outside the gate.
+        "self._conn.reboot_autopilot()",
+        "self._conn.set_servo(9, 1900)",
+        "self._conn.calibrate_level()",
+        "self._conn.set_mode_rtl()",
+        "boot = conn.reboot_autopilot",
+    ],
+)
+def test_denied_helpers_fail_in_the_simulator(line: str) -> None:
+    assert rules(line, SIM) == ["forbidden-command"]
+    assert rules(line, HARNESS) == ["forbidden-command"]
 
 
 def test_mavlink_map_outside_production_only_for_allowed_ids() -> None:
@@ -193,6 +207,9 @@ def test_the_gate_is_allowed() -> None:
     [
         # set_sim_param refuses any name but SIM_* at run time.
         "def set_sim_param(self, name, v):\n"
+        "    'Docs.'\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
         "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
         "self._conn.mav.param_set_send(1, 1, b'SIM_RC_FAIL', 1, 9)",
         "self._conn.mav.param_set_send(1, 1, 'SIM_WIND_DIR'.encode(), 90, 9)",
@@ -219,11 +236,50 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "self._conn.mav.param_ext_set_send(1, 1, b'SIM_RC_FAIL', b'1', 9)",
         "self._conn.mav.rc_channels_override_send(1, 1, *([1500] * 8))",
         "m = mavlink.MAVLink_set_mode_message(1, 1, 4)",
-        "c = mavlink.MAV_CMD_DO_FENCE_ENABLE",
+        # A set_sim_param without the SIM_ guard first gets no exemption.
+        "def set_sim_param(self, name, v):\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        "def set_sim_param(self, name, v):\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)",
+        "def set_sim_param(self, name, v):\n"
+        "    if not other.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        # A function nested in the writer, or a second writer, gets no exemption.
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    def inner():\n"
+        "        self._conn.mav.param_set_send(1, 1, b'FENCE_ENABLE', 0, 9)",
+        "def set_sim_param(name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    conn.mav.param_set_send(1, 1, name.encode(), v, 9)\n"
+        "class Evil:\n"
+        "    def set_sim_param(self, name, v):\n"
+        "        if not name.startswith('SIM_'):\n"
+        "            raise ValueError(name)\n"
+        "        self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
     ],
 )
 def test_the_harness_may_build_nothing_else(line: str) -> None:
-    assert rules(line, HARNESS) != []
+    assert set(rules(line, HARNESS)) == {"forbidden-message"}
+
+
+def test_the_harness_may_send_no_denied_command() -> None:
+    assert rules("c = mavlink.MAV_CMD_DO_FENCE_ENABLE", HARNESS) == ["forbidden-command"]
+
+
+def test_the_real_harness_guards_set_sim_param() -> None:
+    # The exemption rests on this guard: without it, the harness's PARAM_SET is refused.
+    text = (ROOT / HARNESS).read_text(encoding="utf-8")
+    assert cfm.check_source(text, HARNESS) == []
+    guard = '        if not name.startswith("SIM_"):\n'
+    assert guard in text
+    unguarded = cfm.check_source(text.replace(guard, "        if False:\n"), HARNESS)
+    assert [f.rule for f in unguarded] == ["forbidden-message"]
 
 
 def test_tests_are_not_read() -> None:
