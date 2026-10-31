@@ -116,7 +116,13 @@ def drift_m(track: Track) -> float:
 
 
 def fly_scenario(
-    name: str, physics: str, instance: int, brain: str, flight: Callable[[Harness, Report], None]
+    name: str,
+    physics: str,
+    instance: int,
+    brain: str,
+    flight: Callable[[Harness, Report], None],
+    *,
+    vehicle: str = "sd_quad14",
 ) -> Report:
     cfg = config.load(
         {
@@ -129,7 +135,7 @@ def fly_scenario(
     )
     cfg.home = fixture.load().home.sitl_arg()
     cfg.personal_home = False
-    cfg.vehicle = "sd_quad14"
+    cfg.vehicle = vehicle
     run_dir = new_run_dir(instance, name)
     rep = Report(name, run_dir, instance, physics, brain)
     stack = Stack(cfg, run_dir, observer=False)

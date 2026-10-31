@@ -81,8 +81,9 @@ def test_rules_agree_with_the_ground_station() -> None:
 
 
 # A vehicle's sim layer may raise ATC_ANGLE_MAX this far above FC_ANGLE_MAX_DEG and no
-# further: the ground station's tilt warning stays at FC_ANGLE_MAX_DEG - 10, so it then
-# comes at most 15 degrees before the limit instead of 10.
+# further. The ground station reads ATC_ANGLE_MAX from the flight controller, but keeps
+# FC_ANGLE_MAX_DEG - 10 for its tilt warning when the read fails, which then comes at
+# most 15 degrees before the limit instead of 10.
 SIM_LEAN_HEADROOM_DEG = 5.0
 
 
