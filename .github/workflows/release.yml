@@ -23,12 +23,18 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      pull-requests: read # check_merged_pr_gates: the PR behind each commit
+      statuses: read # and the gate statuses on its head
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup # zizmor: ignore[self-repository]
+      - name: The tagged commit is on main
+        run: |
+          git fetch -q --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - name: The tag matches every version
         env:
           TAG: ${{ github.ref_name }}

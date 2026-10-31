@@ -8,11 +8,18 @@ gate statuses on that pull request's last head commit:
 * the commit must be a pull request's merge commit (squash or merge), not a direct push;
 * ``gate/review``, ``gate/owner`` and ``gate/pr-title`` must each be ``success`` in their
   newest status on the head commit;
-* each of those statuses must be written by ``github-actions[bot]``, the token of the
-  gate workflows. Any other writer (a person's token, another app) could have forged it.
+* each of those statuses must be written by ``github-actions[bot]``. That is the token
+  of every workflow, not only the gates, so it rules out a person's token or another
+  app but not a workflow the pull request itself brought:
+* no workflow file the pull request adds or changes, other than the three gate
+  workflows, may be able to write a gate: ``statuses: write``, ``checks: write``,
+  ``write-all`` or a job named ``gate/...`` or ``review/...`` (read as text at the head
+  commit, so a comment counts too; ``tools/tests/test_workflows.py`` holds main to the
+  same rule).
 
-``--exceptions FILE`` takes one full commit SHA per line (``#`` starts a comment); those
-commits are skipped, for history from before the gates existed. Exit code 1 prints every
+``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
+commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
+before the gates existed. Exit code 1 prints every
 finding as ``<sha12>: message``; 2 means GitHub could not be asked.
 
 Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R-09).
@@ -21,6 +28,7 @@ Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -33,9 +41,17 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_REPO_SLUG = "YXHFR/Searchdrone"
+EXCEPTIONS = REPO / "tools" / "accept" / "pr_gate_exceptions.txt"
 GATES = ("gate/review", "gate/owner", "gate/pr-title")
 GATE_WRITER = "github-actions[bot]"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+GATE_WORKFLOWS = frozenset({"review-gate.yml", "owner-gate.yml", "pr-title.yml"})
+WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
+GATE_WRITE_RE = re.compile(
+    r"(?:statuses|checks)\s*:\s*['\"]?write|write-all|"
+    r"^\s*(?:name\s*:\s*)?['\"]?(?:gate|review)/",
+    re.M,
+)
 
 # GitHub, read-only: the API path -> parsed JSON. Tests pass a fake.
 Api = Callable[[str], Any]
@@ -82,9 +98,10 @@ def git(root: Path, *args: str) -> str:
 
 
 def previous_tag(root: Path, sha: str) -> str | None:
-    """The newest ``v*`` tag reachable from ``sha`` (not ``sha`` itself when it is tagged)."""
+    """The newest release tag ``vN...`` reachable from ``sha`` (not ``sha`` itself)."""
+    argv = ["git", "-C", str(root), "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"]
     proc = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-        ["git", "-C", str(root), "describe", "--tags", "--abbrev=0", "--match", "v*", f"{sha}^"],  # noqa: S607
+        [*argv, f"{sha}^"],
         capture_output=True,
         text=True,
         check=False,
@@ -144,6 +161,22 @@ def gate_problems(statuses: Iterable[dict[str, Any]]) -> list[str]:
     return out
 
 
+def workflow_problems(api: Api, repo: str, number: object, head: str) -> list[str]:
+    """Workflows the pull request adds or changes that could write a gate status."""
+    out = []
+    for f in api(f"repos/{repo}/pulls/{number}/files?per_page=100"):
+        path = str(f.get("filename", ""))
+        if f.get("status") == "removed" or not WORKFLOW_RE.match(path):
+            continue
+        if path.rsplit("/", 1)[-1] in GATE_WORKFLOWS:
+            continue
+        (blob,) = api(f"repos/{repo}/contents/{path}?ref={head}")
+        text = base64.b64decode(str(blob.get("content", ""))).decode("utf-8", "replace")
+        if GATE_WRITE_RE.search(text):
+            out.append(f"{path} kan skriva en grind (statuses/checks: write eller gate-namn)")
+    return out
+
+
 def check_commit(api: Api, repo: str, sha: str) -> list[Finding]:
     pr = merged_pull(api, repo, sha)
     if pr is None:
@@ -151,7 +184,8 @@ def check_commit(api: Api, repo: str, sha: str) -> list[Finding]:
     head = str(pr["head"]["sha"])
     number = pr.get("number")
     statuses = api(f"repos/{repo}/commits/{head}/statuses?per_page=100")
-    return [Finding(sha, f"PR #{number}: {p}") for p in gate_problems(statuses)]
+    problems = gate_problems(statuses) + workflow_problems(api, repo, number, head)
+    return [Finding(sha, f"PR #{number}: {p}") for p in problems]
 
 
 def check(
@@ -169,7 +203,7 @@ def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser.add_argument("--sha", default="HEAD", help="the commit to release (default HEAD)")
     parser.add_argument("--since", help="older end, excluded (default: the previous v* tag)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO_SLUG))
-    parser.add_argument("--exceptions", type=Path)
+    parser.add_argument("--exceptions", type=Path, default=EXCEPTIONS)
     args = parser.parse_args(argv)
     sha = git(REPO, "rev-parse", f"{args.sha}^{{commit}}")
     since = args.since or previous_tag(REPO, sha)

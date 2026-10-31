@@ -15,8 +15,10 @@ All notable changes to this project are listed here. The format follows
   the commit list from git-cliff (`cliff.toml`, pinned in `simulation/versions.lock`).
   It never commits or tags. `tools/check_merged_pr_gates.py` checks that every commit on
   main since the previous `v*` tag is a merged pull request's commit whose `gate/review`,
-  `gate/owner` and `gate/pr-title` were green and written by `github-actions[bot]`.
-  `.github/workflows/release.yml` runs both checks on a pushed `v*` tag, builds the
+  `gate/owner` and `gate/pr-title` were green and written by `github-actions[bot]`, and
+  whose own workflow changes cannot write a gate (`github-actions[bot]` writes for every
+  workflow). `.github/workflows/release.yml` refuses a tag that is not on main, runs both
+  checks on a pushed `v*` tag, builds the
   packages and the panel and publishes the GitHub release; only its publish job can
   write. `just showcase` is still not built.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection

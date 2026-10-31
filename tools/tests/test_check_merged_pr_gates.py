@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,12 @@ class FakeGitHub:
     def __init__(self) -> None:
         self.prs: dict[str, dict[str, Any]] = {}
         self.statuses: dict[str, list[dict[str, Any]]] = {}
+        self.files: dict[int, list[dict[str, Any]]] = {}
+        self.contents: dict[tuple[str, str], str] = {}
+
+    def workflow(self, number: int, head: str, path: str, text: str, status: str = "added"):
+        self.files.setdefault(number, []).append({"filename": path, "status": status})
+        self.contents[(path, head)] = text
 
     def merged(self, sha: str, number: int, head: str, statuses: list[dict[str, Any]]) -> None:
         self.prs[sha] = {
@@ -37,7 +44,13 @@ class FakeGitHub:
         self.statuses[head] = statuses
 
     def __call__(self, path: str) -> Any:
+        if "/contents/" in path:
+            file, ref = path.split("/contents/", 1)[1].split("?ref=")
+            raw = self.contents[(file, ref)].encode()
+            return [{"content": base64.b64encode(raw).decode()}]
         parts = path.split("?")[0].split("/")
+        if parts[3] == "pulls":
+            return self.files.get(int(parts[4]), [])
         sha = parts[4]
         if parts[-1] == "pulls":
             return [self.prs[sha]] if sha in self.prs else []
@@ -86,6 +99,50 @@ def test_red_missing_or_forged_gates_fail(statuses: list[dict[str, Any]], expect
     assert [f.message for f in cmg.check(gh, REPO, ["e" * 40])] == [expected]
 
 
+FORGER = """on: pull_request
+permissions: {}
+jobs:
+  paint:
+    permissions:
+      statuses: write
+    runs-on: ubuntu-24.04
+"""
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "status", "flagged"),
+    [
+        (".github/workflows/paint.yml", FORGER, "added", True),
+        (".github/workflows/paint.yaml", "permissions: write-all\n", "modified", True),
+        (".github/workflows/x.yml", "jobs:\n  a:\n    name: gate/review\n", "added", True),
+        (
+            ".github/workflows/x.yml",
+            "jobs:\n  a:\n    permissions:\n      checks: write\n",
+            "added",
+            True,
+        ),
+        (".github/workflows/paint.yml", FORGER, "removed", False),
+        (".github/workflows/review-gate.yml", FORGER, "modified", False),
+        (".github/workflows/ci.yml", "permissions:\n  contents: read\n", "modified", False),
+        ("docs/statuses.yml", FORGER, "added", False),
+    ],
+)
+def test_a_workflow_from_the_pr_that_can_write_a_gate_fails(
+    path: str, text: str, status: str, flagged: bool
+) -> None:
+    # github-actions[bot] writes for every workflow: green gates from the PR's own
+    # workflow look exactly like the real ones, so the workflow itself is checked.
+    gh = FakeGitHub()
+    gh.merged("9" * 40, 7, "h7", green())
+    gh.workflow(7, "h7", path, text, status)
+    messages = [f.message for f in cmg.check(gh, REPO, ["9" * 40])]
+    assert messages == (
+        [f"PR #7: {path} kan skriva en grind (statuses/checks: write eller gate-namn)"]
+        if flagged
+        else []
+    )
+
+
 def test_the_newest_status_decides() -> None:
     gh = FakeGitHub()
     later_red = [*green(), status("gate/review", "failure", at="2026-10-01T12:00:00Z")]
@@ -119,6 +176,7 @@ def test_commits_since_the_previous_tag(tmp_path: Path) -> None:
     second = commit()
     third = commit()
     cmg.git(tmp_path, *env, "tag", "v0.2.0")
+    cmg.git(tmp_path, *env, "tag", "v-test", second)  # not a release tag
     assert cmg.previous_tag(tmp_path, third) == "v0.1.0"
     assert cmg.commits(tmp_path, "v0.1.0", third) == [second, third]
     assert cmg.previous_tag(tmp_path, first) is None
@@ -141,3 +199,13 @@ def test_github_errors_exit_2() -> None:
 
     head = cmg.git(cmg.REPO, "rev-parse", "HEAD")
     assert cmg.main(["--sha", head, "--since", f"{head}~1"], api=broken) == 2
+
+
+def test_the_pre_gate_history_is_excepted_by_default(capsys: pytest.CaptureFixture[str]) -> None:
+    shas = cmg.read_exceptions(cmg.EXCEPTIONS)
+    # The first-parent line up to PR #11, which added owner-gate.yml; nothing later.
+    assert len(shas) == 15
+    assert "1a64a2804e4ea54d8c910caafbf92ff88ddbab28" in shas
+    head = cmg.git(cmg.REPO, "rev-parse", "HEAD")
+    assert cmg.main(["--sha", head, "--since", f"{head}~1", "--repo", REPO], api=FakeGitHub()) == 1
+    assert "0 commits" not in capsys.readouterr().out
