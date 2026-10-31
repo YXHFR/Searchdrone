@@ -8,6 +8,20 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
+  fails when code outside the MAVLink gate `sd_mav` names a message or command from its
+  deny list (parameter writes, switching off the fence, flight termination, forced
+  arming with 21196 ...), or when production code writes on a pymavlink connection
+  itself instead of through `Vehicle.send`. Tests are not read; the simulator harness may
+  set `SIM_*` parameters.
+- The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
+  (in `just test-contract`): the manifest names the safety parameter layers of the
+  simulator and real-flight profiles and pins the content of the safety files, the Lua
+  script, the deny list and the parameter allowlist. The check fails when a pinned file
+  changes without the manifest, when a profile breaks the safety rules or the values the
+  ground station reads back, when SITL or `sd-onboard` load other layers than the
+  manifest names, or when a sim-only layer (or the allowlist) could set a safety
+  parameter. `--update` writes the new digests after a reviewed change.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
   fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures

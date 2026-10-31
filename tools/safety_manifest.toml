@@ -1,0 +1,38 @@
+# The safety manifest: which parameter layers make up the flight controller's safety
+# configuration per profile, and the files whose content is pinned. Checked by
+# tools/check_safety_manifest.py (just test-contract): the layers must meet the safety
+# rules in sd_sim.params, match what SITL and sd-onboard really load, and every pinned
+# file must have the digest below. A change to a pinned file is a safety change: update
+# the digest with `uv run tools/check_safety_manifest.py --update` in the same pull
+# request and say why in its description.
+
+# Layers in load order; a later layer wins.
+[profile.sim]
+layers = ["simulation/sitl/params/searchdrone-safety.parm"]
+
+[profile.field]
+layers = [
+  "simulation/sitl/params/searchdrone-safety.parm",
+  "simulation/sitl/params/searchdrone-safety.field.parm",
+]
+
+# .parm and .toml files are pinned by content (names and values), the rest by bytes.
+[[pinned]]
+path = "simulation/sitl/params/searchdrone-safety.parm"
+sha256 = "ef050e949d2d802afb1224fb0a437251c609050700340a9df462ce2a6e62c0cb"
+
+[[pinned]]
+path = "simulation/sitl/params/searchdrone-safety.field.parm"
+sha256 = "2e65e836d2d543c9180054c57aa5f1d16f660e18e0c83f34047c3929682bb7e3"
+
+[[pinned]]
+path = "simulation/sitl/scripts/sd_gcs_loiter_cap.lua"
+sha256 = "d3c41c7724dc147f13887b67141dda009f6d8fb4b7ffc505cc647ab912b6945d"
+
+[[pinned]]
+path = "tools/params_allowlist.toml"
+sha256 = "2e2049b52dc066986b13771ed07c49b5659c3992a0d6d35fd9ff7be06a5331ca"
+
+[[pinned]]
+path = "software/common/mav/src/sd_mav/denylist.py"
+sha256 = "7c04e5a4f1f9328a4eac036c436207673ff429bac48653581762851c8c78f1c1"
