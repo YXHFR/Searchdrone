@@ -277,6 +277,67 @@ def test_any_protected_path_needs_the_owner(change: dict[str, Any]) -> None:
     assert message.startswith("PR #5: gate/owner: ")
 
 
+@pytest.mark.parametrize(
+    ("parent_rules", "ok"),
+    [
+        (None, True),  # no list before the merge: only this copy's rules
+        ('PROTECTED = (re.compile(r"^docs/keys\\.md$"),)\n', False),
+        ('PROTECTED = (re.compile(r"^DOCS/", re.IGNORECASE),)\n', False),
+        ('PROTECTED = (re.compile(r"^other/"),)\n', True),
+        ("PROTECTED = (re.compile(PATTERN),)\n", True),  # not a literal: left out
+        ("not python (\n", True),
+    ],
+)
+def test_the_parents_protected_paths_apply(parent_rules: str | None, ok: bool) -> None:
+    # A path the merge's parent protects needs owner-ok even if this copy's list
+    # (or the list the merge itself leaves behind) no longer names it.
+    gh = FakeGitHub()
+    gh.merged("3" * 40, 6, H3)
+    git = FakeGit()
+    git.add("3" * 40, "docs/keys.md", status="modified")
+    if parent_rules is not None:
+        git.contents[("3" * 40 + "^1", cmg.OWNER_GATE)] = parent_rules
+    messages = run(gh, "3" * 40, git)
+    assert (messages == []) is ok
+    if not ok:
+        assert messages == [
+            "PR #6: gate/owner: ändrar docs/keys.md utan ägarens owner-ok efter head-commiten"
+        ]
+
+
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        # Weakening the gates themselves: each needs owner-ok under the rules before it.
+        ("tools/check_owner_gate.py", "PROTECTED = ()\n"),
+        ("tools/check_merged_pr_gates.py", "def main(argv=None, api=None):\n    return 0\n"),
+        ("tools/accept/pr_gate_exceptions.txt", "a" * 40 + "\n"),
+        # release.yml without its gates job.
+        (
+            ".github/workflows/release.yml",
+            "on:\n  push:\n    tags: [v1]\npermissions:\n  contents: read\n"
+            "jobs:\n  build:\n    runs-on: x\n",
+        ),
+    ],
+)
+def test_weakening_the_release_check_needs_the_owner(path: str, text: str) -> None:
+    gh = FakeGitHub()
+    gh.merged("4" * 40, 10, H4)
+    git = FakeGit()
+    git.add("4" * 40, path, text, "modified")
+    (message,) = run(gh, "4" * 40, git)
+    assert message == f"PR #10: gate/owner: ändrar {path} utan ägarens owner-ok efter head-commiten"
+    gh.events[10] = [label()]
+    assert run(gh, "4" * 40, git) == []
+
+
+def test_read_protected_matches_check_owner_gate() -> None:
+    text = (cmg.REPO / cmg.OWNER_GATE).read_text(encoding="utf-8")
+    import check_owner_gate
+
+    assert cmg.read_protected(text) == list(check_owner_gate.PROTECTED)
+
+
 def test_local_git_lists_renames_and_deletes(tmp_path: Path) -> None:
     env = ["-c", "user.name=t", "-c", "user.email=1+t@users.noreply.github.com"]
     env += ["-c", "commit.gpgsign=false"]
@@ -355,6 +416,19 @@ GATE = "on:\n  pull_request_target:\n  issue_comment:\npermissions:\n  statuses:
         ),
         (".github/workflows/x.yml", 'permissions:\n  "\\x73tatuses": write\n', "added", "(top)"),
         (".github/workflows/x.yml", "permissions: [\n", "added", "går inte att läsa"),
+        (
+            ".github/workflows/x.yml",
+            "permissions:\n  pull-requests: write\n",
+            "added",
+            "kan godkänna i ägarens ställe (top)",
+        ),
+        (
+            ".github/workflows/x.yml",
+            "permissions: {}\njobs:\n  a:\n    permissions: {}\n    env:\n"
+            "      GH_TOKEN: ${{ secrets.PAT }}\n",
+            "modified",
+            "kan godkänna i ägarens ställe (token a)",
+        ),
         # A gate workflow may change, but must still run only from the base branch.
         (".github/workflows/review-gate.yml", FORGER, "modified", "trigger pull_request"),
         (

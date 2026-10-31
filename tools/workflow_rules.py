@@ -5,18 +5,30 @@ protection and ``tools/check_merged_pr_gates.py`` trust, and every workflow writ
 ``github-actions[bot]``. So only the three gate workflows may write statuses or check
 runs or name a job like a gate, and they may only run from the base branch
 (``pull_request_target``, ``issue_comment``), never from a pull request's own code.
+Nor may any other workflow approve on the owner's behalf (``docs/security.md``): no
+``pull-requests: write`` or ``issues: write`` (labels and comments are the gates'
+evidence) and no token from a secret (a personal access token acts as its owner).
 ``tools/tests/test_workflows.py`` holds main to these rules; ``check_merged_pr_gates.py``
 applies them to the workflow files each merged pull request changed (A18).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 GATE_WORKFLOWS = frozenset({"review-gate.yml", "owner-gate.yml", "pr-title.yml"})
 GATE_NAME_PREFIXES = ("gate/", "review/")
 # Both run the workflow file from the base branch, so a pull request cannot change it.
 GATE_TRIGGERS = frozenset({"pull_request_target", "issue_comment"})
+# Scopes that can comment, label or review: what the gates read as the owner's word.
+APPROVAL_SCOPES = ("pull-requests", "issues")
+# A key that passes a token (token, github-token, GH_TOKEN, repo-token ...).
+TOKEN_KEY_RE = re.compile(r"(^|[-_])token$", re.IGNORECASE)
+SECRET_RE = re.compile(r"\bsecrets\b", re.IGNORECASE)
+WORKFLOW_TOKEN_RE = re.compile(
+    r"secrets\s*\.\s*github_token\b|secrets\s*\[\s*'github_token'", re.IGNORECASE
+)
 
 
 def triggers(doc: dict[Any, Any]) -> dict[str, Any]:
@@ -69,3 +81,43 @@ def gate_trigger_problems(doc: dict[Any, Any]) -> list[str]:
     if not on:
         return ["inga triggers"]
     return [f"trigger {t}" for t in sorted(map(str, on)) if t not in GATE_TRIGGERS]
+
+
+def _secret_tokens(node: Any) -> bool:
+    """Somewhere under ``node`` a token key takes a secret other than ``GITHUB_TOKEN``."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if (
+                TOKEN_KEY_RE.search(str(key))
+                and SECRET_RE.search(str(value))
+                and not WORKFLOW_TOKEN_RE.fullmatch(
+                    str(value).replace("${{", "").replace("}}", "").strip()
+                )
+            ):
+                return True
+            if _secret_tokens(value):
+                return True
+    elif isinstance(node, list):
+        return any(_secret_tokens(v) for v in node)
+    return False
+
+
+def approval_writers(doc: dict[Any, Any]) -> list[str]:
+    """Where a workflow could speak for the owner: ``pull-requests: write`` or
+    ``issues: write`` (``write-all`` is already a status writer) at ``top`` or
+    ``job <id>``, or a token taken from a secret (``token top``, ``token <id>``)."""
+
+    def grants(perms: Any) -> bool:
+        return isinstance(perms, dict) and any(perms.get(s) == "write" for s in APPROVAL_SCOPES)
+
+    out = ["top"] if grants(doc.get("permissions")) else []
+    if _secret_tokens({k: v for k, v in doc.items() if k != "jobs"}):
+        out.append("token top")
+    for name, job in (doc.get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        if grants(job.get("permissions")):
+            out.append(f"job {name}")
+        if _secret_tokens(job):
+            out.append(f"token {name}")
+    return out

@@ -9,7 +9,7 @@ from typing import Any
 import check_owner_gate
 import pytest
 import yaml
-from workflow_rules import GATE_WORKFLOWS, gate_trigger_problems, status_writers
+from workflow_rules import GATE_WORKFLOWS, approval_writers, gate_trigger_problems, status_writers
 
 ROOT = Path(__file__).resolve().parents[2]
 # GitHub runs both extensions; a rule that only read *.yml could be dodged with *.yaml.
@@ -52,6 +52,39 @@ def test_only_the_gate_workflows_write_statuses(path: Path) -> None:
         return
     where = status_writers(load(path))
     assert not where, f"{path.name}: can write a gate ({', '.join(where)}) outside the gates"
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=ids(WORKFLOWS))
+def test_only_the_gate_workflows_can_approve(path: Path) -> None:
+    if path.name in STATUS_WRITERS:
+        return
+    where = approval_writers(load(path))
+    assert not where, f"{path.name}: can approve for the owner ({', '.join(where)})"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("permissions:\n  pull-requests: write\njobs: {}\n", ["top"]),
+        ("permissions: {}\njobs:\n  a:\n    permissions:\n      issues: write\n", ["job a"]),
+        ("permissions:\n  pull-requests: read\n  issues: read\njobs: {}\n", []),
+        (
+            "jobs:\n  a:\n    steps:\n      - uses: x/y@1\n        with:\n"
+            "          github-token: ${{ secrets.OWNER_PAT }}\n",
+            ["token a"],
+        ),
+        ("env:\n  GH_TOKEN: ${{ secrets.BOT }}\njobs: {}\n", ["token top"]),
+        ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n", []),
+        ("jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ github.token }}\n", []),
+        (
+            "jobs:\n  a:\n    env:\n      GH_TOKEN: ${{ secrets.GITHUB_TOKEN || secrets.PAT }}\n",
+            ["token a"],
+        ),
+        ("jobs:\n  a:\n    env:\n      API_KEY: ${{ secrets.KEY }}\n", []),
+    ],
+)
+def test_approval_writers(text: str, expected: list[str]) -> None:
+    assert approval_writers(yaml.safe_load(text)) == expected
 
 
 def test_the_gate_workflows_exist_and_write_statuses() -> None:
@@ -588,7 +621,12 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     ]
     assert str(gates[0]["uses"]).startswith("actions/checkout@")
     run = str(gates[2]["run"])
-    copied = set(re.findall(r"tools/[\w./]+", run))
+    # Copied from the newest earlier release on the tag's line, or the tag for the first.
+    assert 'git show "$rules:tools/$f" > "$gate/$f"' in run
+    assert '--since "$since"' in run and "gh release list --exclude-drafts" in run
+    loop = re.search(r"for f in ([^;]+); do", run.replace("\\\n", " "))
+    assert loop is not None
+    copied = {f"tools/{name}" for name in loop[1].split()}
     assert copied == {
         "tools/check_merged_pr_gates.py",
         "tools/workflow_rules.py",
@@ -602,7 +640,10 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     # Python runs only after leaving the clone, and with -m only isolated (-I), so no
     # repository file (venv.py, pip/, yaml.py) can stand in for a module.
     lines = [line.strip() for line in run.splitlines()]
-    first_python = next(i for i, line in enumerate(lines) if "python" in line)
+    # (The version check before it runs isolated (-I) with -c: no file is read.)
+    first_python = next(
+        i for i, line in enumerate(lines) if "python" in line and " -I -c " not in line
+    )
     assert 'cd "$gate"' in lines[:first_python]
     assert all(" -I -m " in line for line in lines if " -m " in line)
     assert not re.search(r"\b(just|uv|pnpm)\b|\./", run), run

@@ -21,13 +21,16 @@ concurrency:
 
 jobs:
   # First and alone: nothing from the repository runs here except the four gate scripts,
-  # which check_owner_gate.PROTECTED keeps behind owner-ok. They run from a clean
-  # directory (no other tools/*.py can shadow an import) with PyYAML pinned by hash here.
+  # which check_owner_gate.PROTECTED keeps behind owner-ok. They come from the newest
+  # published release on the tag's line (the tagged commit only for the first release),
+  # so a later merge that loosened them is judged by the rules before it, and the check
+  # starts after that release, which passed it. They run from a clean directory (no other
+  # tools/*.py can shadow an import) with PyYAML pinned by hash for Python 3.12.
   gates:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: read # and the published releases
       pull-requests: read # check_merged_pr_gates: the PR behind each commit
       issues: read # and its review comments and owner-ok label events
       checks: read # and when its head commit reached GitHub (the first check suite)
@@ -43,11 +46,32 @@ jobs:
       - name: Every commit on main came from a pull request with green gates
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          # The PyYAML hash below is the cp312 wheel's.
+          /usr/bin/python3 -I -c 'import sys; sys.exit(sys.version_info[:2] != (3, 12))' || {
+            echo "release.yml väntar sig Python 3.12 för PyYAML-hashen" >&2
+            exit 1
+          }
+          # The newest published release whose tag is on this tag's line.
+          since=""
+          rules="$GITHUB_SHA"
+          for tag in $(gh release list --exclude-drafts --limit 100 --json tagName --jq '.[].tagName'); do
+            [ "$tag" = "$GITHUB_REF_NAME" ] && continue
+            commit=$(git rev-parse --verify -q "refs/tags/$tag^{commit}") || continue
+            if git merge-base --is-ancestor "$commit" "$GITHUB_SHA"; then
+              since="$commit"
+              rules="$commit"
+              echo "Regler och startpunkt från $tag ($commit)"
+              break
+            fi
+          done
           gate="$RUNNER_TEMP/gate"
           mkdir -p "$gate"
-          cp tools/check_merged_pr_gates.py tools/workflow_rules.py \
-            tools/check_owner_gate.py tools/check_review_comments.py "$gate/"
+          for f in check_merged_pr_gates.py workflow_rules.py check_owner_gate.py \
+            check_review_comments.py; do
+            git show "$rules:tools/$f" > "$gate/$f"
+          done
           # Out of the clone and isolated (-I): no repository file can stand in for a module.
           cd "$gate"
           /usr/bin/python3 -I -m venv venv
@@ -56,7 +80,7 @@ jobs:
           venv/bin/python -I -m pip install -q --no-deps --only-binary :all: --require-hashes \
             -r requirements.txt
           venv/bin/python -E -s check_merged_pr_gates.py \
-            --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA"
+            --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA" ${since:+--since "$since"}
 
   build:
     needs: gates

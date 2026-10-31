@@ -14,32 +14,41 @@ local clone:
   ``review/<role>: approve`` for all three roles, naming the head commit. A comment
   deleted after the merge leaves no trace, so this trusts that verdicts are not deleted
   (the gate's own assumption);
-* ``gate/owner``: if the merge changed a path in ``check_owner_gate.PROTECTED``,
+* ``gate/owner``: if the merge changed a protected path,
   ``check_owner_gate.approved_by_label_events``: the newest ``owner-ok`` event before
   the merge is the owner adding it after the head commit reached GitHub (its first check
   suite; a head without one fails) and after any base change, force push or reopening.
   Issue events do not record ordinary pushes, so a label set before new commits counts
   only if the live gate's ``synchronize`` run failed to remove it; and a head pushed
-  earlier to another branch dates from that push;
+  earlier to another branch dates from that push. The protected paths are this copy's
+  ``check_owner_gate.PROTECTED`` together with the list in the merge's first parent
+  (read from ``tools/check_owner_gate.py`` there, never run), so a merge is judged by
+  the rules in force before it: a pull request that shortens the list, makes this check
+  pass everything or edits the exceptions file still needs ``owner-ok`` itself;
 * ``gate/pr-title``: the title at the merge (later renames undone) follows
   ``PR_TITLE_RE``, the rule in ``pr-title.yml`` (kept equal by a test);
 * no workflow file the merge adds or changes can write a gate, read as YAML
   (``tools/workflow_rules.py``): outside the three gate workflows no ``statuses: write``,
   ``checks: write``, ``write-all``, missing ``permissions`` or job named like a gate; the
-  gate workflows only on ``pull_request_target`` and ``issue_comment``.
+  gate workflows only on ``pull_request_target`` and ``issue_comment``; and none outside
+  them with ``pull-requests: write``, ``issues: write`` or a token from a secret.
 
-Tags and releases do not shorten the default range, since anyone who can push a tag
-could then hide older commits. Old pull requests are judged by today's rules; when a rule
-changes, the owner lists the merges it would newly fail in the exceptions file. It costs
-four API calls per commit (five when protected paths changed, more past 100 comments or
-events): about 450 for 100 commits, within the token's 1000 requests an hour until main
-has about 200 commits.
+Tags do not shorten the default range, since anyone who can push a tag could then hide
+older commits. The release workflow instead starts after the newest published release
+on the tag's line (``--since``; that release passed this check) and runs this check and
+its rules from that release, not from the commit being released; only the first release
+checks the whole history with the tagged commit's own copy. Old pull requests are judged
+by today's rules; when a rule changes, the owner lists the merges it would newly fail in
+the exceptions file. It costs four API calls per commit (five when protected paths
+changed, more past 100 comments or events), about 450 for 100 commits; past the token's
+1000 requests an hour ``gh`` fails and so does the check (exit 2).
 
 ``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
 commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
 before the gates existed and for commits the owner has accepted. The file needs the
-owner's ``owner-ok`` to change (``check_owner_gate.PROTECTED``). Exit code 1 prints every
-finding as ``<sha12>: message``; 2 means GitHub could not be asked.
+owner's ``owner-ok`` to change (``check_owner_gate.PROTECTED``), and a merge cannot list
+itself, so every entry was added by a later merge that this check holds to that. Exit
+code 1 prints every finding as ``<sha12>: message``; 2 means GitHub could not be asked.
 
 Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R-09).
 """
@@ -47,6 +56,7 @@ Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -61,7 +71,12 @@ from typing import Any, Protocol
 import check_owner_gate
 import check_review_comments
 import yaml
-from workflow_rules import GATE_WORKFLOWS, gate_trigger_problems, status_writers
+from workflow_rules import (
+    GATE_WORKFLOWS,
+    approval_writers,
+    gate_trigger_problems,
+    status_writers,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_REPO_SLUG = "YXHFR/Searchdrone"
@@ -75,6 +90,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # git diff --name-status letters -> the status names of the GitHub files API.
 GIT_STATUS = {"A": "added", "D": "removed"}
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
+OWNER_GATE = "tools/check_owner_gate.py"
 
 # GitHub, read-only: the API path -> parsed JSON. Tests pass a fake.
 Api = Callable[[str], Any]
@@ -189,6 +205,49 @@ class LocalGit:
         return git(self.root, "show", f"{sha}:{path}", strip=False)
 
 
+def read_protected(text: str) -> list[re.Pattern[str]]:
+    """``PROTECTED`` from the text of a ``check_owner_gate.py``, read and never run:
+    each ``re.compile("...")``, with ``re.IGNORECASE`` if given. Anything else in the
+    tuple is left out; this copy's own list applies as well."""
+    out: list[re.Pattern[str]] = []
+    for node in ast.parse(text).body:
+        target = node.targets[0] if isinstance(node, ast.Assign) else None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        value = getattr(node, "value", None)
+        if not (isinstance(target, ast.Name) and target.id == "PROTECTED"):
+            continue
+        for item in value.elts if isinstance(value, (ast.Tuple, ast.List)) else []:
+            if not (isinstance(item, ast.Call) and item.args):
+                continue
+            pattern, *flags = item.args
+            if not (isinstance(pattern, ast.Constant) and isinstance(pattern.value, str)):
+                continue
+            ignore = any(
+                isinstance(f, ast.Attribute) and f.attr in ("IGNORECASE", "I") for f in flags
+            )
+            try:
+                out.append(re.compile(pattern.value, re.IGNORECASE if ignore else 0))
+            except re.error:
+                continue
+    return out
+
+
+def parent_protected(local: Clone, sha: str) -> list[re.Pattern[str]]:
+    """The protected paths in force before the merge: its first parent's list."""
+    try:
+        return read_protected(local.show(f"{sha}^1", OWNER_GATE))
+    except (KeyError, SyntaxError, ValueError, subprocess.CalledProcessError):
+        return []
+
+
+def protected_files(files: list[dict[str, Any]], rules: Iterable[re.Pattern[str]]) -> list[str]:
+    """The changed paths (old and new names) that one of ``rules`` matches."""
+    rules = list(rules)
+    names = (f.get(k) for f in files for k in ("filename", "previous_filename"))
+    return sorted({n for n in names if isinstance(n, str) and any(r.search(n) for r in rules)})
+
+
 def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> list[str]:
     """gate/review worked out again: the gate's own rule over the comments before the merge."""
     merged = check_review_comments.parse_time(str(pr["merged_at"]))
@@ -273,8 +332,11 @@ def workflow_problems(local: Clone, sha: str, files: list[dict[str, Any]]) -> li
                 f"{path}: {p} (bara pull_request_target/issue_comment)"
                 for p in gate_trigger_problems(doc)
             ]
-        elif where := status_writers(doc):
-            out.append(f"{path} kan skriva en grind ({', '.join(where)})")
+        else:
+            if where := status_writers(doc):
+                out.append(f"{path} kan skriva en grind ({', '.join(where)})")
+            if where := approval_writers(doc):
+                out.append(f"{path} kan godkänna i ägarens ställe ({', '.join(where)})")
     return out
 
 
@@ -290,7 +352,8 @@ def check_commit(api: Api, repo: str, sha: str, local: Clone) -> list[Finding]:
     events = api(f"repos/{repo}/issues/{pr['number']}/events?per_page=100")
     files = local.files(sha)
     problems = review_problems(api, repo, pr, head_time)
-    if protected := check_owner_gate.protected_files(files):
+    rules = [*check_owner_gate.PROTECTED, *parent_protected(local, sha)]
+    if protected := protected_files(files, rules):
         since = pushed_at(api, repo, head, head_time)
         problems += owner_problems(repo.split("/", 1)[0], pr, events, since, protected)
     if not PR_TITLE_RE.match(title_at_merge(pr, events)):
