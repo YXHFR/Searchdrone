@@ -164,16 +164,15 @@ def gh_api(path: str) -> Any:
     runs out of requests, waits for the limit to reset (at most ``RATE_LIMIT_WAITS``
     times, an hour each) and asks again, so a long range only takes longer; any other
     error, or a limit that keeps hitting, stops the check."""
-    for waits in range(RATE_LIMIT_WAITS + 1):
-        proc = _gh("--paginate", "--slurp", path)
-        if proc.returncode == 0:
-            break
+    waits = 0
+    while (proc := _gh("--paginate", "--slurp", path)).returncode != 0:
         tail = (proc.stderr.strip().splitlines() or [""])[-1]
         if "rate limit" not in proc.stderr.lower() or waits == RATE_LIMIT_WAITS:
             raise GitHubError(f"gh api {path}: kod {proc.returncode}: {tail}")
         delay = min(rate_limit_wait(time.time()), 3700.0)
         print(f"gh api: {tail}; väntar {delay:.0f} s", file=sys.stderr, flush=True)
         time.sleep(delay)
+        waits += 1
     pages = json.loads(proc.stdout or "[]")
     out: list[Any] = []
     for page in pages:
