@@ -133,9 +133,11 @@ All notable changes to this project are listed here. The format follows
   `RTL_SPEED_MS` through the air). The 1.3 margin stays. The strictest of the estimate
   as before, the same with the flight controller's numbers and the one with the wind
   decides, so the warning never comes later than before, and a wind too strong to get
-  home in warns at once. `ENERGY_HOME` also starts the battery guard's FLY HOME
-  (`battery_rtl`, `vehicle.battery_rtl` with `reason: energy_home`); the guard's
-  percentage level and the flight controller's failsafes are unchanged. SITL W5 shows
+  home in (once the drag is measured) warns at once. The wind used is the mean over the
+  last 60 s, so one gust does not count. `ENERGY_HOME` also starts the battery guard's
+  FLY HOME (`battery_rtl`, `vehicle.battery_rtl` with `reason: energy_home`), but not
+  while the pilot flies by hand; the guard's percentage level and the flight
+  controller's failsafes are unchanged. SITL W5 shows
   the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35.
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):

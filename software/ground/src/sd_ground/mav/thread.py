@@ -43,7 +43,7 @@ from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.mav.gnss_watch import GnssWatch, text_alarm
 from sd_ground.services.latches import HOME_LATCHES, Latches
-from sd_ground.services.wind import WIND_PARAMS, WindStage, WindWatch, fc_params
+from sd_ground.services.wind import WIND_PARAMS, FcParams, WindStage, WindWatch, fc_params
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.failsafe_signals import text_signal
@@ -626,9 +626,11 @@ class GroundMav:
         latch = self.latches.get(self.vehicle_id)
         mode = snap.fc_mode
         at_level = t.battery_pct is not None and t.battery_pct <= self._rtl_pct()
+        # Never while the pilot steers by hand: only the percentage level overrides that.
         energy = (
             self._energy_short_at is not None
             and self.clock.monotonic() - self._energy_short_at <= ENERGY_FRESH_S
+            and not snap.by_hand
         )
         low = at_level or energy
         blocked = (
@@ -676,7 +678,8 @@ class ThreadSafeMav:
         self.wind = WindWatch() if wind is None else wind
         self._wind_lock = threading.Lock()
         # The flight controller's own lean limit, RTL speed and battery numbers for the
-        # wind check, read once per connection (the fence check's parameter reading).
+        # wind check, read once per connection (the fence check's parameter reading). The
+        # read runs in the MAVLink loop; its result is taken here, by the callers.
         self._params_read: concurrent.futures.Future[dict[str, float | None]] | None = None
         self._params_done = False
         self._params_retry_at: float = -math.inf
@@ -743,50 +746,59 @@ class ThreadSafeMav:
 
     def telemetry(self, vehicle_id: str) -> Telemetry | None:
         snap = self.snapshot()
-        if snap is not None and not snap.connected:
-            self._params_done = False  # read again after the next connect (a reboot)
         if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
+            if snap is not None and not snap.connected:
+                self._forget_wind_params()  # read again after the next connect (a reboot)
             return None
-        self._read_wind_params()
         with self._wind_lock:
+            self._wind_params()
             self.wind.observe(snap.telemetry, snap.now_mono_ms)
             wind = self.wind.check(snap.telemetry, snap.now_mono_ms)
         self._call(self.core.energy_short, "ENERGY_HOME" in wind.reasons)
         return to_telemetry(snap, self.core.clock.utc_now(), wind)
 
-    def _read_wind_params(self) -> None:
-        """Start reading ``WIND_PARAMS`` in the MAVLink thread's loop unless they are read
-        for this connection or a read is under way. Until they are, the wind check uses
-        the constants (``FcParams()``)."""
-        now = self.core.clock.monotonic()
-        if self._params_done or self._params_read is not None or now < self._params_retry_at:
+    def _forget_wind_params(self) -> None:
+        with self._wind_lock:
+            if self._params_read is not None:
+                self._params_read.cancel()
+            self._params_read = None
+            self._params_done = False
+            self._params_retry_at = -math.inf
+            self.wind.set_params(FcParams())
+
+    def _wind_params(self) -> None:
+        """Take a finished read of ``WIND_PARAMS``, or start one unless they are read for
+        this connection. Until they are, the wind check uses the constants
+        (``FcParams()``). Called under ``_wind_lock``."""
+        future = self._params_read
+        if future is not None:
+            if not future.done():
+                return
+            self._params_read = None
+            values: dict[str, float | None] = {}
+            if not future.cancelled() and future.exception() is None:
+                values = future.result()
+            else:
+                error = "cancelled" if future.cancelled() else type(future.exception()).__name__
+                log.warning("wind.params_failed", error=error)
+            if any(v is not None for v in values.values()):
+                self._params_done = True
+            else:
+                self._params_retry_at = self.core.clock.monotonic() + WIND_PARAMS_RETRY_S
+            self.wind.set_params(fc_params(values))  # logs every constant it falls back to
+            return
+        if self._params_done or self.core.clock.monotonic() < self._params_retry_at:
             return
 
         async def read(vehicle: Vehicle) -> dict[str, float | None]:
             return await mav_fence.read_params(vehicle, WIND_PARAMS)
 
         try:
-            future = asyncio.run_coroutine_threadsafe(_run(read, self.core.vehicle), self.loop)
+            self._params_read = asyncio.run_coroutine_threadsafe(
+                _run(read, self.core.vehicle), self.loop
+            )
         except RuntimeError:  # the loop is closed
             return
-        self._params_read = future
-        future.add_done_callback(self._wind_params_read)
-
-    def _wind_params_read(self, future: concurrent.futures.Future[dict[str, float | None]]) -> None:
-        self._params_read = None
-        values: dict[str, float | None] = {}
-        if not future.cancelled() and future.exception() is None:
-            values = future.result()
-        else:
-            error = "cancelled" if future.cancelled() else type(future.exception()).__name__
-            log.warning("wind.params_failed", error=error)
-        if not any(v is not None for v in values.values()):
-            self._params_retry_at = self.core.clock.monotonic() + WIND_PARAMS_RETRY_S
-        else:
-            self._params_done = True
-        params = fc_params(values)  # logs every constant it falls back to
-        with self._wind_lock:
-            self.wind.set_params(params)
 
 
 def to_telemetry(snap: MavSnapshot, now: dt.datetime, wind: WindCheck | None = None) -> Telemetry:

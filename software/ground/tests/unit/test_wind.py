@@ -15,7 +15,7 @@ from typing import cast
 import pytest
 import structlog
 from conftest import FakeVehicleLink, telemetry  # pyright: ignore[reportMissingImports]
-from stop_helpers import VID, stack  # pyright: ignore[reportMissingImports]
+from stop_helpers import PILOT, VID, stack  # pyright: ignore[reportMissingImports]
 
 from sd_ground.context import Ground
 from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
@@ -29,7 +29,7 @@ from sd_ground.services.wind import (
     home_mah,
     tilt_deg,
 )
-from sd_mav.modes import HOME_MODES
+from sd_mav.modes import HOME_MODES, CopterMode
 from sd_mav.vehicle import FcTelemetry
 from sd_safety.constants import FC_ANGLE_MAX_DEG
 from sd_safety.targets import distance_m
@@ -238,7 +238,7 @@ def test_panel_telemetry_carries_the_wind_check(monkeypatch: pytest.MonkeyPatch)
     )
     loop = asyncio.new_event_loop()
     mav = ThreadSafeMav(core, loop, WindWatch("until_calibrated"))
-    monkeypatch.setattr(mav, "_read_wind_params", lambda: None)  # no flight controller here
+    monkeypatch.setattr(mav, "_wind_params", lambda: None)  # no flight controller here
     t = flying(pitch_deg=-25.0)
     out = None
     for now in range(0, 12_001, 250):
@@ -363,6 +363,7 @@ async def test_unanswered_parameters_keep_the_constants_and_retry() -> None:
         with structlog.testing.capture_logs() as logs:
             mav.telemetry(VID)
             await s.run(25.0)
+            mav.telemetry(VID)  # takes the finished read
         assert mav.wind.params == FcParams()
         assert {e["param"] for e in logs if e["event"] == "wind.param_fallback"} == {
             "ATC_ANGLE_MAX",
@@ -374,11 +375,29 @@ async def test_unanswered_parameters_keep_the_constants_and_retry() -> None:
         mav.telemetry(VID)
         await s.run(5.0)
         mav.telemetry(VID)
-        assert mav.wind.params.angle_max_deg == FC_ANGLE_MAX_DEG
-        await s.run(25.0)
-        mav.telemetry(VID)
-        await s.run(20.0)
+        assert mav.wind.params.angle_max_deg == FC_ANGLE_MAX_DEG  # not yet asked again
+        for _ in range(16):  # the callers' telemetry, every 5 s here
+            await s.run(5.0)
+            mav.telemetry(VID)
         assert mav.wind.params.angle_max_deg == 25.0
+
+
+async def test_a_new_connection_starts_from_the_constants_and_reads_again() -> None:
+    async with stack() as s:
+        s.fc.params["ATC_ANGLE_MAX"] = 25.0
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        mav.telemetry(VID)
+        await s.run(10.0)
+        mav.telemetry(VID)
+        assert mav.wind.params.angle_max_deg == 25.0
+        # what telemetry() does when the link is down
+        mav._forget_wind_params()  # pyright: ignore[reportPrivateUsage]
+        assert mav.wind.params == FcParams()
+        s.fc.params["ATC_ANGLE_MAX"] = 40.0  # another flight controller
+        mav.telemetry(VID)
+        await s.run(10.0)
+        mav.telemetry(VID)
+        assert mav.wind.params.angle_max_deg == 40.0
 
 
 # --- the energy home against the wind (B4) ---------------------------------------------
@@ -476,8 +495,52 @@ def test_headwind_warns_where_the_estimate_without_wind_did_not() -> None:
 
 
 def test_too_strong_to_get_home_warns_at_once() -> None:
-    check, _ = wind_check(WindWatch(), far(battery_pct=95.0), 9.0, FROM_SOUTH)
+    """With the drag measured: 9 m/s against a top airspeed of 8.7 m/s."""
+    watch = WindWatch()
+    watch.drag_k = math.tan(math.radians(30.0)) / 8.7**2
+    check, _ = wind_check(watch, far(battery_pct=95.0), 9.0, FROM_SOUTH)
     assert "ENERGY_HOME" in check.reasons and check.home_mah is None
+
+
+def test_without_drag_a_strong_headwind_is_slow_not_impossible() -> None:
+    """Without the drag the top airspeed is unknown (RTL speed is only a lower bound), so
+    a full battery 500 m out in 9 m/s is not sent home; a low one still is."""
+    full, _ = wind_check(WindWatch(), far(battery_pct=95.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" not in full.reasons and full.home_mah is not None
+    low, _ = wind_check(WindWatch(), far(battery_pct=50.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in low.reasons
+
+
+def test_one_gust_does_not_count_as_the_wind_home() -> None:
+    watch = WindWatch()
+    t = far(battery_pct=30.0)
+    now = 0
+    for i in range(60):  # 59 s calm from the south, then one 12 m/s sample
+        now = i * 1000
+        speed = 12.0 if i == 59 else 1.0
+        watch.observe(
+            replace(
+                t,
+                attitude_mono_ms=now,
+                wind_mono_ms=now,
+                wind_speed_ms=speed,
+                wind_from_deg=FROM_SOUTH,
+            ),
+            now,
+        )
+    assert "ENERGY_HOME" not in watch.check(t, now).reasons
+
+
+def test_hovering_at_home_in_wind_is_not_short() -> None:
+    watch = WindWatch()
+    watch.drag_k = 0.01  # top airspeed 7.6 m/s, less than the wind
+    check, _ = wind_check(watch, flying(battery_pct=90.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" not in check.reasons and check.home_mah == pytest.approx(0.0)
+
+
+def test_upside_down_does_not_break_the_check() -> None:
+    check, _ = wind_check(WindWatch(), far(battery_pct=60.0, roll_deg=170.0), 6.0, FROM_SOUTH)
+    assert check.home_mah is not None and math.isfinite(check.home_mah)
 
 
 def test_measured_drag_lets_the_drone_fly_faster_than_rtl_through_the_air() -> None:
@@ -577,6 +640,21 @@ async def test_a_stale_energy_home_never_flies_home() -> None:
         s.core._energy_short_at = s.clock.monotonic() - 10.0  # pyright: ignore[reportPrivateUsage]
         await s.run(2.0)
         assert s.fc.mode not in HOME_MODES and s.latches.get(VID) is None
+
+
+async def test_energy_home_leaves_the_pilots_take_over_alone() -> None:
+    async with stack() as s:
+        s.fly(mode=CopterMode.LOITER)
+        s.fc.battery_pct = 80.0
+        await s.run(1.0)
+        s.actions.takeover(VID, client_action_id="t1", by=PILOT)
+        await s.run(1.0)
+        for _ in range(4):
+            s.core.energy_short(True)
+            await s.run(0.5)
+        assert s.fc.mode == CopterMode.LOITER
+        latch = s.latches.get(VID)
+        assert latch is None or latch.action != "battery_rtl"
 
 
 async def test_energy_ok_leaves_the_percentage_level_as_before() -> None:

@@ -24,7 +24,8 @@ reason in ``WindCheck.reasons``:
     minus the headwind component, with the crosswind crabbed out
     (``home_ground_speed``); the current on the way is the hover current scaled to the
     lean that airspeed needs (``home_leg_mah``), times ``ENERGY_MARGIN``. When the wind
-    is too strong to get home at all the check fails at once.
+    is too strong to get home at all (known only once the drag is measured) the check
+    fails at once.
 
   The drag that turns airspeed into lean is measured while the drone holds position in
   a wind (``tan(tilt) = k * wind**2``). Until it is measured, the drone is assumed to fly
@@ -92,11 +93,13 @@ _IN_AIR: Final = "in_air"
 # The drag is measured only while the drone holds position (every sample of a full tilt
 # window slower than this over the ground) in at least this much wind and lean.
 HOLD_GROUNDSPEED_MS: Final = 1.0
-DRAG_MIN_WIND_MS: Final = 3.0
+# A trim or centre-of-gravity lean of a few degrees in light wind would read as a lot of
+# drag; in at least 5 m/s it is small next to the wind's own lean.
+DRAG_MIN_WIND_MS: Final = 5.0
 DRAG_MIN_TILT_DEG: Final = 2.0
 # Slower than this over the ground on the way home counts as not getting home.
 MIN_HOME_GROUND_MS: Final = 1.0
-_NEAR_HOME_M: Final = 1.0  # closer than this the way home has no direction: all headwind
+_NEAR_HOME_M: Final = 1.0  # closer than this the way home has no direction (and no length)
 
 RTL_SPEED_MS: Final = float(FC_SAFETY_EXPECTED["RTL_SPEED_MS"])
 CAPACITY_MAH: Final = float(FC_SAFETY_EXPECTED["BATT_CAPACITY"])
@@ -214,16 +217,23 @@ def home_leg_mah(
     ``ATC_ANGLE_MAX``) and the lean on the way. The hover current is the measured current
     taken back to level flight, and the current on the way that scaled to the lean:
     the thrust grows with ``1 / cos(tilt)`` and the induced power with the thrust to the
-    power 1.5 (momentum theory, without translational lift, so on the safe side). Without
-    ``drag_k`` the airspeed is ``RTL_SPEED_MS`` at full lean."""
+    power 1.5 (momentum theory, without translational lift, so on the safe side).
+
+    Without ``drag_k`` the airspeed is ``RTL_SPEED_MS`` at full lean, which is only a
+    lower bound on what the drone can fly: then the way home is never called impossible,
+    only slow (at least ``MIN_HOME_GROUND_MS``), and the energy decides."""
     max_tan = math.tan(math.radians(params.angle_max_deg))
     max_air = params.rtl_speed_ms if drag_k is None else math.sqrt(max_tan / drag_k)
     ground = home_ground_speed(params.rtl_speed_ms, max_air, headwind_ms, crosswind_ms)
     if ground is None:
-        return None
+        if drag_k is not None:
+            return None
+        ground = MIN_HOME_GROUND_MS
     airspeed = math.hypot(ground + headwind_ms, crosswind_ms)
     lean_tan = max_tan if drag_k is None else min(max_tan, drag_k * airspeed**2)
-    hover_a = current_a * math.cos(math.radians(tilt_now_deg)) ** 1.5
+    # Upside down (a tilt over 90 degrees) says nothing about the hover current: level.
+    level = max(0.0, math.cos(math.radians(min(tilt_now_deg, 90.0))))
+    hover_a = current_a * level**1.5
     leg_a = hover_a / math.cos(math.atan(lean_tan)) ** 1.5
     return distance_m / ground * leg_a / 3.6 * ENERGY_MARGIN
 
@@ -272,7 +282,7 @@ def _wind_on_the_way(
     east, north = home.xy(lat, lon)
     way = math.hypot(east, north)
     if not math.isfinite(way) or way < _NEAR_HOME_M:
-        return speed_ms, 0.0
+        return 0.0, 0.0
     home_e, home_n = -east / way, -north / way
     from_e, from_n = math.sin(math.radians(from_deg)), math.cos(math.radians(from_deg))
     # The wind comes from where the drone flies to: a headwind.
@@ -327,8 +337,8 @@ class WindWatch:
         )
 
     def _measure_drag(self, tilt_avg: float | None, wind_ms: float | None) -> None:
-        """While the drone holds position the lean is the wind's drag alone. The largest
-        drag seen this flight is kept: more drag means a slower, steeper way home."""
+        """While the drone holds position the lean is the wind's drag alone. The latest
+        measurement this flight is kept."""
         if tilt_avg is None or wind_ms is None:
             return
         if wind_ms < DRAG_MIN_WIND_MS or tilt_avg < DRAG_MIN_TILT_DEG:
@@ -336,7 +346,7 @@ class WindWatch:
         if any(s.groundspeed_ms >= HOLD_GROUNDSPEED_MS for s in self._tilt):
             return
         k = math.tan(math.radians(tilt_avg)) / wind_ms**2
-        if math.isfinite(k) and (self.drag_k is None or k > self.drag_k):
+        if math.isfinite(k) and k > 0.0:
             self.drag_k = k
 
     def _energy(
@@ -391,7 +401,7 @@ class WindWatch:
 
         wind = None
         if mean is not None and from_deg is not None:
-            wind = (max(mean, self._wind[-1].speed_ms), from_deg)
+            wind = (mean, from_deg)  # the 60 s mean: one gust does not send it home
         # The lean the measured current belongs to (the same samples, full window or not).
         tilt_now = sum(s.tilt_deg for s in self._tilt) / len(self._tilt) if self._tilt else 0.0
         energy = self._energy(t, tilt_now, wind)

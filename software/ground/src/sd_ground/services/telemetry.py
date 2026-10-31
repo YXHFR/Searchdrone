@@ -108,7 +108,8 @@ class TelemetryService:
 
     def _wind_event(self, vid: str, t: Telemetry) -> None:
         """``vehicle.wind_warning`` when the wind warning starts or its reasons change, and
-        ``vehicle.wind_ok`` when it ends. A warning only: nothing acts on it."""
+        ``vehicle.wind_ok`` when it ends. Only events: ``ENERGY_HOME``'s FLY HOME is the
+        battery guard's (``sd_ground.mav.thread``)."""
         reasons = tuple(t.wind.reasons) if t.wind is not None else ()
         before = self._wind_reasons.get(vid, ())
         if reasons == before:
