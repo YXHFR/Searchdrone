@@ -1,37 +1,33 @@
-"""Every commit on main since the last release came from a pull request with green gates.
+"""Every commit on main came from a pull request whose gates really were green.
 
-For each commit on the first-parent line of ``--sha`` after ``--since`` (by default the
-newest ``v*`` tag before ``--sha`` that has a published GitHub release; without one the
-whole history), the check asks GitHub (read-only, through ``gh api``) for the pull
-request it was merged from and the gate statuses on that pull request's last head commit:
+The stored gate statuses prove nothing afterwards: every workflow in the repository, on
+any branch, writes statuses as ``github-actions[bot]`` and may give them any
+``target_url``. So for each first-parent commit of ``--sha`` (after ``--since``; by
+default the whole history) this check works the gates out again from what GitHub
+recorded about the pull request (read-only, ``gh api``) and from the merge commit in the
+local clone:
 
-* the commit must be the merge commit (squash or merge) of a pull request into ``main``,
-  not a direct push;
-* ``gate/review``, ``gate/owner`` and ``gate/pr-title`` must each be ``success`` in their
-  newest status on the head commit, written by ``github-actions[bot]``. That is the
-  token of every workflow, so the writer alone proves little; each status is also traced:
-* ``gate/review`` and ``gate/owner`` must link (``target_url``) to a run of
-  ``review-gate.yml`` / ``owner-gate.yml`` in this repository, started by
-  ``pull_request_target`` for this pull request into ``main`` on its head commit, or by
-  ``issue_comment`` on ``main``. Both events run the workflow file from the base branch,
-  never the pull request's copy. A run does not say which pull request it ran for, so no
-  other pull request may have the same head commit and a base other than ``main``. (An
-  ``issue_comment`` run carries main's commit, not the head, so the head can only be
-  matched for ``pull_request_target``.)
-* ``gate/pr-title`` has never linked to its run, so the pull request's title is checked
-  again with the rule from ``pr-title.yml`` (``PR_TITLE_RE``, kept equal by a test);
-* no workflow file the pull request adds or changes may be able to write a gate, read as
-  YAML: outside the three gate workflows no ``statuses: write``, ``checks: write``,
-  ``write-all`` or job named like ``gate/...`` or ``review/...``; the gate workflows
-  themselves only on ``pull_request_target`` and ``issue_comment``
-  (``tools/workflow_rules.py``, which ``tools/tests/test_workflows.py`` holds main to).
+* the commit is the merge commit (squash or merge) of a pull request into ``main``, not
+  a direct push;
+* ``gate/review``: ``check_review_comments.evaluate`` (the gate's own rule) over the
+  comments written before the merge gives ``success``: the owner's unedited
+  ``review/<role>: approve`` for all three roles, naming the head commit;
+* ``gate/owner``: if the merge changed a path in ``check_owner_gate.PROTECTED``, the
+  newest ``owner-ok`` label event before the merge is the owner's account adding it
+  after the head commit;
+* ``gate/pr-title``: the title follows ``PR_TITLE_RE``, the rule in ``pr-title.yml``
+  (kept equal by a test);
+* no workflow file the merge adds or changes can write a gate, read as YAML
+  (``tools/workflow_rules.py``): outside the three gate workflows no ``statuses: write``,
+  ``checks: write``, ``write-all``, missing ``permissions`` or job named like a gate; the
+  gate workflows only on ``pull_request_target`` and ``issue_comment``.
 
-A ``v*`` tag without a published release (a release that failed) does not end the
-range; its commits are checked again and the tag is named in the output.
+Tags and releases do not shorten the default range, since anyone who can push a tag
+could then hide older commits. It costs about four API calls per commit.
 
 ``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
 commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
-before the gates existed. Exit code 1 prints every
+before the gates existed and for commits the owner has accepted. Exit code 1 prints every
 finding as ``<sha12>: message``; 2 means GitHub could not be asked.
 
 Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R-09).
@@ -40,7 +36,6 @@ Used by ``just release-prep``, the release workflow and ``just accept`` (R-08, R
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import re
@@ -51,24 +46,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import check_owner_gate
+import check_review_comments
 import yaml
-from workflow_rules import GATE_TRIGGERS, GATE_WORKFLOWS, gate_trigger_problems, status_writers
+from workflow_rules import GATE_WORKFLOWS, gate_trigger_problems, status_writers
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_REPO_SLUG = "YXHFR/Searchdrone"
 EXCEPTIONS = REPO / "tools" / "accept" / "pr_gate_exceptions.txt"
 MAIN = "main"
-GATES = ("gate/review", "gate/owner", "gate/pr-title")
-GATE_WRITER = "github-actions[bot]"
-# The gate -> the workflow that alone may write it (gate/pr-title has no target_url).
-GATE_SOURCES = {"gate/review": "review-gate.yml", "gate/owner": "owner-gate.yml"}
 # The same rule as .github/workflows/pr-title.yml (tools/tests/test_workflows.py).
 PR_TITLE_RE = re.compile(
     r"^(feat|fix|perf|refactor|test|build|ci|docs|chore|revert|hw)(\([a-z0-9-]+\))?!?: .{3,100}$"
 )
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# git diff --name-status letters -> the status names of the GitHub files API.
+GIT_STATUS = {"A": "added", "D": "removed", "R": "renamed", "C": "copied"}
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
-RUN_ID_RE = re.compile(r"/actions/runs/(\d+)(?:/|$)")
 
 # GitHub, read-only: the API path -> parsed JSON. Tests pass a fake.
 Api = Callable[[str], Any]
@@ -114,35 +108,6 @@ def git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def release_base(root: Path, sha: str, released: set[str]) -> tuple[str | None, list[str]]:
-    """The newest ``vN...`` tag before ``sha`` with a published release, and the newer
-    tags before ``sha`` that have none (their commits are checked again)."""
-    proc = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
-        ["git", "-C", str(root), "tag", "--merged", f"{sha}^", "--list", "v[0-9]*"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    tags = proc.stdout.split() if proc.returncode == 0 else []
-    depth = {tag: int(git(root, "rev-list", "--count", tag)) for tag in tags}
-    done = [tag for tag in tags if tag in released]
-    base = max(done, key=lambda tag: depth[tag]) if done else None
-    floor = depth[base] if base else -1
-    skipped = sorted(
-        (t for t in tags if t not in released and depth[t] > floor), key=lambda tag: depth[tag]
-    )
-    return base, skipped
-
-
-def released_tags(api: Api, repo: str) -> set[str]:
-    """Tags with a published (not draft) GitHub release."""
-    return {
-        str(r.get("tag_name"))
-        for r in api(f"repos/{repo}/releases?per_page=100")
-        if not r.get("draft")
-    }
-
-
 def commits(root: Path, since: str | None, sha: str) -> list[str]:
     """First-parent commits of ``sha`` after ``since`` (all when ``None``), oldest first."""
     rng = f"{since}..{sha}" if since else sha
@@ -173,80 +138,107 @@ def merged_pull(api: Api, repo: str, sha: str) -> dict[str, Any] | None:
     return None
 
 
-def newest_statuses(statuses: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Context -> its newest status (the API lists the newest first; sorted to be sure)."""
-    ordered = sorted(statuses, key=lambda s: (str(s.get("created_at", "")), s.get("id", 0)))
-    return {str(s.get("context")): s for s in ordered}
+class LocalGit:
+    """What a merge commit changed, read from the local clone (no API file-list cap)."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def files(self, sha: str) -> list[dict[str, Any]]:
+        """``git diff --name-status`` against the first parent, as API-style dicts."""
+        out = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
+            ["git", "-C", str(self.root), "diff", "--name-status", "-M", "-z", f"{sha}^1", sha],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split("\0")
+        files: list[dict[str, Any]] = []
+        i = 0
+        while i < len(out) and out[i]:
+            code = out[i][0]
+            if code in "RC":
+                files.append(
+                    {
+                        "status": GIT_STATUS[code],
+                        "previous_filename": out[i + 1],
+                        "filename": out[i + 2],
+                    }
+                )
+                i += 3
+            else:
+                files.append({"status": GIT_STATUS.get(code, "modified"), "filename": out[i + 1]})
+                i += 2
+        return files
+
+    def show(self, sha: str, path: str) -> str:
+        return subprocess.run(  # noqa: S603 - fixed git arguments, no shell
+            ["git", "-C", str(self.root), "show", f"{sha}:{path}"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
 
 
-def run_problems(
-    api: Api, repo: str, gate: str, status: dict[str, Any], pr: dict[str, Any]
+def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> list[str]:
+    """gate/review worked out again: the gate's own rule over the comments before the merge."""
+    merged = check_review_comments.parse_time(str(pr["merged_at"]))
+    comments = [
+        c
+        for c in api(f"repos/{repo}/issues/{pr['number']}/comments?per_page=100")
+        if c.get("created_at") and check_review_comments.parse_time(str(c["created_at"])) <= merged
+    ]
+    head = str(pr["head"]["sha"])
+    result = check_review_comments.evaluate(
+        comments, head, check_review_comments.parse_time(head_time)
+    )
+    return [] if result.state == "success" else [f"gate/review: {result.description}"]
+
+
+def owner_problems(
+    api: Api, repo: str, pr: dict[str, Any], head_time: str, files: list[dict[str, Any]]
 ) -> list[str]:
-    """Why the run behind ``status`` (its ``target_url``) is not the gate's own workflow."""
-    match = RUN_ID_RE.search(str(status.get("target_url") or ""))
-    url_ok = str(status.get("target_url") or "").startswith(f"https://github.com/{repo}/")
-    if not match or not url_ok:
-        return [f"{gate} länkar inte till en körning i {repo}"]
-    (run,) = api(f"repos/{repo}/actions/runs/{match.group(1)}")
-    where = f"{gate} kommer från körning {match.group(1)}"
-    path, _, ref = str(run.get("path", "")).partition("@")
+    """gate/owner worked out again: protected paths need the owner's newest ``owner-ok``."""
+    protected = check_owner_gate.protected_files(files)
+    if not protected:
+        return []
+    owner = repo.split("/", 1)[0]
+    parse = check_review_comments.parse_time
+    merged = parse(str(pr["merged_at"]))
+    events = [
+        e
+        for e in api(f"repos/{repo}/issues/{pr['number']}/events?per_page=100")
+        if e.get("event") in ("labeled", "unlabeled")
+        and (e.get("label") or {}).get("name") == check_owner_gate.LABEL
+        and e.get("created_at")
+        and parse(str(e["created_at"])) <= merged
+    ]
+    last = max(
+        events, key=lambda e: (parse(str(e["created_at"])), int(e.get("id") or 0)), default=None
+    )
+    actor = (last or {}).get("actor") or {}
+    if (
+        last is not None
+        and last.get("event") == "labeled"
+        and actor.get("login") == owner
+        and actor.get("type") == "User"
+        and parse(str(last["created_at"])) > parse(head_time)
+    ):
+        return []
+    return [
+        f"gate/owner: ändrar {', '.join(protected)} utan ägarens "
+        f"{check_owner_gate.LABEL} efter head-commiten"
+    ]
+
+
+def workflow_problems(local: LocalGit, sha: str, files: list[dict[str, Any]]) -> list[str]:
+    """Workflow files the merge adds or changes that could write a gate status."""
     out = []
-    if path != f".github/workflows/{GATE_SOURCES[gate]}" or ref not in ("", f"refs/heads/{MAIN}"):
-        out.append(f"{where} av {run.get('path')}, inte {GATE_SOURCES[gate]}")
-    if str((run.get("repository") or {}).get("full_name")) != repo:
-        out.append(f"{where} i ett annat repo")
-    event = str(run.get("event"))
-    if event not in GATE_TRIGGERS:
-        out.append(f"{where} startad av {event}")
-    elif event == "pull_request_target":
-        if run.get("head_sha") != pr["head"]["sha"]:
-            out.append(f"{where} på en annan commit än PR:ens head")
-        # The run does not say which pull request (or base branch) it ran for, and
-        # pull_request_target runs the base branch's copy of the gate. So no other pull
-        # request may share the head commit with a base other than main.
-        for other in api(f"repos/{repo}/commits/{pr['head']['sha']}/pulls"):
-            base = str((other.get("base") or {}).get("ref", ""))
-            same_head = (other.get("head") or {}).get("sha") == pr["head"]["sha"]
-            if same_head and base != MAIN:
-                out.append(f"{where}; head-commiten är också PR #{other.get('number')} mot {base}")
-    elif run.get("head_branch") != MAIN:
-        out.append(f"{where} på grenen {run.get('head_branch')}, inte {MAIN}")
-    return out
-
-
-def gate_problems(
-    api: Api, repo: str, pr: dict[str, Any], statuses: Iterable[dict[str, Any]]
-) -> list[str]:
-    newest = newest_statuses(statuses)
-    out = []
-    for gate in GATES:
-        status = newest.get(gate)
-        if status is None:
-            out.append(f"{gate} saknas")
-            continue
-        writer = str((status.get("creator") or {}).get("login", "?"))
-        if writer != GATE_WRITER:
-            out.append(f"{gate} skrevs av {writer}, inte {GATE_WRITER}")
-        elif status.get("state") != "success":
-            out.append(f"{gate} är {status.get('state')}")
-        elif gate in GATE_SOURCES:
-            out += run_problems(api, repo, gate, status, pr)
-        elif not PR_TITLE_RE.match(str(pr.get("title", ""))):
-            out.append(f"{gate} är grön men titeln följer inte regeln i pr-title.yml")
-    return out
-
-
-def workflow_problems(api: Api, repo: str, number: object, head: str) -> list[str]:
-    """Workflows the pull request adds or changes that could write a gate status."""
-    out = []
-    for f in api(f"repos/{repo}/pulls/{number}/files?per_page=100"):
+    for f in files:
         path = str(f.get("filename", ""))
         if f.get("status") == "removed" or not WORKFLOW_RE.match(path):
             continue
-        (blob,) = api(f"repos/{repo}/contents/{path}?ref={head}")
-        text = base64.b64decode(str(blob.get("content", ""))).decode("utf-8", "replace")
         try:
-            doc = yaml.safe_load(text)
+            doc = yaml.safe_load(local.show(sha, path))
         except yaml.YAMLError:
             doc = None
         if not isinstance(doc, dict):
@@ -261,35 +253,42 @@ def workflow_problems(api: Api, repo: str, number: object, head: str) -> list[st
     return out
 
 
-def check_commit(api: Api, repo: str, sha: str) -> list[Finding]:
+def check_commit(api: Api, repo: str, sha: str, local: LocalGit) -> list[Finding]:
     pr = merged_pull(api, repo, sha)
     if pr is None:
         return [
             Finding(sha, f"kom inte från en pull request sammanslagen till {MAIN} (direkt push?)")
         ]
     head = str(pr["head"]["sha"])
-    number = pr.get("number")
-    statuses = api(f"repos/{repo}/commits/{head}/statuses?per_page=100")
-    problems = gate_problems(api, repo, pr, statuses) + workflow_problems(api, repo, number, head)
-    return [Finding(sha, f"PR #{number}: {p}") for p in problems]
+    head_time = str(api(f"repos/{repo}/commits/{head}")[0]["commit"]["committer"]["date"])
+    files = local.files(sha)
+    problems = review_problems(api, repo, pr, head_time)
+    problems += owner_problems(api, repo, pr, head_time, files)
+    if not PR_TITLE_RE.match(str(pr.get("title", ""))):
+        problems.append("gate/pr-title: titeln följer inte regeln i pr-title.yml")
+    problems += workflow_problems(local, sha, files)
+    return [Finding(sha, f"PR #{pr.get('number')}: {p}") for p in problems]
 
 
 def check(
-    api: Api, repo: str, shas: Iterable[str], exceptions: set[str] | None = None
+    api: Api,
+    repo: str,
+    shas: Iterable[str],
+    exceptions: set[str] | None = None,
+    local: LocalGit | None = None,
 ) -> list[Finding]:
+    local = local or LocalGit(REPO)
     out: list[Finding] = []
     for sha in shas:
         if sha not in (exceptions or set()):
-            out += check_commit(api, repo, sha)
+            out += check_commit(api, repo, sha, local)
     return out
 
 
 def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--sha", default="HEAD", help="the commit to release (default HEAD)")
-    parser.add_argument(
-        "--since", help="older end, excluded (default: the previous v* tag with a release)"
-    )
+    parser.add_argument("--since", help="older end, excluded (default: the whole history)")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO_SLUG))
     parser.add_argument("--exceptions", type=Path, default=EXCEPTIONS)
     args = parser.parse_args(argv)
@@ -300,11 +299,7 @@ def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
         print(exc, file=sys.stderr)
         return 2
     try:
-        since, skipped = args.since, []
-        if since is None:
-            since, skipped = release_base(REPO, sha, released_tags(api, args.repo))
-        for tag in skipped:
-            print(f"{tag} har ingen publicerad release; dess commits granskas igen.")
+        since = args.since
         shas = commits(REPO, since, sha)
         findings = check(api, args.repo, shas, exceptions)
     except GitHubError as exc:

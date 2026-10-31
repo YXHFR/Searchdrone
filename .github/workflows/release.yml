@@ -1,7 +1,8 @@
 # Publishes a GitHub release when the owner pushes a tag vX.Y.Z (after `just release-prep`
 # and its pull request are merged). The build job first refuses a tag that is not on
-# main, then checks the tag against every version and that every commit since the
-# previous tag with a published release came from a pull request with green gates,
+# main, then checks the tag against every version and that every commit on main came
+# from a pull request whose gates, worked out again from its comments, label events,
+# title and files, were green (check_merged_pr_gates.py),
 # builds the Python packages and the panel and writes the release notes from
 # CHANGELOG.md. Only the publish job can write, and it runs no repository code: it
 # uploads what the build job made. Nothing here creates or moves a tag.
@@ -25,8 +26,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read # check_merged_pr_gates: the PR behind each commit
-      statuses: read # and the gate statuses on its head
-      actions: read # and the gate workflow run behind each status
+      issues: read # and its review comments and owner-ok label events
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +41,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: python3 tools/check_versions.py --expect "${TAG#v}"
-      - name: Every commit since the previous tag came from a pull request with green gates
+      - name: Every commit on main came from a pull request with green gates
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-sync python tools/check_merged_pr_gates.py --sha "$GITHUB_SHA"

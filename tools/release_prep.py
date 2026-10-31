@@ -2,9 +2,9 @@
 
 1. Refuses a dirty working tree, a version that is not ``X.Y.Z`` or
    ``X.Y.Z-(alpha|beta|rc).N``, and a version whose tag ``vX.Y.Z`` already exists.
-2. Runs ``tools/check_merged_pr_gates.py``: every commit since the previous ``v*`` tag
-   with a published release came from a pull request with green gates, each traced to
-   its gate workflow (read-only ``gh``).
+2. Runs ``tools/check_merged_pr_gates.py``: every commit on main came from a pull
+   request whose gates pass when worked out again from its comments, label events,
+   title and files (read-only ``gh`` and local git).
 3. Sets ``[project] version`` in every ``pyproject.toml`` (PEP 440: ``0.1.0rc1``) and
    ``version`` in every ``package.json`` (SemVer: ``0.1.0-rc.1``), refreshes the uv lock
    files, and runs ``tools/check_versions.py --expect``.

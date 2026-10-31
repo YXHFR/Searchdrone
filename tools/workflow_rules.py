@@ -41,7 +41,9 @@ def _gate_like(name: object) -> bool:
 
 def status_writers(doc: dict[Any, Any]) -> list[str]:
     """Where a workflow could write a gate: ``statuses: write``, ``checks: write`` or
-    ``write-all`` (``top`` or ``job <id>``), or a job named like a gate (``name <id>``)."""
+    ``write-all`` (``top`` or ``job <id>``), a job with no ``permissions`` at either level,
+    which gets the repository's default token (``default <id>``), or a job named like a
+    gate (``name <id>``)."""
 
     def grants(perms: Any) -> bool:
         if perms == "write-all":
@@ -54,6 +56,8 @@ def status_writers(doc: dict[Any, Any]) -> list[str]:
             continue
         if grants(job.get("permissions")):
             out.append(f"job {name}")
+        elif "permissions" not in doc and "permissions" not in job:
+            out.append(f"default {name}")
         if any(_gate_like(n) for n in (name, job.get("name", ""))):
             out.append(f"name {name}")
     return out

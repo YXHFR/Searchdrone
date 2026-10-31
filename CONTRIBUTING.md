@@ -30,7 +30,7 @@ just check
 
 ## Releases
 
-Only the maintainer releases. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) checks that every commit since the previous released tag came through a pull request into `main` whose gates were written by the gate workflows themselves, sets the version everywhere and writes the release's section in `CHANGELOG.md` from `[Unreleased]` and the commit list (git-cliff, `cliff.toml`). It never commits or tags. The maintainer merges that change as `chore(release): vX.Y.Z` and then pushes the tag `vX.Y.Z` on the merge commit; `.github/workflows/release.yml` checks it again, builds and publishes the GitHub release. Protect the `v*` tags with a tag ruleset in the repository settings so that only the maintainer can push them.
+Only the maintainer releases. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) checks that every commit on `main` came through a pull request whose gates pass when worked out again from its review comments, `owner-ok` label events, title and changed files (the stored statuses are not trusted), sets the version everywhere and writes the release's section in `CHANGELOG.md` from `[Unreleased]` and the commit list (git-cliff, `cliff.toml`). It never commits or tags. The maintainer merges that change as `chore(release): vX.Y.Z` and then pushes the tag `vX.Y.Z` on the merge commit; `.github/workflows/release.yml` checks it again, builds and publishes the GitHub release. Protect the `v*` tags with a tag ruleset in the repository settings so that only the maintainer can push them.
 
 ## Reporting bugs
 

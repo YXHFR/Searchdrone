@@ -1,8 +1,8 @@
-"""tools/check_merged_pr_gates.py against a fake GitHub: green, red and forged gates."""
+"""tools/check_merged_pr_gates.py against a fake GitHub: gates worked out again from the
+pull request's comments, label events, title and the merge commit's files."""
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import subprocess
@@ -13,129 +13,245 @@ import check_merged_pr_gates as cmg
 import pytest
 
 REPO = "o/r"
-BOT = {"login": "github-actions[bot]"}
 TITLE = "feat(tools): a change"
-RUNS = {"gate/review": 100, "gate/owner": 200}
+HEAD_TIME = "2026-10-01T09:00:00Z"
+MERGED = "2026-10-01T11:00:00Z"
+OWNER = {"login": "o", "type": "User"}
+# Head commits: full SHAs, since a verdict must name the whole SHA.
+H1, H2, H3, H4, H5, H7, H8, H9 = (str(n) * 40 for n in (1, 2, 3, 4, 5, 7, 8, 9))
 
 
-def status(context: str, state: str = "success", at: str = "2026-10-01T10:00:00Z", **kw: Any):
-    run = RUNS.get(context)
-    url = {"target_url": f"https://github.com/{REPO}/actions/runs/{run}"} if run else {}
-    return {"context": context, "state": state, "created_at": at, "creator": BOT, **url, **kw}
-
-
-def green(head: str = "h1") -> list[dict[str, Any]]:
-    return [status(g) for g in cmg.GATES]
-
-
-def gate_run(workflow: str, head: str, number: int, **kw: Any) -> dict[str, Any]:
-    """A pull_request_target run of a gate workflow on ``head`` (``number`` is unused: real
-    runs carry an empty ``pull_requests`` list)."""
+def verdict(
+    role: str, head: str, word: str = "approve", at: str = "2026-10-01T10:00:00Z", **kw: Any
+):
     return {
-        "path": f".github/workflows/{workflow}",
-        "event": "pull_request_target",
-        "head_sha": head,
-        "head_branch": "feature",
-        "repository": {"full_name": REPO},
+        "id": hash((role, head, at)) % 10**6,
+        "body": f"review/{role}: {word}\n\nHead: {head}\n",
+        "author_association": "OWNER",
+        "user": {"login": "o", "type": "User"},
+        "created_at": at,
+        "updated_at": at,
         **kw,
     }
 
 
+def approvals(head: str) -> list[dict[str, Any]]:
+    return [verdict(r, head) for r in ("architecture", "security", "flight-safety")]
+
+
+def label(event: str = "labeled", at: str = "2026-10-01T10:30:00Z", actor: Any = OWNER, i: int = 1):
+    return {
+        "id": i,
+        "event": event,
+        "label": {"name": "owner-ok"},
+        "actor": actor,
+        "created_at": at,
+    }
+
+
 class FakeGitHub:
-    """Merge commit -> PR, head SHA -> statuses, run id -> run, PR -> changed files."""
+    """Merge commit -> PR; PR -> comments and issue events; head -> commit date."""
 
     def __init__(self) -> None:
         self.prs: dict[str, dict[str, Any]] = {}
-        self.statuses: dict[str, list[dict[str, Any]]] = {}
-        self.files: dict[int, list[dict[str, Any]]] = {}
-        self.contents: dict[tuple[str, str], str] = {}
-        self.runs: dict[str, dict[str, Any]] = {}
-        self.releases: list[dict[str, Any]] = []
+        self.comments: dict[int, list[dict[str, Any]]] = {}
+        self.events: dict[int, list[dict[str, Any]]] = {}
 
-    def workflow(self, number: int, head: str, path: str, text: str, status: str = "added"):
-        self.files.setdefault(number, []).append({"filename": path, "status": status})
-        self.contents[(path, head)] = text
-
-    def merged(self, sha: str, number: int, head: str, statuses: list[dict[str, Any]]) -> None:
+    def merged(
+        self, sha: str, number: int, head: str, comments: list[dict[str, Any]] | None = None
+    ):
         self.prs[sha] = {
             "number": number,
             "title": TITLE,
-            "merged_at": "2026-10-01T11:00:00Z",
+            "merged_at": MERGED,
             "merge_commit_sha": sha,
             "head": {"sha": head},
             "base": {"ref": "main"},
         }
-        self.statuses[head] = statuses
-        self.runs["100"] = gate_run("review-gate.yml", head, number)
-        self.runs["200"] = gate_run("owner-gate.yml", head, number)
+        self.comments[number] = approvals(head) if comments is None else comments
 
     def __call__(self, path: str) -> Any:
-        if "/contents/" in path:
-            file, ref = path.split("/contents/", 1)[1].split("?ref=")
-            raw = self.contents[(file, ref)].encode()
-            return [{"content": base64.b64encode(raw).decode()}]
         parts = path.split("?")[0].split("/")
-        if parts[3] == "releases":
-            return self.releases
-        if parts[3] == "actions":
-            return [self.runs[parts[5]]]
-        if parts[3] == "pulls":
-            return self.files.get(int(parts[4]), [])
+        if parts[3] == "issues":
+            store = self.comments if parts[5] == "comments" else self.events
+            return store.get(int(parts[4]), [])
         sha = parts[4]
         if parts[-1] == "pulls":
-            return [
-                pr for pr in self.prs.values() if sha in (pr["merge_commit_sha"], pr["head"]["sha"])
-            ]
-        return self.statuses.get(sha, [])
+            return [pr for pr in self.prs.values() if pr["merge_commit_sha"] == sha]
+        return [{"sha": sha, "commit": {"committer": {"date": HEAD_TIME}}}]
+
+
+class FakeGit:
+    """Merge commit -> changed files and their contents (stands in for the local clone)."""
+
+    def __init__(self) -> None:
+        self.changed: dict[str, list[dict[str, Any]]] = {}
+        self.contents: dict[tuple[str, str], str] = {}
+
+    def add(self, sha: str, path: str, text: str = "", status: str = "added", **kw: Any) -> None:
+        self.changed.setdefault(sha, []).append({"filename": path, "status": status, **kw})
+        self.contents[(sha, path)] = text
+
+    def files(self, sha: str) -> list[dict[str, Any]]:
+        return self.changed.get(sha, [])
+
+    def show(self, sha: str, path: str) -> str:
+        return self.contents[(sha, path)]
+
+
+def run(gh: FakeGitHub, sha: str, git: FakeGit | None = None) -> list[str]:
+    return [f.message for f in cmg.check(gh, REPO, [sha], local=git or FakeGit())]  # type: ignore[arg-type]
 
 
 def test_green_gates_pass() -> None:
     gh = FakeGitHub()
-    gh.merged("a" * 40, 1, "h1", green())
-    assert cmg.check(gh, REPO, ["a" * 40]) == []
+    gh.merged("a" * 40, 1, H1)
+    assert run(gh, "a" * 40) == []
 
 
 def test_direct_push_fails() -> None:
-    (finding,) = cmg.check(FakeGitHub(), REPO, ["b" * 40])
-    assert "inte från en pull request sammanslagen till main" in finding.message
+    (message,) = run(FakeGitHub(), "b" * 40)
+    assert "inte från en pull request sammanslagen till main" in message
 
 
 def test_a_pr_merged_into_another_branch_does_not_count() -> None:
     gh = FakeGitHub()
-    gh.merged("c" * 40, 2, "h2", green())
+    gh.merged("c" * 40, 2, H2)
     gh.prs["c" * 40]["base"] = {"ref": "release-x"}
-    assert cmg.check(gh, REPO, ["c" * 40])[0].message.startswith("kom inte från")
+    assert run(gh, "c" * 40)[0].startswith("kom inte från")
 
 
 def test_open_pr_that_only_contains_the_commit_does_not_count() -> None:
     gh = FakeGitHub()
-    gh.merged("c" * 40, 2, "h2", green())
+    gh.merged("c" * 40, 2, H2)
     gh.prs["c" * 40]["merge_commit_sha"] = "d" * 40
-    assert cmg.check(gh, REPO, ["c" * 40])[0].message.startswith("kom inte från")
+    assert run(gh, "c" * 40)[0].startswith("kom inte från")
 
 
 @pytest.mark.parametrize(
-    ("statuses", "expected"),
+    ("comments", "expected"),
     [
-        ([status("gate/review"), status("gate/owner")], "PR #3: gate/pr-title saknas"),
-        (
-            [status("gate/review", "failure"), status("gate/owner"), status("gate/pr-title")],
-            "PR #3: gate/review är failure",
-        ),
+        ([], "Waiting for review of 3333333"),
+        (approvals(H3)[:2], "flight-safety"),
+        (approvals("old"), "Waiting for review"),
         (
             [
-                status("gate/review"),
-                status("gate/owner"),
-                status("gate/pr-title", creator={"login": "someone"}),
+                *approvals(H3),
+                verdict("security", H3, "request_changes", "2026-10-01T10:10:00Z"),
             ],
-            "PR #3: gate/pr-title skrevs av someone, inte github-actions[bot]",
+            "Changes requested by security",
+        ),
+        ([*approvals(H3)[:2], verdict("flight-safety", H3, updated_at=MERGED)], "Edited"),
+        # Written before the head commit, or after the merge: neither counts.
+        (
+            [*approvals(H3)[:2], verdict("flight-safety", H3, at="2026-10-01T08:00:00Z")],
+            "flight",
+        ),
+        (
+            [*approvals(H3)[:2], verdict("flight-safety", H3, at="2026-10-01T12:00:00Z")],
+            "flight",
+        ),
+        # A verdict the owner did not write.
+        (
+            [*approvals(H3)[:2], verdict("flight-safety", H3, author_association="MEMBER")],
+            "flight-safety",
+        ),
+        (
+            [*approvals(H3)[:2], verdict("flight-safety", H3, user={"type": "Bot"})],
+            "flight-safety",
         ),
     ],
 )
-def test_red_missing_or_forged_gates_fail(statuses: list[dict[str, Any]], expected: str) -> None:
+def test_review_is_worked_out_again_from_the_comments(
+    comments: list[dict[str, Any]], expected: str
+) -> None:
+    # A green gate/review status proves nothing (any workflow can write one); the
+    # comments before the merge must pass the gate's own rule.
     gh = FakeGitHub()
-    gh.merged("e" * 40, 3, "h3", statuses)
-    assert [f.message for f in cmg.check(gh, REPO, ["e" * 40])] == [expected]
+    gh.merged("e" * 40, 3, H3, comments)
+    (message,) = run(gh, "e" * 40)
+    assert message.startswith("PR #3: gate/review: ") and expected in message, message
+
+
+@pytest.mark.parametrize(
+    ("events", "ok"),
+    [
+        ([label()], True),
+        ([], False),
+        ([label(actor={"login": "mallory", "type": "User"})], False),
+        ([label(actor={"login": "o", "type": "Bot"})], False),
+        ([label(at="2026-10-01T08:00:00Z")], False),  # before the head commit
+        ([label(at="2026-10-01T12:00:00Z")], False),  # after the merge
+        (
+            [
+                label(),
+                label("unlabeled", "2026-10-01T10:40:00Z", {"login": "github-actions[bot]"}, 2),
+            ],
+            False,
+        ),
+        ([label("unlabeled", "2026-10-01T09:30:00Z", {"login": "x"}, 2), label()], True),
+        # Same second: the newer event id decides.
+        ([label(i=5), label("unlabeled", actor={"login": "x"}, i=4)], True),
+    ],
+)
+def test_owner_is_worked_out_again_from_the_label_events(
+    events: list[dict[str, Any]], ok: bool
+) -> None:
+    gh = FakeGitHub()
+    gh.merged("1" * 40, 4, H4)
+    gh.events[4] = events
+    git = FakeGit()
+    git.add("1" * 40, "hardware/board.kicad_pcb", status="modified")
+    messages = run(gh, "1" * 40, git)
+    if ok:
+        assert messages == []
+    else:
+        (message,) = messages
+        assert message == (
+            "PR #4: gate/owner: ändrar hardware/board.kicad_pcb utan ägarens owner-ok "
+            "efter head-commiten"
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"filename": ".github/CODEOWNERS", "status": "modified"},
+        {"filename": "docs/x.md", "status": "renamed", "previous_filename": "Hardware/x.md"},
+        {"filename": "hardware/x", "status": "removed"},
+    ],
+)
+def test_any_protected_path_needs_the_owner(change: dict[str, Any]) -> None:
+    gh = FakeGitHub()
+    gh.merged("2" * 40, 5, H5)
+    git = FakeGit()
+    git.changed["2" * 40] = [change]
+    (message,) = run(gh, "2" * 40, git)
+    assert message.startswith("PR #5: gate/owner: ")
+
+
+def test_local_git_lists_renames_and_deletes(tmp_path: Path) -> None:
+    env = ["-c", "user.name=t", "-c", "user.email=1+t@users.noreply.github.com"]
+    env += ["-c", "commit.gpgsign=false"]
+    cmg.git(tmp_path, "init", "-q")
+    (tmp_path / "hardware").mkdir()
+    (tmp_path / "hardware" / "a.txt").write_text("same text, long enough to be a rename\n")
+    (tmp_path / "gone.txt").write_text("x\n")
+    cmg.git(tmp_path, "add", ".")
+    cmg.git(tmp_path, *env, "commit", "-q", "-m", "1")
+    cmg.git(tmp_path, "mv", "hardware/a.txt", "a b.txt")
+    cmg.git(tmp_path, "rm", "-q", "gone.txt")
+    (tmp_path / "new.yml").write_text("on: push\n")
+    cmg.git(tmp_path, "add", ".")
+    cmg.git(tmp_path, *env, "commit", "-q", "-m", "2")
+    local = cmg.LocalGit(tmp_path)
+    files = sorted(local.files("HEAD"), key=lambda f: f["filename"])
+    assert files == [
+        {"status": "renamed", "previous_filename": "hardware/a.txt", "filename": "a b.txt"},
+        {"status": "removed", "filename": "gone.txt"},
+        {"status": "added", "filename": "new.yml"},
+    ]
+    assert local.show("HEAD", "new.yml") == "on: push\n"
 
 
 FORGER = """on: pull_request
@@ -154,8 +270,25 @@ GATE = "on:\n  pull_request_target:\n  issue_comment:\npermissions:\n  statuses:
     [
         (".github/workflows/paint.yml", FORGER, "added", "kan skriva en grind (job paint)"),
         (".github/workflows/paint.yaml", "permissions: write-all\n", "modified", "(top)"),
-        (".github/workflows/x.yml", "jobs:\n  a:\n    name: gate/review\n", "added", "(name a)"),
-        (".github/workflows/x.yml", "jobs:\n  a:\n    name: Gate/Owner\n", "added", "(name a)"),
+        (
+            ".github/workflows/x.yml",
+            "jobs:\n  a:\n    name: gate/review\n",
+            "added",
+            "(default a, name a)",
+        ),
+        (
+            ".github/workflows/x.yml",
+            "permissions: {}\njobs:\n  a:\n    name: Gate/Owner\n",
+            "added",
+            "(name a)",
+        ),
+        # No permissions anywhere: the repository's default token, which may write.
+        (
+            ".github/workflows/x.yml",
+            "on: push\njobs:\n  a:\n    runs-on: x\n",
+            "added",
+            "(default a)",
+        ),
         (
             ".github/workflows/x.yml",
             "jobs:\n  a:\n    permissions:\n      checks: write\n",
@@ -187,15 +320,16 @@ GATE = "on:\n  pull_request_target:\n  issue_comment:\npermissions:\n  statuses:
         ("docs/statuses.yml", FORGER, "added", None),
     ],
 )
-def test_a_workflow_from_the_pr_that_can_write_a_gate_fails(
+def test_a_workflow_from_the_merge_that_can_write_a_gate_fails(
     path: str, text: str, status: str, expected: str | None
 ) -> None:
-    # github-actions[bot] writes for every workflow: green gates from the PR's own
-    # workflow look exactly like the real ones, so the workflow itself is checked.
+    # The gates are worked out again here, but branch protection reads the statuses:
+    # no merged workflow may be able to write them.
     gh = FakeGitHub()
-    gh.merged("9" * 40, 7, "h7", green())
-    gh.workflow(7, "h7", path, text, status)
-    messages = [f.message for f in cmg.check(gh, REPO, ["9" * 40])]
+    gh.merged("9" * 40, 7, H7)
+    git = FakeGit()
+    git.add("9" * 40, path, text, status)
+    messages = run(gh, "9" * 40, git)
     if expected is None:
         assert messages == []
     else:
@@ -203,94 +337,17 @@ def test_a_workflow_from_the_pr_that_can_write_a_gate_fails(
         assert message.startswith(f"PR #7: {path}") and expected in message, message
 
 
-@pytest.mark.parametrize(
-    ("change", "expected"),
-    [
-        (
-            {"path": ".github/workflows/paint.yml"},
-            "av .github/workflows/paint.yml, inte review-gate.yml",
-        ),
-        ({"path": ".github/workflows/review-gate.yml@refs/heads/x"}, "inte review-gate.yml"),
-        ({"event": "pull_request"}, "startad av pull_request"),
-        ({"event": "push"}, "startad av push"),
-        ({"repository": {"full_name": "fork/r"}}, "i ett annat repo"),
-        ({"head_sha": "other"}, "på en annan commit än PR:ens head"),
-        ({"event": "issue_comment", "head_branch": "x", "head_sha": "m"}, "på grenen x, inte main"),
-        ({"event": "issue_comment", "head_branch": "main", "head_sha": "m"}, None),
-        ({"path": ".github/workflows/review-gate.yml@refs/heads/main"}, None),
-    ],
-)
-def test_a_gate_status_must_come_from_its_own_workflow(
-    change: dict[str, Any], expected: str | None
-) -> None:
-    # Any workflow anywhere in the repo writes as github-actions[bot]; only a run of the
-    # gate's own workflow from main counts.
+def test_a_bad_title_fails() -> None:
     gh = FakeGitHub()
-    gh.merged("5" * 40, 5, "h5", green())
-    gh.runs["100"].update(change)
-    messages = [f.message for f in cmg.check(gh, REPO, ["5" * 40])]
-    if expected is None:
-        assert messages == []
-    else:
-        (message,) = messages
-        assert message.startswith("PR #5: gate/review kommer från körning 100")
-        assert expected in message, message
-
-
-def test_a_head_also_proposed_to_another_branch_fails() -> None:
-    # pull_request_target runs the base branch's gate workflow; a second pull request with
-    # the same head into a branch with an edited gate could have written the status.
-    gh = FakeGitHub()
-    gh.merged("4" * 40, 4, "h4", green())
-    gh.prs["other"] = {
-        "number": 9,
-        "merge_commit_sha": None,
-        "head": {"sha": "h4"},
-        "base": {"ref": "evil"},
-    }
-    messages = [f.message for f in cmg.check(gh, REPO, ["4" * 40])]
-    assert messages == [
-        f"PR #4: {gate} kommer från körning {run}; head-commiten är också PR #9 mot evil"
-        for gate, run in RUNS.items()
-    ]
-
-
-@pytest.mark.parametrize(
-    "url",
-    [None, "https://example.com/o/r/actions/runs/100", "https://github.com/x/r/actions/runs/100"],
-)
-def test_a_gate_status_without_a_run_in_the_repo_fails(url: str | None) -> None:
-    gh = FakeGitHub()
-    owner = status("gate/owner", target_url=url)
-    gh.merged("6" * 40, 6, "h6", [status("gate/review"), owner, status("gate/pr-title")])
-    assert [f.message for f in cmg.check(gh, REPO, ["6" * 40])] == [
-        "PR #6: gate/owner länkar inte till en körning i o/r"
-    ]
-
-
-def test_a_green_pr_title_status_needs_a_title_that_passes() -> None:
-    gh = FakeGitHub()
-    gh.merged("7" * 40, 8, "h8", green())
+    gh.merged("7" * 40, 8, H8)
     gh.prs["7" * 40]["title"] = "Update stuff"
-    assert [f.message for f in cmg.check(gh, REPO, ["7" * 40])] == [
-        "PR #8: gate/pr-title är grön men titeln följer inte regeln i pr-title.yml"
-    ]
+    assert run(gh, "7" * 40) == ["PR #8: gate/pr-title: titeln följer inte regeln i pr-title.yml"]
 
 
 def test_the_title_rule_is_the_one_in_pr_title_yml() -> None:
     text = (cmg.REPO / ".github" / "workflows" / "pr-title.yml").read_text(encoding="utf-8")
     (rule,) = re.findall(r"re='([^']+)'", text)
     assert rule == cmg.PR_TITLE_RE.pattern
-
-
-def test_the_newest_status_decides() -> None:
-    gh = FakeGitHub()
-    later_red = [*green(), status("gate/review", "failure", at="2026-10-01T12:00:00Z")]
-    gh.merged("f" * 40, 4, "h4", later_red)
-    assert [f.message for f in cmg.check(gh, REPO, ["f" * 40])] == ["PR #4: gate/review är failure"]
-    later_green = [status("gate/owner", "pending", at="2026-09-30T00:00:00Z"), *green()]
-    gh.merged("f" * 40, 4, "h4", later_green)
-    assert cmg.check(gh, REPO, ["f" * 40]) == []
 
 
 def test_exceptions_are_skipped(tmp_path: Path) -> None:
@@ -302,7 +359,7 @@ def test_exceptions_are_skipped(tmp_path: Path) -> None:
         cmg.read_exceptions(path)
 
 
-def test_the_range_starts_at_the_newest_published_release(tmp_path: Path) -> None:
+def test_the_range_is_the_whole_first_parent_line(tmp_path: Path) -> None:
     env = ["-c", "user.name=t", "-c", "user.email=1+t@users.noreply.github.com"]
     env += ["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"]
 
@@ -312,24 +369,10 @@ def test_the_range_starts_at_the_newest_published_release(tmp_path: Path) -> Non
 
     cmg.git(tmp_path, "init", "-q")
     first = commit()
-    cmg.git(tmp_path, *env, "tag", "v0.1.0")
+    cmg.git(tmp_path, *env, "tag", "v0.1.0")  # a tag does not shorten the range
     second = commit()
-    cmg.git(tmp_path, *env, "tag", "v0.2.0")  # its release failed
-    cmg.git(tmp_path, *env, "tag", "v-test")  # not a release tag
-    third = commit()
-    released = {"v0.1.0"}
-    assert cmg.release_base(tmp_path, third, released) == ("v0.1.0", ["v0.2.0"])
-    assert cmg.commits(tmp_path, "v0.1.0", third) == [second, third]
-    assert cmg.release_base(tmp_path, third, {"v0.1.0", "v0.2.0"}) == ("v0.2.0", [])
-    assert cmg.release_base(tmp_path, third, set()) == (None, ["v0.1.0", "v0.2.0"])
-    assert cmg.release_base(tmp_path, first, released) == (None, [])
     assert cmg.commits(tmp_path, None, second) == [first, second]
-
-
-def test_released_tags_ignore_drafts() -> None:
-    gh = FakeGitHub()
-    gh.releases = [{"tag_name": "v0.1.0", "draft": False}, {"tag_name": "v0.2.0", "draft": True}]
-    assert cmg.released_tags(gh, REPO) == {"v0.1.0"}
+    assert cmg.commits(tmp_path, first, second) == [second]
 
 
 def test_gh_api_joins_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -356,7 +399,7 @@ def test_main_reports_and_fails(capsys: pytest.CaptureFixture[str]) -> None:
     gh = FakeGitHub()
     assert cmg.main(["--sha", head, "--since", parent, "--repo", REPO], api=gh) == 1
     assert f"{head[:12]}: kom inte från" in capsys.readouterr().out
-    gh.merged(head, 9, "h9", green())
+    gh.merged(head, 9, H9)
     assert cmg.main(["--sha", head, "--since", parent, "--repo", REPO], api=gh) == 0
 
 
