@@ -1,4 +1,5 @@
-"""Decide the commit status ``gate/owner``: the owner's OK for hardware and CODEOWNERS.
+"""Decide the commit status ``gate/owner``: the owner's OK for hardware, CODEOWNERS and the
+release's gate check.
 
 Pull requests are opened with the owner's own account, so GitHub's Approve button cannot
 be used. Instead the owner says OK and the label ``owner-ok`` is set on the pull request
@@ -33,7 +34,9 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +44,19 @@ LABEL = "owner-ok"
 CONTEXT = "gate/owner"
 ACTIONS_BOT = "github-actions[bot]"
 MAX_FILES = 3000  # GitHub lists at most this many files of a pull request
-PROTECTED = (re.compile(r"^hardware/", re.IGNORECASE), re.compile(r"^\.github/CODEOWNERS$"))
+PROTECTED = (
+    re.compile(r"^hardware/", re.IGNORECASE),
+    re.compile(r"^\.github/CODEOWNERS$"),
+    # The gates and what a release accepts (check_merged_pr_gates.py), so that loosening
+    # any of their rules, this list included, needs the owner too.
+    re.compile(r"^tools/accept/pr_gate_exceptions\.txt$"),
+    re.compile(
+        r"^tools/(check_merged_pr_gates|workflow_rules|check_owner_gate|check_review_comments)\.py$"
+    ),
+    re.compile(r"^\.github/workflows/(review-gate|owner-gate|pr-title|release)\.yml$"),
+)
+# Issue events after which an earlier owner-ok no longer covers the pull request.
+RESETS = ("base_ref_changed", "head_ref_force_pushed", "reopened")
 
 
 @dataclass(frozen=True)
@@ -62,6 +77,10 @@ class Result:
     remove_label: bool = False
 
 
+def parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def flatten(pages: Any) -> list[dict[str, Any]]:
     """``gh api --paginate --slurp`` gives a list of pages; accept a flat list too."""
     flat: list[dict[str, Any]] = []
@@ -73,13 +92,49 @@ def flatten(pages: Any) -> list[dict[str, Any]]:
     return flat
 
 
-def protected_files(files: list[dict[str, Any]]) -> list[str]:
+def protected_files(
+    files: list[dict[str, Any]], rules: Sequence[re.Pattern[str]] = PROTECTED
+) -> list[str]:
+    """The changed paths (old and new names) that one of ``rules`` matches."""
     hits = []
     for f in files:
         for name in (f.get("filename"), f.get("previous_filename")):
-            if isinstance(name, str) and any(p.search(name) for p in PROTECTED):
+            if isinstance(name, str) and any(p.search(name) for p in rules):
                 hits.append(name)
     return sorted(set(hits))
+
+
+def approved_by_label_events(
+    events: list[dict[str, Any]], owner: str, since: datetime, until: datetime
+) -> bool:
+    """The rule above, worked out afterwards from a pull request's issue events (used by
+    ``check_merged_pr_gates.py``): the newest ``owner-ok`` event up to ``until`` is the
+    owner's account adding it after ``since`` (when the head commit reached GitHub) and
+    after every base change, force push or reopening. Issue events do not name the head
+    commit, so ``since`` stands in for the SHA the live gate compares."""
+
+    def at(e: dict[str, Any]) -> datetime:
+        return parse_time(str(e["created_at"]))
+
+    seen = [e for e in events if e.get("created_at") and at(e) <= until]
+    ours = [
+        e
+        for e in seen
+        if e.get("event") in ("labeled", "unlabeled")
+        and (e.get("label") or {}).get("name") == LABEL
+    ]
+    if not ours:
+        return False
+    last = max(ours, key=lambda e: (at(e), int(e.get("id") or 0)))
+    actor = last.get("actor") or {}
+    resets = [at(e) for e in seen if e.get("event") in RESETS]
+    return (
+        last.get("event") == "labeled"
+        and actor.get("login") == owner
+        and actor.get("type") == "User"
+        and at(last) > since
+        and all(at(last) > r for r in resets)
+    )
 
 
 def approved_status_on(statuses: list[dict[str, Any]]) -> bool:
