@@ -58,7 +58,9 @@ PERSON_R_M = 100.0
 CLIMB_TO_M = PERSON_R_M + KEEPOUT_CLIMB_MARGIN_M
 ALT_TOL_M = 2.0
 SIDEWAYS_M = 15.0  # braking from the leg's speed, then straight up
-INSTALL_SEQ = 1_000_000  # far above the ground's own installs in this test
+# The ground numbers its installs from the wall clock in ms: one hour past the
+# executor's, so the ground's own resends in this test do not replace this one.
+INSTALL_AHEAD = 3_600_000
 
 
 def _refused(req: GateRequest, ctx: GateContext) -> GateDecision:
@@ -104,7 +106,11 @@ async def test_no_way_out_over_a_person_climbs_straight_up_and_hovers(
         assert sc.track[-1].alt_m < CLIMB_TO_M - ALT_TOL_M
         since = time.monotonic()
         here = (st.lat, st.lon)
-        ex.on_keepouts(KeepoutInstall(install_seq=INSTALL_SEQ, keepouts=[person]), new_id())
+        install = KeepoutInstall(
+            install_seq=ex.keepout_seq + INSTALL_AHEAD, keepouts=[*ex.keepouts, person]
+        )
+        ex.on_keepouts(install, new_id())
+        assert person in ex.keepouts  # taken, not refused as stale
 
         holds = await until_event(sc, "keepout_hold")
         told = holds[-1]["payload"]
@@ -119,8 +125,12 @@ async def test_no_way_out_over_a_person_climbs_straight_up_and_hovers(
             120,
             "up there and still",
         )
-        live = await sc.onboard_state()
-        assert live["executor_state"] == "HOLD" and live["hold_reason"] == "limit", live
+
+        async def kept_out() -> bool:  # the snapshot may still be the one before the end
+            live = await sc.onboard_state()
+            return live["executor_state"] == "HOLD" and live["hold_reason"] == "limit"
+
+        await sc.until(kept_out, 5, "the keep-out hover")
         await sc.hold_for(10.0, lambda: sc.fc_mode() == "LOITER", "hovering up there")
         assert len(await _events(sc, "keepout_hold")) == 1  # told once
 
