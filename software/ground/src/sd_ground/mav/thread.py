@@ -698,13 +698,17 @@ class ThreadSafeMav:
         self.wind = WindWatch() if wind is None else wind
         self._wind_lock = threading.Lock()
         # The flight controller's own lean limit, RTL speed and battery numbers for the
-        # wind check, read once per connection (the fence check's parameter reading). The
-        # read runs in the MAVLink loop; its result is taken here, by the callers.
+        # wind check, read once per connection with ``mav.fence.read_params`` (missing ones
+        # again until answered). The read runs in the MAVLink loop; its result is taken
+        # here, by the callers.
         self._params_read: concurrent.futures.Future[dict[str, float | None]] | None = None
         self._params_done = False
         self._params_retry_at: float = -math.inf
         self._wind_check: WindCheck | None = None  # the newest from ``update_wind``
-        self._wind_connected = False
+        # The flight controller connection the wind check's numbers belong to:
+        # (connected, ``fc_link_epoch``). A new connection or a reboot starts over.
+        self._wind_link: tuple[bool, int] = (False, 0)
+        self._params_values: dict[str, float | None] = {}
 
     def _call(self, fn: Callable[..., None], *args: Any) -> bool:
         try:
@@ -782,13 +786,14 @@ class ThreadSafeMav:
         snap = self.snapshot()
         if snap is None or snap.vehicle_id != vehicle_id:
             return
+        link = (snap.connected, snap.telemetry.fc_link_epoch)
         with self._wind_lock:
-            if snap.connected != self._wind_connected:
-                # A new connection (possibly another flight controller, or a reboot) and a
-                # lost one both start from nothing: the numbers are read again, and the
-                # drag is measured again.
+            if link != self._wind_link:
+                # A new connection (possibly another flight controller), a reboot and a
+                # lost connection all start from nothing: the numbers are read again, and
+                # the drag is measured again.
                 self._forget_wind()
-                self._wind_connected = snap.connected
+                self._wind_link = link
             if not snap.connected:
                 return
             self._wind_params()
@@ -805,13 +810,15 @@ class ThreadSafeMav:
         self._params_read = None
         self._params_done = False
         self._params_retry_at = -math.inf
+        self._params_values = {}
         self._wind_check = None
         self.wind.reset(FcParams())
 
     def _wind_params(self) -> None:
-        """Take a finished read of ``WIND_PARAMS``, or start one unless they are read for
-        this connection. Until they are, the wind check uses the constants
-        (``FcParams()``). Called under ``_wind_lock``."""
+        """Take a finished read of ``WIND_PARAMS``, or start one for those not yet
+        answered on this connection (all of them at first; after a partial answer only the
+        missing ones, ``WIND_PARAMS_RETRY_S`` later). Until a number is read, the wind
+        check uses its constant. Called under ``_wind_lock``."""
         future = self._params_read
         if future is not None:
             if not future.done():
@@ -823,17 +830,22 @@ class ThreadSafeMav:
             else:
                 error = "cancelled" if future.cancelled() else type(future.exception()).__name__
                 log.warning("wind.params_failed", error=error)
-            if any(v is not None for v in values.values()):
-                self._params_done = True
-            else:
+            answered = {k: v for k, v in values.items() if v is not None}
+            self._params_values |= answered
+            if self._missing_params():
                 self._params_retry_at = self.core.clock.monotonic() + WIND_PARAMS_RETRY_S
-            self.wind.set_params(fc_params(values))  # logs every constant it falls back to
+            else:
+                self._params_done = True
+            if answered or not self._params_values:
+                # logs every constant it falls back to
+                self.wind.set_params(fc_params(self._params_values))
             return
         if self._params_done or self.core.clock.monotonic() < self._params_retry_at:
             return
+        names = self._missing_params()
 
         async def read(vehicle: Vehicle) -> dict[str, float | None]:
-            return await mav_fence.read_params(vehicle, WIND_PARAMS)
+            return await mav_fence.read_params(vehicle, names)
 
         try:
             self._params_read = asyncio.run_coroutine_threadsafe(
@@ -841,6 +853,16 @@ class ThreadSafeMav:
             )
         except RuntimeError:  # the loop is closed
             return
+
+    def _missing_params(self) -> tuple[str, ...]:
+        """``WIND_PARAMS`` the flight controller has not answered on this connection;
+        ``WP_SPD`` only matters when ``RTL_SPEED_MS`` is 0."""
+        got = self._params_values
+        return tuple(
+            name
+            for name in WIND_PARAMS
+            if name not in got and (name != "WP_SPD" or got.get("RTL_SPEED_MS", 0.0) == 0.0)
+        )
 
 
 def to_telemetry(snap: MavSnapshot, now: dt.datetime, wind: WindCheck | None = None) -> Telemetry:

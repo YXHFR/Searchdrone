@@ -20,6 +20,7 @@ from stop_helpers import PILOT, VID, stack  # pyright: ignore[reportMissingImpor
 from sd_ground.context import Ground
 from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
 from sd_ground.services import wind
+from sd_ground.services.latches import Latches
 from sd_ground.services.telemetry import TelemetryService
 from sd_ground.services.vehicle_actions import ActionRefusedError
 from sd_ground.services.wind import (
@@ -410,6 +411,52 @@ async def test_a_new_connection_starts_from_the_constants_and_reads_again() -> N
         assert mav.wind.params.angle_max_deg == 40.0
 
 
+async def test_a_reboot_without_a_lost_link_reads_again() -> None:
+    """The flight controller restarts faster than the heartbeat timeout: time_boot_ms
+    goes back, and the numbers and the drag start over."""
+    async with stack() as s:
+        s.fc.params["ATC_ANGLE_MAX"] = 25.0
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        mav.update_wind(VID)
+        await s.run(10.0)
+        mav.update_wind(VID)
+        assert mav.wind.params.angle_max_deg == 25.0
+        mav.wind.drag_k = 0.01
+        s.fc.params["ATC_ANGLE_MAX"] = 40.0
+        s.fc.reboot()
+        await s.run(1.0)
+        snap = mav.snapshot()
+        assert snap is not None and snap.connected
+        mav.update_wind(VID)
+        assert mav.wind.params == FcParams() and mav.wind.drag_k is None
+        await s.run(10.0)
+        mav.update_wind(VID)
+        assert mav.wind.params.angle_max_deg == 40.0
+
+
+async def test_a_partial_read_asks_again_for_the_missing_ones() -> None:
+    async with stack() as s:
+        s.fc.params["ATC_ANGLE_MAX"] = 25.0
+        capacity = s.fc.params.pop("BATT_CAPACITY")
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        mav.update_wind(VID)
+        await s.run(20.0)  # an unanswered parameter is asked for twice
+        mav.update_wind(VID)
+        assert mav.wind.params.fallback == ("BATT_CAPACITY",)
+        s.fc.params["BATT_CAPACITY"] = capacity  # answers later on the same connection
+        asked = len(s.fc.received)
+        for _ in range(10):
+            await s.run(5.0)
+            mav.update_wind(VID)
+        assert mav.wind.params.fallback == ()
+        names = [
+            r.msg.param_id
+            for r in s.fc.received[asked:]
+            if r.msg.get_type() == "PARAM_REQUEST_READ"
+        ]
+        assert set(names) == {"BATT_CAPACITY"}  # only the missing one
+
+
 # --- the energy home against the wind (B4) ---------------------------------------------
 
 
@@ -738,6 +785,24 @@ async def test_resume_and_the_alarm_name_the_energy_reason() -> None:
         assert "vinden" in alarms[0]["message_sv"]
 
 
+def test_the_battery_reason_goes_with_its_latch() -> None:
+    """Resume, a new latch without the battery and an adopted latch forget the reason."""
+    clock = FakeClock()
+    latches = Latches(clock)
+    latches.set_battery_reason(VID, "energy_home")
+    latches.start(VID, "battery_rtl", "system")
+    latches.start(VID, "stop", "operator:demo")  # the battery latch stays under the STOP
+    assert latches.battery_reason(VID) == "energy_home"
+    latches.release(VID)
+    assert latches.battery_reason(VID) == "battery_level"
+    latches.set_battery_reason(VID, "energy_home")
+    latches.start(VID, "battery_rtl", "system")
+    latch = latches.get(VID)
+    assert latch is not None
+    latches.adopt(latch)  # as read back after a restart
+    assert latches.battery_reason(VID) == "battery_level"
+
+
 async def test_the_level_alarm_still_says_the_battery_is_low() -> None:
     async with stack(rtl_pct=20.0) as s:
         s.fly()
@@ -758,11 +823,21 @@ def test_the_wind_estimate_without_drag_only_warns() -> None:
     assert "ENERGY_HOME" in check.reasons and not watch.energy_rtl
 
 
+CAPACITY_READ = FcParams(fallback=())  # every number from the flight controller (10000 mAh)
+
+
 def test_the_wind_estimate_with_measured_drag_flies_home() -> None:
-    watch = WindWatch()
+    watch = WindWatch(params=CAPACITY_READ)
     watch.drag_k = math.tan(math.radians(10.0)) / 36.0  # top airspeed 10.9 m/s
     check, _ = wind_check(watch, far(battery_pct=30.0), 9.0, FROM_SOUTH)
     assert "ENERGY_HOME" in check.reasons and watch.energy_rtl
+
+
+def test_the_wind_estimate_with_drag_but_no_capacity_read_only_warns() -> None:
+    watch = WindWatch()  # BATT_CAPACITY not read: the constant
+    watch.drag_k = math.tan(math.radians(10.0)) / 36.0
+    check, _ = wind_check(watch, far(battery_pct=30.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in check.reasons and not watch.energy_rtl
 
 
 def test_too_strong_to_get_home_only_warns() -> None:
@@ -774,14 +849,32 @@ def test_too_strong_to_get_home_only_warns() -> None:
 
 
 def test_the_estimate_with_the_fc_numbers_flies_home() -> None:
-    # 500 m, 20 A, no wind: 451 mAh + 1500 reserve > 15 % of 10000 mAh.
-    watch = WindWatch()
+    """With BATT_CAPACITY read from the flight controller. 500 m, 20 A, no wind:
+    451 mAh + 1500 reserve > 15 % of 10000 mAh."""
+    watch = WindWatch(params=CAPACITY_READ)
     t = far(battery_pct=15.0)
     now = run(watch, t, 12.0)
     assert "ENERGY_HOME" in watch.check(t, now).reasons and watch.energy_rtl
     t = far(battery_pct=60.0)
     now = run(watch, t, 12.0, start_ms=now + 250)
     assert "ENERGY_HOME" not in watch.check(t, now).reasons and not watch.energy_rtl
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        FcParams(),  # before the first read, and after a reconnect or a reboot
+        fc_params({**READ, "BATT_CAPACITY": None}),  # a partial read without the capacity
+        fc_params({**READ, "BATT_CAPACITY": 50.0}),  # an unusable capacity
+    ],
+    ids=["not-read", "partial", "unusable"],
+)
+def test_the_constant_capacity_only_warns(params: FcParams) -> None:
+    assert "BATT_CAPACITY" in params.fallback
+    watch = WindWatch(params=params)
+    t = far(battery_pct=5.0)
+    now = run(watch, t, 12.0)
+    assert "ENERGY_HOME" in watch.check(t, now).reasons and not watch.energy_rtl
 
 
 def test_the_fc_capacity_decides_the_fly_home() -> None:
@@ -812,6 +905,11 @@ def test_no_ground_speed_is_not_holding_position(groundspeed: float) -> None:
         ({"RTL_SPEED_MS": 0.0, "WP_SPD": 30.0}, "RTL_SPEED_MS"),
         ({"BATT_CAPACITY": 5e6}, "BATT_CAPACITY"),
         ({"BATT_LOW_MAH": 9000.0}, "BATT_LOW_MAH"),  # above the 8000 mAh capacity
+        ({"BATT_LOW_MAH": 8000.0}, "BATT_LOW_MAH"),  # the whole capacity
+        ({"RTL_SPEED_MS": 0.05}, "RTL_SPEED_MS"),  # under ArduCopter's 0.1 m/s
+        ({"RTL_SPEED_MS": 0.0, "WP_SPD": 0.05}, "RTL_SPEED_MS"),
+        ({"BATT_CAPACITY": 50.0}, "BATT_CAPACITY"),  # under 100 mAh
+        ({"ATC_ANGLE_MAX": 85.0}, "ATC_ANGLE_MAX"),
     ],
 )
 def test_absurd_values_fall_back(values: dict[str, float | None], fallback: str) -> None:

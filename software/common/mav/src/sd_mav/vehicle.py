@@ -83,6 +83,8 @@ _ARMED_FLAG: Final = mavlink.MAV_MODE_FLAG_SAFETY_ARMED
 # window as the executor's classification of a mode change (a failsafe signal up to
 # this long around the change counts), so both agree on what "new" means.
 _SIGNAL_QUIET_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
+# ATTITUDE's time_boot_ms this much back counts as a reboot (not a reordered packet).
+_REBOOT_BACK_MS: Final = 1000
 # Landed states that count as "in the air" (the flight controller's own words).
 _AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
 # Commands that move the vehicle; their retries stop when the flight controller decided.
@@ -197,6 +199,11 @@ class FcTelemetry:
 
     fc_connected: bool = False
     fc_heartbeat_mono_ms: int | None = None
+    # Counts the flight controller's connections: one more at each new connection and at
+    # a reboot seen without a lost connection (ATTITUDE's time_boot_ms going back).
+    # Readers that keep something per flight controller start over when it changes.
+    fc_link_epoch: int = 0
+    fc_boot_ms: int | None = None  # ATTITUDE's time_boot_ms, the newest
     gcs_mavlink_seen_mono_ms: int | None = None  # HEARTBEAT from the ground station
     onboard_seen_mono_ms: int | None = None  # HEARTBEAT from the onboard computer
     armed: bool = False
@@ -868,6 +875,7 @@ class Vehicle:
                 )
                 notify = True
                 if not was_connected:
+                    t = replace(t, fc_link_epoch=t.fc_link_epoch + 1, fc_boot_ms=None)
                     self._t = t
                     self._connected_event.set()
                     self._event("mav.fc_connected", {"mode": t.fc_mode})
@@ -893,6 +901,10 @@ class Vehicle:
                 # No notify: the panel and perception read the latest. A non-finite sample
                 # is dropped and the previous one ages out instead of being shown as a
                 # made-up horizon.
+                boot_ms = int(msg.time_boot_ms)
+                if t.fc_boot_ms is not None and boot_ms + _REBOOT_BACK_MS < t.fc_boot_ms:
+                    t = replace(t, fc_link_epoch=t.fc_link_epoch + 1)  # a reboot
+                t = replace(t, fc_boot_ms=boot_ms)
                 rpy = (float(msg.roll), float(msg.pitch), float(msg.yaw))
                 if all(map(math.isfinite, rpy)):
                     roll, pitch, yaw = map(math.degrees, rpy)

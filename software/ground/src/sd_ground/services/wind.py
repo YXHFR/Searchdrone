@@ -116,8 +116,10 @@ RESERVE_MAH: Final = float(FC_SAFETY_EXPECTED["BATT_LOW_MAH"])
 # when ``RTL_SPEED_MS`` is 0 (Copter 4.7 names; WPNAV_SPEED before).
 WIND_PARAMS: Final = ("ATC_ANGLE_MAX", "RTL_SPEED_MS", "WP_SPD", "BATT_CAPACITY", "BATT_LOW_MAH")
 _ANGLE_RANGE_DEG: Final = (10.0, 80.0)  # ATC_ANGLE_MAX's range in ArduCopter
-_SPEED_MAX_MS: Final = 20.0  # RTL_SPEED_MS' and WP_SPD's upper end in ArduCopter
-_CAPACITY_MAX_MAH: Final = 1_000_000.0  # far above any battery this drone can lift
+# RTL_SPEED_MS' and WP_SPD's range in ArduCopter (WP_SPD 10-2000 cm/s before 4.7).
+_SPEED_RANGE_MS: Final = (0.1, 20.0)
+# BATT_CAPACITY: far below and far above any battery this drone flies on.
+_CAPACITY_RANGE_MAH: Final = (100.0, 1_000_000.0)
 
 log = get_logger("sd_ground.wind")
 
@@ -137,33 +139,34 @@ class FcParams:
 
 
 def _usable(v: float | None, low: float = 0.0, high: float = math.inf) -> float | None:
-    """``v`` when the flight controller answered with a value in (low, high]."""
-    return v if v is not None and math.isfinite(v) and low < v <= high else None
+    """``v`` when the flight controller answered with a value in [low, high] (above 0)."""
+    ok = v is not None and math.isfinite(v) and v > 0.0 and low <= v <= high
+    return v if ok else None
 
 
 def fc_params(values: Mapping[str, float | None]) -> FcParams:
     """``FcParams`` from what the flight controller answered (``mav.fence.read_params``).
     A parameter without a usable answer keeps its constant, with ``wind.param_fallback``
-    in the log: ``BATT_LOW_MAH`` 0 (no mAh failsafe) or above the capacity, an
-    ``ATC_ANGLE_MAX`` outside ArduCopter's range, a speed over 20 m/s and an absurd
-    capacity count as unusable too."""
+    in the log: a value outside ArduCopter's range counts as unusable (``ATC_ANGLE_MAX``
+    10-80 degrees, ``RTL_SPEED_MS`` and ``WP_SPD`` 0.1-20 m/s), and so do a capacity
+    outside 100-1,000,000 mAh and a ``BATT_LOW_MAH`` of 0 (no mAh failsafe) or not below
+    the capacity."""
     defaults = FcParams()
-    lo, hi = _ANGLE_RANGE_DEG
-    angle = _usable(values.get("ATC_ANGLE_MAX"), lo - 1e-6, hi)
-    rtl = _usable(values.get("RTL_SPEED_MS"), high=_SPEED_MAX_MS)
+    angle = _usable(values.get("ATC_ANGLE_MAX"), *_ANGLE_RANGE_DEG)
+    rtl = _usable(values.get("RTL_SPEED_MS"), *_SPEED_RANGE_MS)
     if rtl is None and values.get("RTL_SPEED_MS") == 0.0:
         # RTL_SPEED_MS 0: RTL flies at WP_SPD
-        rtl = _usable(values.get("WP_SPD"), high=_SPEED_MAX_MS)
-    capacity = _usable(values.get("BATT_CAPACITY"), high=_CAPACITY_MAX_MAH)
-    reserve_high = _CAPACITY_MAX_MAH if capacity is None else capacity
+        rtl = _usable(values.get("WP_SPD"), *_SPEED_RANGE_MS)
+    capacity = _usable(values.get("BATT_CAPACITY"), *_CAPACITY_RANGE_MAH)
+    low = values.get("BATT_LOW_MAH")
+    below_capacity = low is not None and low < (
+        _CAPACITY_RANGE_MAH[1] if capacity is None else capacity
+    )
     read = {
         "ATC_ANGLE_MAX": (angle, defaults.angle_max_deg),
         "RTL_SPEED_MS": (rtl, defaults.rtl_speed_ms),
         "BATT_CAPACITY": (capacity, defaults.capacity_mah),
-        "BATT_LOW_MAH": (
-            _usable(values.get("BATT_LOW_MAH"), high=reserve_high),
-            defaults.reserve_mah,
-        ),
+        "BATT_LOW_MAH": (_usable(low) if below_capacity else None, defaults.reserve_mah),
     }
     fallback = tuple(name for name, (v, _) in read.items() if v is None)
     for name in fallback:
@@ -404,11 +407,14 @@ class WindWatch:
         pct = None if t.battery_pct is None else t.battery_pct / 100.0
         p = self.params
         left = None if pct is None else pct * p.capacity_mah
+        # Only a capacity read from the flight controller may send the drone home: with
+        # the constant, what is left is a guess for another pack, so it only warns.
+        capacity_read = "BATT_CAPACITY" not in p.fallback
         estimates = [
             _Energy(
                 home_mah(way, current), None if pct is None else pct * CAPACITY_MAH, RESERVE_MAH
             ),
-            _Energy(home_mah(way, current, p.rtl_speed_ms), left, p.reserve_mah, True),
+            _Energy(home_mah(way, current, p.rtl_speed_ms), left, p.reserve_mah, capacity_read),
         ]
         if wind is not None:
             head, cross = _wind_on_the_way(Plane(t.home.lat, t.home.lon), t.lat, t.lon, *wind)
@@ -422,7 +428,7 @@ class WindWatch:
                 drag_k=self.drag_k,
             )
             calibrated = self.drag_k is not None and cost is not None
-            estimates.append(_Energy(cost, left, p.reserve_mah, calibrated))
+            estimates.append(_Energy(cost, left, p.reserve_mah, calibrated and capacity_read))
         return estimates
 
     def check(self, t: FcTelemetry, now_mono_ms: int) -> WindCheck:
@@ -456,9 +462,6 @@ class WindWatch:
             if mean > self.limit_ms or over_gust:
                 reasons.append("WIND_LIMIT")
 
-        left = None
-        if t.battery_pct is not None:
-            left = t.battery_pct / 100.0 * self.params.capacity_mah
         return WindCheck(
             warning=bool(reasons),
             reasons=reasons,
@@ -470,6 +473,14 @@ class WindWatch:
             wind_limit_ms=self.limit_ms,
             wind_gust_limit_ms=self.gust_limit_ms,
             home_mah=None if energy is None else energy.cost_mah,
-            left_mah=left if energy is None else energy.left_mah,
+            left_mah=(
+                (
+                    None
+                    if t.battery_pct is None
+                    else t.battery_pct / 100.0 * self.params.capacity_mah
+                )
+                if energy is None
+                else energy.left_mah
+            ),
             reserve_mah=self.params.reserve_mah if energy is None else energy.reserve_mah,
         )

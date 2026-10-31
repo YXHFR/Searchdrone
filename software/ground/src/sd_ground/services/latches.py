@@ -135,6 +135,8 @@ class Latches:
             under_battery = old is not None and "battery_rtl" in (old.action, old.underlying)
             if action != "battery_rtl" and under_battery:
                 underlying = "battery_rtl"
+            elif action != "battery_rtl":
+                self._battery_reason.pop(vehicle_id, None)  # no battery latch any more
             latch = OperatorLatch(
                 vehicle_id=vehicle_id,
                 action=action,
@@ -166,6 +168,7 @@ class Latches:
             _refuse_while_home(latch, self._battery_reason.get(vehicle_id))
             seq = self._take(vehicle_id)
             self._latch.pop(vehicle_id, None)
+            self._battery_reason.pop(vehicle_id, None)
             self._override[vehicle_id] = seq
             self.changes.put(LatchChange("released", vehicle_id, latch, seq))
         return seq, latch
@@ -182,6 +185,7 @@ class Latches:
         """A latch read back after a restart (database or the onboard ``Hello``)."""
         with self._lock:
             self._latch[latch.vehicle_id] = latch
+            self._battery_reason.pop(latch.vehicle_id, None)  # unknown: counts as the level
             self._seq[latch.vehicle_id] = max(self._seq.get(latch.vehicle_id, 0), latch.action_seq)
 
 

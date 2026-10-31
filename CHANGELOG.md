@@ -143,13 +143,17 @@ All notable changes to this project are listed here. The format follows
   mean over the last 60 s, direction and speed from the same samples, so one gust does
   not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
   `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
-  from the estimate with the flight controller's numbers (`BATT_CAPACITY`, not the
-  constant 10000 mAh), or from the wind estimate once the drag is measured; an
-  uncalibrated drag and a wind too strong to get home in only warn. Not while the pilot
-  flies by hand. A ground speed of 0 or NaN does not count as holding position for the
-  drag. Parameters outside sane bounds (speeds over 20 m/s, a capacity over 1,000,000
-  mAh, `BATT_LOW_MAH` over the capacity) keep their constants. A reconnect forgets the
-  parameters and the measured drag. The guard's percentage level and the flight
+  from the estimate with the flight controller's numbers, or from the wind estimate once
+  the drag is measured, and both only with `BATT_CAPACITY` read from the flight
+  controller (with the constant 10000 mAh, before the read, after a reconnect or when it
+  is not answered, they only warn); an uncalibrated drag and a wind too strong to get
+  home in only warn. Not while the pilot flies by hand. A ground speed of 0 or NaN does
+  not count as holding position for the drag. Parameters outside ArduCopter's ranges
+  (`RTL_SPEED_MS` and `WP_SPD` 0.1-20 m/s), a capacity outside 100-1,000,000 mAh and a
+  `BATT_LOW_MAH` not below the capacity keep their constants; parameters not answered
+  are asked for again on the same connection. A reconnect or a reboot of the flight
+  controller (`FcTelemetry.fc_link_epoch`, also counting ATTITUDE's `time_boot_ms` going
+  back) forgets the parameters and the measured drag. The guard's percentage level and the flight
   controller's failsafes are unchanged: an energy flight home under a STOP blocks only
   the energy trigger, so the percentage level still flies home after STOP and "Ta över".
   Resume's refusal and the alarm say when the wind and the battery sent the drone home.
