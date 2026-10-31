@@ -70,8 +70,12 @@ All notable changes to this project are listed here. The format follows
   tag on the line) checks the whole history with the tagged commit's own copy. Past
   the API's hourly limit the check waits for the reset instead of failing, and a test
   runs the workflow's own anchor loop against the check's choice. New rules therefore
-  apply from the release after the one that ships them. A deleted release and a `release.yml` without its gates job are left
-  to the owner's ruleset on `v*` tags and immutable releases. Then it checks the
+  apply from the release after the one that ships them; so do the `gates` job check and
+  the waiting, which run in the anchor's copy. A deleted release and a `release.yml`
+  without its gates job are left to the owner's ruleset on `v*` tags and immutable
+  releases. While the check waits it shares the token's hourly limit with the gate
+  workflows, so a long first release is best started when no pull request is under
+  review. Then it checks the
   versions, builds the packages and the panel and publishes the
   GitHub release only if the tag still names the commit it built; only its publish job
   can write. `just showcase` is still not built.

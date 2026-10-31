@@ -29,8 +29,9 @@ jobs:
   # confirm that release.yml made the anchor and that its run and gates job succeeded
   # (check_merged_pr_gates.release_anchor), and starts after it, so a later merge that
   # loosened them is judged by the rules before it. Any error stops the release; the
-  # API's hourly limit only makes the check wait (hence the long timeout). They run from a clean directory (no other tools/*.py can
-  # shadow an import) with PyYAML pinned by hash for Python 3.12. A release.yml without
+  # API's hourly limit only makes the check wait (hence the long timeout). They run
+  # from a clean directory (no other tools/*.py can shadow an import) with PyYAML
+  # pinned by hash for Python 3.12. A release.yml without
   # this job, or a deleted release, is the owner's to stop: a ruleset on v* tags and
   # immutable releases (see the checker).
   gates:
@@ -95,7 +96,9 @@ jobs:
           if [ -z "$since" ]; then
             # The first release: no release elsewhere, and no release tag on the line
             # whose release failed or was deleted.
-            tags=$(git tag --merged "$GITHUB_SHA" --list 'v*' \
+            # Its own assignment, so a git error stops the step; only grep may find nothing.
+            tags=$(git tag --merged "$GITHUB_SHA" --list 'v*')
+            tags=$(printf '%s\n' "$tags" \
               | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' \
               | grep -vxF "$GITHUB_REF_NAME" || true)
             if [ -n "$off$tags" ]; then

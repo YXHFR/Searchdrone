@@ -526,13 +526,17 @@ def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str |
 def release_tags_on_line(root: Path, sha: str, tag: str) -> list[str]:
     """``vX.Y.Z[-rc.N]`` tags other than ``tag`` that ``sha`` contains. With no release
     on the line there must be none: a tag whose release failed or was deleted would
-    otherwise turn the next release into a first release, checked with its own copy."""
+    otherwise turn the next release into a first release, checked with its own copy.
+    release.yml checks this itself before any script runs (``--anchor-for-tag`` runs only
+    once it has an anchor); here it covers a direct caller."""
     out = git(root, "tag", "--merged", sha, "--list", "v*")
     return sorted(t for t in out.splitlines() if RELEASE_TAG_RE.match(t) and t != tag)
 
 
 def gates_passed(api: Api, repo: str, run_id: int) -> bool:
-    """The ``gates`` job of the release.yml run ``run_id`` (its latest attempt) succeeded."""
+    """The ``gates`` job of the release.yml run ``run_id`` (its latest attempt) succeeded.
+    Only by name: what that job does is the owner's to protect (``release.yml`` needs
+    ``owner-ok``)."""
     pages = api(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
     jobs = [job for page in pages for job in page.get("jobs") or []]
     return any(

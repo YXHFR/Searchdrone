@@ -611,7 +611,9 @@ def release_loop(root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: st
     bin_dir.mkdir(exist_ok=True)
     (tmp_path / "releases.tsv").write_text(gh.tsv())
     stub = bin_dir / "gh"
-    stub.write_text(f'#!/bin/sh\ncat "{tmp_path / "releases.tsv"}"\n')
+    args = tmp_path / "gh-args"
+    tsv = tmp_path / "releases.tsv"
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{args}"\ncat "{tsv}"\n')
     stub.chmod(0o755)
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -628,6 +630,14 @@ def release_loop(root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: st
         text=True,
         check=False,
     )
+    # The stub stands in for the filter below (no drafts; tag and author): it must be asked.
+    assert args.read_text().splitlines() == [
+        "api",
+        "--paginate",
+        f"repos/{REPO}/releases?per_page=100",
+        "--jq",
+        ".[] | select(.draft | not) | [.tag_name, .author.login] | @tsv",
+    ]
     if proc.returncode != 0:
         raise ValueError(proc.stderr.strip())
     return proc.stdout.strip()
@@ -652,7 +662,9 @@ def test_release_yml_picks_the_same_anchor_as_release_anchor(tmp_path: Path, cas
         gh.release("x-junk", c["c2"])
         if case == "tie":
             cmg.git(root, "tag", "v0.2.0-rc.1", c["c2"])
-            gh.release("v0.2.0-rc.1", c["c2"])
+            # The tie goes to the larger tag (bytes): the rc, whose author then stops
+            # both. A different tie-break in either would pick v0.2.0 and pass.
+            gh.release("v0.2.0-rc.1", c["c2"], author={"login": "mallory"})
     elif case == "mallory":
         gh.release("v0.1.0", c["c1"])
         gh.release("v0.2.0", c["c2"], author={"login": "mallory"})
@@ -677,12 +689,12 @@ def test_release_yml_picks_the_same_anchor_as_release_anchor(tmp_path: Path, cas
         except ValueError as exc:
             results.append(f"stop: {str(exc).splitlines()[-1]}")
     shell, python = results
-    expected = {"first": None, "newest": c["c2"], "tie": c["c2"]}
+    expected = {"first": None, "newest": c["c2"]}
     if case in expected:
         assert shell == python == expected[case]
-    elif case in ("same-commit", "off-line"):
-        # Only the workflow judges these: release_anchor skips the tagged commit, and it
-        # runs only from an anchor's copy, never for a first release. The workflow stops.
+    elif case == "off-line":
+        # Only the workflow judges this: release_anchor runs only from an anchor's copy,
+        # never for a first release. The workflow stops.
         assert str(shell).startswith("stop: "), shell
     else:
         assert str(shell).startswith("stop: "), shell
@@ -937,3 +949,13 @@ def test_both_gates_parse_times_alike() -> None:
     assert inspect.getsource(check_owner_gate.parse_time) == inspect.getsource(
         check_review_comments.parse_time
     )
+
+
+def test_release_yml_stops_when_git_cannot_list_the_tags(tmp_path: Path) -> None:
+    # No release anywhere, and git fails: not a first release, an error.
+    root = tmp_path / "repo"
+    root.mkdir()
+    tagged_repo(root)
+    untag(root, "v0.1.0", "v0.2.0")
+    with pytest.raises(ValueError, match="must point to a commit"):
+        release_loop(root, tmp_path, FakeReleases(), "0" * 40, "v0.3.0")
