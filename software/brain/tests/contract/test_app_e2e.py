@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 
 import pytest
 from brain_helpers import REG, fixture, with_stub
@@ -78,7 +79,10 @@ async def test_zdr_and_the_ai_hash_follow_the_ground_stations_profile(
     try:
         before = b.loop.ai_hash
         assert cfg.cloud.provider.zdr_on
-        follow_ground_profile(b, "sim")
+        with caplog.at_level(logging.INFO, logger="sd_brain"):
+            follow_ground_profile(b, "sim")
+            follow_ground_profile(b, "sim")  # already off: no second line
+        assert caplog.text.count("zdr av") == 1
         assert not cfg.cloud.provider.zdr_on and b.loop.ai_hash != before
         follow_ground_profile(b, None)  # the stream is down: the profile is unknown again
         assert cfg.cloud.provider.zdr_on and b.loop.ai_hash == before

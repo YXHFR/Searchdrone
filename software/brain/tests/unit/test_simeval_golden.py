@@ -126,7 +126,7 @@ def test_every_key_the_ai_reads_is_refused() -> None:
     assert set(BRAIN_KEYS) <= set(SECRET_ENV)
 
 
-@pytest.mark.parametrize("key", BRAIN_KEYS)
+@pytest.mark.parametrize("key", SECRET_ENV)
 def test_cli_export_refuses_a_key_from_dotenv(
     key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -191,7 +191,11 @@ async def _idle_ticker(b: Brain) -> None:
 def follow_ground_profile(b: Brain, profile: str | None) -> None:
     """The cloud's zero-data-retention default follows the ground station's profile, not
     the brain's own: a real flight is the ground station's call."""
-    b.cfg.cloud.provider.follow_ground(profile)
+    provider = b.cfg.cloud.provider
+    was_on = provider.zdr_on
+    provider.follow_ground(profile)
+    if was_on and not provider.zdr_on:
+        log.info("markstationens profil är %s: zdr av för molnets turer", profile)
     b.loop.ai_hash = b.ai_hash_of()
     if warning := b.cfg.zdr_warning(profile):
         log.warning(warning)

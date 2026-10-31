@@ -455,10 +455,12 @@ All notable changes to this project are listed here. The format follows
   the ground station's profile from its `server.hello`, not the brain's own: on until the
   ground station has said it, off only against a `sim` ground station, and on again while
   the stream is down. The offline evaluations count as `sim`. The AI configuration hash is
-  computed again after the hello.
+  computed again after the hello. The brain logs a line when the ground station's
+  profile turns zero retention off.
 - `sd-brain bank export-golden` and `eval-profiles record=1` refuse answers holding the
   value of any key the AI reads (`SD_JEV_API_KEY` and `SD_OPENAI_API_KEY` were missing);
-  the list is built from the brain's own key list, and the keys in `.env` are checked too.
+  the list is built from the brain's own key list, and the keys in `.env` are checked too,
+  `SD_BRAIN_TOKEN` and the `SD_BANK_R2_*` keys included.
 - The cloud matcher refuses a crop larger than 512 px instead of scaling it down: the
   link caps crops at 512 px, so a larger image is not a crop.
 - The cloud image policy passes a text part on with its text only, no other keys.
