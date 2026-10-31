@@ -184,7 +184,10 @@ All notable changes to this project are listed here. The format follows
   goto's deadline runs from its first target, so replans cannot keep it flying. A way
   out planned again gets its own deadline, `goto.start` can no longer overwrite a
   renewed one, and every keep-out hover tells the ground whether the drone is inside a
-  cylinder. STOP and FLY HOME still go past the AI and the reflex.
+  cylinder. The AI's next order after such a hover waits for the onboard snapshot after
+  it also when the hover's red alarm names the turn (before, it was refused onboard as
+  `STATE_CHANGED` and the drone kept hovering). STOP and FLY HOME still go past the AI
+  and the reflex.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read

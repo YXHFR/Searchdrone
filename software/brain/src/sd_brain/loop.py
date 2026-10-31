@@ -579,7 +579,9 @@ class CommanderLoop:
         # so a pin the operator placed before writing is in it.
         chat = await self.ground.chat(mid, 0, 200)
         s = await self.ground.situation(mid)
-        if trigger in ("skill_event", "operator_override"):
+        # A skill's end waits for its snapshot also in a turn named after a higher
+        # trigger (a critical alert arrives with a keep-out hover's end).
+        if trigger == "operator_override" or any(e.get("type") == "event.skill" for e in events):
             s = await self._fresh_situation(mid, s, trigger, events)
         try:
             mem = await self.ground.memory(mid)
@@ -1099,12 +1101,12 @@ class CommanderLoop:
         older one is refused onboard as ``STATE_CHANGED``); after the pilot's Resume, the
         mission no longer paused by a person nor HELD by the STOP (until the onboard
         computer confirms the release, the gate still says the pilot must resume)."""
-        kind = "event.skill" if trigger == "skill_event" else "event.operator_override"
+        kind = "event.operator_override" if trigger == "operator_override" else "event.skill"
         body = next((e.get("body") or {} for e in reversed(events) if e.get("type") == kind), {})
         first = (s.snapshot_state_epoch, s.snapshot_state_seq)
 
         def stale(s: Situation) -> bool:
-            if trigger == "skill_event":
+            if kind == "event.skill":
                 ended = body.get("command_id")
                 if ended is None:
                     return False
