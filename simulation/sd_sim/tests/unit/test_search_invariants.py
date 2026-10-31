@@ -122,6 +122,19 @@ def test_inside_since_it_came_the_drone_may_not_go_deeper() -> None:
     assert keepout_never_entered([_cyl()], across)
 
 
+def test_inside_since_it_came_braking_may_take_it_its_stop_deeper() -> None:
+    """Made around a drone heading deeper at 5 m/s: braking takes it on by its stop
+    (7.5 m), not more; the same drone flying across is still caught."""
+    braked = _track([(0, 75, 0), (0.5, 77.5, 0), (1, 80, 0), (2, 82, 0), (5, 82, 0), (8, 60, 0)])
+    assert keepout_never_entered([_cyl()], braked) == []
+    on = _track([(0, 75, 0), (0.5, 77.5, 0), (1, 80, 0), (2, 85, 0), (3, 90, 0)])
+    broken = keepout_never_entered([_cyl()], on)
+    assert broken and "inbromsningen tar den 7.5 m till" in broken[0]
+    # Heading out when it came: no stop to allow for.
+    turned = _track([(0, 75, 0), (1, 70, 0), (2, 77, 0)])
+    assert keepout_never_entered([_cyl()], turned)
+
+
 def test_a_new_shape_of_a_cylinder_is_no_new_grace() -> None:
     """The ground moved a cylinder (same id) 5 m ahead of a drone at 5 m/s, 10 s after the
     id came: a new cylinder there would allow braking in, a new shape of an old one not."""

@@ -231,6 +231,18 @@ def _braking_speed_ms(rows: Sequence[tuple[float, float, Sample]], t: float) -> 
     return max(0.0, s0.groundspeed_ms - slowed) + BRAKE_SLACK_MS
 
 
+def _closing_ms(rows: Sequence[tuple[float, float, Sample]]) -> float:
+    """The drone's speed deeper into the cylinder at the first row: the ground speed times
+    the share of the next movement that heads in (all of it until the drone has moved)."""
+    _, d0, s0 = rows[0]
+    v0 = s0.groundspeed_ms
+    for _, d1, s1 in rows[1:]:
+        moved = distance_m(s0.lat, s0.lon, s1.lat, s1.lon)
+        if moved >= MOVED_M:
+            return v0 * min(1.0, max(0.0, (d0 - d1) / moved))
+    return v0
+
+
 def _brake_allowance(
     k: SeenKeepout, rows: Sequence[tuple[float, float, Sample]]
 ) -> tuple[float, float]:
@@ -243,13 +255,7 @@ def _brake_allowance(
     v0 = s0.groundspeed_ms
     if d0 < 0.0 or t0 - k.arrival > ARRIVAL_S:
         return 0.0, -math.inf
-    closing = v0
-    for _, d1, s1 in rows[1:]:
-        moved = distance_m(s0.lat, s0.lon, s1.lat, s1.lon)
-        if moved >= MOVED_M:
-            closing = v0 * min(1.0, max(0.0, (d0 - d1) / moved))
-            break
-    brake_m = stop_distance_m(closing) - d0
+    brake_m = stop_distance_m(_closing_ms(rows)) - d0
     if brake_m <= 0.0:
         return 0.0, -math.inf
     return brake_m, t0 + STOP_REACT_S + v0 / STOP_DECEL_MS2 + STOP_SETTLE_S
@@ -267,8 +273,14 @@ def keepout_never_entered(
             continue
         brake_m, braking_until = _brake_allowance(k, rows)
         # Inside when it came (made around a person under the drone): on its way out, never
-        # deeper than then.
+        # deeper than then, plus what braking takes it on when it was heading deeper (only
+        # with a sample from when the id came, as for a cylinder ahead).
         came_in = -rows[0][1] if rows[0][1] < 0.0 else None
+        came_brake_m = (
+            stop_distance_m(_closing_ms(rows))
+            if came_in is not None and rows[0][0] - k.arrival <= ARRIVAL_S
+            else 0.0
+        )
         out = False
         last_t, last_d, last_s = rows[0]
         for t, d, sample in rows:
@@ -300,8 +312,11 @@ def keepout_never_entered(
                 why = f": inbromsningen tar den {brake_m:.1f} m in"
             else:
                 depth = came_in or 0.0
-                deepest = depth + tolerance_m  # inside since it came: out, never deeper
-                why = f": den var {depth:.1f} m inne när den kom och får inte gå djupare"
+                deepest = depth + came_brake_m + tolerance_m  # inside since it came: out
+                why = (
+                    f": den var {depth:.1f} m inne när den kom, inbromsningen tar den "
+                    f"{came_brake_m:.1f} m till, och får inte gå djupare"
+                )
             if -d > deepest:
                 broken.append(
                     f"E8: banan gick {-d:.1f} m in i cylindern {k.keepout_id} "
