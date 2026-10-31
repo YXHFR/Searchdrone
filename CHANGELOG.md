@@ -175,6 +175,38 @@ All notable changes to this project are listed here. The format follows
   grace. FLY HOME pressed in a chain run must be under way within its limit, and the
   drone must land at home. New SITL tests fly the margin case from #96 and require the
   inspection's `keepout_replan`.
+- The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
+  `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
+  connection, with the fence check's parameter reading. A parameter that cannot be read
+  keeps its constant from `sd_safety.constants`, and `wind.param_fallback` is logged.
+  `ENERGY_HOME` now also counts the wind on the way home: with a fresh MAVLink WIND the
+  ground speed home is the airspeed minus the headwind, with the crosswind crabbed out,
+  and the current comes from the hover current scaled to the lean that airspeed needs
+  (the drag is measured while the drone holds position; until then, full lean at
+  `RTL_SPEED_MS` through the air). The 1.3 margin stays. The strictest of the estimate
+  as before, the same with the flight controller's numbers and the one with the wind
+  decides the warning, so the warning never comes later than before, and a wind too
+  strong to get home in (once the drag is measured) warns at once. The wind used is the
+  mean over the last 60 s, direction and speed from the same samples, so one gust does
+  not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
+  `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
+  from the estimate with the flight controller's numbers, or from the wind estimate once
+  the drag is measured, and both only with `BATT_CAPACITY` read from the flight
+  controller (with the constant 10000 mAh, before the read, after a reconnect or when it
+  is not answered, they only warn); an uncalibrated drag and a wind too strong to get
+  home in only warn. Not while the pilot flies by hand. A ground speed of 0 or NaN does
+  not count as holding position for the drag. Parameters outside ArduCopter's ranges
+  (`RTL_SPEED_MS` and `WP_SPD` 0.1-20 m/s), a capacity outside 100-1,000,000 mAh and a
+  `BATT_LOW_MAH` not below the capacity keep their constants; parameters not answered
+  are asked for again on the same connection. A reconnect or a reboot of the flight
+  controller (`FcTelemetry.fc_link_epoch`, also counting ATTITUDE's `time_boot_ms` going
+  back) forgets the parameters and the measured drag. The guard's percentage level and the flight
+  controller's failsafes are unchanged: an energy flight home under a STOP blocks only
+  the energy trigger, so the percentage level still flies home after STOP and "Ta över".
+  Resume's refusal and the alarm say when the wind and the battery sent the drone home.
+  SITL W5 shows the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35; W6 has
+  `ENERGY_HOME` fly home (reason `energy_home`, Resume refused, STOP and "Ta över" leave
+  the drone in LOITER).
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also

@@ -91,6 +91,7 @@ class TelemetryService:
         """``telemetry`` for each vehicle. A failure skips one sample, like ``publish_state``."""
         for vid in self._vehicles:
             try:
+                self.g.vehicle_link.update_wind(vid)
                 t = self.g.vehicle_link.telemetry(vid)
             except Exception as exc:  # one sample is lost; the loop lives on
                 log.error("telemetry.sample_failed", vehicle_id=vid, error=type(exc).__name__)
@@ -108,7 +109,8 @@ class TelemetryService:
 
     def _wind_event(self, vid: str, t: Telemetry) -> None:
         """``vehicle.wind_warning`` when the wind warning starts or its reasons change, and
-        ``vehicle.wind_ok`` when it ends. A warning only: nothing acts on it."""
+        ``vehicle.wind_ok`` when it ends. Only events: ``ENERGY_HOME``'s FLY HOME is the
+        battery guard's (``sd_ground.mav.thread``)."""
         reasons = tuple(t.wind.reasons) if t.wind is not None else ()
         before = self._wind_reasons.get(vid, ())
         if reasons == before:

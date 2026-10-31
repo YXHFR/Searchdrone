@@ -260,6 +260,9 @@ class _Link:
     def telemetry(self, vehicle_id: str) -> Telemetry:
         return _telemetry(self.clock.utc_now())
 
+    def update_wind(self, vehicle_id: str) -> None:
+        return None
+
     def in_flight(self, vehicle_id: str) -> bool:
         return True
 
