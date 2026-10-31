@@ -445,6 +445,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- `hardware/drone.yaml` uses the measured 0.913 kg for the 10 000 mAh 6S2P pack (was
+  0.87 kg), as the fpv7 CAD already does. `just hw-check` now gives 2.343 kg in all,
+  291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
+  `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
+  file instead of repeating it.
 - The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a
   timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer or a

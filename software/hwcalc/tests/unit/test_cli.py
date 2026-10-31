@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from sd_hwcalc.__main__ import main
+from sd_hwcalc.calc import compute
+from sd_hwcalc.model import load_drone
 
 HARDWARE = Path(__file__).resolve().parents[4] / "hardware"
 
@@ -21,8 +23,12 @@ def test_committed_files_pass(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 0
     assert report["pass"] is True
     assert report["failures"] == []
-    assert report["total_mass_kg"] == pytest.approx(2.3)
-    assert report["hover_time_min"] == pytest.approx(36.58, abs=0.05)
+    # The CLI reports what the calculation gives for the committed file; the numbers
+    # themselves are pinned in test_reference.py.
+    perf = compute(load_drone(HARDWARE / "drone.yaml"))
+    assert report["total_mass_kg"] == pytest.approx(perf.total_mass_kg, abs=1e-4)
+    assert report["hover_time_min"] == pytest.approx(perf.hover_time_min, abs=0.01)
+    assert report["hover_power_w"] == pytest.approx(perf.hover_power_w, abs=0.01)
     assert set(report) >= {
         "total_mass_kg",
         "hover_power_w",
