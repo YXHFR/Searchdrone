@@ -38,7 +38,8 @@ local clone:
 Tags do not shorten the default range, since anyone who can push a tag could then hide
 older commits. The release workflow instead finds the anchor itself, with ``gh`` and
 git and no repository code: the newest published ``vX.Y.Z[-rc.N]`` release whose tag is
-on the tagged commit's line. It then runs this check and its rules from that release,
+on the tagged commit's line, made by ``github-actions[bot]``; with none on the line, a
+release anywhere else stops it. It then runs this check and its rules from that release,
 not from the commit being released. That copy first confirms the anchor
 (``--anchor-for-tag``, ``release_anchor``: the same release, made by ``release.yml``
 itself, author ``github-actions[bot]`` and a successful run for that tag and commit, so
@@ -368,7 +369,7 @@ def workflow_problems(local: Clone, sha: str, files: list[dict[str, Any]]) -> li
             continue
         try:
             doc = yaml.safe_load(local.show(sha, path))
-        except yaml.YAMLError:
+        except (yaml.YAMLError, KeyError):
             doc = None
         if not isinstance(doc, dict):
             out.append(f"{path} går inte att läsa som en workflow")

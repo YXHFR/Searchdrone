@@ -646,9 +646,15 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     # release tags on the line count. The anchor's own scripts confirm it (an error stops
     # the step, since it is an assignment), then check everything after it.
     assert "tagged" not in run
-    assert "--jq '.[] | select(.draft | not) | .tag_name'" in run
+    assert 'gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100"' in run
+    assert "--jq '.[] | select(.draft | not) | [.tag_name, .author.login] | @tsv'" in run
     assert 'git rev-parse -q --verify "refs/tags/$name^{commit}"' in run
-    assert 'git merge-base --is-ancestor "$c" "$GITHUB_SHA"' in run
+    # A git error is not "not an ancestor"; releases off the line with none on it, or an
+    # anchor not made by this workflow, stop the release before any script runs.
+    assert 'git merge-base --is-ancestor "$c" "$GITHUB_SHA" || rc=$?' in run
+    assert '[ "$rc" -le 1 ] || exit 1' in run
+    assert 'if [ -z "$since" ] && [ -n "$off" ]; then' in run
+    assert '[ "$by" != "github-actions[bot]" ]' in run
     assert 'rules="${since:-$GITHUB_SHA}"' in run
     assert 'git show "$rules:tools/$f" > "$gate/$f"' in run
     assert '--anchor-for-tag "$GITHUB_REF_NAME")' in run

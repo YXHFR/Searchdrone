@@ -23,7 +23,8 @@ jobs:
   # First and alone: nothing from the repository runs here except the four gate scripts,
   # which check_owner_gate.PROTECTED keeps behind owner-ok. The anchor, the release to
   # start after, comes from GitHub and git alone: the newest published vX.Y.Z[-rc.N]
-  # release whose tag is on the tagged commit's line (none for the first release). The
+  # release whose tag is on the tagged commit's line, made by github-actions[bot] (none
+  # for the first release, and then no such release may exist anywhere else). The
   # check runs with the anchor's scripts, which first confirm that release.yml made the
   # anchor and that its run succeeded (check_merged_pr_gates.release_anchor), and starts
   # after it, so a later merge that loosened them is judged by the rules before it. Any
@@ -61,20 +62,40 @@ jobs:
           gate="$RUNNER_TEMP/gate"
           mkdir -p "$gate"
           cd "$GITHUB_WORKSPACE"
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.draft | not) | .tag_name' > "$gate/releases.txt"
-          since="" best=-1
-          while read -r name; do
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft | not) | [.tag_name, .author.login] | @tsv' \
+            > "$gate/releases.txt"
+          # The newest release on the line (ties: the larger tag name, as release_anchor);
+          # one that is not on it is only allowed while another one is.
+          export LC_ALL=C # tag names compare as bytes, like Python
+          since="" best=-1 tag="" by="" off=""
+          while IFS=$'\t' read -r name author; do
             [[ "$name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || continue
             [ "$name" != "$GITHUB_REF_NAME" ] || continue
             c=$(git rev-parse -q --verify "refs/tags/$name^{commit}") || {
               echo "releasen $name finns inte i klonen" >&2
               exit 1
             }
-            [ "$c" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$c" "$GITHUB_SHA" || continue
+            rc=0
+            git merge-base --is-ancestor "$c" "$GITHUB_SHA" || rc=$?
+            [ "$rc" -le 1 ] || exit 1
+            if [ "$rc" -eq 1 ] || [ "$c" = "$GITHUB_SHA" ]; then
+              off="$off $name"
+              continue
+            fi
             n=$(git rev-list --count "$c")
-            if [ "$n" -gt "$best" ]; then best=$n since=$c; fi
+            if [ "$n" -gt "$best" ] || { [ "$n" -eq "$best" ] && [[ "$name" > "$tag" ]]; }; then
+              best=$n since=$c tag=$name by=$author
+            fi
           done < "$gate/releases.txt"
+          if [ -z "$since" ] && [ -n "$off" ]; then
+            echo "ingen release på taggens linje, men andra finns:$off" >&2
+            exit 1
+          fi
+          if [ -n "$since" ] && [ "$by" != "github-actions[bot]" ]; then
+            echo "releasen $tag skapades av ${by:-?}, inte av release.yml" >&2
+            exit 1
+          fi
           rules="${since:-$GITHUB_SHA}"
           echo "Regler från $rules, kontroll efter ${since:-början av historiken}"
           scripts="check_merged_pr_gates.py workflow_rules.py check_owner_gate.py check_review_comments.py"
