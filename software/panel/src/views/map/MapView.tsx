@@ -50,7 +50,7 @@ import {
   targetData,
   trackData,
 } from "./mapData";
-import { Picker } from "./Picker";
+import { Picker } from "../../ui/Picker";
 import { ProbabilityLegend } from "./ProbabilityLegend";
 import { ProfileCard } from "./ProfileCard";
 import { formatLength, lengthM, nextPathLabel, pathProblem } from "./pathData";

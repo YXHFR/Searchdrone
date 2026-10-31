@@ -122,6 +122,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The panel's choice lists (a drawn area's hint, the search profile's fields) work
+  from the keyboard like a native select: ↓/↑ on the button opens the list on the
+  current choice, ↓/↑, Home and End move, Enter or Space chooses, Escape and Tab close,
+  and the focus returns to the button. The component moved to `src/ui/Picker.tsx`.
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also
   shows its Wilson lower bound. SK04 counts every verdict of the hiker's top that saw it,
