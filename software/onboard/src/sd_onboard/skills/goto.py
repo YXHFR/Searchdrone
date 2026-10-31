@@ -139,6 +139,9 @@ class GotoHandler:
             raise RuntimeError("planned before running")
         # The deadline first: an end set again while the modes below are awaited
         # (``retarget``, e.g. the climb out of a cylinder) keeps the deadline it set.
+        # ``plan`` is the current end's: the goto order's own plan, or the inspection's
+        # leg plan, which it sets with every new end and reads just before this call
+        # (no await between), so an end set before the start is in it.
         self._deadline = self._deadline_for(io.clock.monotonic(), plan)
         if io.vehicle.fc_mode != CopterMode.GUIDED.name and not await io.set_mode(
             CopterMode.GUIDED

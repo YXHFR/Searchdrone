@@ -15,6 +15,7 @@ import pytest
 
 from sd_ground.services.missions import MissionFlow, keepout_hold_text
 from sd_schemas.api import KeepoutHoldField
+from sd_schemas.link import OnboardEvent
 from sd_schemas.mission import MissionState
 
 SV = Path(__file__).resolve().parents[3] / "panel" / "src" / "i18n" / "sv.json"
@@ -102,3 +103,40 @@ def test_the_send_time_goes_into_the_details_unchanged() -> None:
     code, severity, _, details = flow.alerts[0]
     assert (code, severity) == ("KEEPOUT_HOLD", "critical")
     assert details == {"inside": True, "sent_utc": "2026-05-01T10:00:07+00:00"}
+
+
+async def test_a_hover_from_the_link_carries_the_envelope_send_time() -> None:
+    """Through the real entry point (``on_inbound``): the alarm's details carry the
+    envelope's ``sent_utc``, so every keep-out hover alarm shows when the drone sent it."""
+
+    class _Inbound(_Flow):
+        def __init__(self, mission: Any) -> None:
+            super().__init__()
+
+            async def open_mission(vehicle_id: str) -> Any:
+                return mission
+
+            async def by_id(mission_id: str) -> Any:
+                return None
+
+            self.repo = SimpleNamespace(open_mission=open_mission, mission=by_id)
+            self.g = SimpleNamespace(add_event=lambda *a, **k: None)
+
+        def publish(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def _keepout_hold_alert(self, *a: Any) -> None:
+            MissionFlow._keepout_hold_alert(self, *a)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    flow = _Inbound(SimpleNamespace(id=uuid.uuid4(), status=MissionState.ACTIVE))
+    sent = dt.datetime(2026, 5, 1, 10, 0, 7, tzinfo=dt.UTC)
+    body = OnboardEvent(
+        type="executor.keepout_hold",
+        severity="warning",
+        data={"command_id": "c", "skill": "goto", "inside": False},
+    )
+    inbound = SimpleNamespace(body=body, envelope=SimpleNamespace(mission_id=None, sent_utc=sent))
+    await MissionFlow.on_inbound(flow, "sd-01", inbound)  # type: ignore[arg-type]
+    ((code, severity, _, details),) = flow.alerts
+    assert (code, severity) == ("KEEPOUT_HOLD", "warning")
+    assert details == {"inside": False, "sent_utc": "2026-05-01T10:00:07+00:00"}

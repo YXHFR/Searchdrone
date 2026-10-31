@@ -712,6 +712,7 @@ async def test_a_new_cylinder_reroutes_the_search() -> None:
 
 
 BRAKE_MS2 = 2.5  # ArduCopter's LOITER braking (LOIT_BRK_ACCEL)
+SOFT_BRAKE_MS2 = 1.0  # a brake too soft to stop short of ``_close_cylinder_ahead``'s cylinder
 
 
 async def _close_cylinder_ahead(r: Rig) -> tuple[SkillCommand, Keepout, int]:
@@ -735,7 +736,7 @@ async def _close_cylinder_ahead(r: Rig) -> tuple[SkillCommand, Keepout, int]:
     await r.until(on_a_long_leg, 300)
     here, (ve, vn) = xy(r), r.fc.vel
     speed = math.hypot(ve, vn)
-    assert stop_m(speed) > 17 > speed**2 / (2 * BRAKE_MS2) + speed * 0.5
+    assert stop_m(speed) > 17
     k = keepout(here[0] + 37 * ve / speed, here[1] + 37 * vn / speed, 20, source="detection")
     start = len(r.fc.track)
     install(r, k)
@@ -773,10 +774,30 @@ async def test_no_way_around_from_where_the_search_stopped_is_a_keepout_hold(
             monkeypatch.setattr(survey_sector.SurveyRun, "plan", no_way)
         await r.until(lambda: r.ex.state == S.HOLD, 60)
         assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
-        assert "executor.keepout_hold" in r.up.kinds()
+        assert [h["inside"] for h in _holds(r)] == [False]  # short of the cylinder: orange
         assert "executor.keepout_reroute_stopped" not in r.up.kinds()
         assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
         assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
+
+
+async def test_no_way_around_from_a_stop_inside_the_cylinder_says_inside(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A soft brake stops the search inside the cylinder it stopped for, and no way on is
+    planned from there: the hold says ``inside`` (the red alarm), from where the drone is
+    when the order fails."""
+
+    def no_way(self: survey_sector.SurveyRun, ctx: Any) -> Any:
+        raise PlanError("KEEPOUT_VIOLATION", "ingen väg")
+
+    async with rig(fc_options={"accel_ms2": SOFT_BRAKE_MS2}) as r:
+        cmd, k, _ = await _close_cylinder_ahead(r)
+        monkeypatch.setattr(survey_sector.SurveyRun, "plan", no_way)
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
+        ((c, rad),) = circles([k], PLANE)
+        assert math.dist(xy(r), c) < rad  # it stopped inside
+        assert [h["inside"] for h in _holds(r)] == [True]
 
 
 async def test_a_way_around_the_gate_refuses_for_another_reason_says_that_reason() -> None:
@@ -822,7 +843,7 @@ async def test_a_new_cylinder_on_a_goto_hovers() -> None:
         await r.until(lambda: r.ex.state == S.HOLD, 120)
         assert r.ex.hold_reason == "limit"
         assert ("KEEPOUT_VIOLATION",) in [c for ref, _, c in r.up.acks if ref == cmd.command_id]
-        assert "executor.keepout_hold" in r.up.kinds()
+        assert [h["inside"] for h in _holds(r)] == [False]  # short of it: orange
         await r.run(10)
         assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
         assert xy(r)[1] < 90.0
@@ -958,7 +979,8 @@ async def test_a_merged_cylinder_holds_a_goto_short_of_the_person() -> None:
         start = len(r.fc.track)
         await r.until(lambda: r.ex.state == S.HOLD, 20)
         assert r.ex.hold_reason == "limit"
-        assert "executor.keepout_hold" in r.up.kinds()
+        assert math.dist(xy(r), centre) < grown.radius_m
+        assert [h["inside"] for h in _holds(r)] == [True]  # over the person: red
         await r.run(5)
         dists = [math.dist(p, centre) for p in track_xy(r, start)]
         assert min(dists) >= dists[0] - 3.0  # the brake, no deeper
@@ -1167,9 +1189,30 @@ async def test_no_way_around_inside_the_charter_hovers(monkeypatch: pytest.Monke
         )
         install(r, keepout(0, 120, 30, source="candidate"))
         await r.run(0.5)
-        assert r.ex.state == S.HOLD and "executor.keepout_hold" in r.up.kinds()
+        assert r.ex.state == S.HOLD and [h["inside"] for h in _holds(r)] == [False]
         assert r.up.stages(cmd.command_id)[-1] == "superseded"
         assert r.ex.resume_point is not None  # the search can go on later
+
+
+async def test_no_way_out_of_a_cylinder_around_a_search_says_inside(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cylinder comes around the drone on a search leg and no way out is planned: the
+    hover is over the person, and the hold says ``inside`` (the red alarm)."""
+    box = square(60, east=0, north=120)
+    monkeypatch.setattr(survey_sector, "reroute", lambda *_a, **_k: None)
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        cmd = await r.send(
+            r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
+        )
+        await r.until(lambda: r.fc.mission_current >= 4, 120)  # on a search leg
+        here = xy(r)
+        install(r, keepout(here[0], here[1], 30, source="candidate"))
+        await r.run(0.5)
+        assert r.ex.state == S.HOLD and [h["inside"] for h in _holds(r)] == [True]
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"
 
 
 async def test_a_detour_the_gate_refuses_hovers(monkeypatch: pytest.MonkeyPatch) -> None:
