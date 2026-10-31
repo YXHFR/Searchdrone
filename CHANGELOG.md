@@ -9,8 +9,9 @@ All notable changes to this project are listed here. The format follows
 ### Added
 
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
-  `owner-gate.yml` and `pr-title.yml` grants `statuses: write` (or `write-all`), at the
-  top or in a job, so no other workflow can write the gate statuses (A18).
+  `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
+  `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no
+  other workflow can write a gate (A18). The workflow rules now read `*.yaml` files too.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
   fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures
