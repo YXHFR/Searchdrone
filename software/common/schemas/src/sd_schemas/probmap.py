@@ -24,6 +24,7 @@ __all__ = [
     "PROBMAP_B64_MAX",
     "PROBMAP_CELLS_MAX",
     "PROBMAP_SIDE_MAX",
+    "PSR_MAX",
     "MapNote",
     "MapReason",
     "PoaHint",
@@ -45,6 +46,7 @@ PROBMAP_CELLS_MAX: Final = PROBMAP_SIDE_MAX * PROBMAP_SIDE_MAX
 # base64 of at most 25 600 float32 values, compressed or not (102 400 bytes, plus zlib's
 # worst-case overhead), with room to spare.
 PROBMAP_B64_MAX: Final = 140_000
+PSR_MAX: Final = 100.0  # a sector's pos_plan per planned minute, est_min >= 0.01
 
 PoaHint = Literal["high", "low", "excluded"]
 # Why a version was written.
@@ -80,7 +82,8 @@ class SectorScore(SdModel):
     ``covered_pct``: the share of its cells seen with a POD of at least 0.1.
     ``mean_pod``: the mean cumulative POD over its cells.
     ``pos_plan``: the chance of finding the person if the sector is surveyed once more as
-    planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).
+    planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first); with
+    ``est_min`` in hundredths of a minute it is at most ``PSR_MAX`` (1 / 0.01).
     """
 
     sector_id: str = Field(pattern=r"^[A-Z]{1,2}$")
@@ -89,7 +92,7 @@ class SectorScore(SdModel):
     mean_pod: float = Field(ge=0, le=1)
     pos_plan: float = Field(ge=0, le=1)
     est_min: float = Field(ge=0, le=10_000)
-    psr: float = Field(ge=0)
+    psr: float = Field(ge=0, le=PSR_MAX)
     spacing_m: float = Field(gt=0, le=500)  # the suggested line spacing for a survey
 
 

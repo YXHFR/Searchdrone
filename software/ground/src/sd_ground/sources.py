@@ -43,6 +43,11 @@ class VehicleLink(Protocol):
 
     def telemetry(self, vehicle_id: str) -> Telemetry | None: ...
 
+    def update_wind(self, vehicle_id: str) -> None:
+        """One step of the wind check (``sd_ground.services.wind``) that ``telemetry``
+        then shows; the telemetry loop calls it before ``telemetry``."""
+        ...
+
     def in_flight(self, vehicle_id: str) -> bool: ...
 
     def airborne_since(self) -> dt.datetime | None:
@@ -94,6 +99,9 @@ class NoVehicleLink:
         return False
 
     def telemetry(self, vehicle_id: str) -> Telemetry | None:
+        return None
+
+    def update_wind(self, vehicle_id: str) -> None:
         return None
 
     def in_flight(self, vehicle_id: str) -> bool:

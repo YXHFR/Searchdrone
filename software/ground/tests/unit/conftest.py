@@ -73,6 +73,9 @@ class FakeVehicleLink:
     def telemetry(self, vehicle_id: str) -> Telemetry | None:
         return self.values.get(vehicle_id)
 
+    def update_wind(self, vehicle_id: str) -> None:
+        return None
+
     def in_flight(self, vehicle_id: str) -> bool:
         return self.flying_since is not None
 

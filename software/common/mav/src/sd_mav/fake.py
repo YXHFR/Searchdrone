@@ -142,6 +142,7 @@ class FakeFlightController:
         self.sticks: Any | None = None  # last MANUAL_CONTROL
         self.rc_mode_pwm: int | None = None  # an RC receiver's mode channel (None: no RC)
         self.attitude_rad = (0.0, 0.0, 0.0)  # roll, pitch, yaw sent in ATTITUDE
+        self.boot_mono_ms = 0  # time_boot_ms counts from here (``reboot`` moves it)
         self.battery_current_a: float | None = None  # BATTERY_STATUS current; None: -1
         # GPS_RAW_INT: fix type, and how far the receiver's position lies from the EKF's
         # (north m, east m, up m); a test sets it to imitate jamming or spoofing.
@@ -264,9 +265,15 @@ class FakeFlightController:
 
     def _attitude(self) -> Any:
         roll, pitch, yaw = self.attitude_rad
+        boot_ms = int(self.clock.monotonic_ms()) - self.boot_mono_ms
         return mavlink.MAVLink_attitude_message(
-            int(self.clock.monotonic_ms()) & 0xFFFFFFFF, roll, pitch, yaw, 0.0, 0.0, 0.0
+            boot_ms & 0xFFFFFFFF, roll, pitch, yaw, 0.0, 0.0, 0.0
         )
+
+    def reboot(self) -> None:
+        """time_boot_ms starts again from 0, as after a reboot too quick for the
+        heartbeat timeout."""
+        self.boot_mono_ms = int(self.clock.monotonic_ms())
 
     def _position(self) -> Any:
         return mavlink.MAVLink_global_position_int_message(

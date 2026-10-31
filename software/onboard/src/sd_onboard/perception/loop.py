@@ -145,7 +145,10 @@ class PerceptionLoop:
         on_targets: Callable[[list[GeoDetectionMsg]], None] | None = None,
         off: Callable[[str, str], None] | None = None,
         on: Callable[[], None] | None = None,
+        sources: BuiltSources | None = None,
     ) -> None:
+        """``sources``: detector sources built by the caller (the simulator's oracle);
+        without them they are built from ``registry`` on first use."""
         self.source = source
         self.telemetry = telemetry
         self.send = send
@@ -158,7 +161,7 @@ class PerceptionLoop:
         self.off = off  # (reason code, error class) when perception cannot work
         self.on = on  # perception works again after ``stills_failing``
         self._failing = 0
-        self._built: BuiltSources | None = None
+        self._built: BuiltSources | None = sources
         self._build_failed = False  # ``run`` could not build the sources: no stills at all
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()

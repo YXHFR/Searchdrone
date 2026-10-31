@@ -12,9 +12,16 @@ import pytest
 
 from sd_brain.cli import main
 from sd_brain.geo import from_enu
+from sd_brain.secrets import BRAIN_KEYS
 from sd_brain.simeval.decider import DecisionMaker
 from sd_brain.simeval.farm import RoundError, brain_record, grade_round
-from sd_brain.simeval.golden import GoldenError, export_golden, load_fixture, replay_golden
+from sd_brain.simeval.golden import (
+    SECRET_ENV,
+    GoldenError,
+    export_golden,
+    load_fixture,
+    replay_golden,
+)
 from sd_brain.simeval.score import FlightLog, score_flight
 from sd_brain.simeval.trend import failure_rows, failure_text, load_scores
 
@@ -113,6 +120,27 @@ def test_cli_export_golden(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
     src.write_bytes(gzip.compress(json.dumps(_record(passed=False)).encode()))
     assert main([*args, "--replace"]) == 1
     assert "godkända" in capsys.readouterr().err
+
+
+def test_every_key_the_ai_reads_is_refused() -> None:
+    assert set(BRAIN_KEYS) <= set(SECRET_ENV)
+
+
+@pytest.mark.parametrize("key", SECRET_ENV)
+def test_cli_export_refuses_a_key_from_dotenv(
+    key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in SECRET_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{key}={FAKE_SECRET}\n", encoding="utf-8")
+    rec = _record()
+    rec["replies"][0]["content"] = f"det är {FAKE_SECRET}"
+    src = tmp_path / "good-f1.json.gz"
+    src.write_bytes(gzip.compress(json.dumps(rec).encode()))
+    assert main(["bank", "export-golden", str(src), "--name", "SIM-09", "--out", "out"]) == 1
+    assert key in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
 
 
 # --- the failure list -------------------------------------------------------------------
@@ -235,11 +263,15 @@ def test_grade_round_without_brain_json_is_the_script(tmp_path: Path) -> None:
 def test_grade_round_counts_a_candidate_only_once_the_ai_raised_it(tmp_path: Path) -> None:
     target = from_enu(50.0, 40.0, *HOME)
     card = {"seq": 1, "t_s": 200, "lat": target[0], "lon": target[1], "priority_class": "high"}
-    raised = grade_round(
-        _round(tmp_path / "a", brain=None, candidates=[{**card, "raised_t_s": 260}])
-    )
+    flew_on = {**card, "raised_t_s": 260, "flew_on": True}
+    raised = grade_round(_round(tmp_path / "a", brain=None, candidates=[flew_on]))
     run = raised["runs"][0]["score"]
     assert raised["found"] and run["candidate_raised"] and run["time_to_find_s"] == 260
+    # Raised, but the search waited for an answer (the farm saw no search after it).
+    waited = grade_round(
+        _round(tmp_path / "w", brain=None, candidates=[{**flew_on, "flew_on": False}])
+    )
+    assert waited["runs"][0]["score"]["candidate_raised"] and not waited["found"]
     # The same queue, never named to the operator: the ground's finds no longer stand in.
     silent = grade_round(_round(tmp_path / "b", brain=None, candidates=[card]))
     run = silent["runs"][0]["score"]

@@ -10,7 +10,10 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+# GitHub runs both extensions; a rule that only read *.yml could be dodged with *.yaml.
+WORKFLOWS = sorted(
+    p for ext in ("*.yml", "*.yaml") for p in (ROOT / ".github" / "workflows").glob(ext)
+)
 ACTIONS = sorted((ROOT / ".github" / "actions").glob("*/action.yml"))
 ALL_FILES = WORKFLOWS + ACTIONS
 PINNED_RE = re.compile(r"^[\w.-]+/[\w.-]+(/[\w./-]+)?@[0-9a-f]{40}$")
@@ -29,6 +32,76 @@ def steps(doc: dict[Any, Any]) -> list[dict[str, Any]]:
     if "jobs" in doc:
         return [s for job in doc["jobs"].values() for s in job.get("steps", [])]
     return doc["runs"].get("steps", [])
+
+
+# The gate statuses (gate/review, gate/owner, gate/pr-title) are what branch protection
+# and check_merged_pr_gates.py trust. Only the three gate workflows may write statuses or
+# check runs, or name a job like a gate; any other workflow that could would be able to
+# paint a gate green (A18).
+STATUS_WRITERS = frozenset({"review-gate.yml", "owner-gate.yml", "pr-title.yml"})
+GATE_NAME_PREFIXES = ("gate/", "review/")
+
+
+def status_writers(doc: dict[Any, Any]) -> list[str]:
+    """Where a workflow could write a gate: ``statuses: write``, ``checks: write`` or
+    ``write-all`` (``top`` or ``job <id>``), or a job named like a gate (``name <id>``)."""
+
+    def grants(perms: Any) -> bool:
+        if perms == "write-all":
+            return True
+        return isinstance(perms, dict) and "write" in (perms.get("statuses"), perms.get("checks"))
+
+    out = ["top"] if grants(doc.get("permissions")) else []
+    for name, job in (doc.get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        if grants(job.get("permissions")):
+            out.append(f"job {name}")
+        if any(str(n).startswith(GATE_NAME_PREFIXES) for n in (name, job.get("name", ""))):
+            out.append(f"name {name}")
+    return out
+
+
+def test_workflows_include_yaml_files() -> None:
+    assert all(p.suffix in (".yml", ".yaml") for p in WORKFLOWS)
+    assert any(p.name == "ci.yml" for p in WORKFLOWS)
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=ids(WORKFLOWS))
+def test_only_the_gate_workflows_write_statuses(path: Path) -> None:
+    if path.name in STATUS_WRITERS:
+        return
+    where = status_writers(load(path))
+    assert not where, f"{path.name}: can write a gate ({', '.join(where)}) outside the gates"
+
+
+def test_the_gate_workflows_exist_and_write_statuses() -> None:
+    # A renamed gate workflow must not leave a stale name on the list above.
+    for name in sorted(STATUS_WRITERS):
+        path = ROOT / ".github" / "workflows" / name
+        assert path.is_file(), name
+        assert status_writers(load(path)), f"{name} no longer writes statuses"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("permissions:\n  statuses: write\njobs: {}\n", ["top"]),
+        ("permissions: write-all\njobs: {}\n", ["top"]),
+        (
+            "permissions: {}\njobs:\n  a:\n    permissions:\n      contents: read\n"
+            "  b:\n    permissions:\n      statuses: write\n",
+            ["job b"],
+        ),
+        ("permissions: {}\njobs:\n  a:\n    permissions:\n      checks: write\n", ["job a"]),
+        ("permissions: {}\njobs:\n  a:\n    name: gate/review\n", ["name a"]),
+        ("permissions: {}\njobs:\n  review/x:\n    runs-on: x\n", ["name review/x"]),
+        ("permissions:\n  statuses: read\njobs:\n  a:\n    permissions: read-all\n", []),
+        ("permissions: {}\njobs:\n  a:\n    name: lint\n", []),
+    ],
+)
+def test_status_writers_finds_every_grant(text: str, expected: list[str]) -> None:
+    assert status_writers(yaml.safe_load(text)) == expected
 
 
 def test_files_exist() -> None:
@@ -355,17 +428,35 @@ def test_storable_paths() -> None:
         assert not storable(bad), bad
 
 
+def stored(step: dict[str, Any]) -> list[str] | None:
+    """What a storing step stores (its ``path``, exclusions left out), or None when it is
+    not a storing step. A step without a path stores the action's default (all of
+    ``_site`` for upload-pages-artifact), which no rule here has seen: it gets ``[]``."""
+    if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
+        return None
+    lines = str((step.get("with") or {}).get("path", "")).splitlines()
+    return [e for e in (line.strip() for line in lines) if e and not e.startswith("!")]
+
+
 @pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
 def test_only_shareable_paths_are_cached_or_uploaded(path: Path) -> None:
     for step in steps(load(path)):
-        if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
+        entries = stored(step)
+        if entries is None:
             continue
-        for line in str(step.get("with", {}).get("path", "")).splitlines():
-            entry = line.strip()
-            if entry and not entry.startswith("!"):
-                assert storable(entry), (
-                    f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
-                )
+        action = step["uses"].split("@")[0]
+        assert entries, f"{path.name}: {action} without a path"
+        for entry in entries:
+            assert storable(entry), f"{path.name}: {action} stores {entry!r}"
+
+
+def test_a_storing_step_without_a_path_is_caught() -> None:
+    up = "actions/upload-artifact@0123456789abcdef0123456789abcdef01234567"
+    assert stored({"uses": up}) == []
+    assert stored({"uses": up, "with": {"name": "x"}}) == []
+    assert stored({"uses": up, "with": {"path": "!runs/secrets\n"}}) == []
+    assert stored({"uses": "actions/cache@abc", "with": {"path": "runs/a\n!runs/b"}}) == ["runs/a"]
+    assert stored({"uses": "actions/checkout@abc"}) is None
 
 
 UPLOADS = ("actions/upload-artifact@", "actions/upload-pages-artifact@")

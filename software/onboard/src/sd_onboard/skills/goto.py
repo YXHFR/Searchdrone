@@ -2,8 +2,8 @@
 
 Above a 5 m height difference the vehicle first climbs or sinks where it is, then flies
 straight. The target is sent again every 2 s, and at once when it changes
-(:meth:`GotoHandler.retarget`). Arrived = within 2 m, height within 1.5 m and slower
-than 0.5 m/s for 2 s; then LOITER.
+(:meth:`GotoHandler.retarget`; the deadline still runs from the first end). Arrived =
+within 2 m, height within 1.5 m and slower than 0.5 m/s for 2 s; then LOITER.
 """
 
 from __future__ import annotations
@@ -120,13 +120,18 @@ class GotoHandler:
         speed_ms: float,
         *,
         yaw_deg: float | None = None,
+        renew_deadline: bool = False,
     ) -> None:
-        """A new end for the leg being flown, from ``ctx``: sent on the next tick."""
+        """A new end for the leg being flown, from ``ctx``: sent on the next tick. The
+        deadline still runs from the first end (a leg planned again and again does not
+        get more time each time), unless ``renew_deadline`` (once, for the climb out of
+        a keep-out cylinder) or the leg has not started yet."""
         self.prepare(ctx, lat, lon, alt_m, speed_ms, yaw_deg=yaw_deg)
         self._resend = True
-        self._deadline = self._deadline_for(
-            ctx.clock.monotonic(), goto_plan(ctx, lat, lon, alt_m, speed_ms)
-        )
+        if renew_deadline or self._deadline == math.inf:
+            self._deadline = self._deadline_for(
+                ctx.clock.monotonic(), goto_plan(ctx, lat, lon, alt_m, speed_ms)
+            )
 
     async def start(self, plan: SkillPlan, io: ExecutorIO) -> None:
         if self.target is None or self._plane is None:

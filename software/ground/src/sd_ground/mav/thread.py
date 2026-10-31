@@ -25,6 +25,7 @@ their own loop with a fake flight controller and a fake clock.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import datetime as dt
 import math
@@ -37,11 +38,18 @@ from typing import Any, Final, Literal
 
 from sd_ground.liveness import LoopLiveness
 from sd_ground.logging import get_logger
+from sd_ground.mav import fence as mav_fence
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
-from sd_ground.mav.gnss_watch import GnssWatch, text_alarm
-from sd_ground.services.latches import HOME_LATCHES, Latches
-from sd_ground.services.wind import WindStage, WindWatch
+from sd_ground.mav.gnss_watch import GnssWatch, alarm, text_alarm
+from sd_ground.services.latches import (
+    BATTERY_LOW_SV,
+    ENERGY_HOME_SV,
+    HOME_LATCHES,
+    BatteryReason,
+    Latches,
+)
+from sd_ground.services.wind import WIND_PARAMS, FcParams, WindStage, WindWatch, fc_params
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.failsafe_signals import text_signal
@@ -64,7 +72,9 @@ from sd_schemas.mission import LatchAction
 
 __all__ = [
     "BATTERY_CONFIRM_S",
+    "ENERGY_FRESH_S",
     "TICK_S",
+    "WIND_PARAMS_RETRY_S",
     "ActionReport",
     "GroundMav",
     "HeartbeatGate",
@@ -79,6 +89,10 @@ TICK_S: Final = 0.05
 STICK_RESEND_S: Final = 0.1  # 10 Hz while the panel's values are fresh
 TAKEOVER_POLL_S: Final = 0.01  # how often a waiting take-over looks for its notice's ack
 BATTERY_CONFIRM_S: Final = 0.5  # two BATTERY_STATUS at 2 Hz
+# The wind check's ENERGY_HOME (computed at 5 Hz outside this thread) counts this long;
+# an older one, from callers that stopped, never starts FLY HOME.
+ENERGY_FRESH_S: Final = 2.0
+WIND_PARAMS_RETRY_S: Final = 30.0  # the flight controller did not answer: read again
 ATTITUDE_FRESH_S: Final = 1.0  # ATTITUDE is streamed at 4 Hz
 ATTITUDE_EDGE_DEG: Final = 0.01  # float rounding of +-pi and +-pi/2 radians
 _IN_AIR: Final = frozenset({"in_air", "takeoff", "landing"})
@@ -289,6 +303,7 @@ class GroundMav:
         self._airborne_since: dt.datetime | None = None
         self._flown = False
         self._battery_low_since: float | None = None
+        self._energy_short_at: float | None = None  # monotonic s of the last ENERGY_HOME
         self._was_connected = False
         self.sticks_sent = 0
         self._closed = False
@@ -606,17 +621,37 @@ class GroundMav:
             self._on_event("vehicle.onboard_silent_rtl", "critical", {})
             self._system_action(self.vehicle_id, action)
 
+    def energy_short(self, short: bool) -> None:
+        """The wind check's ``ENERGY_HOME`` (``sd_ground.services.wind``): the battery
+        will not last the way home against the wind. Called in this loop through
+        ``ThreadSafeMav``; it only adds a reason to fly home, never removes one."""
+        self._energy_short_at = self.clock.monotonic() if short else None
+
     def _battery(self, snap: MavSnapshot) -> None:
         t = snap.telemetry
         latch = self.latches.get(self.vehicle_id)
         mode = snap.fc_mode
-        low = t.battery_pct is not None and t.battery_pct <= self._rtl_pct()
+        at_level = t.battery_pct is not None and t.battery_pct <= self._rtl_pct()
+        # Never while the pilot steers by hand: only the percentage level overrides that.
+        energy = (
+            self._energy_short_at is not None
+            and self.clock.monotonic() - self._energy_short_at <= ENERGY_FRESH_S
+            and not snap.by_hand
+        )
+        # A battery latch under a STOP blocks its own trigger again until Resume. One set by
+        # ENERGY_HOME never blocks the percentage level: STOP and a take-over after an
+        # energy flight home must not cost the flight home at the level.
+        under = latch is not None and latch.underlying == "battery_rtl"
+        if under and self.latches.battery_reason(self.vehicle_id) == "energy_home":
+            energy = False
+        elif under:
+            at_level = energy = False
+        low = at_level or energy
         blocked = (
             not snap.connected
             or not snap.in_flight
             or mode in _FLYING_HOME
             or (latch is not None and latch.action in ("battery_rtl", *HOME_LATCHES))
-            or (latch is not None and latch.underlying == "battery_rtl")
         )
         if not low or blocked:
             self._battery_low_since = None if not low else self._battery_low_since
@@ -627,11 +662,22 @@ class GroundMav:
         if now - self._battery_low_since < BATTERY_CONFIRM_S:
             return
         self._battery_low_since = None
+        reason: BatteryReason = "battery_level" if at_level else "energy_home"
         self._on_event(
             "vehicle.battery_rtl",
             "critical",
-            {"battery_pct": t.battery_pct, "alarm": "BATTERY_RTL"},
+            {"battery_pct": t.battery_pct, "alarm": "BATTERY_RTL", "reason": reason},
         )
+        self._on_event(
+            *alarm(
+                "BATTERY_RTL",
+                "critical",
+                ENERGY_HOME_SV if reason == "energy_home" else BATTERY_LOW_SV,
+                battery_pct=t.battery_pct,
+                reason=reason,
+            )
+        )
+        self.latches.set_battery_reason(self.vehicle_id, reason)
         self._system_action(self.vehicle_id, "battery_rtl")
 
 
@@ -651,6 +697,18 @@ class ThreadSafeMav:
         # MAVLink thread, so it can never slow the emergency path).
         self.wind = WindWatch() if wind is None else wind
         self._wind_lock = threading.Lock()
+        # The flight controller's own lean limit, RTL speed and battery numbers for the
+        # wind check, read once per connection with ``mav.fence.read_params`` (missing ones
+        # again until answered). The read runs in the MAVLink loop; its result is taken
+        # here, by the callers.
+        self._params_read: concurrent.futures.Future[dict[str, float | None]] | None = None
+        self._params_done = False
+        self._params_retry_at: float = -math.inf
+        self._wind_check: WindCheck | None = None  # the newest from ``update_wind``
+        # The flight controller connection the wind check's numbers belong to:
+        # (connected, ``fc_link_epoch``). A new connection or a reboot starts over.
+        self._wind_link: tuple[bool, int] = (False, 0)
+        self._params_values: dict[str, float | None] = {}
 
     def _call(self, fn: Callable[..., None], *args: Any) -> bool:
         try:
@@ -713,13 +771,98 @@ class ThreadSafeMav:
         return "ok" if snap is not None and snap.onboard_alive else "down"
 
     def telemetry(self, vehicle_id: str) -> Telemetry | None:
+        """The newest telemetry with the newest wind check (``update_wind``). Reads only."""
         snap = self.snapshot()
         if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
             return None
         with self._wind_lock:
+            wind = self._wind_check
+        return to_telemetry(snap, self.core.clock.utc_now(), wind)
+
+    def update_wind(self, vehicle_id: str) -> None:
+        """The wind check's step, from the telemetry loop (never the MAVLink thread): take
+        the newest samples, read the flight controller's numbers once per connection, and
+        hand the energy check's FLY HOME reason to the battery guard."""
+        snap = self.snapshot()
+        if snap is None or snap.vehicle_id != vehicle_id:
+            return
+        link = (snap.connected, snap.telemetry.fc_link_epoch)
+        with self._wind_lock:
+            if link != self._wind_link:
+                # A new connection (possibly another flight controller), a reboot and a
+                # lost connection all start from nothing: the numbers are read again, and
+                # the drag is measured again.
+                self._forget_wind()
+                self._wind_link = link
+            if not snap.connected:
+                return
+            self._wind_params()
             self.wind.observe(snap.telemetry, snap.now_mono_ms)
             wind = self.wind.check(snap.telemetry, snap.now_mono_ms)
-        return to_telemetry(snap, self.core.clock.utc_now(), wind)
+            self._wind_check = wind
+            rtl = self.wind.energy_rtl
+        self._call(self.core.energy_short, rtl)
+
+    def _forget_wind(self) -> None:
+        """Called under ``_wind_lock``."""
+        if self._params_read is not None:
+            self._params_read.cancel()
+        self._params_read = None
+        self._params_done = False
+        self._params_retry_at = -math.inf
+        self._params_values = {}
+        self._wind_check = None
+        self.wind.reset(FcParams())
+
+    def _wind_params(self) -> None:
+        """Take a finished read of ``WIND_PARAMS``, or start one for those not yet
+        answered on this connection (all of them at first; after a partial answer only the
+        missing ones, ``WIND_PARAMS_RETRY_S`` later). Until a number is read, the wind
+        check uses its constant. Called under ``_wind_lock``."""
+        future = self._params_read
+        if future is not None:
+            if not future.done():
+                return
+            self._params_read = None
+            values: dict[str, float | None] = {}
+            if not future.cancelled() and future.exception() is None:
+                values = future.result()
+            else:
+                error = "cancelled" if future.cancelled() else type(future.exception()).__name__
+                log.warning("wind.params_failed", error=error)
+            answered = {k: v for k, v in values.items() if v is not None}
+            self._params_values |= answered
+            if self._missing_params():
+                self._params_retry_at = self.core.clock.monotonic() + WIND_PARAMS_RETRY_S
+            else:
+                self._params_done = True
+            if answered or not self._params_values:
+                # logs every constant it falls back to
+                self.wind.set_params(fc_params(self._params_values))
+            return
+        if self._params_done or self.core.clock.monotonic() < self._params_retry_at:
+            return
+        names = self._missing_params()
+
+        async def read(vehicle: Vehicle) -> dict[str, float | None]:
+            return await mav_fence.read_params(vehicle, names)
+
+        try:
+            self._params_read = asyncio.run_coroutine_threadsafe(
+                _run(read, self.core.vehicle), self.loop
+            )
+        except RuntimeError:  # the loop is closed
+            return
+
+    def _missing_params(self) -> tuple[str, ...]:
+        """``WIND_PARAMS`` the flight controller has not answered on this connection;
+        ``WP_SPD`` only matters when ``RTL_SPEED_MS`` is 0."""
+        got = self._params_values
+        return tuple(
+            name
+            for name in WIND_PARAMS
+            if name not in got and (name != "WP_SPD" or got.get("RTL_SPEED_MS", 0.0) == 0.0)
+        )
 
 
 def to_telemetry(snap: MavSnapshot, now: dt.datetime, wind: WindCheck | None = None) -> Telemetry:

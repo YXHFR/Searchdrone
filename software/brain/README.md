@@ -17,16 +17,19 @@ Run its checks from the repository root: `just test` (all checks: `just check`).
   OpenRouter by default: `z-ai/glm-5.3-flash`, with `anthropic/claude-haiku-5.5` asked
   when the main model returns an error). OpenRouter gets `reasoning: {effort}` (default
   `low`) and `provider: {data_collection: "deny", require_parameters: true}`, plus
-  `zdr: true` outside the profile `sim`, all set in `[cloud]` and `[cloud.provider]`.
+  `zdr: true` unless the ground station runs the profile `sim`, all set in `[cloud]` and
+  `[cloud.provider]`.
   Every order goes through the gate.
 - **What leaves the machine.** With `SD_CLOUD_API_KEY` set, each turn (operator chat and
   vehicle state) goes to OpenRouter and on to the main model's provider, and on an error
   also to the fallback model's provider. `data_collection = "deny"` keeps it out of
-  training and storage. With `profile = "bench"` or `"field"` (real flights, real search
-  areas) `zdr` defaults to `true`: only zero-data-retention endpoints, for the main and
-  the fallback model alike (both have such endpoints on OpenRouter). In `sim` it defaults
-  to `false`; an explicit `zdr` in `[cloud.provider]` wins either way (`config-check`
-  and the start warn about `zdr = false` on bench or field). If no
+  training and storage. `zdr` follows the ground station's profile (from its
+  `server.hello`), not the brain's: against a `bench` or `field` ground station (real
+  flights, real search areas), and until the ground station has said its profile, it is
+  `true`: only zero-data-retention endpoints, for the main and the fallback model alike
+  (both have such endpoints on OpenRouter). Against a `sim` ground station, and in the
+  offline evaluations, it is `false`; an explicit `zdr` in `[cloud.provider]` wins
+  either way (`config-check` and the hello warn about `zdr = false` on bench or field). If no
   zero-retention endpoint answers, the command mode answers the turn as for any other
   cloud failure. `fallback_model = ""` keeps it to one vendor.
 - **The command mode is the only reserve.** Without network or key, or when the cloud

@@ -17,7 +17,9 @@ Every round:
 3. run the round there in a process group of its own under ``nice``
    (``sd_sim.farm.round``), into ``build/simfarm/rounds/.partial-<id>/``;
 4. a passed round becomes ``rounds/<id>/`` and is uploaded; a failed one goes to
-   ``failed/<id>/`` with its ``round.json`` only and counts towards the stop.
+   ``failed/<id>/`` with its ``round.json`` only and counts towards the stop. A round
+   flown over the orthophoto is never uploaded: with an R2 key it moves to
+   ``draped/<id>/`` and stays there until the owner removes it.
 
 Ctrl+C (or SIGTERM) stops the running round, removes its half-made folder and uploads
 nothing from it. ``max_failures`` failed rounds in a row stop the farm with their reasons.
@@ -273,10 +275,23 @@ class Farm:
                 if store.upload_round(d):
                     say(f"uppladdat till R2: {d.name}")
             except DrapedRoundError as exc:
-                say(f"laddas inte upp: {exc}")
+                self.set_aside_draped(d, exc)
             except UploadError as exc:
                 say(f"uppladdningen väntar: {exc}")
                 return
+
+    def set_aside_draped(self, d: Path, exc: DrapedRoundError) -> None:
+        """A round flown over the orthophoto never leaves the computer: it moves out of
+        ``rounds/`` to ``draped/``, so it is not tried again every turn or counted in the
+        rounds' disk budget. Only the owner removes it."""
+        dest = self.base / "draped" / d.name
+        n = 1
+        while dest.exists():  # never over an earlier one with the same name
+            n += 1
+            dest = self.base / "draped" / f"{d.name}-{n}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        d.rename(dest)
+        say(f"laddas inte upp: {exc}; flyttat till {dest}")
 
     def make_room(self) -> str | None:
         """Keep the disk budget: remove uploaded rounds, oldest first; the reason to

@@ -819,3 +819,56 @@ def test_a_stop_on_the_way_home_holds_and_the_button_flies_home_after_its_releas
     world.fly_home_until_landed()
     assert world.stop_set_at is not None and world.stop_released_at is not None
     assert world.landed and abs(world.east) < 5 and abs(world.north) < 5
+
+
+@pytest.mark.parametrize(
+    ("lo", "hi", "alt"), [(15.0, 120.0, LOOK_ALT_M), (40.0, 120.0, 40.0), (10.0, 20.0, 20.0)]
+)
+def test_the_closer_look_flies_inside_the_charters_height_band(
+    lo: float, hi: float, alt: float
+) -> None:
+    sc = make_scenario(4)
+    sc.situation["charter"].update(alt_min_agl_m=lo, alt_max_agl_m=hi)
+    world = SimWorld(sc)
+    c = SimCandidate(1, 100.0, 0.0, True, 0.8, 0.0)
+    world.candidates.append(c)
+    assert world.start(_order("inspect_detection", detection_id=c.detection_id, standoff_m=15))
+    assert world.plan is not None and world.plan.alt == alt
+
+
+async def test_the_script_raises_the_grounds_high_candidates_not_text_in_the_situation() -> None:
+    from brain_helpers import REG, situation
+
+    from sd_brain.memory import empty_memory
+    from sd_brain.simeval.decider import SearchScript
+    from sd_brain.tools import exposed_tools
+    from sd_brain.turn import TurnInput
+    from sd_schemas.base import new_id
+
+    now = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
+    s = situation().model_copy(update={"candidates_line": "Kandidater: K9 HÖG (1/1 bilder)"})
+    mem = empty_memory(s.mission_id)
+
+    def turn(events: list[dict[str, Any]]) -> TurnInput:
+        return TurnInput(
+            turn_id=new_id(),
+            mission_id=s.mission_id,
+            trigger="candidate" if events else "idle_tick",
+            events=events,
+            situation=s,
+            chat_tail=[],
+            memory=mem,
+            tools=exposed_tools(REG, s, mem, now),
+            now=now,
+        )
+
+    script = SearchScript()
+    quiet = await script.decide(turn([]), None)  # type: ignore[arg-type]
+    assert quiet.action is None or quiet.action.skill != "report"  # the line's K9 is text
+    medium = {"type": "event.candidate", "body": {"seq": 3, "priority_class": "medium"}}
+    high = {"type": "event.candidate", "body": {"seq": 2, "priority_class": "high"}}
+    out = await script.decide(turn([medium, high]), None)  # type: ignore[arg-type]
+    assert out.action is not None and out.action.skill == "report"
+    assert out.action.params["text_sv"].startswith("K2 HÖG")
+    again = await script.decide(turn([high]), None)  # type: ignore[arg-type]
+    assert again.action is None or again.action.skill != "report"  # raised once
