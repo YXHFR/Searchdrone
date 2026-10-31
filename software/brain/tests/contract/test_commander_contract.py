@@ -172,7 +172,11 @@ async def test_token_never_in_url() -> None:
 
 
 async def _consume(
-    g: GroundClient, got: list[dict[str, Any]], resyncs: list[int], beat: Any = None
+    g: GroundClient,
+    got: list[dict[str, Any]],
+    resyncs: list[int],
+    beat: Any = None,
+    lost: list[int] | None = None,
 ) -> None:
     async def resync() -> None:
         resyncs.append(1)
@@ -181,6 +185,7 @@ async def _consume(
         lambda: {"version": "t"},
         beat or (lambda: {"status": "idle"}),
         on_resync=resync,
+        on_lost=None if lost is None else lambda: lost.append(1),
         heartbeat_s=1.0,
     ):
         got.append(evt)
@@ -192,7 +197,8 @@ async def test_heartbeat_reconnect_and_resync() -> None:
         g = GroundClient(mock.url, TOKEN, http)
         got: list[dict[str, Any]] = []
         resyncs: list[int] = []
-        task = asyncio.create_task(_consume(g, got, resyncs))
+        lost: list[int] = []
+        task = asyncio.create_task(_consume(g, got, resyncs, lost=lost))
         try:
             for _ in range(100):
                 if mock.sockets:
@@ -231,6 +237,7 @@ async def test_heartbeat_reconnect_and_resync() -> None:
                     break
                 await asyncio.sleep(0.02)
             assert resyncs == [1]
+            assert lost == [1, 1]  # told each time the stream was down
         finally:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

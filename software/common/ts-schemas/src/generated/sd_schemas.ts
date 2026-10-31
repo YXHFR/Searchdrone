@@ -2664,7 +2664,8 @@ export interface ProbabilityMapView {
  * ``covered_pct``: the share of its cells seen with a POD of at least 0.1.
  * ``mean_pod``: the mean cumulative POD over its cells.
  * ``pos_plan``: the chance of finding the person if the sector is surveyed once more as
- * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).
+ * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first); with
+ * ``est_min`` in hundredths of a minute it is at most ``PSR_MAX`` (1 / 0.01).
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SectorScore".

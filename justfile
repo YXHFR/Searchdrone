@@ -316,9 +316,17 @@ panel-build:
 
 # --- simulator -----------------------------------------------------------------------
 
-# Run the whole stack against a fake vehicle (keys: physics, gui, brain, instance)
+# A local development environment with one command: database, ground station, the panel's
+# dev server (hot reload), onboard computer and AI against a fake flight controller; no
+# ArduPilot, Gazebo or cloud key needed (keys: physics=mock|builtin|gz, gui, brain, instance)
 dev *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
     uv run --no-sync python tools/just_args.py dev "$@"
+    [[ " $* " == *" dry=1 "* ]] && exit 0
+    # Local secrets are random values made here; nothing has to be handed out first.
+    [ -f .env ] || {{_just}} setup-config
+    uv run --all-packages python -m sd_sim.launch up --dev "$@"
 
 # Start the simulator stack with Gazebo (keys: physics, gui, video, brain, vehicle, ...)
 sim *args:

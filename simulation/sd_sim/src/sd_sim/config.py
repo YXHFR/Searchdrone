@@ -140,6 +140,7 @@ def load(
     repo: Path = paths.REPO,
     environ: dict[str, str] | None = None,
     default_world: str = TEST_WORLD,
+    allow_mock: bool = False,
 ) -> SimConfig:
     """Merge the layers; a world built from a site brings its own home (``Site.home_arg``)
     unless a personal home is set outside the demo."""
@@ -178,7 +179,10 @@ def load(
         raise ConfigError("instance= ska vara 0-7")
     if cfg.speedup != 1:
         raise ConfigError("speedup ska vara 1 (simulatorn körs i realtid)")
-    cfg.physics = _choice("physics", merged.get("physics", "gz"), ("gz", "builtin"))
+    # physics=mock has no ArduPilot, failsafes or fence: only `just dev` may ask for it, so
+    # no smoke flight, demo or test can pass against the fake.
+    physics_choices = ("gz", "builtin", "mock") if allow_mock else ("gz", "builtin")
+    cfg.physics = _choice("physics", merged.get("physics", "gz"), physics_choices)
     cfg.gui = _bool("gui", merged.get("gui", True)) and cfg.physics == "gz"
     cfg.video = _choice("video", merged.get("video", "camera"), ("camera", "test", "off"))
     if cfg.video == "camera" and cfg.physics != "gz":

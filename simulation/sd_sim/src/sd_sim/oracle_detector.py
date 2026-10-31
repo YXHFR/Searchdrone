@@ -418,6 +418,6 @@ class OraclePerception(PerceptionLoop):
     the register's ``model`` name, the source the person class names)."""
 
     def __init__(self, detector: OracleDetector, *args: Any, **kwargs: Any) -> None:
+        kwargs["sources"] = BuiltSources(sources={"model": detector})
         super().__init__(detector.stills, *args, **kwargs)
         self.detector = detector
-        self._built = BuiltSources(sources={"model": detector})

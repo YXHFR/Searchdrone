@@ -3,6 +3,8 @@ recall by pixel size from the profile, only in the simulator."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from sd_geo import PinholeCamera
@@ -10,6 +12,7 @@ from sd_mav.vehicle import FcTelemetry
 from sd_sim.oracle_detector import (
     NOT_IN_SIMULATOR,
     OracleDetector,
+    OraclePerception,
     SyntheticStillSource,
     load_det_profile,
 )
@@ -32,6 +35,14 @@ def test_refuses_outside_the_simulator() -> None:
     with pytest.raises(RuntimeError, match="SD_SIM"):
         SyntheticStillSource(w, lambda: FcTelemetry(), CAM, env={})
     assert "SD_SIM=1" in NOT_IN_SIMULATOR
+
+
+def test_the_perception_task_gets_the_oracle_as_its_only_source() -> None:
+    src = _source("SK01", "target")
+    det = OracleDetector(src, seed=5, sleep=False, env=SIM)
+    clock: Any = object()  # never read: nothing runs
+    lp = OraclePerception(det, src.telemetry, lambda _p: None, clock, CAM, env=SIM)
+    assert lp.built.sources == {"model": det}  # passed in, never built from the register
 
 
 def test_the_profile_recall_grows_with_pixels_and_falls_with_occlusion() -> None:
