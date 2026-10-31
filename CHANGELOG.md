@@ -249,6 +249,11 @@ All notable changes to this project are listed here. The format follows
   SITL W5 shows the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35; W6 has
   `ENERGY_HOME` fly home (reason `energy_home`, Resume refused, STOP and "Ta över" leave
   the drone in LOITER).
+  The battery guard's reason is set together with its latch (`Latches.start`), so no
+  moment shows the latch without its reason. A late ATTITUDE (up to 1 s back) no longer
+  moves `fc_boot_ms` back: the reboot check compares with the newest. The ground's
+  README says to set `BATT_CAPACITY` and `BATT_LOW_MAH` on the flight controller, since
+  without them `ENERGY_HOME` only warns.
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also

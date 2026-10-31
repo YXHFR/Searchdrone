@@ -278,7 +278,7 @@ class GroundMav:
         latches: Latches,
         on_report: Callable[[ActionReport], None],
         on_event: EventSink,
-        system_action: Callable[[str, LatchAction], object],
+        system_action: Callable[[str, LatchAction, BatteryReason | None], object],
         rtl_pct: Callable[[], float] = lambda: DEFAULT_LIMITS.battery_rtl_pct,
     ) -> None:
         self.vehicle = vehicle
@@ -616,10 +616,10 @@ class GroundMav:
             self._on_event("alarm.ONBOARD_SILENT", "critical", {"phase": self.watchdog.phase})
         if action == "watchdog_stop":
             self._on_event("vehicle.onboard_silent", "warning", {})
-            self._system_action(self.vehicle_id, action)
+            self._system_action(self.vehicle_id, action, None)
         elif action == "watchdog_rtl":
             self._on_event("vehicle.onboard_silent_rtl", "critical", {})
-            self._system_action(self.vehicle_id, action)
+            self._system_action(self.vehicle_id, action, None)
 
     def energy_short(self, short: bool) -> None:
         """The wind check's ``ENERGY_HOME`` (``sd_ground.services.wind``): the battery
@@ -677,10 +677,8 @@ class GroundMav:
                 reason=reason,
             )
         )
-        # The reason belongs to the latch: only once the flight home was started (None:
-        # no path to the drone, no latch).
-        if self._system_action(self.vehicle_id, "battery_rtl") is not None:
-            self.latches.set_battery_reason(self.vehicle_id, reason)
+        # The reason is set with the latch, in one step (no path to the drone: neither).
+        self._system_action(self.vehicle_id, "battery_rtl", reason)
 
 
 async def _run[T](work: Callable[[Vehicle], Awaitable[T]], vehicle: Vehicle) -> T:

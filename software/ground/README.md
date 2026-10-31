@@ -59,6 +59,12 @@ working when the main loop, the database, the AI or the onboard computer hang:
   gives STOP's steps, for 20 s FLY HOME's; never while the pilot's STOP or FLY HOME
   stands or the pilot steers by hand. The **battery guard** flies home at the mission's
   level, also after a STOP (but not against a STOP pressed during its own flight home).
+  It also flies home when the wind check's `ENERGY_HOME` says the battery will not last
+  the way home, but only with `BATT_CAPACITY` and `BATT_LOW_MAH` read from the flight
+  controller. **Set both on the flight controller** (the pack's capacity, and a reserve
+  above 0 and below it): without them, or with `BATT_LOW_MAH` 0, `ENERGY_HOME` only warns
+  and never flies home; the percentage level and the flight controller's own failsafes
+  are unchanged.
 - **Steering by hand** (`actions/takeover`, `actions/handback`, pilot only): LOITER, and
   the pilot's sticks go as MAVLink `MANUAL_CONTROL` from here, only in LOITER and in the
   air. Without a new stick value for 1 s nothing more is sent and the vehicle holds.

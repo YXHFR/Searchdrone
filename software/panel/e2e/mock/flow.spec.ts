@@ -276,14 +276,15 @@ test.describe("chat and approval cards", () => {
   }) => {
     ground.pushLive("mission", "charter.updated", charter());
     ground.pushLive("approvals", "approval.requested", approval());
-    // The probability map's images load in the background and are not sent by this click.
-    const sent = () => ground.requests.filter((r) => !r.path.includes("/probability-map.png"));
-    const before = sent().length;
+    // Only what the click sends counts: the pushes above make the panel read in the
+    // background (GETs, e.g. the probability map), at any time.
+    const before = ground.requests.length;
     await page.getByTestId("approval-AP1").getByTestId("edit-charter").click();
     const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
     await expect(box).toHaveValue("Ändra ramen: ");
     await expect(box).toBeFocused();
-    expect(sent().length).toBe(before);
+    const sent = ground.requests.slice(before).filter((r) => r.method !== "GET");
+    expect(sent.map((r) => `${r.method} ${r.path}`)).toEqual([]);
   });
 
   test("a proposal to resume draws the Resume button; typing 'fortsätt' never resumes", async ({
