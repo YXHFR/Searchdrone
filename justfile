@@ -18,7 +18,7 @@ unbuilt := ""
 
 # Check scripts in tools/ that are not built yet. Composite recipes skip only these;
 # any other missing script fails. The test checks that none of them exists yet.
-unbuilt_tools := "check_forbidden_mavlink check_safety_manifest"
+unbuilt_tools := ""
 
 _just := just_executable() + " --justfile " + quote(justfile()) + " --working-directory " + quote(justfile_directory())
 
