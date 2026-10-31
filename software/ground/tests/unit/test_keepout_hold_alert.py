@@ -4,6 +4,7 @@ panel's (``keepouts.HOLD*`` in sv.json) and both read the same fields."""
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import uuid
 from pathlib import Path
@@ -90,3 +91,14 @@ def test_a_hover_held_back_past_its_mission_is_only_logged() -> None:
     """Held back by a lost link and delivered after its mission closed: that hover is
     over, so no alarm (the event itself is stored as usual)."""
     assert _alert({"inside": True}, MissionState.CLOSED).alerts == []
+
+
+def test_the_send_time_goes_into_the_details_unchanged() -> None:
+    """A hover held back by a lost link shows when the drone sent it; the same alarm."""
+    flow = _Flow()
+    mission = SimpleNamespace(id=uuid.uuid4(), status=MissionState.ACTIVE)
+    sent = dt.datetime(2026, 5, 1, 10, 0, 7, tzinfo=dt.UTC)
+    MissionFlow._keepout_hold_alert(flow, "sd-01", mission, {"inside": True}, sent)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    code, severity, _, details = flow.alerts[0]
+    assert (code, severity) == ("KEEPOUT_HOLD", "critical")
+    assert details == {"inside": True, "sent_utc": "2026-05-01T10:00:07+00:00"}

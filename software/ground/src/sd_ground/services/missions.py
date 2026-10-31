@@ -229,11 +229,19 @@ class MissionFlow:
             topic, type_, data, ts=self.now(), vehicle_id=vehicle_id, mission_id=mission_id
         )
 
-    def _keepout_hold_alert(self, vehicle_id: str, mission: Any, data: dict[str, Any]) -> None:
+    def _keepout_hold_alert(
+        self,
+        vehicle_id: str,
+        mission: Any,
+        data: dict[str, Any],
+        sent_utc: dt.datetime | None = None,
+    ) -> None:
         """The drone hovers for a keep-out cylinder (``executor.keepout_hold``): short of
         one (orange), or inside one over a person with no safe way out (red), after
         climbing straight up when it could (``climb_to_m``). One held back by a lost link
-        that comes after its mission closed is only logged: that hover is over."""
+        that comes after its mission closed is only logged: that hover is over.
+        ``sent_utc`` (the onboard clock) goes into the details so a late one shows when
+        it was sent; it is shown, never acted on."""
         if mission is not None and mission.status is MissionState.CLOSED:
             log.info(
                 "missions.keepout_hold_after_close",
@@ -246,6 +254,8 @@ class MissionFlow:
         climb = _climb_to_m(data)
         if climb is not None:
             details[str(KeepoutHoldField.CLIMB_TO_M)] = climb
+        if sent_utc is not None:
+            details["sent_utc"] = sent_utc.isoformat()
         self.alert(
             str(AlertCode.KEEPOUT_HOLD),
             "critical" if inside else "warning",
@@ -674,7 +684,7 @@ class MissionFlow:
                 payload={"source": "onboard", **body.data},
             )
             if body.type == "executor.keepout_hold":
-                self._keepout_hold_alert(vehicle_id, mission, body.data)
+                self._keepout_hold_alert(vehicle_id, mission, body.data, inbound.envelope.sent_utc)
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",

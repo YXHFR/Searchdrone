@@ -130,6 +130,7 @@ from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS
 from sd_safety.policy import ALWAYS_REQUIRE_APPROVAL, KEEPOUT_EXEMPT, MODE_A_EXEMPT
 from sd_safety.rules import route_battery_pct
 from sd_safety.targets import Plane, Xy, distance_m, polygon_from_geojson
+from sd_schemas.api import KeepoutHoldField
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
@@ -812,7 +813,9 @@ class Executor:
             # climb out of reach the operator was told as it began (``_keepout_climb``).
             if not (isinstance(active.handler, Replans) and active.handler.climbing()):
                 data = {"command_id": str(active.command_id), "skill": active.skill}
-                self.emit("keepout_hold", {**data, "inside": self._over_a_keepout()})
+                self.emit(
+                    "keepout_hold", {**data, str(KeepoutHoldField.INSIDE): self._over_a_keepout()}
+                )
             hold_reason = "limit"
         self._enter(
             target,
@@ -1739,8 +1742,8 @@ class Executor:
             {
                 "command_id": str(active.command_id),
                 "skill": active.skill,
-                "inside": True,
-                "climb_to_m": round(alt, 1),
+                str(KeepoutHoldField.INSIDE): True,
+                str(KeepoutHoldField.CLIMB_TO_M): round(alt, 1),
             },
         )
         return True
@@ -1849,7 +1852,11 @@ class Executor:
             kind="hold",
             hold_reason="limit",
             event="keepout_hold",
-            data={"command_id": str(active.command_id), "skill": active.skill, "inside": inside},
+            data={
+                "command_id": str(active.command_id),
+                "skill": active.skill,
+                str(KeepoutHoldField.INSIDE): inside,
+            },
         )
         self.emit(action.event, dict(action.data))
         self._apply_limit(action)
