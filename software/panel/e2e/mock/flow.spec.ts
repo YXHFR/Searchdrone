@@ -276,14 +276,15 @@ test.describe("chat and approval cards", () => {
   }) => {
     ground.pushLive("mission", "charter.updated", charter());
     ground.pushLive("approvals", "approval.requested", approval());
-    // The probability map's images load in the background and are not sent by this click.
-    const sent = () => ground.requests.filter((r) => !r.path.includes("/probability-map.png"));
-    const before = sent().length;
+    // "Sends nothing" is about writes: the panel's own loads (the resync, the probability
+    // map) are GETs that may still land after this point, so they are not counted.
+    const before = ground.requests.length;
     await page.getByTestId("approval-AP1").getByTestId("edit-charter").click();
     const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
     await expect(box).toHaveValue("Ändra ramen: ");
     await expect(box).toBeFocused();
-    expect(sent().length).toBe(before);
+    const sent = ground.requests.slice(before).filter((r) => r.method !== "GET");
+    expect(sent.map((r) => `${r.method} ${r.path}`)).toEqual([]);
   });
 
   test("a proposal to resume draws the Resume button; typing 'fortsätt' never resumes", async ({
