@@ -61,7 +61,49 @@ def test_raw_send_in_production_fails_but_not_in_the_simulator() -> None:
 @pytest.mark.parametrize(
     "line",
     [
+        # Ways to own a connection, or to write on one, without Vehicle.send.
+        "from pymavlink import mavutil",
+        "import pymavlink.mavutil as mu",
+        "from pymavlink.mavutil import mavlink_connection",
+        "c = mavutil.mavlink_connection('udpout:127.0.0.1:14550')",
+        "enc = mavlink.MAVLink(sock)",
+        "conn.reboot_autopilot()",
+        "conn.arducopter_arm()",
+        "conn.set_mode_apm(6)",
+        "conn.set_mode_rtl()",
+    ],
+)
+def test_owning_a_connection_in_production_fails(line: str) -> None:
+    assert "raw-send" in rules(line)
+    assert "raw-send" not in rules(line, SIM)
+
+
+@pytest.mark.parametrize(
+    ("line", "rule"),
+    [
+        # A denied name under another name, or spelled as a string for getattr.
+        (
+            "from pymavlink.dialects.v20.ardupilotmega import MAVLink_param_set_message as M",
+            "forbidden-message",
+        ),
+        (
+            "from pymavlink.dialects.v20.ardupilotmega import MAV_CMD_DO_FENCE_ENABLE as F",
+            "forbidden-command",
+        ),
+        ("getattr(conn.mav, 'param_set_send')(1, 1, b'FENCE_ENABLE', 0, 2)", "forbidden-message"),
+        ("cmd = getattr(mavlink, 'MAV_CMD_DO_FLIGHTTERMINATION')", "forbidden-command"),
+    ],
+)
+def test_renamed_or_spelled_out_denied_names_fail(line: str, rule: str) -> None:
+    assert rule in rules(line, SIM)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
         # What the ground station and the onboard computer really send, via Vehicle.send.
+        "from pymavlink.dialects.v20 import ardupilotmega as mavlink",
+        "io.set_mode('GUIDED')",
         "m = mavlink.MAVLink_command_long_message(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)",
         "m = mavlink.MAVLink_command_long_message(1, 1, mavlink.MAV_CMD_DO_SET_MODE, 0, 1, 4)",
         "m = mavlink.MAVLink_mission_count_message(1, 1, 3, mavlink.MAV_MISSION_TYPE_FENCE)",

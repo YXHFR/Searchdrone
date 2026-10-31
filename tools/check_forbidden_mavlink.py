@@ -9,14 +9,23 @@ so a forbidden message is caught at review time and not only when it is sent:
 * ``forbidden-message``: a denied message type (``PARAM_SET``, ``SET_MODE``,
   ``RC_CHANNELS_OVERRIDE`` ...) as a pymavlink constructor
   (``MAVLink_param_set_message``), a send or encode method (``param_set_send``) or as
-  the exact string ``"PARAM_SET"``;
+  the exact string ``"PARAM_SET"`` or ``"param_set_send"`` (``getattr``), also when
+  imported under another name;
 * ``forbidden-command``: a denied command (``MAV_CMD_DO_FENCE_ENABLE``,
   ``MAV_CMD_DO_FLIGHTTERMINATION`` ...) by name, or by number in the command position of
   a ``COMMAND_LONG``, ``COMMAND_INT`` or ``MISSION_ITEM_INT``;
 * ``forced-arming``: the number 21196 (``COMPONENT_ARM_DISARM`` param2 that skips every
   arming check);
-* ``raw-send``: production code under ``software/`` that writes on a pymavlink
-  connection itself (``<conn>.mav.<message>_send(...)``) instead of ``Vehicle.send``.
+* ``raw-send``: production code under ``software/`` that could write on a pymavlink
+  connection itself instead of ``Vehicle.send``: ``<conn>.mav.<message>_send(...)``,
+  any use of ``pymavlink.mavutil`` (``mavlink_connection``, ``mavfile``), a bare
+  ``MAVLink`` encoder, or a mavfile helper that sends on its own (``reboot_autopilot``,
+  ``arducopter_arm``, ``set_mode*`` ...). Building messages from the dialect for
+  ``Vehicle.send`` stays allowed.
+
+The check is a static net on top of ``Vehicle.send``, not a proof: a command number
+that only exists at run time (``cmd = 207`` passed on) is not seen, which is why
+production code may not own a connection at all.
 
 Test code (``tests/`` folders, ``conftest.py``) is not read: tests build forbidden
 messages on purpose to see them refused. The allowed modules are listed in ``ALLOWED``
@@ -57,6 +66,28 @@ ALLOWED: dict[str, frozenset[str]] = {
 # Only production code is held to the raw-send rule; the simulator and tools may talk
 # to SITL on their own connections (still without forbidden traffic).
 RAW_SEND_ROOT = "software/"
+
+# Calls that write on a pymavlink connection without Vehicle.send (mavutil.mavfile).
+MAVFILE_HELPERS = frozenset(
+    {
+        "reboot_autopilot",
+        "arducopter_arm",
+        "arducopter_disarm",
+        "set_mode_apm",
+        "set_mode_px4",
+        "set_mode_auto",
+        "set_mode_rtl",
+        "set_mode_loiter",
+        "set_mode_manual",
+        "set_mode_fbwa",
+        "set_servo",
+        "set_relay",
+        "calibrate_level",
+        "calibrate_pressure",
+    }
+)
+# Names that open or are a connection or a raw encoder.
+CONNECTION_NAMES = frozenset({"mavutil", "mavlink_connection", "mavfile", "MAVLink"})
 
 # Where the command number sits in each constructor's or send method's arguments.
 COMMAND_ARG = {"command_long": 2, "command_int": 3, "mission_item_int": 4}
@@ -149,7 +180,27 @@ def check_source(text: str, path: str) -> list[Finding]:
         if rule not in exempt:
             out.append(Finding(path, getattr(node, "lineno", 0), rule, message))
 
+    production = path.startswith(RAW_SEND_ROOT)
+
+    def raw(node: ast.AST, what: str) -> None:
+        add(node, "raw-send", f"{what}: skickar förbi Vehicle.send (sd_mav-grinden)")
+
     for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            module = node.module or "" if isinstance(node, ast.ImportFrom) else ""
+            for alias in node.names:
+                full = f"{module}.{alias.name}" if module else alias.name
+                if production and any(n in CONNECTION_NAMES for n in full.split(".")):
+                    raw(node, f"import {full}")
+                if alias.name in DENIED_COMMAND_NAMES:
+                    add(node, "forbidden-command", f"{alias.name} är ett förbjudet kommando")
+                elif alias.name in DENIED_MESSAGE_CALLS:
+                    msg = DENIED_MESSAGE_CALLS[alias.name]
+                    add(node, "forbidden-message", f"{alias.name}: {msg} är förbjudet (denylist)")
+        if production and isinstance(node, ast.Attribute | ast.Name):
+            name = node.attr if isinstance(node, ast.Attribute) else node.id
+            if name in CONNECTION_NAMES:
+                raw(node, name)
         if isinstance(node, ast.Attribute | ast.Name):
             name = node.attr if isinstance(node, ast.Attribute) else node.id
             if name in DENIED_COMMAND_NAMES:
@@ -163,6 +214,11 @@ def check_source(text: str, path: str) -> list[Finding]:
                 value = value.decode("ascii", errors="replace")
             if isinstance(value, str) and value in DENIED_MESSAGES:
                 add(node, "forbidden-message", f'"{value}" är ett förbjudet meddelande (denylist)')
+            elif isinstance(value, str) and value in DENIED_MESSAGE_CALLS:
+                msg = DENIED_MESSAGE_CALLS[value]
+                add(node, "forbidden-message", f'"{value}": {msg} är förbjudet (denylist)')
+            elif isinstance(value, str) and value in DENIED_COMMAND_NAMES:
+                add(node, "forbidden-command", f'"{value}" är ett förbjudet kommando (denylist)')
             elif _int_value(node) == ARM_FORCE_MAGIC and not isinstance(value, bool):
                 add(node, "forced-arming", f"{ARM_FORCE_MAGIC} tvingar armering förbi kontrollerna")
         if isinstance(node, ast.Call):
@@ -177,12 +233,11 @@ def check_source(text: str, path: str) -> list[Finding]:
                 number = _int_value(arg) if arg is not None else None
                 if number is not None and number in DENIED_COMMANDS:
                     add(node, "forbidden-command", f"kommando {number} i {call} är förbjudet")
-            if path.startswith(RAW_SEND_ROOT) and _is_raw_send(node.func):
-                add(
-                    node,
-                    "raw-send",
-                    f"{ast.unparse(node.func)}: skickar förbi Vehicle.send (sd_mav-grinden)",
-                )
+            if production and (
+                _is_raw_send(node.func)
+                or (isinstance(node.func, ast.Attribute) and node.func.attr in MAVFILE_HELPERS)
+            ):
+                raw(node, ast.unparse(node.func))
     return sorted(out, key=lambda f: (f.line, f.rule))
 
 

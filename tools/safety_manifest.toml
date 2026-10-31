@@ -36,3 +36,12 @@ sha256 = "2e2049b52dc066986b13771ed07c49b5659c3992a0d6d35fd9ff7be06a5331ca"
 [[pinned]]
 path = "software/common/mav/src/sd_mav/denylist.py"
 sha256 = "7c04e5a4f1f9328a4eac036c436207673ff429bac48653581762851c8c78f1c1"
+
+# The rules themselves: weakening one must not pass with only a parameter file's digest.
+[[pinned]]
+path = "simulation/sd_sim/src/sd_sim/params.py"
+sha256 = "b2c923b601f401e6e84d4f84a12d76429b2a8d12a1d57dc3c6d79b8b43cf0673"
+
+[[pinned]]
+path = "software/common/safety/src/sd_safety/constants.py"
+sha256 = "00861380f06add8eaca1d44f2332f7695bdbd74c009e7672e3fe1f56d1101b0f"

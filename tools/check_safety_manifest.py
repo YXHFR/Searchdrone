@@ -15,7 +15,8 @@ Checks (each finding is printed as ``rule: message``, exit code 1):
   exactly the values the ground station reads back
   (``sd_safety.constants.FC_SAFETY_EXPECTED``).
 * ``ruled``: every failsafe, fence, battery, arming, RTL and scripting line in a safety
-  layer has a rule (``sd_sim.params.RULED_PREFIXES``).
+  layer has a rule (``sd_sim.params.RULED_PREFIXES``): the simulator's layers in
+  ``SAFETY_RULES``, the real-flight layers on top of them in ``FIELD_RULES``.
 * ``loaded``: SITL loads the simulator profile's first layer as its safety layer for every
   vehicle and stages every pinned Lua script; the onboard computer's default and example
   config (``expected_param_files``) read back exactly the simulator profile's layers.
@@ -119,7 +120,9 @@ def rule_problems(
     return out
 
 
-def ruled_problems(root: Path, layers: Iterable[str], rules: Iterable[tuple[str, str, float]]):
+def ruled_problems(
+    root: Path, layers: Iterable[str], rules: Iterable[tuple[str, str, float]], rules_name: str
+):
     from sd_sim.params import RULED_PREFIXES
 
     ruled = {name for name, _, _ in rules}
@@ -128,7 +131,7 @@ def ruled_problems(root: Path, layers: Iterable[str], rules: Iterable[tuple[str,
         for name in parse_parm((root / rel).read_text(encoding="utf-8")):
             if name.startswith(RULED_PREFIXES) and name not in ruled:
                 out.append(
-                    f"ruled: {Path(rel).name} sätter {name}, som saknar regel i SAFETY_RULES"
+                    f"ruled: {Path(rel).name} sätter {name}, som saknar regel i {rules_name}"
                 )
     return out
 
@@ -207,7 +210,9 @@ def check(root: Path = REPO, manifest_path: Path | None = None) -> list[str]:
     expected = {k: float(v) for k, v in FC_SAFETY_EXPECTED.items()}
     out += rule_problems("sim", merged(root, sim), SAFETY_RULES, expected)
     out += rule_problems("field", merged(root, field), FIELD_RULES)
-    out += ruled_problems(root, sim, SAFETY_RULES)
+    out += ruled_problems(root, sim, SAFETY_RULES, "SAFETY_RULES")
+    # The real-flight layers on top of the simulator's answer to FIELD_RULES.
+    out += ruled_problems(root, [r for r in field if r not in sim], FIELD_RULES, "FIELD_RULES")
     out += loaded_problems(root, manifest)
     out += shadow_problems(root, manifest)
     return out

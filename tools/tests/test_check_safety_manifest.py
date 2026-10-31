@@ -16,8 +16,11 @@ COPY = (
     "tools/safety_manifest.toml",
     "config/onboard.example.toml",
     "software/common/mav/src/sd_mav/denylist.py",
+    "simulation/sd_sim/src/sd_sim/params.py",
+    "software/common/safety/src/sd_safety/constants.py",
 )
 SAFETY = "simulation/sitl/params/searchdrone-safety.parm"
+FIELD = "simulation/sitl/params/searchdrone-safety.field.parm"
 MANIFEST = "tools/safety_manifest.toml"
 
 
@@ -86,6 +89,20 @@ def test_a_new_failsafe_line_needs_a_rule(root: Path) -> None:
     assert csm.check(root) == [
         "ruled: searchdrone-safety.parm sätter FS_VIBE_ENABLE, som saknar regel i SAFETY_RULES"
     ]
+
+
+def test_a_new_failsafe_line_in_the_field_layer_needs_a_rule(root: Path) -> None:
+    # The layer real flights add on top: a digest bump alone must not switch a failsafe off.
+    edit(root, FIELD, "FS_THR_ENABLE 4", "FS_THR_ENABLE 4\nFS_VIBE_ENABLE 0")
+    csm.update(root / MANIFEST, root)
+    assert csm.check(root) == [
+        "ruled: searchdrone-safety.field.parm sätter FS_VIBE_ENABLE, som saknar regel i FIELD_RULES"
+    ]
+
+
+def test_a_weakened_rule_needs_the_manifest(root: Path) -> None:
+    edit(root, "simulation/sd_sim/src/sd_sim/params.py", "RULED_PREFIXES", "RULED_PREFIXES ")
+    assert rules(csm.check(root)) == {"pinned"}
 
 
 def test_a_sim_layer_may_not_set_a_safety_parameter(root: Path) -> None:
