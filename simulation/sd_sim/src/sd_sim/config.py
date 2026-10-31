@@ -178,7 +178,7 @@ def load(
         raise ConfigError("instance= ska vara 0-7")
     if cfg.speedup != 1:
         raise ConfigError("speedup ska vara 1 (simulatorn körs i realtid)")
-    cfg.physics = _choice("physics", merged.get("physics", "gz"), ("gz", "builtin"))
+    cfg.physics = _choice("physics", merged.get("physics", "gz"), ("gz", "builtin", "mock"))
     cfg.gui = _bool("gui", merged.get("gui", True)) and cfg.physics == "gz"
     cfg.video = _choice("video", merged.get("video", "camera"), ("camera", "test", "off"))
     if cfg.video == "camera" and cfg.physics != "gz":

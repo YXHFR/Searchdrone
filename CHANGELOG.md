@@ -8,6 +8,13 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `just dev`: one command for the local development stack. It starts the database,
+  `sd-ground`, `sd-onboard`, `sd-search`, the scripted AI commander and the panel's Vite
+  dev server (hot reload), then prints the login link. The default `physics=mock`
+  replaces ArduPilot with the new `sd_sim.mockfc`, sd_mav's fake flight controller on
+  SITL's ports, so it needs no simulator build and no API key; `physics=builtin` or `gz`
+  flies SITL as `just sim` does. The panel's dev server port follows the instance
+  (`SD_PANEL_PORT`, 5173 + 10N).
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
   fetched with `just bench-fetch yes=1 sets=kios` from its two pinned archives (pictures
