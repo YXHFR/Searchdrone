@@ -59,7 +59,7 @@ def test_forced_arming_fails() -> None:
 
 def test_raw_send_in_production_fails_but_not_in_the_simulator() -> None:
     line = "self._conn.mav.heartbeat_send(6, 8, 0, 0, 0)"
-    assert rules(line) == ["raw-send"] * 2  # heartbeat_send, and the send on mav
+    assert rules(line) == ["raw-send"] * 3  # _conn, heartbeat_send, and the send on mav
     assert rules(line, SIM) == []
 
 
@@ -223,6 +223,13 @@ def test_the_gate_is_allowed() -> None:
         # mavfile's own param_set_send(parm_name, parm_value).
         "self._conn.param_set_send('SIM_WIND_DIR', 90)",
         "self._conn.param_set_send(parm_name=b'SIM_WIND_SPD', parm_value=3)",
+        # A mav taken into another name is still the dialect's: the name is third.
+        "m = self._conn.mav\nm.param_set_send(1, 1, b'SIM_RC_FAIL', 1, 9)",
+        # The guarded name, sent as is.
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
     ],
 )
 def test_the_harness_may_set_sim_parameters(line: str) -> None:
@@ -250,6 +257,21 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "    if not name.startswith('SIM_'):\n"
         "        raise ValueError(name)\n"
         "    self._conn.mav.param_set_send(1, 1, other.encode(), v, 9)",
+        # A mav taken into another name, or an owner of unknown kind: the third
+        # argument is the dialect's param_id, whatever the first says.
+        "m = self._conn.mav\nm.param_set_send(b'SIM_X', 1, b'FENCE_ENABLE', 0, 9)",
+        "getattr(self._conn, 'mav').param_set_send(b'SIM_X', 1, b'ARMING_CHECK', 0, 9)",
+        # The guarded name bound again after the guard is not trusted.
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    name = 'FENCE_ENABLE'\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    for name in ['FENCE_ENABLE']:\n"
+        "        self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
         "self._conn.mav.send(mavlink.mavlink_map[23](1, 1, b'FENCE_ENABLE', 0, 9))",
         "cls = mavlink.mavlink_map.get(23)",
         "self._conn.mav.param_ext_set_send(1, 1, b'SIM_RC_FAIL', b'1', 9)",
@@ -368,12 +390,20 @@ def test_a_sim_param_set_outside_the_harness_is_refused(path: str) -> None:
         # The mav taken into another name first, then a plain send.
         "m = conn.mav\nm.send(msg)",
         "m: object = self._conn.mav\nm.send(msg)",
+        "self._m = conn.mav\nself._m.send(msg)",
+        "(m := conn.mav).send(msg)",
         # pymavlink.mavutil through sys.modules.
         "mavutil = sys.modules['pymavlink.mavutil']",
         # Another object's _conn or write_message is still the gate's.
         "vehicle._conn.close()",
         "conn.write_message(msg)",
         "self.link._conn.recv_msg()",
+        # Any _conn or write_message counts, also the class's own: a subclass of
+        # sd_mav's MavConnection has the real connection under these names.
+        "class S(MavConnection):\n    def go(self, msg):\n        self.write_message(msg)",
+        "self._conn.write(msgbuf)",
+        "self._conn = MavConnection(url)",
+        "w = self.write_message\nw(msg)",
     ],
 )
 def test_more_raw_sends_in_production(line: str) -> None:
@@ -383,14 +413,10 @@ def test_more_raw_sends_in_production(line: str) -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        # A class's own database connection or websocket, not the gate's.
-        "self._conn.execute('SELECT 1')",
-        "self.write_message({'kind': 'ping'})",
-        "cls._conn = sqlite3.connect(path)",
         # A mav that is not a connection's, and a dotted name without mavutil.
         "mav = self.mav\nmav.submit(work)",
         "name = 'sd_ground.mav.thread'",
     ],
 )
-def test_own_names_in_production_are_allowed(line: str) -> None:
+def test_lookalikes_in_production_are_allowed(line: str) -> None:
     assert rules(line) == []

@@ -23,16 +23,16 @@ All notable changes to this project are listed here. The format follows
   message id (`MAVLINK_MSG_ID_*`, `mavlink_map[...]`), or when production code could
   write on a pymavlink connection itself instead of through `Vehicle.send`
   (`pymavlink.mavutil`, also through `importlib`/`__import__`, `mavlink_connection`, a
-  raw `MAVLink` encoder, `mavlink_map`, `_conn` or `write_message` on another object
-  (a class's own `self._conn` or `self.write_message` is its database or websocket),
+  raw `MAVLink` encoder, `mavlink_map`, `_conn` or `write_message` anywhere,
   `pymavlink.mavutil` as a string (`sys.modules[...]`), any message's
-  `*_send`/`*_encode` method, `send` on a connection's `mav` (also taken into another
-  name first), mavfile helpers such as `reboot_autopilot` or `set_mode`, called, only
+  `*_send`/`*_encode` method, `send` on a connection's `mav` (also assigned to a name or
+  attribute first, or with `:=`), mavfile helpers such as `reboot_autopilot` or `set_mode`, called, only
   referenced or as a `getattr` string). Tests outside `src/` packages are not read; of
   the denied messages only the simulator harness may send `PARAM_SET`: from a
-  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name or
-  a literal `SIM_*` one, or elsewhere in the harness with a literal `SIM_*` name
-  (mavfile's `param_set_send` read with the name first). The
+  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name (if it is
+  never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a literal `SIM_*` name
+  (a `param_set_send` on an owner not known to be a `mav` needs it both first, as
+  mavfile's, and third, as the dialect's). The
   mavfile helpers that send denied traffic themselves (`reboot_autopilot`, `set_servo`,
   `calibrate_level` ...) are refused everywhere outside the gate. Names built at run
   time (f-strings, arithmetic) are not seen.
