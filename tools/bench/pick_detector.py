@@ -30,22 +30,11 @@ from pathlib import Path
 from typing import Any
 
 from bench.common import RESULTS, BenchError, data_dir, parse_args, say, warn
+from bench.metrics import weakest_recall
 
 KEYS = ("results", "data")
 TIE = 0.02
 BUILT_IN = frozenset({"null", "facit"})
-
-
-def _recall(body: dict[str, Any], cls: str) -> float:
-    """The weakest dataset's recall for ``cls``; the pooled one for older results."""
-    rows = [
-        row["by_class"][cls]
-        for row in (body.get("recall_by_dataset") or {}).values()
-        if "by_class" in row and row["by_class"][cls]["n"]
-    ]
-    if not rows:
-        return float(body["recall"][cls]["recall"])
-    return min(float(r["recall"]) for r in rows)
 
 
 def _cell(row: dict[str, Any]) -> str:
@@ -65,8 +54,8 @@ def _fields(body: dict[str, Any]) -> tuple[str, float, float, float]:
     """What the rule reads from a result; a missing or wrong field raises."""
     return (
         str(body["model"]),
-        _recall(body, "gt32"),
-        _recall(body, "16to32"),
+        weakest_recall(body, "gt32"),
+        weakest_recall(body, "16to32"),
         float(body["latency_ms"]["p50"]),
     )
 
@@ -75,10 +64,10 @@ def pick(bodies: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """The chosen result (rule in the module doc)."""
     if not bodies:
         raise BenchError("Inga mätresultat att välja bland.", 2)
-    best = max(_recall(b, "gt32") for b in bodies)
-    left = [b for b in bodies if _recall(b, "gt32") >= best - TIE]
-    best = max(_recall(b, "16to32") for b in left)
-    left = [b for b in left if _recall(b, "16to32") >= best - TIE]
+    best = max(weakest_recall(b, "gt32") for b in bodies)
+    left = [b for b in bodies if weakest_recall(b, "gt32") >= best - TIE]
+    best = max(weakest_recall(b, "16to32") for b in left)
+    left = [b for b in left if weakest_recall(b, "16to32") >= best - TIE]
     return min(left, key=lambda b: (float(b["latency_ms"]["p50"]), b["model"]))
 
 
@@ -114,8 +103,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             warn("bara ett snabbtest (limit=); mät på hela val-delen innan du väljer på riktigt")
         for b in sorted(bodies, key=lambda b: b["model"]):
             say(
-                f"  {b['model']}: > 32 px {_recall(b, 'gt32'):.3f}, 16-32 px "
-                f"{_recall(b, '16to32'):.3f}, {b['latency_ms']['p50']} ms{_per_set(b)}"
+                f"  {b['model']}: > 32 px {weakest_recall(b, 'gt32'):.3f}, 16-32 px "
+                f"{weakest_recall(b, '16to32'):.3f}, {b['latency_ms']['p50']} ms{_per_set(b)}"
             )
         manifest = data_dir(args) / "models" / "detector" / f"{chosen['model']}.json"
         say(f"Vald: {chosen['model']}.")

@@ -167,7 +167,9 @@ sets; default every set whose SHA-256 is pinned), `mini=1` (the mini bank), `kee
 
 Keys of `just bench-detector`: `model=`, `part=test|val`, `sets=`, `mini=1`, `limit=N`
 (the first N pictures, for a quick look), `data=`, `out=`, `compare=<earlier result>`
-(fails if recall over 32 px drops more than 2 points).
+(fails if recall over 32 px drops more than 2 points for the weakest dataset or for any
+one dataset, each at its own threshold, or if a dataset of the earlier result was not
+measured; an earlier result without per-dataset rows is compared pooled against pooled).
 
 ## For maintainers
 

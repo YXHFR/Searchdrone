@@ -6,7 +6,8 @@ default ``<data>/train/<model>``), ``name`` (default ``person_<model>``), ``out`
 
 Writes ``<name>.onnx`` and its manifest ``<name>.json`` (``sd.detector-model/v1``: the
 family, the input size, the classes, the SHA-256 of the ONNX file, what it was trained
-on and under which licences). Before writing, the ONNX file is run with ONNX Runtime
+on and under which licences, and that recall is measured per dataset, each at its own
+threshold). Before writing, the ONNX file is run with ONNX Runtime
 next to PyTorch on the same pictures; if they disagree, nothing is written. Point
 ``SD_DETECTOR_MODEL`` at the manifest to use the model (``tools/train/README.md``).
 """
@@ -27,13 +28,17 @@ import numpy as np
 import torch
 from bench.common import BenchError, parse_args, say, warn
 from bench.datasets import load_register
-from train_detector import trained_sets
+from train_detector import seen_by
 
 KEYS = ("model", "data", "train", "name", "out")
 MANIFEST_SCHEMA = "sd.detector-model/v1"
 MAX_MODEL_BYTES = 128 << 20  # sd_detect.onnx refuses a larger file on board
 OPSET = 17
 MAX_DIFF = 2e-2  # scores and pixels; fp32 both sides
+RECALL_RULE = (
+    "just bench-detector measures each dataset's recall at that dataset's own threshold "
+    "(bench.metrics); the model's recall is the lowest of them"
+)
 
 
 def export(
@@ -44,10 +49,7 @@ def export(
     register = load_register()
     # what the weights have seen in all: a run started from earlier weights (init=)
     # carries their sets too, so every one of them is credited
-    sets = list(ck["trained_on"]) if "trained_on" in ck else trained_sets(settings["sets"])
-    pretrained = list(
-        ck.get("pretrained_on", ["simfarm"] if settings.get("simfarm_epochs") else [])
-    )
+    sets, pretrained = seen_by(ck)
     unknown = [s for s in (*sets, *pretrained) if s not in register]
     if unknown:
         # a set dropped or renamed since: its credit and licence would silently vanish
@@ -102,8 +104,10 @@ def export(
         "started_from": ck.get("started_from"),
         "val_ap50": ck.get("val_ap50"),
         "val_ap50_by_dataset": ck.get("val_ap50_by_dataset"),
-        # how val_ap50 was made: the mean of each dataset's AP50, or (older runs) pooled
+        # how val_ap50 was made: the lowest of each dataset's AP50, or (older runs) pooled
         "val_ap50_rule": "min_over_datasets" if ck.get("val_ap50_by_dataset") else "pooled",
+        # AP50 needs no threshold; recall does, and the bench sets one per dataset
+        "recall_rule": RECALL_RULE,
         "epoch": ck.get("epoch"),
         "settings": shown,
         "exported": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
