@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from sd_brain.constants import LLM_CALL_TIMEOUT_S, STOP_CHECK_TARGET_S
 
@@ -94,14 +94,27 @@ class ProviderConfig(_Section):
     ``data_collection = "deny"`` keeps the calls away from providers that may store or
     train on the data. ``require_parameters`` routes only to providers that support every
     parameter sent (tools, reasoning). ``zdr`` narrows it to zero-data-retention
-    endpoints; left unset it follows the profile (see ``BrainConfig``). Other
+    endpoints; left unset it follows the ground station's profile (``server.hello``):
+    on unless the ground station runs ``sim``, and on until its profile is known. Other
     OpenAI-compatible APIs ignore or refuse the field: turn it off with ``send = false``.
     """
 
     send: bool = True
     data_collection: Literal["allow", "deny"] = "deny"
     require_parameters: bool = True
-    zdr: bool | None = None  # None = by profile: true outside sim
+    zdr: bool | None = None  # None = by the ground station's profile: true outside sim
+    _ground_profile: str | None = PrivateAttr(default=None)
+
+    def follow_ground(self, profile: str | None) -> None:
+        """The ground station's profile, from its ``server.hello``."""
+        self._ground_profile = profile
+
+    @property
+    def zdr_on(self) -> bool:
+        if self.zdr is not None:
+            return self.zdr
+        return self._ground_profile != "sim"
+
     only: list[str] = Field(default_factory=list[str])
     order: list[str] = Field(default_factory=list[str])
 
@@ -112,7 +125,7 @@ class ProviderConfig(_Section):
             "data_collection": self.data_collection,
             "require_parameters": self.require_parameters,
         }
-        if self.zdr:
+        if self.zdr_on:
             out["zdr"] = True
         if self.only:
             out["only"] = list(self.only)
@@ -242,28 +255,22 @@ class BrainConfig(_Section):
     behaviour: BehaviourConfig = Field(default_factory=BehaviourConfig)
 
     @model_validator(mode="after")
-    def _zdr_by_profile(self) -> BrainConfig:
-        # Real flights (bench, field) carry a real search area: only zero-data-retention
-        # endpoints unless zdr is set explicitly.
-        if self.cloud.provider.zdr is None:
-            self.cloud.provider.zdr = self.profile != "sim"
-        return self
-
-    @model_validator(mode="after")
     def _scripted_only_in_sim(self) -> BrainConfig:
         if self.backend.kind == "scripted" and self.profile != "sim":
             raise ValueError("ett förskrivet manus (scripted) får bara användas i profilen sim")
         return self
 
-    def zdr_warning(self) -> str | None:
-        """A Swedish warning when a real flight may reach providers that keep data."""
+    def zdr_warning(self, profile: str | None = None) -> str | None:
+        """A Swedish warning when a real flight may reach providers that keep data.
+        ``profile`` is the ground station's; without it the brain's own is used."""
         provider = self.cloud.provider
-        if self.profile == "sim" or self.backend.kind != "cloud" or not provider.send:
+        profile = profile or self.profile
+        if profile == "sim" or self.backend.kind != "cloud" or not provider.send:
             return None
-        if provider.zdr:
+        if provider.zdr is not False:
             return None
         return (
-            f"Varning: profilen {self.profile} med cloud.provider.zdr = false skickar "
+            f"Varning: profilen {profile} med cloud.provider.zdr = false skickar "
             "turerna även till leverantörer som sparar data. Ta bort raden zdr = false i "
             "config/brain.toml för att bara använda leverantörer utan datalagring."
         )

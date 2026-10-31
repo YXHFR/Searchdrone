@@ -428,17 +428,35 @@ def test_storable_paths() -> None:
         assert not storable(bad), bad
 
 
+def stored(step: dict[str, Any]) -> list[str] | None:
+    """What a storing step stores (its ``path``, exclusions left out), or None when it is
+    not a storing step. A step without a path stores the action's default (all of
+    ``_site`` for upload-pages-artifact), which no rule here has seen: it gets ``[]``."""
+    if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
+        return None
+    lines = str((step.get("with") or {}).get("path", "")).splitlines()
+    return [e for e in (line.strip() for line in lines) if e and not e.startswith("!")]
+
+
 @pytest.mark.parametrize("path", ALL_FILES, ids=ids(ALL_FILES))
 def test_only_shareable_paths_are_cached_or_uploaded(path: Path) -> None:
     for step in steps(load(path)):
-        if not str(step.get("uses", "")).startswith(STORING_ACTIONS):
+        entries = stored(step)
+        if entries is None:
             continue
-        for line in str(step.get("with", {}).get("path", "")).splitlines():
-            entry = line.strip()
-            if entry and not entry.startswith("!"):
-                assert storable(entry), (
-                    f"{path.name}: {step['uses'].split('@')[0]} stores {entry!r}"
-                )
+        action = step["uses"].split("@")[0]
+        assert entries, f"{path.name}: {action} without a path"
+        for entry in entries:
+            assert storable(entry), f"{path.name}: {action} stores {entry!r}"
+
+
+def test_a_storing_step_without_a_path_is_caught() -> None:
+    up = "actions/upload-artifact@0123456789abcdef0123456789abcdef01234567"
+    assert stored({"uses": up}) == []
+    assert stored({"uses": up, "with": {"name": "x"}}) == []
+    assert stored({"uses": up, "with": {"path": "!runs/secrets\n"}}) == []
+    assert stored({"uses": "actions/cache@abc", "with": {"path": "runs/a\n!runs/b"}}) == ["runs/a"]
+    assert stored({"uses": "actions/checkout@abc"}) is None
 
 
 UPLOADS = ("actions/upload-artifact@", "actions/upload-pages-artifact@")

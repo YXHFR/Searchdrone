@@ -156,10 +156,9 @@ class ExecutorIO(Protocol):
     # Every cylinder in force now (read only).
     @property
     def keepouts(self) -> tuple[Keepout, ...]: ...
-    # Whether this order may fly ``path`` (current position first) from where the drone is
-    # now: clear of every cylinder, inside the charter and through the whole gate.
-    def leg_allowed(self, path: list[LatLonAlt]) -> bool: ...
-    # The same check, with why not: the refusal's reason codes, empty when allowed.
+    # Why this order may not fly ``path`` (current position first) from where the drone is
+    # now: the reason codes, empty when it may (clear of every cylinder, inside the charter
+    # and through the whole gate).
     def leg_refusal(self, path: list[LatLonAlt]) -> tuple[str, ...]: ...
 
 

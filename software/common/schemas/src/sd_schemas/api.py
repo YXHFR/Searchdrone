@@ -122,6 +122,12 @@ class AlertCode(StrEnum):
     FIND_HOLD_ALL = "FIND_HOLD_ALL"  # hovering at a confirmed find; MAVLink down too
     LINK_BACK_HOLD = "LINK_BACK_HOLD"  # the link is back, the drone hovers
     LINK_BACK_HOME = "LINK_BACK_HOME"  # the link is back, the drone flies home
+    # The keep-out list (KeepoutInstall) was refused or not answered; and in again
+    KEEPOUTS_NOT_INSTALLED = "KEEPOUTS_NOT_INSTALLED"
+    KEEPOUTS_INSTALLED = "KEEPOUTS_INSTALLED"
+    # The drone hovers short of a keep-out cylinder, or inside one over a person (climbing
+    # first when it can): onboard executor.keepout_hold
+    KEEPOUT_HOLD = "KEEPOUT_HOLD"
     # The GPS, from the ground's own MAVLink (sd_safety.gnss) and the flight controller's texts
     GPS_WEAK = "GPS_WEAK"
     GPS_LOST = "GPS_LOST"
@@ -129,6 +135,14 @@ class AlertCode(StrEnum):
     GPS_GLITCH = "GPS_GLITCH"
     GPS_SPOOF = "GPS_SPOOF"
     GPS_OK = "GPS_OK"
+
+
+class KeepoutHoldField(StrEnum):
+    """The fields of the onboard ``executor.keepout_hold`` data that the ground's
+    ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text."""
+
+    INSIDE = "inside"  # bool: inside a cylinder over a person, not short of one
+    CLIMB_TO_M = "climb_to_m"  # number: the altitude (m) it climbs straight up to first
 
 
 class CommandStatus(StrEnum):

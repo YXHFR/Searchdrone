@@ -24,7 +24,7 @@ NOT_BUILT_EXIT = 2
 # recipe -> (ticket that builds it, or None when it is built, allowed keys). A built
 # recipe only has its keys checked here (exit 0) and does its work in the justfile.
 RECIPES: dict[str, tuple[str | None, frozenset[str]]] = {
-    "dev": ("B1-16", frozenset({"physics", "gui", "brain", "instance"})),
+    "dev": (None, frozenset({"physics", "gui", "brain", "instance"})),
     "e2e": (None, frozenset({"runs", "offline"})),
     "e2e-search": (None, frozenset({"runs", "detector", "model"})),
     "demo-search": (None, frozenset({"detector", "model"})),

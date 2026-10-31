@@ -59,7 +59,8 @@ def sector_scores(
         n = int(inside.sum())
         poa = float(state.p[inside].sum())
         pos = float((state.p * pod_plan)[inside].sum())
-        est_min = poly.area / spacing / speed_ms / 60
+        # Rounded first, and at least 0.01 to divide by: psr is at most 1 / 0.01 = PSR_MAX.
+        est_min = round(poly.area / spacing / speed_ms / 60, 2)
         out.append(
             SectorScore(
                 sector_id=s.sector_id,
@@ -69,8 +70,8 @@ def sector_scores(
                 else 0.0,
                 mean_pod=round(float(state.pod_cum[inside].mean()), 4) if n else 0.0,
                 pos_plan=round(min(1.0, pos), 6),
-                est_min=round(est_min, 2),
-                psr=round(pos / est_min, 6) if est_min > 0 else 0.0,
+                est_min=est_min,
+                psr=round(min(1.0, pos) / max(est_min, 0.01), 6),
                 spacing_m=round(spacing, 1),
             )
         )

@@ -12,8 +12,9 @@ empty spot halves it. False sightings come at scenario times, and the pilot's ST
 its release) when the scenario says. The world notes when the AI first names a candidate
 to the operator (``K3`` in a report or a chat message) and how far the search flew after.
 A closer look (``inspect_detection``) is flown reduced: to ``LOOK_RADIUS_M`` from the
-candidate at ``LOOK_ALT_M`` (near enough for the second picture, no keep-out cylinder),
-then hovering; it replaces the order it interrupted, as the executor does.
+candidate at ``LOOK_ALT_M`` held inside the charter's height band (near enough for the
+second picture when the band allows it, no keep-out cylinder), then hovering; it
+replaces the order it interrupted, as the executor does.
 
 ``SimGround`` is ``FakeGround`` with this world behind it and a deliberately reduced copy
 of the gate: allowed skills, area, height band, speed and known sectors, with the real
@@ -43,6 +44,7 @@ from sd_schemas.candidate_ai import candidate_event_body, candidates_line, named
 from sd_schemas.commander import BrainMessage, Situation, SkillRequest, SkillSubmitResult
 from sd_schemas.keepout import INSPECT_SPEED_MS
 from sd_schemas.search import CandidateCard, priority_class
+from sd_schemas.simfarm import CLOSE_UP_RADIUS_M, FLEW_ON_M, SEARCH_SKILLS
 
 __all__ = ["FLEW_ON_M", "Mark", "OrderRecord", "SimCandidate", "SimGround", "SimWorld"]
 
@@ -52,14 +54,10 @@ FOOTPRINT_PER_M = 0.7  # half-width of the camera footprint per metre of height
 COVERAGE_MAX_ALT_M = 80.0  # higher than this, a pass does not count as searched
 CELL_M = 10.0
 CLOSE_UP_ALT_M = 30.0
-CLOSE_UP_RADIUS_M = 15.0
 # The closer look (inspect_detection), reduced: low and near enough for the second picture.
 LOOK_ALT_M = 25.0
 LOOK_RADIUS_M = 10.0
 SIGMA95_M = 6.0  # the sighting's position error: the camera's jitter around the person
-# Search flown after the AI raised a candidate: the drone did not wait for an answer.
-FLEW_ON_M = 30.0
-SEARCH_SKILLS = frozenset({"goto", "survey_sector"})
 # Plans the AI did not order: no skill event when they end.
 BATTERY_ID = "battery"
 FLY_HOME_ID = "fly_home"
@@ -179,6 +177,7 @@ class SimWorld:
         self.alt = float(sit["vehicle"]["alt_rel_home_m"])
         self.rtl_pct = float(ch["battery_rtl_pct"])
         self.max_speed = float(ch["max_speed_ms"])
+        self.alt_band = (float(ch["alt_min_agl_m"]), float(ch["alt_max_agl_m"]))
         minx, miny, maxx, maxy = self.area.bounds
         self._cells = {
             (i, j)
@@ -242,7 +241,8 @@ class SimWorld:
                 return False
             pts = [self._look_point(c)]
             speed = min(INSPECT_SPEED_MS, self.max_speed)
-            self.plan = _Plan(cid, req.skill, pts, LOOK_ALT_M, speed, self._length(pts))
+            alt = min(max(LOOK_ALT_M, self.alt_band[0]), self.alt_band[1])
+            self.plan = _Plan(cid, req.skill, pts, alt, speed, self._length(pts))
         elif req.skill == "return_home":
             self.plan = _Plan(cid, "return_home", [(0.0, 0.0)], self.alt, speed, 0, lands=True)
             self.plan.total_m = self._length(self.plan.points)

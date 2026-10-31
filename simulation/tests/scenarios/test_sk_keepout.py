@@ -10,6 +10,12 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
   together in the middle of the box, so their cylinders overlap. The rest of the survey
   goes around both as one group: no hold, no refused reroute, no track sample inside
   either, and the survey ends ``done``.
+* ``test_a_way_around_keeps_the_margin_from_a_cylinder_beside_it``: the case #96 fixed.
+  On a survey's only line a find is confirmed beside the line, and then one on it whose
+  short way around would pass inside the first one's margin without entering it. The way
+  around keeps the margin from both: the track never comes closer than the margin to the
+  one beside the line (less the track's noise), never inside either, and the survey ends
+  ``done`` with no hold and no refused reroute.
 * ``test_a_person_seen_close_ahead_stops_the_search_first``: the drone sees a person
   ahead on a long survey line, closer than it can turn away from at its speed but farther
   than braking takes it. It stops in LOITER first, plans the rest again from where it
@@ -36,10 +42,16 @@ executor as the ground's ``KeepoutInstall`` (``Scenario.confirm_find``).
   meanwhile the ground moves the candidate's cylinder (or shrinks it) under the same id.
   After the drone is out of a cylinder's shape it never comes back into it (more than a
   metre: the track's noise), and the inspection ends done or in a keep-out hover.
+* ``test_a_person_below_during_an_inspection_is_left_on_a_replan``: on the leg to an
+  inspection point the drone sees a person right below, the leg heading deeper. The
+  reflex plans the leg again (``executor.keepout_replan``): out of the cylinder, never
+  deeper than braking takes it and never back in; the order ends done, failed (no safe
+  way to the point) or in a keep-out hover.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 import sys
 import time
@@ -81,9 +93,10 @@ from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
 from sd_onboard.executor.keepout_reflex import stop_m
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_safety.constants import FIND_MOVE_DEADLINE_S, LINK_LOSS_DETECT_S, PERSON_KEEPOUT_M
-from sd_safety.targets import Plane, distance_m
+from sd_safety.keepout import KEEPOUT_ARC_MARGIN_M, reroute
+from sd_safety.targets import Plane, distance_m, point_segment_distance, polygon_from_geojson
 from sd_schemas.base import new_id
-from sd_schemas.keepout import Keepout
+from sd_schemas.keepout import INSPECT_SPEED_MS, Keepout
 from sd_schemas.link import KeepoutInstall
 from sd_sim.search_invariants import stop_distance_m
 
@@ -101,6 +114,10 @@ FIND_RADIUS_M = PERSON_KEEPOUT_M + 5.0  # ``find_ahead``'s find (its sigma is 5 
 NOISE_M = 1.0  # the flight controller's wobble and the track's sampling
 # Far above the ground's own installs in this test: a later one of those is stale.
 INSTALL_SEQ = 1_000_000
+# A survey of a box narrower than two lines' spacing has one line: east-west, this far
+# north of home, from this far west to as far east.
+LINE_N = 150.0
+LINE_E = 130.0
 
 
 def _inside(sc: Scenario, since: float, centre: tuple[float, float]) -> list[Any]:
@@ -179,6 +196,69 @@ async def test_overlapping_cylinders_are_passed_as_one_group(
         for c in centres:
             inside = _inside(sc, since, c)
             assert not inside, inside[:3]
+        await _land(sc)
+
+
+def _one_line(sc: Scenario) -> dict[str, Any]:
+    corners = [(-LINE_E, LINE_N - 10.0), (LINE_E, LINE_N - 10.0), (LINE_E, LINE_N + 10.0)]
+    ring = [
+        [lon, lat] for lat, lon in (sc.at(e, n) for e, n in [*corners, (-LINE_E, LINE_N + 10.0)])
+    ]
+    return {"type": "Polygon", "coordinates": [[*ring, ring[0]]]}
+
+
+@pytest.mark.budget_s(480)
+async def test_a_way_around_keeps_the_margin_from_a_cylinder_beside_it(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.airborne()
+        line = {"polygon": _one_line(sc), "heading_deg": 90.0, "spacing_m": 30.0}
+        res = await sc.operator_order("survey_sector", line)
+        assert res["gate"]["decision"] == "ALLOW", res
+        survey = await sc.wait_command("survey_sector", "running", 60)
+        ex = sc.r.onboard.ex
+        plane, charter = ex.plane(), ex.charter
+        assert plane is not None and charter is not None
+        st = sc.sim.harness.state
+
+        def at_its_start() -> bool:
+            e, n = plane.xy(st.lat, st.lon)
+            return abs(n - LINE_N) < 3.0 and abs(e) > 90.0
+
+        await sc.until(at_its_start, 120, "at the start of the line")
+        here = plane.xy(st.lat, st.lon)
+        way = 1.0 if here[0] < 0.0 else -1.0  # towards the other end
+        # A, the person on the line, a little north of it: the short way around is south.
+        # B, south of the line, where that way would pass inside B's margin without
+        # entering B. B overlaps neither A nor the line.
+        a = (40.0 * way, LINE_N + 5.0)
+        b = (a[0], a[1] - 73.0)
+        area = polygon_from_geojson(charter.area, plane)
+        alone = reroute([here, (LINE_E * way, LINE_N)], [(a, RADIUS_M)], area=area)
+        assert alone is not None
+        past_b = min(point_segment_distance(b, p, q) for p, q in itertools.pairwise(alone))
+        assert RADIUS_M <= past_b < RADIUS_M + KEEPOUT_ARC_MARGIN_M - NOISE_M, past_b
+        assert math.dist(a, b) > 2 * RADIUS_M and LINE_N - b[1] > RADIUS_M
+
+        since = time.monotonic()
+        cb, ca = plane.latlon(*b), plane.latlon(*a)
+        await sc.confirm_find(*cb, sigma95_m=SIGMA_M)
+        assert distance_m(sc.tel.lat, sc.tel.lon, *ca) >= RADIUS_M + CLEAR_M
+        await sc.confirm_find(*ca, sigma95_m=SIGMA_M)
+        await until_event(sc, "keepout_reroute")
+
+        await sc.wait_command("survey_sector", "done", 300)
+        after = await sc.command(survey["id"])
+        assert after["status"] == "done", after
+        assert not await onboard_events(sc, "keepout_reroute_refused")
+        assert not await onboard_events(sc, "keepout_hold")
+        for c in (ca, cb):
+            inside = _inside(sc, since, c)
+            assert not inside, inside[:3]
+        track = [s for s in sc.track if s.t >= since and s.armed]
+        nearest = min(distance_m(s.lat, s.lon, *cb) for s in track)
+        assert nearest >= RADIUS_M + KEEPOUT_ARC_MARGIN_M - NOISE_M, nearest
         await _land(sc)
 
 
@@ -518,6 +598,50 @@ async def test_an_inspection_started_inside_new_cylinders(
         ]
         track = [s for s in sc.track if s.t >= since and s.armed]
         broken = _shapes_entered(shapes, track)
+        assert not broken, broken
+        await _land(sc)
+
+
+@pytest.mark.budget_s(420)
+async def test_a_person_below_during_an_inspection_is_left_on_a_replan(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await airborne_for_inspection(sc)
+        p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
+        det = await a_detection(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
+        Camera(sc)
+        order = await inspecting(sc, det)
+        ex = sc.r.onboard.ex
+        st = sc.sim.harness.state
+        await sc.until(
+            lambda: north_m(sc) >= 50.0 and st.ground_speed_ms > 3.0, 90, "on the leg north"
+        )
+
+        # A person 15 m ahead, right below the leg: the drone is inside the new cylinder
+        # and its leg heads deeper.
+        plane = Plane(*sc.r.home)
+        e, n = plane.xy(st.lat, st.lon)
+        centre = plane.latlon(e, n + 15.0)
+        since = time.monotonic()
+        ex.on_detections([person(centre)])
+        k = min(
+            (k for k, _ in ex.local_keepouts.values()),
+            key=lambda k: distance_m(k.lat, k.lon, *centre),
+        )
+        await until_event(sc, "keepout_replan")
+
+        await sc.until(
+            lambda: _status(sc, order["id"], "done", "failed", "superseded"), 240, "ended"
+        )
+        after = await sc.command(order["id"])
+        if after["status"] == "superseded":  # the keep-out hover (KEEPOUT_VIOLATION)
+            assert await onboard_events(sc, "keepout_hold"), after
+        track = [s for s in sc.track if s.t >= since and s.armed]
+        dists = [distance_m(s.lat, s.lon, k.lat, k.lon) for s in track]
+        assert dists[0] < k.radius_m  # it came with the drone inside
+        assert min(dists) >= dists[0] - stop_distance_m(INSPECT_SPEED_MS), (dists[0], min(dists))
+        broken = _shapes_entered([(k.lat, k.lon, k.radius_m, since, math.inf)], track)
         assert not broken, broken
         await _land(sc)
 

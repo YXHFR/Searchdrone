@@ -94,6 +94,7 @@ LANDED_LIMIT_S = 480.0  # SmartRTL retraces the flown path at 5 m/s
 HOLD_LIMIT_S = 60.0  # the AI's hold after a confirmation
 GATE_RATE_S = RATE_ACTION_MIN_GAP_MS / 1000 + 0.1  # the gate's rate limit, and a margin
 HOME_LIMIT_S = 30.0  # the AI's return home after "Flyg hem." under way
+HOME_LANDED_M = 10.0  # RTL's landing at home, with the chain worlds' wind
 WATCH_S = 0.25
 
 
@@ -240,10 +241,13 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
             shape = (k.lat, k.lon, k.radius_m)
             if seen is not None and (seen.lat, seen.lon, seen.radius_m) != shape:
                 # The ground moves a candidate's cylinder as its position firms up, under
-                # the same id: the old shape ends here and the new one starts.
+                # the same id: the old shape ends here and the new one starts, with the
+                # same rules but no new grace (E8 counts its braking from the id's arrival).
                 run.keepouts[f"{kid}@{seen.since}"] = replace(seen, until=now)
-                seen = None
-            if seen is None:
+                run.keepouts[kid] = SeenKeepout(
+                    kid, k.lat, k.lon, k.radius_m, now, came=seen.arrival
+                )
+            elif seen is None:
                 run.keepouts[kid] = SeenKeepout(kid, k.lat, k.lon, k.radius_m, now)
         for kid, seen in list(run.keepouts.items()):
             if kid not in held and seen.until == math.inf:
@@ -432,6 +436,16 @@ def _others_judged(run: SearchRun, queue: list[dict[str, Any]]) -> bool:
     return others <= judged
 
 
+def _landed_home(sc: Scenario) -> None:
+    """Every flight ends with the return home (RTL or SmartRTL, both land at home): the
+    drone came down near home, unless the flight controller landed it where it was
+    (LAND: no GPS, a failsafe or the pilot's switch), which the invariants judge."""
+    flown = [s for s in sc.track if s.armed]
+    if any(s.mode == "LAND" for s in flown):
+        return
+    assert sc.from_home_m() <= HOME_LANDED_M, f"landed {sc.from_home_m():.1f} m from home"
+
+
 async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
     """After the confirmation the AI holds (its script); the operator asks it to search on
     so the other persons get seen too, until each has a card whose top was judged, for at
@@ -472,6 +486,8 @@ async def _search_on(run: SearchRun, extra_s: float, limit_s: float) -> None:
             return
         if sc.tel.armed and sc.mode() not in LANDING_MODES:
             assert (await sc.press("return_home")).status_code == 202
+            # FLY HOME goes past the AI: the flight controller takes it within the limit.
+            await sc.until(under_way, HOME_LIMIT_S, "FLY HOME under way")
 
     if before or await homeward():
         return await home()
@@ -578,6 +594,7 @@ async def search_run(
             if flying is not None and not flying.done():
                 flying.cancel()
             await sc.until(lambda: not sc.tel.armed, LANDED_LIMIT_S, "landed")
+            _landed_home(sc)
             # The last cards the operator has not reached yet are left as they are.
         finally:
             stop.set()

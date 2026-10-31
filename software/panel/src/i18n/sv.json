@@ -342,6 +342,13 @@
       "link_restored": "länken kom tillbaka"
     }
   },
+  "keepouts": {
+    "NOT_INSTALLED": "Drönaren har inte tagit emot de senaste förbudszonerna runt fynden. Den kan flyga över en person som den inte vet om. Marken skickar dem igen. Håll uppsikt och tryck STOPP om det behövs.",
+    "INSTALLED": "Förbudszonerna runt fynden är nu inlagda i drönaren igen.",
+    "HOLD": "Drönaren svävar för att inte flyga in i en förbudszon runt en person. Ge en ny order eller tryck FLYG HEM.",
+    "HOLD_CLIMB": "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den stiger rakt upp till {{alt}} m och svävar där. Ta över med RC, ge en ny order eller tryck FLYG HEM.",
+    "HOLD_INSIDE": "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den kan inte stiga högre och svävar där den är. Ta över med RC, ge en ny order eller tryck FLYG HEM."
+  },
   "gnss": {
     "GPS_WEAK": "GPS är svag ({{sats}} satelliter). Drönaren flyger vidare men kan bli osäker på var den är.",
     "GPS_LOST": "GPS är borta. Drönaren gissar sin position och flyger mot hem i högst {{dr}} s, sedan landar den. Ta över med RC om du kan.",

@@ -38,6 +38,9 @@ def test_example_config_is_valid() -> None:
     assert cfg.cloud.fallback_model == "anthropic/claude-haiku-5.5"
     assert cfg.cloud.reasoning_effort == "low"
     assert cfg.cloud.provider.data_collection == "deny"
+    # zdr is on until the ground station says it runs the simulator
+    assert cfg.cloud.extra_body()["provider"]["zdr"] is True
+    cfg.cloud.provider.follow_ground("sim")
     assert cfg.cloud.extra_body() == {
         "reasoning": {"effort": "low", "exclude": True},
         "provider": {"data_collection": "deny", "require_parameters": True},
@@ -89,16 +92,25 @@ def test_old_local_model_config_still_loads(tmp_path: Path) -> None:
     assert cfg.decide.engines == ["jev", "openai_decisions"]
 
 
-@pytest.mark.parametrize(("profile", "zdr"), [("sim", False), ("bench", True), ("field", True)])
-def test_zdr_defaults_to_true_outside_sim(profile: str, zdr: bool) -> None:
-    cfg = BrainConfig.model_validate({"profile": profile})
-    assert cfg.cloud.provider.zdr is zdr
+@pytest.mark.parametrize("brain_profile", ["sim", "bench", "field"])
+@pytest.mark.parametrize(
+    ("ground_profile", "zdr"), [(None, True), ("sim", False), ("bench", True), ("field", True)]
+)
+def test_zdr_follows_the_ground_stations_profile(
+    brain_profile: str, ground_profile: str | None, zdr: bool
+) -> None:
+    """On until the ground station has said its profile; then off only for its sim. The
+    brain's own profile does not decide it."""
+    cfg = BrainConfig.model_validate({"profile": brain_profile})
+    cfg.cloud.provider.follow_ground(ground_profile)
+    assert cfg.cloud.provider.zdr is None and cfg.cloud.provider.zdr_on is zdr
     assert ("zdr" in cfg.cloud.extra_body()["provider"]) is zdr
     assert cfg.cloud.fallback_model == "anthropic/claude-haiku-5.5"
 
 
 def test_example_config_in_field_sends_zdr() -> None:
     cfg = load_config(ROOT / "config/brain.example.toml", {"SD_BRAIN__PROFILE": "field"})
+    cfg.cloud.provider.follow_ground("field")
     assert cfg.cloud.extra_body()["provider"] == {
         "data_collection": "deny",
         "require_parameters": True,
@@ -108,8 +120,10 @@ def test_example_config_in_field_sends_zdr() -> None:
 
 def test_explicit_zdr_wins_over_the_profile() -> None:
     off = BrainConfig.model_validate({"profile": "field", "cloud": {"provider": {"zdr": False}}})
+    off.cloud.provider.follow_ground("field")
     assert off.cloud.provider.zdr is False and "zdr" not in off.cloud.extra_body()["provider"]
     on = BrainConfig.model_validate({"profile": "sim", "cloud": {"provider": {"zdr": True}}})
+    on.cloud.provider.follow_ground("sim")
     assert on.cloud.extra_body()["provider"]["zdr"] is True
 
 
@@ -124,6 +138,10 @@ def test_explicit_zdr_off_on_a_real_flight_warns() -> None:
         {"profile": "field", "cloud": {"provider": {"send": False}}}
     )
     assert other_api.zdr_warning() is None
+    # The ground station's profile decides: a sim brain against a field ground warns.
+    sim_brain = BrainConfig.model_validate({"cloud": {"provider": {"zdr": False}}})
+    assert sim_brain.zdr_warning() is None
+    assert sim_brain.zdr_warning("field") is not None
 
 
 def test_provider_can_be_turned_off_and_narrowed() -> None:

@@ -46,6 +46,12 @@ SRTL_POINTS 300          # SmartRTL track buffer
 WP_RADIUS_M 2            # m; a mission waypoint counts as reached within this radius
 WP_SPD 5                 # m/s default in AUTO and GUIDED (not a cap; missions set speed)
 LOIT_SPEED_MS 15         # m/s, the fastest LOITER may fly (= the 15 m/s limit)
+# LOITER's braking, which STOP and the keep-out reflex rely on: the E8 stop model
+# (sd_sim.search_invariants: STOP_DECEL_MS2, STOP_SETTLE_S) is built on these values, and
+# test_search_invariants fails when they drift apart. ArduCopter's defaults, written out.
+LOIT_BRK_ACC_M 2.5       # m/s², braking deceleration once the sticks are centred
+LOIT_BRK_JRK_M 5         # m/s³, how fast the braking ramps up
+LOIT_BRK_DELAY 1         # s after the last stick input before braking starts
 GUID_TIMEOUT 3           # s; GUIDED velocity orders stop when they are not renewed
 
 # --- arming and manual control ----------------------------------------------------------
@@ -95,3 +101,8 @@ RC8_OPTION 0             # no source switch in the simulator; 90 with a real RC 
 
 # --- scripting ------------------------------------------------------------------------
 SCR_ENABLE 1             # one Lua script: sd_gcs_loiter_cap.lua (simulation/sitl/scripts)
+# Arming is refused unless exactly that script is loaded and running: the low 23 bits of
+# the XOR of the scripts' CRC32 (sd_sim.sitl.scripts_checksum). A changed script needs a
+# new value here; test_link_loss_params fails until it has one.
+SCR_LD_CHECKSUM 1589952  # 0x1842C0
+SCR_RUN_CHECKSUM 1589952  # 0x1842C0
