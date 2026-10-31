@@ -581,4 +581,10 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     paths = [*copied, ".github/workflows/release.yml"]
     assert check_owner_gate.protected_files([{"filename": p} for p in paths]) == sorted(paths)
     assert "--require-hashes" in run and "--root" in run
+    # Python runs only after leaving the clone, and with -m only isolated (-I), so no
+    # repository file (venv.py, pip/, yaml.py) can stand in for a module.
+    lines = [line.strip() for line in run.splitlines()]
+    first_python = next(i for i, line in enumerate(lines) if "python" in line)
+    assert 'cd "$gate"' in lines[:first_python]
+    assert all(" -I -m " in line for line in lines if " -m " in line)
     assert not re.search(r"\b(just|uv|pnpm)\b|\./", run), run

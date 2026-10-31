@@ -48,12 +48,14 @@ jobs:
           mkdir -p "$gate"
           cp tools/check_merged_pr_gates.py tools/workflow_rules.py \
             tools/check_owner_gate.py tools/check_review_comments.py "$gate/"
-          /usr/bin/python3 -m venv "$gate/venv"
+          # Out of the clone and isolated (-I): no repository file can stand in for a module.
+          cd "$gate"
+          /usr/bin/python3 -I -m venv venv
           printf '%s\n' 'pyyaml==6.0.3 --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc' \
-            > "$gate/requirements.txt"
-          "$gate/venv/bin/pip" install -q --no-deps --only-binary :all: --require-hashes \
-            -r "$gate/requirements.txt"
-          "$gate/venv/bin/python" -E -s "$gate/check_merged_pr_gates.py" \
+            > requirements.txt
+          venv/bin/python -I -m pip install -q --no-deps --only-binary :all: --require-hashes \
+            -r requirements.txt
+          venv/bin/python -E -s check_merged_pr_gates.py \
             --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA"
 
   build:
