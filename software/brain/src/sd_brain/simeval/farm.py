@@ -42,6 +42,7 @@ from sd_brain.simeval.score import (
     LoggedOrder,
     score_flight,
 )
+from sd_schemas.simfarm import ROUND_SCHEMA
 
 __all__ = [
     "BRAIN_SCHEMA",
@@ -54,7 +55,6 @@ __all__ = [
     "grade_round",
 ]
 
-ROUND_SCHEMA = "simfarm.round/v1"
 GRADE_SCHEMA = "sd-brain.grade/1"
 BRAIN_SCHEMA = "sd-brain.brain/1"
 FallbackReason = Literal["key_invalid", "budget", "cloud_error"]
@@ -162,9 +162,8 @@ def _grade_run(
         )
     except ValidationError as exc:
         raise RoundError(f"{run_dir.name}: fel form ({exc.error_count()} fel)") from None
-    candidates = [
-        c.model_copy(update={"flew_on": c.raised_t_s is not None}) for c in flight.candidates
-    ] or [
+    # Each candidate as the farm recorded it: flew_on from the track after the raise.
+    candidates = flight.candidates or [
         LoggedCandidate(
             seq=i + 1,
             t_s=m.t_s,

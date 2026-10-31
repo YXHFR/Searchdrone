@@ -8,6 +8,14 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `just dev`: one command for the local development stack. It starts the database,
+  `sd-ground`, `sd-onboard`, `sd-search`, the scripted AI commander and the panel's Vite
+  dev server (hot reload), then prints the login link. The default `physics=mock`
+  replaces ArduPilot with the new `sd_sim.mockfc`, sd_mav's fake flight controller on
+  SITL's ports, so it needs no simulator build and no API key. Only `just dev` accepts
+  `physics=mock`, so no smoke flight, demo or test can pass without ArduPilot;
+  `physics=builtin` or `gz` flies SITL as `just sim` does. The panel's dev server port follows the instance
+  (`SD_PANEL_PORT`, 5173 + 10N).
 - `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
   fails when code outside the MAVLink gate `sd_mav` names a message or command from its
   deny list (parameter writes, switching off the fence, flight termination, forced
@@ -146,6 +154,27 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- Flight safety: arming needs exactly `sd_gcs_loiter_cap.lua` loaded and running
+  (`SCR_LD_CHECKSUM` / `SCR_RUN_CHECKSUM` in `searchdrone-safety.parm`); a unit test
+  fails when the script changes without a new checksum. LOITER's braking
+  (`LOIT_BRK_ACC_M`, `LOIT_BRK_JRK_M`, `LOIT_BRK_DELAY`) is set explicitly to the stop
+  model E8 assumes, and a test fails when they drift apart.
+- The ground waits for the onboard executor's answer to every `KeepoutInstall`. A
+  refused, failed, expired or unanswered keep-out list is sent again (above a stale
+  sequence number when the executor holds a newer one), and the operator gets one red,
+  sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+- A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
+  orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
+  whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
+  delivered after its mission closed is only logged.
+- The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
+  new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
+- The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
+  when it came may leave it but never go deeper, and a cylinder's new shape gives no new
+  grace. FLY HOME pressed in a chain run must be under way within its limit, and the
+  drone must land at home. New SITL tests fly the margin case from #96 and require the
+  inspection's `keepout_replan`.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read
@@ -502,6 +531,31 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
+  the ground station's profile from its `server.hello`, not the brain's own: on until the
+  ground station has said it, off only against a `sim` ground station, and on again while
+  the stream is down. The offline evaluations count as `sim`. The AI configuration hash is
+  computed again after the hello. The brain logs a line when the ground station's
+  profile turns zero retention off.
+- `sd-brain bank export-golden` and `eval-profiles record=1` refuse answers holding the
+  value of any key the AI reads (`SD_JEV_API_KEY` and `SD_OPENAI_API_KEY` were missing);
+  the list is built from the brain's own key list, and the keys in `.env` are checked too,
+  `SD_BRAIN_TOKEN` and the `SD_BANK_R2_*` keys included.
+- The cloud matcher refuses a crop larger than 512 px instead of scaling it down: the
+  link caps crops at 512 px, so a larger image is not a crop.
+- The cloud image policy passes a text part on with its text only, no other keys.
+- The probability map is frozen only with a confirmed find checked under the map's write
+  lock, and a sector's `psr` is at most 100 (`PSR_MAX`); a sector stored before that is
+  read with its `psr` clamped.
+- Simulator exams: the closer look flies inside the charter's height band, the farm grade
+  takes `flew_on` from the track flown on a search order after the raise (the exam's
+  rule, from `sd_schemas.simfarm`) instead of counting every raised candidate as flown
+  on, and the scripted decider raises the ground's high candidates from their
+  `event.candidate` bodies instead of reading the situation's text.
+- The sim farm moves a round flown over the orthophoto from `rounds/` to `draped/` once
+  instead of trying to upload it on every turn. `ROUND_SCHEMA` has one home
+  (`sd_schemas.simfarm`), the workflow test fails a storing step without a `path`, and
+  `PerceptionLoop` takes prebuilt detector sources (`sources=`).
 - The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) and
   the detector weights' (`just detector-fetch`, `tools/train/fetch_weights.py`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a

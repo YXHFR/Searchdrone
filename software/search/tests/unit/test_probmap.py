@@ -10,14 +10,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from search_helpers import HOME, at, profile  # pyright: ignore[reportMissingImports]
 
-from sd_schemas.probmap import situation_line, suggest_sector_order
+from sd_schemas.probmap import PSR_MAX, situation_line, suggest_sector_order
 from sd_schemas.search import SubjectCategory
-from sd_search.probmap.bayes import HeadingPrior, OperatorArea, RingTerrainMap
+from sd_search.probmap.bayes import HeadingPrior, MapState, OperatorArea, RingTerrainMap
 from sd_search.probmap.build import MapBuilder, MapCandidate, MapInputs
 from sd_search.probmap.grid import Grid, grid_around
 from sd_search.probmap.pod import DETECTORS, Still, pass_pod, still_pod
 from sd_search.probmap.rings import ring_mass, rings_for
-from sd_search.probmap.sectors import spacing_m
+from sd_search.probmap.sectors import PlanSector, sector_scores, spacing_m
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
 
 CATEGORIES: list[SubjectCategory] = [
@@ -391,6 +391,18 @@ def test_sector_order_and_the_situation_line() -> None:
     line = situation_line(built.sectors)
     assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR): ")
     assert " A " in f" {line} " and " B " in f" {line} "
+
+
+def test_a_tiny_sector_holding_all_the_mass_stays_within_psr_max() -> None:
+    """Under 0.005 min of flight est_min rounds to 0; psr still divides by 0.01 at least."""
+    grid = Grid(lat0=HOME[0], lon0=HOME[1], x0=0.0, y0=0.0, nx=4, ny=4, cell=1.0)
+    p = np.zeros((4, 4))
+    p[0, 0] = 1.0
+    state = MapState(grid=grid, p=p, row=0.0, pod_cum=np.zeros((4, 4)))
+    tiny = PlanSector("A", ((0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)))
+    [score] = sector_scores(state, [tiny], np.zeros((4, 4)), DET, alt_m=40, speed_ms=8)
+    assert score.est_min == 0.0 and score.pos_plan > 0
+    assert score.psr == pytest.approx(score.pos_plan / 0.01) and score.psr <= PSR_MAX
 
 
 def test_the_grid_covers_the_area_plus_the_margin_and_at_most_4_km() -> None:

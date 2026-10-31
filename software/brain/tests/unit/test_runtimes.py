@@ -96,7 +96,8 @@ async def test_cloud_sends_reasoning_provider_and_tools() -> None:
     assert reply.tool_calls[0].name == "hold"
     assert body["model"] == "z-ai/glm-5.3-flash"
     assert body["reasoning"] == {"effort": "low", "exclude": True}
-    assert body["provider"] == {"data_collection": "deny", "require_parameters": True}
+    # no ground station has said its profile: zero data retention
+    assert body["provider"] == {"data_collection": "deny", "require_parameters": True, "zdr": True}
     assert body["tool_choice"] == "auto" and body["tools"] == [{"type": "function"}]
     assert seen[0].headers["authorization"] == f"Bearer {KEY}"
 

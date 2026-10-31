@@ -30,6 +30,9 @@ export type AlertCode =
   | "FIND_HOLD_ALL"
   | "LINK_BACK_HOLD"
   | "LINK_BACK_HOME"
+  | "KEEPOUTS_NOT_INSTALLED"
+  | "KEEPOUTS_INSTALLED"
+  | "KEEPOUT_HOLD"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"
@@ -91,6 +94,14 @@ export type CommandStatus =
  */
 export type ExecutorState =
   "IDLE" | "PREFLIGHT" | "TAKEOFF" | "TRANSIT" | "SURVEY" | "HOLD" | "RTL" | "LAND" | "LANDED" | "HELD" | "FAILSAFE";
+/**
+ * The fields of the onboard ``executor.keepout_hold`` data that the ground's
+ * ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "KeepoutHoldField".
+ */
+export type KeepoutHoldField = "inside" | "climb_to_m";
 /**
  * Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
  *
@@ -2664,7 +2675,8 @@ export interface ProbabilityMapView {
  * ``covered_pct``: the share of its cells seen with a POD of at least 0.1.
  * ``mean_pod``: the mean cumulative POD over its cells.
  * ``pos_plan``: the chance of finding the person if the sector is surveyed once more as
- * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first).
+ * planned. ``psr``: ``pos_plan`` per minute of planned flight (higher first); with
+ * ``est_min`` in hundredths of a minute it is at most ``PSR_MAX`` (1 / 0.01).
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "SectorScore".

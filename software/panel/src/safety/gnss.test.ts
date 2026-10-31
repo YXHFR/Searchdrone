@@ -80,6 +80,37 @@ describe("alertView", () => {
     expect(alertView("FIND_HOLD", {}, T0)).toBeNull(); // no times: the ground's own text
   });
 
+  it("keep-out list not on board: red and sticky; back on board: info", () => {
+    const v = alertView("KEEPOUTS_NOT_INSTALLED", { stage: "rejected" }, T0);
+    expect(v && isSticky(v)).toBe(true);
+    expect(say(v)).toContain("förbudszonerna");
+    const ok = alertView("KEEPOUTS_INSTALLED", {}, T0);
+    expect(ok?.tone).toBe("info");
+    expect(say(ok)).toBe("Förbudszonerna runt fynden är nu inlagda i drönaren igen.");
+  });
+
+  it("keep-out hover: orange short of a cylinder, red over a person (climbing or not)", () => {
+    const short = alertView("KEEPOUT_HOLD", { inside: false }, T0);
+    expect(short?.tone).toBe("orange");
+    expect(short && isSticky(short)).toBe(false);
+    const climb = alertView("KEEPOUT_HOLD", { inside: true, climb_to_m: 63.4 }, T0);
+    expect(climb && isSticky(climb)).toBe(true);
+    expect(say(climb)).toContain("stiger rakt upp till 63 m");
+    const stuck = alertView("KEEPOUT_HOLD", { inside: true }, T0);
+    expect(stuck?.tone).toBe("red");
+    expect(say(stuck)).toContain("kan inte stiga högre");
+  });
+
+  it("keep-out hover: half metres round up as on the ground, a non-number climb is left out", () => {
+    const half = alertView("KEEPOUT_HOLD", { inside: true, climb_to_m: 62.5 }, T0);
+    expect(say(half)).toContain("stiger rakt upp till 63 m");
+    for (const climb of ["63", null, Number.NaN]) {
+      const v = alertView("KEEPOUT_HOLD", { inside: true, climb_to_m: climb }, T0);
+      expect(v?.key).toBe("keepouts.HOLD_INSIDE");
+      expect(v?.tone).toBe("red");
+    }
+  });
+
   it("is null for codes the panel has no text for", () => {
     expect(alertView("BATTERY_RTL", {}, T0)).toBeNull();
   });
