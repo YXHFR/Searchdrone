@@ -32,6 +32,7 @@ export type AlertCode =
   | "LINK_BACK_HOME"
   | "KEEPOUTS_NOT_INSTALLED"
   | "KEEPOUTS_INSTALLED"
+  | "KEEPOUT_HOLD"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"

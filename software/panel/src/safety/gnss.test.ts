@@ -89,6 +89,18 @@ describe("alertView", () => {
     expect(say(ok)).toBe("Förbudszonerna runt fynden är nu inlagda i drönaren igen.");
   });
 
+  it("keep-out hover: orange short of a cylinder, red over a person (climbing or not)", () => {
+    const short = alertView("KEEPOUT_HOLD", { inside: false }, T0);
+    expect(short?.tone).toBe("orange");
+    expect(short && isSticky(short)).toBe(false);
+    const climb = alertView("KEEPOUT_HOLD", { inside: true, climb_to_m: 63.4 }, T0);
+    expect(climb && isSticky(climb)).toBe(true);
+    expect(say(climb)).toContain("stiger rakt upp till 63 m");
+    const stuck = alertView("KEEPOUT_HOLD", { inside: true }, T0);
+    expect(stuck?.tone).toBe("red");
+    expect(say(stuck)).toContain("kan inte stiga högre");
+  });
+
   it("is null for codes the panel has no text for", () => {
     expect(alertView("BATTERY_RTL", {}, T0)).toBeNull();
   });
