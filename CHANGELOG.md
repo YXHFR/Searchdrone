@@ -65,10 +65,12 @@ All notable changes to this project are listed here. The format follows
   code runs before it. The workflow finds the newest published release (rc included)
   on the tag's line with `gh` and git alone; the scripts come from that release, first
   confirm that `release.yml` itself made it, with a successful run for that tag and
-  commit, and the check starts after it. A different answer, or any error, stops the
-  job, and only the first release checks the whole history with the tagged commit's
-  own copy. New rules therefore apply from the release after the one
-  that ships them. A deleted release and a `release.yml` without its gates job are left
+  commit whose `gates` job passed, and the check starts after it. A different answer,
+  or any error, stops the job, and only the first release (no release and no release
+  tag on the line) checks the whole history with the tagged commit's own copy. Past
+  the API's hourly limit the check waits for the reset instead of failing, and a test
+  runs the workflow's own anchor loop against the check's choice. New rules therefore
+  apply from the release after the one that ships them. A deleted release and a `release.yml` without its gates job are left
   to the owner's ruleset on `v*` tags and immutable releases. Then it checks the
   versions, builds the packages and the panel and publishes the
   GitHub release only if the tag still names the commit it built; only its publish job

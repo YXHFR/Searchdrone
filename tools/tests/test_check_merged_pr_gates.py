@@ -3,6 +3,7 @@ pull request's comments, label events, title and the merge commit's files."""
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import subprocess
@@ -10,7 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import check_merged_pr_gates as cmg
+import check_owner_gate
+import check_review_comments
 import pytest
+import yaml
 
 REPO = "o/r"
 TITLE = "feat(tools): a change"
@@ -563,6 +567,128 @@ def test_gh_api_joins_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
         cmg.gh_api("repos/o/r/x")
 
 
+def test_gh_api_waits_out_the_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A long range runs out of the token's hourly requests: wait for the reset, go on.
+    calls: list[list[str]] = []
+    answers = [
+        (1, "", "gh: API rate limit exceeded for installation ID 1 (HTTP 403)"),
+        (0, "0\t1100\n", ""),
+        (0, json.dumps([[{"n": 1}]]), ""),
+    ]
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        code, out, err = answers.pop(0)
+        return subprocess.CompletedProcess(argv, code, out, err)
+
+    slept: list[float] = []
+    monkeypatch.setattr(cmg.subprocess, "run", fake_run)
+    monkeypatch.setattr(cmg.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(cmg.time, "sleep", slept.append)
+    assert cmg.gh_api("repos/o/r/x") == [{"n": 1}]
+    assert slept == [105.0]
+    assert calls[1][:5] == ["gh", "api", "--method", "GET", "rate_limit"]
+    # A secondary limit (the core limit not spent): a minute. And it does not go on forever.
+    answers[:] = [(1, "", "secondary rate limit")] + [(0, "5\t0\n", ""), (1, "", "rate limit")] * 2
+    slept.clear()
+    with pytest.raises(cmg.GitHubError, match="rate limit"):
+        cmg.gh_api("repos/o/r/x")
+    assert slept == [60.0] * cmg.RATE_LIMIT_WAITS
+    # Any other error stops at once.
+    answers[:] = [(1, "", "HTTP 404: Not Found")]
+    with pytest.raises(cmg.GitHubError, match="404"):
+        cmg.gh_api("repos/o/r/x")
+
+
+def release_loop(root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: str) -> str:
+    """release.yml's own shell, up to where the anchor is known, run for real: ``gh`` is
+    a stub that prints what the workflow's ``--jq`` would. Returns ``$since`` or raises
+    with the step's error."""
+    doc = yaml.safe_load((cmg.REPO / ".github" / "workflows" / "release.yml").read_text())
+    run = str(doc["jobs"]["gates"]["steps"][2]["run"])
+    body = run[run.index('gate="$RUNNER_TEMP/gate"') : run.index('rules="${since')]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (tmp_path / "releases.tsv").write_text(gh.tsv())
+    stub = bin_dir / "gh"
+    stub.write_text(f'#!/bin/sh\ncat "{tmp_path / "releases.tsv"}"\n')
+    stub.chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "GITHUB_WORKSPACE": str(root),
+        "GITHUB_SHA": sha,
+        "GITHUB_REF_NAME": tag,
+        "GITHUB_REPOSITORY": REPO,
+        "RUNNER_TEMP": str(tmp_path),
+    }
+    proc = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", body + 'echo "$since"\n'],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(proc.stderr.strip())
+    return proc.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["first", "newest", "tie", "mallory", "off-line", "tag-only", "missing", "same-commit"],
+)
+def test_release_yml_picks_the_same_anchor_as_release_anchor(tmp_path: Path, case: str) -> None:
+    # The workflow finds the anchor without repository code; the anchor's own copy then
+    # must agree. Both run here on the same releases: same answer, or both stop.
+    root = tmp_path / "repo"
+    root.mkdir()
+    c = tagged_repo(root)
+    gh = FakeReleases()
+    if case == "first":
+        untag(root, "v0.1.0", "v0.2.0")
+    elif case in ("newest", "tie"):
+        gh.release("v0.1.0", c["c1"])
+        gh.release("v0.2.0", c["c2"])
+        gh.release("x-junk", c["c2"])
+        if case == "tie":
+            cmg.git(root, "tag", "v0.2.0-rc.1", c["c2"])
+            gh.release("v0.2.0-rc.1", c["c2"])
+    elif case == "mallory":
+        gh.release("v0.1.0", c["c1"])
+        gh.release("v0.2.0", c["c2"], author={"login": "mallory"})
+    elif case == "off-line":
+        untag(root, "v0.1.0", "v0.2.0")
+        gh.release("v0.9.0", c["s1"])
+    elif case == "tag-only":
+        untag(root, "v0.1.0")
+    elif case == "missing":
+        gh.release("v0.4.0", c["c2"])
+    elif case == "same-commit":
+        untag(root, "v0.1.0", "v0.2.0")
+        cmg.git(root, "tag", "v0.3.0-rc.1", c["c3"])
+        gh.release("v0.3.0-rc.1", c["c3"])
+    results = []
+    for pick in (
+        lambda: release_loop(root, tmp_path, gh, c["c3"], "v0.3.0") or None,
+        lambda: cmg.release_anchor(gh, REPO, root, c["c3"], "v0.3.0"),
+    ):
+        try:
+            results.append(pick())
+        except ValueError as exc:
+            results.append(f"stop: {str(exc).splitlines()[-1]}")
+    shell, python = results
+    expected = {"first": None, "newest": c["c2"], "tie": c["c2"]}
+    if case in expected:
+        assert shell == python == expected[case]
+    elif case in ("same-commit", "off-line"):
+        # Only the workflow judges these: release_anchor skips the tagged commit, and it
+        # runs only from an anchor's copy, never for a first release. The workflow stops.
+        assert str(shell).startswith("stop: "), shell
+    else:
+        assert str(shell).startswith("stop: "), shell
+        assert str(python).startswith("stop: "), python
+
+
 def test_main_reports_and_fails(capsys: pytest.CaptureFixture[str]) -> None:
     head = cmg.git(cmg.REPO, "rev-parse", "HEAD")
     parent = cmg.git(cmg.REPO, "rev-parse", "HEAD~1")
@@ -648,22 +774,31 @@ class FakeReleases:
     def __init__(self) -> None:
         self.releases: list[dict[str, Any]] = []
         self.runs: dict[str, list[dict[str, Any]]] = {}
+        self.jobs: dict[int, list[dict[str, Any]]] = {}
 
     def release(self, tag: str, commit: str, author: Any = BOT, run: bool = True, **kw: Any):
         self.releases.append({"tag_name": tag, "draft": False, "author": author, **kw})
         if run:
+            run_id = len(self.jobs) + 1
             self.runs.setdefault(commit, []).append(
                 {
+                    "id": run_id,
                     "head_branch": tag,
                     "head_sha": commit,
                     "conclusion": "success",
                     "path": ".github/workflows/release.yml",
                 }
             )
+            self.jobs[run_id] = [
+                {"name": n, "status": "completed", "conclusion": "success"}
+                for n in ("gates", "build", "publish")
+            ]
 
     def __call__(self, path: str) -> Any:
         if path == "repos/o/r/releases?per_page=100":
             return self.releases
+        if m := re.fullmatch(r"repos/o/r/actions/runs/(\d+)/jobs\?per_page=100", path):
+            return [{"jobs": self.jobs.get(int(m[1]), [])}]
         m = re.fullmatch(
             r"repos/o/r/actions/workflows/release\.yml/runs"
             r"\?event=push&status=success&head_sha=(\w+)&per_page=100",
@@ -673,13 +808,27 @@ class FakeReleases:
             raise AssertionError(f"unexpected request {path}")
         return [{"workflow_runs": self.runs.get(m[1], [])}]
 
+    def tsv(self) -> str:
+        """What release.yml's ``gh api ... --jq`` prints: tag and author, drafts left out."""
+        return "".join(
+            f"{r['tag_name']}\t{(r.get('author') or {}).get('login') or ''}\n"
+            for r in self.releases
+            if not r.get("draft")
+        )
+
 
 def anchor(gh: FakeReleases, root: Path, c: dict[str, str]) -> str | None:
     return cmg.release_anchor(gh, REPO, root, c["c3"], "v0.3.0")
 
 
+def untag(root: Path, *tags: str) -> None:
+    for tag in tags:
+        cmg.git(root, "tag", "-d", tag)
+
+
 def test_the_first_release_has_no_anchor(tmp_path: Path) -> None:
     c = tagged_repo(tmp_path)
+    untag(tmp_path, "v0.1.0", "v0.2.0")
     gh = FakeReleases()
     assert anchor(gh, tmp_path, c) is None
     # Not releases on this line: another pattern, a draft, the tag itself, another branch.
@@ -724,6 +873,39 @@ def test_a_release_not_made_by_release_yml_stops_the_release(
         anchor(gh, tmp_path, c)
 
 
+def test_a_release_tag_on_the_line_without_its_release_stops_the_release(
+    tmp_path: Path,
+) -> None:
+    # Its release failed or was deleted: the next one must not become a first release,
+    # checked from the start with the tagged commit's own copy.
+    c = tagged_repo(tmp_path)
+    untag(tmp_path, "v0.1.0")
+    with pytest.raises(ValueError, match=r"taggarna v0\.2\.0 finns där"):
+        anchor(FakeReleases(), tmp_path, c)
+
+
+def test_a_release_whose_gates_job_did_not_pass_stops_the_release(tmp_path: Path) -> None:
+    c = tagged_repo(tmp_path)
+    gh = FakeReleases()
+    gh.release("v0.1.0", c["c1"])
+    gh.release("v0.2.0", c["c2"])
+    (run,) = gh.runs[c["c2"]]
+    gh.jobs[run["id"]] = [j for j in gh.jobs[run["id"]] if j["name"] != "gates"]
+    with pytest.raises(ValueError, match=r"ingen lyckad release\.yml-körning"):
+        anchor(gh, tmp_path, c)
+    gh.jobs[run["id"]].append({"name": "gates", "status": "completed", "conclusion": "skipped"})
+    with pytest.raises(ValueError, match=r"ingen lyckad release\.yml-körning"):
+        anchor(gh, tmp_path, c)
+
+
+def test_is_ancestor_raises_on_a_git_error(tmp_path: Path) -> None:
+    c = tagged_repo(tmp_path)
+    assert cmg.is_ancestor(tmp_path, c["c1"], c["c3"])
+    assert not cmg.is_ancestor(tmp_path, c["s1"], c["c3"])
+    with pytest.raises(subprocess.CalledProcessError):
+        cmg.is_ancestor(tmp_path, "0" * 40, c["c3"])
+
+
 def test_a_release_without_its_tag_stops_the_release(tmp_path: Path) -> None:
     c = tagged_repo(tmp_path)
     gh = FakeReleases()
@@ -734,12 +916,24 @@ def test_a_release_without_its_tag_stops_the_release(tmp_path: Path) -> None:
 
 def test_main_prints_the_anchor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     c = tagged_repo(tmp_path)
+    untag(tmp_path, "v0.1.0", "v0.2.0")
     gh = FakeReleases()
     argv = ["--root", str(tmp_path), "--sha", c["c3"], "--repo", REPO]
     assert cmg.main([*argv, "--anchor-for-tag", "v0.3.0"], api=gh) == 0
     assert capsys.readouterr().out == "\n"
+    cmg.git(tmp_path, "tag", "v0.2.0", c["c2"])
     gh.release("v0.2.0", c["c2"])
     assert cmg.main([*argv, "--anchor-for-tag", "v0.3.0"], api=gh) == 0
     assert capsys.readouterr().out == c["c2"] + "\n"
     gh.releases[0]["author"] = {"login": "mallory"}
     assert cmg.main([*argv, "--anchor-for-tag", "v0.3.0"], api=gh) == 2
+
+
+def test_both_gates_parse_times_alike() -> None:
+    # Each gate workflow checks out its own script alone, so check_owner_gate and
+    # check_review_comments cannot share parse_time; this check uses one of them for both.
+    for value in ("2026-01-02T03:04:05Z", "2026-01-02T03:04:05+02:00", "2026-01-02T03:04:05.5Z"):
+        assert check_owner_gate.parse_time(value) == cmg.parse_time(value)
+    assert inspect.getsource(check_owner_gate.parse_time) == inspect.getsource(
+        check_review_comments.parse_time
+    )
