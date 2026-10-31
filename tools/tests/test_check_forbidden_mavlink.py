@@ -287,6 +287,18 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "        raise ValueError(name)\n"
         "    with open(p) as name:\n"
         "        self._conn.mav.param_set_send(1, 1, name, v, 9)",
+        # A default, decorator or annotation runs outside the guard.
+        "name = b'FENCE_ENABLE'\n"
+        "def set_sim_param(self, name, v, _s=c.mav.param_set_send(1, 1, name, 0, 9)):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)",
+        "name = b'FENCE_ENABLE'\n"
+        "@deco(c.mav.param_set_send(1, 1, name, 0, 9))\n"
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)",
+        # A bare param_set_send (a bound method passed in) is of unknown kind.
+        "def f(param_set_send):\n    param_set_send('FS_THR_ENABLE', 0, b'SIM_X')",
         # A *args or **kwargs may fill the name's place.
         "self._conn.mav.param_set_send(1, *[1, b'ARMING_CHECK'], b'SIM_X', 0, 9)",
         "def set_sim_param(self, name, v):\n"

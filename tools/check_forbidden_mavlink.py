@@ -289,10 +289,10 @@ def _param_args(node: ast.Call) -> list[ast.expr | None]:
     is refused too. A place an earlier ``*args`` or a ``**kwargs`` may fill is unknown
     (``None``), never ``SIM_*``."""
     func = node.func
-    unknown = (
-        _call_name(func) == "param_set_send"
-        and isinstance(func, ast.Attribute)
-        and not (isinstance(func.value, ast.Attribute) and func.value.attr == "mav")
+    unknown = _call_name(func) == "param_set_send" and not (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "mav"
     )
     places = [(2, "param_id")] + ([(0, "parm_name")] if unknown else [])
     out: list[ast.expr | None] = []
@@ -411,7 +411,10 @@ def _sim_param_sets(tree: ast.Module, writers: frozenset[str]) -> set[int]:
             guarded = _params(defs[0])[0]
             # A guarded parameter that is bound again in the writer is not trusted.
             rebound = guarded in _bound_names(defs[0])
-            for n in _own_calls(defs[0]):
+            # Only the body: decorators, defaults and annotations run at definition
+            # time, where the parameter's name means an outer one.
+            body = (n for stmt in defs[0].body for n in _own_calls(stmt))
+            for n in body:
                 if _call_name(n.func) in PARAM_SET_CALLS and all(
                     (not rebound and isinstance(arg, ast.Name) and arg.id == guarded)
                     or _sim_literal(arg)
