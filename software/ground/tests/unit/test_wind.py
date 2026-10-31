@@ -20,7 +20,7 @@ from stop_helpers import PILOT, VID, Stack, stack  # pyright: ignore[reportMissi
 from sd_ground.context import Ground
 from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
 from sd_ground.services import wind
-from sd_ground.services.latches import Latches
+from sd_ground.services.latches import BatteryReason, Latches
 from sd_ground.services.telemetry import TelemetryService
 from sd_ground.services.vehicle_actions import ActionRefusedError
 from sd_ground.services.wind import (
@@ -37,6 +37,7 @@ from sd_safety.constants import FC_ANGLE_MAX_DEG
 from sd_safety.targets import distance_m
 from sd_schemas.api import WindCheck
 from sd_schemas.base import LatLonAlt
+from sd_schemas.mission import LatchAction
 from sd_testing import FakeClock
 
 HOME = LatLonAlt(lat=-35.363262, lon=149.165237, alt_amsl_m=584.0)
@@ -789,14 +790,12 @@ def test_the_battery_reason_goes_with_its_latch() -> None:
     """Resume, a new latch without the battery and an adopted latch forget the reason."""
     clock = FakeClock()
     latches = Latches(clock)
-    latches.set_battery_reason(VID, "energy_home")
-    latches.start(VID, "battery_rtl", "system")
+    latches.start(VID, "battery_rtl", "system", "energy_home")
     latches.start(VID, "stop", "operator:demo")  # the battery latch stays under the STOP
     assert latches.battery_reason(VID) == "energy_home"
     latches.release(VID)
     assert latches.battery_reason(VID) == "battery_level"
-    latches.set_battery_reason(VID, "energy_home")
-    latches.start(VID, "battery_rtl", "system")
+    latches.start(VID, "battery_rtl", "system", "energy_home")
     latch = latches.get(VID)
     assert latch is not None
     latches.adopt(latch)  # as read back after a restart
@@ -1004,27 +1003,40 @@ async def test_the_constants_never_fly_home_through_update_wind(
         if not read:
             monkeypatch.setattr(mav, "_wind_params", lambda: None)
         mav = await _short_far_from_home(s, pct)
-        assert (
-            mav.wind.params == FcParams()
-            if not read
-            else "BATT_LOW_MAH" in (mav.wind.params.fallback)
-        )
+        if read:
+            assert "BATT_LOW_MAH" in mav.wind.params.fallback
+        else:
+            assert mav.wind.params == FcParams()
         out = mav.telemetry(VID)
         assert out is not None and out.wind is not None
         assert "ENERGY_HOME" in out.wind.reasons and not mav.wind.energy_rtl
         assert s.latches.get(VID) is None and s.fc.mode not in HOME_MODES
 
 
-async def test_no_battery_reason_without_a_flight_home() -> None:
-    """The reason is set only once the system action started the flight home."""
+async def test_the_battery_reason_is_set_with_the_latch() -> None:
+    """The guard hands its reason to the system action, which sets it with the latch in
+    one step; with no path to the drone neither is set."""
     async with stack() as s:
         s.fly()
         s.fc.battery_pct = 80.0
-        calls: list[tuple[str, str]] = []
-        s.core._system_action = lambda vid, kind: calls.append((vid, kind))  # pyright: ignore[reportPrivateUsage]
+        calls: list[tuple[str, str, str | None]] = []
+        system = s.actions.system
+
+        def record(vid: str, kind: LatchAction, reason: BatteryReason | None) -> object:
+            calls.append((vid, kind, reason))
+            return system(vid, kind, reason)
+
+        s.core._system_action = record  # pyright: ignore[reportPrivateUsage]
         await s.run(1.0)
         s.core.energy_short(True)
         await s.run(1.0)
-        assert calls and calls[0] == (VID, "battery_rtl")  # tried, but no path: None
-        assert s.latches.get(VID) is None
-        assert s.latches._battery_reason == {}  # pyright: ignore[reportPrivateUsage]
+        assert calls[0] == (VID, "battery_rtl", "energy_home")
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "battery_rtl"
+        assert s.latches.battery_reason(VID) == "energy_home"
+
+
+def test_no_battery_reason_without_a_latch() -> None:
+    latches = Latches(FakeClock())
+    latches.start(VID, "stop", "operator:demo", "energy_home")  # not a battery latch
+    assert latches._battery_reason == {}  # pyright: ignore[reportPrivateUsage]

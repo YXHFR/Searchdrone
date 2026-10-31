@@ -115,19 +115,21 @@ class Latches:
         with self._lock:
             return self._latch.get(vehicle_id)
 
-    def set_battery_reason(self, vehicle_id: str, reason: BatteryReason) -> None:
-        """Why the ground's battery guard is about to set ``battery_rtl``."""
-        with self._lock:
-            self._battery_reason[vehicle_id] = reason
-
     def battery_reason(self, vehicle_id: str) -> BatteryReason:
         """Why the battery latch (or the one under a STOP) was set; ``battery_level``
         when unknown (adopted after a restart)."""
         with self._lock:
             return self._battery_reason.get(vehicle_id, "battery_level")
 
-    def start(self, vehicle_id: str, action: LatchAction, by: str) -> OperatorLatch:
-        """Take the next number and set the latch, in one step (any thread)."""
+    def start(
+        self,
+        vehicle_id: str,
+        action: LatchAction,
+        by: str,
+        battery_reason: BatteryReason | None = None,
+    ) -> OperatorLatch:
+        """Take the next number and set the latch, in one step (any thread). A
+        ``battery_rtl`` latch takes its ``battery_reason`` in the same step."""
         with self._lock:
             seq = self._take(vehicle_id)
             old = self._latch.get(vehicle_id)
@@ -147,6 +149,8 @@ class Latches:
                 set_mono_ms=self._clock.monotonic_ms(),
             )
             self._latch[vehicle_id] = latch
+            if action == "battery_rtl" and battery_reason is not None:
+                self._battery_reason[vehicle_id] = battery_reason
             self._override[vehicle_id] = seq
             # Queued under the lock, so the main loop sees the changes in number order.
             self.changes.put(LatchChange("set", vehicle_id, latch, seq))
