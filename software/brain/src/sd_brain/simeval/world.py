@@ -12,8 +12,9 @@ empty spot halves it. False sightings come at scenario times, and the pilot's ST
 its release) when the scenario says. The world notes when the AI first names a candidate
 to the operator (``K3`` in a report or a chat message) and how far the search flew after.
 A closer look (``inspect_detection``) is flown reduced: to ``LOOK_RADIUS_M`` from the
-candidate at ``LOOK_ALT_M`` (near enough for the second picture, no keep-out cylinder),
-then hovering; it replaces the order it interrupted, as the executor does.
+candidate at ``LOOK_ALT_M`` held inside the charter's height band (near enough for the
+second picture when the band allows it, no keep-out cylinder), then hovering; it
+replaces the order it interrupted, as the executor does.
 
 ``SimGround`` is ``FakeGround`` with this world behind it and a deliberately reduced copy
 of the gate: allowed skills, area, height band, speed and known sectors, with the real
@@ -179,6 +180,7 @@ class SimWorld:
         self.alt = float(sit["vehicle"]["alt_rel_home_m"])
         self.rtl_pct = float(ch["battery_rtl_pct"])
         self.max_speed = float(ch["max_speed_ms"])
+        self.alt_band = (float(ch["alt_min_agl_m"]), float(ch["alt_max_agl_m"]))
         minx, miny, maxx, maxy = self.area.bounds
         self._cells = {
             (i, j)
@@ -242,7 +244,8 @@ class SimWorld:
                 return False
             pts = [self._look_point(c)]
             speed = min(INSPECT_SPEED_MS, self.max_speed)
-            self.plan = _Plan(cid, req.skill, pts, LOOK_ALT_M, speed, self._length(pts))
+            alt = min(max(LOOK_ALT_M, self.alt_band[0]), self.alt_band[1])
+            self.plan = _Plan(cid, req.skill, pts, alt, speed, self._length(pts))
         elif req.skill == "return_home":
             self.plan = _Plan(cid, "return_home", [(0.0, 0.0)], self.alt, speed, 0, lands=True)
             self.plan.total_m = self._length(self.plan.points)

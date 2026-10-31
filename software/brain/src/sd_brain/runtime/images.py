@@ -167,7 +167,10 @@ def check_messages(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
             part = cast("dict[str, Any]", raw)
             kind = part.get("type")
             if kind == "text":
-                parts.append(part)
+                text = part.get("text")
+                if not isinstance(text, str):
+                    raise _reject("textdelen saknar text")
+                parts.append({"type": "text", "text": text})  # no other key goes along
                 continue
             if kind != "image_url":
                 raise _reject(f"bara text och utsnitt, inte {kind}")

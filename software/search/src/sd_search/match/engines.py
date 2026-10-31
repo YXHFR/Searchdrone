@@ -13,7 +13,6 @@ A failed call raises :class:`~sd_brain.runtime.base.ModelError` (a refused budge
 
 from __future__ import annotations
 
-import io
 import json
 import re
 import time
@@ -21,12 +20,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
-from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sd_brain.runtime.base import ModelError, ModelReply, Sampling
 from sd_brain.runtime.budget import BudgetContext
-from sd_brain.runtime.images import MAX_SIDE_PX, CloudImagePolicy, ImagePart
+from sd_brain.runtime.images import CloudImagePolicy, ImagePart
 from sd_schemas.search import (
     AssessmentEngine,
     AssessmentFlag,
@@ -43,7 +41,6 @@ __all__ = [
     "MatchEngine",
     "MatchRequest",
     "claim_flags",
-    "fit_crop",
 ]
 
 FAST_SAMPLING: Final = Sampling(temperature=0.0, top_p=1.0, max_tokens=300)
@@ -115,22 +112,6 @@ def claim_flags(explanation: str) -> list[AssessmentFlag]:
     return flags
 
 
-def fit_crop(jpeg: bytes) -> bytes:
-    """A crop larger than the policy allows, scaled down to fit (the policy still checks
-    the result); a crop that fits is passed on as it is."""
-    try:
-        with Image.open(io.BytesIO(jpeg)) as img:
-            if img.width <= MAX_SIDE_PX and img.height <= MAX_SIDE_PX:
-                return jpeg
-            small = img.convert("RGB")
-            small.thumbnail((MAX_SIDE_PX, MAX_SIDE_PX))
-    except (OSError, ValueError, Image.DecompressionBombError):
-        return jpeg  # the policy refuses it with the reason
-    out = io.BytesIO()
-    small.save(out, format="JPEG", quality=90)
-    return out.getvalue()
-
-
 def _parse(content: str | None, keys: list[str]) -> _Answer:
     answer = _Answer.model_validate(json.loads(content or ""))
     fields = {k: v for k, v in answer.fields.items() if k in keys}
@@ -161,9 +142,9 @@ class CloudMatchEngine:
 
     async def assess(self, req: MatchRequest) -> CandidateAssessment:
         crops = req.crops[: self.max_crops]
-        images = self.policy.check(
-            [ImagePart("crop", "image/jpeg", fit_crop(c.jpeg)) for c in crops]
-        )
+        # A crop is never scaled to fit: the link caps it at 512 px (CROP_MAX_PX), so a
+        # larger one is something else (a still, a view) and the policy refuses it.
+        images = self.policy.check([ImagePart("crop", "image/jpeg", c.jpeg) for c in crops])
         keys = [] if req.profile is None else req.profile.field_keys
         messages = build_messages(
             req.profile, images, agl_m=req.agl_m, px_size=max((c.px_size for c in crops), default=0)

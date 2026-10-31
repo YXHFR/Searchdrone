@@ -7,15 +7,21 @@ height and ``runs/<run>/flight.json`` (``sd-brain eval grade`` reads it as its
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from sd_detect.classes import ClassRegistry, default_registry
+from sd_safety.targets import distance_m
 from sd_schemas.candidate_ai import named_seqs
 
 HOME_RADIUS_M = 3.0  # landed at home: this close to the take-off point
+# The search flew on from a raised candidate: this much flown after the raise, not to the
+# candidate (legs ending this close to it). The simulator exam's rule (sd_brain.simeval).
+FLEW_ON_M = 30.0
+CLOSE_UP_RADIUS_M = 15.0
 ASK = "?"  # a message from the AI that asks the pilot something
 PENDING = frozenset({"pending_approval", "approval_expired", "rejected_by_operator"})
 _ALT = re.compile(r"\balt_m: 40\b")
@@ -74,11 +80,30 @@ def _told(
     return sorted((_utc_s(at) - t0, str(text)) for at, text in said if at and text)
 
 
+def _flew_on(
+    lat: float, lon: float, raised: float | None, track: Sequence[tuple[float, float, float]]
+) -> bool:
+    """``FLEW_ON_M`` flown after the raise (seconds from the first order), legs that end
+    near the candidate not counted. ``track``: (seconds from the first order, lat, lon)."""
+    if raised is None:
+        return False
+    flown = 0.0
+    after = [p for p in track if p[0] >= raised]
+    for (_, a_lat, a_lon), (_, b_lat, b_lon) in itertools.pairwise(after):
+        if distance_m(b_lat, b_lon, lat, lon) > CLOSE_UP_RADIUS_M:
+            flown += distance_m(a_lat, a_lon, b_lat, b_lon)
+    return flown >= FLEW_ON_M
+
+
 def _candidates(
-    cards: Sequence[Mapping[str, Any]], told: Sequence[tuple[float, str]], t0: float
+    cards: Sequence[Mapping[str, Any]],
+    told: Sequence[tuple[float, str]],
+    t0: float,
+    track: Sequence[tuple[float, float, float]],
 ) -> list[dict[str, Any]]:
     """The ground's candidates, each raised when the AI first named it (``K3``) to the
-    operator after it was seen, as the simulator exam counts a raise."""
+    operator after it was seen, as the simulator exam counts a raise, and whether the
+    search flew on after that (``flew_on``)."""
     out = []
     for c in cards:
         seen = _utc_s(c["first_seen_utc"]) - t0
@@ -91,6 +116,7 @@ def _candidates(
                 "lon": float(c["lon"]),
                 "priority_class": c["priority_class"],
                 "raised_t_s": None if raised is None else round(max(0.0, raised), 2),
+                "flew_on": _flew_on(float(c["lat"]), float(c["lon"]), raised, track),
             }
         )
     return out
@@ -106,6 +132,7 @@ def flight_record(
     detections: Sequence[Mapping[str, Any]],
     chat: Sequence[Mapping[str, Any]],
     candidates: Sequence[Mapping[str, Any]] = (),
+    track: Sequence[tuple[float, float, float]] = (),
     breaches: int,
     coverage: float,
     landed_home: bool,
@@ -115,8 +142,9 @@ def flight_record(
     """``flight.json`` from what the ground station recorded: the AI's orders with the
     gate's answers, the people found (a find joins the detections of one person; its time
     is when its best picture was taken), the ground's candidate queue (``candidates``, its
-    cards) with when the AI raised each, the pilot questions and the landing. Times are
-    seconds from the first order."""
+    cards) with when the AI raised each and whether the search flew on after that (from
+    ``track``: UTC seconds, lat, lon of the armed flight), the pilot questions and the
+    landing. Times are seconds from the first order."""
     t0 = min((_utc_s(c["created_at"]) for c in commands), default=0.0)
     taken = {str(d.get("detection_id", d.get("id"))): d.get("captured_at") for d in detections}
     orders = [
@@ -141,7 +169,9 @@ def flight_record(
         "max_time_s": max_time_s,
         "orders": orders,
         "marks": marks,
-        "candidates": _candidates(candidates, _told(commands, chat, t0), t0),
+        "candidates": _candidates(
+            candidates, _told(commands, chat, t0), t0, [(t - t0, la, lo) for t, la, lo in track]
+        ),
         "geofence_breaches": breaches,
         "coverage": round(max(0.0, min(1.0, coverage)), 4),
         "pilot_questions": len(asked),

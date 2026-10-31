@@ -167,13 +167,6 @@ async def write(
         raise ApiStatusError(
             409, "MAP_PROFILE_STALE", "Kartan bygger inte på sökprofilen som gäller nu."
         )
-    if (body.frozen or body.reason == "confirmed") and not await flow.repo.confirmed_candidates(
-        mission_id
-    ):
-        # Only a person confirms a find; the search service cannot fake its effect.
-        raise ApiStatusError(
-            409, "MAP_NOT_CONFIRMED", "Kartan låses bara när en person har bekräftat ett fynd."
-        )
     charter = await flow.active_charter(mission)
     known = set() if charter is None else {s.sector_id for s in charter.sectors}
     if any(s.sector_id not in known for s in body.sectors):
@@ -201,6 +194,9 @@ async def write(
             row=body.row,
             frozen=body.frozen,
             event_seq=body.event_seq,
+            # Only a person confirms a find; the search service cannot fake its effect. The
+            # repo checks it under the map's write lock, in the same step as the insert.
+            needs_confirmed=body.frozen or body.reason == "confirmed",
         )
     except MapWriteError as exc:
         raise ApiStatusError(409, exc.code, exc.detail_sv) from None

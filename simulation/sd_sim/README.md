@@ -137,7 +137,9 @@ uploaded artifact or the cache: a picture-shaped NumPy array, a GeoTIFF, a symbo
 or a world, snapshot or ground texture marked as built from a photo. It cannot recognise
 a photo saved by hand as an ordinary picture with no such mark; no photo is ever fetched
 in CI, and images outside the test data are kept out of git anyway. The sim farm never
-uploads a round flown over the photo: its facit says so.
+uploads a round flown over the photo: its facit says so. With an R2 key such a round moves
+from `build/simfarm/rounds/` to `build/simfarm/draped/`, where it stays (not retried, not
+in the rounds' disk budget) until you remove it.
 
 ## Parts
 

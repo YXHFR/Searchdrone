@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -269,7 +270,51 @@ def test_a_candidate_is_raised_when_the_ai_first_names_it_to_the_operator() -> N
         "lon": 149.16,
         "priority_class": "high",
         "raised_t_s": 120.0,
+        "flew_on": False,  # no track: nothing flown after the raise
     }
+
+
+def test_flew_on_is_the_search_flown_after_the_raise_not_to_the_candidate() -> None:
+    t0 = flight._utc_s("2026-10-19T10:00:00Z")
+    commands = [
+        _cmd("1", "takeoff", "done", "2026-10-19T10:00:00Z"),
+        {
+            **_cmd("2", "report", "done", "2026-10-19T10:02:00Z"),
+            "params": {"priority": "urgent", "text_sv": "K1 HÖG, K2 HÖG"},
+        },
+    ]
+    lat, lon = -35.36, 149.16
+    away = _card(1, "2026-10-19T10:01:00Z")
+    # K2 is 300 m south: legs there end far from it as well, so only K1 needs care.
+    cards = [away, {**_card(2, "2026-10-19T10:01:00Z"), "lat": lat - 0.0027}]
+    deg_m = 1 / 111_000
+
+    def rec(track: Sequence[tuple[float, float, float]]) -> list[bool]:
+        out = flight.flight_record(
+            started=0.0,
+            ended=300.0,
+            commands=commands,
+            gates={},
+            finds=[],
+            detections=[],
+            chat=[],
+            candidates=cards,
+            track=[(t0 + t, la, lo) for t, la, lo in track],
+            breaches=0,
+            coverage=0.5,
+            landed_home=True,
+            turns=2,
+            max_time_s=1200.0,
+        )
+        return [c["flew_on"] for c in out["candidates"]]
+
+    # 40 m north, away from both, after the raise at 120 s: the search flew on.
+    assert rec([(130, lat, lon + 0.001), (140, lat + 40 * deg_m, lon + 0.001)]) == [True, True]
+    # The same flight before the raise does not count.
+    assert rec([(100, lat, lon + 0.001), (110, lat + 40 * deg_m, lon + 0.001)]) == [False, False]
+    # Flying to K1 (ending on it) is no search for K1, but is for the far K2.
+    to_k1 = [(130, lat + 40 * deg_m, lon), (140, lat + 5 * deg_m, lon), (150, lat, lon)]
+    assert rec(to_k1) == [False, True]
 
 
 def test_script_at_the_rounds_height(tmp_path: Path) -> None:
