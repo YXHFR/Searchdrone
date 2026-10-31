@@ -11,21 +11,27 @@ All notable changes to this project are listed here. The format follows
 - `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
   fails when code outside the MAVLink gate `sd_mav` names a message or command from its
   deny list (parameter writes, switching off the fence, flight termination, forced
-  arming with 21196 ...), also under an import alias or as a `getattr` string, or when
-  production code could write on a pymavlink connection itself instead of through
-  `Vehicle.send` (`pymavlink.mavutil`, `mavlink_connection`, a raw `MAVLink` encoder,
-  `<conn>.mav.*_send`, mavfile helpers such as `reboot_autopilot`). Tests are not read;
-  the simulator harness may set `SIM_*` parameters.
+  arming with 21196 ...), also under an import alias, as a `getattr` string or by
+  message id (`MAVLINK_MSG_ID_*`, `mavlink_map[...]`), or when production code could
+  write on a pymavlink connection itself instead of through `Vehicle.send`
+  (`pymavlink.mavutil`, also through `importlib`/`__import__`, `mavlink_connection`, a
+  raw `MAVLink` encoder, `mavlink_map`, the gate's `_conn` or `write_message`,
+  `<conn>.mav.*_send`, mavfile helpers such as `reboot_autopilot` or `set_mode`, called
+  or only referenced). Tests outside `src/` packages are not read; the simulator
+  harness may build only `PARAM_SET`, and a literal parameter name in it must start
+  with `SIM_`. Names built at run time (f-strings, arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
   (in `just test-contract`): the manifest names the safety parameter layers of the
   simulator and real-flight profiles and pins the content of the safety files, the Lua
   script, the deny list, the parameter allowlist and the safety rules themselves
-  (`sd_sim/params.py`, `sd_safety/constants.py`). The check fails when a pinned file
-  changes without the manifest, when a failsafe, fence, battery, arming, RTL or
+  (`sd_sim/params.py`, `sd_safety/constants.py`); these files must stay pinned. The
+  check fails when a pinned file changes without the manifest, when a failsafe, fence, battery, arming, RTL or
   scripting line in either profile has no rule, when a profile breaks the safety rules or the values the
   ground station reads back, when SITL or `sd-onboard` load other layers than the
-  manifest names, or when a sim-only layer (or the allowlist) could set a safety
-  parameter. `--update` writes the new digests after a reviewed change.
+  manifest names, or when a sim-only layer (or the allowlist) sets a parameter the
+  safety layers set or any name with a safety prefix (`FS_`, `FENCE_`, `BATT_`,
+  `ARMING_` ...). `--update` writes the new digests after a reviewed change and prints
+  which pinned files changed.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
   `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no

@@ -9,7 +9,8 @@ Checks (each finding is printed as ``rule: message``, exit code 1):
 
 * ``pinned``: every pinned file exists and has the manifest's digest. Parameter files and
   TOML files are compared by content (names and values; comments and order do not count),
-  everything else byte for byte.
+  everything else byte for byte. The files in ``REQUIRED_PINS`` must be pinned, so taking
+  a pin out of the manifest does not let its file change unseen.
 * ``sim`` / ``field``: the profile's layers, merged in order, meet the simulator's safety
   rules (``sd_sim.params.SAFETY_RULES`` / ``FIELD_RULES``), and the simulator profile has
   exactly the values the ground station reads back
@@ -20,11 +21,14 @@ Checks (each finding is printed as ``rule: message``, exit code 1):
 * ``loaded``: SITL loads the simulator profile's first layer as its safety layer for every
   vehicle and stages every pinned Lua script; the onboard computer's default and example
   config (``expected_param_files``) read back exactly the simulator profile's layers.
-* ``shadow``: no sim-only layer sets a name a safety layer sets, and
-  ``tools/params_allowlist.toml`` lets no sim-only layer do so either.
+* ``shadow``: no sim-only layer sets a name a safety layer sets or any name with a
+  safety prefix (``sd_sim.params.RULED_PREFIXES``: ``FS_``, ``FENCE_``, ``BATT_``,
+  ``ARMING_`` ...), and ``tools/params_allowlist.toml`` lets no sim-only layer do so
+  either.
 
 ``uv run tools/check_safety_manifest.py`` checks; ``--update`` writes the current digests
-into the manifest (do that only for a change you mean, and say so in the pull request).
+into the manifest and prints the pinned files whose digest changed (do that only for a
+change you mean, and say so in the pull request).
 """
 
 from __future__ import annotations
@@ -44,6 +48,18 @@ MANIFEST = REPO / "tools" / "safety_manifest.toml"
 ONBOARD_EXAMPLE = "config/onboard.example.toml"
 PARAMS_ALLOWLIST = "tools/params_allowlist.toml"
 DIGEST_LINE = re.compile(r'^(sha256\s*=\s*)"[0-9a-f]*"', re.M)
+# Files that must stay pinned whatever the manifest says: the rules, the deny list, the
+# allowlist and the safety layers. The profiles' layers and SITL's Lua scripts are
+# required on top of these (``pinned_problems``, ``loaded_problems``).
+REQUIRED_PINS = (
+    "software/common/mav/src/sd_mav/denylist.py",
+    "tools/params_allowlist.toml",
+    "simulation/sd_sim/src/sd_sim/params.py",
+    "software/common/safety/src/sd_safety/constants.py",
+    "simulation/sitl/params/searchdrone-safety.parm",
+    "simulation/sitl/params/searchdrone-safety.field.parm",
+    "simulation/sitl/scripts/sd_gcs_loiter_cap.lua",
+)
 
 
 @dataclass(frozen=True)
@@ -103,6 +119,9 @@ def pinned_problems(root: Path, manifest: Manifest) -> list[str]:
         for rel in layers:
             if rel not in manifest.pinned:
                 out.append(f"pinned: säkerhetslagret {rel} är inte låst i manifestet")
+    for rel in REQUIRED_PINS:
+        if rel not in manifest.pinned:
+            out.append(f"pinned: {rel} måste vara låst i manifestet (REQUIRED_PINS)")
     return out
 
 
@@ -169,24 +188,26 @@ def loaded_problems(root: Path, manifest: Manifest) -> list[str]:
 
 
 def shadow_problems(root: Path, manifest: Manifest) -> list[str]:
+    from sd_sim.params import RULED_PREFIXES
     from sd_sim.sitl import SIM_PARAM_FILES
 
     safety: set[str] = set()
     for layers in manifest.profiles.values():
         safety |= set(merged(root, layers))
+
+    def unsafe(names: Iterable[str]) -> list[str]:
+        return sorted(n for n in names if n in safety or n.startswith(RULED_PREFIXES))
+
     out = []
     params = root / "simulation" / "sitl" / "params"
     for name in sorted(set(SIM_PARAM_FILES.values())):
-        overlap = sorted(set(parse_parm((params / name).read_text(encoding="utf-8"))) & safety)
-        out += [f"shadow: {name} sätter säkerhetsparametern {p}" for p in overlap]
+        found = unsafe(parse_parm((params / name).read_text(encoding="utf-8")))
+        out += [f"shadow: {name} sätter säkerhetsparametern {p}" for p in found]
     allow = tomllib.loads((root / PARAMS_ALLOWLIST).read_text(encoding="utf-8"))
     names = set(allow.get("allowed", []))
     for vehicle in allow.get("vehicles", {}).values():
         names |= set(vehicle.get("allowed", []))
-    out += [
-        f"shadow: {PARAMS_ALLOWLIST} tillåter säkerhetsparametern {p}"
-        for p in sorted(names & safety)
-    ]
+    out += [f"shadow: {PARAMS_ALLOWLIST} tillåter säkerhetsparametern {p}" for p in unsafe(names)]
     return out
 
 
@@ -218,16 +239,24 @@ def check(root: Path = REPO, manifest_path: Path | None = None) -> list[str]:
     return out
 
 
-def update(manifest_path: Path, root: Path = REPO) -> None:
-    """Write each pinned file's current digest into the manifest, comments kept."""
+def update(manifest_path: Path, root: Path = REPO) -> list[str]:
+    """Write each pinned file's current digest into the manifest, comments kept.
+
+    Returns the pinned files whose digest changed."""
     text = manifest_path.read_text(encoding="utf-8")
+    old = load_manifest(text).pinned
     blocks = re.split(r"(?=^\[\[pinned\]\])", text, flags=re.M)
+    changed = []
     for i, block in enumerate(blocks):
         found = re.search(r'^path\s*=\s*"([^"]+)"', block, re.M)
         if block.startswith("[[pinned]]") and found:
-            sha = digest(root / found.group(1))
+            rel = found.group(1)
+            sha = digest(root / rel)
+            if old.get(rel) != sha:
+                changed.append(rel)
             blocks[i] = DIGEST_LINE.sub(lambda m, s=sha: f'{m.group(1)}"{s}"', block, count=1)
     manifest_path.write_text("".join(blocks), encoding="utf-8")
+    return changed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -235,8 +264,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update", action="store_true", help="write the current digests")
     args = parser.parse_args(argv)
     if args.update:
-        update(MANIFEST)
-    problems = check()
+        changed = update(MANIFEST, REPO)
+        for rel in changed:
+            print(f"--update: ny digest för {rel}")
+        if not changed:
+            print("--update: inga låsta filer har ändrats")
+    problems = check(REPO, MANIFEST)
     for line in problems:
         print(line)
     if problems:

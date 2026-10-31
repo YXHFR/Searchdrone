@@ -25,6 +25,10 @@ def rules(text: str, path: str = GROUND) -> list[str]:
         "msg = mavlink.MAVLink_set_mode_message(1, 1, 4)",
         "kind = 'PARAM_SET'",
         "kind = b'RC_CHANNELS_OVERRIDE'",
+        # By message id: the constant, its name as a string, or the number in mavlink_map.
+        "i = mavlink.MAVLINK_MSG_ID_PARAM_SET",
+        "i = getattr(mavlink, 'MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE')",
+        "cls = mavlink.mavlink_map[23]",
     ],
 )
 def test_denied_messages_fail(line: str) -> None:
@@ -54,7 +58,7 @@ def test_forced_arming_fails() -> None:
 
 def test_raw_send_in_production_fails_but_not_in_the_simulator() -> None:
     line = "self._conn.mav.heartbeat_send(6, 8, 0, 0, 0)"
-    assert rules(line) == ["raw-send"]
+    assert set(rules(line)) == {"raw-send"}
     assert rules(line, SIM) == []
 
 
@@ -71,6 +75,19 @@ def test_raw_send_in_production_fails_but_not_in_the_simulator() -> None:
         "conn.arducopter_arm()",
         "conn.set_mode_apm(6)",
         "conn.set_mode_rtl()",
+        # Importing mavutil by name at run time.
+        "mu = importlib.import_module('pymavlink.mavutil')",
+        "mu = __import__('pymavlink', fromlist=['mavutil'])",
+        # Any message class from the id table, the gate's connection or its writer.
+        "cls = mavlink.mavlink_map[msg_id]",
+        "vehicle._conn.close()",
+        "vehicle._transport.write_message(m)",
+        # mavfile's set_mode, and a helper taken without a call (called later).
+        "conn.set_mode('GUIDED')",
+        "conn.set_mode(4, custom_mode=4)",
+        "switch = conn.set_mode",
+        "boot = conn.reboot_autopilot",
+        "send = conn.write_message",
     ],
 )
 def test_owning_a_connection_in_production_fails(line: str) -> None:
@@ -103,7 +120,11 @@ def test_renamed_or_spelled_out_denied_names_fail(line: str, rule: str) -> None:
     [
         # What the ground station and the onboard computer really send, via Vehicle.send.
         "from pymavlink.dialects.v20 import ardupilotmega as mavlink",
-        "io.set_mode('GUIDED')",
+        "await io.set_mode(CopterMode.GUIDED)",
+        "await self.set_mode(mode, SendOrigin.LIMIT)",
+        "i = mavlink.MAVLINK_MSG_ID_HEARTBEAT",
+        "skills = importlib.import_module('sd_onboard.skills')",
+        "self._connection.close()",
         "m = mavlink.MAVLink_command_long_message(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)",
         "m = mavlink.MAVLink_command_long_message(1, 1, mavlink.MAV_CMD_DO_SET_MODE, 0, 1, 4)",
         "m = mavlink.MAVLink_mission_count_message(1, 1, 3, mavlink.MAV_MISSION_TYPE_FENCE)",
@@ -124,20 +145,67 @@ def test_docstrings_are_prose() -> None:
     assert rules(text) == []
 
 
-def test_the_gate_and_the_harness_are_allowed() -> None:
+def test_mavlink_map_outside_production_only_for_allowed_ids() -> None:
+    assert rules("cls = mavlink.mavlink_map[0]", SIM) == []
+    assert rules("cls = mavlink.mavlink_map[23]", SIM) == ["forbidden-message"]
+
+
+HARNESS = "simulation/sd_sim/src/sd_sim/harness.py"
+
+
+def test_the_gate_is_allowed() -> None:
     gate = "software/common/mav/src/sd_mav/vehicle.py"
-    harness = "simulation/sd_sim/src/sd_sim/harness.py"
     assert rules("m = mavlink.MAVLink_param_set_message(1, 1, b'FENCE_RADIUS', 600, 9)", gate) == []
-    assert rules("self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)", harness) == []
-    # The harness may set SIM_* parameters, never switch off the fence.
-    assert rules("c = mavlink.MAV_CMD_DO_FENCE_ENABLE", harness) == ["forbidden-command"]
+    assert rules("self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)", gate) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
+        "self._conn.mav.param_set_send(1, 1, b'SIM_RC_FAIL', 1, 9)",
+        "self._conn.mav.heartbeat_send(6, 8, 0, 0, 0)",
+    ],
+)
+def test_the_harness_may_set_sim_parameters(line: str) -> None:
+    assert rules(line, HARNESS) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # PARAM_SET of a literal non-SIM_ name, and every other denied message or command.
+        "self._conn.mav.param_set_send(1, 1, b'FENCE_ENABLE', 0, 9)",
+        "m = mavlink.MAVLink_param_set_message(1, 1, 'ARMING_SKIPCHK', 1, 9)",
+        "self._conn.mav.param_ext_set_send(1, 1, b'SIM_RC_FAIL', b'1', 9)",
+        "self._conn.mav.rc_channels_override_send(1, 1, *([1500] * 8))",
+        "m = mavlink.MAVLink_set_mode_message(1, 1, 4)",
+        "c = mavlink.MAV_CMD_DO_FENCE_ENABLE",
+    ],
+)
+def test_the_harness_may_build_nothing_else(line: str) -> None:
+    assert rules(line, HARNESS) != []
 
 
 def test_tests_are_not_read() -> None:
     assert cfm.is_test_file("software/common/mav/tests/unit/test_forbidden.py")
     assert cfm.is_test_file("simulation/tests/onboard/test_onboard_sitl.py")
     assert cfm.is_test_file("software/onboard/conftest.py")
+    assert cfm.is_test_file("software/panel/e2e/helpers.py")
     assert not cfm.is_test_file("software/onboard/src/sd_onboard/executor/executor.py")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Inside a package, a folder named tests or e2e is shipped code and is read.
+        "software/onboard/src/sd_onboard/tests/helpers.py",
+        "software/onboard/src/sd_onboard/e2e/driver.py",
+        "software/onboard/src/sd_onboard/conftest.py",
+    ],
+)
+def test_code_in_a_package_is_read(path: str) -> None:
+    assert not cfm.is_test_file(path)
 
 
 def test_every_denied_command_has_a_name() -> None:
