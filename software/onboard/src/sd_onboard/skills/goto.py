@@ -125,8 +125,8 @@ class GotoHandler:
         """A new end for the leg being flown, from ``ctx``: sent on the next tick. The
         deadline still runs from the first end (a leg planned again and again does not
         get more time each time), unless ``renew_deadline`` (a way out of a keep-out
-        cylinder or the climb above one, at most ``inspect_detection.REPLANS_MAX`` + 1
-        times in one inspection) or the leg has not started yet."""
+        cylinder or the climb above one; the caller bounds how often it asks for that) or
+        the leg has not started yet."""
         self.prepare(ctx, lat, lon, alt_m, speed_ms, yaw_deg=yaw_deg)
         self._resend = True
         if renew_deadline or self._deadline == math.inf:

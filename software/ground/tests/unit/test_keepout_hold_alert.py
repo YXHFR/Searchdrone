@@ -47,7 +47,10 @@ def test_half_metres_round_as_on_the_panel() -> None:
 
 def test_the_panel_reads_the_same_fields() -> None:
     gnss = (SV.parents[1] / "safety" / "gnss.ts").read_text(encoding="utf-8")
-    for name in KeepoutHoldField:  # typed there as the generated KeepoutHoldField
+    # Every field the panel's text uses; the send time is for the logs and not shown yet.
+    worded = set(KeepoutHoldField) - {KeepoutHoldField.SENT_UTC}
+    assert worded == {KeepoutHoldField.INSIDE, KeepoutHoldField.CLIMB_TO_M}
+    for name in worded:  # typed there as the generated KeepoutHoldField
         assert f'KeepoutHoldField = "{name.value}"' in gnss
 
 

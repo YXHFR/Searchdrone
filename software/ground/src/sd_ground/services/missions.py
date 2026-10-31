@@ -240,8 +240,8 @@ class MissionFlow:
         one (orange), or inside one over a person with no safe way out (red), after
         climbing straight up when it could (``climb_to_m``). One held back by a lost link
         that comes after its mission closed is only logged: that hover is over.
-        ``sent_utc`` (the onboard clock) goes into the details so a late one shows when
-        it was sent; it is shown, never acted on."""
+        ``sent_utc`` (the onboard clock) goes into the details, so the alert's record shows
+        when a late one was sent. Nothing acts on it, and the panel does not show it yet."""
         if mission is not None and mission.status is MissionState.CLOSED:
             log.info(
                 "missions.keepout_hold_after_close",
@@ -255,7 +255,7 @@ class MissionFlow:
         if climb is not None:
             details[str(KeepoutHoldField.CLIMB_TO_M)] = climb
         if sent_utc is not None:
-            details["sent_utc"] = sent_utc.isoformat()
+            details[str(KeepoutHoldField.SENT_UTC)] = sent_utc.isoformat()
         self.alert(
             str(AlertCode.KEEPOUT_HOLD),
             "critical" if inside else "warning",

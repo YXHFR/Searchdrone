@@ -169,7 +169,8 @@ All notable changes to this project are listed here. The format follows
   orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
   whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
   delivered after its mission closed is only logged. Every such alarm carries the
-  drone's `sent_utc` in its details, so a late one shows when it was sent.
+  drone's `sent_utc` in its details, so its record shows when a late one was sent (the
+  panel does not show it yet).
 - The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
   new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
 - The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
