@@ -138,6 +138,7 @@ def test_a_sim_layer_may_not_set_a_safety_parameter(root: Path) -> None:
         "MOT_SAFE_DISARM",
         "BRD_SAFETY_DEFLT",
         "LAND_SPEED",
+        "SYSID_MYGCS",
         "fs_thr_enable",
     ],
 )
@@ -267,3 +268,16 @@ def test_update_names_the_changed_files(
     assert f"--update: ny digest för {SAFETY}" in out
     assert "--update: ny digest för tools/" not in out
     assert csm.update(root / MANIFEST, root) == []
+
+
+def test_a_malformed_parameter_line_is_a_finding(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sim = root / "simulation/sitl/params/sd_quad14-sim.parm"
+    sim.write_text(sim.read_text(encoding="utf-8") + "SIM_WIND_SPD fast\n", encoding="utf-8")
+    monkeypatch.setattr(csm, "REPO", root)
+    monkeypatch.setattr(csm, "MANIFEST", root / MANIFEST)
+    assert csm.main([]) == 1
+    out = capsys.readouterr().out
+    assert "parm: simulation/sitl/params/sd_quad14-sim.parm:" in out
+    assert "'fast' är inget tal" in out
