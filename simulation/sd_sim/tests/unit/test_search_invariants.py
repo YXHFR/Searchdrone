@@ -7,6 +7,8 @@ import datetime as dt
 import pytest
 
 from sd_safety.targets import Plane
+from sd_sim import params, paths
+from sd_sim import search_invariants as si
 from sd_sim.invariants import Sample
 from sd_sim.search_invariants import (
     CandidateWatch,
@@ -88,9 +90,9 @@ def _flown(points: list[tuple[float, float, float, float]]) -> list[Sample]:
     return [Sample(t, *plane.latlon(e, n), 40.0, v, "GUIDED", True) for t, e, n, v in points]
 
 
-def _cyl(since: float = 0.0, until: float = float("inf")) -> SeenKeepout:
+def _cyl(since: float = 0.0, until: float = float("inf"), came: float | None = None) -> SeenKeepout:
     lat, lon = Plane(*HOME).latlon(100.0, 0.0)
-    return SeenKeepout("k1", lat, lon, 30.0, since, until)
+    return SeenKeepout("k1", lat, lon, 30.0, since, until, came=came)
 
 
 def test_flying_around_a_cylinder_is_fine() -> None:
@@ -106,6 +108,45 @@ def test_leaving_a_cylinder_made_around_the_drone_is_fine_but_coming_back_is_not
     broken = keepout_never_entered([_cyl()], back)
     assert broken and broken[0].startswith("E8")
     assert (keepout_distances([_cyl()], back) or 0.0) < 0
+
+
+def test_inside_since_it_came_the_drone_may_not_go_deeper() -> None:
+    """Made around the drone 5 m inside the edge: the way out never goes deeper, so 5 m
+    plus the track's metre is the deepest it may be until it is out."""
+    wobble = _track([(1, 75, 0), (2, 75.8, 0), (3, 70, 0), (4, 60, 0)])
+    assert keepout_never_entered([_cyl()], wobble) == []
+    deeper = _track([(1, 75, 0), (2, 85, 0), (3, 60, 0)])
+    broken = keepout_never_entered([_cyl()], deeper)
+    assert broken and broken[0].startswith("E8") and "djupare" in broken[0]
+    across = _track([(1, 75, 0), (2, 100, 0), (3, 140, 0)])  # over the person and out
+    assert keepout_never_entered([_cyl()], across)
+
+
+def test_inside_since_it_came_braking_may_take_it_its_stop_deeper() -> None:
+    """Made around a drone heading deeper at 5 m/s: braking takes it on by its stop
+    (7.5 m), not more; the same drone flying across is still caught."""
+    braked = _track([(0, 75, 0), (0.5, 77.5, 0), (1, 80, 0), (2, 82, 0), (5, 82, 0), (8, 60, 0)])
+    assert keepout_never_entered([_cyl()], braked) == []
+    on = _track([(0, 75, 0), (0.5, 77.5, 0), (1, 80, 0), (2, 85, 0), (3, 90, 0)])
+    broken = keepout_never_entered([_cyl()], on)
+    assert broken and "inbromsningen tar den 7.5 m till" in broken[0]
+    # Heading out when it came: no stop to allow for.
+    turned = _track([(0, 75, 0), (1, 70, 0), (2, 77, 0)])
+    assert keepout_never_entered([_cyl()], turned)
+
+
+def test_a_new_shape_of_a_cylinder_is_no_new_grace() -> None:
+    """The ground moved a cylinder (same id) 5 m ahead of a drone at 5 m/s, 10 s after the
+    id came: a new cylinder there would allow braking in, a new shape of an old one not."""
+    braked = _track([(10, 65, 0), (11, 69, 0), (12, 71.5, 0), (16, 71.5, 0)])
+    assert keepout_never_entered([_cyl(since=10.0)], braked) == []
+    broken = keepout_never_entered([_cyl(since=10.0, came=0.0)], braked)
+    assert broken and broken[0].startswith("E8")
+    # Moved onto the drone: as one made around it, out and never deeper.
+    leave = _track([(10, 75, 0), (11, 70, 0), (12, 60, 0)])
+    assert keepout_never_entered([_cyl(since=10.0, came=0.0)], leave) == []
+    deeper = _track([(10, 75, 0), (11, 90, 0)])
+    assert keepout_never_entered([_cyl(since=10.0, came=0.0)], deeper)
 
 
 def test_the_way_home_goes_past_cylinders() -> None:
@@ -206,3 +247,21 @@ def test_a_fast_drone_that_never_brakes_breaks_e8() -> None:
                       (4, 102, 0, 5.5), (5, 105, 0, 3), (6, 106, 0, 0.5),
                       (9, 106, 0, 0.2)])  # fmt: skip
     assert keepout_never_entered([_cyl()], braking) == []
+
+
+def test_stop_model_matches_the_flight_controllers_braking() -> None:
+    """E8's stop model is the flight controller's LOITER braking: the safety file pins
+    LOIT_BRK_* to the model's values, and the ramp and delay fit the model's times."""
+    path = paths.REPO / "simulation" / "sitl" / "params" / "searchdrone-safety.parm"
+    safety = params.parse_parm(path.read_text(encoding="utf-8"), path.name)
+    for name, value in si.FC_BRAKE.items():
+        assert safety.get(name) == value, f"{name} i {path.name} ska vara {value:g}"
+    rules = {name: value for name, _, value in params.SAFETY_RULES}
+    assert {name: rules.get(name) for name in si.FC_BRAKE} == si.FC_BRAKE
+    # The jerk-limited ramp to full braking fits inside the settling time.
+    assert si.STOP_DECEL_MS2 / si.STOP_JERK_MS3 <= si.STOP_SETTLE_S
+    # A stick released just before still brakes within the reaction and settling.
+    assert si.STOP_BRAKE_DELAY_S <= si.STOP_REACT_S + si.STOP_SETTLE_S
+    # Copter-4.7.1 allows these values (AC_Loiter.cpp ranges).
+    assert 0.25 <= si.STOP_DECEL_MS2 <= 2.5 and 5.0 <= si.STOP_JERK_MS3 <= 50.0
+    assert 0.0 <= si.STOP_BRAKE_DELAY_S <= 2.0

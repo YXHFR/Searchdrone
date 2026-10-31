@@ -36,6 +36,7 @@ from sd_ground.logging import get_logger
 from sd_ground.services import search_profile as profile_service
 from sd_schemas.geo import plane_distance_m, plane_offset
 from sd_schemas.probmap import (
+    PSR_MAX,
     ProbabilityGrid,
     ProbabilityMapInputs,
     ProbabilityMapLatest,
@@ -167,13 +168,6 @@ async def write(
         raise ApiStatusError(
             409, "MAP_PROFILE_STALE", "Kartan bygger inte på sökprofilen som gäller nu."
         )
-    if (body.frozen or body.reason == "confirmed") and not await flow.repo.confirmed_candidates(
-        mission_id
-    ):
-        # Only a person confirms a find; the search service cannot fake its effect.
-        raise ApiStatusError(
-            409, "MAP_NOT_CONFIRMED", "Kartan låses bara när en person har bekräftat ett fynd."
-        )
     charter = await flow.active_charter(mission)
     known = set() if charter is None else {s.sector_id for s in charter.sectors}
     if any(s.sector_id not in known for s in body.sectors):
@@ -201,6 +195,9 @@ async def write(
             row=body.row,
             frozen=body.frozen,
             event_seq=body.event_seq,
+            # Only a person confirms a find; the search service cannot fake its effect. The
+            # repo checks it under the map's write lock, in the same step as the insert.
+            needs_confirmed=body.frozen or body.reason == "confirmed",
         )
     except MapWriteError as exc:
         raise ApiStatusError(409, exc.code, exc.detail_sv) from None
@@ -261,6 +258,16 @@ def _f16(a: Floats) -> str:
     return base64.b64encode(a.astype("<f2").tobytes()).decode("ascii")
 
 
+def _stored_scores(raw: list[dict[str, Any]]) -> list[SectorScore]:
+    """Sector rows as stored. A row written before psr had a bound is read clamped."""
+    return [
+        SectorScore.model_validate(
+            {**s, "psr": min(s["psr"], PSR_MAX)} if isinstance(s.get("psr"), int | float) else s
+        )
+        for s in raw
+    ]
+
+
 async def view(flow: MissionFlow, mission_id: str) -> ProbabilityMapView | None:
     """The newest version, or None before the first."""
     row = await _newest_row(flow, mission_id)
@@ -277,7 +284,7 @@ async def view(flow: MissionFlow, mission_id: str) -> ProbabilityMapView | None:
         frozen=bool(row["frozen"]),
         event_seq=int(row["event_seq"]),
         profile_version=int(meta.get("profile_version", 0)),
-        sectors=[SectorScore.model_validate(s) for s in meta.get("sectors", [])],
+        sectors=_stored_scores(meta.get("sectors", [])),
         notes=list(meta.get("notes", [])),
         p_b64=_f16(p),
         pod_b64=_f16(pod),
@@ -290,7 +297,7 @@ async def sector_scores(flow: MissionFlow, mission_id: str) -> list[SectorScore]
     head = await repo(flow).head(mission_id)
     if head is None:
         return []
-    return [SectorScore.model_validate(s) for s in head["grid"].get("sectors", [])]
+    return _stored_scores(head["grid"].get("sectors", []))
 
 
 async def probability_line(flow: MissionFlow, mission_id: str) -> str | None:
@@ -301,7 +308,7 @@ async def probability_line(flow: MissionFlow, mission_id: str) -> str | None:
         scores = [] if head is None else head["grid"].get("sectors", [])
         if not scores:
             return None
-        return situation_line([SectorScore.model_validate(s) for s in scores])
+        return situation_line(_stored_scores(scores))
     except Exception:
         log.exception("probability_map.situation_line_failed", mission_id=mission_id)
         return None

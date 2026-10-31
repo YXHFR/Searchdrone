@@ -51,6 +51,11 @@ SAFETY_RULES: tuple[tuple[str, str, float], ...] = (
     ("RTL_LOIT_TIME", "==", 0.0),
     ("SRTL_POINTS", "==", 300.0),
     ("SCR_ENABLE", "==", 1.0),  # sd_gcs_loiter_cap.lua
+    ("SCR_LD_CHECKSUM", "==", 1589952.0),  # only that script (sd_sim.sitl.scripts_checksum)
+    ("SCR_RUN_CHECKSUM", "==", 1589952.0),
+    ("LOIT_BRK_ACC_M", "==", 2.5),  # the E8 stop model (sd_sim.search_invariants)
+    ("LOIT_BRK_JRK_M", "==", 5.0),
+    ("LOIT_BRK_DELAY", "==", 1.0),
     ("EK3_GLITCH_RAD", "==", 25.0),  # below sd_safety.constants.SPOOF_JUMP_M
     ("EK3_SRC2_POSXY", "==", 0.0),  # the spoofing guard's set has no GPS
     ("EK3_SRC2_VELXY", "==", 0.0),

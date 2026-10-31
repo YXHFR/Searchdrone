@@ -18,6 +18,7 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just sim-farm-status` | What the farm is doing: running or paused and why, pictures and labels kept, rounds per hour, AI-commander exams and their cost, the upload backlog, the latest errors. |
 | `just sim-farm-setup` | Fetches the person models (pinned by SHA-256) from Gazebo Fuel into `build/simfarm/assets/`. |
 | `just world-fetch site=<site>` | Fetches a site's heights and map layers (see Worlds). |
+| `just dev [physics=mock\|builtin\|gz] [brain=scripted\|cloud\|grammar\|none] [instance=N]` | The development stack with one command: `sim`'s services plus the panel's Vite dev server on the instance's `panel_dev` port (5173 + 10N), whose login link it prints. `physics=mock` (the default) runs `sd_sim.mockfc`, sd_mav's fake flight controller on SITL's ports with the safety layer's parameters: it starts in a second, but has no flight model, failsafes or fence, so flight safety is tested in SITL (and no other recipe accepts `physics=mock`). Brain `scripted` (SC01) by default, so no cloud key is needed; a missing `.env` is created with random local secrets. |
 | `just sim` / `just sim-headless` | Starts the simulator stack for one instance in the foreground (Ctrl-C stops it). |
 | `just stop` | Stops what `just sim` started. |
 | `just test-sitl [sc=SC00] [physics=builtin\|gz] [mode=pr\|nightly\|search\|search-nightly\|e2e-search] [seeds=1-50] [workers=N] [shard=N shards=M]` | Runs the scenario tests (pytest with `sd_sim.pytest_plugin`). Each test writes `runs/<run>/result.json`; the run writes `runs/summary.md`. The search chain's sets run only in their own modes: `search` (the pull request set), `search-nightly` (the nightly campaign over `seeds=`, `A-B` or `1,2,3`, default 1-3) and `e2e-search` (the search demo). |
@@ -137,7 +138,9 @@ uploaded artifact or the cache: a picture-shaped NumPy array, a GeoTIFF, a symbo
 or a world, snapshot or ground texture marked as built from a photo. It cannot recognise
 a photo saved by hand as an ordinary picture with no such mark; no photo is ever fetched
 in CI, and images outside the test data are kept out of git anyway. The sim farm never
-uploads a round flown over the photo: its facit says so.
+uploads a round flown over the photo: its facit says so. With an R2 key such a round moves
+from `build/simfarm/rounds/` to `build/simfarm/draped/`, where it stays (not retried, not
+in the rounds' disk budget) until you remove it.
 
 ## Parts
 

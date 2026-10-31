@@ -6,7 +6,9 @@ import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 import securityHeaders from "../common/schemas/security_headers.json" with { type: "json" };
 
 const TARGET = process.env.SD_GROUND_URL ?? "http://127.0.0.1:8080";
-const DEV_ORIGIN = "http://127.0.0.1:5173";
+// `just dev` sets the port per simulator instance (simulation/ports.yaml, panel_dev).
+const PORT = Number(process.env.SD_PANEL_PORT ?? "5173");
+const DEV_ORIGIN = `http://127.0.0.1:${PORT}`;
 
 interface HeaderSetter {
   setHeader(name: string, value: string): void;
@@ -47,7 +49,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: "127.0.0.1",
-      port: 5173,
+      port: PORT,
       strictPort: true,
       proxy: { "/api": proxy, "/ws": { ...proxy, ws: true }, "/tiles": proxy },
     },

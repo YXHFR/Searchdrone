@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from sd_safety import constants as c
-from sd_sim import params, paths
+from sd_sim import params, paths, sitl
 
 PARAMS = paths.REPO / "simulation" / "sitl" / "params"
 SAFETY = params.parse_parm((PARAMS / "searchdrone-safety.parm").read_text(encoding="utf-8"))
@@ -35,6 +35,40 @@ def test_lua_constants_match() -> None:
     assert f"no GCS {c.FC_LOITER_CAP_S:.0f} s" in text
     # Its text must classify as a failsafe onboard (sd_mav.failsafe_signals "failsafe").
     assert re.search(r'send_text\(2, "SD failsafe', text)
+
+
+def _crc32_bitwise(data: bytes) -> int:
+    """ArduPilot's crc_crc32(0, data) written out bit by bit (reflected 0xEDB88320, start
+    0, no final inversion), independent of the zlib shortcut in sd_sim.sitl."""
+    crc = 0
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xEDB88320 if crc & 1 else crc >> 1
+    return crc
+
+
+def test_script_crc_is_ardupilots() -> None:
+    for data in (b"", b"123456789", LUA.read_bytes()):
+        assert sitl.script_crc32(data) == _crc32_bitwise(data)
+    assert sitl.script_crc32(b"123456789") == 0x2DFD2D88  # zlib (0xCBF43926) inverts twice
+
+
+def test_only_our_lua_script_can_arm() -> None:
+    """SCR_LD_CHECKSUM and SCR_RUN_CHECKSUM lock the flight controller to exactly the
+    scripts in sitl.LUA_SCRIPTS. A changed script fails here until the safety file (and
+    sd_sim.params.SAFETY_RULES) carry its new checksum."""
+    scripts = [LUA.parent / name for name in sitl.LUA_SCRIPTS]
+    want = sitl.scripts_checksum(scripts)
+    assert SAFETY["SCR_LD_CHECKSUM"] == want, f"SCR_LD_CHECKSUM ska vara {want}"
+    assert SAFETY["SCR_RUN_CHECKSUM"] == want, f"SCR_RUN_CHECKSUM ska vara {want}"
+    rules = {name: value for name, _, value in params.SAFETY_RULES}
+    assert rules["SCR_LD_CHECKSUM"] == rules["SCR_RUN_CHECKSUM"] == want
+    # A float parameter holds the 23-bit value exactly, and -1 (off) is never it.
+    assert 0 <= want <= sitl.SCRIPT_CHECKSUM_MASK and float(want) == want
+    # Any other byte in the script gives another checksum.
+    changed = LUA.read_bytes() + b"\n"
+    assert (sitl.script_crc32(changed) & sitl.SCRIPT_CHECKSUM_MASK) != want
 
 
 def test_model_files_set_the_drag_for_dead_reckoning() -> None:

@@ -19,7 +19,7 @@ layers = [
 # .parm and .toml files are pinned by content (names and values), the rest by bytes.
 [[pinned]]
 path = "simulation/sitl/params/searchdrone-safety.parm"
-sha256 = "ef050e949d2d802afb1224fb0a437251c609050700340a9df462ce2a6e62c0cb"
+sha256 = "63b9dc4847d3d36941777e73f0923d987f67ad2225ce2ce5f5db7608903a7cc3"
 
 [[pinned]]
 path = "simulation/sitl/params/searchdrone-safety.field.parm"
@@ -40,7 +40,7 @@ sha256 = "7c04e5a4f1f9328a4eac036c436207673ff429bac48653581762851c8c78f1c1"
 # The rules themselves: weakening one must not pass with only a parameter file's digest.
 [[pinned]]
 path = "simulation/sd_sim/src/sd_sim/params.py"
-sha256 = "b2c923b601f401e6e84d4f84a12d76429b2a8d12a1d57dc3c6d79b8b43cf0673"
+sha256 = "5f9b7ae7f8b8bab290c75310f70163c0765e10f587844151fdf7bb2da6a3127a"
 
 [[pinned]]
 path = "software/common/safety/src/sd_safety/constants.py"
