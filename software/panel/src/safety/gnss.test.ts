@@ -101,6 +101,16 @@ describe("alertView", () => {
     expect(say(stuck)).toContain("kan inte stiga högre");
   });
 
+  it("keep-out hover: half metres round up as on the ground, a non-number climb is left out", () => {
+    const half = alertView("KEEPOUT_HOLD", { inside: true, climb_to_m: 62.5 }, T0);
+    expect(say(half)).toContain("stiger rakt upp till 63 m");
+    for (const climb of ["63", null, Number.NaN]) {
+      const v = alertView("KEEPOUT_HOLD", { inside: true, climb_to_m: climb }, T0);
+      expect(v?.key).toBe("keepouts.HOLD_INSIDE");
+      expect(v?.tone).toBe("red");
+    }
+  });
+
   it("is null for codes the panel has no text for", () => {
     expect(alertView("BATTERY_RTL", {}, T0)).toBeNull();
   });

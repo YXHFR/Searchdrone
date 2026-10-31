@@ -155,7 +155,11 @@ All notable changes to this project are listed here. The format follows
   refused, failed, expired or unanswered keep-out list is sent again (above a stale
   sequence number when the executor holds a newer one), and the operator gets one red,
   sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
-  (`KEEPOUTS_INSTALLED`).
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+- A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
+  orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
+  whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
+  delivered after its mission closed is only logged.
 - The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
   new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
 - The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder

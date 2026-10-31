@@ -95,6 +95,14 @@ export type CommandStatus =
 export type ExecutorState =
   "IDLE" | "PREFLIGHT" | "TAKEOFF" | "TRANSIT" | "SURVEY" | "HOLD" | "RTL" | "LAND" | "LANDED" | "HELD" | "FAILSAFE";
 /**
+ * The fields of the onboard ``executor.keepout_hold`` data that the ground's
+ * ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "KeepoutHoldField".
+ */
+export type KeepoutHoldField = "inside" | "climb_to_m";
+/**
  * Where the onboard link-loss rule is (sd_onboard.executor.link_loss).
  *
  * Times count from the last inbound SD-link message.

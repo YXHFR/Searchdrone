@@ -5407,6 +5407,15 @@
       "title": "Keepout",
       "type": "object"
     },
+    "KeepoutHoldField": {
+      "description": "The fields of the onboard ``executor.keepout_hold`` data that the ground's\n``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.",
+      "enum": [
+        "inside",
+        "climb_to_m"
+      ],
+      "title": "KeepoutHoldField",
+      "type": "string"
+    },
     "KeepoutInstall": {
       "additionalProperties": false,
       "description": "Ground -> onboard: the whole list of ground cylinders; it replaces the previous one.\n\n``install_seq`` grows with every list; a lower one than the last seen is ignored, so a\nlate resend never brings back a removed cylinder or drops a new one. The installed\nlist stays in force until a list with a higher ``install_seq`` arrives: the envelope's\n``ttl_ms`` only limits how late the message may be delivered, never how long the\ncylinders apply.",

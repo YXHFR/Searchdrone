@@ -137,6 +137,14 @@ class AlertCode(StrEnum):
     GPS_OK = "GPS_OK"
 
 
+class KeepoutHoldField(StrEnum):
+    """The fields of the onboard ``executor.keepout_hold`` data that the ground's
+    ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text."""
+
+    INSIDE = "inside"  # bool: inside a cylinder over a person, not short of one
+    CLIMB_TO_M = "climb_to_m"  # number: the altitude (m) it climbs straight up to first
+
+
 class CommandStatus(StrEnum):
     PENDING_APPROVAL = "pending_approval"
     REJECTED_BY_GATE = "rejected_by_gate"

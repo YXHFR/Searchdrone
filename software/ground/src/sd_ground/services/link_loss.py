@@ -10,13 +10,14 @@ panel should expect while SD-link is down.
   ``install_seq`` is at least the wall clock in milliseconds, so a restarted ground
   station still sends a higher one than the onboard computer kept.
 * **Installed or not:** the ground waits for the executor's ``Ack`` on every list. Only
-  ``done`` counts as installed. A refusal (``rejected``, ``failed``, ``expired``), a list
-  the link let expire, or no answer within ``INSTALL_ACK_WAIT_MS`` while the link is up
-  sends the list again at the next poll; a refusal for ``ONB_STALE_ORDER`` (the onboard
-  computer kept a higher ``install_seq``, e.g. the ground's clock went back) also moves
-  the number up, further each time. The operator gets the red ``KEEPOUTS_NOT_INSTALLED``
-  at once, so nobody believes the drone knows a find it does not know, and
-  ``KEEPOUTS_INSTALLED`` when a list is in again.
+  ``done`` counts as installed. A refusal (``rejected``, ``failed``, ``expired``, or
+  ``superseded`` by another list on board), a list the link let expire, or no answer
+  within ``INSTALL_ACK_WAIT_MS`` while the link is up sends the list again at the next
+  poll; a refusal for ``ONB_STALE_ORDER`` (the onboard computer kept a higher
+  ``install_seq``, e.g. the ground's clock went back) also moves the number up, further
+  each time, up to ``INSTALL_SEQ_MAX``. The operator gets the red
+  ``KEEPOUTS_NOT_INSTALLED`` at once, so nobody believes the drone knows a find it does
+  not know, and ``KEEPOUTS_INSTALLED`` when a list is in again.
 * **Forecast:** once nothing has come from the onboard computer for
   ``LINK_LOSS_DETECT_S``, the same ``sd_safety.link_loss.choose_mode`` as onboard runs on
   the last snapshot and the same list (``VehicleLive.link_loss_plan``), and the panel is
@@ -48,6 +49,7 @@ log = get_logger("sd_ground.link_loss")
 
 __all__ = [
     "INSTALL_ACK_WAIT_MS",
+    "INSTALL_SEQ_MAX",
     "KEEPOUT_POLL_S",
     "LinkWatch",
     "on_ack",
@@ -66,7 +68,13 @@ INSTALL_ACK_WAIT_MS: Final = KEEPOUT_TTL_MS + 5_000
 # After ONB_STALE_ORDER the next install_seq jumps this far, doubled at every further
 # refusal in a row (an hour, two, four, ...: past any clock error in a few tries).
 STALE_STEP_MS: Final = 3_600_000
-_STALE_DOUBLINGS_MAX: Final = 40
+_STALE_DOUBLINGS_MAX: Final = 20  # 2**20 hours: over a century
+# The highest install_seq the ground sends: exact as a JSON number everywhere (the panel
+# and the logs too). An onboard computer that keeps refusing past it is not a clock error;
+# the red alarm stays and the ground logs an error.
+INSTALL_SEQ_MAX: Final = 2**53 - 1
+# Not installed. "superseded" counts too: the list the ground waits for was replaced by
+# another on board, so the newest one is sent again.
 _REFUSED: Final = frozenset({"rejected", "failed", "expired", "superseded"})
 _S = ExecutorState
 # Where the onboard rule steers (sd_onboard.executor.state.MOVING); elsewhere someone else
@@ -179,7 +187,7 @@ async def _install(
     seq = w.install_seq
     if key != w.sent or seq < 0:
         epoch_ms = int(flow.now().timestamp() * 1000)
-        seq = max(w.install_seq + 1, epoch_ms)
+        seq = min(max(w.install_seq + 1, epoch_ms), INSTALL_SEQ_MAX)
     install = KeepoutInstall(install_seq=seq, keepouts=list(w.keepouts))
     sent = await flow.link.send_message(vid, install, mission_id=mid, ttl_ms=KEEPOUT_TTL_MS)
     if sent is None:
@@ -201,7 +209,7 @@ async def on_ack(flow: MissionFlow, vehicle_id: str, ack: Ack) -> None:
             w.not_installed = False
             flow.alert(
                 str(AlertCode.KEEPOUTS_INSTALLED),
-                "warning",
+                "info",
                 "Förbudszonerna runt fynden är nu inlagda i drönaren igen.",
                 vehicle_id=vehicle_id,
                 mission_id=mid,
@@ -253,7 +261,14 @@ def _refused(
     w.refusals += 1
     if stale:
         jump = STALE_STEP_MS << min(w.refusals - 1, _STALE_DOUBLINGS_MAX)
-        w.install_seq = max(w.install_seq, seq) + jump
+        w.install_seq = min(max(w.install_seq, seq) + jump, INSTALL_SEQ_MAX)
+        if w.install_seq == INSTALL_SEQ_MAX:
+            log.error(
+                "link_loss.install_seq_at_cap",
+                vehicle_id=vehicle_id,
+                install_seq=w.install_seq,
+                refusals=w.refusals,
+            )
     log.warning(
         "link_loss.keepouts_not_installed",
         vehicle_id=vehicle_id,
