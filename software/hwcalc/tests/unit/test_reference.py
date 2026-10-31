@@ -5,9 +5,10 @@ formula, a unit or the files that moves any value fails here, so it cannot happe
 silently.
 
 2026-10-31: the battery is the measured 0.913 kg (was 0.87 kg), so the total is 2.343 kg
-and every value that follows the mass moves with it: hover power up by about 3 %
-((2.343 / 2.300)^1.5), hover time down from 36.58 to 35.62 min, hover thrust fraction up
-and thrust-to-weight down by the mass ratio. The usable energy does not depend on mass.
+and every value that follows the mass moves with it: the ideal hover power by
+(2.343 / 2.300)^1.5 (+2.8 %), the hover power with the fixed 12 W avionics by 2.7 %, the
+hover time from 36.58 down to 35.62 min, and the hover thrust fraction up and the
+thrust-to-weight down by the mass ratio. The usable energy does not depend on mass.
 """
 
 from pathlib import Path

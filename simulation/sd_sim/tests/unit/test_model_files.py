@@ -68,7 +68,6 @@ def pose(element: ET.Element | None) -> list[float]:
 def test_model_mass_matches_drone_yaml() -> None:
     total = sum(float(m.text or "nan") for m in model_root().iter("mass"))
     assert abs(total - total_mass_kg()) <= MASS_TOLERANCE_KG
-    assert abs(total - 2.30) <= MASS_TOLERANCE_KG
 
 
 def test_model_rotors_x_frame_and_speed() -> None:
