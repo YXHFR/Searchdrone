@@ -8,6 +8,14 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `just dev`: one command for the local development stack. It starts the database,
+  `sd-ground`, `sd-onboard`, `sd-search`, the scripted AI commander and the panel's Vite
+  dev server (hot reload), then prints the login link. The default `physics=mock`
+  replaces ArduPilot with the new `sd_sim.mockfc`, sd_mav's fake flight controller on
+  SITL's ports, so it needs no simulator build and no API key. Only `just dev` accepts
+  `physics=mock`, so no smoke flight, demo or test can pass without ArduPilot;
+  `physics=builtin` or `gz` flies SITL as `just sim` does. The panel's dev server port follows the instance
+  (`SD_PANEL_PORT`, 5173 + 10N).
 - `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
   fails when code outside the MAVLink gate `sd_mav` names a message or command from its
   deny list (parameter writes, switching off the fence, flight termination, forced

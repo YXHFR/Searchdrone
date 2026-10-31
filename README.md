@@ -60,6 +60,7 @@ Common commands (`just --list` shows all):
 | `just lint` / `just test` | Lint, or unit tests only |
 | `just fmt` | Format code |
 | `just setup-config` | Create local config and random secrets |
+| `just dev` | Database, ground station, panel (hot reload), onboard computer and AI against a fake flight controller, then the login link; Ctrl-C stops it. Needs Docker for the database, no simulator and no API key (`physics=builtin` or `gz` flies ArduPilot SITL instead) |
 
 Settings are passed as `key=value` after the recipe name, for example `just test-sitl physics=builtin sc=SC04`.
 
