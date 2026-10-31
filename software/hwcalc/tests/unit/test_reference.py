@@ -4,7 +4,7 @@ The committed drone and limits files must give exactly these numbers. A change t
 formula, a unit or the files that moves any value fails here, so it cannot happen
 silently.
 
-2026-10-31: the battery is the measured 0.913 kg (was 0.87 kg), so the total is 2.343 kg
+2026-10-31: the battery is the retailer's listed 0.913 kg (was 0.87 kg), so the total is 2.343 kg
 and every value that follows the mass moves with it: the ideal hover power by
 (2.343 / 2.300)^1.5 (+2.8 %), the hover power with the fixed 12 W avionics by 2.7 %, the
 hover time from 36.58 down to 35.62 min, and the hover thrust fraction up and the
