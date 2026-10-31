@@ -531,6 +531,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- `hardware/drone.yaml` uses the retailer's listed 0.913 kg for the 10 000 mAh 6S2P pack
+  (was 0.87 kg), as the fpv7 CAD already does. `just hw-check` now gives 2.343 kg in all,
+  291 W hover power and 35.6 min hover time; every limit still holds. The SITL frame
+  `sd_quad14.json` follows with `mass` 2.343, and the hwcalc tests read the mass from the
+  file instead of repeating it.
 - The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
   the ground station's profile from its `server.hello`, not the brain's own: on until the
   ground station has said it, off only against a `sim` ground station, and on again while
