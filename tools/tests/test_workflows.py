@@ -31,6 +31,61 @@ def steps(doc: dict[Any, Any]) -> list[dict[str, Any]]:
     return doc["runs"].get("steps", [])
 
 
+# The gate statuses (gate/review, gate/owner, gate/pr-title) are what branch protection
+# and check_merged_pr_gates.py trust. Only the three gate workflows may write statuses;
+# any other workflow with that permission could paint a gate green (A18).
+STATUS_WRITERS = frozenset({"review-gate.yml", "owner-gate.yml", "pr-title.yml"})
+
+
+def status_writers(doc: dict[Any, Any]) -> list[str]:
+    """Where a workflow grants ``statuses: write``: ``top`` and/or ``job <name>``."""
+
+    def grants(perms: Any) -> bool:
+        if perms == "write-all":
+            return True
+        return isinstance(perms, dict) and perms.get("statuses") == "write"
+
+    out = ["top"] if grants(doc.get("permissions")) else []
+    for name, job in (doc.get("jobs") or {}).items():
+        if isinstance(job, dict) and grants(job.get("permissions")):
+            out.append(f"job {name}")
+    return out
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=ids(WORKFLOWS))
+def test_only_the_gate_workflows_write_statuses(path: Path) -> None:
+    if path.name in STATUS_WRITERS:
+        return
+    where = status_writers(load(path))
+    assert not where, f"{path.name}: statuses: write ({', '.join(where)}) outside the gates"
+
+
+def test_the_gate_workflows_exist_and_write_statuses() -> None:
+    # A renamed gate workflow must not leave a stale name on the list above.
+    for name in sorted(STATUS_WRITERS):
+        path = ROOT / ".github" / "workflows" / name
+        assert path.is_file(), name
+        assert status_writers(load(path)), f"{name} no longer writes statuses"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("permissions:\n  statuses: write\njobs: {}\n", ["top"]),
+        ("permissions: write-all\njobs: {}\n", ["top"]),
+        (
+            "permissions: {}\njobs:\n  a:\n    permissions:\n      contents: read\n"
+            "  b:\n    permissions:\n      statuses: write\n",
+            ["job b"],
+        ),
+        ("permissions:\n  statuses: read\njobs:\n  a:\n    permissions: read-all\n", []),
+        ("permissions: {}\njobs:\n  a:\n    runs-on: x\n", []),
+    ],
+)
+def test_status_writers_finds_every_grant(text: str, expected: list[str]) -> None:
+    assert status_writers(yaml.safe_load(text)) == expected
+
+
 def test_files_exist() -> None:
     names = {p.name for p in WORKFLOWS}
     assert {
