@@ -401,7 +401,8 @@ async def test_a_new_connection_starts_from_the_constants_and_reads_again() -> N
         mav.update_wind(VID)
         del mav.snapshot
         assert mav.wind.params == FcParams() and mav.wind.drag_k is None
-        assert mav.telemetry(VID) is not None and mav.telemetry(VID).wind is None
+        out = mav.telemetry(VID)
+        assert out is not None and out.wind is None
         s.fc.params["ATC_ANGLE_MAX"] = 40.0  # another flight controller
         mav.update_wind(VID)
         await s.run(10.0)
