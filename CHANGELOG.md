@@ -231,9 +231,11 @@ All notable changes to this project are listed here. The format follows
   not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
   `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
   from the estimate with the flight controller's numbers, or from the wind estimate once
-  the drag is measured, and both only with `BATT_CAPACITY` read from the flight
-  controller (with the constant 10000 mAh, before the read, after a reconnect or when it
-  is not answered, they only warn); an uncalibrated drag and a wind too strong to get
+  the drag is measured, and both only with `BATT_CAPACITY` and `BATT_LOW_MAH` read from
+  the flight controller (with the constant 10000 mAh or 1500 mAh reserve, before the
+  read, after a reconnect, when one is not answered or `BATT_LOW_MAH` is 0 or not below
+  the capacity, they only warn, so the 1500 mAh constant never flies a small pack
+  home); an uncalibrated drag and a wind too strong to get
   home in only warn. Not while the pilot flies by hand. A ground speed of 0 or NaN does
   not count as holding position for the drag. Parameters outside ArduCopter's ranges
   (`RTL_SPEED_MS` and `WP_SPD` 0.1-20 m/s), a capacity outside 100-1,000,000 mAh and a

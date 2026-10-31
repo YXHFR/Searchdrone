@@ -677,8 +677,10 @@ class GroundMav:
                 reason=reason,
             )
         )
-        self.latches.set_battery_reason(self.vehicle_id, reason)
-        self._system_action(self.vehicle_id, "battery_rtl")
+        # The reason belongs to the latch: only once the flight home was started (None:
+        # no path to the drone, no latch).
+        if self._system_action(self.vehicle_id, "battery_rtl") is not None:
+            self.latches.set_battery_reason(self.vehicle_id, reason)
 
 
 async def _run[T](work: Callable[[Vehicle], Awaitable[T]], vehicle: Vehicle) -> T:

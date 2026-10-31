@@ -778,3 +778,56 @@ def test_a_negative_yaw_becomes_a_compass_heading() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_link_epoch_counts_a_reconnect() -> None:
+    """A real HEARTBEAT reconnect: lost, then heard again. The boot time starts over."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        first = vehicle.telemetry.fc_link_epoch
+        assert first == 1 and vehicle.telemetry.fc_boot_ms is not None
+        await clock.run_for(5.0)
+        assert vehicle.telemetry.fc_link_epoch == first  # steady: no new epoch
+        vehicle.fc.silent = True
+        await clock.run_for(4.0)
+        assert not vehicle.telemetry.fc_connected
+        assert vehicle.telemetry.fc_link_epoch == first
+        vehicle.fc.silent = False
+        await clock.run_for(3.0)
+        assert vehicle.telemetry.fc_connected
+        assert vehicle.telemetry.fc_link_epoch == first + 1
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def _attitude(boot_ms: int) -> Any:
+    return mavlink.MAVLink_attitude_message(boot_ms, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def test_link_epoch_tolerates_reordered_attitude_but_not_a_reboot() -> None:
+    """An ATTITUDE up to 1 s older than the newest is a late message, not a reboot."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        epoch = vehicle.telemetry.fc_link_epoch
+        newest = vehicle.telemetry.fc_boot_ms
+        assert newest is not None and newest > 2000
+        vehicle.fc._send(_attitude(newest - 1000))  # pyright: ignore[reportPrivateUsage]
+        await clock.run_for(0.05)
+        assert vehicle.telemetry.fc_link_epoch == epoch  # exactly 1 s back: late
+        vehicle.fc._send(_attitude(newest - 400))  # pyright: ignore[reportPrivateUsage]
+        await clock.run_for(0.05)
+        assert vehicle.telemetry.fc_link_epoch == epoch
+        vehicle.fc.reboot()  # time_boot_ms starts again from 0: more than 1 s back
+        await clock.run_for(0.5)
+        assert vehicle.telemetry.fc_link_epoch == epoch + 1
+        assert vehicle.telemetry.fc_connected  # faster than the heartbeat timeout
+        await clock.run_for(2.0)
+        assert vehicle.telemetry.fc_link_epoch == epoch + 1  # once per reboot
+        await vehicle.close()
+
+    asyncio.run(run())
