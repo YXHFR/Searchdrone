@@ -446,10 +446,11 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
-- The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) try a
+- The image bank's downloads (`just bench-fetch`, the mini bank and `make_splits`) and
+  the detector weights' (`just detector-fetch`, `tools/train/fetch_weights.py`) try a
   request up to four times, after 2, 4 and 8 s, when the network fails on the way (a
-  timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer or a
-  refused file stops at once, as before.
+  timed-out TLS handshake, a dropped connection, a cut read or a 5xx). A 4xx answer, a
+  certificate that does not verify or a refused file stops at once, as before.
 - The simulator farm's grade (`sd-brain eval grade`) now counts a candidate as raised only
   when the AI named it (`K3`) to the operator in a chat message or a report, as the exam
   does: `flight.json` carries the ground's candidate queue with when each was raised
