@@ -21,6 +21,7 @@ from sd_ground.context import Ground
 from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
 from sd_ground.services import wind
 from sd_ground.services.telemetry import TelemetryService
+from sd_ground.services.vehicle_actions import ActionRefusedError
 from sd_ground.services.wind import (
     FcParams,
     WindWatch,
@@ -243,6 +244,7 @@ def test_panel_telemetry_carries_the_wind_check(monkeypatch: pytest.MonkeyPatch)
     out = None
     for now in range(0, 12_001, 250):
         monkeypatch.setattr(mav, "snapshot", lambda now=now: _snap(t, now))
+        mav.update_wind("sim-01")
         out = mav.telemetry("sim-01")
     loop.close()
     assert out is not None and out.wind is not None
@@ -346,8 +348,9 @@ async def test_parameters_are_read_from_the_flight_controller() -> None:
         s.fc.params["ATC_ANGLE_MAX"] = 25.0
         s.fc.params["BATT_LOW_MAH"] = 2500.0
         mav = cast(ThreadSafeMav, s.actions.mav)
-        assert mav.telemetry(VID) is not None  # starts the read
+        mav.update_wind(VID)  # starts the read
         await s.run(10.0)  # WP_SPD is not answered: two tries of 2 s
+        mav.update_wind(VID)
         out = mav.telemetry(VID)
         assert out is not None and out.wind is not None
         assert out.wind.tilt_warn_deg == 15.0
@@ -361,9 +364,9 @@ async def test_unanswered_parameters_keep_the_constants_and_retry() -> None:
             s.fc.params.pop(name, None)
         mav = cast(ThreadSafeMav, s.actions.mav)
         with structlog.testing.capture_logs() as logs:
-            mav.telemetry(VID)
+            mav.update_wind(VID)
             await s.run(25.0)
-            mav.telemetry(VID)  # takes the finished read
+            mav.update_wind(VID)  # takes the finished read
         assert mav.wind.params == FcParams()
         assert {e["param"] for e in logs if e["event"] == "wind.param_fallback"} == {
             "ATC_ANGLE_MAX",
@@ -372,13 +375,13 @@ async def test_unanswered_parameters_keep_the_constants_and_retry() -> None:
             "BATT_LOW_MAH",
         }
         s.fc.params["ATC_ANGLE_MAX"] = 25.0  # answers on the next try, 30 s later
-        mav.telemetry(VID)
+        mav.update_wind(VID)
         await s.run(5.0)
-        mav.telemetry(VID)
+        mav.update_wind(VID)
         assert mav.wind.params.angle_max_deg == FC_ANGLE_MAX_DEG  # not yet asked again
         for _ in range(16):  # the callers' telemetry, every 5 s here
             await s.run(5.0)
-            mav.telemetry(VID)
+            mav.update_wind(VID)
         assert mav.wind.params.angle_max_deg == 25.0
 
 
@@ -386,17 +389,23 @@ async def test_a_new_connection_starts_from_the_constants_and_reads_again() -> N
     async with stack() as s:
         s.fc.params["ATC_ANGLE_MAX"] = 25.0
         mav = cast(ThreadSafeMav, s.actions.mav)
-        mav.telemetry(VID)
+        mav.update_wind(VID)
         await s.run(10.0)
-        mav.telemetry(VID)
+        mav.update_wind(VID)
         assert mav.wind.params.angle_max_deg == 25.0
-        # what telemetry() does when the link is down
-        mav._forget_wind_params()  # pyright: ignore[reportPrivateUsage]
-        assert mav.wind.params == FcParams()
+        mav.wind.drag_k = 0.01
+        snap = mav.snapshot()
+        assert snap is not None
+        lost = replace(snap, connected=False)
+        mav.snapshot = lambda: lost  # the link drops for one step
+        mav.update_wind(VID)
+        del mav.snapshot
+        assert mav.wind.params == FcParams() and mav.wind.drag_k is None
+        assert mav.telemetry(VID) is not None and mav.telemetry(VID).wind is None
         s.fc.params["ATC_ANGLE_MAX"] = 40.0  # another flight controller
-        mav.telemetry(VID)
+        mav.update_wind(VID)
         await s.run(10.0)
-        mav.telemetry(VID)
+        mav.update_wind(VID)
         assert mav.wind.params.angle_max_deg == 40.0
 
 
@@ -665,3 +674,167 @@ async def test_energy_ok_leaves_the_percentage_level_as_before() -> None:
         s.fc.battery_pct = 19.0
         await s.run(1.5)
         assert s.fc.mode in HOME_MODES
+
+
+async def test_stop_and_take_over_after_an_energy_flight_home_keep_the_level() -> None:
+    """ENERGY_HOME flies home at 60 %, the pilot presses STOP and takes over: at the
+    percentage level the battery guard still flies home (the energy latch under the STOP
+    blocks only the energy trigger)."""
+    async with stack(rtl_pct=20.0) as s:
+        s.fly()
+        s.fc.battery_pct = 60.0
+        await s.run(1.0)
+        s.core.energy_short(True)
+        await s.run(1.0)
+        assert s.fc.mode in HOME_MODES
+        s.stop()
+        await s.run(1.0)
+        latch = s.latches.get(VID)
+        assert latch is not None and (latch.action, latch.underlying) == ("stop", "battery_rtl")
+        s.actions.takeover(VID, client_action_id="t-energy", by=PILOT)
+        await s.run(1.0)
+        assert s.fc.mode == CopterMode.LOITER
+        for _ in range(4):  # still short: the energy trigger stays blocked under the STOP
+            s.core.energy_short(True)
+            await s.run(0.5)
+        assert s.fc.mode == CopterMode.LOITER
+        s.fc.battery_pct = 19.0
+        await s.run(1.5)
+        assert s.fc.mode in HOME_MODES
+        guard = [e for e in s.g.events if e[0] == "vehicle.battery_rtl" and "alarm" in e[2]]
+        assert [e[2]["reason"] for e in guard] == ["energy_home", "battery_level"]
+
+
+async def test_a_level_latch_under_a_stop_still_blocks_the_level() -> None:
+    """As before: the percentage level's own latch under a STOP waits for Resume."""
+    async with stack(rtl_pct=20.0) as s:
+        s.fly()
+        s.fc.battery_pct = 19.0
+        await s.run(1.5)
+        assert s.fc.mode in HOME_MODES
+        s.stop()
+        await s.run(1.0)
+        s.fc.battery_pct = 18.0
+        await s.run(1.5)
+        assert s.fc.mode not in HOME_MODES
+        guard = [e for e in s.g.events if e[0] == "vehicle.battery_rtl" and "alarm" in e[2]]
+        assert len(guard) == 1
+
+
+async def test_resume_and_the_alarm_name_the_energy_reason() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.battery_pct = 80.0
+        await s.run(1.0)
+        s.core.energy_short(True)
+        await s.run(1.0)
+        with pytest.raises(ActionRefusedError) as err:
+            s.resume()
+        assert err.value.code == "BATTERY_RTL_ACTIVE"
+        assert "vinden" in str(err.value.detail_sv)
+        alarms = [e[2] for e in s.g.events if e[0] == "alarm.BATTERY_RTL"]
+        assert [a["reason"] for a in alarms] == ["energy_home"]
+        assert "vinden" in alarms[0]["message_sv"]
+
+
+async def test_the_level_alarm_still_says_the_battery_is_low() -> None:
+    async with stack(rtl_pct=20.0) as s:
+        s.fly()
+        s.fc.battery_pct = 19.0
+        await s.run(1.5)
+        with pytest.raises(ActionRefusedError) as err:
+            s.resume()
+        assert "Batteriet är lågt" in str(err.value.detail_sv)
+        alarms = [e[2] for e in s.g.events if e[0] == "alarm.BATTERY_RTL"]
+        assert [a["reason"] for a in alarms] == ["battery_level"]
+
+
+# --- which estimates may fly the drone home (energy_rtl) --------------------------------
+
+
+def test_the_wind_estimate_without_drag_only_warns() -> None:
+    check, _ = wind_check(watch := WindWatch(), far(battery_pct=30.0), 6.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in check.reasons and not watch.energy_rtl
+
+
+def test_the_wind_estimate_with_measured_drag_flies_home() -> None:
+    watch = WindWatch()
+    watch.drag_k = math.tan(math.radians(10.0)) / 36.0  # top airspeed 10.9 m/s
+    check, _ = wind_check(watch, far(battery_pct=30.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in check.reasons and watch.energy_rtl
+
+
+def test_too_strong_to_get_home_only_warns() -> None:
+    watch = WindWatch()
+    watch.drag_k = math.tan(math.radians(30.0)) / 8.7**2
+    check, _ = wind_check(watch, far(battery_pct=95.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in check.reasons and check.home_mah is None
+    assert not watch.energy_rtl
+
+
+def test_the_estimate_with_the_fc_numbers_flies_home() -> None:
+    # 500 m, 20 A, no wind: 451 mAh + 1500 reserve > 15 % of 10000 mAh.
+    watch = WindWatch()
+    t = far(battery_pct=15.0)
+    now = run(watch, t, 12.0)
+    assert "ENERGY_HOME" in watch.check(t, now).reasons and watch.energy_rtl
+    t = far(battery_pct=60.0)
+    now = run(watch, t, 12.0, start_ms=now + 250)
+    assert "ENERGY_HOME" not in watch.check(t, now).reasons and not watch.energy_rtl
+
+
+def test_the_fc_capacity_decides_the_fly_home() -> None:
+    """The estimate with the constants (10000 mAh) only warns; the flight controller's
+    BATT_CAPACITY decides whether it flies home."""
+    t = far(battery_pct=25.0)  # 2500 mAh by the constant: 451 + 1500 fits
+    small = WindWatch(params=FcParams(capacity_mah=7000.0, fallback=()))  # 1750 mAh
+    now = run(small, t, 12.0)
+    assert "ENERGY_HOME" in small.check(t, now).reasons and small.energy_rtl
+    large = WindWatch(params=FcParams(capacity_mah=16000.0, fallback=()))
+    t = far(battery_pct=15.0)  # 1500 mAh by the constant: short, 2400 by the FC: fits
+    now = run(large, t, 12.0)
+    assert "ENERGY_HOME" in large.check(t, now).reasons and not large.energy_rtl
+
+
+@pytest.mark.parametrize("groundspeed", [0.0, math.nan])
+def test_no_ground_speed_is_not_holding_position(groundspeed: float) -> None:
+    watch = WindWatch()
+    hold = flying(pitch_deg=-10.0, groundspeed_ms=groundspeed)
+    wind_check(watch, hold, 6.0, FROM_SOUTH)
+    assert watch.drag_k is None
+
+
+@pytest.mark.parametrize(
+    ("values", "fallback"),
+    [
+        ({"RTL_SPEED_MS": 25.0}, "RTL_SPEED_MS"),
+        ({"RTL_SPEED_MS": 0.0, "WP_SPD": 30.0}, "RTL_SPEED_MS"),
+        ({"BATT_CAPACITY": 5e6}, "BATT_CAPACITY"),
+        ({"BATT_LOW_MAH": 9000.0}, "BATT_LOW_MAH"),  # above the 8000 mAh capacity
+    ],
+)
+def test_absurd_values_fall_back(values: dict[str, float | None], fallback: str) -> None:
+    assert fallback in fc_params({**READ, **values}).fallback
+
+
+def test_the_wind_direction_is_the_mean_of_the_window() -> None:
+    watch = WindWatch()
+    t = flying()
+    now = 0
+    for i, frm in enumerate((350.0, 10.0, 350.0, 10.0)):
+        now = i * 1000
+        watch.observe(replace(t, wind_mono_ms=now, wind_speed_ms=5.0, wind_from_deg=frm), now)
+    assert watch.check(t, now).wind_from_deg == pytest.approx(0.0, abs=1e-6)
+
+
+async def test_telemetry_reads_only() -> None:
+    """``telemetry`` neither reads parameters nor hands ENERGY_HOME on."""
+    async with stack() as s:
+        s.fly()
+        s.fc.battery_pct = 5.0
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        for _ in range(20):
+            assert mav.telemetry(VID) is not None
+            await s.run(0.25)
+        assert mav._params_read is None  # pyright: ignore[reportPrivateUsage]
+        assert s.core._energy_short_at is None  # pyright: ignore[reportPrivateUsage]

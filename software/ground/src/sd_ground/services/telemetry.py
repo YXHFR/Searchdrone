@@ -91,6 +91,7 @@ class TelemetryService:
         """``telemetry`` for each vehicle. A failure skips one sample, like ``publish_state``."""
         for vid in self._vehicles:
             try:
+                self.g.vehicle_link.update_wind(vid)
                 t = self.g.vehicle_link.telemetry(vid)
             except Exception as exc:  # one sample is lost; the loop lives on
                 log.error("telemetry.sample_failed", vehicle_id=vid, error=type(exc).__name__)

@@ -41,8 +41,14 @@ from sd_ground.logging import get_logger
 from sd_ground.mav import fence as mav_fence
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
-from sd_ground.mav.gnss_watch import GnssWatch, text_alarm
-from sd_ground.services.latches import HOME_LATCHES, Latches
+from sd_ground.mav.gnss_watch import GnssWatch, alarm, text_alarm
+from sd_ground.services.latches import (
+    BATTERY_LOW_SV,
+    ENERGY_HOME_SV,
+    HOME_LATCHES,
+    BatteryReason,
+    Latches,
+)
 from sd_ground.services.wind import WIND_PARAMS, FcParams, WindStage, WindWatch, fc_params
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
@@ -632,13 +638,20 @@ class GroundMav:
             and self.clock.monotonic() - self._energy_short_at <= ENERGY_FRESH_S
             and not snap.by_hand
         )
+        # A battery latch under a STOP blocks its own trigger again until Resume. One set by
+        # ENERGY_HOME never blocks the percentage level: STOP and a take-over after an
+        # energy flight home must not cost the flight home at the level.
+        under = latch is not None and latch.underlying == "battery_rtl"
+        if under and self.latches.battery_reason(self.vehicle_id) == "energy_home":
+            energy = False
+        elif under:
+            at_level = energy = False
         low = at_level or energy
         blocked = (
             not snap.connected
             or not snap.in_flight
             or mode in _FLYING_HOME
             or (latch is not None and latch.action in ("battery_rtl", *HOME_LATCHES))
-            or (latch is not None and latch.underlying == "battery_rtl")
         )
         if not low or blocked:
             self._battery_low_since = None if not low else self._battery_low_since
@@ -649,15 +662,22 @@ class GroundMav:
         if now - self._battery_low_since < BATTERY_CONFIRM_S:
             return
         self._battery_low_since = None
+        reason: BatteryReason = "battery_level" if at_level else "energy_home"
         self._on_event(
             "vehicle.battery_rtl",
             "critical",
-            {
-                "battery_pct": t.battery_pct,
-                "alarm": "BATTERY_RTL",
-                "reason": "battery_level" if at_level else "energy_home",
-            },
+            {"battery_pct": t.battery_pct, "alarm": "BATTERY_RTL", "reason": reason},
         )
+        self._on_event(
+            *alarm(
+                "BATTERY_RTL",
+                "critical",
+                ENERGY_HOME_SV if reason == "energy_home" else BATTERY_LOW_SV,
+                battery_pct=t.battery_pct,
+                reason=reason,
+            )
+        )
+        self.latches.set_battery_reason(self.vehicle_id, reason)
         self._system_action(self.vehicle_id, "battery_rtl")
 
 
@@ -683,6 +703,8 @@ class ThreadSafeMav:
         self._params_read: concurrent.futures.Future[dict[str, float | None]] | None = None
         self._params_done = False
         self._params_retry_at: float = -math.inf
+        self._wind_check: WindCheck | None = None  # the newest from ``update_wind``
+        self._wind_connected = False
 
     def _call(self, fn: Callable[..., None], *args: Any) -> bool:
         try:
@@ -745,26 +767,46 @@ class ThreadSafeMav:
         return "ok" if snap is not None and snap.onboard_alive else "down"
 
     def telemetry(self, vehicle_id: str) -> Telemetry | None:
+        """The newest telemetry with the newest wind check (``update_wind``). Reads only."""
         snap = self.snapshot()
         if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
-            if snap is not None and not snap.connected:
-                self._forget_wind_params()  # read again after the next connect (a reboot)
             return None
         with self._wind_lock:
+            wind = self._wind_check
+        return to_telemetry(snap, self.core.clock.utc_now(), wind)
+
+    def update_wind(self, vehicle_id: str) -> None:
+        """The wind check's step, from the telemetry loop (never the MAVLink thread): take
+        the newest samples, read the flight controller's numbers once per connection, and
+        hand the energy check's FLY HOME reason to the battery guard."""
+        snap = self.snapshot()
+        if snap is None or snap.vehicle_id != vehicle_id:
+            return
+        with self._wind_lock:
+            if snap.connected != self._wind_connected:
+                # A new connection (possibly another flight controller, or a reboot) and a
+                # lost one both start from nothing: the numbers are read again, and the
+                # drag is measured again.
+                self._forget_wind()
+                self._wind_connected = snap.connected
+            if not snap.connected:
+                return
             self._wind_params()
             self.wind.observe(snap.telemetry, snap.now_mono_ms)
             wind = self.wind.check(snap.telemetry, snap.now_mono_ms)
-        self._call(self.core.energy_short, "ENERGY_HOME" in wind.reasons)
-        return to_telemetry(snap, self.core.clock.utc_now(), wind)
+            self._wind_check = wind
+            rtl = self.wind.energy_rtl
+        self._call(self.core.energy_short, rtl)
 
-    def _forget_wind_params(self) -> None:
-        with self._wind_lock:
-            if self._params_read is not None:
-                self._params_read.cancel()
-            self._params_read = None
-            self._params_done = False
-            self._params_retry_at = -math.inf
-            self.wind.set_params(FcParams())
+    def _forget_wind(self) -> None:
+        """Called under ``_wind_lock``."""
+        if self._params_read is not None:
+            self._params_read.cancel()
+        self._params_read = None
+        self._params_done = False
+        self._params_retry_at = -math.inf
+        self._wind_check = None
+        self.wind.reset(FcParams())
 
     def _wind_params(self) -> None:
         """Take a finished read of ``WIND_PARAMS``, or start one unless they are read for

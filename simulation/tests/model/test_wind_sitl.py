@@ -25,6 +25,13 @@ the drone north.
   sim layer, the constant is 30); the ground station's ``ThreadSafeMav`` reads it on
   connect and the tilt warning is at 35 - 10 degrees, with no parameter on the
   constants.
+* W6 ENERGY_HOME flies home: 150 m out, the ground station's own ``GroundMav`` and
+  ``VehicleActions`` on 250/190, the pack set to 14 % (under ``BATT_LOW_MAH``, which the
+  flight controller takes without acting on it at the reset, over the critical 7 %). The
+  estimate with the flight controller's own numbers is short, so the ground station flies
+  home: SmartRTL/RTL, the event's reason is ``energy_home``, Resume is refused with
+  ``BATTERY_RTL_ACTIVE``; after STOP and "Ta över" the drone stays in LOITER while the
+  estimate is still short (the energy latch under the STOP blocks only its own trigger).
 * Nightly sweep: W2 with 0-18 m/s in steps of 2; red only if the drone does not get home
   in 12 m/s or less. Each run's report gives the speed, so the summary shows the
   strongest wind it still got home in.
@@ -69,9 +76,11 @@ from test_sd_quad14_sitl import (  # pyright: ignore[reportMissingImports]
     take_off,
 )
 
+from sd_ground.auth import Principal
 from sd_ground.mav.thread import GroundMav, ThreadSafeMav
 from sd_ground.services import wind
 from sd_ground.services.latches import Latches
+from sd_ground.services.vehicle_actions import ActionRefusedError, VehicleActions
 from sd_mav import Role, Vehicle, connect
 from sd_obs.clock import MonotonicClock
 from sd_safety.constants import FC_ANGLE_MAX_DEG, FC_SAFETY_EXPECTED
@@ -557,7 +566,7 @@ W5_VID = "sim-01"
 
 async def ground_wind_check(instance: int) -> tuple[wind.FcParams, float | None]:
     """The ground station's own path: ``GroundMav`` on 250/190 and ``ThreadSafeMav``,
-    whose ``telemetry`` reads ``WIND_PARAMS`` on connect. Returns what it read and the
+    whose ``update_wind`` reads ``WIND_PARAMS`` on connect. Returns what it read and the
     tilt warning it then shows."""
     clock = MonotonicClock()
     url = f"udpin:127.0.0.1:{ports.for_instance(instance)['ground_mavlink']}"
@@ -579,6 +588,7 @@ async def ground_wind_check(instance: int) -> tuple[wind.FcParams, float | None]
         warn: float | None = None
         end = time.monotonic() + PARAMS_WAIT_S
         while time.monotonic() < end:
+            mav.update_wind(W5_VID)
             out = mav.telemetry(W5_VID)
             if out is not None and out.wind is not None:
                 warn = out.wind.tilt_warn_deg
@@ -636,6 +646,173 @@ def test_w5_ground_reads_the_fc_lean_limit(sim_instance: int, sim_brain: str) ->
         sim_brain,
         fc_params_flight(sim_instance),
         vehicle="sd_fpv7",
+    )
+    assert rep.passed, "\n".join(rep.failures())
+
+
+# --- W6 ENERGY_HOME flies home ----------------------------------------------------------
+
+W6_OUT_M = 150.0
+W6_PCT = 14.0  # under BATT_LOW_MAH (15 %), taken silently at the reset; over BATT_CRT (7 %)
+W6_RTL_PCT = 5.0  # the percentage level stays out of the way: only the energy can fly home
+W6_FIRE_S = 20.0
+W6_TAKEOVER_S = 10.0
+W6_HOLD_S = 10.0
+W6_PILOT = Principal(role="pilot", issuer_ref="operator:sitl", auth_mode="local")
+
+
+@dataclass
+class EnergyRun:
+    fired_mode: str | None = None
+    reasons: list[str] = field(default_factory=list[str])
+    resume_code: str | None = None
+    resume_text: str = ""
+    takeover_mode: str | None = None
+    hold_modes: set[str] = field(default_factory=set[str])
+    reasons_in_hold: list[str] = field(default_factory=list[str])
+    landed: bool = False
+
+
+async def ground_energy_home(harness: Harness, instance: int) -> EnergyRun:
+    """The ground station's battery guard against SITL: ``GroundMav`` with ``Latches`` and
+    ``VehicleActions`` as in ``sd_ground``, ``update_wind`` five times a second as the
+    telemetry publisher calls it. The harness runs in a worker thread while the ground
+    station's loop keeps its heartbeat (``MAV_GCS_SYSID`` 250) going."""
+    clock = MonotonicClock()
+    url = f"udpin:127.0.0.1:{ports.for_instance(instance)['ground_mavlink']}"
+    conn = connect(url, role=Role.GROUND, source_system=250, source_component=190)
+    vehicle = Vehicle(conn, role=Role.GROUND, clock=clock)
+    latches = Latches(clock)
+    actions = VehicleActions(clock, latches, vehicle_ids=[W5_VID])
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def on_event(type_: str, severity: str, payload: dict[str, object]) -> None:
+        events.append((type_, payload))
+        actions.on_event(type_, severity, payload)
+
+    core = GroundMav(
+        vehicle,
+        clock,
+        vehicle_id=W5_VID,
+        latches=latches,
+        on_report=actions.on_report,
+        on_event=on_event,
+        system_action=actions.system,
+        rtl_pct=lambda: W6_RTL_PCT,
+    )
+    mav = ThreadSafeMav(core, asyncio.get_running_loop())
+    actions.mav = mav
+    run = EnergyRun()
+
+    def mode() -> str | None:
+        snap = mav.snapshot()
+        return None if snap is None else snap.telemetry.fc_mode
+
+    def reasons() -> list[str]:
+        return [str(p["reason"]) for t, p in events if t == "vehicle.battery_rtl" and "alarm" in p]
+
+    async def until(ok: Callable[[], bool], timeout_s: float) -> bool:
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            mav.update_wind(W5_VID)
+            if ok():
+                return True
+            await asyncio.sleep(0.2)
+        return ok()
+
+    await core.start()
+    try:
+        assert await vehicle.wait_connected(20), "ingen HEARTBEAT på markstationens kanal"
+        snap_ok = await until(
+            lambda: (snap := mav.snapshot()) is not None and snap.connected and snap.in_flight,
+            PARAMS_WAIT_S,
+        )
+        assert snap_ok, "markstationen ser inte drönaren i luften"
+        await until(lambda: mav.wind.params.fallback == (), PARAMS_WAIT_S)
+        await asyncio.to_thread(harness.battery_set_remaining, W6_PCT)
+        await until(lambda: mode() in HOME_MODES and bool(reasons()), W6_FIRE_S)
+        run.fired_mode, run.reasons = mode(), reasons()
+
+        try:
+            actions.resume(W5_VID, client_action_id="w6-resume", by=W6_PILOT)
+        except ActionRefusedError as exc:
+            run.resume_code, run.resume_text = exc.code, str(exc.detail_sv)
+
+        actions.dispatch("stop", W5_VID, client_action_id="w6-stop", via="button", by=W6_PILOT)
+        await until(lambda: False, 2.0)
+        actions.takeover(W5_VID, client_action_id="w6-takeover", by=W6_PILOT)
+        await until(lambda: mode() == "LOITER", W6_TAKEOVER_S)
+        run.takeover_mode = mode()
+        before = len(reasons())
+        end = time.monotonic() + W6_HOLD_S
+        while time.monotonic() < end:
+            await until(lambda: False, 0.5)
+            if (m := mode()) is not None:
+                run.hold_modes.add(m)
+        run.reasons_in_hold = reasons()[before:]
+
+        # Home and down with the ground station still connected (its heartbeat keeps the
+        # flight controller's GCS failsafe away).
+        actions.dispatch(
+            "return_home", W5_VID, client_action_id="w6-home", via="button", by=W6_PILOT
+        )
+        run.landed = await asyncio.to_thread(wait_on_ground, harness, RTL_WAIT_S)
+        return run
+    finally:
+        await core.close()
+
+
+def energy_home_flight(instance: int) -> Callable[[Harness, Report], None]:
+    def flight(harness: Harness, rep: Report) -> None:
+        rep.variant = VARIANT
+        take_off(harness, ALT_M)
+        home = Plane(harness.state.lat, harness.state.lon)
+        lat, lon = home.latlon(0.0, W6_OUT_M)
+        harness.goto(lat, lon, ALT_M)
+        harness.wait(
+            lambda s: home.xy(s.lat, s.lon)[1] >= W6_OUT_M - 3.0, 120, f"{W6_OUT_M:.0f} m ut"
+        )
+        run = asyncio.run(ground_energy_home(harness, instance))
+        rep.check(
+            "W6.1",
+            "ENERGY_HOME flyger hem: SmartRTL/RTL från markstationen (okalibrerad)",
+            run.fired_mode in HOME_MODES,
+            measured=run.fired_mode,
+        )
+        rep.check(
+            "W6.2",
+            "Händelsens orsak är energy_home",
+            run.reasons[:1] == ["energy_home"],
+            measured=run.reasons,
+        )
+        rep.check(
+            "W6.3",
+            "Resume nekas med BATTERY_RTL_ACTIVE och texten nämner vinden",
+            run.resume_code == "BATTERY_RTL_ACTIVE" and "vinden" in run.resume_text,
+            measured={"code": run.resume_code, "text": run.resume_text},
+        )
+        rep.check(
+            "W6.4",
+            f"Efter STOPP och Ta över ligger drönaren i LOITER i {W6_HOLD_S:g} s, "
+            "ingen ny energiutlösning",
+            run.takeover_mode == "LOITER"
+            and run.hold_modes == {"LOITER"}
+            and not run.reasons_in_hold,
+            measured={
+                "takeover_mode": run.takeover_mode,
+                "modes": sorted(run.hold_modes),
+                "reasons": run.reasons_in_hold,
+            },
+        )
+        assert run.landed, f"landade inte inom {RTL_WAIT_S:.0f} s"
+
+    return flight
+
+
+@pytest.mark.budget_s(300)
+def test_w6_energy_home_flies_home(sim_instance: int, sim_brain: str) -> None:
+    rep = fly_scenario(
+        "wind_w6_energy_home", "builtin", sim_instance, sim_brain, energy_home_flight(sim_instance)
     )
     assert rep.passed, "\n".join(rep.failures())
 

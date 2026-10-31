@@ -2,11 +2,11 @@
 
 The panel shows it before takeoff and in flight (``Telemetry.wind``), and the event log
 gets ``vehicle.wind_warning`` when it starts. ``TILT_MARGIN`` and ``WIND_LIMIT`` are
-warnings only. ``ENERGY_HOME`` also starts the battery guard's FLY HOME
-(``sd_ground.mav.thread.GroundMav``, ``battery_rtl``) in addition to its percentage
-level, so the drone can turn home earlier than before but never later. STOP, FLY HOME
-and the flight controller's own failsafes are unchanged. Three checks, each one a
-reason in ``WindCheck.reasons``:
+warnings only. ``ENERGY_HOME`` can also start the battery guard's FLY HOME
+(``sd_ground.mav.thread.GroundMav``, ``battery_rtl``, through ``WindWatch.energy_rtl``) in
+addition to its percentage level, so the drone can turn home earlier than before but
+never later. STOP, FLY HOME and the flight controller's own failsafes are unchanged.
+Three checks, each one a reason in ``WindCheck.reasons``:
 
 * **Tilt margin** (``TILT_MARGIN``): a quadcopter leans into the wind to hold its place,
   so the tilt is a wind gauge that needs no calibration. The mean tilt over the last
@@ -31,10 +31,17 @@ reason in ``WindCheck.reasons``:
   a wind (``tan(tilt) = k * wind**2``). Until it is measured, the drone is assumed to fly
   home at ``RTL_SPEED_MS`` through the air at full lean (``ATC_ANGLE_MAX``): slow and
   expensive, so early.
+
+  Only some of them may fly the drone home (``energy_rtl``): the estimate with the flight
+  controller's numbers, and the one with the wind once the drag is measured and the way
+  home is possible at all. The estimate with the constants, the wind estimate without
+  measured drag and "too strong to get home" only warn: without the drag a headwind of
+  a few m/s already reads as a crawl home, and the pilot decides.
 * **Wind limit** (``WIND_LIMIT``): the flight controller's own wind estimate (MAVLink
-  WIND) over the owner's limit for the current stage. ArduCopter only sends WIND when
-  ``EK3_DRAG_*`` are set, which they are not until the drag is measured in flight, so
-  this check, and the energy estimate with the wind, are silent until then.
+  WIND) over the owner's limit for the current stage. ArduCopter's EKF only estimates
+  the wind with drag fusion (``EK3_DRAG_*``), which is not set until the drag is
+  measured in flight; until then WIND reads (close to) no wind, so this check, and the
+  energy estimate with the wind, see no wind.
 
 The lean limit, the RTL speed and the battery numbers are the flight controller's own
 (``WIND_PARAMS``, read on each connection, ``FcParams``); a parameter that could not be
@@ -109,6 +116,8 @@ RESERVE_MAH: Final = float(FC_SAFETY_EXPECTED["BATT_LOW_MAH"])
 # when ``RTL_SPEED_MS`` is 0 (Copter 4.7 names; WPNAV_SPEED before).
 WIND_PARAMS: Final = ("ATC_ANGLE_MAX", "RTL_SPEED_MS", "WP_SPD", "BATT_CAPACITY", "BATT_LOW_MAH")
 _ANGLE_RANGE_DEG: Final = (10.0, 80.0)  # ATC_ANGLE_MAX's range in ArduCopter
+_SPEED_MAX_MS: Final = 20.0  # RTL_SPEED_MS' and WP_SPD's upper end in ArduCopter
+_CAPACITY_MAX_MAH: Final = 1_000_000.0  # far above any battery this drone can lift
 
 log = get_logger("sd_ground.wind")
 
@@ -135,19 +144,26 @@ def _usable(v: float | None, low: float = 0.0, high: float = math.inf) -> float 
 def fc_params(values: Mapping[str, float | None]) -> FcParams:
     """``FcParams`` from what the flight controller answered (``mav.fence.read_params``).
     A parameter without a usable answer keeps its constant, with ``wind.param_fallback``
-    in the log: ``BATT_LOW_MAH`` 0 (no mAh failsafe) or an ``ATC_ANGLE_MAX`` outside
-    ArduCopter's range count as unusable too."""
+    in the log: ``BATT_LOW_MAH`` 0 (no mAh failsafe) or above the capacity, an
+    ``ATC_ANGLE_MAX`` outside ArduCopter's range, a speed over 20 m/s and an absurd
+    capacity count as unusable too."""
     defaults = FcParams()
     lo, hi = _ANGLE_RANGE_DEG
     angle = _usable(values.get("ATC_ANGLE_MAX"), lo - 1e-6, hi)
-    rtl = _usable(values.get("RTL_SPEED_MS"))
+    rtl = _usable(values.get("RTL_SPEED_MS"), high=_SPEED_MAX_MS)
     if rtl is None and values.get("RTL_SPEED_MS") == 0.0:
-        rtl = _usable(values.get("WP_SPD"))  # RTL_SPEED_MS 0: RTL flies at WP_SPD
+        # RTL_SPEED_MS 0: RTL flies at WP_SPD
+        rtl = _usable(values.get("WP_SPD"), high=_SPEED_MAX_MS)
+    capacity = _usable(values.get("BATT_CAPACITY"), high=_CAPACITY_MAX_MAH)
+    reserve_high = _CAPACITY_MAX_MAH if capacity is None else capacity
     read = {
         "ATC_ANGLE_MAX": (angle, defaults.angle_max_deg),
         "RTL_SPEED_MS": (rtl, defaults.rtl_speed_ms),
-        "BATT_CAPACITY": (_usable(values.get("BATT_CAPACITY")), defaults.capacity_mah),
-        "BATT_LOW_MAH": (_usable(values.get("BATT_LOW_MAH")), defaults.reserve_mah),
+        "BATT_CAPACITY": (capacity, defaults.capacity_mah),
+        "BATT_LOW_MAH": (
+            _usable(values.get("BATT_LOW_MAH"), high=reserve_high),
+            defaults.reserve_mah,
+        ),
     }
     fallback = tuple(name for name, (v, _) in read.items() if v is None)
     for name in fallback:
@@ -258,6 +274,7 @@ class _Energy:
     cost_mah: float | None  # None: does not get home
     left_mah: float | None
     reserve_mah: float
+    may_fly_home: bool = False  # this estimate may start the FLY HOME (``energy_rtl``)
 
     @property
     def short(self) -> bool:
@@ -291,6 +308,16 @@ def _wind_on_the_way(
     return head, cross
 
 
+def _mean_from_deg(samples: deque[_Wind]) -> float:
+    """The direction of the mean wind over the window (the wind vectors averaged), so
+    the direction and the speed come from the same samples."""
+    east = sum(s.speed_ms * math.sin(math.radians(s.from_deg)) for s in samples)
+    north = sum(s.speed_ms * math.cos(math.radians(s.from_deg)) for s in samples)
+    if math.hypot(east, north) < 1e-9:
+        return samples[-1].from_deg
+    return round(math.degrees(math.atan2(east, north)), 6) % 360.0
+
+
 class WindWatch:
     """Keeps the last samples and computes ``WindCheck``. Not thread safe on its own."""
 
@@ -300,6 +327,8 @@ class WindWatch:
         self._tilt: deque[_Tilt] = deque()
         self._wind: deque[_Wind] = deque()
         self.drag_k: float | None = None  # tan(tilt) / airspeed**2, measured this flight
+        # ENERGY_HOME from an estimate that may fly the drone home (see the module doc).
+        self.energy_rtl = False
 
     @property
     def tilt_warn_deg(self) -> float:
@@ -308,6 +337,14 @@ class WindWatch:
     def set_params(self, params: FcParams) -> None:
         """The flight controller's values (read on each connection)."""
         self.params = params
+
+    def reset(self, params: FcParams) -> None:
+        """A new or lost connection: nothing of the last one is kept."""
+        self.params = params
+        self._tilt.clear()
+        self._wind.clear()
+        self.drag_k = None
+        self.energy_rtl = False
 
     def observe(self, t: FcTelemetry, now_mono_ms: int) -> None:
         """Take the newest ATTITUDE and WIND from ``t``; each sample is kept once."""
@@ -343,7 +380,9 @@ class WindWatch:
             return
         if wind_ms < DRAG_MIN_WIND_MS or tilt_avg < DRAG_MIN_TILT_DEG:
             return
-        if any(s.groundspeed_ms >= HOLD_GROUNDSPEED_MS for s in self._tilt):
+        # Exactly 0 is what the telemetry reads before any ground speed came (and NaN a bad
+        # one): neither shows that the drone holds position.
+        if not all(0.0 < s.groundspeed_ms < HOLD_GROUNDSPEED_MS for s in self._tilt):
             return
         k = math.tan(math.radians(tilt_avg)) / wind_ms**2
         if math.isfinite(k) and k > 0.0:
@@ -351,15 +390,16 @@ class WindWatch:
 
     def _energy(
         self, t: FcTelemetry, tilt_now: float, wind: tuple[float, float] | None
-    ) -> _Energy | None:
-        """The strictest of: the estimate as before (the constants), the same with the
-        flight controller's own numbers, and (with a fresh WIND) the one with the wind."""
+    ) -> list[_Energy]:
+        """The estimate as before (the constants), the same with the flight controller's
+        own numbers, and (with a fresh WIND) the one with the wind; empty without a
+        current or a home."""
         currents = [s.current_a for s in self._tilt if s.current_a is not None]
         if not currents or t.home is None:
-            return None
+            return []
         way = distance_m(t.home.lat, t.home.lon, t.lat, t.lon)
         if not math.isfinite(way):
-            return None
+            return []
         current = sum(currents) / len(currents)
         pct = None if t.battery_pct is None else t.battery_pct / 100.0
         p = self.params
@@ -368,7 +408,7 @@ class WindWatch:
             _Energy(
                 home_mah(way, current), None if pct is None else pct * CAPACITY_MAH, RESERVE_MAH
             ),
-            _Energy(home_mah(way, current, p.rtl_speed_ms), left, p.reserve_mah),
+            _Energy(home_mah(way, current, p.rtl_speed_ms), left, p.reserve_mah, True),
         ]
         if wind is not None:
             head, cross = _wind_on_the_way(Plane(t.home.lat, t.home.lon), t.lat, t.lon, *wind)
@@ -381,8 +421,9 @@ class WindWatch:
                 params=p,
                 drag_k=self.drag_k,
             )
-            estimates.append(_Energy(cost, left, p.reserve_mah))
-        return min(estimates, key=lambda e: e.spare_mah)
+            calibrated = self.drag_k is not None and cost is not None
+            estimates.append(_Energy(cost, left, p.reserve_mah, calibrated))
+        return estimates
 
     def check(self, t: FcTelemetry, now_mono_ms: int) -> WindCheck:
         reasons: list[WindReason] = []
@@ -396,7 +437,7 @@ class WindWatch:
         if self._wind and now_mono_ms - self._wind[-1].mono_ms <= WIND_FRESH_S * 1000:
             mean = sum(s.speed_ms for s in self._wind) / len(self._wind)
             gust = max(s.speed_ms for s in self._wind)
-            from_deg = self._wind[-1].from_deg
+            from_deg = _mean_from_deg(self._wind)
         self._measure_drag(tilt_avg, mean)
 
         wind = None
@@ -404,9 +445,11 @@ class WindWatch:
             wind = (mean, from_deg)  # the 60 s mean: one gust does not send it home
         # The lean the measured current belongs to (the same samples, full window or not).
         tilt_now = sum(s.tilt_deg for s in self._tilt) / len(self._tilt) if self._tilt else 0.0
-        energy = self._energy(t, tilt_now, wind)
+        estimates = self._energy(t, tilt_now, wind)
+        energy = min(estimates, key=lambda e: e.spare_mah) if estimates else None
         if energy is not None and energy.short:
             reasons.append("ENERGY_HOME")
+        self.energy_rtl = any(e.may_fly_home and e.short for e in estimates)
 
         if mean is not None and gust is not None:
             over_gust = self.gust_limit_ms is not None and gust > self.gust_limit_ms

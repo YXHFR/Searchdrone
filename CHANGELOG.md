@@ -132,13 +132,24 @@ All notable changes to this project are listed here. The format follows
   (the drag is measured while the drone holds position; until then, full lean at
   `RTL_SPEED_MS` through the air). The 1.3 margin stays. The strictest of the estimate
   as before, the same with the flight controller's numbers and the one with the wind
-  decides, so the warning never comes later than before, and a wind too strong to get
-  home in (once the drag is measured) warns at once. The wind used is the mean over the
-  last 60 s, so one gust does not count. `ENERGY_HOME` also starts the battery guard's
-  FLY HOME (`battery_rtl`, `vehicle.battery_rtl` with `reason: energy_home`), but not
-  while the pilot flies by hand; the guard's percentage level and the flight
-  controller's failsafes are unchanged. SITL W5 shows
-  the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35.
+  decides the warning, so the warning never comes later than before, and a wind too
+  strong to get home in (once the drag is measured) warns at once. The wind used is the
+  mean over the last 60 s, direction and speed from the same samples, so one gust does
+  not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
+  `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
+  from the estimate with the flight controller's numbers (`BATT_CAPACITY`, not the
+  constant 10000 mAh), or from the wind estimate once the drag is measured; an
+  uncalibrated drag and a wind too strong to get home in only warn. Not while the pilot
+  flies by hand. A ground speed of 0 or NaN does not count as holding position for the
+  drag. Parameters outside sane bounds (speeds over 20 m/s, a capacity over 1,000,000
+  mAh, `BATT_LOW_MAH` over the capacity) keep their constants. A reconnect forgets the
+  parameters and the measured drag. The guard's percentage level and the flight
+  controller's failsafes are unchanged: an energy flight home under a STOP blocks only
+  the energy trigger, so the percentage level still flies home after STOP and "Ta över".
+  Resume's refusal and the alarm say when the wind and the battery sent the drone home.
+  SITL W5 shows the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35; W6 has
+  `ENERGY_HOME` fly home (reason `energy_home`, Resume refused, STOP and "Ta över" leave
+  the drone in LOITER).
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also

@@ -134,7 +134,7 @@ GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: 500_000,
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,
     mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
-    mavlink.MAVLINK_MSG_ID_WIND: 1_000_000,  # sent only with EK3_DRAG_* set
+    mavlink.MAVLINK_MSG_ID_WIND: 1_000_000,  # a real estimate only with EK3_DRAG_* set
 }
 
 
@@ -222,8 +222,9 @@ class FcTelemetry:
     battery_charge_state: int | None = None
     battery_voltage_v: float | None = None
     battery_current_a: float | None = None  # BATTERY_STATUS; None when not measured
-    # MAVLink WIND: the EKF's wind estimate (direction it blows from, deg). ArduCopter only
-    # sends it when EK3_DRAG_* are set; None until the first one.
+    # MAVLink WIND: the EKF's wind estimate (direction it blows from, deg). ArduCopter
+    # sends it either way, but the EKF estimates wind only with drag fusion (EK3_DRAG_*);
+    # without it the speed stays near 0. None until the first one.
     wind_mono_ms: int | None = None
     wind_from_deg: float = 0.0
     wind_speed_ms: float = 0.0
@@ -916,7 +917,8 @@ class Vehicle:
                     battery_current_a=None if centiamps < 0 else centiamps / 100.0,
                 )
             case "WIND":
-                # Display and the ground's wind warning only, so no notify. A non-finite
+                # Read by the ground station's wind check (the warning, and ENERGY_HOME's
+                # estimate once the drag is measured); no notify. A non-finite
                 # or negative sample is dropped; the previous one ages out.
                 speed, frm = float(msg.speed), float(msg.direction)
                 if math.isfinite(speed) and math.isfinite(frm) and speed >= 0.0:

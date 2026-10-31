@@ -3298,18 +3298,22 @@ export interface Telemetry {
 }
 /**
  * The ground station's "too windy" warning. ``TILT_MARGIN`` and ``WIND_LIMIT`` are
- * warnings only; ``ENERGY_HOME`` also starts the ground station's battery FLY HOME
- * (``battery_rtl``), which can only make the flight home earlier. Its thresholds are not
- * yet calibrated against flight logs, so ``calibrated`` is always false for now.
+ * warnings only. ``ENERGY_HOME`` warns on the strictest estimate, and starts the ground
+ * station's battery FLY HOME (``battery_rtl``) only when the estimate with the flight
+ * controller's own numbers is short, or the wind estimate is short with a measured drag;
+ * that can only make the flight home earlier. Its thresholds are not yet calibrated
+ * against flight logs, so ``calibrated`` is always false for now.
  *
  * * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
  *   the flight controller's lean limit (ATC_ANGLE_MAX, read from the flight controller).
  * * ``ENERGY_HOME``: flying home now would leave less than the flight controller's
  *   low-battery reserve, or the wind is too strong to get home at all. The strictest of
- *   the estimate at RTL speed and the measured current with a 30 % margin, and (with
- *   WIND) the same against the measured headwind and crosswind on the way home.
- * * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
- *   when EK3_DRAG_* are set) is over the configured wind limit.
+ *   the estimate at RTL speed and the measured current with a 30 % margin (with the
+ *   constants and with the flight controller's BATT_CAPACITY, BATT_LOW_MAH and
+ *   RTL_SPEED_MS), and (with WIND) the same against the measured headwind and crosswind
+ *   on the way home. Too strong to get home only warns.
+ * * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND; the EKF
+ *   estimates wind only with drag fusion, EK3_DRAG_*) is over the configured wind limit.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "WindCheck".
