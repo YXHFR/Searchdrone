@@ -122,6 +122,22 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
+  `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
+  connection, with the fence check's parameter reading. A parameter that cannot be read
+  keeps its constant from `sd_safety.constants`, and `wind.param_fallback` is logged.
+  `ENERGY_HOME` now also counts the wind on the way home: with a fresh MAVLink WIND the
+  ground speed home is the airspeed minus the headwind, with the crosswind crabbed out,
+  and the current comes from the hover current scaled to the lean that airspeed needs
+  (the drag is measured while the drone holds position; until then, full lean at
+  `RTL_SPEED_MS` through the air). The 1.3 margin stays. The strictest of the estimate
+  as before, the same with the flight controller's numbers and the one with the wind
+  decides, so the warning never comes later than before, and a wind too strong to get
+  home in warns at once. `ENERGY_HOME` also starts the battery guard's FLY HOME
+  (`battery_rtl`, `vehicle.battery_rtl` with `reason: energy_home`); the guard's
+  percentage level and the flight controller's failsafes are unchanged. SITL W5 shows
+  the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35.
+
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also
   shows its Wilson lower bound. SK04 counts every verdict of the hiker's top that saw it,

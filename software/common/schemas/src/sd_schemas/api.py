@@ -267,14 +267,17 @@ WindReason = Literal["TILT_MARGIN", "ENERGY_HOME", "WIND_LIMIT"]
 
 
 class WindCheck(SdModel):
-    """The ground station's "too windy" warning. A warning only: nothing on board or on
-    the ground acts on it, and STOP and FLY HOME are unchanged. Its thresholds are not yet
-    calibrated against flight logs, so ``calibrated`` is always false for now.
+    """The ground station's "too windy" warning. ``TILT_MARGIN`` and ``WIND_LIMIT`` are
+    warnings only; ``ENERGY_HOME`` also starts the ground station's battery FLY HOME
+    (``battery_rtl``), which can only make the flight home earlier. Its thresholds are not
+    yet calibrated against flight logs, so ``calibrated`` is always false for now.
 
     * ``TILT_MARGIN``: the mean tilt over the last 10 s in the air is within 10 degrees of
-      the flight controller's lean limit (ATC_ANGLE_MAX).
-    * ``ENERGY_HOME``: flying home now at RTL speed, at the measured current with a 30 %
-      margin, would leave less than the flight controller's low-battery reserve.
+      the flight controller's lean limit (ATC_ANGLE_MAX, read from the flight controller).
+    * ``ENERGY_HOME``: flying home now would leave less than the flight controller's
+      low-battery reserve, or the wind is too strong to get home at all. The strictest of
+      the estimate at RTL speed and the measured current with a 30 % margin, and (with
+      WIND) the same against the measured headwind and crosswind on the way home.
     * ``WIND_LIMIT``: the flight controller's own wind estimate (MAVLink WIND, only sent
       when EK3_DRAG_* are set) is over the configured wind limit.
     """
@@ -289,7 +292,8 @@ class WindCheck(SdModel):
     wind_from_deg: float | None
     wind_limit_ms: float
     wind_gust_limit_ms: float | None  # None: no gust limit at this stage
-    home_mah: float | None  # estimated cost of flying home now, margin included
+    home_mah: float | None  # cost of flying home now, margin included; None: no
+    # estimate, or (with ENERGY_HOME) the wind is too strong to get home
     left_mah: float | None
     reserve_mah: float
 

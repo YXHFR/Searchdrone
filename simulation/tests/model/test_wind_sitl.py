@@ -21,6 +21,10 @@ the drone north.
 * W4 battery margin: 500 m out, the pack just above the flight controller's 15 % and
   10 m/s against the way home; SmartRTL/RTL within 5 s of the low-battery message, lands
   within 5 m of home, the critical level (LAND) never triggers.
+* W5 the flight controller's own lean limit: ``sd_fpv7`` (``ATC_ANGLE_MAX`` 35 in its
+  sim layer, the constant is 30); the ground station's ``ThreadSafeMav`` reads it on
+  connect and the tilt warning is at 35 - 10 degrees, with no parameter on the
+  constants.
 * Nightly sweep: W2 with 0-18 m/s in steps of 2; red only if the drone does not get home
   in 12 m/s or less. Each run's report gives the speed, so the summary shows the
   strongest wind it still got home in.
@@ -30,8 +34,9 @@ the position controller leans at most ``ATC_ANGLE_MAX``; both are 30 degrees, so
 fastest the model flies through the air is ``refSpd``. RTL keeps ``RTL_SPEED_MS`` over
 the ground when it can, so home takes ``distance / min(RTL_SPEED_MS, refSpd - wind)``.
 The mAh model is that time at the current measured while the drone held position in the
-same wind. (The ground station's warning, which does not know the wind, takes the same
-current at ``RTL_SPEED_MS`` and leaves the headwind to its 1.3 margin.)
+same wind. (The ground station's ``ENERGY_HOME`` takes the measured WIND's headwind and
+crosswind on the way home, the drag it measured while holding position, and the
+flight controller's own ``ATC_ANGLE_MAX`` and ``RTL_SPEED_MS``; ``sd_ground.services.wind``.)
 
 Landing in wind: SITL keeps pushing a drone on the ground, and ArduCopter's land
 detector then never confirms the landing. A landing counts when the drone has been on
@@ -40,6 +45,7 @@ the ground for 3 s, and the wind is set to 0 before any disarm the test waits fo
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -63,9 +69,14 @@ from test_sd_quad14_sitl import (  # pyright: ignore[reportMissingImports]
     take_off,
 )
 
+from sd_ground.mav.thread import GroundMav, ThreadSafeMav
+from sd_ground.services import wind
+from sd_ground.services.latches import Latches
+from sd_mav import Role, Vehicle, connect
+from sd_obs.clock import MonotonicClock
 from sd_safety.constants import FC_ANGLE_MAX_DEG, FC_SAFETY_EXPECTED
 from sd_safety.targets import Plane
-from sd_sim import paths
+from sd_sim import paths, ports
 from sd_sim.harness import Harness, VehicleState
 from sd_sim.report import Report
 
@@ -534,6 +545,98 @@ def margin_flight(harness: Harness, rep: Report) -> None:
 @pytest.mark.budget_s(360)
 def test_w4_battery_margin_against_10_ms(sim_instance: int, sim_brain: str) -> None:
     rep = wind_report("wind_w4_margin", sim_instance, sim_brain, margin_flight)
+    assert rep.passed, "\n".join(rep.failures())
+
+
+# --- W5 the flight controller's own lean limit ----------------------------------------------
+
+FPV7_ANGLE_MAX_DEG = 35.0  # sd_fpv7-sim.parm
+PARAMS_WAIT_S = 30.0
+W5_VID = "sim-01"
+
+
+async def ground_wind_check(instance: int) -> tuple[wind.FcParams, float | None]:
+    """The ground station's own path: ``GroundMav`` on 250/190 and ``ThreadSafeMav``,
+    whose ``telemetry`` reads ``WIND_PARAMS`` on connect. Returns what it read and the
+    tilt warning it then shows."""
+    clock = MonotonicClock()
+    url = f"udpin:127.0.0.1:{ports.for_instance(instance)['ground_mavlink']}"
+    conn = connect(url, role=Role.GROUND, source_system=250, source_component=190)
+    vehicle = Vehicle(conn, role=Role.GROUND, clock=clock)
+    core = GroundMav(
+        vehicle,
+        clock,
+        vehicle_id=W5_VID,
+        latches=Latches(clock),
+        on_report=lambda _: None,
+        on_event=lambda *_: None,
+        system_action=lambda *_: None,
+    )
+    mav = ThreadSafeMav(core, asyncio.get_running_loop())
+    await core.start()
+    try:
+        assert await vehicle.wait_connected(20), "ingen HEARTBEAT på markstationens kanal"
+        warn: float | None = None
+        end = time.monotonic() + PARAMS_WAIT_S
+        while time.monotonic() < end:
+            out = mav.telemetry(W5_VID)
+            if out is not None and out.wind is not None:
+                warn = out.wind.tilt_warn_deg
+                if mav.wind.params.angle_max_deg != FC_ANGLE_MAX_DEG:
+                    break
+            await asyncio.sleep(0.2)
+        return mav.wind.params, warn
+    finally:
+        await core.close()
+
+
+def fc_params_flight(instance: int) -> Callable[[Harness, Report], None]:
+    def flight(harness: Harness, rep: Report) -> None:
+        rep.variant = VARIANT
+        params, warn = asyncio.run(ground_wind_check(instance))
+        rep.check(
+            "W5.1",
+            "Markstationen läser ATC_ANGLE_MAX från flygkontrollen (okalibrerad)",
+            params.angle_max_deg == FPV7_ANGLE_MAX_DEG and "ATC_ANGLE_MAX" not in params.fallback,
+            measured={"angle_max_deg": params.angle_max_deg, "fallback": list(params.fallback)},
+            limit=FPV7_ANGLE_MAX_DEG,
+            unit="deg",
+        )
+        rep.check(
+            "W5.2",
+            "Lutningsvarningen ligger 10 grader under flygkontrollens egen gräns (okalibrerad)",
+            warn == FPV7_ANGLE_MAX_DEG - wind.TILT_MARGIN_DEG,
+            measured=warn,
+            limit=FPV7_ANGLE_MAX_DEG - wind.TILT_MARGIN_DEG,
+            unit="deg",
+        )
+        rep.check(
+            "W5.3",
+            "RTL-fart och batteriets mAh kommer från flygkontrollen, inte konstanterna",
+            params.fallback == ()
+            and params.rtl_speed_ms == RTL_SPEED_MS
+            and params.reserve_mah == LOW_MAH,
+            measured={
+                "rtl_speed_ms": params.rtl_speed_ms,
+                "capacity_mah": params.capacity_mah,
+                "reserve_mah": params.reserve_mah,
+                "fallback": list(params.fallback),
+            },
+        )
+
+    return flight
+
+
+@pytest.mark.budget_s(120)
+def test_w5_ground_reads_the_fc_lean_limit(sim_instance: int, sim_brain: str) -> None:
+    rep = fly_scenario(
+        "wind_w5_fc_params",
+        "builtin",
+        sim_instance,
+        sim_brain,
+        fc_params_flight(sim_instance),
+        vehicle="sd_fpv7",
+    )
     assert rep.passed, "\n".join(rep.failures())
 
 

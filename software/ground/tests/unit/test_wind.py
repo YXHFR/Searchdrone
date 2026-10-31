@@ -1,24 +1,39 @@
-"""The ground station's wind warning (``sd_ground.services.wind``): a warning only."""
+"""The ground station's wind check (``sd_ground.services.wind``): the warnings, the
+flight controller's parameters it uses, the energy home against the wind and the
+battery guard's FLY HOME on ``ENERGY_HOME``."""
 
 from __future__ import annotations
 
 import asyncio
 import datetime as dt
 import math
+import random
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
+import structlog
 from conftest import FakeVehicleLink, telemetry  # pyright: ignore[reportMissingImports]
+from stop_helpers import VID, stack  # pyright: ignore[reportMissingImports]
 
 from sd_ground.context import Ground
 from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
 from sd_ground.services import wind
 from sd_ground.services.telemetry import TelemetryService
-from sd_ground.services.wind import WindWatch, home_mah, tilt_deg
+from sd_ground.services.wind import (
+    FcParams,
+    WindWatch,
+    fc_params,
+    home_ground_speed,
+    home_mah,
+    tilt_deg,
+)
+from sd_mav.modes import HOME_MODES
 from sd_mav.vehicle import FcTelemetry
 from sd_safety.constants import FC_ANGLE_MAX_DEG
+from sd_safety.targets import distance_m
+from sd_schemas.api import WindCheck
 from sd_schemas.base import LatLonAlt
 from sd_testing import FakeClock
 
@@ -218,9 +233,12 @@ def _snap(t: FcTelemetry, now_ms: int) -> MavSnapshot:
 
 
 def test_panel_telemetry_carries_the_wind_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    core = cast(GroundMav, SimpleNamespace(clock=FakeClock()))
+    core = cast(
+        GroundMav, SimpleNamespace(clock=FakeClock(), vehicle=None, energy_short=lambda _: None)
+    )
     loop = asyncio.new_event_loop()
     mav = ThreadSafeMav(core, loop, WindWatch("until_calibrated"))
+    monkeypatch.setattr(mav, "_read_wind_params", lambda: None)  # no flight controller here
     t = flying(pitch_deg=-25.0)
     out = None
     for now in range(0, 12_001, 250):
@@ -251,3 +269,321 @@ def test_events_when_the_warning_starts_and_ends(
     logged = [e for e in ground.queued_events() if e["type"].startswith("vehicle.wind")]
     assert [e["severity"] for e in logged] == ["warning", "info"] * 2
     assert logged[0]["payload"]["reasons"] == ["TILT_MARGIN"]
+
+
+# --- the flight controller's parameters (B3) -------------------------------------------
+
+READ = {
+    "ATC_ANGLE_MAX": 25.0,
+    "RTL_SPEED_MS": 6.0,
+    "WP_SPD": 10.0,
+    "BATT_CAPACITY": 8000.0,
+    "BATT_LOW_MAH": 2000.0,
+}
+
+
+def test_read_parameters_are_used() -> None:
+    with structlog.testing.capture_logs() as logs:
+        p = fc_params(READ)
+    assert (p.angle_max_deg, p.rtl_speed_ms, p.capacity_mah, p.reserve_mah) == (
+        25.0,
+        6.0,
+        8000.0,
+        2000.0,
+    )
+    assert p.fallback == ()
+    assert not [e for e in logs if e["event"] == "wind.param_fallback"]
+    watch = WindWatch(params=p)
+    t = flying(roll_deg=2.0)
+    now = run(watch, t, 12.0)
+    check = watch.check(t, now)
+    assert check.tilt_warn_deg == 15.0  # 25 from the flight controller, not 30
+    assert check.left_mah == 0.8 * 8000.0 and check.reserve_mah == 2000.0
+
+
+def test_missing_parameters_fall_back_to_the_constants_with_a_log() -> None:
+    with structlog.testing.capture_logs() as logs:
+        p = fc_params({"ATC_ANGLE_MAX": None, "RTL_SPEED_MS": 6.0})
+    assert p == FcParams(
+        rtl_speed_ms=6.0, fallback=("ATC_ANGLE_MAX", "BATT_CAPACITY", "BATT_LOW_MAH")
+    )
+    fallbacks = {e["param"]: e for e in logs if e["event"] == "wind.param_fallback"}
+    assert set(fallbacks) == {"ATC_ANGLE_MAX", "BATT_CAPACITY", "BATT_LOW_MAH"}
+    assert fallbacks["ATC_ANGLE_MAX"]["used"] == FC_ANGLE_MAX_DEG
+    assert all(e["log_level"] == "warning" for e in fallbacks.values())
+    assert WindWatch(params=p).tilt_warn_deg == FC_ANGLE_MAX_DEG - 10.0
+
+
+def test_nothing_read_is_all_constants() -> None:
+    with structlog.testing.capture_logs() as logs:
+        p = fc_params({})
+    assert p == FcParams()
+    assert len([e for e in logs if e["event"] == "wind.param_fallback"]) == 4
+
+
+@pytest.mark.parametrize(
+    ("values", "fallback"),
+    [
+        ({"ATC_ANGLE_MAX": 5.0}, "ATC_ANGLE_MAX"),  # outside ArduCopter's 10-80
+        ({"ATC_ANGLE_MAX": math.nan}, "ATC_ANGLE_MAX"),
+        ({"BATT_LOW_MAH": 0.0}, "BATT_LOW_MAH"),  # no mAh failsafe: keep the constant
+        ({"BATT_CAPACITY": -1.0}, "BATT_CAPACITY"),
+        ({"RTL_SPEED_MS": 0.0, "WP_SPD": None}, "RTL_SPEED_MS"),
+    ],
+)
+def test_unusable_values_fall_back(values: dict[str, float | None], fallback: str) -> None:
+    assert fallback in fc_params({**READ, **values}).fallback
+
+
+def test_rtl_speed_0_flies_at_wp_spd() -> None:
+    p = fc_params({**READ, "RTL_SPEED_MS": 0.0})
+    assert p.rtl_speed_ms == 10.0 and "RTL_SPEED_MS" not in p.fallback
+
+
+async def test_parameters_are_read_from_the_flight_controller() -> None:
+    """Through ``ThreadSafeMav``: read on connect with the fence check's reading."""
+    async with stack() as s:
+        s.fc.params["ATC_ANGLE_MAX"] = 25.0
+        s.fc.params["BATT_LOW_MAH"] = 2500.0
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        assert mav.telemetry(VID) is not None  # starts the read
+        await s.run(10.0)  # WP_SPD is not answered: two tries of 2 s
+        out = mav.telemetry(VID)
+        assert out is not None and out.wind is not None
+        assert out.wind.tilt_warn_deg == 15.0
+        assert out.wind.reserve_mah == 2500.0
+        assert mav.wind.params.fallback == ()
+
+
+async def test_unanswered_parameters_keep_the_constants_and_retry() -> None:
+    async with stack() as s:
+        for name in ("ATC_ANGLE_MAX", "RTL_SPEED_MS", "BATT_CAPACITY", "BATT_LOW_MAH"):
+            s.fc.params.pop(name, None)
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        with structlog.testing.capture_logs() as logs:
+            mav.telemetry(VID)
+            await s.run(25.0)
+        assert mav.wind.params == FcParams()
+        assert {e["param"] for e in logs if e["event"] == "wind.param_fallback"} == {
+            "ATC_ANGLE_MAX",
+            "RTL_SPEED_MS",
+            "BATT_CAPACITY",
+            "BATT_LOW_MAH",
+        }
+        s.fc.params["ATC_ANGLE_MAX"] = 25.0  # answers on the next try, 30 s later
+        mav.telemetry(VID)
+        await s.run(5.0)
+        mav.telemetry(VID)
+        assert mav.wind.params.angle_max_deg == FC_ANGLE_MAX_DEG
+        await s.run(25.0)
+        mav.telemetry(VID)
+        await s.run(20.0)
+        assert mav.wind.params.angle_max_deg == 25.0
+
+
+# --- the energy home against the wind (B4) ---------------------------------------------
+
+
+def test_ground_speed_home() -> None:
+    # Calm, or within what the drone can fly: RTL holds its ground speed.
+    assert home_ground_speed(8.0, 15.0, 0.0, 0.0) == 8.0
+    assert home_ground_speed(8.0, 15.0, 6.0, 0.0) == 8.0
+    # Airspeed minus the headwind component once the airspeed is at its top.
+    assert home_ground_speed(8.0, 15.0, 10.0, 0.0) == pytest.approx(5.0)
+    # Crosswind: crab out of it, then what is left after the headwind.
+    assert home_ground_speed(8.0, 15.0, 9.0, 9.0) == pytest.approx(3.0)
+    # A tailwind never makes RTL faster than its speed.
+    assert home_ground_speed(8.0, 8.0, -6.0, 0.0) == 8.0
+    # Too strong: does not get home.
+    assert home_ground_speed(8.0, 15.0, 14.5, 0.0) is None
+    assert home_ground_speed(8.0, 15.0, 0.0, 15.0) is None
+
+
+def wind_check(
+    watch: WindWatch,
+    t: FcTelemetry,
+    speed_ms: float,
+    from_deg: float,
+    seconds: float = 12.0,
+) -> tuple[WindCheck, int]:
+    now = 0
+    for i in range(round(seconds * 4) + 1):
+        now = i * 250
+        watch.observe(
+            replace(
+                t,
+                attitude_mono_ms=now,
+                wind_mono_ms=now - now % 1000,
+                wind_speed_ms=speed_ms,
+                wind_from_deg=from_deg,
+            ),
+            now,
+        )
+    return watch.check(t, now), now
+
+
+# 500 m north of home: home is to the south. SIM_WIND_DIR-style "from" directions.
+FROM_SOUTH, FROM_NORTH, FROM_EAST = 180.0, 0.0, 90.0
+
+
+def far(**kw: object) -> FcTelemetry:
+    return flying(lat=FAR[0], lon=FAR[1], groundspeed_ms=5.0, **kw)
+
+
+def test_headwind_costs_more_than_the_estimate_without_wind() -> None:
+    before = home_mah(500.0, 20.0)
+    check, _ = wind_check(WindWatch(), far(battery_pct=60.0), 6.0, FROM_SOUTH)
+    assert check.home_mah is not None and check.home_mah > before
+    # No drag measured: 8 m/s through the air, 2 m/s over the ground, at full lean.
+    lean = (1.0 / math.cos(math.radians(FC_ANGLE_MAX_DEG))) ** 1.5
+    assert check.home_mah == pytest.approx(500.0 / 2.0 * 20.0 * lean / 3.6 * 1.3, rel=1e-3)
+
+
+def test_tailwind_never_costs_less_than_the_estimate_without_wind() -> None:
+    # No drag measured: RTL speed over the ground, but at full lean (the safe side).
+    check, _ = wind_check(WindWatch(), far(battery_pct=60.0), 6.0, FROM_NORTH)
+    lean = (1.0 / math.cos(math.radians(FC_ANGLE_MAX_DEG))) ** 1.5
+    assert check.home_mah == pytest.approx(home_mah(500.0, 20.0) * lean, rel=1e-3)
+    # Drag measured and little lean needed: the estimate without the wind still holds.
+    watch = WindWatch()
+    watch.drag_k = 0.001
+    check, _ = wind_check(watch, far(battery_pct=60.0), 6.0, FROM_NORTH)
+    way = distance_m(HOME.lat, HOME.lon, *FAR)
+    assert check.home_mah == pytest.approx(home_mah(way, 20.0), rel=1e-4)
+
+
+def test_crosswind_costs_between_tail_and_head() -> None:
+    head, _ = wind_check(WindWatch(), far(battery_pct=60.0), 6.0, FROM_SOUTH)
+    cross, _ = wind_check(WindWatch(), far(battery_pct=60.0), 6.0, FROM_EAST)
+    tail, _ = wind_check(WindWatch(), far(battery_pct=60.0), 6.0, FROM_NORTH)
+    assert tail.home_mah is not None and cross.home_mah is not None
+    assert head.home_mah is not None
+    assert tail.home_mah < cross.home_mah < head.home_mah
+    # sqrt(8**2 - 6**2) = 5.29 m/s over the ground.
+    lean = (1.0 / math.cos(math.radians(FC_ANGLE_MAX_DEG))) ** 1.5
+    expected = 500.0 / math.sqrt(28.0) * 20.0 * lean / 3.6 * 1.3
+    assert cross.home_mah == pytest.approx(expected, rel=1e-3)
+
+
+def test_headwind_warns_where_the_estimate_without_wind_did_not() -> None:
+    # 500 m out, 30 %: without the wind 451 + 1500 < 3000, so no warning before.
+    t = far(battery_pct=30.0)
+    calm = WindWatch()
+    now = run(calm, t, 12.0)
+    assert "ENERGY_HOME" not in calm.check(t, now).reasons
+    check, _ = wind_check(WindWatch(), t, 6.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in check.reasons
+
+
+def test_too_strong_to_get_home_warns_at_once() -> None:
+    check, _ = wind_check(WindWatch(), far(battery_pct=95.0), 9.0, FROM_SOUTH)
+    assert "ENERGY_HOME" in check.reasons and check.home_mah is None
+
+
+def test_measured_drag_lets_the_drone_fly_faster_than_rtl_through_the_air() -> None:
+    """Holding position in 6 m/s at 10 degrees: tan(10) / 36. The top airspeed at 30
+    degrees is then 6 * sqrt(tan 30 / tan 10) = 10.9 m/s, so 9 m/s of headwind leaves
+    1.9 m/s over the ground instead of not getting home."""
+    watch = WindWatch()
+    hold = flying(lat=FAR[0], lon=FAR[1], pitch_deg=-10.0, groundspeed_ms=0.2, battery_pct=95.0)
+    check, _ = wind_check(watch, hold, 6.0, FROM_SOUTH)
+    assert watch.drag_k == pytest.approx(math.tan(math.radians(10.0)) / 36.0)
+    assert check.home_mah is not None
+    moving = WindWatch()
+    moving.drag_k = watch.drag_k
+    strong, _ = wind_check(moving, replace(hold, groundspeed_ms=5.0), 9.0, FROM_SOUTH)
+    assert moving.drag_k == watch.drag_k  # not holding position: not measured again
+    assert strong.home_mah is not None
+    top = 6.0 * math.sqrt(math.tan(math.radians(30.0)) / math.tan(math.radians(10.0)))
+    assert strong.home_mah == pytest.approx(
+        500.0
+        / (top - 9.0)
+        * 20.0
+        * math.cos(math.radians(10.0)) ** 1.5
+        / math.cos(math.radians(30.0)) ** 1.5
+        / 3.6
+        * 1.3,
+        rel=1e-2,
+    )
+
+
+def test_landing_forgets_the_drag() -> None:
+    watch = WindWatch()
+    hold = flying(pitch_deg=-10.0, groundspeed_ms=0.2)
+    wind_check(watch, hold, 6.0, FROM_SOUTH)
+    assert watch.drag_k is not None
+    watch.observe(replace(hold, armed=False, landed_state="on_ground"), 20_000)
+    assert watch.drag_k is None
+
+
+def test_the_energy_home_never_warns_later_than_before() -> None:
+    """Whatever the wind, the parameters read and the drag: wherever the estimate
+    without the wind (the constants, x 1.3) warned, the check still warns."""
+    rng = random.Random(20261031)  # noqa: S311 - test data
+    for _ in range(400):
+        pct = rng.uniform(5.0, 60.0)
+        current = rng.uniform(5.0, 40.0)
+        lat = HOME.lat + rng.uniform(-0.008, 0.008)
+        lon = HOME.lon + rng.uniform(-0.008, 0.008)
+        params = FcParams(
+            angle_max_deg=rng.uniform(15.0, 45.0),
+            rtl_speed_ms=rng.uniform(3.0, 15.0),
+            capacity_mah=rng.uniform(5000.0, 20000.0),
+            reserve_mah=rng.uniform(100.0, 3000.0),
+            fallback=(),
+        )
+        watch = WindWatch(params=params)
+        if rng.random() < 0.5:
+            watch.drag_k = rng.uniform(0.0005, 0.02)
+        t = flying(
+            lat=lat,
+            lon=lon,
+            battery_pct=pct,
+            battery_current_a=current,
+            pitch_deg=-rng.uniform(0.0, 25.0),
+            groundspeed_ms=3.0,
+        )
+        check, _ = wind_check(watch, t, rng.uniform(0.0, 16.0), rng.uniform(0.0, 360.0))
+        way = distance_m(HOME.lat, HOME.lon, lat, lon)
+        before = home_mah(way, current) + wind.RESERVE_MAH > pct / 100.0 * wind.CAPACITY_MAH
+        if before:
+            assert "ENERGY_HOME" in check.reasons, (pct, current, way, params)
+
+
+# --- the battery guard flies home on ENERGY_HOME ----------------------------------------
+
+
+async def test_energy_home_starts_the_battery_guards_fly_home() -> None:
+    async with stack() as s:
+        s.fly()
+        s.fc.battery_pct = 80.0  # far above the level
+        await s.run(1.0)
+        s.core.energy_short(True)
+        await s.run(1.0)
+        assert s.fc.mode in HOME_MODES
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "battery_rtl"
+        guard = [e for e in s.g.events if e[0] == "vehicle.battery_rtl" and "alarm" in e[2]]
+        assert [e[2]["reason"] for e in guard] == ["energy_home"]
+
+
+async def test_a_stale_energy_home_never_flies_home() -> None:
+    """When the callers of ``telemetry`` stop, their last ENERGY_HOME runs out."""
+    async with stack() as s:
+        s.fly()
+        s.fc.battery_pct = 80.0
+        await s.run(1.0)
+        s.core.energy_short(True)
+        s.core._energy_short_at = s.clock.monotonic() - 10.0  # pyright: ignore[reportPrivateUsage]
+        await s.run(2.0)
+        assert s.fc.mode not in HOME_MODES and s.latches.get(VID) is None
+
+
+async def test_energy_ok_leaves_the_percentage_level_as_before() -> None:
+    async with stack(rtl_pct=20.0) as s:
+        s.fly()
+        await s.run(1.0)
+        s.core.energy_short(False)
+        s.fc.battery_pct = 19.0
+        await s.run(1.5)
+        assert s.fc.mode in HOME_MODES
