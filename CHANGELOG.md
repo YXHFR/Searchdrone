@@ -194,6 +194,28 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- Flight safety: arming needs exactly `sd_gcs_loiter_cap.lua` loaded and running
+  (`SCR_LD_CHECKSUM` / `SCR_RUN_CHECKSUM` in `searchdrone-safety.parm`); a unit test
+  fails when the script changes without a new checksum. LOITER's braking
+  (`LOIT_BRK_ACC_M`, `LOIT_BRK_JRK_M`, `LOIT_BRK_DELAY`) is set explicitly to the stop
+  model E8 assumes, and a test fails when they drift apart.
+- The ground waits for the onboard executor's answer to every `KeepoutInstall`. A
+  refused, failed, expired or unanswered keep-out list is sent again (above a stale
+  sequence number when the executor holds a newer one), and the operator gets one red,
+  sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+- A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
+  orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
+  whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
+  delivered after its mission closed is only logged.
+- The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
+  new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
+- The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
+  when it came may leave it but never go deeper, and a cylinder's new shape gives no new
+  grace. FLY HOME pressed in a chain run must be under way within its limit, and the
+  drone must land at home. New SITL tests fly the margin case from #96 and require the
+  inspection's `keepout_replan`.
+
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also
   shows its Wilson lower bound. SK04 counts every verdict of the hiker's top that saw it,

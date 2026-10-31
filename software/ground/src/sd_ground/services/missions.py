@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,7 +38,7 @@ from sd_ground.services.limits import check_change
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import Vehicle
 from sd_safety.constants import OPERATOR_ABSENT_S
-from sd_schemas.api import Charter, Mission, MissionDetail
+from sd_schemas.api import AlertCode, Charter, KeepoutHoldField, Mission, MissionDetail
 from sd_schemas.base import new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState
@@ -102,6 +103,35 @@ _PANEL_EVENTS: Final = frozenset(
     {"executor.find_hold_ended", "executor.perception_off", "executor.perception_on"}
 )
 log = get_logger("sd_ground.missions")
+
+
+def _climb_to_m(details: Mapping[str, Any]) -> float | None:
+    climb = details.get(KeepoutHoldField.CLIMB_TO_M)
+    if isinstance(climb, int | float) and not isinstance(climb, bool) and math.isfinite(climb):
+        return float(climb)
+    return None
+
+
+def keepout_hold_text(details: Mapping[str, Any]) -> str:
+    """The operator's Swedish text for a keep-out hover (the panel's ``keepouts.HOLD*``)."""
+    if details.get(KeepoutHoldField.INSIDE) is not True:
+        return (
+            "Drönaren svävar för att inte flyga in i en förbudszon runt en person. "
+            "Ge en ny order eller tryck FLYG HEM."
+        )
+    climb = _climb_to_m(details)
+    if climb is not None:
+        alt = math.floor(climb + 0.5)  # as the panel's Math.round: 62.5 -> 63
+        return (
+            "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den "
+            f"stiger rakt upp till {alt} m och svävar där. Ta över med RC, ge en ny "
+            "order eller tryck FLYG HEM."
+        )
+    return (
+        "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den kan "
+        "inte stiga högre och svävar där den är. Ta över med RC, ge en ny order eller tryck "
+        "FLYG HEM."
+    )
 
 
 class FlowError(ApiStatusError):
@@ -197,6 +227,32 @@ class MissionFlow:
     ) -> None:
         self.g.bus.publish(
             topic, type_, data, ts=self.now(), vehicle_id=vehicle_id, mission_id=mission_id
+        )
+
+    def _keepout_hold_alert(self, vehicle_id: str, mission: Any, data: dict[str, Any]) -> None:
+        """The drone hovers for a keep-out cylinder (``executor.keepout_hold``): short of
+        one (orange), or inside one over a person with no safe way out (red), after
+        climbing straight up when it could (``climb_to_m``). One held back by a lost link
+        that comes after its mission closed is only logged: that hover is over."""
+        if mission is not None and mission.status is MissionState.CLOSED:
+            log.info(
+                "missions.keepout_hold_after_close",
+                vehicle_id=vehicle_id,
+                mission_id=str(mission.id),
+            )
+            return
+        inside = data.get(KeepoutHoldField.INSIDE) is True
+        details: dict[str, Any] = {str(KeepoutHoldField.INSIDE): inside}
+        climb = _climb_to_m(data)
+        if climb is not None:
+            details[str(KeepoutHoldField.CLIMB_TO_M)] = climb
+        self.alert(
+            str(AlertCode.KEEPOUT_HOLD),
+            "critical" if inside else "warning",
+            keepout_hold_text(details),
+            vehicle_id=vehicle_id,
+            mission_id=None if mission is None else str(mission.id),
+            details=details,
         )
 
     def alert(
@@ -588,18 +644,22 @@ class MissionFlow:
 
     async def on_expired(self, vehicle_id: str, expired: Expired) -> None:
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import link_loss as link_loss_service
 
         await commands_service.on_expired(self, vehicle_id, expired)
+        link_loss_service.on_expired(self, vehicle_id, expired)
 
     async def on_inbound(self, vehicle_id: str, inbound: Inbound) -> None:
         from sd_ground.services import approvals as approvals_service
         from sd_ground.services import commands as commands_service
+        from sd_ground.services import link_loss as link_loss_service
         from sd_ground.services import perception as perception_service
         from sd_schemas.link import Ack, CharterAck, CropData, OnboardEvent, PerceptionReport
 
         body = inbound.body
         if isinstance(body, Ack):
             await commands_service.on_ack(self, vehicle_id, body)
+            await link_loss_service.on_ack(self, vehicle_id, body)
         elif isinstance(body, CharterAck):
             await approvals_service.on_charter_ack(self, vehicle_id, body)
         elif isinstance(body, OnboardEvent):
@@ -613,6 +673,8 @@ class MissionFlow:
                 vehicle_id=vehicle_id,
                 payload={"source": "onboard", **body.data},
             )
+            if body.type == "executor.keepout_hold":
+                self._keepout_hold_alert(vehicle_id, mission, body.data)
             if body.type in _PANEL_EVENTS:  # the pilot's log line, after the link is back
                 self.publish(
                     "vehicle",

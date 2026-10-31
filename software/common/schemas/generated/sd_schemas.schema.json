@@ -358,6 +358,9 @@
         "FIND_HOLD_ALL",
         "LINK_BACK_HOLD",
         "LINK_BACK_HOME",
+        "KEEPOUTS_NOT_INSTALLED",
+        "KEEPOUTS_INSTALLED",
+        "KEEPOUT_HOLD",
         "GPS_WEAK",
         "GPS_LOST",
         "DEAD_RECKONING",
@@ -5403,6 +5406,15 @@
       ],
       "title": "Keepout",
       "type": "object"
+    },
+    "KeepoutHoldField": {
+      "description": "The fields of the onboard ``executor.keepout_hold`` data that the ground's\n``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.",
+      "enum": [
+        "inside",
+        "climb_to_m"
+      ],
+      "title": "KeepoutHoldField",
+      "type": "string"
     },
     "KeepoutInstall": {
       "additionalProperties": false,
