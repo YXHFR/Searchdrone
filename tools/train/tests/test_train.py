@@ -3,6 +3,7 @@ COCO start, training, stop and resume, ONNX export. No real data, no download.""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -301,6 +302,41 @@ def test_measure_only_sets_are_never_credited_as_trained_on() -> None:
     assert train_detector.trained_sets(["heridal", *measure_only]) == ["heridal"]
     # a set gone from the register stays, so the export refuses it instead of dropping it
     assert train_detector.trained_sets(["heridal", "gone"]) == ["heridal", "gone"]
+
+
+@pytest.mark.parametrize("licence", ["GPL-3.0-only", "NONE"])
+def test_gpl_or_unlicensed_set_is_refused_not_trained_on(
+    bank: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    licence: str,
+) -> None:
+    """The owner's decision of 2026-11-01: such a set is measured on, never trained on."""
+    import bench.datasets
+
+    register = load_register()
+    measured = dataclasses.replace(
+        register["heridal"],
+        name="gplset",
+        licence=licence,
+        use=("measure",),
+        local_only=True,
+        publish_weights=False,
+        publish_results=False,
+        licence_confirmed=False,
+    )
+    assert bench.datasets.licence_problems(measured) == []
+    with_it = {**register, "gplset": measured}
+    monkeypatch.setattr(bench.datasets, "load_register", lambda *a, **k: with_it)
+    monkeypatch.setattr(tiles, "load_register", lambda *a, **k: with_it)
+    out = tmp_path / "run"
+    argv = ["model=yolox_s", f"data={bank}", f"out={out}", "epochs=1", "sets=heridal,gplset",
+            "device=cpu", "workers=0"]  # fmt: skip
+    assert train_detector.main(argv) == 2
+    assert "gplset får bara mätas på" in capsys.readouterr().err
+    assert not (out / "last.pt").exists()
+    assert tiles.pictures(bank, "train", ["gplset"]) == []  # nor would the tiles take it
 
 
 def test_old_checkpoints_get_their_credit_from_their_settings() -> None:

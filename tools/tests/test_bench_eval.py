@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 from bench import eval_detector as ev
-from bench import pick_detector
+from bench import pick_detector, profiles
 from bench.common import BenchError
-from bench.datasets import Image
+from bench.datasets import Dataset, Image
 from bench.metrics import (
     MP12,
     PictureResult,
@@ -240,6 +240,35 @@ def test_profile_refuses_a_result_pooled_over_datasets() -> None:
     }
     start = json.loads(START.read_text(encoding="utf-8"))
     with pytest.raises(BenchError, match="flera datamängder"):
+        build_profile("yolox_s", 1, result, start)
+
+
+def test_profile_refuses_a_result_whose_numbers_are_not_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile is committed, so a GPL or unlicensed set's numbers never become one."""
+    gpl = Dataset(
+        name="gplset",
+        title="g",
+        licence="GPL-3.0-only",
+        attribution="a",
+        layout="heridal_voc",
+        use=("measure",),
+        publish_weights=False,
+        local_only=True,
+        publish_results=False,
+        url="https://example.org/g.zip",
+    )
+    monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {"gplset": gpl})
+    row = {"recall": 0.5, "n": 10}
+    result = {
+        "schema": "bench.detector/v1",
+        "recall": dict.fromkeys(("lt16", "16to32", "gt32", "all"), row),
+        "recall_by_dataset": {"gplset": row},
+        "latency_ms": {"p50": 800.0, "p95": 1200.0},
+    }
+    start = json.loads(START.read_text(encoding="utf-8"))
+    with pytest.raises(BenchError, match="publiceras"):
         build_profile("yolox_s", 1, result, start)
 
 

@@ -7,7 +7,8 @@ A profile holds recall per size class at the fixed false-alarm rate, the false-a
 rate, the score distributions of hits and false alarms (Beta, fitted by the method of
 moments) and the time per picture. It is made from a result measured on one dataset
 (``sets=heridal``): a result pooled over several is refused, since its recall would be
-mostly that of the set with the most people. ``occlusion_factor`` cannot be measured on the bank
+mostly that of the set with the most people, and so is one measured on a set whose results
+are not published (``publish_results = false``). ``occlusion_factor`` cannot be measured on the bank
 (the boxes say nothing of cover); it is carried over from the start profile and listed
 under ``not_measured``. ``det_oracle_v0.json`` is the start profile from the published
 HERIDAL figures, used until a measurement exists; anything built on it is modelled,
@@ -23,6 +24,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from bench.common import BENCH, BenchError, parse_args, say, warn
+from bench.datasets import load_register
 from bench.metrics import SIZE_CLASSES
 
 PROFILES = BENCH / "profiles"
@@ -43,6 +45,15 @@ def build_profile(
         raise BenchError(
             f"Resultatet är mätt på flera datamängder ({', '.join(sorted(sets))}); en profil "
             "görs av en mätning på en enda (sets=heridal).",
+            2,
+        )
+    register = load_register()
+    private = [s for s in sets if s in register and not register[s].publish_results]
+    if private:
+        # a profile is committed to the public repository: a published number
+        raise BenchError(
+            f"Resultat mätta på {', '.join(private)} får inte publiceras (publish_results = "
+            "false i datasets.toml), och en profil hamnar i repot.",
             2,
         )
     recall = result["recall"]
