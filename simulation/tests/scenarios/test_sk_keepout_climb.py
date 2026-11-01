@@ -238,11 +238,18 @@ async def test_a_goto_held_over_a_person_climbs_straight_up_and_hovers(
             "up there and still",
         )
 
-        async def kept_out() -> bool:
-            live = await sc.onboard_state()
-            return live["executor_state"] == "HOLD" and live["hold_reason"] == "limit"
+        seen: list[dict[str, Any]] = []
 
-        await sc.until(kept_out, 5, "the keep-out hover")
+        async def kept_out() -> bool:
+            seen[:] = [await sc.onboard_state()]
+            return seen[0]["executor_state"] == "HOLD" and seen[0]["hold_reason"] == "limit"
+
+        try:
+            await sc.until(kept_out, 5, "the keep-out hover")
+        except AssertionError as e:
+            live = {k: seen[0].get(k) for k in ("executor_state", "hold_reason", "active")}
+            kinds = [ev["type"] for ev in await sc.events()][-30:]
+            raise AssertionError(f"{e}; onboard {live}; events {kinds}") from e
         await sc.hold_for(10.0, lambda: sc.fc_mode() == "LOITER", "hovering up there")
         assert len(await _events(sc, "keepout_hold")) == 1  # told once
 

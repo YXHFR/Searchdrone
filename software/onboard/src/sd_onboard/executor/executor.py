@@ -774,7 +774,9 @@ class Executor:
         if isinstance(target, Refusal):
             return
         reason = "limit" if active.skill in _LIMIT_GOTOS else "skill_done"
-        if self.ai_silent_after_step:
+        if self.ai_silent_after_step and active.skill != INTERNAL_KEEPOUT_CLIMB:
+            # The keep-out climb ends in the keep-out hover whatever the AI does, as a
+            # ``KEEPOUT_VIOLATION`` does in ``_skill_failed``: a find move never leaves it.
             reason = "ai_silent"
         if active.skill == INTERNAL_FIND_GOTO:
             reason = "find_hold"  # T27: at the hover point beside the find

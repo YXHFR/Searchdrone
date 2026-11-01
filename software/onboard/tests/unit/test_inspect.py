@@ -1270,6 +1270,27 @@ async def test_no_way_out_of_a_cylinder_around_a_search_climbs_then_hovers(
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
 
 
+async def test_a_climb_with_the_ai_silent_still_ends_in_the_keepout_hover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the AI gone quiet (finish the step, then hover), the climb still ends in the
+    keep-out hover (``limit``) as a failed order does, not ``ai_silent``: a link loss's
+    find move never takes the drone out of that hover sideways."""
+    async with rig() as r:
+        _, person, _, _ = await _search_over_a_person(r, monkeypatch)
+        await r.run(0.5)
+        assert r.ex.state == S.TRANSIT  # climbing
+
+        def held_with_the_ai_silent() -> bool:  # the rig's AI keeps talking: silence it
+            r.ex.ai_silent_after_step = True
+            return r.ex.state == S.HOLD
+
+        await r.until(held_with_the_ai_silent, 120)
+        assert r.ex.hold_reason == "limit"
+        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
+        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+
+
 async def test_no_way_out_of_a_search_and_no_room_to_climb_hovers_where_it_is(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
