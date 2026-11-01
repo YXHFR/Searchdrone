@@ -756,6 +756,45 @@ async def test_the_wait_reads_the_skill_event_among_others() -> None:
     assert backend.turns and backend.turns[0].trigger == "skill_event"
 
 
+async def test_the_wait_follows_the_skill_event_under_a_critical_alert() -> None:
+    """A skill's end with a critical alert (a keep-out hover over a person): the turn is
+    the alert's, and its order still waits for the snapshot after the skill's end, or the
+    onboard computer refuses it as STATE_CHANGED."""
+    backend = Steps(act("return_home"))
+    loop, fg, _ = make_loop(backend, "airborne_survey.json")
+    cid = str(fg.sit["active_command"]["id"])
+    calls = 0
+    situation = fg.situation
+
+    async def lagging(mission_id: str) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 3:  # the newer snapshot: holding, nothing active
+            fg.sit["active_command"] = None
+            fg.sit["snapshot_state_seq"] = 1005
+        return await situation(mission_id)
+
+    fg.situation = lagging  # type: ignore[method-assign]
+    loop.handle_event(
+        {
+            "type": "event.skill",
+            "body": {
+                "command_id": cid,
+                "skill": "survey_sector",
+                "status": "superseded",
+                "reason_codes": ["KEEPOUT_VIOLATION"],
+            },
+        }
+    )
+    loop.handle_event(
+        {"type": "event.alert", "body": {"level": "critical", "code": "KEEPOUT_HOLD"}}
+    )
+    await loop.settle()
+    assert backend.turns and backend.turns[0].trigger == "alert_critical"
+    assert len(fg.commands) == 1
+    assert fg.commands[0].based_on is not None and fg.commands[0].based_on.state_seq == 1005
+
+
 @pytest.mark.parametrize(
     ("status", "paused_by"),
     [("PAUSED", "operator"), ("HELD", None)],  # HELD: STOP's BRAKE right after takeoff

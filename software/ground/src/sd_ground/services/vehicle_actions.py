@@ -46,7 +46,7 @@ from sd_ground.auth import Principal
 from sd_ground.bus import EventBus
 from sd_ground.logging import get_logger
 from sd_ground.mav.thread import ActionReport, MavSnapshot, ModeAction
-from sd_ground.services.latches import LatchChange, Latches, LatchRefusedError
+from sd_ground.services.latches import BatteryReason, LatchChange, Latches, LatchRefusedError
 from sd_ground.sources import EmergencyAction, EmergencyUnavailableError
 from sd_obs.clock import Clock
 from sd_safety.constants import OPERATOR_ABSENT_S
@@ -253,10 +253,15 @@ class VehicleActions:
         """STOP or FLY HOME now. Raises ``EmergencyUnavailableError``."""
         return self._start(action, vehicle_id, client_action_id, via, by.issuer_ref, "operator")
 
-    def system(self, vehicle_id: str, kind: LatchAction) -> ActionDispatched | None:
-        """The battery guard, the watchdog or the absence guard (any thread)."""
+    def system(
+        self, vehicle_id: str, kind: LatchAction, battery_reason: BatteryReason | None = None
+    ) -> ActionDispatched | None:
+        """The battery guard, the watchdog or the absence guard (any thread). The battery
+        guard's ``battery_reason`` is set with the latch, in one step."""
         try:
-            return self._start(kind, vehicle_id, str(new_id()), "system", SYSTEM, "system")
+            return self._start(
+                kind, vehicle_id, str(new_id()), "system", SYSTEM, "system", battery_reason
+            )
         except EmergencyUnavailableError:
             log.error("actions.system_no_path", kind=kind, vehicle_id=vehicle_id)
             return None
@@ -278,9 +283,12 @@ class VehicleActions:
         via: Via,
         by: str,
         issuer_kind: Literal["operator", "system"],
+        battery_reason: BatteryReason | None = None,
     ) -> ActionDispatched:
         with self._start_lock:  # one action at a time: dedupe, number, latch, hand-off
-            return self._start_locked(kind, vehicle_id, client_action_id, via, by, issuer_kind)
+            return self._start_locked(
+                kind, vehicle_id, client_action_id, via, by, issuer_kind, battery_reason
+            )
 
     def _start_locked(
         self,
@@ -290,6 +298,7 @@ class VehicleActions:
         via: Via,
         by: str,
         issuer_kind: Literal["operator", "system"],
+        battery_reason: BatteryReason | None = None,
     ) -> ActionDispatched:
         key = (vehicle_id, kind, client_action_id)
         with self._lock:
@@ -307,7 +316,7 @@ class VehicleActions:
                 "Ingen väg till drönaren just nu. Använd RC-sändaren; flygkontrollens egen "
                 "failsafe tar hem den om markstationen är borta.",
             )
-        seq = self.latches.start(vehicle_id, kind, by).action_seq
+        seq = self.latches.start(vehicle_id, kind, by, battery_reason).action_seq
         with self._lock:
             self._via[vehicle_id] = via
         action_id = str(new_id())

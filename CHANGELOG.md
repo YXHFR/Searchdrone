@@ -19,24 +19,85 @@ All notable changes to this project are listed here. The format follows
 - `tools/check_forbidden_mavlink.py` (in `just lint`): reads the repository's Python and
   fails when code outside the MAVLink gate `sd_mav` names a message or command from its
   deny list (parameter writes, switching off the fence, flight termination, forced
-  arming with 21196 ...), also under an import alias or as a `getattr` string, or when
-  production code could write on a pymavlink connection itself instead of through
-  `Vehicle.send` (`pymavlink.mavutil`, `mavlink_connection`, a raw `MAVLink` encoder,
-  `<conn>.mav.*_send`, mavfile helpers such as `reboot_autopilot`). Tests are not read;
-  the simulator harness may set `SIM_*` parameters.
+  arming with 21196 ...), also under an import alias, as a `getattr` string or by
+  message id (`MAVLINK_MSG_ID_*`, `mavlink_map[...]`), or when production code could
+  write on a pymavlink connection itself instead of through `Vehicle.send`
+  (`pymavlink.mavutil`, also through `importlib`/`__import__`, `mavlink_connection`, a
+  raw `MAVLink` encoder, `mavlink_map`, `_conn` or `write_message` anywhere,
+  `pymavlink.mavutil` as a string (`sys.modules[...]`), any message's
+  `*_send`/`*_encode` method, `send` on a connection's `mav` (also assigned to a name or
+  attribute first, or with `:=`), mavfile helpers such as `reboot_autopilot` or `set_mode`, called, only
+  referenced or as a `getattr` string). Tests outside `src/` packages are not read; of
+  the denied messages only the simulator harness may send `PARAM_SET`: from a
+  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name (if
+  it is never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a
+  literal `SIM_*` name (a `param_set_send` on any owner but a literal `<x>.mav` needs it
+  in every place it may sit: first, as mavfile's, and third, as the dialect's; a
+  `*args`/`**kwargs` that may fill it is refused). The mavfile helpers that send
+  denied traffic themselves (`reboot_autopilot`, `set_servo`, `calibrate_level` ...)
+  are refused everywhere outside the gate. Names built at run time (f-strings,
+  arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
   (in `just test-contract`): the manifest names the safety parameter layers of the
   simulator and real-flight profiles and pins the content of the safety files, the Lua
-  script, the deny list, the parameter allowlist and the safety rules themselves
-  (`sd_sim/params.py`, `sd_safety/constants.py`). The check fails when a pinned file
-  changes without the manifest, when a failsafe, fence, battery, arming, RTL or
-  scripting line in either profile has no rule, when a profile breaks the safety rules or the values the
-  ground station reads back, when SITL or `sd-onboard` load other layers than the
-  manifest names, or when a sim-only layer (or the allowlist) could set a safety
-  parameter. `--update` writes the new digests after a reviewed change.
+  script, the deny list, the parameter allowlist, the safety rules themselves
+  (`sd_sim/params.py`, `sd_safety/constants.py`) and what enforces them (the gate's
+  `vehicle.py`, `connection.py` and `allowlist.py`, `sd_sim/sitl.py`,
+  `tools/params_check.py` and both checks); these
+  files must stay pinned, so changing one needs `--update` in the same PR. The check
+  fails when a pinned file changes without the manifest, when a failsafe, fence,
+  battery, arming, RTL or scripting line in either profile has no rule, when a profile
+  breaks the safety rules or the values the ground station reads back, when SITL or
+  `sd-onboard` load other layers than the manifest names, or when a sim-only layer (or
+  the allowlist) sets a parameter the safety layers set or any safety-relevant name
+  (`FS_`, `FENCE_`, every `BATTn_` and `GPSn_`, `ARMING_`, `FLTMODE`, `EK3_SRC`,
+  `MOT_SAFE_`, `RCn_OPTION`, `SYSID_MYGCS` ..., in any case); a parameter value that
+  is not a number is a finding with its file and line, not a crash; Python files are
+  pinned byte for byte, so a comment change needs `--update` too. `--update` writes the new digests after
+  a reviewed change and prints which pinned files changed.
+- Release tools. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) refuses a dirty tree or an
+  existing tag, runs `tools/check_merged_pr_gates.py`, sets the version in every
+  `pyproject.toml` (PEP 440) and `package.json`, refreshes the uv lock files, runs
+  `check_versions --expect` and turns `[Unreleased]` into the release's section, with
+  the commit list from git-cliff (`cliff.toml`, pinned in `simulation/versions.lock`).
+  It never commits or tags. `tools/check_merged_pr_gates.py` checks that every commit on
+  main (the whole first-parent history minus `tools/accept/pr_gate_exceptions.txt`; tags
+  do not shorten it) is the merge commit of a pull request into `main` whose gates pass
+  when worked out again, since any workflow can write a status: `gate/review` with
+  `check_review_comments.evaluate` over the comments written before the merge,
+  `gate/owner` from the merge commit's own files (local git) and
+  `check_owner_gate.approved_by_label_events` (the owner's newest `owner-ok`, added after
+  the head commit's first check suite, so a head without one fails, and after any base
+  change, force push or reopening), and `gate/pr-title` from the title at the merge. Workflow files the merge
+  added or changed are read as YAML: none may be able to write a gate (a job without
+  `permissions` at either level counts, since it gets the default token), and the gate
+  workflows may only run on `pull_request_target`/`issue_comment`
+  (`tools/workflow_rules.py`, shared with `tools/tests/test_workflows.py`). The exceptions
+  file, the gate scripts and the gate and release workflows now need the owner's
+  `owner-ok` (`check_owner_gate.PROTECTED`).
+  Each merge is judged by the protected paths in force before it (its first parent's
+  `PROTECTED` as well as the checker's own; a parent list it cannot read in full makes
+  every changed path need `owner-ok`), and no merged workflow outside the gates may hold
+  `pull-requests: write`, `issues: write`, `secrets: inherit` or any secret other than
+  `GITHUB_TOKEN` and `OPENROUTER_API_KEY` (`workflow_rules.ALLOWED_SECRETS`).
+  `.github/workflows/release.yml`, on a pushed `v[0-9]*` tag, first runs a job that
+  refuses a tag that is not on main and runs the gate check from a clean copy of the
+  protected scripts, with PyYAML pinned by hash (Python 3.12), so no other repository
+  code runs before it. The workflow finds the newest published release (rc included)
+  on the tag's line with `gh` and git alone; the scripts come from that release, first
+  confirm that `release.yml` itself made it, with a successful run for that tag and
+  commit, and the check starts after it. A different answer, or any error, stops the
+  job, and only the first release checks the whole history with the tagged commit's
+  own copy. New rules therefore apply from the release after the one
+  that ships them. A deleted release and a `release.yml` without its gates job are left
+  to the owner's ruleset on `v*` tags and immutable releases. Then it checks the
+  versions, builds the packages and the panel and publishes the
+  GitHub release only if the tag still names the commit it built; only its publish job
+  can write. `just showcase` is still not built.
 - `tools/tests/test_workflows.py` fails when any workflow other than `review-gate.yml`,
   `owner-gate.yml` and `pr-title.yml` grants `statuses: write`, `checks: write` or
-  `write-all` (at the top or in a job) or names a job `gate/...` or `review/...`, so no
+  `write-all` (at the top or in a job), leaves a job without `permissions` or names a job
+  `gate/...` or `review/...`, so no
   other workflow can write a gate (A18). The workflow rules now read `*.yaml` files too.
 - The image bank's second open dataset: KIOS Small Object Aerial Person Detection
   (University of Cyprus, Zenodo 7740081, CC BY 4.0; 3,136 pictures, 61,708 people),
@@ -167,11 +228,14 @@ All notable changes to this project are listed here. The format follows
   refused, failed, expired or unanswered keep-out list is sent again (above a stale
   sequence number when the executor holds a newer one), and the operator gets one red,
   sticky alarm in Swedish (`KEEPOUTS_NOT_INSTALLED`) until the list is on board
-  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`.
+  (`KEEPOUTS_INSTALLED`). The sequence number stops at `INSTALL_SEQ_MAX`, logged once
+  per run of refusals.
 - A drone hovering for a keep-out cylinder (`executor.keepout_hold`) alarms the operator:
   orange short of a cylinder, red and sticky over a person (`KEEPOUT_HOLD`), saying
   whether it climbs straight up first. The fields are shared (`KeepoutHoldField`). One
-  delivered after its mission closed is only logged.
+  delivered after its mission closed is only logged. Every such alarm carries the
+  drone's `sent_utc` in its details, so its record shows when a late one was sent (the
+  panel does not show it yet).
 - The tlog writer's queue has a cap (`QUEUE_MAX` frames); when the disk falls behind,
   new frames are dropped, numbered gaps show where, and `<stem>.lost.json` counts them.
 - The chain scenarios' E8 oracle is as strict as the executor: a drone inside a cylinder
@@ -179,6 +243,17 @@ All notable changes to this project are listed here. The format follows
   grace. FLY HOME pressed in a chain run must be under way within its limit, and the
   drone must land at home. New SITL tests fly the margin case from #96 and require the
   inspection's `keepout_replan`.
+- Flight safety: an inspection inside a cylinder over a person with every way out
+  refused climbs straight up to the cylinder's top plus a margin, never above the
+  geofence or the charter's height, then hovers and alarms; when it cannot climb it
+  hovers and alarms. An inspection plans its way at most `REPLANS_MAX` times, and a
+  goto's deadline runs from its first target, so replans cannot keep it flying. A way
+  out planned again gets its own deadline, `goto.start` can no longer overwrite a
+  renewed one, and every keep-out hover tells the ground whether the drone is inside a
+  cylinder. The AI's next order after such a hover waits for the onboard snapshot after
+  it also when the hover's red alarm names the turn (before, it was refused onboard as
+  `STATE_CHANGED` and the drone kept hovering). STOP and FLY HOME still go past the AI
+  and the reflex.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read
@@ -195,9 +270,11 @@ All notable changes to this project are listed here. The format follows
   not count. `ENERGY_HOME` also starts the battery guard's FLY HOME (`battery_rtl`,
   `vehicle.battery_rtl` and `alarm.BATTERY_RTL` with `reason: energy_home`), but only
   from the estimate with the flight controller's numbers, or from the wind estimate once
-  the drag is measured, and both only with `BATT_CAPACITY` read from the flight
-  controller (with the constant 10000 mAh, before the read, after a reconnect or when it
-  is not answered, they only warn); an uncalibrated drag and a wind too strong to get
+  the drag is measured, and both only with `BATT_CAPACITY` and `BATT_LOW_MAH` read from
+  the flight controller (with the constant 10000 mAh or 1500 mAh reserve, before the
+  read, after a reconnect, when one is not answered or `BATT_LOW_MAH` is 0 or not below
+  the capacity, they only warn, so the 1500 mAh constant never flies a small pack
+  home); an uncalibrated drag and a wind too strong to get
   home in only warn. Not while the pilot flies by hand. A ground speed of 0 or NaN does
   not count as holding position for the drag. Parameters outside ArduCopter's ranges
   (`RTL_SPEED_MS` and `WP_SPD` 0.1-20 m/s), a capacity outside 100-1,000,000 mAh and a
@@ -211,6 +288,11 @@ All notable changes to this project are listed here. The format follows
   SITL W5 shows the ground station using sd_fpv7's `ATC_ANGLE_MAX` 35; W6 has
   `ENERGY_HOME` fly home (reason `energy_home`, Resume refused, STOP and "Ta över" leave
   the drone in LOITER).
+  The battery guard's reason is set together with its latch (`Latches.start`), so no
+  moment shows the latch without its reason. A late ATTITUDE (up to 1 s back) no longer
+  moves `fc_boot_ms` back: the reboot check compares with the newest. The ground's
+  README says to set `BATT_CAPACITY` and `BATT_LOW_MAH` on the flight controller, since
+  without them `ENERGY_HOME` only warns.
 
 - The nightly search campaign's targets (`python -m sd_sim.eval_search aggregate`):
   SK02's "never in the low list" still passes on a share of at least 0.95 and now also

@@ -138,11 +138,14 @@ class AlertCode(StrEnum):
 
 
 class KeepoutHoldField(StrEnum):
-    """The fields of the onboard ``executor.keepout_hold`` data that the ground's
-    ``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text."""
+    """The fields of the ``KEEPOUT_HOLD`` alert's details: the onboard
+    ``executor.keepout_hold`` data the ground passes on, for the panel's text, and the
+    envelope's send time."""
 
     INSIDE = "inside"  # bool: inside a cylinder over a person, not short of one
     CLIMB_TO_M = "climb_to_m"  # number: the altitude (m) it climbs straight up to first
+    # ISO 8601: when the drone sent it (onboard clock). For the logs; nothing reads it.
+    SENT_UTC = "sent_utc"
 
 
 class CommandStatus(StrEnum):

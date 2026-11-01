@@ -276,8 +276,9 @@ test.describe("chat and approval cards", () => {
   }) => {
     ground.pushLive("mission", "charter.updated", charter());
     ground.pushLive("approvals", "approval.requested", approval());
-    // "Sends nothing" is about writes: the panel's own loads (the resync, the probability
-    // map) are GETs that may still land after this point, so they are not counted.
+    // "Sends nothing" is about writes: the pushes above make the panel read in the
+    // background (GETs, e.g. the resync and the probability map) at any time, so those
+    // are not counted.
     const before = ground.requests.length;
     await page.getByTestId("approval-AP1").getByTestId("edit-charter").click();
     const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });

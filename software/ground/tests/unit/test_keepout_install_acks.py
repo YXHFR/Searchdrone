@@ -118,7 +118,8 @@ async def test_stale_refusal_alarms_and_resends_higher_until_done() -> None:
 
 async def test_endless_stale_refusals_stop_at_the_cap_and_keep_the_alarm() -> None:
     """An onboard computer that refuses every number as stale: the jumps stop at
-    ``INSTALL_SEQ_MAX`` (exact in JSON), the ground logs an error, the red alarm stays."""
+    ``INSTALL_SEQ_MAX`` (exact in JSON), the ground logs an error once per run of
+    refusals, the red alarm stays."""
     flow = FakeFlow()
     msg_id, install = await send(flow)
     with structlog.testing.capture_logs() as logs:
@@ -128,16 +129,22 @@ async def test_endless_stale_refusals_stop_at_the_cap_and_keep_the_alarm() -> No
             assert install.install_seq <= link_loss.INSTALL_SEQ_MAX
             if install.install_seq == link_loss.INSTALL_SEQ_MAX:
                 break
-        await answer(flow, msg_id, "rejected", "ONB_STALE_ORDER")  # still refused at the cap
-        msg_id, install = await send(flow)
+        for _ in range(3):  # still refused at the cap
+            await answer(flow, msg_id, "rejected", "ONB_STALE_ORDER")
+            msg_id, install = await send(flow)
     at_cap = [e for e in logs if e["event"] == "link_loss.install_seq_at_cap"]
-    assert at_cap and all(e["log_level"] == "error" for e in at_cap)
+    assert len(at_cap) == 1 and at_cap[0]["log_level"] == "error"
     assert install.install_seq == link_loss.INSTALL_SEQ_MAX
     assert flow.link_watch[VID].install_seq == link_loss.INSTALL_SEQ_MAX
     assert codes(flow) == ["KEEPOUTS_NOT_INSTALLED"]  # still on, once
     assert flow.link_watch[VID].not_installed
     await answer(flow, msg_id, "done")  # it takes the capped number: in again
     assert codes(flow) == ["KEEPOUTS_NOT_INSTALLED", "KEEPOUTS_INSTALLED"]
+    with structlog.testing.capture_logs() as logs:  # a new run of refusals logs again
+        flow.link_watch[VID].sent = None
+        msg_id, install = await send(flow)
+        await answer(flow, msg_id, "rejected", "ONB_STALE_ORDER")
+    assert [e["event"] for e in logs].count("link_loss.install_seq_at_cap") == 1
 
 
 async def test_back_in_is_info_as_on_the_panel() -> None:
