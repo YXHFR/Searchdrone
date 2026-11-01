@@ -23,15 +23,20 @@ All notable changes to this project are listed here. The format follows
   message id (`MAVLINK_MSG_ID_*`, `mavlink_map[...]`), or when production code could
   write on a pymavlink connection itself instead of through `Vehicle.send`
   (`pymavlink.mavutil`, also through `importlib`/`__import__`, `mavlink_connection`, a
-  raw `MAVLink` encoder, `mavlink_map`, any `_conn` attribute, `write_message`,
-  any message's `*_send`/`*_encode` method, mavfile helpers such as `reboot_autopilot`
-  or `set_mode`, called, only referenced or as a `getattr` string). Tests outside
-  `src/` packages are not read; of the denied messages the simulator harness may send
-  only `PARAM_SET`, from a `set_sim_param` that first refuses any name but `SIM_*`, or
-  with a literal `SIM_*` name.
-  mavfile helpers that send denied traffic themselves (`reboot_autopilot`, `set_servo`,
-  `calibrate_level` ...) are refused everywhere outside the gate. Names built at run
-  time (f-strings, arithmetic) are not seen.
+  raw `MAVLink` encoder, `mavlink_map`, `_conn` or `write_message` anywhere,
+  `pymavlink.mavutil` as a string (`sys.modules[...]`), any message's
+  `*_send`/`*_encode` method, `send` on a connection's `mav` (also assigned to a name or
+  attribute first, or with `:=`), mavfile helpers such as `reboot_autopilot` or `set_mode`, called, only
+  referenced or as a `getattr` string). Tests outside `src/` packages are not read; of
+  the denied messages only the simulator harness may send `PARAM_SET`: from a
+  `set_sim_param` that first refuses any name but `SIM_*` and then sends that name (if
+  it is never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a
+  literal `SIM_*` name (a `param_set_send` on any owner but a literal `<x>.mav` needs it
+  in every place it may sit: first, as mavfile's, and third, as the dialect's; a
+  `*args`/`**kwargs` that may fill it is refused). The mavfile helpers that send
+  denied traffic themselves (`reboot_autopilot`, `set_servo`, `calibrate_level` ...)
+  are refused everywhere outside the gate. Names built at run time (f-strings,
+  arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
   (in `just test-contract`): the manifest names the safety parameter layers of the
   simulator and real-flight profiles and pins the content of the safety files, the Lua
@@ -46,8 +51,9 @@ All notable changes to this project are listed here. The format follows
   `sd-onboard` load other layers than the manifest names, or when a sim-only layer (or
   the allowlist) sets a parameter the safety layers set or any safety-relevant name
   (`FS_`, `FENCE_`, every `BATTn_` and `GPSn_`, `ARMING_`, `FLTMODE`, `EK3_SRC`,
-  `MOT_SAFE_`, `RCn_OPTION` ..., in any case); Python files are pinned byte for byte,
-  so a comment change needs `--update` too. `--update` writes the new digests after
+  `MOT_SAFE_`, `RCn_OPTION`, `SYSID_MYGCS` ..., in any case); a parameter value that
+  is not a number is a finding with its file and line, not a crash; Python files are
+  pinned byte for byte, so a comment change needs `--update` too. `--update` writes the new digests after
   a reviewed change and prints which pinned files changed.
 - Release tools. `just release-prep X.Y.Z` (or `X.Y.Z-rc.N`) refuses a dirty tree or an
   existing tag, runs `tools/check_merged_pr_gates.py`, sets the version in every

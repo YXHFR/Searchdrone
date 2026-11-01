@@ -88,6 +88,7 @@ SHADOW_PREFIXES = (
     "LAND_",
     "PILOT_THR_",
     "RCMAP_",
+    "SYSID_MYGCS",  # which ground station the failsafes and the gate listen to
 )
 # Families with an instance number: RCn_OPTION, GPS_/GPS1_/GPS2_, BATT2_ ... BATTG_.
 SHADOW_PATTERN = re.compile(r"RC\d+_OPTION$|GPS\d*_|BATT[2-9A-G]_")
@@ -106,21 +107,35 @@ def load_manifest(text: str) -> Manifest:
     return Manifest(profiles, pinned)
 
 
-def parse_parm(text: str) -> dict[str, float]:
+class ParmError(ValueError):
+    """A parameter file line that is not ``NAME value``: a finding, not a crash."""
+
+
+def parse_parm(text: str, source: str = "<text>") -> dict[str, float]:
     """``NAME value`` / ``NAME,value`` lines; ``#`` starts a comment."""
     out: dict[str, float] = {}
-    for raw in text.splitlines():
+    for no, raw in enumerate(text.splitlines(), 1):
         line = raw.split("#", 1)[0].strip()
         if line:
             parts = [p for p in re.split(r"[\s,]+", line) if p]
-            out[parts[0]] = float(parts[1]) if len(parts) > 1 else float("nan")
+            try:
+                out[parts[0]] = float(parts[1]) if len(parts) > 1 else float("nan")
+            except ValueError as exc:
+                raise ParmError(
+                    f"{source}:{no}: {parts[1]!r} är inget tal ({raw.strip()!r})"
+                ) from exc
     return out
+
+
+def read_parm(path: Path, root: Path = REPO) -> dict[str, float]:
+    source = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+    return parse_parm(path.read_text(encoding="utf-8"), source)
 
 
 def digest(path: Path) -> str:
     """sha256 of the file's meaning: parameters and TOML by content, the rest by bytes."""
     if path.suffix == ".parm":
-        data = json.dumps(sorted(parse_parm(path.read_text(encoding="utf-8")).items()))
+        data = json.dumps(sorted(read_parm(path).items()))
         return hashlib.sha256(data.encode()).hexdigest()
     if path.suffix == ".toml":
         parsed = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -131,7 +146,7 @@ def digest(path: Path) -> str:
 def merged(root: Path, layers: Iterable[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for rel in layers:
-        out.update(parse_parm((root / rel).read_text(encoding="utf-8")))
+        out.update(read_parm(root / rel, root))
     return out
 
 
@@ -178,7 +193,7 @@ def ruled_problems(
     ruled = {name for name, _, _ in rules}
     out = []
     for rel in layers:
-        for name in parse_parm((root / rel).read_text(encoding="utf-8")):
+        for name in read_parm(root / rel, root):
             if name.startswith(RULED_PREFIXES) and name not in ruled:
                 out.append(
                     f"ruled: {Path(rel).name} sätter {name}, som saknar regel i {rules_name}"
@@ -241,7 +256,7 @@ def shadow_problems(root: Path, manifest: Manifest) -> list[str]:
     out = []
     params = root / "simulation" / "sitl" / "params"
     for name in sorted(set(SIM_PARAM_FILES.values())):
-        found = unsafe(parse_parm((params / name).read_text(encoding="utf-8")))
+        found = unsafe(read_parm(params / name, root))
         out += [f"shadow: {name} sätter säkerhetsparametern {p}" for p in found]
     allow = tomllib.loads((root / PARAMS_ALLOWLIST).read_text(encoding="utf-8"))
     names = set(allow.get("allowed", []))
@@ -305,13 +320,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     # REPO and MANIFEST are passed, not left to the defaults, so a test can point them
     # at a copy.
-    if args.update:
-        changed = update(MANIFEST, REPO)
-        for rel in changed:
-            print(f"--update: ny digest för {rel}")
-        if not changed:
-            print("--update: inga låsta filer har ändrats")
-    problems = check(REPO, MANIFEST)
+    try:
+        if args.update:
+            changed = update(MANIFEST, REPO)
+            for rel in changed:
+                print(f"--update: ny digest för {rel}")
+            if not changed:
+                print("--update: inga låsta filer har ändrats")
+        problems = check(REPO, MANIFEST)
+    except ParmError as exc:
+        problems = [f"parm: {exc}"]
     for line in problems:
         print(line)
     if problems:

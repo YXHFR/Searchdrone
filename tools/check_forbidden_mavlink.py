@@ -25,10 +25,12 @@ so a forbidden message is caught at review time and not only when it is sent:
   any use of ``pymavlink.mavutil`` (``mavlink_connection``, ``mavfile``, also through
   ``importlib.import_module`` or ``__import__``), a bare ``MAVLink`` encoder,
   ``mavlink_map``, the gate's own connection (``_conn``, any attribute of that name,
-  and ``write_message``), a mavfile helper that sends on its own
+  and ``write_message``), ``pymavlink.mavutil`` as a
+  string (``sys.modules[...]``), a mavfile helper that sends on its own
   (``reboot_autopilot``, ``arducopter_arm``, ``set_mode*`` ...), called, only
   referenced or spelled as a ``getattr`` string, and any message's ``*_send`` /
-  ``*_encode`` method (also on a ``mav`` taken into another name). Plain ``set_mode``
+  ``*_encode`` method and ``send`` on a ``mav`` (also one assigned to a name or
+  attribute, ``m = conn.mav``, ``self._m = conn.mav``, ``(m := conn.mav)``). Plain ``set_mode``
   is also the skills' and ``Vehicle``'s method, which takes a ``CopterMode``, so it is
   refused only with mavfile's arguments (a literal mode, ``custom_mode=``) or when
   only referenced.
@@ -38,9 +40,10 @@ The check is a static net on top of ``Vehicle.send``, not a proof: a command num
 that only exists at run time (``cmd = 207`` passed on) is not seen, which is why
 production code may not own a connection at all. Names built at run time (an f-string,
 ``21195 + 1``) are not seen either, nor a mavfile helper spelled as a ``getattr`` string
-outside production. The harness's ``set_sim_param`` is trusted to send the name it
-checked: the guard proves the first parameter starts with ``SIM_``, not that this is
-the name the ``PARAM_SET`` carries.
+outside production, nor a ``mav`` bound by ``for``, unpacking, a subscript or ``getattr`` (names and
+attributes assigned a ``mav`` are followed anywhere in the file, in any class). In the
+harness's ``set_sim_param`` the guard proves the first parameter starts with ``SIM_``;
+a PARAM_SET there may carry that parameter only if it is never bound again.
 
 Test code (``tests/`` and ``e2e/`` folders and ``conftest.py`` outside a ``src/``
 package) is not read: tests build forbidden messages on purpose to see them refused.
@@ -48,7 +51,10 @@ The allowed modules are listed in ``ALLOWED`` with the rules they are exempt fro
 in ``ALLOWED_MESSAGES`` with the denied messages they may name (this file names
 ``PARAM_SET``, which it looks for). ``SIM_PARAM_WRITERS`` lets the simulator harness
 send PARAM_SET from ``set_sim_param``, which refuses any name but ``SIM_*`` at run
-time; anywhere else in the harness a PARAM_SET needs a literal ``SIM_*`` name. Adding
+time, and in it may carry only that guarded name (never bound again) or a literal
+``SIM_*`` one; anywhere
+else in the harness a PARAM_SET needs a literal ``SIM_*`` name, and outside these files
+none is allowed. Adding
 an entry to any of these needs review.
 
 ``uv run tools/check_forbidden_mavlink.py [paths ...]`` checks the files git would take
@@ -205,14 +211,40 @@ def _docstrings(tree: ast.AST) -> set[int]:
     return out
 
 
-def _is_raw_send(func: ast.expr) -> bool:
-    """``<x>.mav.<name>_send`` or ``<x>.mav.send``: a write on a pymavlink connection."""
-    return (
-        isinstance(func, ast.Attribute)
-        and (func.attr.endswith("_send") or func.attr == "send")
-        and isinstance(func.value, ast.Attribute)
-        and func.value.attr == "mav"
+def _on_mav(owner: ast.expr, mav_names: frozenset[str]) -> bool:
+    """``<x>.mav``, or a name or attribute the ``mav`` was taken into."""
+    if isinstance(owner, ast.NamedExpr):
+        owner = owner.value
+    return (isinstance(owner, ast.Attribute) and owner.attr == "mav") or (
+        isinstance(owner, ast.Name | ast.Attribute) and ast.unparse(owner) in mav_names
     )
+
+
+def _is_raw_send(func: ast.expr, mav_names: frozenset[str] = frozenset()) -> bool:
+    """``<x>.mav.<name>_send`` or ``<x>.mav.send``, also on a name or attribute the
+    ``mav`` was taken into (``m = conn.mav``, ``self._m = conn.mav``, ``(m := conn.mav)``):
+    a write on a pymavlink connection."""
+    if not isinstance(func, ast.Attribute):
+        return False
+    if not (func.attr.endswith("_send") or func.attr == "send"):
+        return False
+    return _on_mav(func.value, mav_names)
+
+
+def _mav_names(tree: ast.AST) -> frozenset[str]:
+    """Names and attributes assigned a ``<x>.mav`` anywhere in the file (``=``, an
+    annotated ``=`` or ``:=``), as source text. Other bindings (``for``, unpacking,
+    ``getattr``, ``setattr``) are not followed."""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign | ast.AnnAssign | ast.NamedExpr):
+            continue
+        value = node.value
+        if not (isinstance(value, ast.Attribute) and value.attr == "mav"):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        out.update(ast.unparse(t) for t in targets if isinstance(t, ast.Name | ast.Attribute))
+    return frozenset(out)
 
 
 def _matches(path: str, prefix: str) -> bool:
@@ -233,27 +265,68 @@ def _is_mavfile_set_mode(node: ast.Call) -> bool:
     return first is None or isinstance(first, ast.Constant)
 
 
-def _param_name(node: ast.Call) -> str | None:
-    """The literal parameter name of a PARAM_SET (``b"X"``, ``"X"``, ``"X".encode()``)."""
-    arg = node.args[2] if len(node.args) > 2 else None
-    for kw in node.keywords:
-        if kw.arg == "param_id":
-            arg = kw.value
+def _strip_encode(arg: ast.expr | None) -> ast.expr | None:
+    """``x.encode()`` -> ``x``. ``.encode`` with arguments is kept: never read as SIM_*."""
     if (
         isinstance(arg, ast.Call)
         and isinstance(arg.func, ast.Attribute)
         and arg.func.attr == "encode"
+        and not arg.args
     ):
-        arg = arg.func.value
+        return arg.func.value
+    return arg
+
+
+def _param_args(node: ast.Call) -> list[ast.expr | None]:
+    """Every place the parameter name a PARAM_SET call carries may sit.
+
+    The dialect's ``MAVLink_param_set_message`` / ``param_set_encode`` and
+    ``<conn>.mav.param_set_send`` take it third (``param_id``). mavfile's own
+    ``param_set_send(parm_name, parm_value)`` takes it first, but a ``param_set_send``
+    on an owner other than a literal ``<x>.mav`` (``getattr(conn, "mav")``, a name the
+    ``mav`` was taken into, which may be a connection elsewhere) may be either: both
+    places count, so mavfile's form with its third argument ``parm_type`` (a number)
+    is refused too. A place an earlier ``*args`` or a ``**kwargs`` may fill is unknown
+    (``None``), never ``SIM_*``."""
+    func = node.func
+    unknown = _call_name(func) == "param_set_send" and not (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "mav"
+    )
+    places = [(2, "param_id")] + ([(0, "parm_name")] if unknown else [])
+    out: list[ast.expr | None] = []
+    spread = any(kw.arg is None for kw in node.keywords)
+    for pos, key in places:
+        blind = spread or any(isinstance(a, ast.Starred) for a in node.args[: pos + 1])
+        arg = None if blind else node.args[pos] if len(node.args) > pos else None
+        for kw in node.keywords:
+            if kw.arg == key:
+                arg = kw.value
+        if arg is not None or blind or pos == 0 or not unknown:
+            out.append(_strip_encode(arg))
+    return out
+
+
+def _sim_literal(arg: ast.expr | None) -> bool:
+    """A literal ``SIM_*`` name (``b"X"``, ``"X"``, ``"X".encode()``)."""
     value = arg.value if isinstance(arg, ast.Constant) else None
     if isinstance(value, bytes):
         value = value.decode("ascii", errors="replace")
-    return value if isinstance(value, str) else None
+    return isinstance(value, str) and value.startswith(SIM_PARAM_PREFIX)
+
+
+def _sim_name(node: ast.Call) -> bool:
+    return all(_sim_literal(arg) for arg in _param_args(node))
+
+
+def _params(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    return [a.arg for a in fn.args.args if a.arg not in ("self", "cls")]
 
 
 def _guards_sim_name(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """The function opens with ``if not <first parameter>.startswith("SIM_"): raise``."""
-    params = [a.arg for a in fn.args.args if a.arg not in ("self", "cls")]
+    params = _params(fn)
     body = fn.body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
@@ -286,11 +359,48 @@ def _own_calls(fn: ast.AST) -> Iterator[ast.Call]:
         yield from _own_calls(child)
 
 
+def _bound_names(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Every name bound anywhere in a function's body (its parameters not counted):
+    assignment, ``for``, ``with``/``except``/``match``/``import`` ``as``, ``global``,
+    ``nonlocal``, nested ``def``/``class`` and their parameters, also in functions
+    nested inside it."""
+    out: set[str] = set()
+    for stmt in fn.body:
+        for n in ast.walk(stmt):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store | ast.Del):
+                out.add(n.id)
+            elif isinstance(n, ast.arg):
+                out.add(n.arg)
+            elif isinstance(n, ast.Global | ast.Nonlocal):
+                out |= set(n.names)
+            elif isinstance(
+                n,
+                ast.FunctionDef
+                | ast.AsyncFunctionDef
+                | ast.ClassDef
+                | ast.ExceptHandler
+                | ast.MatchAs
+                | ast.MatchStar,
+            ):
+                if n.name:
+                    out.add(n.name)
+            elif isinstance(n, ast.MatchMapping) and n.rest:
+                out.add(n.rest)
+            elif isinstance(n, ast.alias):
+                out.add(n.asname or n.name.split(".")[0])
+    return out
+
+
 def _sim_param_sets(tree: ast.Module, writers: frozenset[str]) -> set[int]:
     """ids of the PARAM_SET call functions allowed in a SIM_PARAM_WRITERS file.
 
     A writer is a module-level function or a method, defined once under its name, that
-    opens with the SIM_ guard; calls in functions nested inside it are not covered."""
+    opens with the SIM_ guard; in it, a PARAM_SET may carry the guarded parameter (if
+    the writer never binds it again) or a literal ``SIM_*`` name, nothing else. Calls
+    in functions nested inside it are not covered. Elsewhere in the file only a
+    literal ``SIM_*`` name is allowed; outside these files, no PARAM_SET at all."""
+    if not writers:
+        return set()
     found: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
     scopes: list[ast.Module | ast.ClassDef] = [tree]
     scopes += [n for n in tree.body if isinstance(n, ast.ClassDef)]
@@ -301,14 +411,23 @@ def _sim_param_sets(tree: ast.Module, writers: frozenset[str]) -> set[int]:
     out: set[int] = set()
     for defs in found.values():
         if len(defs) == 1 and _guards_sim_name(defs[0]):
-            out |= {
-                id(n.func) for n in _own_calls(defs[0]) if _call_name(n.func) in PARAM_SET_CALLS
-            }
+            guarded = _params(defs[0])[0]
+            # A guarded parameter that is bound again in the writer is not trusted.
+            rebound = guarded in _bound_names(defs[0])
+            # Only the body: decorators, defaults and annotations run at definition
+            # time, where the parameter's name means an outer one. Functions and
+            # classes nested in the body stay out, as everywhere in _own_calls.
+            body = ast.Module(body=defs[0].body, type_ignores=[])
+            for n in _own_calls(body):
+                if _call_name(n.func) in PARAM_SET_CALLS and all(
+                    (not rebound and isinstance(arg, ast.Name) and arg.id == guarded)
+                    or _sim_literal(arg)
+                    for arg in _param_args(n)
+                ):
+                    out.add(id(n.func))
     for n in ast.walk(tree):
-        if isinstance(n, ast.Call) and _call_name(n.func) in PARAM_SET_CALLS:
-            name = _param_name(n)
-            if name is not None and name.startswith(SIM_PARAM_PREFIX):
-                out.add(id(n.func))
+        if isinstance(n, ast.Call) and _call_name(n.func) in PARAM_SET_CALLS and _sim_name(n):
+            out.add(id(n.func))
     return out
 
 
@@ -350,6 +469,7 @@ def check_source(text: str, path: str) -> list[Finding]:
         add(node, "forbidden-message", f"{spelled}: {msg} är förbjudet (denylist)", msg)
 
     production = path.startswith(RAW_SEND_ROOT)
+    mav_names = _mav_names(tree) if production else frozenset()
     # The function of every call, so a helper only referenced is told from one called.
     called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
 
@@ -378,10 +498,13 @@ def check_source(text: str, path: str) -> list[Finding]:
             if not isinstance(name, str) or id(node) in docs:
                 pass
             elif name in CONNECTION_NAMES or name in DIALECT_SENDS:
-                raw(node, name)
+                hint = " (byt namn om det inte är grindens)" if name == "_conn" else ""
+                raw(node, f"{name}{hint}")
             elif isinstance(node, ast.Constant):
                 if name in MAVFILE_HELPERS:
                     raw(node, f'"{name}"')
+                elif "." in name and CONNECTION_NAMES & set(name.split(".")):
+                    raw(node, f'"{name}"')  # sys.modules["pymavlink.mavutil"]
             elif (name in MAVFILE_HELPERS or name == "set_mode") and id(node) not in called:
                 raw(node, f"{name} (utan anrop)")
         if not production and isinstance(node, ast.Attribute | ast.Name):
@@ -437,7 +560,7 @@ def check_source(text: str, path: str) -> list[Finding]:
                 if number is not None and number in DENIED_COMMANDS:
                     add(node, "forbidden-command", f"kommando {number} i {call} är förbjudet")
             if production and (
-                _is_raw_send(node.func)
+                _is_raw_send(node.func, mav_names)
                 or (isinstance(node.func, ast.Attribute) and node.func.attr in MAVFILE_HELPERS)
                 or (
                     isinstance(node.func, ast.Attribute)
