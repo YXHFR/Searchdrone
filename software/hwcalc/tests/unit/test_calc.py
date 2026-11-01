@@ -35,15 +35,26 @@ def failed(d: Drone, limits: HardwareLimits = LIMITS) -> set[str]:
     return {f.limit for f in check(d, limits).failures}
 
 
+def frame_for_total(total_kg: float) -> float:
+    """The frame mass that brings the committed drone to ``total_kg`` in all."""
+    d = drone()
+    return total_kg - (compute(d).total_mass_kg - d.frame_mass_kg)
+
+
 def test_mass_above_takeoff_limit_fails() -> None:
-    # 0.55 + 0.21 kg frame takes the total to 2.51 kg.
-    assert "max_takeoff_mass_kg" in failed(drone(frame_mass_kg=0.76))
+    heavy = drone(frame_mass_kg=frame_for_total(LIMITS.max_takeoff_mass_kg + 0.01))
+    assert compute(heavy).total_mass_kg > LIMITS.max_takeoff_mass_kg
+    assert "max_takeoff_mass_kg" in failed(heavy)
 
 
 def test_mass_exactly_at_limit_passes() -> None:
-    d = drone(frame_mass_kg=0.75)
-    assert compute(d).total_mass_kg == pytest.approx(2.5)
-    assert "max_takeoff_mass_kg" not in failed(d)
+    # The limit is set to the drone's own total, so "at the limit" is exact in floats.
+    d = drone()
+    total = compute(d).total_mass_kg
+    at_limit = LIMITS.model_copy(update={"max_takeoff_mass_kg": total})
+    assert "max_takeoff_mass_kg" not in failed(d, at_limit)
+    just_below = LIMITS.model_copy(update={"max_takeoff_mass_kg": total - 1e-9})
+    assert "max_takeoff_mass_kg" in failed(d, just_below)
 
 
 def test_short_hover_time_fails() -> None:
@@ -79,7 +90,7 @@ def test_hover_time_scales_with_battery() -> None:
         {"propulsion__efficiency_total": 0.81},  # above the plausibility bound
         {"environment__air_density_kg_m3": 1000.0},
         {"environment__air_density_kg_m3": 0.5},
-        {"battery__capacity_mah": 30000},  # 648 Wh in 0.87 kg
+        {"battery__capacity_mah": 30000},  # 648 Wh in the committed pack: > 300 Wh/kg
         {"schema_version": True},
         {"battery__usable_fraction": 0},
         {"environment__air_density_kg_m3": float("nan")},

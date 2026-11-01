@@ -22,7 +22,7 @@ battery:
   cells_parallel: 2
   capacity_mah: 10000         # whole pack
   nominal_cell_v: 3.6
-  mass_kg: 0.87
+  mass_kg: 0.913
   usable_fraction: 0.80
 propulsion:
   efficiency_total: 0.40      # rotor figure of merit x motor x ESC
