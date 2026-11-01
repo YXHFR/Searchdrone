@@ -307,6 +307,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             out.write_text(
                 json.dumps({"errors": errors, **bodies}, indent=1) + "\n", encoding="utf-8"
             )
+            sets: set[str] = set()
+            for b in bodies.values():
+                rows = b.get("recall_by_dataset") if isinstance(b, dict) else None
+                if isinstance(rows, dict):
+                    sets.update(rows)
+            private = private_out(out, sorted(sets), load_register())
+            if private:
+                warn(private)
             for e in errors:
                 warn(e)
             return 1 if errors else 0
