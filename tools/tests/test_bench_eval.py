@@ -476,3 +476,24 @@ def test_profiles_main_writes_a_profile(tmp_path: Path, monkeypatch: pytest.Monk
     assert profiles.main(["model=Bad-Name", f"result={result}", f"out={out}"]) == 2
     monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {})
     assert profiles.main(["model=facit_x", f"result={result}", f"out={out}"]) == 2
+
+
+def test_private_results_inside_the_repo_but_outside_build_are_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Warn, not refuse: the owner may measure anywhere, but git must not take these numbers."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ev, "ROOT", tmp_path)
+    register = {
+        "open": SimpleNamespace(publish_results=True),
+        "kept": SimpleNamespace(publish_results=False),
+    }
+    inside_repo = tmp_path / "tools" / "r.json"
+    message = ev.private_out(inside_repo, ["open", "kept"], register)
+    assert message is not None
+    assert "kept" in message
+    assert "open" not in message
+    assert ev.private_out(inside_repo, ["open"], register) is None
+    assert ev.private_out(tmp_path / "build" / "bench" / "r.json", ["kept"], register) is None
+    assert ev.private_out(tmp_path.parent / "elsewhere.json", ["kept"], register) is None

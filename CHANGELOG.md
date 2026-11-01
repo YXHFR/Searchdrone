@@ -371,6 +371,8 @@ All notable changes to this project are listed here. The format follows
   (`recall_by_dataset` missing or empty) or names one no longer in `datasets.toml`, so the
   `publish_results` check can no longer be skipped. A yes/no field in `datasets.toml` must
   be TOML `true` or `false`; a quoted `"false"` is refused instead of read as true.
+- `just bench-detector` warns when `out=` puts a result inside the repository but outside
+  `build/` and it includes a dataset with `publish_results = false`.
 
 ### Added
 
