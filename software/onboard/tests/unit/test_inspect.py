@@ -29,6 +29,7 @@ from sd_onboard.executor.keepout_reflex import (
     way_out,
 )
 from sd_onboard.executor.limits import LimitAction
+from sd_onboard.executor.state import Trigger
 from sd_onboard.skills import inspect_detection, survey_sector
 from sd_onboard.skills.base import PlanError
 from sd_onboard.skills.goto import GotoHandler, goto_plan
@@ -1388,7 +1389,7 @@ async def test_no_climb_when_the_altitude_limit_cannot_be_entered_hovers(
         target_of = r.ex.target_of
 
         def no_climb(trigger: Any, **kw: Any) -> Any:
-            if trigger == executor_module.Trigger.LIMIT_ALT:
+            if trigger == Trigger.LIMIT_ALT:
                 return Refusal(None)
             return target_of(trigger, **kw)
 
