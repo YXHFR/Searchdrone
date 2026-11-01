@@ -1,15 +1,19 @@
 # The link-loss rule's table (sd_onboard.executor.link_loss), written out row by row.
 # test_link_loss_table_matches_spec drives LinkLossRule into each "from" phase, applies the
 # event and requires the new phase and the events. "to: same" keeps the phase; a mapping
-# names the new phase per "from" phase.
+# names the new phase per "from" phase. "climbing": the keep-out climb under way, which
+# nothing cuts short (LL-T3b, LL-T7b); it ends in the keep-out hold (LL-T3c, LL-T6).
 - {id: LL-T1, from: [none], event: detect_normal, to: grace, emits: [link_lost]}
 - {id: LL-T2, from: [none], event: detect_find, to: find_move, emits: [find_hold_started]}
 - {id: LL-T2b, from: [none], event: detect_find_at_point, to: find_hover, emits: [find_hold_started]}
 - {id: LL-T3, from: [grace], event: hold_time, to: hold, emits: [link_loss_hold]}
+- {id: LL-T3b, from: [grace], event: hold_time_climbing, to: same, emits: []}
+- {id: LL-T3c, from: [grace], event: climb_done_after_home_time, to: home, emits: [link_loss_hold, link_loss_rtl]}
 - {id: LL-T4, from: [hold], event: home_time, to: home, emits: [link_loss_rtl]}
 - {id: LL-T5, from: [grace, hold], event: gcs_lost, to: home, emits: [gcs_lost_rtl]}
 - {id: LL-T6, from: [find_move], event: find_goto_done, to: find_hover, emits: []}
 - {id: LL-T7, from: [find_move], event: find_deadline, to: find_hover, emits: [find_move_deadline]}
+- {id: LL-T7b, from: [find_move], event: find_deadline_climbing, to: same, emits: []}
 - {id: LL-T8, from: [find_hover], event: find_timeout, to: home, emits: [find_hold_ended]}
 - {id: LL-T9, from: [find_move, find_hover], event: gcs_lost, to: same, emits: [gcs_lost_ignored_find]}
 - {id: LL-T10, from: [grace, hold], event: other_rtl, to: yielded, emits: []}

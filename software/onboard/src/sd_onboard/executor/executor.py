@@ -2119,14 +2119,10 @@ class Executor:
                 gcs_continue=self._gcs_continue,
                 active_skill=self.active.skill if self.active else None,
                 taken_by=self._taken_by,
+                climbing_out=self._climbing_out(),
             )
         )
         for action in actions:
-            if action.event == "find_move_deadline" and self._climbing_out():
-                # The find move's deadline during the keep-out climb stops nothing: the
-                # climb goes on and ends in the keep-out hold, where the find hover starts
-                # (the rule is in FIND_HOVER already). Not logged as a stop either.
-                continue
             self.emit(action.event, dict(action.data))
             if action.event == "find_hold_started":
                 self._find_hold_started(action.data)
@@ -2258,7 +2254,10 @@ class Executor:
                     return
                 was = self.state
                 if was == S.HOLD and self.active is None:
-                    self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
+                    # The keep-out hold stays the keep-out hold (a find move never leaves it).
+                    keep = self.hold_reason == "limit"
+                    reason = "limit" if keep else action.hold_reason
+                    self._enter(target, hold_reason=reason, cause=action.limit)
                     return
                 # The AI silent with ``hold`` stops the keep-out climb over the person: that
                 # hover is the keep-out hold, which a find move never leaves.

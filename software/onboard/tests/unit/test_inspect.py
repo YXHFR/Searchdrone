@@ -18,6 +18,7 @@ from sd_mav.vehicle import SendOrigin
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.guards import Refusal
 from sd_onboard.executor.keepout_reflex import (
+    INTERNAL_KEEPOUT_CLIMB,
     KEEPOUT_CLIMB_MARGIN_M,
     LOCAL_KEEPOUTS_MAX,
     Replans,
@@ -38,7 +39,7 @@ from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
-from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS
+from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS, HOLD_MS, HOME_MS
 from sd_safety.targets import polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
@@ -1333,13 +1334,19 @@ async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
         r.link = False
         cut = r.clock.monotonic()
         skills: set[str | None] = set()
+        held: list[int] = []  # when the climb ended in the hold
 
         def hovering() -> bool:
             skills.add(r.ex.active.skill if r.ex.active else None)
+            if r.ex.state == S.HOLD and not held:
+                held.append(r.ex.now_ms())
             return r.ex.link_rule.phase == LinkLossPhase.FIND_HOVER and r.ex.state == S.HOLD
 
         await r.until(hovering, 120)
         assert "executor.find_hold_started" in r.up.kinds()  # the find rule did start
+        # The hover's clock starts up there, when the climb has ended (hovered_s).
+        assert r.ex.link_rule.hover_since_ms is not None
+        assert r.ex.link_rule.hover_since_ms >= held[0]
         if slow:  # the deadline passed during the climb, with no word of a stop
             assert r.clock.monotonic() - cut >= FIND_MOVE_DEADLINE_MS / 1000
             assert "executor.find_move_deadline" not in r.up.kinds()
@@ -1350,6 +1357,49 @@ async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
         assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
         assert "executor.find_move_keepout_exit" not in r.up.kinds()
         # Straight up and still: no farther off than braking from the search's speed.
+        assert max(math.dist(p, here) for p in track_xy(r, start)) <= 10.0
+
+
+@pytest.mark.parametrize("radius", [80.0, 105.0])
+async def test_a_link_loss_with_no_find_lets_the_climb_end_then_holds_and_flies_home(
+    monkeypatch: pytest.MonkeyPatch, radius: float
+) -> None:
+    """The link lost as the drone begins to climb out of a person's cylinder, no confirmed
+    find near: the hold that is due at 23 s does not cut the climb short. It climbs on to
+    the top; the hold there is the keep-out hold (``limit``), told as the link-loss hold,
+    and home is at 53 s as ever (up in about 45 s), or at once at the top when the climb
+    takes longer than that (about 70 s)."""
+    async with rig() as r:
+        _, person, here, start = await _search_over_a_person(r, monkeypatch, radius=radius)
+        monkeypatch.setattr("sd_mav.fake._CLIMB_MS", 1.0)  # after the takeoff
+        await r.run(0.5)
+        assert r.ex.state == S.TRANSIT  # climbing
+        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
+        assert r.ex.vehicle_state().alt_rel_home_m < want - 40  # longer than 23 s up
+        r.link = False
+        cut = r.clock.monotonic()
+        seen: list[tuple[float, str, str | None, str | None]] = []
+
+        def homing() -> bool:
+            active = r.ex.active.skill if r.ex.active else None
+            seen.append((r.clock.monotonic() - cut, str(r.ex.state), r.ex.hold_reason, active))
+            return r.ex.state == S.RTL
+
+        await r.until(homing, 200)
+        took = r.clock.monotonic() - cut
+        top = r.ex.vehicle_state().alt_rel_home_m
+        assert abs(top - want) <= 1.5, top  # home from the top, not from halfway up
+        climbing = [t for t, _, _, a in seen if a == INTERNAL_KEEPOUT_CLIMB]
+        assert max(climbing) > HOLD_MS / 1000  # the climb went on past 23 s
+        holds = {(st, why) for _, st, why, a in seen if st == str(S.HOLD)}
+        assert holds <= {(str(S.HOLD), "limit")}, holds  # no hover halfway, no relabel
+        kinds = r.up.kinds()
+        assert "executor.link_lost" in kinds and "executor.link_loss_rtl" in kinds
+        assert kinds.index("executor.link_loss_hold") < kinds.index("executor.link_loss_rtl")
+        if radius == 80.0:  # up before 53 s: the keep-out hold, then home on time
+            assert holds and took == pytest.approx(HOME_MS / 1000, abs=0.5)
+        else:  # up after 53 s: home at once from the top
+            assert took > HOME_MS / 1000
         assert max(math.dist(p, here) for p in track_xy(r, start)) <= 10.0
 
 
