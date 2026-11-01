@@ -197,7 +197,7 @@ async def test_the_map_reaches_the_panel_and_the_ai(r: Rig) -> None:
 
         res = await r.commander.get(f"/commander/v1/missions/{mid}/situation", headers=AS_BRAIN)
         line = res.json()["probability_line"]
-        assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR): ")
+        assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR / min): ")
 
         types = [e.type for e in r.g.bus.replay(r.g.bus.server_epoch, 0) or []]
         assert types.count("probability_map.updated") == 1

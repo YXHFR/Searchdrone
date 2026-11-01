@@ -69,7 +69,11 @@ COVERED_POD = 0.1  # a cell counts as covered on the map from this POD on, as on
 
 
 def _spacing(alt: float) -> float:
-    """The lane spacing of a survey that names none."""
+    """The lane spacing of a survey that names none: the footprint less the side overlap
+    (39 m at 40 m height), close to the map's plan spacing. The executor flies
+    ``SURVEY_DEFAULT_SPACING_M`` (30 m) at any height instead; the sim keeps its own value
+    because its golden flights (tests/golden/sim) were recorded with it, and moving it
+    shifts every later answer of a replay."""
     return max(10.0, 1.4 * FOOTPRINT_PER_M * alt)
 
 

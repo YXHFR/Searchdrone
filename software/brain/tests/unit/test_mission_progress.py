@@ -21,7 +21,8 @@ from pydantic import ValidationError
 from sd_brain.backends import LlmCommander
 from sd_brain.charter_draft import CharterError
 from sd_brain.config import BehaviourConfig, BrainConfig
-from sd_brain.context import ContextBuilder, situation_text
+from sd_brain.constants import SURVEY_DEFAULT_SPACING_M
+from sd_brain.context import ContextBuilder, min_survey_spacing_m, situation_text
 from sd_brain.loop import DEADLINE_TEXT, FINISH_DONE_TEXT, FINISH_TEXT, PROPOSED_TEXT
 from sd_brain.memory import (
     MissionRequest,
@@ -43,6 +44,8 @@ from sd_brain.turn import (
     TurnOutput,
 )
 from sd_schemas.base import new_id
+from sd_schemas.probmap import SectorScore, situation_line
+from sd_schemas.skills import SurveySectorAiParams
 
 REQUEST = "Sök sektor A på 40 m. Landa hemma sen."
 STOP_OVERRIDE = {
@@ -252,6 +255,40 @@ def test_the_prompt_has_the_finishing_rule() -> None:
     assert "search again instead of going home" in system and "Sektorer (POA" in system
     assert "WAITING CARDS." in system
     assert "så kör jag" not in system  # the example no longer teaches waiting
+
+
+def test_the_search_again_numbers_come_from_the_code() -> None:
+    """The default spacing is the executor's, the floor the survey tool's own minimum; the
+    operator's words and a "come home" end the search again."""
+    from sd_safety.constants import DEFAULT_SURVEY_SPACING_M
+
+    assert SURVEY_DEFAULT_SPACING_M == DEFAULT_SURVEY_SPACING_M
+    floor = min_survey_spacing_m()
+    assert floor == 10
+    with pytest.raises(ValidationError):
+        SurveySectorAiParams(sector="A", spacing_m=floor - 0.1)
+    system = _ctx().system
+    assert "{" not in system.split("EXEMPEL")[0]  # every placeholder filled
+    assert "one without `spacing_m` flew 30 m, so 20 m" in system
+    assert "never below 10 m" in system
+    assert "three times the minutes" in system and "till hemgräns" in system
+    assert "the mission ends after the first round" in system
+    assert "at once, also in the middle of a search" in system
+
+
+def test_the_sector_line_shows_the_minutes_of_a_pass() -> None:
+    score = SectorScore(
+        sector_id="A",
+        poa=0.4,
+        covered_pct=100,
+        mean_pod=0.3,
+        pos_plan=0.1,
+        est_min=6.3,
+        psr=0.016,
+        spacing_m=41.6,
+    )
+    line = situation_line([score])
+    assert line == "Sektorer (POA kvar / täckt / medel-POD / PSR / min): A 0,40/100%/0,30/0,016/6,3"
 
 
 async def test_a_plan_note_sent_with_the_action_is_kept() -> None:

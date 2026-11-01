@@ -120,8 +120,9 @@ class Situation(SdModel):
     pilot: LatLon | None
     alerts: list[dict[str, Any]]
     recent_events: list[Event]  # the latest 20
-    # The probability map's sector line (POA left / covered / mean POD / PSR), or None
-    # before the first map. Only a ranking: orders still go through the gate.
+    # The probability map's sector line (POA left / covered / mean POD / PSR / minutes of
+    # one pass), or None before the first map. Only a ranking: orders still go through the
+    # gate.
     probability_line: str | None = None
     # The open search candidates (best first, with field matches, distance and the
     # review counts) and the confirmed finds. Built by the ground from enum-like values

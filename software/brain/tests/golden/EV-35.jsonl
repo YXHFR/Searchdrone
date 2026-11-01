@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Allt är sökt utan fynd, men batteriet räcker inte till en sektor till. Flyger hem.", "tool_calls": [{"name": "return_home", "arguments": {"reason": "Batteriet räcker inte till ett nytt varv.", "rationale_sv": "Fem minuter till hemgräns räcker inte till en sektor till."}}]}}

@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Allt är sökt utan fynd och batteriet räcker. Söker sektor B igen med 20 m mellan stråken.", "tool_calls": [{"name": "survey_sector", "arguments": {"sector": "B", "spacing_m": 20, "rationale_sv": "Ett varv utan fynd utesluter inte personen, så jag söker tätare i sektorn med högst PSR."}}]}}
