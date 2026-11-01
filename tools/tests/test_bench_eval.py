@@ -476,3 +476,53 @@ def test_profiles_main_writes_a_profile(tmp_path: Path, monkeypatch: pytest.Monk
     assert profiles.main(["model=Bad-Name", f"result={result}", f"out={out}"]) == 2
     monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {})
     assert profiles.main(["model=facit_x", f"result={result}", f"out={out}"]) == 2
+
+
+def test_private_results_inside_the_repo_but_outside_build_are_warned_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Warn, not refuse: the owner may measure anywhere, but git must not take these numbers."""
+    from types import SimpleNamespace
+
+    tmp_path = tmp_path.resolve()
+    monkeypatch.setattr(ev, "ROOT", tmp_path)
+    monkeypatch.setattr(ev, "RESULTS", tmp_path / "build" / "bench")
+    register = {
+        "open": SimpleNamespace(publish_results=True),
+        "kept": SimpleNamespace(publish_results=False),
+    }
+    inside_repo = tmp_path / "tools" / "r.json"
+    message = ev.private_out(inside_repo, ["open", "kept"], register)
+    assert message is not None
+    assert "kept" in message
+    assert "open" not in message
+    assert ev.private_out(inside_repo, ["open"], register) is None
+    assert ev.private_out(inside_repo, ["gone"], register) is not None
+    assert ev.private_out(tmp_path / "build" / "bench" / "r.json", ["kept"], register) is None
+    assert ev.private_out(tmp_path.parent / "elsewhere.json", ["kept"], register) is None
+
+
+def test_main_warns_when_it_writes_private_results_into_the_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from types import SimpleNamespace
+
+    root = tmp_path.resolve()
+    monkeypatch.setattr(ev, "ROOT", root)
+    monkeypatch.setattr(ev, "RESULTS", root / "build" / "bench")
+    monkeypatch.setattr(ev, "pictures", lambda *a: ("s", [object()]))
+    monkeypatch.setattr(ev, "measure", lambda *a: None)
+    cls = {"lt16": {"recall": 0}, "16to32": {"recall": 0}, "gt32": {"recall": 0}}
+    row = {"recall": 0, "n": 1, "by_class": cls, "threshold": 0.5, "fp_per_12mp": 0}
+    monkeypatch.setattr(
+        ev,
+        "result_body",
+        lambda *a: {"recall": cls, "ap50": 0, "recall_by_dataset": {"kept": row}},
+    )
+    monkeypatch.setattr(
+        ev, "load_register", lambda *a: {"kept": SimpleNamespace(publish_results=False)}
+    )
+    assert ev.main(["model=null", f"data={root}", f"out={root / 'r.json'}"]) == 0
+    assert "kept, som inte får publiceras" in capsys.readouterr().err
+    assert ev.main(["model=null", f"data={root}", f"out={root / 'build' / 'r.json'}"]) == 0
+    assert "publiceras" not in capsys.readouterr().err

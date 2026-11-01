@@ -34,6 +34,7 @@ from typing import Any, ClassVar
 import numpy as np
 from bench.common import (
     RESULTS,
+    ROOT,
     BenchError,
     data_dir,
     flag,
@@ -270,6 +271,23 @@ def selfcheck(items: Sequence[Picture], source: str = "") -> tuple[list[str], di
     return errors, bodies
 
 
+def private_out(out: Path, sets: Sequence[str], register: Mapping[str, Any]) -> str | None:
+    """A warning when numbers that may not leave this computer land where git could take them.
+
+    Outside the repository, and under the ignored build/, is the owner's own business. A set
+    the register no longer knows counts as private, as in profiles.py."""
+    where = out.resolve()
+    if not where.is_relative_to(ROOT) or where.is_relative_to(RESULTS.parent):
+        return None
+    private = [s for s in sets if s not in register or not register[s].publish_results]
+    if not private:
+        return None
+    return (
+        f"{out} ligger i förrådet utanför build/ och innehåller resultat på "
+        f"{', '.join(private)}, som inte får publiceras; checka inte in den."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv, KEYS, "bench-detector")
@@ -294,14 +312,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1 if errors else 0
         body = result_body(model, source, measure(model, items, data))
         out.write_text(json.dumps(body, indent=1) + "\n", encoding="utf-8")
+        by_set = body["recall_by_dataset"]
+        assert isinstance(by_set, dict)  # noqa: S101 - built just above
+        private = private_out(out, list(by_set), load_register())
+        if private:
+            warn(private)
         rec = body["recall"]
         assert isinstance(rec, dict)  # noqa: S101 - built just above
         say(
             f"recall < 16 px {rec['lt16']['recall']}, 16-32 px {rec['16to32']['recall']}, "
             f"> 32 px {rec['gt32']['recall']}; AP50 {body['ap50']}; skrivet till {out}"
         )
-        by_set = body["recall_by_dataset"]
-        assert isinstance(by_set, dict)  # noqa: S101 - built just above
         for name, row in by_set.items():
             cls = row["by_class"]
             say(

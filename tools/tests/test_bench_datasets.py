@@ -128,6 +128,7 @@ def test_register_with_a_bad_row_is_refused(tmp_path: Path) -> None:
         ("local_only = 0", "local_only"),
         ('publish_results = "false"', "publish_results"),
         ('licence_confirmed = "yes"', "licence_confirmed"),
+        ("ranges = 1", "ranges"),
     ],
 )
 def test_register_flag_must_be_a_toml_boolean(tmp_path: Path, line: str, key: str) -> None:
