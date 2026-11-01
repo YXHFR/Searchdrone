@@ -21,6 +21,9 @@
   moves the drone sideways out of the cylinder (no ``internal_find_goto``). It climbs on
   to the top, hovers there in the keep-out hold (``limit``), where the find hover starts,
   and flies home when that ends, as the link-loss rule says.
+* ``test_a_link_loss_with_no_find_during_a_climb_climbs_on_and_flies_home``: the same with
+  no confirmed find near. The hold due at 23 s does not cut the climb short: it climbs on
+  to the top, hovers there in the keep-out hold (``limit``), and flies home at 53 s.
 """
 
 from __future__ import annotations
@@ -47,6 +50,8 @@ from test_sc_emergency import stopped_and_holding  # pyright: ignore[reportMissi
 from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
     FIND_HOME_AT,
     FIND_LOITER_BY,
+    HOLD_AT,
+    HOME_AT,
     HOME_MODES,
     SLACK_S,
     back_and_land,
@@ -87,6 +92,9 @@ __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 PERSON_R_M = 100.0
 CLIMB_TO_M = PERSON_R_M + KEEPOUT_CLIMB_MARGIN_M
 ALT_TOL_M = 2.0
+# ArduCopter's default climb speed in GUIDED (``WP_SPD_UP``, not set in the repo's params).
+SITL_MAX_CLIMB_MS = 2.5
+LOW_GOTO_ALT_M = 22.0
 SIDEWAYS_M = 15.0  # braking from the leg's speed, then straight up
 # The ground numbers its installs from the wall clock in ms: one hour past the
 # executor's, so the ground's own resends in this test do not replace this one.
@@ -199,14 +207,14 @@ class Climb(NamedTuple):
 
 
 async def _a_goto_climbs_out(
-    sc: Any, source: Literal["candidate", "confirmed"] = "candidate"
+    sc: Any, source: Literal["candidate", "confirmed"] = "candidate", alt_m: float = 40.0
 ) -> Climb:
-    """A goto flies on inside a person's cylinder (``source``) that came around it, a
-    second one just ahead, closer than it can turn away from: it stops short of that one
-    and climbs out of the one it is in; the operator is told, the goto superseded."""
+    """A goto at ``alt_m`` flies on inside a person's cylinder (``source``) that came around
+    it, a second one just ahead, closer than it can turn away from: it stops short of that
+    one and climbs out of the one it is in; the operator is told, the goto superseded."""
     p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
     target = sc.at(float(p1["east_m"]), float(p1["north_m"]))
-    res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": 40})
+    res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": alt_m})
     assert res["gate"]["decision"] == "ALLOW", res
     goto = await sc.wait_command("goto", "running", 30)
     ex = sc.r.onboard.ex
@@ -220,6 +228,8 @@ async def _a_goto_climbs_out(
         before = next((s for s in reversed(sc.track) if s.t <= now.t - 1.0), None)
         if before is None or now.groundspeed_ms < 4.0 or sc.from_home_m() < 30.0:
             return False
+        if abs(now.alt_m - alt_m) > ALT_TOL_M:
+            return False  # still changing height
         (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
         step = math.dist((e, n), (e0, n0))
         if step < 0.9 * now.groundspeed_ms * (now.t - before.t):
@@ -388,6 +398,63 @@ async def test_a_link_loss_during_a_climb_climbs_on_and_flies_home(
         assert started and started[-1]["payload"]["keepout_id"] == str(around.keepout_id), started
         assert not await onboard_events(sc, "find_move_deadline")
         assert not await onboard_events(sc, "find_move_keepout_exit")
+        await sc.check_invariants()
+
+
+@pytest.mark.budget_s(420)
+async def test_a_link_loss_with_no_find_during_a_climb_climbs_on_and_flies_home(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
+        await sc.airborne()
+        # No find near. The goto flies low, near the charter's floor (20 m), so the climb
+        # to the top is still running well past the hold's time (23 s).
+        _, _, _, here, since, speed = await _a_goto_climbs_out(sc, alt_m=LOW_GOTO_ALT_M)
+        ex = sc.r.onboard.ex
+        # At ArduCopter's fastest climb the top is still at least 8 s past the hold's time.
+        left_s = (CLIMB_TO_M - sc.track[-1].alt_m) / SITL_MAX_CLIMB_MS
+        assert left_s >= HOLD_AT + 8.0, (sc.track[-1].alt_m, left_s)
+        sc.radio(sdlink=False)
+        down = time.monotonic()
+        past_hold: list[str | None] = []  # what ran once the hold was due
+
+        def watch() -> None:
+            active = ex.active.skill if ex.active is not None else None
+            if time.monotonic() - down >= HOLD_AT + 0.5 and not past_hold:
+                past_hold.append(active)
+
+        def kept_out() -> bool:
+            watch()
+            return ex.state == ExecutorState.HOLD and ex.hold_reason == "limit"
+
+        def homing() -> bool:
+            watch()
+            return sc.fc_mode() in HOME_MODES
+
+        try:
+            await sc.until(kept_out, HOME_AT - SLACK_S, "the keep-out hold up there")
+            assert abs(sc.track[-1].alt_m - CLIMB_TO_M) <= ALT_TOL_M, sc.track[-1].alt_m
+            await sc.until(homing, HOME_AT + SLACK_S - (time.monotonic() - down), "home")
+            took = time.monotonic() - down
+            # The hold was due while it climbed: it climbed on, and home is on time.
+            assert past_hold == [INTERNAL_KEEPOUT_CLIMB], past_hold
+            assert HOME_AT - SLACK_S <= took <= HOME_AT + SLACK_S, took
+            homing_at = time.monotonic()
+            track = [s for s in sc.track if since <= s.t < homing_at and s.armed]
+            sideways = max(distance_m(s.lat, s.lon, *here) for s in track)
+            assert sideways <= SIDEWAYS_M + stop_distance_m(speed), sideways
+            top = CLIMB_TO_M - ALT_TOL_M
+            low = [s.alt_m for s in track if s.mode == "LOITER" and s.alt_m < top]
+            assert not low, min(low)
+            await sc.until(lambda: not sim.harness.state.armed, 300, "landed")
+        except AssertionError as exc:
+            raise AssertionError(f"{exc}\n{trace(sc, down)}") from None
+        finally:
+            await back_and_land(sc)
+        assert home_m(sc) <= 3.0
+        await until_event(sc, "link_loss_rtl")  # queued while the link was down
+        assert await onboard_events(sc, "link_loss_hold")
+        assert not await onboard_events(sc, "find_hold_started")
         await sc.check_invariants()
 
 

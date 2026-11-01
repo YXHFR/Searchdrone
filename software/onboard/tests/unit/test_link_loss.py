@@ -15,6 +15,7 @@ from test_limits import C, vs
 
 from sd_mav.modes import CopterMode
 from sd_mav.vehicle import SendOrigin
+from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO, LinkLossInput, LinkLossRule
 from sd_onboard.io.persistence import StateStore
 from sd_safety.constants import FIND_HOVER_EDGE_MARGIN_M, FIND_HOVER_S, LINK_LOSS_DETECT_S
@@ -66,6 +67,7 @@ def inp(
     keepouts: Sequence[Keepout] = (FIND,),
     gcs: bool = False,
     taken_by: str | None = None,
+    climbing: bool = False,
     **vehicle: object,
 ) -> LinkLossInput:
     ctx_state, ctx_active = CONTEXT[phase or P.NONE]
@@ -81,6 +83,7 @@ def inp(
         gcs_continue=gcs,
         active_skill=ctx_active if active == "" else active,
         taken_by=taken_by,
+        climbing_out=climbing,
     )
 
 
@@ -118,6 +121,13 @@ def _hover_latlon() -> tuple[float, float]:
     return plat, plon
 
 
+# The keep-out climb under way (its internal goto, ``climbing_out``).
+CLIMBING: dict[str, Any] = {
+    "state": S.TRANSIT,
+    "active": "internal_keepout_climb",
+    "climbing": True,
+}
+
 EVENTS: dict[str, Callable[[P, float], LinkLossInput | None]] = {
     "detect_normal": lambda p, t: inp(3.0, p, keepouts=()),
     "detect_find": lambda p, t: inp(3.0, p),
@@ -128,7 +138,12 @@ EVENTS: dict[str, Callable[[P, float], LinkLossInput | None]] = {
     "home_time": lambda p, t: inp(53.0, p, keepouts=()),
     "gcs_lost": lambda p, t: inp(t + 0.1, p, gcs=True),
     "find_goto_done": lambda p, t: inp(t + 1, p, state=S.HOLD, active=None),
+    "hold_time_climbing": lambda p, t: inp(23.0, p, keepouts=(), **CLIMBING),
+    "climb_done_after_home_time": lambda p, t: inp(60.0, p, keepouts=(), state=S.HOLD, active=None),
     "find_deadline": lambda p, t: inp(15.0, p),
+    "find_deadline_climbing": lambda p, t: inp(15.0, p, **CLIMBING),
+    "home_time_still_climbing": lambda p, t: inp(113.0, p, keepouts=(), **CLIMBING),
+    "find_timeout_still_climbing": lambda p, t: inp(123.0, p, **CLIMBING),
     "find_timeout": lambda p, t: inp(123.0, p),
     "other_rtl": lambda p, t: inp(
         t + 0.1, p, state=S.RTL, active="return_home", taken_by="battery"
@@ -290,6 +305,36 @@ async def test_find_hover_then_home(tmp_path: Path) -> None:
         r.link = True
         await r.until(lambda: r.ex.state == S.LANDED, 300, step=0.05)
         assert r.ex.link_rule.phase == P.NONE
+
+
+async def test_a_find_move_past_its_deadline_hovers_where_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside the keep-out climb the find move's deadline holds as ever: a find move still
+    on its way at 15 s hovers where it is (``find_move_deadline``, once), and the hover's
+    clock starts then."""
+    monkeypatch.setattr(executor_module, "FIND_MOVE_SPEED_MS", 2.0)  # too slow to arrive
+    find = keepout(east=90, north=10)
+    async with rig() as r:
+        await _searching(r, tmp_path, find)
+        cut = r.clock.monotonic()
+        r.link = False
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_MOVE, 20, step=0.05)
+        assert r.ex.active is not None and r.ex.active.skill == INTERNAL_FIND_GOTO
+        await r.until(lambda: r.ex.link_rule.phase == P.FIND_HOVER, 20, step=0.05)
+        # The deadline and the hover's clock count from the last message from the ground.
+        last = r.ex.link_last_inbound_ms
+        assert last is not None and last / 1000 <= cut
+        hover = r.ex.link_rule.hover_since_ms
+        assert hover is not None and hover - last == pytest.approx(FIND_MOVE_DEADLINE_MS, abs=200)
+        assert r.ex.now_ms() - hover <= 200
+        await r.run(1)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "find_hold"
+        assert r.fc.mode == CopterMode.LOITER
+        assert r.up.kinds().count("executor.find_move_deadline") == 1
+        plan = r.ex.link_rule.plan
+        assert plan is not None
+        assert distance_m(r.fc.lat, r.fc.lon, plan.hover_lat, plan.hover_lon) > 10.0
 
 
 async def test_find_hover_ignores_gcs_lost_and_stays_after_link_back(tmp_path: Path) -> None:

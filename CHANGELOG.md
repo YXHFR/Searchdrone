@@ -275,6 +275,12 @@ All notable changes to this project are listed here. The format follows
   sends the drone sideways out of the cylinder below its top: the climb goes on and the
   find hover starts in the keep-out hold up there, also past the find move's deadline.
   The AI going quiet in the keep-out hold keeps it the keep-out hold.
+- Flight safety: with no confirmed find near, a link loss during that climb no longer
+  stops it halfway up at 23 s either: the climb goes on to the top, the link-loss hold
+  there is the keep-out hold, and home is at 53 s (at once at the top when the climb
+  takes longer). A climb that has not ended by 113 s (53 s plus
+  `KEEPOUT_CLIMB_LINK_ALLOWANCE_S`, 60 s) goes home from where it is, and with a find
+  at 123 s as ever. The find hover's clock (`hovered_s`) now starts at the top.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read
