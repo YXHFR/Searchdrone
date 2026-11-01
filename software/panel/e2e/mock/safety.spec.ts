@@ -220,21 +220,25 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
       };
       new MutationObserver(seen).observe(document.body, { childList: true, subtree: true });
     });
+    // The page's clock just before the drop: wsDownSince must be set by this loss, not
+    // left over from an earlier one, or the 2 s below would count from the wrong moment.
+    const dropAt = await page.evaluate(() => Date.now());
     ground.refuseSockets = true;
     await ground.dropSocket();
     // The banner waits 2 s after the socket is lost: not before, and soon after (the rest
     // of the bound is slack for a busy runner).
     await expect(page.getByTestId("connection-banner")).toBeVisible({ timeout: 3_500 });
-    const delay = await page.evaluate(() => {
+    const seen = await page.evaluate(() => {
       const w = window as unknown as {
         __bannerAt?: number;
         __sd: { liveStore: { getState(): { wsDownSince: number | null } } };
       };
-      const since = w.__sd.liveStore.getState().wsDownSince;
-      return since === null || w.__bannerAt === undefined ? null : w.__bannerAt - since;
+      return { since: w.__sd.liveStore.getState().wsDownSince, bannerAt: w.__bannerAt };
     });
-    expect(delay).not.toBeNull();
-    expect(delay ?? 0).toBeGreaterThanOrEqual(2_000);
+    if (seen.since === null || seen.bannerAt === undefined)
+      throw new Error(`no loss time or banner time on the page: ${JSON.stringify(seen)}`);
+    expect(seen.since).toBeGreaterThanOrEqual(dropAt);
+    expect(seen.bannerAt - seen.since).toBeGreaterThanOrEqual(2_000);
     // Not acknowledged until the panel has polled twice, then acknowledged: each wait counts
     // from the event it waits for, not from the press (the polls start 1 s after it by
     // design, and a busy runner adds its own latency to every faked answer).
