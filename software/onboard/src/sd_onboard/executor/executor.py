@@ -233,7 +233,6 @@ _WARNING: Final = frozenset(
     }
 )
 _STOPPING_MODES: Final = frozenset({CopterMode.BRAKE.name, CopterMode.LOITER.name})
-_INTERNAL_GOTOS: Final = frozenset({INTERNAL_ALT_GOTO, INTERNAL_FIND_GOTO, INTERNAL_KEEPOUT_CLIMB})
 # Internal gotos that end in a limit's hover (``hold_reason`` "limit").
 _LIMIT_GOTOS: Final = frozenset({INTERNAL_ALT_GOTO, INTERNAL_KEEPOUT_CLIMB})
 # Where the link-loss rule follows the flight (it steers only in MOVING, see link_loss).
@@ -774,9 +773,10 @@ class Executor:
         if isinstance(target, Refusal):
             return
         reason = "limit" if active.skill in _LIMIT_GOTOS else "skill_done"
-        if self.ai_silent_after_step and active.skill != INTERNAL_KEEPOUT_CLIMB:
-            # The keep-out climb ends in the keep-out hover whatever the AI does, as a
-            # ``KEEPOUT_VIOLATION`` does in ``_skill_failed``: a find move never leaves it.
+        if self.ai_silent_after_step and active.skill not in _LIMIT_GOTOS:
+            # A limit's climb ends in that limit's hover whatever the AI does (the keep-out
+            # climb as a ``KEEPOUT_VIOLATION`` does in ``_skill_failed``): a link loss's
+            # find move never leaves it.
             reason = "ai_silent"
         if active.skill == INTERNAL_FIND_GOTO:
             reason = "find_hold"  # T27: at the hover point beside the find
@@ -813,13 +813,17 @@ class Executor:
         if isinstance(target, Refusal):
             return
         hold_reason = "skill_done"
-        if exc.code == "KEEPOUT_VIOLATION":
+        if active.skill == INTERNAL_KEEPOUT_CLIMB:
+            # The climb cut short (its deadline, the mode not confirmed): the keep-out hold
+            # where it is, told as the climb began (``_climb_out``); no second climb.
+            hold_reason = "limit"
+        elif exc.code == "KEEPOUT_VIOLATION":
             # No way around the cylinders from where a search stopped: the same keep-out
             # hold as when the reflex finds none while it flies (``_keepout_hold``), after
             # the climb when it stopped inside one (``_climb_out``). After a climb out of
             # reach the operator was told as it began (``_keepout_climb``).
             if not (isinstance(active.handler, Replans) and active.handler.climbing()):
-                if active.skill != INTERNAL_KEEPOUT_CLIMB and self._climb_out(active):
+                if self._climb_out(active):
                     return
                 data = {"command_id": str(active.command_id), "skill": active.skill}
                 self.emit(
@@ -1665,7 +1669,7 @@ class Executor:
         cyl = circles(keepouts, plane)
         # The cylinders that held the drone when they came: it may leave them along its leg.
         inside = {
-            k.keepout_id for k, (c, r) in zip(keepouts, cyl, strict=True) if math.dist(here, c) < r
+            k.keepout_id for k, c in zip(keepouts, cyl, strict=True) if over_a_person(here, [c])
         }
         new = {k.keepout_id for k in keepouts} - self._keepouts_seen
         self._keepouts_through = inside & (self._keepouts_through | new)
@@ -1682,8 +1686,7 @@ class Executor:
             # stops first, and the way around is planned again from where it stopped. Inside
             # one already (it came around the drone), the way out starts at once.
             stop_first = not inside and entry <= stop_m(v.groundspeed_ms)
-            rerouted = self._reroute(active, run, charter, stop_first=stop_first)
-            if not rerouted and not (inside and self._climb_out(active)):
+            if not self._reroute(active, run, charter, stop_first=stop_first):
                 self._keepout_hold(inside=bool(inside))
             return
         # Any other order leaves a new cylinder it is inside along its current leg (rather
@@ -1698,8 +1701,7 @@ class Executor:
         if entry > stop_m(v.groundspeed_ms):
             self._keepout_watch = True
             return
-        if not (inside and self._climb_out(active)):
-            self._keepout_hold(inside=bool(inside))
+        self._keepout_hold(inside=bool(inside))
 
     def _replan_reflex(
         self,
@@ -1758,6 +1760,10 @@ class Executor:
             },
         )
         return True
+
+    def _climbing_out(self) -> bool:
+        """Whether the keep-out climb (``_climb_out``) is under way."""
+        return self.active is not None and self.active.skill == INTERNAL_KEEPOUT_CLIMB
 
     def _climb_out(self, active: _Active) -> bool:
         """Any other order over a person with no way out (not ``Replans``): straight up as
@@ -1881,9 +1887,10 @@ class Executor:
         return over_a_person(here, circles(self.keepouts_in_force(), plane))
 
     def _keepout_hold(self, *, inside: bool = False) -> None:
-        """Stop a moving order in a hover (``KEEPOUT_VIOLATION``; ``inside`` a cylinder,
-        over a person, with no way out and no climb). Internal orders, return home and
-        take-off go on; the link-loss find move ends in its hover here."""
+        """Stop a moving order in a hover (``KEEPOUT_VIOLATION``). ``inside`` a cylinder,
+        over a person, it climbs straight up out of it first when it can (``_climb_out``).
+        Internal orders, return home and take-off go on; the link-loss find move ends in
+        its hover here."""
         active = self.active
         if active is not None and active.skill == INTERNAL_FIND_GOTO:
             if self.state == S.TRANSIT:
@@ -1897,6 +1904,8 @@ class Executor:
             or self.state not in (S.TRANSIT, S.SURVEY)
         ):
             return
+        if inside and not isinstance(active.handler, Replans) and self._climb_out(active):
+            return  # an inspection climbs its own way (``_keepout_climb``) or hovers
         action = LimitAction(
             limit="KEEPOUT_VIOLATION",
             kind="hold",
@@ -2245,8 +2254,11 @@ class Executor:
                 if was == S.HOLD and self.active is None:
                     self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
                     return
+                # A hold that stops the keep-out climb (the AI silent with ``hold``) hovers
+                # over the person: the keep-out hold, which a find move never leaves.
+                reason = "limit" if self._climbing_out() else action.hold_reason
                 self._drop_active(stage="superseded", codes=(action.limit,))
-                self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
+                self._enter(target, hold_reason=reason, cause=action.limit)
                 if was == S.TAKEOFF and not is_airborne(self.vehicle_state()):
                     return
                 self._side(self._loiter(SendOrigin.LIMIT))
@@ -2337,7 +2349,9 @@ class Executor:
         if find is None or charter is None or plane is None:
             return None
         limits = [name for name in self.limits.active() if name != "L-AI"]
-        if limits or self.hold_reason == "limit" or self._find_move_late():
+        if limits or self.hold_reason == "limit" or self._climbing_out():
+            return None  # the keep-out climb counts as its hold
+        if self._find_move_late():
             return None
         v = self.vehicle_state()
         here = plane.xy(v.lat, v.lon)

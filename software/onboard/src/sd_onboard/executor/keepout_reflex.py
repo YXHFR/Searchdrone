@@ -228,7 +228,7 @@ def climb_alt(here: Xy, cyl: Sequence[Circle], alt_m: float, alt_max_m: float) -
     it is inside: their top (the largest radius) plus ``KEEPOUT_CLIMB_MARGIN_M``, at most
     ``alt_max_m``; where it is when it is that high already; None when it is inside none,
     or lower than that and cannot climb (``alt_max_m`` is no higher than it is)."""
-    over = [r for c, r in cyl if math.dist(here, c) < r]
+    over = [r for c, r in cyl if over_a_person(here, [(c, r)])]
     if not over:
         return None
     want = max(over) + KEEPOUT_CLIMB_MARGIN_M

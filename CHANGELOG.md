@@ -266,6 +266,11 @@ All notable changes to this project are listed here. The format follows
   keep-out hover up there (`hold_reason` `limit`), never above the charter's height less
   5 m or the geofence. When it cannot climb it hovers where it is, as before. STOP, FLY
   HOME and manual take-over are unchanged.
+- Flight safety: every end of that climb is the keep-out hover (`hold_reason` `limit`):
+  its deadline, a mode not confirmed, and a charter hold when the AI goes quiet. While it
+  climbs, a link loss's find move never takes the drone sideways out of the cylinder. A
+  full list of the drone's own cylinders also climbs first when it is over a person, and
+  the altitude limit's way back down ends in its own hover when the AI is quiet.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read
