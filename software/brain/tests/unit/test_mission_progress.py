@@ -248,6 +248,8 @@ def _turn_input(s: Any, trigger: Any = "idle_tick") -> TurnInput:
 def test_the_prompt_has_the_finishing_rule() -> None:
     system = _ctx().system
     assert "FINISHING." in system and "call `return_home`" in system
+    # A search without a find goes on while the battery allows, by the map's order.
+    assert "search again instead of going home" in system and "Sektorer (POA" in system
     assert "WAITING CARDS." in system
     assert "så kör jag" not in system  # the example no longer teaches waiting
 

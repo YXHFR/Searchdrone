@@ -196,6 +196,43 @@ async def test_a_move_under_stop_is_rejected_and_the_world_stays_still() -> None
     assert world.plan is None and (world.east, world.north) == before
 
 
+async def test_the_map_line_follows_what_the_camera_passed_over() -> None:
+    from sd_schemas.base import new_id
+    from sd_schemas.commander import SkillRequest
+
+    world = SimWorld(make_scenario(3))
+    ground = SimGround(world, now=lambda: dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+    ground.sync()
+    before = {s.sector_id: s for s in world.sector_scores()}
+    assert abs(sum(s.poa for s in before.values()) - 1) < 0.01
+    assert all(s.covered_pct == 0 and s.mean_pod == 0 for s in before.values())
+    req = SkillRequest(
+        command_id=new_id(),
+        skill="survey_sector",
+        params={"sector_id": "A"},
+        rationale_sv="-",
+        in_reply_to=None,
+        based_on=None,
+        charter_version=1,
+        backend="llm",
+        ai_config_hash="h",
+    )
+    assert world.start(req)
+    while world.plan is not None:
+        world.advance()
+    ground.sync()
+    after = {s.sector_id: s for s in world.sector_scores()}
+    assert abs(sum(s.poa for s in after.values()) - 1) < 0.01
+    # A searched once: less likely to hide the person, but not ruled out.
+    assert 0 < after["A"].poa < before["A"].poa
+    assert after["A"].covered_pct > 90 and 0 < after["A"].mean_pod < 1
+    assert all(after[s].poa > before[s].poa for s in after if s != "A")
+    # The best next sector is not the one just searched, and the AI is told so.
+    line = (await ground.situation(ground.mission_id)).probability_line
+    assert line is not None and line.startswith("Sektorer (POA kvar")
+    assert not line.split(": ", 1)[1].startswith("A ")
+
+
 # --- grades -----------------------------------------------------------------------------
 
 
