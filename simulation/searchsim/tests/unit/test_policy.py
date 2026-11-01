@@ -112,7 +112,15 @@ def test_cli_eval_without_policy_compares_baselines(
 
 @pytest.mark.parametrize(
     "argv",
-    [["train", "foo=1"], ["train", "size=huge"], ["eval", "nokey"], ["fly"], ["train", "seed=x"]],
+    [
+        ["train", "foo=1"],
+        ["train", "size=huge"],
+        ["eval", "nokey"],
+        ["fly"],
+        ["train", "seed=x"],
+        ["eval", "miss_correlation=x"],
+        ["eval", "miss_correlation=1.5"],
+    ],
 )
 def test_cli_rejects_bad_arguments(argv: list[str]) -> None:
     with pytest.raises(SystemExit) as exc:
