@@ -119,3 +119,27 @@ def test_register_with_a_bad_row_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(BenchError, match="licensregeln"):
         load_register(bad)
+
+
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ('publish_weights = "false"', "publish_weights"),
+        ("local_only = 0", "local_only"),
+        ('publish_results = "false"', "publish_results"),
+        ('licence_confirmed = "yes"', "licence_confirmed"),
+    ],
+)
+def test_register_flag_must_be_a_toml_boolean(tmp_path: Path, line: str, key: str) -> None:
+    """``bool("false")`` is True: a quoted flag would publish what it means to keep."""
+    flags = {"publish_weights": "false", "local_only": "false"}
+    flags[key] = line.split(" = ", 1)[1]
+    bad = tmp_path / "datasets.toml"
+    bad.write_text(
+        '[[dataset]]\nname = "v"\ntitle = "v"\nlicence = "CC-BY-4.0"\n'
+        'attribution = "a"\nlayout = "wisard_vis"\nuse = ["measure"]\n'
+        'url = "https://example.org/v.zip"\n' + "".join(f"{k} = {v}\n" for k, v in flags.items()),
+        encoding="utf-8",
+    )
+    with pytest.raises(BenchError, match=f"{key} i v ska vara true eller false"):
+        load_register(bad)
