@@ -33,9 +33,10 @@ All notable changes to this project are listed here. The format follows
   it is never bound again) or a literal `SIM_*` one, or elsewhere in the harness with a
   literal `SIM_*` name (a `param_set_send` on any owner but a literal `<x>.mav` needs it
   in every place it may sit: first, as mavfile's, and third, as the dialect's; a
-  `*args`/`**kwargs` that may fill it is refused). The mavfile helpers that send denied traffic themselves (`reboot_autopilot`, `set_servo`,
-  `calibrate_level` ...) are refused everywhere outside the gate. Names built at run
-  time (f-strings, arithmetic) are not seen.
+  `*args`/`**kwargs` that may fill it is refused). The mavfile helpers that send
+  denied traffic themselves (`reboot_autopilot`, `set_servo`, `calibrate_level` ...)
+  are refused everywhere outside the gate. Names built at run time (f-strings,
+  arithmetic) are not seen.
 - The safety manifest `tools/safety_manifest.toml` and `tools/check_safety_manifest.py`
   (in `just test-contract`): the manifest names the safety parameter layers of the
   simulator and real-flight profiles and pins the content of the safety files, the Lua

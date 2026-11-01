@@ -242,6 +242,12 @@ def test_the_harness_may_set_sim_parameters(line: str) -> None:
         "m = mavlink.MAVLink_param_set_message(1, 1, 'ARMING_SKIPCHK', 1, 9)",
         "self._conn.mav.param_set_send(1, 1, param_id=b'FENCE_ENABLE', param_value=0)",
         "self._conn.mav.param_set_send(1, 1, 'FENCE_ENABLE'.encode(), 0, 9)",
+        # .encode with arguments is not taken off: never read as SIM_ or the guarded name.
+        "c.mav.param_set_send(1, 1, 'SIM_X'.encode('utf-16'), 0, 9)",
+        "def set_sim_param(self, name, v):\n"
+        "    if not name.startswith('SIM_'):\n"
+        "        raise ValueError(name)\n"
+        "    self._conn.mav.param_set_send(1, 1, name.encode('ascii'), v, 9)",
         "self._conn.mav.param_set_send(1, 1, name.encode(), v, 9)",
         "self._conn.param_set_send('FS_THR_ENABLE', 0)",
         # mavfile's param_set_send takes the name first, not third.
@@ -473,3 +479,13 @@ def test_more_raw_sends_in_production(line: str) -> None:
 )
 def test_lookalikes_in_production_are_allowed(line: str) -> None:
     assert rules(line) == []
+
+
+@pytest.mark.parametrize(
+    "line", ["m = sys.modules['pymavlink.mavutil']", "x = 'pymavlink.mavutil'"]
+)
+def test_mavutil_as_a_string_is_a_raw_send(line: str) -> None:
+    # Bound to a neutral name, only the string itself can be the finding.
+    (finding,) = cfm.check_source(line, GROUND)
+    assert finding.rule == "raw-send"
+    assert '"pymavlink.mavutil"' in finding.message
