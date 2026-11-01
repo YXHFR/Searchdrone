@@ -218,7 +218,11 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
         )
           w.__bannerAt = Date.now();
       };
-      new MutationObserver(seen).observe(document.body, { childList: true, subtree: true });
+      const watch = new MutationObserver(() => {
+        seen();
+        if (w.__bannerAt !== undefined) watch.disconnect();
+      });
+      watch.observe(document.body, { childList: true, subtree: true });
     });
     // The page's clock just before the drop: wsDownSince must be set by this loss, not
     // left over from an earlier one, or the 2 s below would count from the wrong moment.
@@ -239,6 +243,8 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
       throw new Error(`no loss time or banner time on the page: ${JSON.stringify(seen)}`);
     expect(seen.since).toBeGreaterThanOrEqual(dropAt);
     expect(seen.bannerAt - seen.since).toBeGreaterThanOrEqual(2_000);
+    // The banner re-checks every 250 ms; the rest is slack for a busy runner.
+    expect(seen.bannerAt - seen.since).toBeLessThanOrEqual(3_500);
     // Not acknowledged until the panel has polled twice, then acknowledged: each wait counts
     // from the event it waits for, not from the press (the polls start 1 s after it by
     // design, and a busy runner adds its own latency to every faked answer).

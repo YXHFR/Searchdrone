@@ -28,7 +28,7 @@ function useViewport(): void {
 
 /** One banner over the stage, never pushing the layout down. No ground station goes first;
  * else the drone's link loss with what it is expected to do, counting down. */
-function StageBanner() {
+export function StageBanner() {
   const { t } = useTranslation();
   const since = useLiveStore((s) => s.wsDownSince);
   const ws = useLiveStore((s) => s.ws);
