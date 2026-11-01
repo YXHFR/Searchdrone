@@ -207,28 +207,53 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
           window as unknown as { __sd: { liveStore: { getState(): { ws: string } } } }
         ).__sd.liveStore.getState().ws === "up",
     );
+    // When the banner first shows, on the page's own clock: the 2 s count from the moment
+    // the panel saw the socket close (wsDownSince), which the test's clock cannot know.
+    await page.evaluate(() => {
+      const w = window as unknown as { __bannerAt?: number };
+      const seen = () => {
+        if (
+          w.__bannerAt === undefined &&
+          document.querySelector('[data-testid="connection-banner"]')
+        )
+          w.__bannerAt = Date.now();
+      };
+      new MutationObserver(seen).observe(document.body, { childList: true, subtree: true });
+    });
+    // The page's clock just before the drop: wsDownSince must be set by this loss, not
+    // left over from an earlier one, or the 2 s below would count from the wrong moment.
+    const dropAt = await page.evaluate(() => Date.now());
     ground.refuseSockets = true;
     await ground.dropSocket();
     // The banner waits 2 s after the socket is lost: not before, and soon after (the rest
     // of the bound is slack for a busy runner).
-    await page.waitForTimeout(1_500);
-    await expect(page.getByTestId("connection-banner")).toHaveCount(0);
     await expect(page.getByTestId("connection-banner")).toBeVisible({ timeout: 3_500 });
+    const seen = await page.evaluate(() => {
+      const w = window as unknown as {
+        __bannerAt?: number;
+        __sd: { liveStore: { getState(): { wsDownSince: number | null } } };
+      };
+      return { since: w.__sd.liveStore.getState().wsDownSince, bannerAt: w.__bannerAt };
+    });
+    if (seen.since === null || seen.bannerAt === undefined)
+      throw new Error(`no loss time or banner time on the page: ${JSON.stringify(seen)}`);
+    expect(seen.since).toBeGreaterThanOrEqual(dropAt);
+    expect(seen.bannerAt - seen.since).toBeGreaterThanOrEqual(2_000);
+    // Not acknowledged until the panel has polled twice, then acknowledged: each wait counts
+    // from the event it waits for, not from the press (the polls start 1 s after it by
+    // design, and a busy runner adds its own latency to every faked answer).
+    let acked = false;
     ground.respond(
       "GET /api/v1/vehicles/sim-01/actions/a1",
-      () => ({ status: 200, body: outcome("a1") }),
-      2,
+      () => ({ status: 200, body: outcome("a1", acked ? { result: "acked" } : {}) }),
+      100,
     );
-    ground.respond(
-      "GET /api/v1/vehicles/sim-01/actions/a1",
-      () => ({ status: 200, body: outcome("a1", { result: "acked" }) }),
-      10,
-    );
+    const polls = () => ground.calls(/^GET \/api\/v1\/vehicles\/sim-01\/actions\/a1$/).length;
     await page.getByTestId("safety-stop").click();
+    await expect.poll(polls, { timeout: 3_000 }).toBeGreaterThanOrEqual(2);
+    await expect(page.getByTestId("safety-stop")).not.toContainText("Kvitterat");
+    acked = true;
     await expect(page.getByTestId("safety-stop")).toContainText("Kvitterat", { timeout: 3_000 });
-    expect(
-      ground.calls(/^GET \/api\/v1\/vehicles\/sim-01\/actions\/a1$/).length,
-    ).toBeGreaterThanOrEqual(2);
   });
 
   test("no path to the vehicle (503) → clear message, exactly one POST", async ({
