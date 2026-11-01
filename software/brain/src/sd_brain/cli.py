@@ -1,4 +1,5 @@
-"""``sd-brain run | eval | scores | bank | perf-cloud | print-prompt | config-check``."""
+"""``sd-brain run | eval | eval-profiles | eval-safety | scores | bank | perf-cloud |
+print-prompt | config-check``."""
 
 from __future__ import annotations
 
@@ -266,6 +267,92 @@ async def _eval_profiles_cloud(cfg: BrainConfig, key: str, cases: list[dict[str,
         report = await run_profiles(cases, make)
     report.update(backend="cloud", model=cfg.cloud.model)
     return report, recorder
+
+
+def cmd_eval_safety(args: argparse.Namespace) -> int:
+    """The safety exam: dangerous orders and hostile text in the data (scores only)."""
+    from sd_brain.evals.safety import load_cases, load_safety_golden, replay_for, run_safety
+
+    defaults, cases = load_cases(Path(args.cases))
+    if args.only:
+        cases = [c for c in cases if c["id"] in args.only.split(",")]
+    golden_path = Path(args.golden)
+    if args.backend == "replay":
+        if args.record:
+            _err("--record gäller bara --backend cloud; inget spelas in från replay")
+        report = asyncio.run(
+            run_safety(cases, replay_for(load_safety_golden(golden_path)), defaults)
+        )
+        # the replayed answers are hand-written, so 100 % here says nothing about a model
+        report.update(backend="replay", golden="hand-written")
+    else:
+        cfg = _eval_config(args)
+        report, rows = asyncio.run(_eval_safety_cloud(args, cfg, _cloud_key(), cases, defaults))
+        # the report first: a paid run always leaves one, even when the recording is refused
+        out_dir = Path(args.report_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = out_dir / f"eval-safety-{stamp}.json"
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _out(f"Rapport: {path}")
+        _out(json.dumps(report, ensure_ascii=False, indent=1))
+        if args.record:
+            if not report["passed"] or args.only:
+                _err("inspelningen sparas bara från en komplett godkänd körning (utan --only)")
+                return 1
+            from sd_brain.simeval.golden import SECRET_ENV, refuse_secrets
+
+            refuse_secrets([r["reply"] for r in rows], {**os.environ, **brain_env(keys=SECRET_ENV)})
+            lines = [json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows]
+            golden_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            _out(f"Golden: {golden_path}")
+        return 0 if report["passed"] else 1
+    _out(json.dumps(report, ensure_ascii=False, indent=1))
+    # the written answers must pass every case
+    return 0 if report["passed"] and not report["failures"] else 1
+
+
+async def _eval_safety_cloud(
+    args: argparse.Namespace,
+    cfg: BrainConfig,
+    key: str,
+    cases: list[dict[str, Any]],
+    defaults: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The exam against the cloud model, under the daily cost cap: before each case the
+    ledger must have room for it, else the rest is left out (``stopped: "budget"``)."""
+    import httpx
+
+    from sd_brain.evals.safety import run_safety
+    from sd_brain.runtime.cloud import CloudModelRuntime
+    from sd_brain.simeval.budget import CostLedger, MeteredRuntime
+
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
+    install_log_masking(Secrets(brain_token="", cloud_api_key=key))
+    ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
+    rows: list[dict[str, Any]] = []
+
+    def keep(result: Any, probe: Any) -> None:
+        rows.extend(probe.rows)
+        _out(f"{result.id}: {'ok' if result.ok else 'FEL'} {'; '.join(result.unsafe)[:200]}")
+
+    async with httpx.AsyncClient() as client:
+        meter = MeteredRuntime(
+            CloudModelRuntime(cfg.cloud, key, client), ledger, run_cap_sek=args.max_cost_sek
+        )
+        report = await run_safety(
+            cases, lambda _: meter, defaults, can_continue=meter.can_afford, on_case=keep
+        )
+    report.update(
+        backend="cloud",
+        model=cfg.cloud.model,
+        cost_sek=round(meter.cost_sek, 4),
+        cost_measured=meter.unmeasured_calls == 0,
+        spent_today_sek=round(ledger.spent_sek(), 4),
+        cap_sek=args.cap_sek,
+        git_sha=_git_sha(Path.cwd()),
+    )
+    return report, rows
 
 
 def cmd_eval_grade(args: argparse.Namespace) -> int:
@@ -550,6 +637,17 @@ def parser() -> argparse.ArgumentParser:
     ep.add_argument("--config", default="config/brain.toml")
     ep.add_argument("--only", default="")
     ep.add_argument("--record", action="store_true", help="cloud: write golden.jsonl")
+    es = sub.add_parser("eval-safety")
+    es.add_argument("--backend", choices=["replay", "cloud"], default="replay")
+    es.add_argument("--cases", default="software/brain/src/sd_brain/evals/safety/cases.yaml")
+    es.add_argument("--golden", default="software/brain/tests/eval/safety/golden.jsonl")
+    es.add_argument("--config", default="config/brain.toml")
+    es.add_argument("--only", default="")
+    es.add_argument("--record", action="store_true", help="cloud: write golden.jsonl")
+    es.add_argument("--report-dir", default="data/reports")
+    es.add_argument("--max-cost-sek", type=float, default=3.0, help="cloud: cap for this run")
+    es.add_argument("--cap-sek", type=float, default=30.0)
+    es.add_argument("--ledger", default="data/brain-eval/cost-ledger.json")
     pc = sub.add_parser("perf-cloud")
     pc.add_argument("--runs", type=int, default=10)
     pc.add_argument("--report-dir", default="data/reports")
@@ -564,6 +662,7 @@ def main(argv: list[str] | None = None) -> int:
         "config-check": cmd_config_check,
         "eval": cmd_eval,
         "eval-profiles": cmd_eval_profiles,
+        "eval-safety": cmd_eval_safety,
         "perf-cloud": cmd_perf_cloud,
         "scores": cmd_scores,
         "bank": cmd_bank,

@@ -303,8 +303,13 @@ async def run_scenario(
     golden_dir: Path | None = None,
     backend: str = "replay",
     sampling: Sampling | None = None,
+    scenario: dict[str, Any] | None = None,
+    on_step: Callable[[int], None] | None = None,
 ) -> ScenarioResult:
-    sc = load_scenario(path)
+    """Run one scenario. ``scenario`` gives it already loaded (``path`` then only says
+    where it lives: its fixtures are in ``path.parent.parent``); ``on_step`` is told each
+    step's index before the step runs."""
+    sc = scenario if scenario is not None else load_scenario(path)
     base = path.parent.parent
     fx = _fixture(base, sc["fixture"])
     clock = EvalClock()
@@ -363,6 +368,8 @@ async def run_scenario(
     )
     forbidden_any = set(sc.get("forbidden_tools_any_step") or [])
     for i, step in enumerate(sc["steps"]):
+        if on_step is not None:
+            on_step(i)
         clock.t += float(step.get("advance_s", 1))
         fg.step_responses = list(step.get("ground_responses") or [])
         if step.get("situation_patch"):
