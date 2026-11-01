@@ -186,6 +186,18 @@ describe("VehicleActionMachine", () => {
     expect(m.snapshot.state).toBe("acked");
   });
 
+  it("stays sent for 3 s without an outcome, then unconfirmed (literal times, not TIMING)", async () => {
+    const { m } = setup([json(202, DISPATCHED)], () =>
+      json(200, outcome({ result: "dispatched" })),
+    );
+    m.trigger();
+    await flush();
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(m.snapshot.state).toBe("sent");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(m.snapshot.state).toBe("unconfirmed");
+  });
+
   it("polls first 1 s after the 202, then every 500 ms (literal times, not TIMING)", async () => {
     const { m, calls } = setup([json(202, DISPATCHED)], () =>
       json(200, outcome({ result: "dispatched" })),

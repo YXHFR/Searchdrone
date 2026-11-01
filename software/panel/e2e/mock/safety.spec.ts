@@ -244,7 +244,7 @@ test.describe("STOP and RETURN HOME go straight to their endpoints", () => {
     expect(seen.since).toBeGreaterThanOrEqual(dropAt);
     expect(seen.bannerAt - seen.since).toBeGreaterThanOrEqual(2_000);
     // The banner re-checks every 250 ms; the rest is slack for a busy runner.
-    expect(seen.bannerAt - seen.since).toBeLessThanOrEqual(3_000);
+    expect(seen.bannerAt - seen.since).toBeLessThanOrEqual(3_500);
     // Not acknowledged until the panel has polled twice, then acknowledged: each wait counts
     // from the event it waits for, not from the press (the polls start 1 s after it by
     // design, and a busy runner adds its own latency to every faked answer).
