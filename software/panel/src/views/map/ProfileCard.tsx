@@ -11,7 +11,7 @@ import type { SearchProfile } from "../../api/types";
 import { useMissionStore } from "../../state/missionStore";
 import { useIsPilot } from "../../state/sessionStore";
 import { useUiStore } from "../../state/uiStore";
-import { Picker } from "./Picker";
+import { Picker } from "../../ui/Picker";
 import {
   baseOf,
   CATEGORIES,

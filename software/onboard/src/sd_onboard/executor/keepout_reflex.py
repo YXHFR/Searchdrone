@@ -21,6 +21,9 @@ the stop distance, through the whole gate, and held when there is no such leg. I
 cylinder over a person with no such leg (the gate refuses every way out), it climbs
 straight up to above the cylinder (:func:`climb_alt`) within the charter's height, then
 hovers; when it cannot climb it hovers where it is. Either way the operator is alarmed.
+Any other order that would hover inside a cylinder (a search with no way out, a goto
+held there) climbs the same way, as an internal goto (``INTERNAL_KEEPOUT_CLIMB``) that
+replaces the order.
 
 Local cylinders (from the drone's own detections) give way once a ground install at
 least ``LOCAL_KEEPOUT_HANDOVER_MS`` later holds a cylinder that covers them; until then,
@@ -46,6 +49,7 @@ from sd_schemas.charter import MissionCharter
 from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M, Keepout, leg_enters
 
 __all__ = [
+    "INTERNAL_KEEPOUT_CLIMB",
     "KEEPOUT_CLIMB_MARGIN_M",
     "LOCAL_KEEPOUTS_MAX",
     "LOCAL_KEEPOUT_HANDOVER_MS",
@@ -58,6 +62,7 @@ __all__ = [
     "entry_m",
     "leg_entry_m",
     "merge_local",
+    "over_a_person",
     "remaining",
     "route_clear",
     "stop_m",
@@ -73,6 +78,9 @@ LOCAL_KEEPOUTS_MAX: Final = 100
 # A cylinder has no height of its own; over a person with no safe way out the drone
 # takes its top as its radius above home (as far up as out) and climbs this much above.
 KEEPOUT_CLIMB_MARGIN_M: Final = 10.0
+# The climb of any other order (not ``Replans``): an internal goto straight up, then the
+# keep-out hover.
+INTERNAL_KEEPOUT_CLIMB: Final = "internal_keepout_climb"
 _NOTHING_LEFT_M: Final = 2.0  # closer to the end than this: hovering, not flying
 _STOP_MARGIN_M: Final = 5.0  # an order is held this far (plus its stop) short of a cylinder
 _STOP_REACT_S: Final = 1.5  # the reflex's tick, the link to the flight controller, LOITER
@@ -220,7 +228,7 @@ def climb_alt(here: Xy, cyl: Sequence[Circle], alt_m: float, alt_max_m: float) -
     it is inside: their top (the largest radius) plus ``KEEPOUT_CLIMB_MARGIN_M``, at most
     ``alt_max_m``; where it is when it is that high already; None when it is inside none,
     or lower than that and cannot climb (``alt_max_m`` is no higher than it is)."""
-    over = [r for c, r in cyl if math.dist(here, c) < r]
+    over = [r for c, r in cyl if over_a_person(here, [(c, r)])]
     if not over:
         return None
     want = max(over) + KEEPOUT_CLIMB_MARGIN_M
@@ -228,6 +236,11 @@ def climb_alt(here: Xy, cyl: Sequence[Circle], alt_m: float, alt_max_m: float) -
         return alt_m
     top = min(want, alt_max_m)
     return top if top > alt_m else None
+
+
+def over_a_person(here: Xy, cyl: Sequence[Circle]) -> bool:
+    """Whether ``here`` lies inside any of the cylinders (over a person)."""
+    return any(math.dist(here, c) < r for c, r in cyl)
 
 
 def stop_m(speed_ms: float) -> float:

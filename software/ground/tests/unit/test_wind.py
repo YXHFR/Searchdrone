@@ -15,12 +15,12 @@ from typing import cast
 import pytest
 import structlog
 from conftest import FakeVehicleLink, telemetry  # pyright: ignore[reportMissingImports]
-from stop_helpers import PILOT, VID, stack  # pyright: ignore[reportMissingImports]
+from stop_helpers import PILOT, VID, Stack, stack  # pyright: ignore[reportMissingImports]
 
 from sd_ground.context import Ground
 from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
 from sd_ground.services import wind
-from sd_ground.services.latches import Latches
+from sd_ground.services.latches import BatteryReason, Latches
 from sd_ground.services.telemetry import TelemetryService
 from sd_ground.services.vehicle_actions import ActionRefusedError
 from sd_ground.services.wind import (
@@ -37,6 +37,7 @@ from sd_safety.constants import FC_ANGLE_MAX_DEG
 from sd_safety.targets import distance_m
 from sd_schemas.api import WindCheck
 from sd_schemas.base import LatLonAlt
+from sd_schemas.mission import LatchAction
 from sd_testing import FakeClock
 
 HOME = LatLonAlt(lat=-35.363262, lon=149.165237, alt_amsl_m=584.0)
@@ -789,14 +790,12 @@ def test_the_battery_reason_goes_with_its_latch() -> None:
     """Resume, a new latch without the battery and an adopted latch forget the reason."""
     clock = FakeClock()
     latches = Latches(clock)
-    latches.set_battery_reason(VID, "energy_home")
-    latches.start(VID, "battery_rtl", "system")
+    latches.start(VID, "battery_rtl", "system", "energy_home")
     latches.start(VID, "stop", "operator:demo")  # the battery latch stays under the STOP
     assert latches.battery_reason(VID) == "energy_home"
     latches.release(VID)
     assert latches.battery_reason(VID) == "battery_level"
-    latches.set_battery_reason(VID, "energy_home")
-    latches.start(VID, "battery_rtl", "system")
+    latches.start(VID, "battery_rtl", "system", "energy_home")
     latch = latches.get(VID)
     assert latch is not None
     latches.adopt(latch)  # as read back after a restart
@@ -823,7 +822,7 @@ def test_the_wind_estimate_without_drag_only_warns() -> None:
     assert "ENERGY_HOME" in check.reasons and not watch.energy_rtl
 
 
-CAPACITY_READ = FcParams(fallback=())  # every number from the flight controller (10000 mAh)
+CAPACITY_READ = FcParams(fallback=())  # every number from the FC (10000 mAh, 1500 reserve)
 
 
 def test_the_wind_estimate_with_measured_drag_flies_home() -> None:
@@ -866,15 +865,31 @@ def test_the_estimate_with_the_fc_numbers_flies_home() -> None:
         FcParams(),  # before the first read, and after a reconnect or a reboot
         fc_params({**READ, "BATT_CAPACITY": None}),  # a partial read without the capacity
         fc_params({**READ, "BATT_CAPACITY": 50.0}),  # an unusable capacity
+        fc_params({**READ, "BATT_LOW_MAH": None}),  # the reserve not answered
+        fc_params({**READ, "BATT_LOW_MAH": 0.0}),  # no mAh failsafe on the FC
+        fc_params({**READ, "BATT_LOW_MAH": 8000.0}),  # not below the capacity
     ],
-    ids=["not-read", "partial", "unusable"],
+    ids=["not-read", "partial", "unusable", "reserve-not-read", "reserve-0", "reserve-full"],
 )
-def test_the_constant_capacity_only_warns(params: FcParams) -> None:
-    assert "BATT_CAPACITY" in params.fallback
+def test_a_constant_capacity_or_reserve_only_warns(params: FcParams) -> None:
+    assert {"BATT_CAPACITY", "BATT_LOW_MAH"} & set(params.fallback)
     watch = WindWatch(params=params)
     t = far(battery_pct=5.0)
     now = run(watch, t, 12.0)
     assert "ENERGY_HOME" in watch.check(t, now).reasons and not watch.energy_rtl
+
+
+def test_the_constant_reserve_never_flies_home_on_a_small_pack() -> None:
+    """BATT_CAPACITY read (2000 mAh) but BATT_LOW_MAH not: the 1500 mAh constant is most
+    of the pack, so even 90 % (1800 mAh) is short of 451 + 1500. Only a warning."""
+    small = FcParams(capacity_mah=2000.0, fallback=("BATT_LOW_MAH",))
+    watch = WindWatch(params=small)
+    t = far(battery_pct=90.0)
+    now = run(watch, t, 12.0)
+    assert "ENERGY_HOME" in watch.check(t, now).reasons and not watch.energy_rtl
+    read = WindWatch(params=replace(small, reserve_mah=300.0, fallback=()))
+    now = run(read, t, 12.0)
+    assert "ENERGY_HOME" not in read.check(t, now).reasons and not read.energy_rtl
 
 
 def test_the_fc_capacity_decides_the_fly_home() -> None:
@@ -937,3 +952,91 @@ async def test_telemetry_reads_only() -> None:
             await s.run(0.25)
         assert mav._params_read is None  # pyright: ignore[reportPrivateUsage]
         assert s.core._energy_short_at is None  # pyright: ignore[reportPrivateUsage]
+
+
+# --- the whole way: update_wind, the battery guard and the FLY HOME ---------------------
+
+
+async def _short_far_from_home(s: Stack, pct: float) -> ThreadSafeMav:
+    """500 m from home at 20 A and ``pct``, with the callers' ``update_wind`` every
+    250 ms for 20 s: the parameter read, the samples and the guard's confirmation."""
+    s.fly()
+    s.fc.lat, s.fc.lon = FAR
+    s.fc.battery_pct = pct
+    s.fc.battery_current_a = 20.0
+    mav = cast(ThreadSafeMav, s.actions.mav)
+    for _ in range(80):
+        mav.update_wind(VID)
+        await s.run(0.25)
+    return mav
+
+
+async def test_a_battery_read_from_the_fc_flies_home_through_update_wind() -> None:
+    async with stack(rtl_pct=1.0) as s:
+        s.fc.params["BATT_CAPACITY"] = 4000.0
+        s.fc.params["BATT_LOW_MAH"] = 1000.0
+        mav = await _short_far_from_home(s, 30.0)  # 1200 mAh: 451 + 1000 does not fit
+        p = mav.wind.params
+        assert (p.capacity_mah, p.reserve_mah) == (4000.0, 1000.0)
+        assert not {"BATT_CAPACITY", "BATT_LOW_MAH"} & set(p.fallback)
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "battery_rtl"
+        assert s.latches.battery_reason(VID) == "energy_home"
+        assert s.fc.mode in HOME_MODES
+
+
+@pytest.mark.parametrize(
+    ("read", "pct"),
+    [
+        (False, 5.0),  # never read: FcParams(), 500 mAh of the constant 10000
+        (True, 30.0),  # BATT_CAPACITY 4000 read, BATT_LOW_MAH not: the 1500 constant
+    ],
+    ids=["fc-params-default", "reserve-not-read"],
+)
+async def test_the_constants_never_fly_home_through_update_wind(
+    monkeypatch: pytest.MonkeyPatch, read: bool, pct: float
+) -> None:
+    async with stack(rtl_pct=1.0) as s:
+        s.fc.params["BATT_CAPACITY"] = 4000.0
+        s.fc.params.pop("BATT_LOW_MAH")
+        mav = cast(ThreadSafeMav, s.actions.mav)
+        if not read:
+            monkeypatch.setattr(mav, "_wind_params", lambda: None)
+        mav = await _short_far_from_home(s, pct)
+        if read:
+            assert "BATT_LOW_MAH" in mav.wind.params.fallback
+        else:
+            assert mav.wind.params == FcParams()
+        out = mav.telemetry(VID)
+        assert out is not None and out.wind is not None
+        assert "ENERGY_HOME" in out.wind.reasons and not mav.wind.energy_rtl
+        assert s.latches.get(VID) is None and s.fc.mode not in HOME_MODES
+
+
+async def test_the_battery_reason_is_set_with_the_latch() -> None:
+    """The guard hands its reason to the system action, which sets it with the latch in
+    one step; with no path to the drone neither is set."""
+    async with stack() as s:
+        s.fly()
+        s.fc.battery_pct = 80.0
+        calls: list[tuple[str, str, str | None]] = []
+        system = s.actions.system
+
+        def record(vid: str, kind: LatchAction, reason: BatteryReason | None) -> object:
+            calls.append((vid, kind, reason))
+            return system(vid, kind, reason)
+
+        s.core._system_action = record  # pyright: ignore[reportPrivateUsage]
+        await s.run(1.0)
+        s.core.energy_short(True)
+        await s.run(1.0)
+        assert calls[0] == (VID, "battery_rtl", "energy_home")
+        latch = s.latches.get(VID)
+        assert latch is not None and latch.action == "battery_rtl"
+        assert s.latches.battery_reason(VID) == "energy_home"
+
+
+def test_no_battery_reason_without_a_latch() -> None:
+    latches = Latches(FakeClock())
+    latches.start(VID, "stop", "operator:demo", "energy_home")  # not a battery latch
+    assert latches._battery_reason == {}  # pyright: ignore[reportPrivateUsage]

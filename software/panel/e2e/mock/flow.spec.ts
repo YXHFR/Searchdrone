@@ -276,14 +276,19 @@ test.describe("chat and approval cards", () => {
   }) => {
     ground.pushLive("mission", "charter.updated", charter());
     ground.pushLive("approvals", "approval.requested", approval());
-    // The probability map's images load in the background and are not sent by this click.
-    const sent = () => ground.requests.filter((r) => !r.path.includes("/probability-map.png"));
-    const before = sent().length;
+    // "Sends nothing" is about writes: the pushes above make the panel read in the
+    // background (GETs, e.g. the resync and the probability map) at any time, so those
+    // are not counted.
+    const before = ground.requests.length;
     await page.getByTestId("approval-AP1").getByTestId("edit-charter").click();
     const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
     await expect(box).toHaveValue("Ändra ramen: ");
     await expect(box).toBeFocused();
-    expect(sent().length).toBe(before);
+    // A write is wrong whenever it comes, not only before the composer is filled: give a
+    // late one (a timer, a chained promise) a second to show, as the tap test above does.
+    await page.waitForTimeout(1_000);
+    const sent = ground.requests.slice(before).filter((r) => r.method !== "GET");
+    expect(sent.map((r) => `${r.method} ${r.path}`)).toEqual([]);
   });
 
   test("a proposal to resume draws the Resume button; typing 'fortsätt' never resumes", async ({

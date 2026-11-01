@@ -3,7 +3,8 @@
 train: size=full|ci (default full), seed=<0..9>, workers=<int>, out=<policy file>
 eval:  size=full|ci (default full), workers=<int>, policy=<policy file>, out=<result file>
 both:  world=synthetic|real (default synthetic), sites=<folder from just rl-maps>,
-       belief_motion=diffuse|lpb (default diffuse; lpb walks the map by sd_motion, real only)
+       belief_motion=diffuse|lpb (default diffuse; lpb walks the map by sd_motion, real only),
+       miss_correlation=<0..1> (default 0.8; 0 gives the numbers from before it existed)
 
 The policy file and the results land in ``build/rl/`` by default, which git ignores:
 trained weights never go into the repository.
@@ -23,9 +24,10 @@ from sd_searchsim.config import BELIEF_MOTIONS, SIZES, WORLDS, SimConfig
 from sd_searchsim.realworld import load_sites
 
 DEFAULT_DIR = Path("build/rl")
+_WORLD_KEYS = {"world", "sites", "belief_motion", "miss_correlation"}
 KEYS = {
-    "train": {"size", "seed", "workers", "out", "world", "sites", "belief_motion"},
-    "eval": {"size", "workers", "policy", "out", "world", "sites", "belief_motion"},
+    "train": {"size", "seed", "workers", "out", *_WORLD_KEYS},
+    "eval": {"size", "workers", "policy", "out", *_WORLD_KEYS},
 }
 
 
@@ -66,6 +68,16 @@ def _int(args: dict[str, str], key: str, default: int, command: str) -> int:
     return value
 
 
+def _share(args: dict[str, str], key: str, default: float, command: str) -> float:
+    try:
+        value = float(args.get(key, default))
+    except ValueError:
+        _fail(f"rl-{command}: {key} ska vara ett tal mellan 0 och 1.")
+    if not 0.0 <= value <= 1.0:
+        _fail(f"rl-{command}: {key} ska vara mellan 0 och 1.")
+    return value
+
+
 def _write_json(path: Path, doc: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -82,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = SimConfig(
         world=args.get("world", "synthetic"),
         belief_motion=args.get("belief_motion", "diffuse"),
+        miss_correlation=_share(args, "miss_correlation", SimConfig.miss_correlation, command),
     )
     if cfg.world == "real":
         cfg = dataclasses.replace(cfg, sites_dir=args.get("sites", cfg.sites_dir))
@@ -136,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     result["size"] = size_name
     result["world"] = cfg.world
     result["belief_motion"] = cfg.belief_motion
+    result["miss_correlation"] = cfg.miss_correlation
     result["policy_file"] = str(policy_path) if theta is not None else None
     out = Path(args.get("out", DEFAULT_DIR / "eval.json"))
     _write_json(out, result)
