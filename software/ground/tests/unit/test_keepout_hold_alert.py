@@ -4,6 +4,7 @@ panel's (``keepouts.HOLD*`` in sv.json) and both read the same fields."""
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import uuid
 from pathlib import Path
@@ -14,6 +15,7 @@ import pytest
 
 from sd_ground.services.missions import MissionFlow, keepout_hold_text
 from sd_schemas.api import KeepoutHoldField
+from sd_schemas.link import OnboardEvent
 from sd_schemas.mission import MissionState
 
 SV = Path(__file__).resolve().parents[3] / "panel" / "src" / "i18n" / "sv.json"
@@ -45,7 +47,10 @@ def test_half_metres_round_as_on_the_panel() -> None:
 
 def test_the_panel_reads_the_same_fields() -> None:
     gnss = (SV.parents[1] / "safety" / "gnss.ts").read_text(encoding="utf-8")
-    for name in KeepoutHoldField:  # typed there as the generated KeepoutHoldField
+    # Every field the panel's text uses; the send time is for the logs and not shown yet.
+    worded = set(KeepoutHoldField) - {KeepoutHoldField.SENT_UTC}
+    assert worded == {KeepoutHoldField.INSIDE, KeepoutHoldField.CLIMB_TO_M}
+    for name in worded:  # typed there as the generated KeepoutHoldField
         assert f'KeepoutHoldField = "{name.value}"' in gnss
 
 
@@ -90,3 +95,51 @@ def test_a_hover_held_back_past_its_mission_is_only_logged() -> None:
     """Held back by a lost link and delivered after its mission closed: that hover is
     over, so no alarm (the event itself is stored as usual)."""
     assert _alert({"inside": True}, MissionState.CLOSED).alerts == []
+
+
+def test_the_send_time_goes_into_the_details_unchanged() -> None:
+    """A hover held back by a lost link shows when the drone sent it; the same alarm."""
+    flow = _Flow()
+    mission = SimpleNamespace(id=uuid.uuid4(), status=MissionState.ACTIVE)
+    sent = dt.datetime(2026, 5, 1, 10, 0, 7, tzinfo=dt.UTC)
+    MissionFlow._keepout_hold_alert(flow, "sd-01", mission, {"inside": True}, sent)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    code, severity, _, details = flow.alerts[0]
+    assert (code, severity) == ("KEEPOUT_HOLD", "critical")
+    assert details == {"inside": True, "sent_utc": "2026-05-01T10:00:07+00:00"}
+
+
+async def test_a_hover_from_the_link_carries_the_envelope_send_time() -> None:
+    """Through the real entry point (``on_inbound``): the alarm's details carry the
+    envelope's ``sent_utc``, so every keep-out hover alarm shows when the drone sent it."""
+
+    class _Inbound(_Flow):
+        def __init__(self, mission: Any) -> None:
+            super().__init__()
+
+            async def open_mission(vehicle_id: str) -> Any:
+                return mission
+
+            async def by_id(mission_id: str) -> Any:
+                return None
+
+            self.repo = SimpleNamespace(open_mission=open_mission, mission=by_id)
+            self.g = SimpleNamespace(add_event=lambda *a, **k: None)
+
+        def publish(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def _keepout_hold_alert(self, *a: Any) -> None:
+            MissionFlow._keepout_hold_alert(self, *a)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    flow = _Inbound(SimpleNamespace(id=uuid.uuid4(), status=MissionState.ACTIVE))
+    sent = dt.datetime(2026, 5, 1, 10, 0, 7, tzinfo=dt.UTC)
+    body = OnboardEvent(
+        type="executor.keepout_hold",
+        severity="warning",
+        data={"command_id": "c", "skill": "goto", "inside": False},
+    )
+    inbound = SimpleNamespace(body=body, envelope=SimpleNamespace(mission_id=None, sent_utc=sent))
+    await MissionFlow.on_inbound(flow, "sd-01", inbound)  # type: ignore[arg-type]
+    ((code, severity, _, details),) = flow.alerts
+    assert (code, severity) == ("KEEPOUT_HOLD", "warning")
+    assert details == {"inside": False, "sent_utc": "2026-05-01T10:00:07+00:00"}

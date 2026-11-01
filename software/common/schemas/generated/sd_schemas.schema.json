@@ -5408,10 +5408,11 @@
       "type": "object"
     },
     "KeepoutHoldField": {
-      "description": "The fields of the onboard ``executor.keepout_hold`` data that the ground's\n``KEEPOUT_HOLD`` alert passes on in its details, for the panel's text.",
+      "description": "The fields of the ``KEEPOUT_HOLD`` alert's details: the onboard\n``executor.keepout_hold`` data the ground passes on, for the panel's text, and the\nenvelope's send time.",
       "enum": [
         "inside",
-        "climb_to_m"
+        "climb_to_m",
+        "sent_utc"
       ],
       "title": "KeepoutHoldField",
       "type": "string"

@@ -94,6 +94,7 @@ class LinkWatch:
     installed_seq: int = -1  # the newest list the executor answered "done" to
     refusals: int = 0  # refusals in a row; reset by "done"
     not_installed: bool = False  # KEEPOUTS_NOT_INSTALLED is out, not yet followed by "done"
+    at_cap_logged: bool = False  # install_seq_at_cap is logged; reset by "done"
     keepouts: list[Keepout] = field(default_factory=list[Keepout])
     ids: dict[str, uuid.UUID] = field(default_factory=dict[str, uuid.UUID])
     seqs: dict[str, int] = field(default_factory=dict[str, int])  # candidate -> K<n>
@@ -205,6 +206,7 @@ async def on_ack(flow: MissionFlow, vehicle_id: str, ack: Ack) -> None:
     _, seq, _, mid = w.pending
     if ack.stage == "done":
         w.pending, w.refusals, w.installed_seq = None, 0, max(w.installed_seq, seq)
+        w.at_cap_logged = False
         if w.not_installed:
             w.not_installed = False
             flow.alert(
@@ -262,7 +264,8 @@ def _refused(
     if stale:
         jump = STALE_STEP_MS << min(w.refusals - 1, _STALE_DOUBLINGS_MAX)
         w.install_seq = min(max(w.install_seq, seq) + jump, INSTALL_SEQ_MAX)
-        if w.install_seq == INSTALL_SEQ_MAX:
+        if w.install_seq == INSTALL_SEQ_MAX and not w.at_cap_logged:
+            w.at_cap_logged = True  # once per run of refusals, not on every poll
             log.error(
                 "link_loss.install_seq_at_cap",
                 vehicle_id=vehicle_id,
