@@ -136,13 +136,35 @@ def _stamp(model: PersonModel) -> str:
     return f"{model.sha256}\n"
 
 
-def is_fetched(model: PersonModel, repo: Path = paths.REPO) -> bool:
-    stamp = model_dir(model, repo) / ".sha256"
+def _stamped(folder: Path, model: PersonModel) -> bool:
+    stamp = folder / ".sha256"
     return stamp.is_file() and stamp.read_text(encoding="utf-8") == _stamp(model)
 
 
-def missing(repo: Path = paths.REPO) -> list[str]:
-    return [m.id for m in CATALOG if not is_fetched(m, repo)]
+def is_fetched(model: PersonModel, repo: Path = paths.REPO) -> bool:
+    return _stamped(model_dir(model, repo), model)
+
+
+def search_dirs(env: Mapping[str, str], repo: Path = paths.REPO) -> list[Path]:
+    """Where Gazebo looks for ``model://<id>``, in its order: this checkout's assets, then
+    ``GZ_SIM_RESOURCE_PATH`` (in a farm round it has the owner's checkout's assets)."""
+    parts = [str(assets_dir(repo)), *env.get("GZ_SIM_RESOURCE_PATH", "").split(":")]
+    return [Path(p) for p in dict.fromkeys(parts) if p]
+
+
+def missing(repo: Path = paths.REPO, env: Mapping[str, str] | None = None) -> list[str]:
+    """The catalog models that are not fetched. Without ``env`` only this checkout's assets
+    count (what ``fetch`` fills). With ``env`` a model counts where Gazebo would load it
+    from: the first folder in ``search_dirs`` that has it, with the right hash stamp."""
+    if env is None:
+        return [m.id for m in CATALOG if not is_fetched(m, repo)]
+    dirs = search_dirs(env, repo)
+    out = []
+    for m in CATALOG:
+        found = next((d / m.id for d in dirs if (d / m.id).is_dir()), None)
+        if found is None or not _stamped(found, m):
+            out.append(m.id)
+    return out
 
 
 def _download(url: str) -> bytes:

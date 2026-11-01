@@ -800,7 +800,8 @@ class Stack:
         return any(isinstance(obj, people.Person) for obj in self.placed)
 
     def check_people_fetched(self) -> None:
-        missing = people.missing(self.repo) if self.places_people() else []
+        # Where Gazebo will look: this checkout's assets, then the passed-on resource path.
+        missing = people.missing(self.repo, os.environ) if self.places_people() else []
         if missing:
             raise InfraError(
                 f"Personmodellerna saknas ({', '.join(missing)}). Kör: just sim-farm-setup"
