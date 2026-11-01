@@ -215,6 +215,10 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The panel's choice lists (a drawn area's hint, the search profile's fields) work
+  from the keyboard like a native select: ↓/↑ on the button opens the list on the
+  current choice, ↓/↑, Home and End move, Enter or Space chooses, Escape and Tab close,
+  and the focus returns to the button. The component moved to `src/ui/Picker.tsx`.
 - Flight safety: arming needs exactly `sd_gcs_loiter_cap.lua` loaded and running
   (`SCR_LD_CHECKSUM` / `SCR_RUN_CHECKSUM` in `searchdrone-safety.parm`); a unit test
   fails when the script changes without a new checksum. LOITER's braking
