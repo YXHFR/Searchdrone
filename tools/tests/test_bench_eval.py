@@ -494,8 +494,7 @@ def test_private_results_inside_the_repo_but_outside_build_are_warned_about(
     inside_repo = tmp_path / "tools" / "r.json"
     message = ev.private_out(inside_repo, ["open", "kept"], register)
     assert message is not None
-    assert "kept" in message
-    assert "open" not in message
+    assert message.endswith("resultat på kept, som inte får publiceras; checka inte in den.")
     assert ev.private_out(inside_repo, ["open"], register) is None
     assert ev.private_out(inside_repo, ["gone"], register) is not None
     assert ev.private_out(tmp_path / "build" / "bench" / "r.json", ["kept"], register) is None
@@ -525,4 +524,25 @@ def test_main_warns_when_it_writes_private_results_into_the_repo(
     assert ev.main(["model=null", f"data={root}", f"out={root / 'r.json'}"]) == 0
     assert "kept, som inte får publiceras" in capsys.readouterr().err
     assert ev.main(["model=null", f"data={root}", f"out={root / 'build' / 'r.json'}"]) == 0
+    assert "publiceras" not in capsys.readouterr().err
+
+
+def test_selfcheck_warns_too_when_it_writes_private_rows_into_the_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Selfcheck also writes per-dataset rows, so it gets the same warning as a real model."""
+    from types import SimpleNamespace
+
+    root = tmp_path.resolve()
+    monkeypatch.setattr(ev, "ROOT", root)
+    monkeypatch.setattr(ev, "RESULTS", root / "build" / "bench")
+    monkeypatch.setattr(ev, "pictures", lambda *a: ("s", [object()]))
+    rows = {"recall_by_dataset": {"kept": {"n": 1}}}
+    monkeypatch.setattr(ev, "selfcheck", lambda *a: ([], {"null": rows, "facit": rows}))
+    monkeypatch.setattr(
+        ev, "load_register", lambda *a: {"kept": SimpleNamespace(publish_results=False)}
+    )
+    assert ev.main(["model=selfcheck", f"data={root}", f"out={root / 'r.json'}"]) == 0
+    assert "kept, som inte får publiceras" in capsys.readouterr().err
+    assert ev.main(["model=selfcheck", f"data={root}", f"out={root / 'build' / 'r.json'}"]) == 0
     assert "publiceras" not in capsys.readouterr().err

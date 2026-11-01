@@ -194,7 +194,10 @@ Keys of `just bench-detector`: `model=`, `part=test|val`, `sets=`, `mini=1`, `li
 (the first N pictures, for a quick look), `data=`, `out=`, `compare=<earlier result>`
 (fails if recall over 32 px drops more than 2 points for the weakest dataset or for any
 one dataset, each at its own threshold, or if a dataset of the earlier result was not
-measured; an earlier result without per-dataset rows is compared pooled against pooled).
+measured; an earlier result without per-dataset rows is compared pooled against pooled). A
+result written with `out=` inside the repository but outside `build/` gets a warning when
+it covers a dataset with `publish_results = false` (or one no longer in `datasets.toml`):
+such numbers must not be committed.
 
 ## For maintainers
 
