@@ -2254,7 +2254,8 @@ class Executor:
                     return
                 was = self.state
                 if was == S.HOLD and self.active is None:
-                    # The keep-out hold stays the keep-out hold (a find move never leaves it).
+                    # A limit's hover (the keep-out hold, any ``limit`` hold) keeps its label
+                    # when another hold comes in; the event still tells why.
                     keep = self.hold_reason == "limit"
                     reason = "limit" if keep else action.hold_reason
                     self._enter(target, hold_reason=reason, cause=action.limit)

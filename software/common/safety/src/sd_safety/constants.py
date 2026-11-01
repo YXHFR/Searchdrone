@@ -62,6 +62,10 @@ FIELD_RC_FAILSAFE: Final = 4.0
 LINK_LOSS_DETECT_S: Final = 3.0
 SDLINK_GRACE_S: Final = 20.0
 SDLINK_HOLD_S: Final = 30.0
+# The link-loss rule lets the keep-out climb (straight up out of a person's cylinder) end at
+# the top before its hold; home is due regardless this long after its usual time (53 s).
+# The highest climb, to the charter's 120 m less 5 m at 2 m/s, takes some 48 s.
+KEEPOUT_CLIMB_LINK_ALLOWANCE_S: Final = 60.0
 FS_GCS_TIMEOUT_S: Final = 20.0  # mirrors FS_GCS_TIMEOUT in the flight controller
 BRAIN_HEARTBEAT_TIMEOUT_S: Final = 5.0
 OPERATOR_ABSENT_S: Final = 30.0

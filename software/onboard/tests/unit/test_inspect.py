@@ -39,7 +39,7 @@ from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
-from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS, HOLD_MS, HOME_MS
+from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS, HOLD_MS, HOME_CLIMBING_MS, HOME_MS
 from sd_safety.targets import polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
@@ -1401,6 +1401,40 @@ async def test_a_link_loss_with_no_find_lets_the_climb_end_then_holds_and_flies_
         else:  # up after 53 s: home at once from the top
             assert took > HOME_MS / 1000
         assert max(math.dist(p, here) for p in track_xy(r, start)) <= 10.0
+
+
+@pytest.mark.parametrize("goto_deadline", [True, False])
+async def test_a_stalled_climb_still_flies_home_on_a_link_loss(
+    monkeypatch: pytest.MonkeyPatch, goto_deadline: bool
+) -> None:
+    """The climb out of a person's cylinder stalls (0.05 m/s) and the link is lost, no find
+    near: home is due regardless at ``HOME_CLIMBING_MS`` (113 s), whatever the climb's own
+    deadline. Without that (``goto_deadline`` False: as if the goto's deadline were far
+    off) the rule's cap alone sends it home then; with it, the goto's deadline ends the
+    climb in the keep-out hold earlier, and home follows at once."""
+    if not goto_deadline:
+        monkeypatch.setattr(GotoHandler, "_deadline_for", staticmethod(lambda now, _p: now + 1e6))
+    async with rig() as r:
+        _, person, _, _ = await _search_over_a_person(r, monkeypatch, radius=80.0)
+        monkeypatch.setattr("sd_mav.fake._CLIMB_MS", 0.05)  # after the takeoff
+        await r.run(0.5)
+        assert r.ex.state == S.TRANSIT and r.ex.active is not None
+        assert r.ex.active.skill == INTERNAL_KEEPOUT_CLIMB
+        r.link = False
+        await r.run(0.1)
+        lost = r.ex.link_last_inbound_ms
+        assert lost is not None
+        await r.until(lambda: r.ex.state == S.RTL, HOME_CLIMBING_MS / 1000 + 5)
+        took = r.ex.now_ms() - lost
+        assert took <= HOME_CLIMBING_MS + 200, took
+        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
+        assert r.ex.vehicle_state().alt_rel_home_m < want - 30  # it never got far up
+        kinds = r.up.kinds()
+        assert kinds.index("executor.link_loss_hold") < kinds.index("executor.link_loss_rtl")
+        if not goto_deadline:  # the cap: home at 113 s, out of the climb itself
+            assert took == pytest.approx(HOME_CLIMBING_MS, abs=200)
+        else:  # the goto's deadline came first: home at once from the keep-out hold
+            assert took < HOME_CLIMBING_MS - 5000
 
 
 async def test_an_inspection_held_over_a_person_does_not_take_the_order_climb(

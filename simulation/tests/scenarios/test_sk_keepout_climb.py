@@ -92,6 +92,9 @@ __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 PERSON_R_M = 100.0
 CLIMB_TO_M = PERSON_R_M + KEEPOUT_CLIMB_MARGIN_M
 ALT_TOL_M = 2.0
+# ArduCopter's default climb speed in GUIDED (``WP_SPD_UP``, not set in the repo's params).
+SITL_MAX_CLIMB_MS = 2.5
+LOW_GOTO_ALT_M = 22.0
 SIDEWAYS_M = 15.0  # braking from the leg's speed, then straight up
 # The ground numbers its installs from the wall clock in ms: one hour past the
 # executor's, so the ground's own resends in this test do not replace this one.
@@ -204,14 +207,14 @@ class Climb(NamedTuple):
 
 
 async def _a_goto_climbs_out(
-    sc: Any, source: Literal["candidate", "confirmed"] = "candidate"
+    sc: Any, source: Literal["candidate", "confirmed"] = "candidate", alt_m: float = 40.0
 ) -> Climb:
-    """A goto flies on inside a person's cylinder (``source``) that came around it, a
-    second one just ahead, closer than it can turn away from: it stops short of that one
-    and climbs out of the one it is in; the operator is told, the goto superseded."""
+    """A goto at ``alt_m`` flies on inside a person's cylinder (``source``) that came around
+    it, a second one just ahead, closer than it can turn away from: it stops short of that
+    one and climbs out of the one it is in; the operator is told, the goto superseded."""
     p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
     target = sc.at(float(p1["east_m"]), float(p1["north_m"]))
-    res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": 40})
+    res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": alt_m})
     assert res["gate"]["decision"] == "ALLOW", res
     goto = await sc.wait_command("goto", "running", 30)
     ex = sc.r.onboard.ex
@@ -225,6 +228,8 @@ async def _a_goto_climbs_out(
         before = next((s for s in reversed(sc.track) if s.t <= now.t - 1.0), None)
         if before is None or now.groundspeed_ms < 4.0 or sc.from_home_m() < 30.0:
             return False
+        if abs(now.alt_m - alt_m) > ALT_TOL_M:
+            return False  # still changing height
         (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
         step = math.dist((e, n), (e0, n0))
         if step < 0.9 * now.groundspeed_ms * (now.t - before.t):
@@ -402,9 +407,13 @@ async def test_a_link_loss_with_no_find_during_a_climb_climbs_on_and_flies_home(
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
         await sc.airborne()
-        _, _, _, here, since, speed = await _a_goto_climbs_out(sc)  # no find near
+        # No find near. The goto flies low, near the charter's floor (20 m), so the climb
+        # to the top is still running well past the hold's time (23 s).
+        _, _, _, here, since, speed = await _a_goto_climbs_out(sc, alt_m=LOW_GOTO_ALT_M)
         ex = sc.r.onboard.ex
-        assert sc.track[-1].alt_m < CLIMB_TO_M - 30.0  # well below the top
+        # At ArduCopter's fastest climb the top is still at least 8 s past the hold's time.
+        left_s = (CLIMB_TO_M - sc.track[-1].alt_m) / SITL_MAX_CLIMB_MS
+        assert left_s >= HOLD_AT + 8.0, (sc.track[-1].alt_m, left_s)
         sc.radio(sdlink=False)
         down = time.monotonic()
         past_hold: list[str | None] = []  # what ran once the hold was due

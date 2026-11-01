@@ -142,6 +142,8 @@ EVENTS: dict[str, Callable[[P, float], LinkLossInput | None]] = {
     "climb_done_after_home_time": lambda p, t: inp(60.0, p, keepouts=(), state=S.HOLD, active=None),
     "find_deadline": lambda p, t: inp(15.0, p),
     "find_deadline_climbing": lambda p, t: inp(15.0, p, **CLIMBING),
+    "home_time_still_climbing": lambda p, t: inp(113.0, p, keepouts=(), **CLIMBING),
+    "find_timeout_still_climbing": lambda p, t: inp(123.0, p, **CLIMBING),
     "find_timeout": lambda p, t: inp(123.0, p),
     "other_rtl": lambda p, t: inp(
         t + 0.1, p, state=S.RTL, active="return_home", taken_by="battery"
