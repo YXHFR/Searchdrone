@@ -3,10 +3,13 @@
 ``SimWorld`` flies the orders the gate let through, the way the executor would (straight
 legs, a lawnmower over a sector, home and land), drains the battery, keeps a coverage grid
 and runs a simple camera: a person under the footprint is seen with a chance per second
-that falls with height. Each sighting becomes a search candidate, as the ground's
-candidate queue would hold it: a high one wakes the AI with the ground's ``candidate``
-event and every open one is in the situation's "Kandidater" line, both built by the
-ground's own functions (``sd_schemas.candidate_ai``). A pass at 30 m or lower within 15 m
+that falls with height. The same chance gives each cell of the area the chance the camera
+would have missed the person there, and from it the probability map's sector line
+(``sd_schemas.probmap.situation_line``), as the ground's map gives the AI. Each sighting
+becomes a search candidate, as the ground's candidate queue would hold it: a high one
+wakes the AI with the ground's ``candidate`` event and every open one is in the
+situation's "Kandidater" line, both built by the ground's own functions
+(``sd_schemas.candidate_ai``). A pass at 30 m or lower within 15 m
 of a candidate is a second picture of it: the person seen again raises its priority, an
 empty spot halves it. False sightings come at scenario times, and the pilot's STOP (and
 its release) when the scenario says. The world notes when the AI first names a candidate
@@ -43,6 +46,7 @@ from sd_schemas.base import new_id
 from sd_schemas.candidate_ai import candidate_event_body, candidates_line, named_seqs
 from sd_schemas.commander import BrainMessage, Situation, SkillRequest, SkillSubmitResult
 from sd_schemas.keepout import INSPECT_SPEED_MS
+from sd_schemas.probmap import PSR_MAX, SectorScore, situation_line
 from sd_schemas.search import CandidateCard, priority_class
 from sd_schemas.simfarm import CLOSE_UP_RADIUS_M, FLEW_ON_M, SEARCH_SKILLS
 
@@ -61,6 +65,12 @@ SIGMA95_M = 6.0  # the sighting's position error: the camera's jitter around the
 # Plans the AI did not order: no skill event when they end.
 BATTERY_ID = "battery"
 FLY_HOME_ID = "fly_home"
+COVERED_POD = 0.1  # a cell counts as covered on the map from this POD on, as on the ground's
+
+
+def _spacing(alt: float) -> float:
+    """The lane spacing of a survey that names none."""
+    return max(10.0, 1.4 * FOOTPRINT_PER_M * alt)
 
 
 def _detect_p(alt: float, visibility: float) -> float:
@@ -187,6 +197,16 @@ class SimWorld:
         }
         self._origin = (minx, miny)
         self._seen: set[tuple[int, int]] = set()
+        # The chance the camera missed the person in a cell, were they there.
+        self._miss = dict.fromkeys(self._cells, 1.0)
+        self._sector_cells = {
+            sid: [
+                c
+                for c in self._cells
+                if poly.contains(Point(minx + (c[0] + 0.5) * CELL_M, miny + (c[1] + 0.5) * CELL_M))
+            ]
+            for sid, poly in self.sectors.items()
+        }
         self._false_left = list(self.scenario.false_alarms_at_s)
 
     # --- geometry -----------------------------------------------------------------------
@@ -200,6 +220,40 @@ class SimWorld:
 
     def coverage(self) -> float:
         return len(self._seen & self._cells) / len(self._cells) if self._cells else 0.0
+
+    def sector_scores(self) -> list[SectorScore]:
+        """The map's view of each sector: the person's chance of being there given what the
+        camera has passed over (an even prior over the area), and of being found by one
+        more survey at the default height and speed."""
+        left = sum(self._miss.values()) or 1.0
+        alt = min(max(40.0, self.alt_band[0]), self.alt_band[1])
+        r, spacing = FOOTPRINT_PER_M * alt, _spacing(alt)
+        speed = min(DEFAULT_SPEED_MS, self.max_speed)
+        # Seconds a point spends under the footprint in one survey, on average.
+        pod_pass = 1 - (1 - _detect_p(alt, self.scenario.visibility)) ** (
+            math.pi * r * r / (spacing * speed)
+        )
+        out = []
+        for sid, cells in sorted(self._sector_cells.items()):
+            if not cells:
+                continue
+            miss = [self._miss[c] for c in cells]
+            poa = sum(miss) / left
+            est_min = max(0.01, len(cells) * CELL_M * CELL_M / spacing / speed / 60)
+            pos = poa * pod_pass
+            out.append(
+                SectorScore(
+                    sector_id=sid,
+                    poa=round(min(1.0, poa), 4),
+                    covered_pct=round(100 * sum(1 - m >= COVERED_POD for m in miss) / len(miss), 1),
+                    mean_pod=round(1 - sum(miss) / len(miss), 4),
+                    pos_plan=round(min(1.0, pos), 4),
+                    est_min=round(est_min, 2),
+                    psr=round(min(PSR_MAX, pos / est_min), 4),
+                    spacing_m=round(spacing, 1),
+                )
+            )
+        return out
 
     def _lawnmower(self, poly: Polygon, spacing: float) -> list[tuple[float, float]]:
         minx, miny, maxx, maxy = poly.bounds
@@ -232,7 +286,7 @@ class SimWorld:
         elif req.skill == "survey_sector":
             sector = str(p.get("sector_id"))
             alt = float(p.get("alt_m") or self.alt)
-            spacing = float(p.get("spacing_m") or max(10.0, 1.4 * FOOTPRINT_PER_M * alt))
+            spacing = float(p.get("spacing_m") or _spacing(alt))
             pts = self._lawnmower(self.sectors[sector], spacing)
             self.plan = _Plan(cid, "survey_sector", pts, alt, speed, self._length(pts), 0, sector)
         elif req.skill == "inspect_detection":
@@ -341,15 +395,19 @@ class SimWorld:
         if self.landed:
             return []
         r = FOOTPRINT_PER_M * self.alt
-        if self.alt <= COVERAGE_MAX_ALT_M:
-            ox, oy = self._origin
-            ci, cj = int((self.east - ox) // CELL_M), int((self.north - oy) // CELL_M)
-            k = int(r // CELL_M) + 1
-            for i in range(ci - k, ci + k + 1):
-                for j in range(cj - k, cj + k + 1):
-                    cx, cy = ox + (i + 0.5) * CELL_M, oy + (j + 0.5) * CELL_M
-                    if math.dist((cx, cy), (self.east, self.north)) <= r:
-                        self._seen.add((i, j))
+        p = _detect_p(self.alt, self.scenario.visibility)
+        ox, oy = self._origin
+        ci, cj = int((self.east - ox) // CELL_M), int((self.north - oy) // CELL_M)
+        k = int(r // CELL_M) + 1
+        for i in range(ci - k, ci + k + 1):
+            for j in range(cj - k, cj + k + 1):
+                cx, cy = ox + (i + 0.5) * CELL_M, oy + (j + 0.5) * CELL_M
+                if math.dist((cx, cy), (self.east, self.north)) > r:
+                    continue
+                if (i, j) in self._miss:
+                    self._miss[(i, j)] *= 1 - p
+                if self.alt <= COVERAGE_MAX_ALT_M:
+                    self._seen.add((i, j))
         out: list[dict[str, Any]] = []
         te, tn = self.scenario.target_east_north
         seen_target = any(c.true for c in self.candidates)
@@ -492,6 +550,7 @@ class SimGround(FakeGround):
                         "active" if w.plan and w.plan.sector == x["sector_id"] else x["status"]
                     )
         s["candidates_line"] = candidates_line([c.card() for c in w.candidates], {}, (lat, lon))
+        s["probability_line"] = situation_line(w.sector_scores()) if w.sectors else None
         s["state_seq"] += 1
         s["snapshot_state_seq"] = (s.get("snapshot_state_seq") or 0) + 1
 
