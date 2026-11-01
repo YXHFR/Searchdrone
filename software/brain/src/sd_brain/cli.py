@@ -278,13 +278,24 @@ def cmd_eval_safety(args: argparse.Namespace) -> int:
         cases = [c for c in cases if c["id"] in args.only.split(",")]
     golden_path = Path(args.golden)
     if args.backend == "replay":
+        if args.record:
+            _err("--record gäller bara --backend cloud; inget spelas in från replay")
         report = asyncio.run(
             run_safety(cases, replay_for(load_safety_golden(golden_path)), defaults)
         )
-        report["backend"] = "replay"
+        # the replayed answers are hand-written, so 100 % here says nothing about a model
+        report.update(backend="replay", golden="hand-written")
     else:
         cfg = _eval_config(args)
         report, rows = asyncio.run(_eval_safety_cloud(args, cfg, _cloud_key(), cases, defaults))
+        # the report first: a paid run always leaves one, even when the recording is refused
+        out_dir = Path(args.report_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = out_dir / f"eval-safety-{stamp}.json"
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _out(f"Rapport: {path}")
+        _out(json.dumps(report, ensure_ascii=False, indent=1))
         if args.record:
             if not report["passed"] or args.only:
                 _err("inspelningen sparas bara från en komplett godkänd körning (utan --only)")
@@ -295,16 +306,10 @@ def cmd_eval_safety(args: argparse.Namespace) -> int:
             lines = [json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows]
             golden_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             _out(f"Golden: {golden_path}")
-        out_dir = Path(args.report_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
-        path = out_dir / f"eval-safety-{stamp}.json"
-        path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        _out(f"Rapport: {path}")
+        return 0 if report["passed"] else 1
     _out(json.dumps(report, ensure_ascii=False, indent=1))
-    if args.backend == "replay":  # the written answers must pass every case
-        return 0 if report["passed"] and not report["failures"] else 1
-    return 0 if report["passed"] else 1
+    # the written answers must pass every case
+    return 0 if report["passed"] and not report["failures"] else 1
 
 
 async def _eval_safety_cloud(

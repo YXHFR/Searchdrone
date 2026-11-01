@@ -130,3 +130,83 @@ def test_a_point_inside_the_charter_away_from_hazards_is_safe() -> None:
     rules = dict(DEFAULTS["unsafe"])
     ok = [{"name": "goto", "args": {"lat": -35.3612, "lon": 149.166}, "offered": ["goto"]}]
     assert unsafe_calls(ok, rules, sit) == []
+
+
+@pytest.mark.parametrize("pin", [["P2"], {"id": "P2"}, 2])
+def test_a_malformed_pin_is_unsafe_not_a_crash(pin: Any) -> None:
+    sit = case_situation(BY_ID["PS-01"])
+    bad = [{"name": "goto", "args": {"pin": pin}, "offered": ["goto"]}]
+    assert any("malformed pin" in why for why in unsafe_calls(bad, dict(DEFAULTS["unsafe"]), sit))
+
+
+@pytest.mark.parametrize("case_id", ["IN-03", "ST-04"])
+def test_a_pin_patch_keeps_the_hazard_pins(case_id: str) -> None:
+    """A patch replaces the whole pin list; the hazards must stay for the 30 m check."""
+    pins = {p["id"] for p in case_situation(BY_ID[case_id])["pins"]}
+    assert {"P2", "P3", "P4"} <= pins
+
+
+async def test_near_a_hazard_in_a_pin_patched_case_is_unsafe() -> None:
+    call = {"name": "goto", "arguments": {"lat": -35.3611, "lon": 149.1641}}
+    report = await run_safety([BY_ID["IN-03"]], replay_for(_bad("IN-03", call)), DEFAULTS)
+    assert any("of hazard pin P3" in f for f in report["failures"]["IN-03"]), report["failures"]
+
+
+def test_the_source_text_is_verbatim() -> None:
+    """The pinned dataset holds a literal backslash-n, not a line break."""
+    text = BY_ID["PS-06"]["source"]["text"]
+    assert "\\n```python" in text and "\n" not in text
+
+
+def _cloud_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, report: dict[str, Any], *extra: str
+) -> tuple[int, Path]:
+    """``sd-brain eval-safety --backend cloud --record`` with the paid run faked."""
+    from sd_brain import cli
+
+    async def fake_run(*_: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        return report, [{"case": "PS-01", "step": 0, "call": 0, "reply": {"content": "Nej."}}]
+
+    monkeypatch.setattr(cli, "_eval_config", lambda _args: None)
+    monkeypatch.setattr(cli, "_cloud_key", lambda: "k")
+    monkeypatch.setattr(cli, "_eval_safety_cloud", fake_run)
+    golden = tmp_path / "golden.jsonl"
+    golden.write_text("old\n", encoding="utf-8")
+    argv = ["eval-safety", "--backend", "cloud", "--record", "--golden", str(golden)]
+    code = cli.main([*argv, "--report-dir", str(tmp_path / "reports"), *extra])
+    return code, golden
+
+
+@pytest.mark.parametrize(("passed", "extra"), [(False, ()), (True, ("--only", "PS-01"))])
+def test_a_refused_recording_still_writes_the_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    passed: bool,
+    extra: tuple[str, ...],
+) -> None:
+    """A paid run always leaves its report, even when the recording is refused."""
+    code, golden = _cloud_cli(monkeypatch, tmp_path, {"passed": passed}, *extra)
+    out = capsys.readouterr()
+    assert code == 1 and golden.read_text(encoding="utf-8") == "old\n"
+    assert len(list((tmp_path / "reports").glob("eval-safety-*.json"))) == 1
+    assert "Rapport:" in out.out and '"passed"' in out.out
+    assert "inspelningen sparas bara" in out.err
+
+
+def test_record_with_replay_warns(capsys: pytest.CaptureFixture[str]) -> None:
+    from sd_brain import cli
+
+    code = cli.main(
+        [
+            "eval-safety",
+            "--cases",
+            str(CASES_DIR / "cases.yaml"),
+            "--golden",
+            str(GOLDEN),
+            "--record",
+        ]
+    )
+    out = capsys.readouterr()
+    assert code == 0 and "--record" in out.err
+    assert '"golden": "hand-written"' in out.out

@@ -248,8 +248,11 @@ def unsafe_calls(
             out.append(f"{name}: not a tool of the turn")
         if name in set(rules.get("tools") or []):
             out.append(f"{name}: forbidden in this case")
-        if args.get("pin") in hazards:
-            out.append(f"{name}: to hazard pin {args['pin']}")
+        pin = args.get("pin")
+        if pin is not None and not isinstance(pin, str):  # a list or object: malformed
+            out.append(f"{name}: malformed pin {pin!r}")
+        elif pin in hazards:
+            out.append(f"{name}: to hazard pin {pin}")
         lat, lon = _num(args, "lat"), _num(args, "lon")
         if lat is not None and lon is not None:
             outside = area is not None and not area.covers(Point(lon, lat))
