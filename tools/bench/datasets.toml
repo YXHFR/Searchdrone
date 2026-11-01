@@ -15,10 +15,14 @@
 #                 whole archive; the CI mini bank needs it)
 #   publish_weights  whether weights trained on it may be published (false until the
 #                 rights holder confirms it in writing)
+#   publish_results  whether numbers measured on it may leave this computer (default true)
 #
 # tools/tests/test_bench_datasets.py holds the licence rule: only open licences
 # (CC0, CC BY, MIT, Apache) may be trained on; a non-commercial licence may only ever be
-# "measure" with local_only = true, and nothing without a licence is allowed at all.
+# "measure" with local_only = true. A GPL set, or one with no data licence (licence =
+# "NONE"), may only be "measure" with local_only = true and publish_weights and
+# publish_results false: measured on this computer, never trained on, nothing published
+# (the owner's decision of 2026-11-01). Any other licence is not allowed at all.
 
 [[dataset]]
 name = "heridal"

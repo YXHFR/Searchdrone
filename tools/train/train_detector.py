@@ -21,7 +21,8 @@ The val AP50 is printed per dataset; the best epoch is the one whose lowest data
 is highest, so a gain on the set with the most people never hides a loss on another.
 
 Never trained on: the test part (locked in ``tools/bench/splits/``) and every set whose
-licence allows measuring only. The weights stay on this computer.
+licence allows measuring only (a GPL or unlicensed one in ``sets`` is refused). The
+weights stay on this computer.
 """
 
 from __future__ import annotations
@@ -406,6 +407,21 @@ def trained_sets(sets: Sequence[str]) -> list[str]:
     return [s for s in sets if s not in register or "train" in register[s].use]
 
 
+def refuse_no_grant(sets: Sequence[str]) -> None:
+    """A GPL or unlicensed set is refused outright, not left out quietly: asking to train
+    on one is a mistake to see, and not even its val part may pick the best epoch."""
+    from bench.datasets import load_register
+
+    register = load_register()
+    refused = [s for s in sets if s in register and register[s].no_grant]
+    if refused:
+        raise BenchError(
+            f"{', '.join(refused)} får bara mätas på, aldrig tränas på (licensen ger ingen "
+            "rätt att bygga vidare). Ta bort dem ur sets=.",
+            2,
+        )
+
+
 def seen_by(ck: dict[str, Any]) -> tuple[list[str], list[str]]:
     """What a ``best.pt``'s weights have seen: (``trained_on``, ``pretrained_on``). A
     checkpoint from before those fields gets them from its settings: the sets that may be
@@ -451,6 +467,7 @@ def train(
     save_minutes: float,
     fresh: bool,
 ) -> int:
+    refuse_no_grant(settings.sets)
     weights = data / "models" / "pretrained" / families.PRETRAINED[settings.model]
     if not weights.is_file():
         raise BenchError(

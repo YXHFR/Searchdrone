@@ -26,6 +26,11 @@ USES: tuple[Use, ...] = ("train", "measure", "pretrain")
 OPEN_LICENCES = frozenset({"CC0-1.0", "CC-BY-3.0", "CC-BY-4.0", "MIT", "Apache-2.0"})
 # Non-commercial licences: only for measuring on the owner's computer, never trained on.
 NC_PREFIXES = ("CC-BY-NC",)
+# No grant to build on (GPL, or no data licence at all: "NONE"): only measured on, on the
+# owner's computer, never trained on, and no weights or results published (the owner's
+# decision of 2026-11-01).
+NO_GRANT_PREFIXES = ("GPL-",)
+NO_GRANT_LICENCES = frozenset({"NONE"})
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,8 @@ class Dataset:
     use: tuple[Use, ...]
     publish_weights: bool
     local_only: bool
+    # whether numbers measured on it may leave this computer (a profile, a README figure)
+    publish_results: bool = True
     url: str | None = None
     size_bytes: int | None = None
     sha256: str | None = None
@@ -55,6 +62,11 @@ class Dataset:
     labels_sha256: str | None = None
 
     @property
+    def no_grant(self) -> bool:
+        """GPL or no data licence: measured on locally, never trained on or published."""
+        return self.licence.startswith(NO_GRANT_PREFIXES) or self.licence in NO_GRANT_LICENCES
+
+    @property
     def archive_name(self) -> str:
         return f"{self.name}.zip"
 
@@ -68,10 +80,17 @@ def licence_problems(ds: Dataset) -> list[str]:
     problems: list[str] = []
     is_open = ds.licence in OPEN_LICENCES
     is_nc = ds.licence.startswith(NC_PREFIXES)
-    if not (is_open or is_nc):
+    if not (is_open or is_nc or ds.no_grant):
         problems.append(f"{ds.name}: licence {ds.licence!r} is not allowed")
     if is_nc and (set(ds.use) != {"measure"} or not ds.local_only or ds.publish_weights):
         problems.append(f"{ds.name}: a non-commercial set may only be measured on, locally")
+    if ds.no_grant and (
+        set(ds.use) != {"measure"} or not ds.local_only or ds.publish_weights or ds.publish_results
+    ):
+        problems.append(
+            f"{ds.name}: a GPL or unlicensed set may only be measured on, locally, "
+            "with publish_weights and publish_results false"
+        )
     if "train" in ds.use and not ds.licence_confirmed:
         problems.append(f"{ds.name}: never trained on until the data licence is confirmed")
     if "pretrain" in ds.use and len(ds.use) > 1:
@@ -101,6 +120,7 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             use=use,  # type: ignore[arg-type]
             publish_weights=bool(row["publish_weights"]),
             local_only=bool(row["local_only"]),
+            publish_results=bool(row.get("publish_results", True)),
             url=row.get("url"),
             size_bytes=row.get("size_bytes"),
             sha256=row.get("sha256"),

@@ -21,7 +21,32 @@ setup-config`, outside the repository).
 The register is `datasets.toml`: address, size, SHA-256, licence and credit of each
 archive. `tools/tests/test_bench_datasets.py` holds the licence rule: only open licences
 (CC0, CC BY, MIT, Apache) may be trained on; a non-commercial set may only ever be
-measured on, on your own computer; nothing without a licence is allowed.
+measured on, on your own computer.
+
+**Measure-only sets (GPL or no data licence).** A set under the GPL, or with no data
+licence at all (`licence = "NONE"`), gives no right to build on it. Since the owner's
+decision of 2026-11-01 such a set may still be measured on, on your own computer, and
+nothing more. Its row must say `use = ["measure"]`, `local_only = true`,
+`publish_weights = false` and `publish_results = false`, or the register is refused.
+`just train-detector` refuses it in `sets=` (it is not quietly left out), and
+`profiles.py` refuses a result measured on it, because a profile is committed here.
+Its numbers stay on your computer: they go in no README, profile, issue or paper. Any
+other licence (one not listed above) is not allowed at all.
+
+None is in the register yet. The two candidates could not be pinned (checked
+2026-11-01):
+
+- **LADD** (Lacmus Drone Dataset, lacmus-foundation, GPL-3.0 per
+  [ladd-utils](https://github.com/lacmus-foundation/ladd-utils)): the download link in
+  that README (Mail.ru Cloud) answers "404", and the foundation's DVC store
+  ([ladd-and-weights](https://github.com/lacmus-foundation/ladd-and-weights)) needs
+  credentials from the Lacmus team. Copies elsewhere (Dataset Ninja, Kaggle, Roboflow)
+  are not the primary source and are not used.
+- **NOMAD** (Notre Dame, WACV 2024, [ArtRuss/NOMAD](https://github.com/ArtRuss/NOMAD),
+  no licence): a public Google Drive folder with the pictures as ten zip files of ten
+  actors each (about 38 GB each) and the labels as loose files and one
+  `annotations.json`. Google Drive answered "quota exceeded" for every file, so no size
+  or SHA-256 could be read; the register also takes one picture archive per set today.
 
 **WiSARD's licence.** The project page carries the MIT licence text for "the Software"
 and says nothing else about the pictures. Until the lab confirms the data licence in

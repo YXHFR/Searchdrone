@@ -62,8 +62,21 @@ def test_sim_farm_is_only_for_pre_training() -> None:
 @pytest.mark.parametrize(
     ("row", "why"),
     [
-        (_row(licence="GPL-3.0-only"), "not allowed"),
         (_row(licence="proprietary"), "not allowed"),
+        (_row(licence="LicenseRef-none"), "not allowed"),
+        (_row(licence="GPL-3.0-only", local_only=True, publish_results=False), "GPL"),
+        (_row(licence="NONE", use=("measure",), publish_results=False), "GPL"),
+        (_row(licence="NONE", use=("measure",), local_only=True), "GPL"),
+        (
+            _row(
+                licence="GPL-3.0-or-later",
+                use=("measure",),
+                local_only=True,
+                publish_weights=True,
+                publish_results=False,
+            ),
+            "GPL",
+        ),
         (_row(licence="CC-BY-NC-4.0"), "non-commercial"),
         (_row(licence="CC-BY-NC-SA-4.0", use=("measure",), local_only=False), "non-commercial"),
         (
@@ -85,6 +98,15 @@ def test_licence_rule_refuses(row: Dataset, why: str) -> None:
 def test_non_commercial_set_may_be_measured_locally() -> None:
     row = _row(licence="CC-BY-NC-4.0", use=("measure",), local_only=True)
     assert licence_problems(row) == []
+
+
+@pytest.mark.parametrize("licence", ["GPL-3.0-only", "NONE"])
+def test_gpl_or_unlicensed_set_may_only_be_measured_locally_unpublished(licence: str) -> None:
+    """The owner's decision of 2026-11-01: measured on this computer, nothing more."""
+    row = _row(licence=licence, use=("measure",), local_only=True, publish_results=False)
+    assert row.no_grant and licence_problems(row) == []
+    for use in (("train",), ("train", "measure"), ("pretrain",)):
+        assert licence_problems(dataclasses.replace(row, use=use))  # type: ignore[arg-type]
 
 
 def test_register_with_a_bad_row_is_refused(tmp_path: Path) -> None:
