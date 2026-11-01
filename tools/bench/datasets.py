@@ -108,6 +108,17 @@ def licence_problems(ds: Dataset) -> list[str]:
     return problems
 
 
+def _flag(row: dict[str, Any], key: str, default: bool | None = None) -> bool:
+    """A yes/no field: only TOML's true or false (``bool("false")`` would be True)."""
+    value = row[key] if default is None else row.get(key, default)
+    if not isinstance(value, bool):
+        raise BenchError(
+            f"datasets.toml: {key} i {row.get('name')} ska vara true eller false, inte {value!r}",
+            2,
+        )
+    return value
+
+
 def _dataset(row: dict[str, Any]) -> Dataset:
     try:
         use = tuple(row["use"])
@@ -118,18 +129,18 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             attribution=row["attribution"],
             layout=row["layout"],
             use=use,  # type: ignore[arg-type]
-            publish_weights=bool(row["publish_weights"]),
-            local_only=bool(row["local_only"]),
-            publish_results=bool(row.get("publish_results", True)),
+            publish_weights=_flag(row, "publish_weights"),
+            local_only=_flag(row, "local_only"),
+            publish_results=_flag(row, "publish_results", True),
             url=row.get("url"),
             size_bytes=row.get("size_bytes"),
             sha256=row.get("sha256"),
-            ranges=bool(row.get("ranges", False)),
+            ranges=_flag(row, "ranges", False),
             local_path=row.get("local_path"),
             licence_note=row.get("licence_note"),
             source_page=row.get("source_page"),
             checked=row.get("checked"),
-            licence_confirmed=bool(row.get("licence_confirmed", False)),
+            licence_confirmed=_flag(row, "licence_confirmed", False),
             labels_url=row.get("labels_url"),
             labels_size_bytes=row.get("labels_size_bytes"),
             labels_sha256=row.get("labels_sha256"),

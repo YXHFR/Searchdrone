@@ -367,6 +367,10 @@ All notable changes to this project are listed here. The format follows
 - **Breaking (`commander/v1`):** the decision engine `local` is gone. `DecisionLog.engine`
   and `SystemStatus.brain_engine` now report `command` where they reported `local`, and
   readers that matched on `local` must match on `command`.
+- `tools/bench/profiles.py` also refuses a result that does not name its dataset
+  (`recall_by_dataset` missing or empty) or names one no longer in `datasets.toml`, so the
+  `publish_results` check can no longer be skipped. A yes/no field in `datasets.toml` must
+  be TOML `true` or `false`; a quoted `"false"` is refused instead of read as true.
 
 ### Added
 

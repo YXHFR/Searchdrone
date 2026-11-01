@@ -207,6 +207,7 @@ def test_profile_has_the_oracle_format() -> None:
         "measured": "2026-11-02",
         "fp_per_12mp_target": 0.5,
         "recall": {c: {"recall": 0.5, "n": 10} for c in ("lt16", "16to32", "gt32", "all")},
+        "recall_by_dataset": {"heridal": {"recall": 0.5, "n": 10}},
         "latency_ms": {"p50": 800.0, "p95": 1200.0},
         "score_hit": {"a": 5.0, "b": 2.0},
         "score_fp": None,
@@ -269,6 +270,31 @@ def test_profile_refuses_a_result_whose_numbers_are_not_published(
     }
     start = json.loads(START.read_text(encoding="utf-8"))
     with pytest.raises(BenchError, match="publiceras"):
+        build_profile("yolox_s", 1, result, start)
+
+
+@pytest.mark.parametrize(
+    ("sets", "match"),
+    [
+        (None, "saknas eller är tom"),
+        ({}, "saknas eller är tom"),
+        ([], "saknas eller är tom"),
+        ({"gone": {"recall": 0.5, "n": 10}}, "gone, som inte finns i registret"),
+    ],
+)
+def test_profile_refuses_a_result_whose_set_is_unknown(sets: object, match: str) -> None:
+    """The publish check needs the set: a result without one, or measured on a set no
+    longer in the register, may hold numbers that must not be published."""
+    row = {"recall": 0.5, "n": 10}
+    result: dict[str, object] = {
+        "schema": "bench.detector/v1",
+        "recall": dict.fromkeys(("lt16", "16to32", "gt32", "all"), row),
+        "latency_ms": {"p50": 800.0, "p95": 1200.0},
+    }
+    if sets is not None:
+        result["recall_by_dataset"] = sets
+    start = json.loads(START.read_text(encoding="utf-8"))
+    with pytest.raises(BenchError, match=match):
         build_profile("yolox_s", 1, result, start)
 
 
@@ -423,9 +449,22 @@ def test_the_mini_bank_measures_only_its_listed_pictures(
         ev.pictures({"mini": "1"}, data)
 
 
-def test_profiles_main_writes_a_profile(tmp_path: Path) -> None:
+def test_profiles_main_writes_a_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from bench import profiles
 
+    # the synthetic pictures' set "t", registered with publishable results
+    t = Dataset(
+        name="t",
+        title="t",
+        licence="CC-BY-4.0",
+        attribution="a",
+        layout="heridal_voc",
+        use=("measure",),
+        publish_weights=False,
+        local_only=False,
+        url="https://example.org/t.zip",
+    )
+    monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {"t": t})
     pics = _pictures(tmp_path)
     body = ev.result_body("facit", "splits/v1 test (t)", ev.measure("facit", pics))
     result = tmp_path / "r.json"
@@ -435,3 +474,5 @@ def test_profiles_main_writes_a_profile(tmp_path: Path) -> None:
     p = json.loads(out.read_text(encoding="utf-8"))
     assert p["profile_id"] == "det_facit_x_v2" and p["recall"]["gt32"] == 1.0
     assert profiles.main(["model=Bad-Name", f"result={result}", f"out={out}"]) == 2
+    monkeypatch.setattr(profiles, "load_register", lambda *a, **k: {})
+    assert profiles.main(["model=facit_x", f"result={result}", f"out={out}"]) == 2

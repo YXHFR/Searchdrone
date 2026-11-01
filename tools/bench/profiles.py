@@ -7,8 +7,9 @@ A profile holds recall per size class at the fixed false-alarm rate, the false-a
 rate, the score distributions of hits and false alarms (Beta, fitted by the method of
 moments) and the time per picture. It is made from a result measured on one dataset
 (``sets=heridal``): a result pooled over several is refused, since its recall would be
-mostly that of the set with the most people, and so is one measured on a set whose results
-are not published (``publish_results = false``). ``occlusion_factor`` cannot be measured on the bank
+mostly that of the set with the most people, and so is one that does not name its set, one
+measured on a set no longer in the register, and one measured on a set whose results are
+not published (``publish_results = false``). ``occlusion_factor`` cannot be measured on the bank
 (the boxes say nothing of cover); it is carried over from the start profile and listed
 under ``not_measured``. ``det_oracle_v0.json`` is the start profile from the published
 HERIDAL figures, used until a measurement exists; anything built on it is modelled,
@@ -38,8 +39,14 @@ def build_profile(
 ) -> dict[str, object]:
     if result.get("schema") != "bench.detector/v1":
         raise BenchError("Resultatfilen har fel format (väntat bench.detector/v1).", 2)
-    sets = result.get("recall_by_dataset") or {}
-    assert isinstance(sets, dict)  # noqa: S101 - schema above
+    sets = result.get("recall_by_dataset")
+    if not isinstance(sets, dict) or not sets:
+        # without its set the publish check below has nothing to check
+        raise BenchError(
+            "Resultatet säger inte vilken datamängd det är mätt på (recall_by_dataset "
+            "saknas eller är tom); mät om med just bench-detector.",
+            2,
+        )
     if len(sets) > 1:
         # a pooled recall is mostly the set with the most people, not the terrain searched
         raise BenchError(
@@ -48,7 +55,15 @@ def build_profile(
             2,
         )
     register = load_register()
-    private = [s for s in sets if s in register and not register[s].publish_results]
+    unknown = [s for s in sets if s not in register]
+    if unknown:
+        # a set dropped or renamed since: whether its numbers may be published is unknown
+        raise BenchError(
+            f"Resultatet är mätt på {', '.join(unknown)}, som inte finns i registret "
+            "(datasets.toml).",
+            2,
+        )
+    private = [s for s in sets if not register[s].publish_results]
     if private:
         # a profile is committed to the public repository: a published number
         raise BenchError(
