@@ -250,6 +250,12 @@ All notable changes to this project are listed here. The format follows
   it also when the hover's red alarm names the turn (before, it was refused onboard as
   `STATE_CHANGED` and the drone kept hovering). STOP and FLY HOME still go past the AI
   and the reflex.
+- Flight safety: any other order that would hover inside a person's cylinder (a search
+  with no way around, a goto stopped short of the next cylinder) now climbs straight up
+  the same way first, as an internal goto that replaces the order, and ends in the
+  keep-out hover up there (`hold_reason` `limit`), never above the charter's height less
+  5 m or the geofence. When it cannot climb it hovers where it is, as before. STOP, FLY
+  HOME and manual take-over are unchanged.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read

@@ -9,10 +9,17 @@
   ``limit``), and the operator is told at once (``executor.keepout_hold`` with
   ``inside`` and ``climb_to_m``). It never goes deeper than braking takes it, nor
   sideways. STOP then brakes and holds as always, and FLY HOME brings it home.
+* ``test_a_goto_held_over_a_person_climbs_straight_up_and_hovers``: the same for any
+  other order. A goto flies on inside a person's cylinder that came around it, and a
+  second cylinder lies just ahead, closer than it can turn away from. It stops short of
+  that one and climbs straight up out of the one it is in (an internal goto that
+  replaces the order, ``superseded`` with ``KEEPOUT_VIOLATION``), hovers in LOITER up
+  there, and the operator is told once. STOP and FLY HOME work as always.
 """
 
 from __future__ import annotations
 
+import math
 import sys
 import time
 from pathlib import Path
@@ -40,7 +47,7 @@ from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_onboard.executor import executor as executor_module
-from sd_onboard.executor.keepout_reflex import KEEPOUT_CLIMB_MARGIN_M
+from sd_onboard.executor.keepout_reflex import KEEPOUT_CLIMB_MARGIN_M, stop_m
 from sd_safety import evaluate
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.base import new_id
@@ -143,6 +150,109 @@ async def test_no_way_out_over_a_person_climbs_straight_up_and_hovers(
 
         # STOP and FLY HOME go past the AI as always.
         monkeypatch.undo()
+        t0 = time.monotonic()
+        assert (await sc.press("stop")).status_code == 202
+        await stopped_and_holding(sc, t0)
+        assert (await sc.press("resume")).status_code == 202
+        assert (await sc.press("return_home")).status_code == 202
+        await sc.until(lambda: not sc.tel.armed, 300, "landed")
+        assert sc.from_home_m() <= 3.0
+        await sc.check_invariants()
+
+
+AHEAD_R_M = 30.0  # the second cylinder, just ahead on the goto's leg
+NOISE_M = 1.0  # the flight controller's wobble and the track's sampling
+
+
+@pytest.mark.budget_s(480)
+async def test_a_goto_held_over_a_person_climbs_straight_up_and_hovers(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path) as sc:
+        await sc.airborne()
+        p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
+        target = sc.at(float(p1["east_m"]), float(p1["north_m"]))
+        res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": 40})
+        assert res["gate"]["decision"] == "ALLOW", res
+        goto = await sc.wait_command("goto", "running", 30)
+        ex = sc.r.onboard.ex
+        st = sc.sim.harness.state
+        plane = Plane(*sc.r.home)
+        line: list[tuple[float, float, float, float, float]] = []
+
+        def on_the_leg() -> bool:
+            """Straight on the leg at speed: where the drone is, which way, how fast."""
+            now = sc.track[-1]
+            before = next((s for s in reversed(sc.track) if s.t <= now.t - 1.0), None)
+            if before is None or now.groundspeed_ms < 4.0 or sc.from_home_m() < 30.0:
+                return False
+            (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
+            step = math.dist((e, n), (e0, n0))
+            if step < 0.9 * now.groundspeed_ms * (now.t - before.t):
+                return False  # still speeding up
+            line[:] = [(e, n, (e - e0) / step, (n - n0) / step, now.groundspeed_ms)]
+            return True
+
+        await sc.until(on_the_leg, 90, "on the goto's leg at speed")
+        ((e, n, de, dn, speed),) = line
+        # One person's cylinder around the drone (it may fly on out of it), and another's
+        # edge closer ahead than the drone can turn away from, far enough to stop outside.
+        edge = (stop_distance_m(speed) + stop_m(speed)) / 2
+        assert stop_distance_m(speed) + 3.0 < edge < stop_m(speed), (speed, edge)
+        around = Keepout(
+            keepout_id=new_id(),
+            lat=plane.latlon(e, n)[0],
+            lon=plane.latlon(e, n)[1],
+            radius_m=PERSON_R_M,
+            source="candidate",
+            source_id=new_id(),
+        )
+        a_lat, a_lon = plane.latlon(e + (edge + AHEAD_R_M) * de, n + (edge + AHEAD_R_M) * dn)
+        ahead = Keepout(
+            keepout_id=new_id(),
+            lat=a_lat,
+            lon=a_lon,
+            radius_m=AHEAD_R_M,
+            source="candidate",
+            source_id=new_id(),
+        )
+        assert sc.track[-1].alt_m < CLIMB_TO_M - ALT_TOL_M
+        since = time.monotonic()
+        here = (st.lat, st.lon)
+        install = KeepoutInstall(
+            install_seq=ex.keepout_seq + INSTALL_AHEAD, keepouts=[*ex.keepouts, around, ahead]
+        )
+        ex.on_keepouts(install, new_id())
+        assert around in ex.keepouts and ahead in ex.keepouts  # taken, not refused as stale
+
+        holds = await until_event(sc, "keepout_hold", 30.0)
+        told = holds[-1]["payload"]
+        assert told.get("inside") is True, told
+        assert told.get("climb_to_m") == pytest.approx(CLIMB_TO_M, abs=0.1), told
+        after = await sc.command(goto["id"])
+        assert after["status"] == "superseded", after
+        assert "KEEPOUT_VIOLATION" in str(after), after
+        await sc.until(
+            lambda: abs(sc.track[-1].alt_m - CLIMB_TO_M) <= ALT_TOL_M and st.ground_speed_ms < 0.5,
+            120,
+            "up there and still",
+        )
+
+        async def kept_out() -> bool:
+            live = await sc.onboard_state()
+            return live["executor_state"] == "HOLD" and live["hold_reason"] == "limit"
+
+        await sc.until(kept_out, 5, "the keep-out hover")
+        await sc.hold_for(10.0, lambda: sc.fc_mode() == "LOITER", "hovering up there")
+        assert len(await _events(sc, "keepout_hold")) == 1  # told once
+
+        track = [s for s in sc.track if s.t >= since and s.armed]
+        nearest = min(distance_m(s.lat, s.lon, a_lat, a_lon) for s in track)
+        assert nearest >= AHEAD_R_M - NOISE_M, (nearest, AHEAD_R_M)
+        sideways = max(distance_m(s.lat, s.lon, *here) for s in track)
+        assert sideways <= SIDEWAYS_M + stop_distance_m(speed), sideways
+        assert max(s.alt_m for s in track) <= CLIMB_TO_M + ALT_TOL_M
+
         t0 = time.monotonic()
         assert (await sc.press("stop")).status_code == 202
         await stopped_and_holding(sc, t0)
