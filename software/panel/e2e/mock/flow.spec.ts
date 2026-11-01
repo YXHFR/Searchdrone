@@ -284,6 +284,9 @@ test.describe("chat and approval cards", () => {
     const box = page.getByRole("textbox", { name: "Meddelande till AI-befälhavaren" });
     await expect(box).toHaveValue("Ändra ramen: ");
     await expect(box).toBeFocused();
+    // A write is wrong whenever it comes, not only before the composer is filled: give a
+    // late one (a timer, a chained promise) a second to show, as the tap test above does.
+    await page.waitForTimeout(1_000);
     const sent = ground.requests.slice(before).filter((r) => r.method !== "GET");
     expect(sent.map((r) => `${r.method} ${r.path}`)).toEqual([]);
   });
