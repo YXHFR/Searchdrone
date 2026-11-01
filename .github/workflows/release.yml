@@ -71,8 +71,8 @@ jobs:
             --jq '.[] | select(.draft | not) | [.tag_name, .author.login] | @tsv' \
             > "$gate/releases.txt"
           # The newest release on the line (ties: the larger tag name, as release_anchor,
-          # so vX.Y.Z-rc.N wins over vX.Y.Z on the same commit, which checks the same
-          # range); one that is not on it is only allowed while another one is.
+          # e.g. vX.Y.Z-rc.N over vX.Y.Z on the same commit); one that is not on it is
+          # only allowed while another one is.
           export LC_ALL=C # tag names compare as bytes, like Python
           since="" best=-1 tag="" by="" off=""
           while IFS=$'\t' read -r name author; do

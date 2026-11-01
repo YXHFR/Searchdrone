@@ -639,11 +639,12 @@ def test_gh_api_waits_out_the_rate_limit(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def release_loop(
-    root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: str, grep_fails: bool = False
+    root: Path, tmp_path: Path, gh: FakeReleases, sha: str, tag: str, grep_fails: str = ""
 ) -> str:
     """release.yml's own shell, up to where the anchor is known, run for real: ``gh`` is
-    a stub that prints what the workflow's ``--jq`` would. Returns ``$since`` or raises
-    with the step's error."""
+    a stub that prints what the workflow's ``--jq`` would. ``grep_fails`` names the grep
+    option (``-Ex`` or ``-vxF``) whose call fails with exit 2. Returns ``$since`` or
+    raises with the step's error."""
     doc = yaml.safe_load((cmg.REPO / ".github" / "workflows" / "release.yml").read_text())
     step = doc["jobs"]["gates"]["steps"][2]
     # The step's own shell (GitHub's "bash" is bash --noprofile --norc -eo pipefail).
@@ -658,9 +659,14 @@ def release_loop(
     tsv = tmp_path / "releases.tsv"
     stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{args}"\ncat "{tsv}"\n')
     stub.chmod(0o755)
+    fake_grep = bin_dir / "grep"
+    fake_grep.unlink(missing_ok=True)
     if grep_fails:
-        (bin_dir / "grep").write_text("#!/bin/sh\necho 'grep: broken' >&2\nexit 2\n")
-        (bin_dir / "grep").chmod(0o755)
+        fake_grep.write_text(
+            f'#!/bin/sh\n[ "$1" = "{grep_fails}" ] || exec /usr/bin/grep "$@"\n'
+            "cat > /dev/null\necho 'grep: broken' >&2\nexit 2\n"
+        )
+        fake_grep.chmod(0o755)
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "GITHUB_WORKSPACE": str(root),
@@ -1014,5 +1020,10 @@ def test_release_yml_stops_when_grep_fails(tmp_path: Path) -> None:
     c = tagged_repo(root)
     untag(root, "v0.1.0", "v0.2.0")
     assert release_loop(root, tmp_path, FakeReleases(), c["c3"], "v0.3.0") == ""
-    with pytest.raises(ValueError, match="grep: broken"):
-        release_loop(root, tmp_path, FakeReleases(), c["c3"], "v0.3.0", grep_fails=True)
+    # Each stage on its own: an error in either one stops the step.
+    for stage in ("-Ex", "-vxF"):
+        with pytest.raises(ValueError, match="grep: broken"):
+            release_loop(root, tmp_path, FakeReleases(), c["c3"], "v0.3.0", grep_fails=stage)
+    # The first stage finding nothing (no release tags at all) is no error either.
+    untag(root, "v0.3.0")
+    assert release_loop(root, tmp_path, FakeReleases(), c["c3"], "v0.3.0") == ""

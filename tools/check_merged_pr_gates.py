@@ -501,7 +501,7 @@ def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str |
         if tags := release_tags_on_line(root, sha, tag):
             raise ValueError(f"ingen release på linjen, men taggarna {', '.join(tags)} finns där")
         return None
-    # Ties go to the larger tag name: an rc over the final on the same commit (same range).
+    # Ties go to the larger tag name, e.g. an rc over the final on the same commit.
     _, name, commit, rel = max(line, key=lambda x: (x[0], x[1]))
     author = str((rel.get("author") or {}).get("login", ""))
     if author != RELEASE_BOT:
