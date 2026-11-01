@@ -24,17 +24,19 @@ jobs:
   # which check_owner_gate.PROTECTED keeps behind owner-ok. The anchor, the release to
   # start after, comes from GitHub and git alone: the newest published vX.Y.Z[-rc.N]
   # release whose tag is on the tagged commit's line, made by github-actions[bot] (none
-  # for the first release, and then no such release may exist anywhere else). The
-  # check runs with the anchor's scripts, which first confirm that release.yml made the
-  # anchor and that its run succeeded (check_merged_pr_gates.release_anchor), and starts
-  # after it, so a later merge that loosened them is judged by the rules before it. Any
-  # error stops the release. They run from a clean directory (no other tools/*.py can
-  # shadow an import) with PyYAML pinned by hash for Python 3.12. A release.yml without
+  # for the first release, and then no such release may exist anywhere else and no
+  # release tag on the line). The check runs with the anchor's scripts, which first
+  # confirm that release.yml made the anchor and that its run and gates job succeeded
+  # (check_merged_pr_gates.release_anchor), and starts after it, so a later merge that
+  # loosened them is judged by the rules before it. Any error stops the release; the
+  # API's hourly limit only makes the check wait (hence the long timeout). They run
+  # from a clean directory (no other tools/*.py can shadow an import) with PyYAML
+  # pinned by hash for Python 3.12. A release.yml without
   # this job, or a deleted release, is the owner's to stop: a ruleset on v* tags and
   # immutable releases (see the checker).
   gates:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 300
     permissions:
       contents: read # and the published releases
       actions: read # the release.yml run behind the anchor release
@@ -78,7 +80,10 @@ jobs:
             }
             rc=0
             git merge-base --is-ancestor "$c" "$GITHUB_SHA" || rc=$?
-            [ "$rc" -le 1 ] || exit 1
+            [ "$rc" -le 1 ] || {
+              echo "git merge-base misslyckades för $name (kod $rc)" >&2
+              exit 1
+            }
             if [ "$rc" -eq 1 ] || [ "$c" = "$GITHUB_SHA" ]; then
               off="$off $name"
               continue
@@ -88,9 +93,18 @@ jobs:
               best=$n since=$c tag=$name by=$author
             fi
           done < "$gate/releases.txt"
-          if [ -z "$since" ] && [ -n "$off" ]; then
-            echo "ingen release på taggens linje, men andra finns:$off" >&2
-            exit 1
+          if [ -z "$since" ]; then
+            # The first release: no release elsewhere, and no release tag on the line
+            # whose release failed or was deleted.
+            # Its own assignment, so a git error stops the step; only grep may find nothing.
+            tags=$(git tag --merged "$GITHUB_SHA" --list 'v*')
+            tags=$(printf '%s\n' "$tags" \
+              | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' \
+              | grep -vxF "$GITHUB_REF_NAME" || true)
+            if [ -n "$off$tags" ]; then
+              echo "ingen release på taggens linje, men releaser:$off; taggar: ${tags//$'\n'/ }" >&2
+              exit 1
+            fi
           fi
           if [ -n "$since" ] && [ "$by" != "github-actions[bot]" ]; then
             echo "releasen $tag skapades av ${by:-?}, inte av release.yml" >&2

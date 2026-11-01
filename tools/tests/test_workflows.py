@@ -652,8 +652,12 @@ def test_release_workflow_writes_only_from_a_job_that_runs_no_repo_code() -> Non
     # A git error is not "not an ancestor"; releases off the line with none on it, or an
     # anchor not made by this workflow, stop the release before any script runs.
     assert 'git merge-base --is-ancestor "$c" "$GITHUB_SHA" || rc=$?' in run
-    assert '[ "$rc" -le 1 ] || exit 1' in run
-    assert 'if [ -z "$since" ] && [ -n "$off" ]; then' in run
+    assert '[ "$rc" -le 1 ] || {' in run
+    assert 'if [ -n "$off$tags" ]; then' in run
+    assert "git tag --merged \"$GITHUB_SHA\" --list 'v*'" in run
+    # What the loop picks is tested by running it (test_check_merged_pr_gates). Past the
+    # API's hourly limit the check waits, so the job has hours, not the default minutes.
+    assert doc["jobs"]["gates"]["timeout-minutes"] == 300
     assert '[ "$by" != "github-actions[bot]" ]' in run
     assert 'rules="${since:-$GITHUB_SHA}"' in run
     assert 'git show "$rules:tools/$f" > "$gate/$f"' in run

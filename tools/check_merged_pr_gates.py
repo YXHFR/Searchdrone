@@ -39,24 +39,28 @@ Tags do not shorten the default range, since anyone who can push a tag could the
 older commits. The release workflow instead finds the anchor itself, with ``gh`` and
 git and no repository code: the newest published ``vX.Y.Z[-rc.N]`` release whose tag is
 on the tagged commit's line, made by ``github-actions[bot]``; with none on the line, a
-release anywhere else stops it. It then runs this check and its rules from that release,
-not from the commit being released. That copy first confirms the anchor
-(``--anchor-for-tag``, ``release_anchor``: the same release, made by ``release.yml``
-itself, author ``github-actions[bot]`` and a successful run for that tag and commit, so
-its gates passed) and then checks everything after it (``--since``). Any difference or
-error stops the release; only when no release is on the line at all (the first release)
-does the whole history get checked with the tagged commit's own copy. Rules added since
+release anywhere else, or a release tag on the line, stops it. It then runs this check
+and its rules from that release, not from the commit being released. That copy first
+confirms the anchor (``--anchor-for-tag``, ``release_anchor``: the same release, made by
+``release.yml`` itself, author ``github-actions[bot]``, and a successful run for that tag
+and commit whose ``gates`` job passed) and then checks everything after it
+(``--since``). Any difference or error stops the release; only when no release and no
+release tag is on the line at all (the first release) does the whole history get
+checked with the tagged commit's own copy. Rules added since
 the anchor therefore apply from the release after the one that ships them. What this
 cannot see, the owner covers with a ruleset on ``v*`` tags and immutable releases: a
-deleted release (the check falls back to the first-release case) and a ``release.yml``
+deleted release together with its tag (the check falls back to the first-release
+case) and a ``release.yml``
 whose gates job a merge removed (the workflow that runs is the tagged commit's own). If
 the anchor's own copy can no longer run (say GitHub's API changed), the way out is the
-owner's: delete that release, so the next one is checked from the start with the tagged
-commit's copy. Old pull requests are judged by today's rules; when a rule changes, the
+owner's: delete that release and its tag, so the next one is checked from the start with
+the tagged commit's copy (a release tag left on the line without its release stops the
+release). Old pull requests are judged by today's rules; when a rule changes, the
 owner lists the merges it would newly fail in the exceptions file. It costs four API
 calls per commit (five when protected paths changed, more past 100 comments or events),
-about 450 for 100 commits; past the token's 1000 requests an hour ``gh`` fails and so
-does the check (exit 2).
+about 450 for 100 commits. Past the token's 1000 requests an hour the check waits for
+the limit to reset and goes on (``gh_api``), so a long range takes hours instead of
+failing; release.yml gives its gates job the time for that.
 
 ``--exceptions FILE`` (default ``tools/accept/pr_gate_exceptions.txt``) takes one full
 commit SHA per line (``#`` starts a comment); those commits are skipped, for history from
@@ -77,6 +81,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -106,11 +111,16 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 GIT_STATUS = {"A": "added", "D": "removed"}
 WORKFLOW_RE = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
 OWNER_GATE = "tools/check_owner_gate.py"
+# check_owner_gate and check_review_comments each define it: each gate workflow checks
+# out its own script alone, so neither can import the other. The tests keep them equal.
+parse_time = check_review_comments.parse_time
 # The parent's PROTECTED could not be read in full: every changed path needs the owner.
 ANY_PATH = re.compile("")
 RELEASE_TAG_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$")
 RELEASE_WORKFLOW = ".github/workflows/release.yml"
 RELEASE_BOT = "github-actions[bot]"
+# Hour-long waits for the token's request limit to reset in one gh_api call.
+RATE_LIMIT_WAITS = 2
 
 # GitHub, read-only: the API path -> parsed JSON. Tests pass a fake.
 Api = Callable[[str], Any]
@@ -129,17 +139,40 @@ class Finding:
         return f"{self.sha[:12]}: {self.message}"
 
 
-def gh_api(path: str) -> Any:
-    """``gh api --paginate <path>`` (GET only); every page's array joined."""
-    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ["gh", "api", "--method", "GET", "--paginate", "--slurp", path],  # noqa: S607
+def _gh(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        ["gh", "api", "--method", "GET", *args],  # noqa: S607
         capture_output=True,
         text=True,
         check=False,
     )
-    if proc.returncode != 0:
+
+
+def rate_limit_wait(now: float) -> float:
+    """Seconds until the token's core limit resets (``rate_limit`` itself costs nothing),
+    plus a margin; a minute when it is not the core limit (a secondary limit)."""
+    proc = _gh("rate_limit", "--jq", ".resources.core | [.remaining, .reset] | @tsv")
+    try:
+        remaining, reset = (int(x) for x in proc.stdout.split())
+    except ValueError:
+        return 60.0
+    return max(0.0, reset - now) + 5.0 if remaining == 0 else 60.0
+
+
+def gh_api(path: str) -> Any:
+    """``gh api --paginate <path>`` (GET only); every page's array joined. When the token
+    runs out of requests, waits for the limit to reset (at most ``RATE_LIMIT_WAITS``
+    times, an hour each) and asks again, so a long range only takes longer; any other
+    error, or a limit that keeps hitting, stops the check."""
+    waits = 0
+    while (proc := _gh("--paginate", "--slurp", path)).returncode != 0:
         tail = (proc.stderr.strip().splitlines() or [""])[-1]
-        raise GitHubError(f"gh api {path}: kod {proc.returncode}: {tail}")
+        if "rate limit" not in proc.stderr.lower() or waits == RATE_LIMIT_WAITS:
+            raise GitHubError(f"gh api {path}: kod {proc.returncode}: {tail}")
+        delay = min(rate_limit_wait(time.time()), 3700.0)
+        print(f"gh api: {tail}; väntar {delay:.0f} s", file=sys.stderr, flush=True)
+        time.sleep(delay)
+        waits += 1
     pages = json.loads(proc.stdout or "[]")
     out: list[Any] = []
     for page in pages:
@@ -296,16 +329,14 @@ def parent_protected(local: Clone, sha: str) -> list[re.Pattern[str]] | None:
 
 def review_problems(api: Api, repo: str, pr: dict[str, Any], head_time: str) -> list[str]:
     """gate/review worked out again: the gate's own rule over the comments before the merge."""
-    merged = check_review_comments.parse_time(str(pr["merged_at"]))
+    merged = parse_time(str(pr["merged_at"]))
     comments = [
         c
         for c in api(f"repos/{repo}/issues/{pr['number']}/comments?per_page=100")
-        if c.get("created_at") and check_review_comments.parse_time(str(c["created_at"])) <= merged
+        if c.get("created_at") and parse_time(str(c["created_at"])) <= merged
     ]
     head = str(pr["head"]["sha"])
-    result = check_review_comments.evaluate(
-        comments, head, check_review_comments.parse_time(head_time)
-    )
+    result = check_review_comments.evaluate(comments, head, parse_time(head_time))
     return [] if result.state == "success" else [f"gate/review: {result.description}"]
 
 
@@ -313,17 +344,16 @@ def pushed_at(api: Api, repo: str, head: str, committer_date: str) -> datetime |
     """When the head commit reached GitHub: its first check suite, which GitHub dates
     (the committer date is the author's to set), and never before the committer date.
     ``None`` when the head has no check suite: then nothing GitHub recorded dates it."""
-    parse = check_review_comments.parse_time
     pages = api(f"repos/{repo}/commits/{head}/check-suites?per_page=100")
     suites = [
-        parse(str(s["created_at"]))
+        parse_time(str(s["created_at"]))
         for p in pages
         for s in p.get("check_suites") or []
         if s.get("created_at")
     ]
     if not suites:
         return None
-    return max(parse(committer_date), min(suites))
+    return max(parse_time(committer_date), min(suites))
 
 
 def owner_problems(
@@ -337,7 +367,7 @@ def owner_problems(
     paths = ", ".join(protected)
     if since is None:
         return [f"gate/owner: ändrar {paths}, men head-commitens push går inte att datera"]
-    merged = check_review_comments.parse_time(str(pr["merged_at"]))
+    merged = parse_time(str(pr["merged_at"]))
     if check_owner_gate.approved_by_label_events(events, owner, since, merged):
         return []
     return [f"gate/owner: ändrar {paths} utan ägarens {check_owner_gate.LABEL} efter head-commiten"]
@@ -345,18 +375,17 @@ def owner_problems(
 
 def title_at_merge(pr: dict[str, Any], events: list[dict[str, Any]]) -> str:
     """The title when the pull request was merged: undo renames made after the merge."""
-    parse = check_review_comments.parse_time
-    merged = parse(str(pr["merged_at"]))
+    merged = parse_time(str(pr["merged_at"]))
     later = [
         e
         for e in events
         if e.get("event") == "renamed"
         and e.get("created_at")
-        and parse(str(e["created_at"])) >= merged
+        and parse_time(str(e["created_at"])) >= merged
     ]
     if not later:
         return str(pr.get("title", ""))
-    first = min(later, key=lambda e: (parse(str(e["created_at"])), int(e.get("id") or 0)))
+    first = min(later, key=lambda e: (parse_time(str(e["created_at"])), int(e.get("id") or 0)))
     return str((first.get("rename") or {}).get("from", ""))
 
 
@@ -432,10 +461,16 @@ def resolve(root: Path, rev: str) -> str:
 
 
 def is_ancestor(root: Path, older: str, newer: str) -> bool:
+    """``older`` is an ancestor of ``newer``. Any git error (exit code above 1) raises,
+    as in release.yml: it must not read as "not an ancestor"."""
     proc = subprocess.run(  # noqa: S603 - fixed git arguments, no shell
         ["git", "-C", str(root), "merge-base", "--is-ancestor", older, newer],  # noqa: S607
+        capture_output=True,
+        text=True,
         check=False,
     )
+    if proc.returncode > 1:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args, proc.stdout, proc.stderr)
     return proc.returncode == 0
 
 
@@ -443,8 +478,9 @@ def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str |
     """The commit of the newest published release on ``sha``'s line, other than ``tag``,
     once GitHub shows that ``release.yml`` itself made it: the release's author is
     ``github-actions[bot]`` and a ``release.yml`` run for that tag and commit, started
-    by the tag's push, succeeded (its gates job passed). ``None`` only when no published
-    ``vX.Y.Z[-rc.N]`` release is on the line (the first release). A newest release that
+    by the tag's push, succeeded, and so did its ``gates`` job. ``None`` only when no
+    published ``vX.Y.Z[-rc.N]`` release and no such tag is on the line (the first
+    release). A newest release that
     fails these checks, or a release tag missing from the clone, is an error: the
     caller then stops instead of falling back to the tagged commit's own rules.
     release.yml finds the same release without repository code and stops on a
@@ -462,6 +498,8 @@ def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str |
             depth = int(git(root, "rev-list", "--count", commit))
             line.append((depth, name, commit, rel))
     if not line:
+        if tags := release_tags_on_line(root, sha, tag):
+            raise ValueError(f"ingen release på linjen, men taggarna {', '.join(tags)} finns där")
         return None
     _, name, commit, rel = max(line, key=lambda x: (x[0], x[1]))
     author = str((rel.get("author") or {}).get("login", ""))
@@ -477,10 +515,35 @@ def release_anchor(api: Api, repo: str, root: Path, sha: str, tag: str) -> str |
         and run.get("head_sha") == commit
         and run.get("conclusion") == "success"
         and str(run.get("path", "")).split("@", 1)[0] == RELEASE_WORKFLOW
+        and gates_passed(api, repo, int(run["id"]))
         for run in runs
     ):
         raise ValueError(f"releasen {name}: ingen lyckad release.yml-körning för {commit[:12]}")
     return commit
+
+
+def release_tags_on_line(root: Path, sha: str, tag: str) -> list[str]:
+    """``vX.Y.Z[-rc.N]`` tags other than ``tag`` that ``sha`` contains. With no release
+    on the line there must be none: a tag whose release failed or was deleted would
+    otherwise turn the next release into a first release, checked with its own copy.
+    release.yml checks this itself before any script runs (``--anchor-for-tag`` runs only
+    once it has an anchor); here it covers a direct caller."""
+    out = git(root, "tag", "--merged", sha, "--list", "v*")
+    return sorted(t for t in out.splitlines() if RELEASE_TAG_RE.match(t) and t != tag)
+
+
+def gates_passed(api: Api, repo: str, run_id: int) -> bool:
+    """The ``gates`` job of the release.yml run ``run_id`` (its latest attempt) succeeded.
+    Only by name: what that job does is the owner's to protect (``release.yml`` needs
+    ``owner-ok``)."""
+    pages = api(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+    jobs = [job for page in pages for job in page.get("jobs") or []]
+    return any(
+        job.get("name") == "gates"
+        and job.get("status") == "completed"
+        and job.get("conclusion") == "success"
+        for job in jobs
+    )
 
 
 def main(argv: list[str] | None = None, api: Api = gh_api) -> int:
