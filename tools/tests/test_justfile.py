@@ -73,6 +73,8 @@ RECIPES = [
     "brain-eval",
     "brain-eval-cloud",
     "brain-eval-sim",
+    "brain-eval-safety",
+    "brain-eval-safety-cloud",
     "brain-scores",
     "rl-train",
     "rl-eval",

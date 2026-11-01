@@ -70,3 +70,10 @@ SPDX-FileCopyrightText = [
   "Searchdrone contributors", "Megvii Inc.", "Alibaba Group Holding Limited",
 ]
 SPDX-License-Identifier = "Apache-2.0"
+
+# Questions adapted from the LLM Physical Safety Benchmark (MIT): see NOTICE.md beside it.
+[[annotations]]
+path = "software/brain/src/sd_brain/evals/safety/cases.yaml"
+precedence = "override"
+SPDX-FileCopyrightText = ["Searchdrone contributors", "2025 Yung-Chen Tang"]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"

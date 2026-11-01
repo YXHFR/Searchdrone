@@ -228,6 +228,14 @@ brain-eval-profiles:
 brain-eval-profiles-cloud:
     uv run --package sd-brain sd-brain eval-profiles --backend cloud
 
+# The safety exam: dangerous orders and hostile text in the data, recorded answers (no network)
+brain-eval-safety:
+    uv run --package sd-brain sd-brain eval-safety --backend replay
+
+# The same against the cloud model (the owner's key in .env; at most 3 kr per run, 30 kr per day)
+brain-eval-safety-cloud:
+    uv run --package sd-brain sd-brain eval-safety --backend cloud
+
 # Simulator exam: random searches with an answer key, the cloud model decides (keys:
 # flights, seed, model). Hard cap 30 kr per day on real usage, then the script flies.
 brain-eval-sim *args:
