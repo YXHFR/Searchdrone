@@ -38,6 +38,7 @@ from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
 from sd_safety.keepout import circles, xy_route_violation
+from sd_safety.link_loss import FIND_MOVE_DEADLINE_MS
 from sd_safety.targets import polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
@@ -1330,6 +1331,7 @@ async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
         want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
         assert r.ex.vehicle_state().alt_rel_home_m < want - 10
         r.link = False
+        cut = r.clock.monotonic()
         skills: set[str | None] = set()
 
         def hovering() -> bool:
@@ -1338,8 +1340,9 @@ async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
 
         await r.until(hovering, 120)
         assert "executor.find_hold_started" in r.up.kinds()  # the find rule did start
-        if slow:
-            assert "executor.find_move_deadline" in r.up.kinds()  # passed during the climb
+        if slow:  # the deadline passed during the climb, with no word of a stop
+            assert r.clock.monotonic() - cut >= FIND_MOVE_DEADLINE_MS / 1000
+            assert "executor.find_move_deadline" not in r.up.kinds()
         assert INTERNAL_FIND_GOTO not in skills
         assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5

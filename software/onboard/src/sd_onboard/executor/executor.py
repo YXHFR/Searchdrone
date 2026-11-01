@@ -2122,6 +2122,11 @@ class Executor:
             )
         )
         for action in actions:
+            if action.event == "find_move_deadline" and self._climbing_out():
+                # The find move's deadline during the keep-out climb stops nothing: the
+                # climb goes on and ends in the keep-out hold, where the find hover starts
+                # (the rule is in FIND_HOVER already). Not logged as a stop either.
+                continue
             self.emit(action.event, dict(action.data))
             if action.event == "find_hold_started":
                 self._find_hold_started(action.data)
@@ -2252,11 +2257,6 @@ class Executor:
                 if isinstance(target, Refusal):
                     return
                 was = self.state
-                if action.limit == "L-FIND" and self._climbing_out():
-                    # The find move's deadline during the keep-out climb: the climb goes on
-                    # and ends in the keep-out hold, where the find hover starts (the rule
-                    # is in FIND_HOVER already).
-                    return
                 if was == S.HOLD and self.active is None:
                     self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
                     return

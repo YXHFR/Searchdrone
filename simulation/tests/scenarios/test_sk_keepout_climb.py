@@ -15,6 +15,12 @@
   that one and climbs straight up out of the one it is in (an internal goto that
   replaces the order, ``superseded`` with ``KEEPOUT_VIOLATION``), hovers in LOITER up
   there, and the operator is told once. STOP and FLY HOME work as always.
+* ``test_a_link_loss_during_a_climb_climbs_on_and_flies_home``: the same climb out of a
+  confirmed find's own cylinder, and SD-link lost just as it begins. The loss is noticed
+  halfway up and the find move's deadline passes during the climb: neither stops it nor
+  moves the drone sideways out of the cylinder (no ``internal_find_goto``). It climbs on
+  to the top, hovers there in the keep-out hold (``limit``), where the find hover starts,
+  and flies home when that ends, as the link-loss rule says.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, NamedTuple
 
 import pytest
 
@@ -38,7 +44,18 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     sim,
 )
 from test_sc_emergency import stopped_and_holding  # pyright: ignore[reportMissingImports]
-from test_sc_linkloss import north_m, until_event  # pyright: ignore[reportMissingImports]
+from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
+    FIND_HOME_AT,
+    FIND_LOITER_BY,
+    HOME_MODES,
+    SLACK_S,
+    back_and_land,
+    home_m,
+    north_m,
+    onboard_events,
+    trace,
+    until_event,
+)
 from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
     Camera,
     a_detection,
@@ -47,10 +64,16 @@ from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
 )
 
 from sd_onboard.executor import executor as executor_module
-from sd_onboard.executor.keepout_reflex import KEEPOUT_CLIMB_MARGIN_M, stop_m
+from sd_onboard.executor.keepout_reflex import (
+    INTERNAL_KEEPOUT_CLIMB,
+    KEEPOUT_CLIMB_MARGIN_M,
+    stop_m,
+)
+from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_safety import evaluate
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.base import new_id
+from sd_schemas.executor import ExecutorState, LinkLossPhase
 from sd_schemas.gate import GateContext, GateDecision, GateRequest
 from sd_schemas.keepout import INSPECT_SPEED_MS, Keepout
 from sd_schemas.link import KeepoutInstall
@@ -164,74 +187,96 @@ AHEAD_R_M = 30.0  # the second cylinder, just ahead on the goto's leg
 NOISE_M = 1.0  # the flight controller's wobble and the track's sampling
 
 
+class Climb(NamedTuple):
+    """A goto superseded by the climb out of ``around``: where it was, and when."""
+
+    goto: dict[str, Any]
+    around: Keepout
+    ahead: tuple[float, float]
+    here: tuple[float, float]
+    since: float
+    speed: float
+
+
+async def _a_goto_climbs_out(
+    sc: Any, source: Literal["candidate", "confirmed"] = "candidate"
+) -> Climb:
+    """A goto flies on inside a person's cylinder (``source``) that came around it, a
+    second one just ahead, closer than it can turn away from: it stops short of that one
+    and climbs out of the one it is in; the operator is told, the goto superseded."""
+    p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
+    target = sc.at(float(p1["east_m"]), float(p1["north_m"]))
+    res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": 40})
+    assert res["gate"]["decision"] == "ALLOW", res
+    goto = await sc.wait_command("goto", "running", 30)
+    ex = sc.r.onboard.ex
+    st = sc.sim.harness.state
+    plane = Plane(*sc.r.home)
+    line: list[tuple[float, float, float, float, float]] = []
+
+    def on_the_leg() -> bool:
+        """Straight on the leg at speed: where the drone is, which way, how fast."""
+        now = sc.track[-1]
+        before = next((s for s in reversed(sc.track) if s.t <= now.t - 1.0), None)
+        if before is None or now.groundspeed_ms < 4.0 or sc.from_home_m() < 30.0:
+            return False
+        (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
+        step = math.dist((e, n), (e0, n0))
+        if step < 0.9 * now.groundspeed_ms * (now.t - before.t):
+            return False  # still speeding up
+        line[:] = [(e, n, (e - e0) / step, (n - n0) / step, now.groundspeed_ms)]
+        return True
+
+    await sc.until(on_the_leg, 90, "on the goto's leg at speed")
+    ((e, n, de, dn, speed),) = line
+    # One person's cylinder around the drone (it may fly on out of it), and another's
+    # edge closer ahead than the drone can turn away from, far enough to stop outside.
+    edge = (stop_distance_m(speed) + stop_m(speed)) / 2
+    assert stop_distance_m(speed) + 3.0 < edge < stop_m(speed), (speed, edge)
+    around = Keepout(
+        keepout_id=new_id(),
+        lat=plane.latlon(e, n)[0],
+        lon=plane.latlon(e, n)[1],
+        radius_m=PERSON_R_M,
+        source=source,
+        source_id=new_id(),
+    )
+    a_lat, a_lon = plane.latlon(e + (edge + AHEAD_R_M) * de, n + (edge + AHEAD_R_M) * dn)
+    ahead = Keepout(
+        keepout_id=new_id(),
+        lat=a_lat,
+        lon=a_lon,
+        radius_m=AHEAD_R_M,
+        source="candidate",
+        source_id=new_id(),
+    )
+    assert sc.track[-1].alt_m < CLIMB_TO_M - ALT_TOL_M
+    since = time.monotonic()
+    here = (st.lat, st.lon)
+    install = KeepoutInstall(
+        install_seq=ex.keepout_seq + INSTALL_AHEAD, keepouts=[*ex.keepouts, around, ahead]
+    )
+    ex.on_keepouts(install, new_id())
+    assert around in ex.keepouts and ahead in ex.keepouts  # taken, not refused as stale
+
+    holds = await until_event(sc, "keepout_hold", 30.0)
+    told = holds[-1]["payload"]
+    assert told.get("inside") is True, told
+    assert told.get("climb_to_m") == pytest.approx(CLIMB_TO_M, abs=0.1), told
+    after = await sc.command(goto["id"])
+    assert after["status"] == "superseded", after
+    assert "KEEPOUT_VIOLATION" in str(after), after
+    return Climb(goto, around, (a_lat, a_lon), here, since, speed)
+
+
 @pytest.mark.budget_s(480)
 async def test_a_goto_held_over_a_person_climbs_straight_up_and_hovers(
     sim: Any, migrated_db: Any, tmp_path: Path
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await sc.airborne()
-        p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
-        target = sc.at(float(p1["east_m"]), float(p1["north_m"]))
-        res = await sc.operator_order("goto", {"lat": target[0], "lon": target[1], "alt_m": 40})
-        assert res["gate"]["decision"] == "ALLOW", res
-        goto = await sc.wait_command("goto", "running", 30)
-        ex = sc.r.onboard.ex
+        _, _, (a_lat, a_lon), here, since, speed = await _a_goto_climbs_out(sc)
         st = sc.sim.harness.state
-        plane = Plane(*sc.r.home)
-        line: list[tuple[float, float, float, float, float]] = []
-
-        def on_the_leg() -> bool:
-            """Straight on the leg at speed: where the drone is, which way, how fast."""
-            now = sc.track[-1]
-            before = next((s for s in reversed(sc.track) if s.t <= now.t - 1.0), None)
-            if before is None or now.groundspeed_ms < 4.0 or sc.from_home_m() < 30.0:
-                return False
-            (e, n), (e0, n0) = plane.xy(now.lat, now.lon), plane.xy(before.lat, before.lon)
-            step = math.dist((e, n), (e0, n0))
-            if step < 0.9 * now.groundspeed_ms * (now.t - before.t):
-                return False  # still speeding up
-            line[:] = [(e, n, (e - e0) / step, (n - n0) / step, now.groundspeed_ms)]
-            return True
-
-        await sc.until(on_the_leg, 90, "on the goto's leg at speed")
-        ((e, n, de, dn, speed),) = line
-        # One person's cylinder around the drone (it may fly on out of it), and another's
-        # edge closer ahead than the drone can turn away from, far enough to stop outside.
-        edge = (stop_distance_m(speed) + stop_m(speed)) / 2
-        assert stop_distance_m(speed) + 3.0 < edge < stop_m(speed), (speed, edge)
-        around = Keepout(
-            keepout_id=new_id(),
-            lat=plane.latlon(e, n)[0],
-            lon=plane.latlon(e, n)[1],
-            radius_m=PERSON_R_M,
-            source="candidate",
-            source_id=new_id(),
-        )
-        a_lat, a_lon = plane.latlon(e + (edge + AHEAD_R_M) * de, n + (edge + AHEAD_R_M) * dn)
-        ahead = Keepout(
-            keepout_id=new_id(),
-            lat=a_lat,
-            lon=a_lon,
-            radius_m=AHEAD_R_M,
-            source="candidate",
-            source_id=new_id(),
-        )
-        assert sc.track[-1].alt_m < CLIMB_TO_M - ALT_TOL_M
-        since = time.monotonic()
-        here = (st.lat, st.lon)
-        install = KeepoutInstall(
-            install_seq=ex.keepout_seq + INSTALL_AHEAD, keepouts=[*ex.keepouts, around, ahead]
-        )
-        ex.on_keepouts(install, new_id())
-        assert around in ex.keepouts and ahead in ex.keepouts  # taken, not refused as stale
-
-        holds = await until_event(sc, "keepout_hold", 30.0)
-        told = holds[-1]["payload"]
-        assert told.get("inside") is True, told
-        assert told.get("climb_to_m") == pytest.approx(CLIMB_TO_M, abs=0.1), told
-        after = await sc.command(goto["id"])
-        assert after["status"] == "superseded", after
-        assert "KEEPOUT_VIOLATION" in str(after), after
         await sc.until(
             lambda: abs(sc.track[-1].alt_m - CLIMB_TO_M) <= ALT_TOL_M and st.ground_speed_ms < 0.5,
             120,
@@ -267,6 +312,82 @@ async def test_a_goto_held_over_a_person_climbs_straight_up_and_hovers(
         assert (await sc.press("return_home")).status_code == 202
         await sc.until(lambda: not sc.tel.armed, 300, "landed")
         assert sc.from_home_m() <= 3.0
+        await sc.check_invariants()
+
+
+@pytest.mark.budget_s(540)
+async def test_a_link_loss_during_a_climb_climbs_on_and_flies_home(
+    sim: Any, migrated_db: Any, tmp_path: Path
+) -> None:
+    async with scenario(sim, migrated_db, tmp_path, proxied_link=True) as sc:
+        await sc.airborne()
+        # The cylinder climbed out of is a confirmed find's own: its hover point lies
+        # straight out, sideways through the cylinder below its top.
+        _, around, _, here, since, speed = await _a_goto_climbs_out(sc, source="confirmed")
+        ex = sc.r.onboard.ex
+        assert sc.track[-1].alt_m < CLIMB_TO_M - 30.0  # well below the top
+        sc.radio(sdlink=False)
+        down = time.monotonic()
+        skills: set[str | None] = set()
+        noticed: list[str | None] = []  # what ran when the loss was noticed
+        past_deadline: list[str | None] = []  # what ran once the find move's deadline passed
+
+        def watch() -> None:
+            active = ex.active.skill if ex.active is not None else None
+            skills.add(active)
+            if ex.link_rule.phase != LinkLossPhase.NONE and not noticed:
+                noticed.append(active)
+            if time.monotonic() - down >= FIND_LOITER_BY + 0.5 and not past_deadline:
+                past_deadline.append(active)
+
+        def find_hover() -> bool:
+            watch()
+            return ex.state == ExecutorState.HOLD and ex.link_rule.phase == LinkLossPhase.FIND_HOVER
+
+        try:
+            await sc.until(find_hover, 90, "the find hover in the keep-out hold")
+            # Noticed halfway up, the deadline passed while climbing: neither stopped it.
+            assert noticed == [INTERNAL_KEEPOUT_CLIMB], noticed
+            assert past_deadline == [INTERNAL_KEEPOUT_CLIMB], past_deadline
+            assert ex.hold_reason == "limit", ex.hold_reason
+            assert sc.fc_mode() == "LOITER"
+            assert abs(sc.track[-1].alt_m - CLIMB_TO_M) <= ALT_TOL_M, sc.track[-1].alt_m
+
+            def kept_out() -> bool:
+                watch()
+                return ex.hold_reason == "limit" and sc.fc_mode() == "LOITER"
+
+            await sc.hold_for(
+                max(0.0, FIND_HOME_AT - SLACK_S - (time.monotonic() - down)),
+                kept_out,
+                "the find hover up there",
+            )
+            await sc.until(lambda: sc.fc_mode() in HOME_MODES, 2 * SLACK_S + 1, "home")
+            took = time.monotonic() - down
+            assert FIND_HOME_AT - SLACK_S <= took <= FIND_HOME_AT + SLACK_S, took
+            homing = time.monotonic()
+            assert INTERNAL_FIND_GOTO not in skills, skills
+
+            # Straight up and never a hover halfway: every LOITER up at the top.
+            track = [s for s in sc.track if since <= s.t < homing and s.armed]
+            sideways = max(distance_m(s.lat, s.lon, *here) for s in track)
+            assert sideways <= SIDEWAYS_M + stop_distance_m(speed), sideways
+            top = CLIMB_TO_M - ALT_TOL_M
+            low = [s.alt_m for s in track if s.mode == "LOITER" and s.alt_m < top]
+            assert not low, min(low)
+            assert max(s.alt_m for s in track) <= CLIMB_TO_M + ALT_TOL_M
+            await sc.until(lambda: not sim.harness.state.armed, 300, "landed")
+        except AssertionError as exc:
+            raise AssertionError(f"{exc}\n{trace(sc, down)}") from None
+        finally:
+            await back_and_land(sc)
+        assert home_m(sc) <= 3.0
+        ended = "executor.find_hold_ended"
+        await sc.until(lambda: bool(sc.published(ended)), 15, "the queued events after the link")
+        started = await onboard_events(sc, "find_hold_started")
+        assert started and started[-1]["payload"]["keepout_id"] == str(around.keepout_id), started
+        assert not await onboard_events(sc, "find_move_deadline")
+        assert not await onboard_events(sc, "find_move_keepout_exit")
         await sc.check_invariants()
 
 
