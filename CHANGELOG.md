@@ -271,6 +271,10 @@ All notable changes to this project are listed here. The format follows
   climbs, a link loss's find move never takes the drone sideways out of the cylinder. A
   full list of the drone's own cylinders also climbs first when it is over a person, and
   the altitude limit's way back down ends in its own hover when the AI is quiet.
+- Flight safety: a link loss detected during that climb no longer cuts it short or
+  sends the drone sideways out of the cylinder below its top: the climb goes on and the
+  find hover starts in the keep-out hold up there, also past the find move's deadline.
+  The AI going quiet in the keep-out hold keeps it the keep-out hold.
 - The ground station's wind check reads the flight controller's own `ATC_ANGLE_MAX`,
   `RTL_SPEED_MS` (`WP_SPD` when it is 0), `BATT_CAPACITY` and `BATT_LOW_MAH` on each
   connection, with the fence check's parameter reading. A parameter that cannot be read

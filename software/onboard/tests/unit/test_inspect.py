@@ -20,6 +20,7 @@ from sd_onboard.executor.guards import Refusal
 from sd_onboard.executor.keepout_reflex import (
     KEEPOUT_CLIMB_MARGIN_M,
     LOCAL_KEEPOUTS_MAX,
+    Replans,
     climb_alt,
     entry_m,
     leg_entry_m,
@@ -29,6 +30,7 @@ from sd_onboard.executor.keepout_reflex import (
     way_out,
 )
 from sd_onboard.executor.limits import LimitAction
+from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_onboard.executor.state import Trigger
 from sd_onboard.skills import inspect_detection, survey_sector
 from sd_onboard.skills.base import PlanError
@@ -39,6 +41,7 @@ from sd_safety.keepout import circles, xy_route_violation
 from sd_safety.targets import polygon_from_geojson
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
+from sd_schemas.executor import LinkLossPhase
 from sd_schemas.gate import GateContext, GateDecision, GateRequest
 from sd_schemas.keepout import INSPECT_AIM_DEG, INSPECT_VIEW_DEG, Keepout
 from sd_schemas.link import BBox, GeoDetectionMsg, KeepoutInstall, SkillCommand
@@ -1233,7 +1236,7 @@ async def test_no_way_around_inside_the_charter_hovers(monkeypatch: pytest.Monke
 
 
 async def _search_over_a_person(
-    r: Rig, monkeypatch: pytest.MonkeyPatch, radius: float = 50.0
+    r: Rig, monkeypatch: pytest.MonkeyPatch, radius: float = 50.0, source: str = "candidate"
 ) -> tuple[SkillCommand, Keepout, tuple[float, float], int]:
     """A cylinder comes around the drone on a search leg and no way out is planned (the
     search is no ``Replans``): the order, the cylinder, where the drone was and where the
@@ -1247,7 +1250,7 @@ async def _search_over_a_person(
     )
     await r.until(lambda: r.fc.mission_current >= 4, 120)  # on a search leg
     here = xy(r)
-    person = keepout(here[0], here[1], radius, source="candidate")
+    person = keepout(here[0], here[1], radius, source=source)
     start = len(r.fc.track)
     install(r, person)
     return cmd, person, here, start
@@ -1301,6 +1304,105 @@ async def test_a_climb_with_the_ai_silent_still_ends_in_the_keepout_hover(
         assert r.ex.hold_reason == "limit"
         want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+
+
+@pytest.mark.parametrize(("own", "slow"), [(True, False), (False, False), (True, True)])
+async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
+    monkeypatch: pytest.MonkeyPatch, own: bool, slow: bool
+) -> None:
+    """The link lost while the drone climbs out of a person's cylinder, with a confirmed
+    find near: the climb goes on to the top and ends in the keep-out hold (``limit``),
+    where the find hover starts. It never moves sideways out of the cylinder below its
+    top (the find's own cylinder, the hover point straight out) and never hovers halfway
+    up (another person's cylinder in the way to the find). A climb slower than the find
+    move's deadline is not cut short by it either (``slow``)."""
+    if slow:
+        monkeypatch.setattr("sd_mav.fake._CLIMB_MS", 1.0)  # 20 m up: past the deadline
+    async with rig() as r:
+        _, person, here, start = await _search_over_a_person(
+            r, monkeypatch, source="confirmed" if own else "candidate"
+        )
+        if not own:
+            find = keepout(here[0] + 90.0, here[1], 10.0)
+            install(r, person, find)
+        await r.run(0.5)
+        assert r.ex.state == S.TRANSIT  # climbing
+        want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
+        assert r.ex.vehicle_state().alt_rel_home_m < want - 10
+        r.link = False
+        skills: set[str | None] = set()
+
+        def hovering() -> bool:
+            skills.add(r.ex.active.skill if r.ex.active else None)
+            return r.ex.link_rule.phase == LinkLossPhase.FIND_HOVER and r.ex.state == S.HOLD
+
+        await r.until(hovering, 120)
+        assert "executor.find_hold_started" in r.up.kinds()  # the find rule did start
+        if slow:
+            assert "executor.find_move_deadline" in r.up.kinds()  # passed during the climb
+        assert INTERNAL_FIND_GOTO not in skills
+        assert r.ex.hold_reason == "limit" and r.fc.mode == CopterMode.LOITER
+        assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+        await r.run(10)
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
+        assert "executor.find_move_keepout_exit" not in r.up.kinds()
+        # Straight up and still: no farther off than braking from the search's speed.
+        assert max(math.dist(p, here) for p in track_xy(r, start)) <= 10.0
+
+
+async def test_an_inspection_held_over_a_person_does_not_take_the_order_climb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_keepout_hold`` inside a cylinder during an inspection: the inspection climbs its
+    own way (``_keepout_climb``) or hovers, never the other orders' ``_climb_out``."""
+    async with rig() as r:
+        await r.install(charter(allowed_skills=SKILLS))
+        await r.takeoff()
+        install(r, keepout(150, 0, 35))
+        camera(r)
+        await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
+        assert r.ex.state == S.TRANSIT and r.ex.active is not None
+        assert isinstance(r.ex.active.handler, Replans)
+        climbs: list[str] = []
+
+        def climb_out(active: Any) -> bool:
+            climbs.append(active.skill)
+            return True
+
+        monkeypatch.setattr(r.ex, "_climb_out", climb_out)
+        r.ex._keepout_hold(inside=True)  # pyright: ignore[reportPrivateUsage]
+        assert climbs == []
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "limit"
+
+
+async def test_the_ai_going_quiet_in_the_keepout_hold_keeps_it_the_keepout_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Already in the keep-out hold when the AI goes quiet (finish the step, then hover):
+    the hold stays ``limit``, which a link loss's find move never leaves sideways."""
+    async with rig() as r:
+        await _search_over_a_person(r, monkeypatch)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert r.ex.hold_reason == "limit" and r.ex.active is None
+        r.ex._apply_limit(  # pyright: ignore[reportPrivateUsage]
+            LimitAction("L-AI", "after_step", "ai_silent", "ai_silent", {})
+        )
+        assert r.ex.ai_silent_after_step and r.ex.hold_reason == "limit"
+
+
+async def test_a_link_loss_hold_during_a_climb_is_told_as_a_link_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the AI going quiet turns the hover that stops a climb into the keep-out hold;
+    a link loss's hold keeps its own name."""
+    async with rig() as r:
+        await _search_over_a_person(r, monkeypatch)
+        await r.run(0.5)
+        assert r.ex.state == S.TRANSIT  # climbing
+        r.ex._apply_limit(  # pyright: ignore[reportPrivateUsage]
+            LimitAction("L-LINK", "hold", "link_loss", "link_loss_hold", {})
+        )
+        assert r.ex.state == S.HOLD and r.ex.hold_reason == "link_loss"
 
 
 async def test_a_climb_cut_short_by_its_deadline_is_the_keepout_hold(

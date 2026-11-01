@@ -2243,7 +2243,8 @@ class Executor:
         match action.kind:
             case "after_step":
                 self.ai_silent_after_step = True
-                if self.state == S.HOLD and self.active is None:
+                # A limit's hover stays that limit's hover (a find move never leaves it).
+                if self.state == S.HOLD and self.active is None and self.hold_reason != "limit":
                     self.hold_reason = "ai_silent"
                     self._save()
             case "hold":
@@ -2251,12 +2252,18 @@ class Executor:
                 if isinstance(target, Refusal):
                     return
                 was = self.state
+                if action.limit == "L-FIND" and self._climbing_out():
+                    # The find move's deadline during the keep-out climb: the climb goes on
+                    # and ends in the keep-out hold, where the find hover starts (the rule
+                    # is in FIND_HOVER already).
+                    return
                 if was == S.HOLD and self.active is None:
                     self._enter(target, hold_reason=action.hold_reason, cause=action.limit)
                     return
-                # A hold that stops the keep-out climb (the AI silent with ``hold``) hovers
-                # over the person: the keep-out hold, which a find move never leaves.
-                reason = "limit" if self._climbing_out() else action.hold_reason
+                # The AI silent with ``hold`` stops the keep-out climb over the person: that
+                # hover is the keep-out hold, which a find move never leaves.
+                climbing = self._climbing_out() and action.limit == "L-AI"
+                reason = "limit" if climbing else action.hold_reason
                 self._drop_active(stage="superseded", codes=(action.limit,))
                 self._enter(target, hold_reason=reason, cause=action.limit)
                 if was == S.TAKEOFF and not is_airborne(self.vehicle_state()):
@@ -2295,6 +2302,11 @@ class Executor:
         """L-FIND (T26): an internal goto to the hover point, or LOITER when already there."""
         find = self.link_rule.plan
         if find is None or self.charter is None:
+            return
+        if self._climbing_out():
+            # Over a person, climbing out: the climb goes on and ends in the keep-out hold,
+            # where the find hover starts (the rule's FIND_MOVE in HOLD). No move sideways
+            # out of the cylinder below its top, and no hover halfway up.
             return
         # Any other cylinder on the way or at the point (a candidate, the drone's own
         # detection): hover here instead, outside the find's cylinder as it is. Inside a
