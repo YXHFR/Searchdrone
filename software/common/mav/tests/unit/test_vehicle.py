@@ -819,6 +819,8 @@ def test_link_epoch_tolerates_reordered_attitude_but_not_a_reboot() -> None:
         vehicle.fc._send(_attitude(newest - 1000))  # pyright: ignore[reportPrivateUsage]
         await clock.run_for(0.05)
         assert vehicle.telemetry.fc_link_epoch == epoch  # exactly 1 s back: late
+        boot = vehicle.telemetry.fc_boot_ms
+        assert boot is not None and boot >= newest  # a late one never moves it back
         vehicle.fc._send(_attitude(newest - 400))  # pyright: ignore[reportPrivateUsage]
         await clock.run_for(0.05)
         assert vehicle.telemetry.fc_link_epoch == epoch

@@ -902,9 +902,12 @@ class Vehicle:
                 # is dropped and the previous one ages out instead of being shown as a
                 # made-up horizon.
                 boot_ms = int(msg.time_boot_ms)
-                if t.fc_boot_ms is not None and boot_ms + _REBOOT_BACK_MS < t.fc_boot_ms:
-                    t = replace(t, fc_link_epoch=t.fc_link_epoch + 1)  # a reboot
-                t = replace(t, fc_boot_ms=boot_ms)
+                newest = t.fc_boot_ms
+                if newest is not None and boot_ms + _REBOOT_BACK_MS < newest:
+                    # A reboot: its clock starts over, so it is the newest from now on.
+                    t = replace(t, fc_link_epoch=t.fc_link_epoch + 1, fc_boot_ms=boot_ms)
+                else:  # a late sample (up to 1 s back) never moves the newest back
+                    t = replace(t, fc_boot_ms=boot_ms if newest is None else max(newest, boot_ms))
                 rpy = (float(msg.roll), float(msg.pitch), float(msg.yaw))
                 if all(map(math.isfinite, rpy)):
                     roll, pitch, yaw = map(math.degrees, rpy)
