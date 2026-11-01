@@ -16,6 +16,17 @@ once as if nothing was found, and the score is the exact expectation over the co
 - ``expected_minutes``: expected time to find, counted as the horizon when not found.
 - ``score``: ``1 - expected_minutes / horizon``; higher is better, and it rewards
   finding early, not only finding.
+
+Misses are not independent. The first sweep of a cell sees a person there with ``pod =
+p_det * (1 - canopy)``, split into two coins: is the person *visible* from the air in this
+cell (``1 - miss_correlation * canopy``; drawn once per scenario and cell, so the trees
+hide them the same way on every pass) and, if so, does this sweep see them (the rest,
+fresh each pass). After ``n`` empty sweeps with the person in the cell the next sweep's
+chance is ``per_pass * P(visible | n misses)`` (``pod_after``), so a repeat sweep is worth
+less than the first. The cells' coins are independent of each other, so the truth stays an
+exact expectation: it counts the empty sweeps per cell while the person was in it. The
+belief cannot know when the person was where, so it counts the sweeps of the sector, as if
+the person had stayed put.
 """
 
 from __future__ import annotations
@@ -96,6 +107,33 @@ def diffuse(p: np.ndarray, sigma_cells: float) -> np.ndarray:
     return g @ p @ g.T
 
 
+def split_pod(
+    pod: np.ndarray, canopy: np.ndarray, miss_correlation: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """The first sweep's detection chance as ``(visible, per_pass)``, with ``visible *
+    per_pass == pod``. ``visible`` lasts for the scenario, ``per_pass`` is fresh each sweep.
+    With ``miss_correlation=0`` every person is visible and ``per_pass`` is ``pod`` itself."""
+    visible = np.maximum(1.0 - miss_correlation * canopy, 1e-12)
+    per_pass = pod / visible
+    # A pod above the visible share (only when set by hand): seen whenever visible.
+    over = per_pass > 1.0
+    return np.where(over, pod, visible), np.where(over, 1.0, per_pass)
+
+
+def pod_after(visible: np.ndarray, per_pass: np.ndarray, misses: np.ndarray) -> np.ndarray:
+    """Chance the next sweep sees the person, after ``misses`` empty sweeps of the cell with
+    them in it: ``per_pass`` times the chance they are visible at all, given those misses."""
+    missed_if_visible = (1.0 - per_pass) ** misses
+    hidden = 1.0 - visible
+    still_visible = np.divide(
+        visible * missed_if_visible,
+        hidden + visible * missed_if_visible,
+        out=np.ones_like(missed_if_visible, dtype=float),
+        where=hidden > 0,  # always visible: the misses tell nothing
+    )
+    return per_pass * still_visible
+
+
 class Episode:
     def __init__(self, scenario: Scenario, cfg: SimConfig | None = None) -> None:
         self.cfg = cfg = cfg or SimConfig()
@@ -120,6 +158,11 @@ class Episode:
         self.t = 0.0
         self.battery = cfg.battery_min
         self.swept = np.zeros(self.n_sec, dtype=int)
+        m = cfg.miss_correlation
+        self._true_split = split_pod(scenario.pod_true, scenario.canopy, m)
+        self._belief_split = split_pod(scenario.pod_belief, scenario.canopy, m)
+        # Truth: empty sweeps of each cell while the person was in it.
+        self._true_misses = np.zeros_like(scenario.pod_true, dtype=int)
         self.survive = 1.0  # chance the person is still not found
         self.expected_minutes = 0.0
         self.sorties = 1
@@ -176,11 +219,22 @@ class Episode:
         k, s = self.cfg.sector_cells, self.cfg.n_sectors
         return (cell[0] // k) * s + cell[1] // k
 
+    def pod_belief_now(self) -> np.ndarray:
+        """What the belief expects the next sweep of each cell to see, after the sweeps of
+        its sector so far (as if the person had stayed in the cell through them)."""
+        k, s = self.cfg.sector_cells, self.cfg.n_sectors
+        misses = self.swept.reshape(s, s).repeat(k, axis=0).repeat(k, axis=1)
+        # In the scenario's memory order, so sums over it add up in the same order as
+        # before (miss_correlation=0 keeps the old numbers to the last bit).
+        out = np.empty_like(self.sc.pod_belief)
+        out[...] = pod_after(*self._belief_split, misses)
+        return out
+
     # --- the loop -----------------------------------------------------------------
 
     def observe(self) -> Observation:
         cfg = self.cfg
-        pod_b = self.sc.pod_belief
+        pod_b = self.pod_belief_now()
         pos = self._sector_sum(self.belief * pod_b)
         poa = self._sector_sum(self.belief)
         transit = self._transit_min(self.centres)
@@ -234,22 +288,26 @@ class Episode:
         t_mid = self.t + transit + cfg.sweep_min / 2
         cell = self._true_cell(t_mid)
         if cell is not None and self._sector_of(cell) == sector:
-            q = float(self.sc.pod_true[cell])
+            visible, per_pass = (x[cell] for x in self._true_split)
+            q = float(pod_after(visible, per_pass, self._true_misses[cell]))
             found_now = self.survive * q
             self.expected_minutes += found_now * t_mid
             self.survive -= found_now
+            self._true_misses[cell] += 1
         self._advance(transit + cfg.sweep_min)
-        # Belief: a sweep that found nothing (Bayes).
+        # Belief: a sweep that found nothing (Bayes), with this sweep's detection chance.
         k, s = cfg.sector_cells, cfg.n_sectors
         r0, c0 = (sector // s) * k, (sector % s) * k
+        block = (slice(r0, r0 + k), slice(c0, c0 + k))
+        pod_block = self.pod_belief_now()[block]
         if self.motion is not None:
             pod = np.zeros_like(self.belief)
-            pod[r0 : r0 + k, c0 : c0 + k] = self.sc.pod_belief[r0 : r0 + k, c0 : c0 + k]
+            pod[block] = pod_block
             self.motion = negative(self.motion, pod)
             self.belief = self.motion.p
         else:
             b = self.belief.copy()
-            b[r0 : r0 + k, c0 : c0 + k] *= 1.0 - self.sc.pod_belief[r0 : r0 + k, c0 : c0 + k]
+            b[block] *= 1.0 - pod_block
             self.belief = b / b.sum()
         self.battery -= transit + cfg.sweep_min
         self.pos = self.centres[sector].copy()
