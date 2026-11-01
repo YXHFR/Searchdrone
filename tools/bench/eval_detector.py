@@ -274,11 +274,12 @@ def selfcheck(items: Sequence[Picture], source: str = "") -> tuple[list[str], di
 def private_out(out: Path, sets: Sequence[str], register: Mapping[str, Any]) -> str | None:
     """A warning when numbers that may not leave this computer land where git could take them.
 
-    Outside the repository, and under the ignored build/, is the owner's own business."""
+    Outside the repository, and under the ignored build/, is the owner's own business. A set
+    the register no longer knows counts as private, as in profiles.py."""
     where = out.resolve()
-    if not where.is_relative_to(ROOT) or where.is_relative_to(ROOT / "build"):
+    if not where.is_relative_to(ROOT) or where.is_relative_to(RESULTS.parent):
         return None
-    private = [s for s in sets if s in register and not register[s].publish_results]
+    private = [s for s in sets if s not in register or not register[s].publish_results]
     if not private:
         return None
     return (
