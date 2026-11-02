@@ -22,6 +22,7 @@ from sd_detect.onnx import (
     OnnxDetector,
     check_model,
     load_model,
+    manifest_upscale,
     sha256_of,
 )
 from sd_detect.sources import MODEL_ENV, build_sources
@@ -224,3 +225,38 @@ def test_the_register_builds_the_model_only_when_one_is_chosen(tmp_path: Path) -
     assert built.sources["model"].source == "model"
     with pytest.raises(ModelError):
         build_sources(registry, env={MODEL_ENV: str(tmp_path / "missing.json")})
+
+
+def test_a_manifest_without_upscale_runs_its_tiles_as_they_are(tmp_path: Path) -> None:
+    source = load_model(_manifest(tmp_path))
+    assert manifest_upscale(source.manifest) == 1
+    assert source.tiled.upscale == 1 and source.tiled.span == INPUT_PX
+
+
+def test_a_2x_model_enlarges_its_tiles_and_shrinks_the_boxes_back(tmp_path: Path) -> None:
+    source = load_model(_manifest(tmp_path, tile_px=INPUT_PX, upscale=2))
+    assert source.tiled.upscale == 2 and source.tiled.span == INPUT_PX // 2
+    # the graph always says (32, 16, 48, 32) in its 64 px input; the 32 px picture is
+    # enlarged to 64 px, so the person is at half that in the picture
+    found = source.detect_still(Still(frame=_frame(INPUT_PX // 2, INPUT_PX // 2)))
+    assert len(found) == 1 and source.tiled.last_tiles == 1
+    assert iou_matrix(from_bbox([found[0].bbox]), TRUTH / 4)[0, 0] >= 0.99
+
+
+@pytest.mark.parametrize("check", [check_model, load_model])
+@pytest.mark.parametrize(
+    ("over", "why"),
+    [
+        ({"upscale": 0}, "upscale"),
+        ({"upscale": 5}, "upscale"),
+        ({"upscale": "2"}, "upscale"),
+        ({"upscale": 2.0}, "upscale"),
+        ({"upscale": 3}, "upscale"),  # 64 / 3 is no whole tile
+        ({"upscale": 4}, "minst 32"),  # 64 / 4 = 16 picture pixels
+    ],
+)
+def test_a_wrong_upscale_is_refused(
+    tmp_path: Path, over: dict[str, object], why: str, check: Callable[[Path], object]
+) -> None:
+    with pytest.raises(ModelError, match=why):
+        check(_manifest(tmp_path, **over))

@@ -21,7 +21,14 @@ All notable changes to this project are listed here. The format follows
   `simstills` (`just train-detector sets=heridal,kios,kios_carperson,simstills`): it
   is never measured on and is kept only if the real test gets better. A growing set's
   scenes are split by a hash of their names (`GROWING` in `tools/bench/splits.py`).
-
+- The person detector can enlarge its tiles 2x so small people are seen larger:
+  `just train-detector upscale=2` cuts tiles of 320×320 picture pixels and enlarges them
+  to 640 px (bilinear) with their boxes, `just export-detector` writes `upscale` into the
+  model's manifest, and `TiledDetector` (on the drone, in the simulator and in
+  `just bench-detector`) enlarges each tile the same way and shrinks the boxes back. A
+  12 MP still then takes 170 tiles instead of 45. A manifest without `upscale` means 1,
+  so models already exported run as before; a manifest whose `upscale` is not a whole
+  number from 1 to 4 that divides `tile_px` is refused.
 - The ground station now fills the AI's "till hemgräns" minutes
   (`battery_to_reserve_s`), which it sent as empty before, so the commander's
   search-again battery check works in real flights. The estimate is the charge above
