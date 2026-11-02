@@ -53,6 +53,7 @@ from sd_safety.limits import fc_fence_params
 from sd_safety.targets import distance_m
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.safety import SafetyLimits
+from sd_sim.onboard_watch import ExecutorRecord, dead_task
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -81,7 +82,10 @@ P1 = (100.0, 50.0)  # east, north of home (m)
 
 
 class SitlOnboard:
-    """The onboard executor on 1/191 against SITL, with SD-link to the ground's server."""
+    """The onboard executor on 1/191 against SITL, with SD-link to the ground's server.
+    The executor's log lines and its state at the end go to the run's ``logs/``
+    (``sd_sim.onboard_watch.ExecutorRecord``); ``failure`` says which onboard task ended
+    while the flight was on."""
 
     def __init__(
         self,
@@ -119,8 +123,24 @@ class SitlOnboard:
         self.link.executor = self.ex
         self._stop = asyncio.Event()
         self._tasks: list[asyncio.Future[Any]] = []
+        self.record = ExecutorRecord(sim.stack.run_dir)
+
+    @property
+    def tasks(self) -> list[asyncio.Future[Any]]:
+        return self._tasks
+
+    def failure(self) -> str | None:
+        """An onboard task (executor, SD-link, perception) that died or returned before
+        ``close``, with its error; None while all run. Its state goes to the record."""
+        if self._stop.is_set():
+            return None
+        why = dead_task(self._tasks)
+        if why is not None:
+            self.record.snapshot(f"onboard task ended: {why}", self.ex, self.tasks)
+        return why
 
     async def start(self, home: tuple[float, float]) -> None:
+        self.record.start()
         await self.vehicle.start()
         if not await self.vehicle.wait_connected(20):
             raise AssertionError("1/191 has no MAVLink")
@@ -130,12 +150,21 @@ class SitlOnboard:
         ]
 
     async def close(self) -> None:
+        ended = None if self._stop.is_set() else dead_task(self._tasks)
+        self.record.snapshot(
+            "close" if ended is None else f"close, an onboard task had ended: {ended}",
+            self.ex,
+            self._tasks,
+        )
         self._stop.set()
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        await self.ex.close()
-        await self.vehicle.close()
+        try:
+            await self.ex.close()
+            await self.vehicle.close()
+        finally:
+            self.record.close()
 
 
 @pytest.fixture

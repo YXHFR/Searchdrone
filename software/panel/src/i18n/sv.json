@@ -349,6 +349,9 @@
     "HOLD_CLIMB": "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den stiger rakt upp till {{alt}} m och svävar där. Ta över med RC, ge en ny order eller tryck FLYG HEM.",
     "HOLD_INSIDE": "Drönaren är över en person och har ingen säker väg ut ur förbudszonen. Den kan inte stiga högre och svävar där den är. Ta över med RC, ge en ny order eller tryck FLYG HEM."
   },
+  "onboard": {
+    "MISSION_FALLBACK": "Ombordsdatorn styr inte drönaren längre. Flygkontrollen avslutar uppdraget själv: den svävar en kort stund och flyger sedan rakt hem, även genom förbudszoner runt personer. Tryck STOPP eller ta över med RC om vägen hem inte är säker."
+  },
   "gnss": {
     "GPS_WEAK": "GPS är svag ({{sats}} satelliter). Drönaren flyger vidare men kan bli osäker på var den är.",
     "GPS_LOST": "GPS är borta. Drönaren gissar sin position och flyger mot hem i högst {{dr}} s, sedan landar den. Ta över med RC om du kan.",

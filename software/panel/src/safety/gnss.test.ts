@@ -111,6 +111,13 @@ describe("alertView", () => {
     }
   });
 
+  it("the mission's built-in end without the onboard computer: red and sticky", () => {
+    const v = alertView("MISSION_FALLBACK", { mission_seq: 14, mission_total: 15 }, T0);
+    expect(v && isSticky(v)).toBe(true);
+    expect(say(v)).toContain("Ombordsdatorn styr inte drönaren längre.");
+    expect(say(v)).toContain("Tryck STOPP eller ta över med RC");
+  });
+
   it("is null for codes the panel has no text for", () => {
     expect(alertView("BATTERY_RTL", {}, T0)).toBeNull();
   });

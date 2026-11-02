@@ -51,7 +51,7 @@ sha256 = "3800283b3a98d2cde86d446cd6c77db5d5ecf090e1243f1c2876fc52ecf9aff1"
 # layers' allowlist check and the checks themselves (the list they must keep pinned).
 [[pinned]]
 path = "software/common/mav/src/sd_mav/vehicle.py"
-sha256 = "0fcaf5fd816a7608dce0ff068a44b3dfeab54ddafc5d4c8befd7a9d1d48b237d"
+sha256 = "5710bec5c577cde628dffedb4f22d457f27e289ad4f856f469e7da9c2f98401d"
 
 [[pinned]]
 path = "software/common/mav/src/sd_mav/connection.py"
@@ -59,7 +59,7 @@ sha256 = "05e5aa96667595fdea8c98c6da89e6d663e47b97ba77a35f26f1ebd417e12ce3"
 
 [[pinned]]
 path = "software/common/mav/src/sd_mav/allowlist.py"
-sha256 = "b092740ad0a4ec725e34b718530bc41c01b9d59a73b79dfa595cfcba2ac63e76"
+sha256 = "21e098dd17764bcf00703b82a7d3793cbbd7611418c412c07f2769a5f3cd4dc4"
 
 [[pinned]]
 path = "simulation/sd_sim/src/sd_sim/sitl.py"
