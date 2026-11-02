@@ -124,6 +124,32 @@ async def test_a_timeout_is_committed_at_the_estimate() -> None:
     assert books.released == []
 
 
+@pytest.mark.parametrize(
+    "usage",
+    [
+        "",
+        {"prompt_tokens": 10**400, "completion_tokens": 30},
+        {"prompt_tokens": 10_000_001, "completion_tokens": 30, "cost": 0.0004},
+        {"prompt_tokens": 120, "completion_tokens": -1, "cost": 0.0004},
+    ],
+)
+async def test_malformed_usage_is_booked_at_the_estimate(usage: object) -> None:
+    """A broken count keeps the answer, but never books the call as free (the cost cap)."""
+    books = Books()
+
+    def ok(_r: httpx.Request) -> httpx.Response:
+        body = chat_reply("svar")
+        body["usage"] = usage
+        return httpx.Response(200, json=body)
+
+    reply = await _rt(ok, books).chat(MSG, [], 5, Sampling())
+    assert reply.content == "svar" and reply.cost_sek == 0.02
+    (req,) = books.reserved
+    (done,) = books.committed
+    assert (done.prompt_tokens, done.completion_tokens) == (req.est_prompt_tokens, 0)
+    assert done.cost_usd is None and books.released == []
+
+
 async def test_a_denied_main_model_never_tries_the_fallback() -> None:
     calls: list[httpx.Request] = []
     books = Books(grant=False)

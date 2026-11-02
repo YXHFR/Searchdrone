@@ -12,9 +12,11 @@ from brain_helpers import chat_reply, mock_client
 
 from sd_brain.config import BrainConfig, CloudConfig
 from sd_brain.runtime.base import (
+    MAX_TOKEN_COUNT,
     ModelError,
     ModelTimeoutError,
     NotConfiguredError,
+    RawToolCall,
     Sampling,
     parse_reply,
 )
@@ -309,6 +311,11 @@ def test_left_out_or_null_parts_are_absent() -> None:
         {"completion_tokens_details": 0},
         {"completion_tokens_details": "many"},
         {"completion_tokens_details": {"reasoning_tokens": "many"}},
+        # too large for a float, or for the budget's books: malformed, never an error
+        {"prompt_tokens": 10**400},
+        {"prompt_tokens": MAX_TOKEN_COUNT + 1},
+        {"completion_tokens": 1e300},
+        {"completion_tokens": 1.5},
     ],
 )
 async def test_malformed_usage_keeps_the_answer(usage: Any) -> None:
@@ -317,7 +324,7 @@ async def test_malformed_usage_keeps_the_answer(usage: Any) -> None:
     reply = parse_reply(data, latency_ms=1)
     assert reply.content == "ok"
     assert (reply.prompt_tokens, reply.completion_tokens, reply.reasoning_tokens) == (0, 0, 0)
-    assert reply.cost_usd is None
+    assert reply.cost_usd is None and not reply.usage_valid
     # ... and no second, paid call goes to the fallback model.
     asked: list[str] = []
 
@@ -330,10 +337,33 @@ async def test_malformed_usage_keeps_the_answer(usage: Any) -> None:
     assert asked == ["main/m"]
 
 
-def test_good_usage_parts_survive_a_broken_neighbour() -> None:
-    usage = {"prompt_tokens": 900, "completion_tokens": 512, "completion_tokens_details": 0}
+def test_a_tool_call_comes_through_next_to_broken_usage() -> None:
+    call = {"id": "call_7", "function": {"name": "hold", "arguments": '{"s": 30}'}}
+    data = {"choices": [{"message": {"tool_calls": [call]}}], "usage": {"prompt_tokens": 10**400}}
+    reply = parse_reply(data, latency_ms=1)
+    assert reply.tool_calls == [RawToolCall(id="call_7", name="hold", arguments_json='{"s": 30}')]
+    assert not reply.usage_valid
+
+
+def test_well_formed_or_left_out_usage_is_valid() -> None:
+    usage = {"prompt_tokens": MAX_TOKEN_COUNT, "completion_tokens": 512.0, "cost": 0.01}
     reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
-    assert (reply.prompt_tokens, reply.completion_tokens, reply.reasoning_tokens) == (900, 512, 0)
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cost_usd) == (
+        MAX_TOKEN_COUNT,
+        512,
+        0.01,
+    )
+    assert reply.usage_valid
+    bare = parse_reply({"choices": [{"message": {"content": "ok"}}]}, latency_ms=1)
+    assert bare.usage_valid and bare.prompt_tokens == 0
+
+
+def test_the_token_limit_is_the_budgets() -> None:
+    from sd_schemas.cloud_budget import BudgetCommit
+
+    fields = BudgetCommit.model_json_schema()["properties"]
+    assert fields["prompt_tokens"]["maximum"] == MAX_TOKEN_COUNT
+    assert fields["completion_tokens"]["maximum"] == MAX_TOKEN_COUNT
 
 
 def test_the_defaults_are_a_flights() -> None:

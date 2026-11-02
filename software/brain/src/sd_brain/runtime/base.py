@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -78,6 +77,9 @@ class ModelReply(BaseModel):
     model_id: str | None = None
     cost_usd: float | None = None  # the provider's own price for the call (OpenRouter usage)
     cost_sek: float | None = None  # what the ground's cloud budget booked for the call
+    # False when the answer's usage was malformed: its counts read 0 and the cloud
+    # budget books the call at its estimate, so a broken count never makes a call free.
+    usage_valid: bool = True
 
 
 class ModelRuntime(Protocol):
@@ -115,7 +117,9 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
                     arguments_json=args if isinstance(args, str) else _dumps(args or {}),
                 )
             )
-        prompt_tokens, completion_tokens, reasoning_tokens, cost_usd = _usage(data.get("usage"))
+        prompt_tokens, completion_tokens, reasoning_tokens, cost_usd, usage_valid = _usage(
+            data.get("usage")
+        )
         return ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
@@ -126,6 +130,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             latency_ms=latency_ms,
             model_id=data.get("model"),
             cost_usd=cost_usd,
+            usage_valid=usage_valid,
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")
@@ -133,31 +138,52 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
         raise err from None
 
 
-def _usage(value: Any) -> tuple[int, int, int, float | None]:
-    """The token counts and price of a call: (prompt, completion, reasoning, cost).
+# The most tokens one call may state: what the ground's cloud budget books at most
+# (``BudgetCommit``); a larger count is malformed usage.
+MAX_TOKEN_COUNT = 10_000_000
 
-    Usage is metadata only. A malformed part drops just that number (0, or no price) and
-    keeps the answer: a broken count must not make a good answer a parse error and pay
-    for a second call to the fallback model.
+
+def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
+    """The token counts and price of a call: (prompt, completion, reasoning, cost, valid).
+
+    Usage is metadata only. A malformed part (also a count that is no finite whole
+    number from 0 to ``MAX_TOKEN_COUNT``) keeps the answer: its counts read 0 and
+    ``valid`` is False, so the cloud budget books the call at its estimate. A broken
+    count must neither make a good answer a parse error (a second, paid call to the
+    fallback model) nor book the call as free. A left-out part is no error: it reads 0.
     """
-    usage = value if isinstance(value, Mapping) else {}
-    details = usage.get("completion_tokens_details")
-    details = details if isinstance(details, Mapping) else {}
-    cost = usage.get("cost")
-    return (
-        _count(usage.get("prompt_tokens")),
-        _count(usage.get("completion_tokens")),
-        _count(details.get("reasoning_tokens")),
-        float(cost) if isinstance(cost, int | float) and not isinstance(cost, bool) else None,
+    if value is None:
+        return 0, 0, 0, None, True
+    if not isinstance(value, Mapping):
+        return 0, 0, 0, None, False
+    details = value.get("completion_tokens_details")
+    if details is not None and not isinstance(details, Mapping):
+        return 0, 0, 0, None, False
+    counts = (
+        _count(value.get("prompt_tokens")),
+        _count(value.get("completion_tokens")),
+        _count((details or {}).get("reasoning_tokens")),
     )
+    if None in counts:
+        return 0, 0, 0, None, False
+    prompt, completion, reasoning = (c or 0 for c in counts)
+    cost = value.get("cost")
+    price = float(cost) if isinstance(cost, int | float) and not isinstance(cost, bool) else None
+    return prompt, completion, reasoning, price, True
 
 
-def _count(value: Any) -> int:
-    """A token count; 0 when left out or not a finite, non-negative number."""
+def _count(value: Any) -> int | None:
+    """A token count: 0 when left out, None (malformed) when it is no finite whole number
+    from 0 to ``MAX_TOKEN_COUNT``. Compared as it came, never through a float, so a count
+    too large for one is malformed too, not an OverflowError."""
+    if value is None:
+        return 0
     if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0
-    if not math.isfinite(value) or value < 0:
-        return 0
+        return None
+    if isinstance(value, float) and not value.is_integer():  # also NaN and infinity
+        return None
+    if not 0 <= value <= MAX_TOKEN_COUNT:
+        return None
     return int(value)
 
 
