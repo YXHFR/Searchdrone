@@ -9,7 +9,7 @@ from typing import Any
 
 from sd_ground.mav.thread import MavSnapshot
 from sd_ground.services.clearance import ActiveClearance
-from sd_ground.services.wind import CAPACITY_MAH
+from sd_ground.services.wind import BatteryDrain
 from sd_safety.constants import AIRBORNE_MIN_ALT_M
 from sd_safety.targets import distance_m
 from sd_schemas.api import Annotation, Approval, Charter, Command, Event, Mission
@@ -18,7 +18,7 @@ from sd_schemas.commander import MapPin, Situation, VehicleSummary
 from sd_schemas.link import StateSnapshot
 from sd_schemas.mission import OperatorLatch
 
-__all__ = ["battery_to_reserve_s", "build_situation"]
+__all__ = ["battery_to_reserve_s", "build_situation", "home_limit_pct"]
 
 _MIN_SATS = 8
 # Below this the measured current is no flight's (on the ground, or a sensor reading
@@ -27,20 +27,27 @@ _MIN_FLIGHT_CURRENT_A = 1.0
 
 
 def battery_to_reserve_s(
-    battery_pct: float | None, rtl_pct: float | None, current_a: float | None
+    battery_pct: float | None, *, rtl_pct: float, drain: BatteryDrain | None
 ) -> int | None:
     """About how many seconds until the battery is at ``rtl_pct`` (the home limit), at
-    the current the drone draws now: the charge above the limit (of the pack's
-    ``BATT_CAPACITY``) divided by that current. None without a level, a limit or a flight's
-    current. An estimate for the AI's picture only; the battery guard reads the level."""
-    if battery_pct is None or rtl_pct is None or current_a is None:
+    the current the drone has drawn lately: the charge above the limit (of the pack's
+    capacity) divided by that current. None without a level or a flight's current. An
+    estimate for the AI's picture only; the battery guard reads the level."""
+    if battery_pct is None or drain is None:
         return None
-    if not all(map(math.isfinite, (battery_pct, rtl_pct, current_a))):
+    current, capacity = drain.current_a, drain.capacity_mah
+    if not all(map(math.isfinite, (battery_pct, rtl_pct, current, capacity))):
         return None
-    if current_a < _MIN_FLIGHT_CURRENT_A:
+    if current < _MIN_FLIGHT_CURRENT_A or capacity <= 0.0:
         return None
-    left_mah = max(battery_pct - rtl_pct, 0.0) / 100.0 * CAPACITY_MAH
-    return round(left_mah * 3.6 / current_a)  # 1 mAh at 1 A lasts 3.6 s
+    left_mah = max(battery_pct - rtl_pct, 0.0) / 100.0 * capacity
+    return round(left_mah * 3.6 / current)  # 1 mAh at 1 A lasts 3.6 s
+
+
+def home_limit_pct(limit_pct: float, charter_pct: float | None) -> float:
+    """The level the drone flies home at: the charter's, never below the mission limit
+    (as the gate's ``rtl_pct`` in ``sd_safety.rules``)."""
+    return limit_pct if charter_pct is None else max(charter_pct, limit_pct)
 
 
 def _vehicle(
@@ -48,7 +55,9 @@ def _vehicle(
     snapshot: StateSnapshot | None,
     sdlink_up: bool,
     pilot: LatLon | None,
-    rtl_pct: float | None = None,
+    *,
+    rtl_pct: float,
+    drain: BatteryDrain | None = None,
 ) -> VehicleSummary:
     connected = mav is not None and mav.connected
     t = None if mav is None else mav.telemetry
@@ -76,7 +85,7 @@ def _vehicle(
         groundspeed_ms=None if t is None or not connected else t.groundspeed_ms,
         battery_pct=None if t is None else t.battery_pct,
         battery_to_reserve_s=(
-            battery_to_reserve_s(t.battery_pct, rtl_pct, t.battery_current_a)
+            battery_to_reserve_s(t.battery_pct, rtl_pct=rtl_pct, drain=drain)
             if t is not None and connected and airborne
             else None
         ),
@@ -120,6 +129,7 @@ def build_situation(
     mav: MavSnapshot | None,
     snapshot: StateSnapshot | None,
     sdlink_up: bool,
+    drain: BatteryDrain | None = None,
     active_command: Command | None,
     sectors: list[dict[str, Any]],
     annotations: list[Annotation],
@@ -160,7 +170,16 @@ def build_situation(
         takeoff_clearance_valid_until=valid_until,
         brain_may_takeoff=installed and verified and valid_until is not None,
         override=latch,
-        vehicle=_vehicle(mav, snapshot, sdlink_up, pilot, mission.limits.battery_rtl_pct),
+        vehicle=_vehicle(
+            mav,
+            snapshot,
+            sdlink_up,
+            pilot,
+            rtl_pct=home_limit_pct(
+                mission.limits.battery_rtl_pct, None if body is None else body.battery_rtl_pct
+            ),
+            drain=drain,
+        ),
         active_command=active_command,
         sectors=[
             {

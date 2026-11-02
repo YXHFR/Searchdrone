@@ -87,5 +87,5 @@ def test_the_gate_sees_a_waiting_takeover_as_manual_control(
 def test_the_ai_sees_a_waiting_takeover_as_manual_control(
     manual: bool, pending: bool, by_hand: bool
 ) -> None:
-    vehicle = _vehicle(_snap(manual=manual, pending=pending), None, True, None)
+    vehicle = _vehicle(_snap(manual=manual, pending=pending), None, True, None, rtl_pct=30.0)
     assert vehicle.manual_control is by_hand

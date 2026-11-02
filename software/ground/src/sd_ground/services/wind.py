@@ -73,6 +73,7 @@ __all__ = [
     "WIND_FRESH_S",
     "WIND_PARAMS",
     "WIND_WINDOW_S",
+    "BatteryDrain",
     "FcParams",
     "WindStage",
     "WindWatch",
@@ -266,6 +267,16 @@ class _Tilt:
 
 
 @dataclass(frozen=True, slots=True)
+class BatteryDrain:
+    """What the battery is drawing in flight: the mean current over the last tilt
+    window and the pack's capacity (``FcParams.capacity_mah``: read from the flight
+    controller, else the constant)."""
+
+    current_a: float
+    capacity_mah: float
+
+
+@dataclass(frozen=True, slots=True)
 class _Wind:
     mono_ms: int
     speed_ms: float
@@ -370,6 +381,18 @@ class WindWatch:
             self._tilt.popleft()
         while self._wind and now_mono_ms - self._wind[0].mono_ms > WIND_WINDOW_S * 1000:
             self._wind.popleft()
+
+    def drain(self, now_mono_ms: int) -> BatteryDrain | None:
+        """The mean measured current of the samples of the last ``TILT_WINDOW_S`` (so a
+        moment of descent or low load does not stand for the flight), with the capacity;
+        None without a current in that window (on the ground, or no measured current)."""
+        since = now_mono_ms - TILT_WINDOW_S * 1000
+        currents = [
+            s.current_a for s in self._tilt if s.current_a is not None and s.mono_ms >= since
+        ]
+        if not currents:
+            return None
+        return BatteryDrain(sum(currents) / len(currents), self.params.capacity_mah)
 
     def _full_tilt_window(self) -> bool:
         return bool(self._tilt) and (

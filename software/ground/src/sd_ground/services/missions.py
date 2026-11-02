@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from sd_ground.link import GroundLink
     from sd_ground.services.link_loss import LinkWatch
     from sd_ground.services.vehicle_actions import VehicleActions
+    from sd_ground.services.wind import BatteryDrain
     from sd_link.session import Expired, Inbound
 
 __all__ = [
@@ -152,6 +153,8 @@ class MavCaller(Protocol):
     def start_tlog(self, path: Path) -> bool: ...
 
     def stop_tlog(self) -> None: ...
+
+    def battery_drain(self, vehicle_id: str) -> BatteryDrain | None: ...
 
     async def call[T](
         self, work: Callable[[Vehicle], Awaitable[T]], timeout_s: float = 30.0
@@ -1000,6 +1003,7 @@ class MissionFlow:
             now_ms=self.now_ms(),
             latch=self.latch(mission.vehicle_id),
             mav=mav,
+            drain=None if self.mav is None else self.mav.battery_drain(mission.vehicle_id),
             snapshot=snapshot,
             sdlink_up=self.sdlink_up(mission.vehicle_id),
             active_command=await commands_service.active_command(self, mission),

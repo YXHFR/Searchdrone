@@ -11,10 +11,12 @@ All notable changes to this project are listed here. The format follows
 - The ground station now fills the AI's "till hemgräns" minutes
   (`battery_to_reserve_s`), which it sent as empty before, so the commander's
   search-again battery check works in real flights. The estimate is the charge above
-  the mission's home limit (of the pack's `BATT_CAPACITY`) divided by the current the
-  flight controller measures now. It stays empty on the ground and without a battery
-  level, a measured current or a link. Only the AI's picture uses it: the battery guard
-  still reads the level.
+  the level the drone flies home at (the charter's, never below the mission limit, as
+  the gate counts it) divided by the mean current of the wind check's last 10 s, using
+  the `BATT_CAPACITY` the connection read (the constant until then). It stays empty on
+  the ground and without a battery level, a fresh measured current or a link. The
+  brain's "till hemgräns X %" names the same level. Only the AI's picture uses it: the
+  battery guard still reads the level.
 - Two training-only sets of real pictures for the person detector (the owner's
   decision of 2026-11-01): KIOS Aerial Dataset for Car and Person Detection (University
   of Cyprus, Zenodo 21216709, CC BY 4.0; people on a parking lot, every tenth video
