@@ -4,6 +4,7 @@
 // made no request to another host, read no geolocation, sent the CSRF header on every
 // changing request, never sent Idempotency-Key, and called no path the fake does not know.
 import { existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   test as base,
@@ -821,7 +822,7 @@ export class FakeGround {
 export const test = base.extend<{ ground: FakeGround }>({
   ground: async ({ page, baseURL }, use, testInfo) => {
     // Names the test in the preview server's log if one of its requests escapes the routes.
-    const where = `${testInfo.project.name} ${testInfo.file.split("/").pop()}:${testInfo.line}`;
+    const where = `${testInfo.project.name} ${basename(testInfo.file)}:${testInfo.line}`;
     await page.setExtraHTTPHeaders({ "x-sd-test": where });
     const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
     await g.install();

@@ -47,13 +47,14 @@ function testBuildMarker(enabled: boolean): Plugin {
 const UNROUTED_LOG = process.env.SD_E2E_UNROUTED_LOG;
 const GROUND_PATH = /^\/(api|ws|tiles)(\/|\?|$)/;
 
-function unroutedGuard(logFile: string | undefined): Plugin {
+function unroutedGuard(logFile: string): Plugin {
   return {
     name: "sd-unrouted-guard",
     configurePreviewServer(server) {
-      if (!logFile) return;
       const record = (req: IncomingMessage): void => {
-        const line = `${req.method} ${req.url} (${req.headers["x-sd-test"] ?? "no test header"})`;
+        const h = req.headers;
+        const from = `${h["x-sd-test"] ?? "no test header"}; referer ${h.referer ?? "-"}; ${h["sec-fetch-dest"] ?? "-"}/${h["sec-fetch-mode"] ?? "-"}`;
+        const line = `${new Date().toISOString()} ${req.method} ${req.url} (${from})`;
         appendFileSync(logFile, `${line}\n`);
         server.config.logger.error(`[sd] request escaped the fake ground: ${line}`);
       };
@@ -76,7 +77,12 @@ function unroutedGuard(logFile: string | undefined): Plugin {
 export default defineConfig(({ mode }) => {
   const testBuild = mode === "test";
   return {
-    plugins: [react(), testBuildMarker(testBuild), unroutedGuard(UNROUTED_LOG)],
+    // Only under the suite: any configurePreviewServer hook turns off vite's "did you build?" check.
+    plugins: [
+      react(),
+      testBuildMarker(testBuild),
+      ...(UNROUTED_LOG ? [unroutedGuard(UNROUTED_LOG)] : []),
+    ],
     define: {
       "import.meta.env.VITE_SD_TEST_HOOKS": JSON.stringify(testBuild ? "1" : "0"),
     },
