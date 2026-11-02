@@ -11,6 +11,8 @@ video = "camera"          # "camera" (gz only) | "test" | "off"
 #                             # and the test suites use the flat "sd_lake_forest" at CMAC
 objects = ""              # objects with facit (gz only), a YAML file in the repo, e.g. simulation/scenarios/objects/red_block.yaml
 vehicle = "sd_quad14"     # "sd_quad14" | "sd_fpv7" (alias fpv7: the 7-inch from hardware/cad/fpv7) | "stock" (ArduPilot's own quad / iris)
+tele = false              # a second, 20-degree tele stills camera beside the first (gz, sd_quad14)
+# tele_hfov_deg = 20.0    # the tele lens's field of view; tele_width / tele_height: its picture (1128 x 846)
 fixture = "simulation/scenarios/demo_fixture.yaml"
 speedup = 1
 wind_mps = 0

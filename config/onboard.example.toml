@@ -28,3 +28,10 @@ height_px = 720
 hfov_deg = 66.0
 period_s = 0.5                                    # how often the folder is looked at
 keep_stills = false                               # save stills with detections in state_dir
+
+[perception.tele]                                 # a second stills camera beside the first, same way
+enabled = false                                   # Raspberry Pi HQ Camera + M12 tele lens (about 20 deg)
+still_dir = ""                                    # its own folder, written like still_dir
+width_px = 4056
+height_px = 3040
+hfov_deg = 20.0                                   # replace with the measured field of view

@@ -8,7 +8,10 @@ height in the charter's band (or under the order's ``alt_m``) gets within 28 deg
 
 The drone flies there in GUIDED at most ``INSPECT_SPEED_MS`` (``goto``), waits
 ``SETTLE_S``, takes ``INSPECT_STILLS`` stills ``INSPECT_STILL_INTERVAL_S`` apart, and
-hovers (HOLD). An interrupted inspection is not resumed.
+hovers (HOLD). An interrupted inspection is not resumed. The stills come from the main
+camera even on a drone with the tele camera: the target is 24-28 degrees from straight
+down here, outside the fixed tele camera's view (about +-10 degrees); revisit with a
+gimbal.
 
 A drone inside cylinders first leaves them along a straight leg that goes deeper into
 none and enters no other (``sd_safety.keepout.reroute``), ``EXIT_CLEAR_M`` past the last

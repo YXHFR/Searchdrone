@@ -142,6 +142,37 @@ uploads a round flown over the photo: its facit says so. With an R2 key such a r
 from `build/simfarm/rounds/` to `build/simfarm/draped/`, where it stays (not retried, not
 in the rounds' disk budget) until you remove it.
 
+## Tele camera
+
+`tele=true` (or `SD_SIM__TELE=1`) puts a second stills camera on `sd_quad14`, beside the
+main one and looking straight down like it: a Raspberry Pi HQ Camera (Sony IMX477,
+4056 × 3040 px, 1.55 µm pixels) behind an M12 tele lens of about 20° horizontally. It is
+off by default. The simulator renders it at 1128 × 846, the main camera's scale (1280 of
+the Camera Module 3's 4608 px), so the two keep their real ratio of pixels per degree:
+from the same height a person is about three times as many pixels across in the tele
+still (at 40 m, about 40 px against 12 px for a person 0.5 m across seen from above).
+`tele_hfov_deg=` sets the lens's field of view (once it is measured), and `tele_width=`
+and `tele_height=` the picture (`4056`, `3040` for the full sensor, slow to render).
+
+The tele camera takes pictures only in a run that has the stills camera: a search
+scenario, or `just sim detector=model` in the flat world. It needs `physics=gz` and
+`vehicle=sd_quad14`. Its pictures go to `runs/<run>/stills_tele/` through their own
+`gz_stills capture` process (topics `/sd_i<N>/tele` and `/sd_i<N>/tele_boxes`), and
+`sd-onboard` gets the folder as `[perception.tele]`: each round its perception task
+takes the newest main still and the newest tele still, stamps each with its time as it
+takes it, then runs the detector on both and sends a report for each, placed on the
+ground with that camera's own view. The two cameras are not triggered together, so the
+stills of a round are close in time, not simultaneous. Tele stills count as searched
+ground on the probability map, over their narrower footprint and with their higher
+detail; a main and a tele still stamped within 0.3 s of each other, with the tele view
+inside the main one, count as one look, each camera with its own chance of seeing a
+person. Further apart they count as two looks. `inspect_detection` and `capture_stills` take their
+stills with the main camera, also with the tele camera on: an inspection hovers so that
+the target is 24–28° from straight down, and the fixed tele camera sees only about ±10°
+across and ±7.5° along, so its stills would not show the target. Revisit with a gimbal.
+The sim farm's archive keeps the main camera's pictures only. The flight itself does not change:
+the same height, speed and search pattern.
+
 ## Parts
 
 - `launch` builds the SITL command line (`sitl.build_sitl_argv`), starts each process with a minimal environment and waits for it to be healthy. Process ids go to `build/sim/i<N>/pids.json`, logs to `runs/<run>/logs/`.
