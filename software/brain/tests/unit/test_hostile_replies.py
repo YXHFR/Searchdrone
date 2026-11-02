@@ -13,8 +13,9 @@ from brain_helpers import REG, make_loop
 from sd_brain.backends import LlmCommander
 from sd_brain.config import BehaviourConfig
 from sd_brain.context import ContextBuilder
+from sd_brain.ground_client import GroundError
 from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling
-from sd_brain.runtime.replay import ReplayRuntime
+from sd_brain.runtime.replay import ReplayExhaustedError, ReplayRuntime
 from sd_brain.tools import PROFILE_TOOL
 from sd_brain.turn import TurnDiagnostics, TurnInput, TurnOutput
 
@@ -154,18 +155,54 @@ async def test_estimate_with_params_that_are_no_object_is_a_tool_error() -> None
     assert fg.posted[-1].text == ANSWER
 
 
-class _OutOfAnswers:
+class _Raising:
     name = "cloud"
 
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+        self.turns = 0
+
     async def decide(self, turn: TurnInput, tools: Any) -> TurnOutput:
-        raise AssertionError("replay ran out of answers")
+        self.turns += 1
+        if self.turns == 1:
+            raise self.exc
+        return TurnOutput(diagnostics=TurnDiagnostics(backend="llm"))
 
 
 async def test_a_harness_out_of_answers_still_fails_loudly() -> None:
-    loop, fg, _ = make_loop(_OutOfAnswers())
+    loop, fg, _ = make_loop(_Raising(ReplayExhaustedError("replay ran out of answers")))
     loop.handle_event(fg.operator_message("Flyg till P1"))
-    with pytest.raises(AssertionError, match="out of answers"):
+    with pytest.raises(ReplayExhaustedError, match="out of answers"):
         await loop.settle()
+
+
+async def test_an_assertion_from_a_dependency_does_not_end_the_loop() -> None:
+    backend = _Raising(AssertionError("a library checked itself"))
+    loop, fg, _ = make_loop(backend)
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    assert fg.decisions[-1].error == "parse_error"
+    loop.handle_event(fg.operator_message("Hallå?"))
+    await loop.settle()
+    assert backend.turns == 2
+
+
+async def test_a_refused_token_in_decide_ends_the_loop() -> None:
+    loop, fg, _ = make_loop(_Raising(GroundError("token refused", 401)))
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    with pytest.raises(GroundError):
+        await loop.settle()
+
+
+async def test_a_log_line_from_a_failed_turn_cannot_be_forged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    forged = ValueError("bad input\nERROR sd_brain.loop forged line")
+    loop, fg, _ = make_loop(_Raising(forged))
+    loop.handle_event(fg.operator_message("Flyg till P1"))
+    await loop.settle()
+    failed = [r.getMessage() for r in caplog.records if "backend_decide_failed" in r.getMessage()]
+    assert failed and all("\n" not in m for m in failed)
 
 
 async def test_a_turn_that_fails_after_the_answer_does_not_end_the_loop(
