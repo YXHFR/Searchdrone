@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { appendFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
@@ -40,10 +41,42 @@ function testBuildMarker(enabled: boolean): Plugin {
   };
 }
 
+// The mock e2e suite (playwright.config.ts) sets this: the fake ground answers /api, /ws and
+// /tiles inside the page, and nothing runs on :8080. A request that escapes it is answered
+// 502, logged and written here, and the suite's teardown fails on it (e2e/helpers/unrouted.ts).
+const UNROUTED_LOG = process.env.SD_E2E_UNROUTED_LOG;
+const GROUND_PATH = /^\/(api|ws|tiles)(\/|\?|$)/;
+
+function unroutedGuard(logFile: string | undefined): Plugin {
+  return {
+    name: "sd-unrouted-guard",
+    configurePreviewServer(server) {
+      if (!logFile) return;
+      const record = (req: IncomingMessage): void => {
+        const line = `${req.method} ${req.url} (${req.headers["x-sd-test"] ?? "no test header"})`;
+        appendFileSync(logFile, `${line}\n`);
+        server.config.logger.error(`[sd] request escaped the fake ground: ${line}`);
+      };
+      server.middlewares.use((req, res, next) => {
+        if (!GROUND_PATH.test(req.url ?? "")) return next();
+        record(req);
+        res.statusCode = 502;
+        res.setHeader("x-sd-unrouted", "1");
+        res.end();
+      });
+      server.httpServer.on("upgrade", (req, socket) => {
+        if (!GROUND_PATH.test(req.url ?? "")) return;
+        record(req);
+        socket.destroy();
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const testBuild = mode === "test";
   return {
-    plugins: [react(), testBuildMarker(testBuild)],
+    plugins: [react(), testBuildMarker(testBuild), unroutedGuard(UNROUTED_LOG)],
     define: {
       "import.meta.env.VITE_SD_TEST_HOOKS": JSON.stringify(testBuild ? "1" : "0"),
     },
@@ -53,7 +86,14 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: { "/api": proxy, "/ws": { ...proxy, ws: true }, "/tiles": proxy },
     },
-    preview: { host: "127.0.0.1", port: 4173, strictPort: true, headers: securityHeaders },
+    preview: {
+      host: "127.0.0.1",
+      port: 4173,
+      strictPort: true,
+      headers: securityHeaders,
+      // Without this the preview inherits server.proxy and forwards to :8080.
+      ...(UNROUTED_LOG ? { proxy: {} } : {}),
+    },
     // MapLibre (~1 MB) is its own lazy chunk; the main bundle limit is checked by check-bundle-size.
     // MapLibre's worker is an ES module; it is bundled as a module worker (src/views/map).
     worker: { format: "es" },

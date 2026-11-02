@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { UNROUTED_LOG } from "./e2e/helpers/unrouted";
 
 // Chromium has no software WebGL fallback by itself on GPU-less CI machines.
 const SWS = { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] };
@@ -15,10 +16,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // Fails the run if any request escaped the fake ground (see vite.config.ts).
+  globalSetup: "./e2e/helpers/unrouted.ts",
   webServer: {
     command: "pnpm exec vite preview --outDir dist-test --port 4173 --strictPort --host 127.0.0.1",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
+    env: { SD_E2E_UNROUTED_LOG: UNROUTED_LOG },
   },
   use: { baseURL: "http://127.0.0.1:4173", trace: "retain-on-failure" },
   projects: [

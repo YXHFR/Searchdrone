@@ -95,6 +95,8 @@ export class FakeGround {
   readonly requests: SeenRequest[] = [];
   readonly external: string[] = [];
   readonly unknown: string[] = [];
+  /** Requests that got past the routes to the preview server (answered 502 there). */
+  readonly escaped: string[] = [];
   readonly cspErrors: string[] = [];
   /** Every /tiles/ request and its status (glyph and tile failures make a test fail). */
   readonly tiles: { path: string; status: number }[] = [];
@@ -180,6 +182,10 @@ export class FakeGround {
         },
       });
     });
+    page.on("response", (res) => {
+      if (res.headers()["x-sd-unrouted"])
+        this.escaped.push(`${res.request().method()} ${res.url()}`);
+    });
     page.on("console", (msg) => {
       if (/Content[- ]Security[- ]Policy/i.test(msg.text())) this.cspErrors.push(msg.text());
     });
@@ -202,6 +208,13 @@ export class FakeGround {
         return route.abort();
       },
     );
+    // Any other /api path is not the ground's API: recorded and answered 404, never sent on.
+    // (Registered first, so the routes below take precedence.)
+    await page.route(`${this.origin}/api/**`, (route) => {
+      const req = route.request();
+      this.unknown.push(`${req.method()} ${new URL(req.url()).pathname}`);
+      return route.fulfill({ status: 404, json: { code: "NOT_FOUND" } });
+    });
     await page.route(`${this.origin}/api/v1/**`, (route) => this.handle(route));
     await page.route(`${this.origin}/tiles/**`, (route) => this.handleTiles(route));
     const host = new URL(this.origin).host;
@@ -373,6 +386,7 @@ export class FakeGround {
   async verify(): Promise<void> {
     expect(this.external, "requests to other hosts").toEqual([]);
     expect(this.unknown, "paths the fake ground does not know").toEqual([]);
+    expect(this.escaped, "requests that escaped the fake ground's routes").toEqual([]);
     const cspDetails = this.cspErrors.length
       ? await this.page
           .evaluate(() => (window as unknown as { __cspDetails?: string[] }).__cspDetails ?? [])
@@ -805,7 +819,10 @@ export class FakeGround {
 }
 
 export const test = base.extend<{ ground: FakeGround }>({
-  ground: async ({ page, baseURL }, use) => {
+  ground: async ({ page, baseURL }, use, testInfo) => {
+    // Names the test in the preview server's log if one of its requests escapes the routes.
+    const where = `${testInfo.project.name} ${testInfo.file.split("/").pop()}:${testInfo.line}`;
+    await page.setExtraHTTPHeaders({ "x-sd-test": where });
     const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
     await g.install();
     await use(g);
