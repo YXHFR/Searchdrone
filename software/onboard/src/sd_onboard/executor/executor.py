@@ -16,6 +16,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
@@ -188,6 +189,10 @@ _PREFLIGHT_EVERY_MS: Final = 1000
 _ALT_GOTO_SPEED_MS: Final = 3.0
 _ALT_GOTO_BELOW_M: Final = 5.0
 _RTL_RETRY_MS: Final = 3000
+# A cylinder lifted (a candidate rejected): the search drops a way around it only when
+# that is at least this much shorter, so a cylinder handed from the drone to the ground
+# (the same person, another id) does not stop the search for nothing.
+_STRAIGHTEN_GAIN_M: Final = 30.0
 _LOOP_ALIVE_MS: Final = 1500  # our HEARTBEAT stops when the tick has not run for this long
 _MIN_GPS_SATS: Final = 8
 _CRITICAL: Final = frozenset(
@@ -1681,9 +1686,10 @@ class Executor:
         inside = {
             k.keepout_id for k, c in zip(keepouts, cyl, strict=True) if over_a_person(here, [c])
         }
-        new = {k.keepout_id for k in keepouts} - self._keepouts_seen
+        ids = {k.keepout_id for k in keepouts}
+        new, lifted = ids - self._keepouts_seen, self._keepouts_seen - ids
         self._keepouts_through = inside & (self._keepouts_through | new)
-        self._keepouts_seen = {k.keepout_id for k in keepouts}
+        self._keepouts_seen = ids
         if isinstance(active.handler, Replans):
             self._replan_reflex(active, active.handler, here, rest, cyl, v.groundspeed_ms)
             return
@@ -1691,6 +1697,10 @@ class Executor:
         if active.skill in REROUTABLE and run is not None:
             entry = entry_m([here, *rest], cyl)
             if entry is None:
+                if lifted and run.detours():
+                    # Around a cylinder that is gone: the rest from the pattern, around
+                    # those still in force, if shorter; else flown on as it is (clear).
+                    self._reroute(active, run, charter, stop_first=False, here=here)
                 return
             # A cylinder ahead, closer than the drone can turn away from at this speed: it
             # stops first, and the way around is planned again from where it stopped. Inside
@@ -1935,12 +1945,21 @@ class Executor:
         self._apply_limit(action)
 
     def _reroute(
-        self, active: _Active, run: SurveyRun, charter: MissionCharter, *, stop_first: bool
+        self,
+        active: _Active,
+        run: SurveyRun,
+        charter: MissionCharter,
+        *,
+        stop_first: bool,
+        here: Xy | None = None,
     ) -> bool:
-        """The rest of a search around the cylinders, as a new mission for the same order.
-        With ``stop_first`` the drone stops before the rest is planned again from there
-        (``SurveyHandler.rerouted``)."""
-        rest = run.waypoints[run.next_index :]
+        """The rest of a search around the cylinders, as a new mission for the same order:
+        the pattern's rest (``SurveyRun.pattern_rest``), not the last way around, so a way
+        around a cylinder that is gone is not flown on. With ``stop_first`` the drone stops
+        before the rest is planned again from there (``SurveyHandler.rerouted``). With
+        ``here`` (a cylinder lifted, the route clear) only a rest at least
+        ``_STRAIGHTEN_GAIN_M`` shorter than the waypoints left from ``here`` replaces them."""
+        rest = run.pattern_rest()
         new = SurveyRun(
             active.command_id, list(rest), run.alt_m, run.speed_ms, target_state=run.target_state
         )
@@ -1949,14 +1968,21 @@ class Executor:
             plan = new.plan(ctx)
         except PlanError:
             return False
-        if self._route_refusal(active, ctx, plan, refused="keepout_reroute_refused"):
+        straighten = here is not None
+        if straighten:
+            old = [here, *(ctx.plane.point(p) for p in run.waypoints[run.next_index :])]
+            route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
+            if _length(route) > _length(old) - _STRAIGHTEN_GAIN_M:
+                return False
+        refused = "keepout_straighten_refused" if straighten else "keepout_reroute_refused"
+        if self._route_refusal(active, ctx, plan, refused=refused):
             return False
         handler = SurveyHandler.rerouted(
             new, charter.home, stop_first=(list(rest), ctx) if stop_first else None
         )
         self._drop_active(stage=None, save_resume=False)
         self.emit(
-            "keepout_reroute",
+            "keepout_straighten" if straighten else "keepout_reroute",
             {
                 "command_id": str(active.command_id),
                 "skill": active.skill,
@@ -2552,3 +2578,7 @@ class Executor:
 
 def _utc(clock: Clock) -> str:
     return clock.utc_now().isoformat().replace("+00:00", "Z")
+
+
+def _length(route: list[Xy]) -> float:
+    return sum(math.dist(a, b) for a, b in pairwise(route))
