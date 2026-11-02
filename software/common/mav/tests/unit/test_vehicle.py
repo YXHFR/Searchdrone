@@ -457,6 +457,23 @@ def test_battery_current_and_wind_are_parsed() -> None:
     asyncio.run(run())
 
 
+def test_mission_current_with_and_without_total() -> None:
+    """``total`` (the items without home) tells the mission's end items apart; a flight
+    controller that sends 0 there gives None."""
+
+    async def run() -> None:
+        _, vehicle, _ = await _started()
+        vehicle._from_fc(mavlink.MAVLink_mission_current_message(14, 15), "MISSION_CURRENT")  # pyright: ignore[reportPrivateUsage]
+        t = vehicle.telemetry
+        assert (t.mission_seq_current, t.mission_total) == (14, 15)
+        vehicle._from_fc(mavlink.MAVLink_mission_current_message(3, 0), "MISSION_CURRENT")  # pyright: ignore[reportPrivateUsage]
+        t = vehicle.telemetry
+        assert (t.mission_seq_current, t.mission_total) == (3, None)
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_impossible_wind_is_ignored() -> None:
     async def run() -> None:
         clock, vehicle, _ = await _started()

@@ -33,6 +33,7 @@ export type AlertCode =
   | "KEEPOUTS_NOT_INSTALLED"
   | "KEEPOUTS_INSTALLED"
   | "KEEPOUT_HOLD"
+  | "MISSION_FALLBACK"
   | "GPS_WEAK"
   | "GPS_LOST"
   | "DEAD_RECKONING"

@@ -42,6 +42,7 @@ from sd_ground.mav import fence as mav_fence
 from sd_ground.mav.companion_watchdog import CompanionWatchdog, WatchInput
 from sd_ground.mav.gcs import OverrideAction, OverrideResult, guard_override, run_override
 from sd_ground.mav.gnss_watch import GnssWatch, alarm, text_alarm
+from sd_ground.mav.mission_end_watch import MissionEndWatch
 from sd_ground.services.latches import (
     BATTERY_LOW_SV,
     ENERGY_HOME_SV,
@@ -301,6 +302,7 @@ class GroundMav:
         self._rtl_pct = rtl_pct
         self.watchdog = CompanionWatchdog(clock.monotonic_ms())
         self.gnss = GnssWatch(self._on_event)
+        self.mission_end = MissionEndWatch(self._on_event)
         self._lock = threading.Lock()
         self._snap: MavSnapshot | None = None
         self._tracks = _Tracks()
@@ -585,6 +587,9 @@ class GroundMav:
         self._battery(snap)
         if snap.connected:
             self.gnss.tick(snap.telemetry, snap.now_mono_ms, in_flight=snap.in_flight)
+            self.mission_end.tick(
+                snap.telemetry, snap.fc_mode, snap.now_mono_ms, in_flight=snap.in_flight
+            )
         await self._send_sticks()
 
     def _landed(self) -> None:
@@ -598,6 +603,7 @@ class GroundMav:
             self._pending = None
         self._battery_low_since = None
         self.gnss.reset()
+        self.mission_end.reset()
         latch = self.latches.landed(self.vehicle_id)
         self._on_event(
             "vehicle.landed", "info", {"latch": latch.action if latch is not None else None}

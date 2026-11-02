@@ -141,6 +141,7 @@ GROUND_STREAMS: Final = frozenset(
         mavlink.MAVLINK_MSG_ID_HOME_POSITION,
         mavlink.MAVLINK_MSG_ID_RC_CHANNELS,  # the RC mode switch: a person took over
         mavlink.MAVLINK_MSG_ID_WIND,  # the EKF's wind estimate for the wind warning
+        mavlink.MAVLINK_MSG_ID_MISSION_CURRENT,  # the mission's built-in end is flying
     }
 )
 _REQUESTABLE: Final = frozenset(

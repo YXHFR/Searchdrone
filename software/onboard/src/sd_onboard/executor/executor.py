@@ -754,6 +754,16 @@ class Executor:
         exc = task.exception()
         if isinstance(exc, ControlNotAllowedError):
             self.active = None  # someone else steers; the takeover already answered the order
+            # Said all the same: should no takeover have come, the order ends here without
+            # any other trace while the flight controller flies on.
+            self.emit(
+                "order_write_refused",
+                {
+                    "skill": active.skill,
+                    "command_id": str(active.command_id),
+                    "reason": _refusal_reason(exc),
+                },
+            )
             return
         if exc is None:
             self._skill_done(active)

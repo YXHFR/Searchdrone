@@ -137,6 +137,8 @@ GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,
     mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
     mavlink.MAVLINK_MSG_ID_WIND: 1_000_000,  # a real estimate only with EK3_DRAG_* set
+    # The mission's built-in end flying without the onboard computer (mission_end_watch)
+    mavlink.MAVLINK_MSG_ID_MISSION_CURRENT: 1_000_000,
 }
 
 
@@ -247,6 +249,9 @@ class FcTelemetry:
     ekf_ok: bool = False
     home: LatLonAlt | None = None
     mission_seq_current: int | None = None
+    # MISSION_CURRENT.total: the mission's items without home, so the last item has
+    # ``seq == total``. None when the flight controller does not send it (or has none).
+    mission_total: int | None = None
     fc_firmware: str | None = None
     last_failsafe_signal: FailsafeSignal | None = None
     last_failsafe_mono_ms: int | None = None  # any failsafe signal, repeated ones too
@@ -979,7 +984,10 @@ class Vehicle:
                 if count >= _RC_MIN_CHANNELS and 800 <= throttle <= 2200:
                     t = replace(t, rc_mono_ms=now)
             case "MISSION_CURRENT":
-                t = replace(t, mission_seq_current=int(msg.seq))
+                total = int(getattr(msg, "total", 0) or 0)
+                t = replace(
+                    t, mission_seq_current=int(msg.seq), mission_total=total if total > 0 else None
+                )
             case "HOME_POSITION":
                 lat, lon = int(msg.latitude) / 1e7, int(msg.longitude) / 1e7
                 with contextlib.suppress(ValueError):
