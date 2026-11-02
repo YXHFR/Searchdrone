@@ -4,6 +4,7 @@ run      the farm loop (``just sim-farm``)
 status   what the farm is doing (``just sim-farm-status``)
 setup    fetch the person models into build/ (``just sim-farm-setup``)
 round    one round from ``spec=<folder>/spec.json`` (the loop runs this in its worktree)
+stills   the photo farm: pictures of people on a real site, no flight (``just sim-farm-stills``)
 """
 
 from __future__ import annotations
@@ -12,11 +13,11 @@ import sys
 from pathlib import Path
 
 from sd_sim import _args
-from sd_sim.farm import loop, people, status
+from sd_sim.farm import loop, people, status, stills
 from sd_sim.farm import round as farm_round
 from sd_sim.farm.gazebo import GazeboRunner
 
-USAGE = "användning: python -m sd_sim.farm run|status|setup|round [nyckel=värde ...]"
+USAGE = "användning: python -m sd_sim.farm run|status|setup|round|stills [nyckel=värde ...]"
 
 
 def main(argv: list[str]) -> int:
@@ -33,6 +34,8 @@ def main(argv: list[str]) -> int:
         fetched = people.fetch()
         print(f"personmodeller: {len(people.CATALOG)} på plats ({len(fetched)} nyhämtade)")  # noqa: T201 - command-line output
         return 0
+    if cmd == "stills":
+        return stills.main(rest)
     if cmd == "round":
         values = _args.parse(rest, ("spec",), "sd_sim.farm round")
         if "spec" not in values:

@@ -39,6 +39,10 @@ in one part, so no near-copy of a test picture is ever trained on.
 * ``simfarm``: the sim farm's rounds (``<round>/images/<stem>.png`` with
   ``<round>/labels/<stem>.txt``, YOLO class 0). The id is ``<round>/<stem>``, the
   sequence the round. Only for pre-training, never measured on.
+* ``simfarm_stills``: the photo farm's scenes (``just sim-farm-stills``:
+  ``<scene>/images/<stem>.jpg`` with ``<scene>/labels/<stem>.txt``, YOLO class 0). The
+  id is ``<scene>/<stem>``, the sequence the scene: its pictures are of the same people
+  in the same place, so a scene is never cut.
 
 Boxes are ``(x0, y0, x1, y1)`` in picture pixels; there is one class, person.
 """
@@ -336,12 +340,12 @@ def _seadronessee(names: list[str], read: Reader) -> list[Member]:
     return out
 
 
-def _simfarm(names: list[str]) -> list[Member]:
+def _simfarm(names: list[str], suffix: str = ".png") -> list[Member]:
     present = set(names)
     out: list[Member] = []
     for name in names:
         p = PurePosixPath(name)
-        if len(p.parts) != 3 or p.parts[1] != "images" or p.suffix.lower() != ".png":
+        if len(p.parts) != 3 or p.parts[1] != "images" or p.suffix.lower() != suffix:
             continue
         image_id = f"{p.parts[0]}/{p.stem}"
         label = f"{p.parts[0]}/labels/{p.stem}.txt"
@@ -357,6 +361,11 @@ LAYOUTS: dict[str, Layout] = {
     "wisard_vis": Layout("wisard_vis", _wisard, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
     "kios_yolo": Layout("kios_yolo", _kios, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
     "simfarm": Layout("simfarm", _simfarm, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
+    "simfarm_stills": Layout(
+        "simfarm_stills",
+        lambda names: _simfarm(names, ".jpg"),
+        lambda d, w, h: yolo_boxes(d, w, h, PERSON),
+    ),
     # class 0 is Human, 1 Car
     "kios_carperson": Layout(
         "kios_carperson",
@@ -382,6 +391,6 @@ def sequence_of(layout: str, image_id: str) -> str:
         if m is None or m["rec"] not in KIOS_SITES:
             raise ValueError(f"KIOS picture of an unknown recording: {image_id!r}")
         return KIOS_SITES[m["rec"]]
-    if layout in ("simfarm", "kios_carperson", "seadronessee_coco"):
+    if layout in ("simfarm", "simfarm_stills", "kios_carperson", "seadronessee_coco"):
         return image_id.split("/")[0]
     raise KeyError(layout)

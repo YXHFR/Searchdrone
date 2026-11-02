@@ -379,7 +379,8 @@ def index_local(ds: Dataset, data: Path) -> int:
     members, _ = _wanted(ds, names)
     images = _index_members(ds, members, base)
     path = write_index(data, ds, images, f"local:{ds.local_path}")
-    say(f"{ds.name}: {len(images)} bilder (bara förträning) -> {path}")
+    use = "bara förträning" if "pretrain" in ds.use else "bara träning"
+    say(f"{ds.name}: {len(images)} bilder ({use}) -> {path}")
     return 0
 
 

@@ -29,6 +29,10 @@ Fetched by the tools into build/ and never committed. Simulator pictures made wi
 - tools/terrain/fetch_tree_models.py (just tree-pictures-fetch): tree pictures made from
   Poly Haven's fir_tree_01, pine_tree_01, island_tree_02, pine_bark and bark_brown_02,
   CC0, https://polyhaven.com/license
+- tools/terrain/fetch_ground_textures.py (just ground-pictures-fetch): ground pictures
+  for the photo farm from Poly Haven's aerial_grass_rock, sparse_grass, forest_floor,
+  forest_leaves_02, forest_ground_04, gravel_road, dirt_aerial_02 and
+  aerial_ground_rock, CC0, https://polyhaven.com/license
 - tools/terrain/fetch_site.py with [dem] source = "lantmateriet-mhm": Markhöjdmodell
   (c) Lantmäteriet, CC BY 4.0; processed. A public site that switches to it commits a
   dem.asc under CC BY 4.0: change its REUSE.toml annotation and this file with it.

@@ -17,6 +17,7 @@ setup-config`, outside the repository).
 | `kios` | KIOS Small Object Aerial Person Detection: 3,136 pictures (1920×1080 to 3840×2160) with 61,708 people from drone flights in Cyprus, from the University of Cyprus | CC BY 4.0 | training, tuning, measuring |
 | `kios_carperson` | KIOS Aerial Dataset for Car and Person Detection: a parking lot at the University of Cyprus filmed from 40 and 60 m, 11 videos, 13,755 frames; every tenth frame is taken | CC BY 4.0 | training and tuning only |
 | `seadronessee` | SeaDronesSee Object Detection v2 (JPEG version): 10,477 pictures of swimmers in open water (Lake Constance and the North Sea), from the University of Tübingen | CC0 1.0 | training and tuning only |
+| `simstills` | Our own photo farm's renders (`just sim-farm-stills`), indexed where they lie in `build/simfarm/stills/`; a scene is one sequence, drawn to train or val by a hash of its name since the set keeps growing | Apache-2.0 (models CC0 / CC BY 4.0) | training and tuning only |
 | `wisard` | WiSARD v1, visible-light part: 20,504 pictures with labels from wilderness search flights in Washington, from the University of Washington | MIT (see below) | measuring only, for now |
 | `simfarm` | Our own simulator pictures (`just sim-farm`) | Apache-2.0 | pre-training only, never measured on |
 

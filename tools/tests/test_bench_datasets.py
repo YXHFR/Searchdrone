@@ -76,6 +76,11 @@ def test_sim_farm_is_only_for_pre_training() -> None:
     simfarm = load_register()["simfarm"]
     assert simfarm.use == ("pretrain",)
     assert simfarm.local_only
+    # the photo farm is trained on, never measured on, and never leaves the computer
+    stills = load_register()["simstills"]
+    assert stills.use == ("train",)
+    assert stills.local_only
+    assert stills.local_path == "build/simfarm/stills"
 
 
 @pytest.mark.parametrize(

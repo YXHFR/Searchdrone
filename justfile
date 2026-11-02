@@ -576,6 +576,11 @@ trees-fetch *args:
 tree-pictures-fetch:
     uv run --no-sync python tools/terrain/fetch_tree_models.py
 
+# Ground pictures (grass, forest floor, gravel, rock) from Poly Haven's CC0 textures to
+# build/ground_textures/, for the photo farm's detailed ground
+ground-pictures-fetch:
+    uv run --no-sync python tools/terrain/fetch_ground_textures.py
+
 # The site's orthophoto from Lantmäteriet with your own Geotorget login
 # (config/geotorget.local.toml, see config/geotorget.example.toml) to build/ortho/<site>/:
 # only on this computer, never committed, uploaded or fetched in CI (keys: site; needs gdal-bin)
@@ -599,6 +604,12 @@ sim-farm-status:
 # Fetch the sim farm's person models (CC0 / CC BY 4.0, from Gazebo Fuel) into build/
 sim-farm-setup:
     uv run --package sd-sim python -m sd_sim.farm setup
+
+# Photo farm: still pictures of people (real heights, poses, clothes) at the site with the
+# real trees, aimed from HERIDAL's and KIOS's heights, with boxes, to build/simfarm/stills/
+# (keys: scenes, seed, site, shots, profile, instance, gi, out). No flight, no drone code
+sim-farm-stills *args:
+    uv run --package sd-sim python -m sd_sim.farm stills "$@"
 
 # Pictures of a site world from the camera at 40 m and 100 m and from the side, with the
 # road's width and the map overlap measured in them (keys: world, instance)

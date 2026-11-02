@@ -2,13 +2,17 @@
   The stills camera without a vehicle, for rendering detector test pictures: a world-level
   model (sd_sim.render_stills.StillRig) that gz_stills moves from shot to shot. Like on
   sd_quad14 the cameras look along their x axis, pitched +90 degrees: straight down, the
-  top of the picture towards the model's front.
+  top of the picture towards the model's front. With ``labels_map`` a semantic
+  segmentation camera also gives every pixel's label (``<topic>/labels/labels_map``), so
+  the caller can count how much of each labelled model is seen.
 #}
 <model name="{{ name }}">
   <static>true</static>
   <pose>{{ pose }}</pose>
   <link name="link">
-{% for sensor, kind in [("stills", "camera"), ("boxes", "boundingbox_camera")] %}
+{% set sensors = [("stills", "camera"), ("boxes", "boundingbox_camera")] %}
+{% if labels_map is defined and labels_map %}{% set sensors = sensors + [("labels", "segmentation")] %}{% endif %}
+{% for sensor, kind in sensors %}
     <sensor name="{{ sensor }}" type="{{ kind }}">
       <pose degrees="true">0 0 0 0 90 0</pose>
       <topic>{{ topic_prefix }}/{{ sensor }}</topic>
@@ -24,6 +28,9 @@
         </clip>
 {% if kind == "boundingbox_camera" %}
         <box_type>2d</box_type>
+{% endif %}
+{% if kind == "segmentation" %}
+        <segmentation_type>semantic</segmentation_type>
 {% endif %}
       </camera>
       <always_on>1</always_on>

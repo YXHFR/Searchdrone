@@ -10,7 +10,8 @@ back to its own plain trees.
 
 Every tree stands where the raster has it and is as tall as the raster says: each species
 has one model one metre tall, scaled by the tree's height and turned by a yaw of its own.
-Trees within ``NEAR_M`` of home, where the vehicle takes off and flies low, are branch
+Trees within ``NEAR_M`` of home (a site can set its own, ``trees.near_m`` in its
+``site.toml``), where the vehicle takes off and flies low, are branch
 cards (``*_near``, roughly a thousand triangles); the rest are the crown's picture from
 the side twice, crossed, and once from above (``*_far``, eight triangles), which from a
 search altitude looks the same. One material for all of them (the atlas, glTF PBR with
@@ -40,6 +41,8 @@ NEAR_M = 150.0
 FOREST_TILES = 8
 # Crown radius as a share of the tree's height (Swedish spruce, Scots pine, birch).
 CROWN = {"spruce": 0.17, "pine": 0.19, "deciduous": 0.22}
+# How far a tuft's cards are tipped up from level (degrees), drawn per card.
+TUFT_TILT_DEG = (15.0, 55.0)
 # The trunk starts this far under the ground so that slopes show no gap under it.
 SINK_M = 0.3
 ATLAS_FILES = ("trees_color.png", "trees_normal.png", "trees_orm.png")
@@ -220,26 +223,23 @@ def _tufts(
     radii: F,
     size: float,
 ) -> None:
-    """Needle tufts or leaf clusters in an ellipsoidal crown, mostly near its surface: two
-    crossed upright cards and one facing up and out each."""
+    """Needle tufts or leaf clusters in an ellipsoidal crown, mostly near its surface:
+    three cards each, turned every way and tipped ``TUFT_TILT_DEG`` from level. Upright
+    cards would be seen edge on from a drone straight above, as long thin streaks."""
     for _ in range(count):
         d = _unit(rng.normal(size=3))
         r = rng.uniform(0.55, 1.0) ** 0.5
         at = centre + d * radii * r
         out = _unit((at - centre) / radii)
-        yaw = rng.uniform(0, math.pi)
+        yaw = rng.uniform(0, 2 * math.pi)
         s = size * rng.uniform(0.8, 1.2)
-        for k in range(2):
-            a = yaw + k * math.pi / 2
-            across = np.array([math.cos(a), math.sin(a), 0.0]) * s / 2
-            card(
-                parts, at - np.array([0, 0, s * 0.3]), np.array([0, 0, s]), across, region, bend=out
-            )
-        # One lying card, tipped outwards, seen from above.
-        flat = _unit(np.array([out[0], out[1], 0.0]) + np.array([1e-6, 0, 0]))
-        side = np.cross(np.array([0.0, 0.0, 1.0]), flat)
-        along = _unit(flat * s + np.array([0, 0, s * 0.35])) * s
-        card(parts, at - along / 2, along, side * s / 2, region, bend=out + np.array([0, 0, 0.5]))
+        for k in range(3):
+            a = yaw + k * 2 * math.pi / 3
+            tilt = math.radians(rng.uniform(*TUFT_TILT_DEG))
+            level = np.array([math.cos(a), math.sin(a), 0.0])
+            along = (level * math.cos(tilt) + np.array([0.0, 0.0, math.sin(tilt)])) * s
+            across = np.cross(np.array([0.0, 0.0, 1.0]), level) * s / 2
+            card(parts, at - along * 0.4, along, across, region, bend=out + np.array([0, 0, 0.5]))
 
 
 def near_model(species: str, atlas: dict[str, tuple[float, float, float, float]]) -> Parts:
@@ -280,7 +280,8 @@ def near_model(species: str, atlas: dict[str, tuple[float, float, float, float]]
             parts, rng, cardr, 140, np.array([0.0, 0.0, 0.8]), np.array([crown, crown, 0.13]), 0.09
         )
     else:
-        trunk(parts, 0.0, 0.55, 0.014, 0.006, 6, bark)
+        # A birch: a trunk of about 30 cm at 20 m, the crown from a quarter of the height.
+        trunk(parts, 0.0, 0.55, 0.008, 0.004, 6, bark)
         for k in range(4):
             a = k * math.pi / 2 + 0.6
             tip = np.array([math.cos(a) * crown * 0.5, math.sin(a) * crown * 0.5, 0.78])
@@ -289,7 +290,7 @@ def near_model(species: str, atlas: dict[str, tuple[float, float, float, float]]
             p, nn, tt, uu, ff = sub.arrays()
             parts.add(p + np.array([0, 0, 0.45]), nn, tt, uu, ff)
         _tufts(
-            parts, rng, cardr, 150, np.array([0.0, 0.0, 0.64]), np.array([crown, crown, 0.32]), 0.1
+            parts, rng, cardr, 170, np.array([0.0, 0.0, 0.6]), np.array([crown, crown, 0.36]), 0.1
         )
     return _one_metre(parts)
 
@@ -361,6 +362,7 @@ def build_forest(
     ground_z: NDArray[np.float64],
     half: float,
     atlas: dict[str, tuple[float, float, float, float]],
+    near_m: float = NEAR_M,
 ) -> Forest:
     """Every tree as a mesh, merged per tile; ``ground_z`` is the ground under each tree
     (world z)."""
@@ -370,7 +372,7 @@ def build_forest(
     tiles: dict[tuple[int, int], gltf.Primitive] = {}
     n_near = 0
     for tree, z in zip(trees, ground_z, strict=True):
-        is_near = math.hypot(tree.east, tree.north) < NEAR_M
+        is_near = math.hypot(tree.east, tree.north) < near_m
         n_near += is_near
         model = (near if is_near else far)[tree.species]
         ti = min(int((half - tree.north) / size), FOREST_TILES - 1)

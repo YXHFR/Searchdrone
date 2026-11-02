@@ -51,7 +51,7 @@ from sd_sim import forest as forest_mod
 from sd_sim import paths, png, raster
 from sd_sim.site import Site
 
-GENERATOR_VERSION = 6
+GENERATOR_VERSION = 7  # 7: tree tufts tipped every way, thinner trunks
 # Gazebo needs a square heightmap of 2^n + 1 pixels: 257 gives 4.7 m over 1.2 km.
 HEIGHTMAP_PX = 257
 HEIGHTMAP = "ground_collision.png"
@@ -1071,7 +1071,7 @@ def build(
         for name in forest_mod.ATLAS_FILES:
             shutil.copyfile(forest_mod.atlas_folder(repo) / name, meshes / name)
         woods = forest_mod.build_forest(
-            kept, np.array([t.z for t in trees]), site.half_size_m, atlas
+            kept, np.array([t.z for t in trees]), site.half_size_m, atlas, site.trees_near_m
         )
         tree_files = [f"{stem}.glb" for stem in forest_mod.write_tiles(woods, meshes, ".")]
         tree_stats = {

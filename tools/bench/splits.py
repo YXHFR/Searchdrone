@@ -18,6 +18,11 @@ training-only sets (KIOS car/person, SeaDronesSee) the same way, with no test pa
 (``RATIOS_TRAIN_ONLY``: they are never measured on). A dataset's own ``seed`` (and
 ``ratios``, where not ``RATIOS``) says how it was drawn.
 
+A set that grows (``GROWING``: the photo farm's renders, made again and again) cannot be
+listed once: its sequences are drawn by a SHA-256 of the set's name and the sequence
+(``hashed_part``), so a scene keeps its part however many come after it. Such a set is
+trained on only, never measured on, so no measured number depends on it.
+
 ``splits/mini_v1.json`` (schema ``bench.mini/v1``) is the small, fixed test set for the
 nightly CPU run: picture and label members with their SHA-256, read straight out of the
 archive with byte ranges. It was drawn from v1's HERIDAL test part, which v2 keeps.
@@ -45,6 +50,20 @@ RATIOS: dict[Part, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
 # A set that is trained on but never measured on has no test part: its val part helps
 # pick the best epoch, and the rest is trained on.
 RATIOS_TRAIN_ONLY: dict[Part, float] = {"train": 0.9, "val": 0.1, "test": 0.0}
+# Sets whose sequences are drawn by hash, not listed (they grow): name -> shares.
+GROWING: dict[str, dict[Part, float]] = {"simstills": RATIOS_TRAIN_ONLY}
+
+
+def hashed_part(dataset: str, seq: str, ratios: Mapping[Part, float]) -> Part:
+    """A growing set's part of a sequence: a fixed draw from a SHA-256 of the names."""
+    digest = hashlib.sha256(f"{dataset}/{seq}".encode()).digest()
+    u = int.from_bytes(digest[:8], "big") / 2**64
+    edge = 0.0
+    for part in PARTS:
+        edge += ratios.get(part, 0.0)
+        if u < edge:
+            return part
+    return "train"
 
 
 @dataclass(frozen=True)
@@ -55,11 +74,16 @@ class Split:
     digests: dict[tuple[str, str], str]
 
     def part_of(self, dataset: str, seq: str) -> Part | None:
+        if dataset in GROWING:
+            return hashed_part(dataset, seq, GROWING[dataset])
         return self.sequences.get((dataset, seq))
 
     def check(self, dataset: str, images: Iterable[tuple[str, str]]) -> None:
         """``images``: ``(local id, sequence)`` of a whole indexed dataset. Every
-        sequence must be in the split with the same pictures."""
+        sequence must be in the split with the same pictures (a growing set's are
+        drawn, not listed)."""
+        if dataset in GROWING:
+            return
         found: dict[str, list[str]] = defaultdict(list)
         for local, seq in images:
             found[seq].append(local)

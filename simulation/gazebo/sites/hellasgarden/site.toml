@@ -30,3 +30,4 @@ canopy_m = 12               # taken off inside forest for the generated trees on
 
 [trees]                     # real trees: `just trees-fetch site=hellasgarden` (tools/terrain/fetch_trees.py)
 county = 1                  # Skogsstyrelsen's tree height raster comes per county; 01 = Stockholm
+near_m = 330                # detailed trees this close to home (the photo farm's people stand within 280 m)
