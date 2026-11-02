@@ -64,7 +64,11 @@ SDLINK_GRACE_S: Final = 20.0
 SDLINK_HOLD_S: Final = 30.0
 # The link-loss rule lets the keep-out climb (straight up out of a person's cylinder) end at
 # the top before its hold; home is due regardless this long after its usual time (53 s).
-# The highest climb, to the charter's 120 m less 5 m at 2 m/s, takes some 48 s.
+# The highest climb, from the lowest floor a charter may set (5 m, ``MIN_ALT_AGL_M``) to
+# 120 m less 5 m, takes some 44 s at ArduCopter's default climb rate (2.5 m/s, ``WP_SPD_UP``,
+# not set in our params) and 55 s even at 2 m/s. The speed a climb asks for (3 m/s for the
+# executor's own, up to ``INSPECT_SPEED_MS`` for an inspection's) is a ground speed, not the
+# climb rate.
 KEEPOUT_CLIMB_LINK_ALLOWANCE_S: Final = 60.0
 FS_GCS_TIMEOUT_S: Final = 20.0  # mirrors FS_GCS_TIMEOUT in the flight controller
 BRAIN_HEARTBEAT_TIMEOUT_S: Final = 5.0
