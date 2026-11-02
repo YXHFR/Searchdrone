@@ -129,9 +129,13 @@ def situation_text(s: Situation, now: dt.datetime) -> str:
         lines.append(f"Drönare: på marken, {armed}, {conn}")
     lines.append(f"Position: {_where(s, v.lat, v.lon)}")
     if v.battery_pct is not None:
+        # The level it flies home at: the charter's, never below the mission limit (the
+        # gate's rtl_pct); the ground counts its seconds down to the same level.
+        home_pct = s.limits.battery_rtl_pct
+        if s.charter is not None:
+            home_pct = max(s.charter.battery_rtl_pct, home_pct)
         reserve = (
-            f"  (till hemgräns {_num(s.limits.battery_rtl_pct)} %: ca "
-            f"{round(v.battery_to_reserve_s / 60)} min)"
+            f"  (till hemgräns {_num(home_pct)} %: ca {round(v.battery_to_reserve_s / 60)} min)"
             if v.battery_to_reserve_s is not None
             else ""
         )

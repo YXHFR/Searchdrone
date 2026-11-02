@@ -49,7 +49,14 @@ from sd_ground.services.latches import (
     BatteryReason,
     Latches,
 )
-from sd_ground.services.wind import WIND_PARAMS, FcParams, WindStage, WindWatch, fc_params
+from sd_ground.services.wind import (
+    WIND_PARAMS,
+    BatteryDrain,
+    FcParams,
+    WindStage,
+    WindWatch,
+    fc_params,
+)
 from sd_ground.sources import PartState
 from sd_mav.chain import mode_shown, rc_switch_moved, set_mode_with_fallback
 from sd_mav.failsafe_signals import text_signal
@@ -778,6 +785,15 @@ class ThreadSafeMav:
         with self._wind_lock:
             wind = self._wind_check
         return to_telemetry(snap, self.core.clock.utc_now(), wind)
+
+    def battery_drain(self, vehicle_id: str) -> BatteryDrain | None:
+        """The wind check's mean current and capacity for the AI's minutes to the home
+        limit (``sd_ground.services.situation``). Reads only."""
+        snap = self.snapshot()
+        if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
+            return None
+        with self._wind_lock:
+            return self.wind.drain(snap.now_mono_ms)
 
     def update_wind(self, vehicle_id: str) -> None:
         """The wind check's step, from the telemetry loop (never the MAVLink thread): take

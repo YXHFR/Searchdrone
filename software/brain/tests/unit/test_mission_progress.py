@@ -234,6 +234,23 @@ def test_the_charter_line_shows_the_sectors_and_the_notes() -> None:
     assert "anteckningar (data): \"Sök längs 'bäcken' först.\"" in ram
 
 
+def test_the_home_limit_in_the_battery_line_is_the_charters_when_higher() -> None:
+    s = situation()
+    assert s.charter is not None
+    vehicle = s.vehicle.model_copy(update={"battery_pct": 60.0, "battery_to_reserve_s": 600})
+    limits = s.limits.model_copy(update={"battery_rtl_pct": 25.0})
+    high = s.charter.model_copy(update={"battery_rtl_pct": 35.0})
+    low = s.charter.model_copy(update={"battery_rtl_pct": 20.0})
+    text = situation_text(
+        s.model_copy(update={"vehicle": vehicle, "limits": limits, "charter": high}), _now()
+    )
+    assert "Batteri: 60 %  (till hemgräns 35 %: ca 10 min)" in text
+    text = situation_text(
+        s.model_copy(update={"vehicle": vehicle, "limits": limits, "charter": low}), _now()
+    )
+    assert "(till hemgräns 25 %: ca 10 min)" in text
+
+
 def _turn_input(s: Any, trigger: Any = "idle_tick") -> TurnInput:
     return TurnInput(
         turn_id=new_id(),
