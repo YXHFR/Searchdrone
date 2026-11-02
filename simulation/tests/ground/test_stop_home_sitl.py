@@ -11,10 +11,11 @@ its MAVLink channel (no more heartbeats from 1/191).
   within 5 s; FLY HOME likewise, landing within 3 m of home;
 * STOP armed on the ground disarms; BRAKE holds for 60 s without RC;
 * only the ground's MAVLink cut: STOP still arrives through the onboard fallback;
-* the companion watchdog: BRAKE within 4 s and FLY HOME within 21 s when the onboard
-  computer dies in GUIDED, nothing while the operator's STOP stands; the executor
-  falling silent mid-search (AUTO): BRAKE within 4 s, then it holds there, never flies
-  home and never enters the keep-out cylinder the search goes around;
+* the companion watchdog: BRAKE within 4 s when the onboard computer dies in GUIDED,
+  then it holds there and never flies home; nothing while the operator's STOP stands;
+  the executor's loop hanging (sd-onboard and SD-link alive) or sd-onboard dying
+  mid-search (AUTO): BRAKE within 4 s and MISSION_FALLBACK, then it holds there, never
+  flies home and never enters the keep-out cylinder the search goes around;
 * the ground station dies: the flight controller's GCS failsafe flies home.
 """
 
@@ -107,6 +108,7 @@ class Emergency:
     pump: asyncio.Task[None]
     executor_tasks: list[asyncio.Future[Any]] = field(default_factory=list)
     onboard_dead: bool = False
+    events: list[str] = field(default_factory=list)  # what the ground told the panel
 
     @property
     def fc(self) -> Any:
@@ -234,7 +236,9 @@ async def emergency(
         link.executor = ex
         f = Flight(ex, onboard, ground, fake, proxy, Plane(home.lat, home.lon), sim, sent=sent)
         stop = asyncio.Event()
-        e = Emergency(f, core, actions, sink, asyncio.ensure_future(actions.pump(g)))
+        e = Emergency(
+            f, core, actions, sink, asyncio.ensure_future(actions.pump(g)), events=g.events
+        )
         e.executor_tasks += [
             asyncio.ensure_future(ex.run(stop)),
             asyncio.ensure_future(link.run(stop)),
@@ -413,9 +417,32 @@ def test_stop_via_sdlink_when_ground_mavlink_down(sim: Sim) -> None:
 # --- the companion watchdog and a dead ground station -------------------------------------
 
 
+_HOLD_S = 40.0  # longer than the old watchdog's 20 s and the old mission end's 30 s
+
+
+async def _holds(e: Emergency, check: Any = None) -> None:
+    """Standing still within 10 s, then BRAKE or LOITER within 3 m for ``_HOLD_S``."""
+    await e.wait(lambda: e.fc.groundspeed_ms < 0.5, 10, "standing")
+    t = e.fc
+    stood = (t.lat, t.lon)
+    end = time.monotonic() + _HOLD_S
+    while time.monotonic() < end:
+        assert e.mode() in ("BRAKE", "LOITER"), f"{e.mode()} while held"
+        if check is not None:
+            check()
+        await asyncio.sleep(0.2)
+    t = e.fc
+    assert distance_m(stood[0], stood[1], t.lat, t.lon) <= 3.0
+    assert e.core.watchdog.alarm_active and e.core.watchdog.phase == "stopped"
+    latch = e.actions.latches.get(VID)
+    assert latch is not None and latch.action == "watchdog_stop"
+    assert "vehicle.onboard_silent_rtl" not in e.events
+
+
 @pytest.mark.budget_s(300)
-def test_onboard_kill_in_guided(sim: Sim) -> None:
-    """``sd-onboard`` killed in GUIDED: BRAKE/LOITER <= 4 s, SMART_RTL/RTL <= 21 s, home."""
+def test_onboard_kill_in_guided_hovers(sim: Sim) -> None:
+    """``sd-onboard`` killed in GUIDED: BRAKE/LOITER <= 4 s and ONBOARD_SILENT, then it
+    holds there for 40 s and never flies home (owner decision, option A)."""
 
     async def run() -> None:
         async with emergency(sim) as e:
@@ -424,14 +451,10 @@ def test_onboard_kill_in_guided(sim: Sim) -> None:
             await e.kill_onboard()
             killed = time.monotonic()
             await e.wait(lambda: e.mode() in ("BRAKE", "LOITER"), 4.0, "watchdog stop")
-            await e.wait(
-                lambda: e.mode() in ("SMART_RTL", "RTL"),
-                21.0 - (time.monotonic() - killed),
-                "watchdog home",
-            )
-            assert time.monotonic() - killed <= 21.0
-            await e.wait(lambda: not e.fc.armed, 150, "landed")
-            assert e.from_home_m() <= 3.0
+            assert time.monotonic() - killed <= 4.0
+            await _holds(e)
+            assert "alarm.ONBOARD_SILENT" in e.events
+            assert "alarm.MISSION_FALLBACK" not in e.events  # no search mission flew
 
     asyncio.run(run())
 
@@ -440,14 +463,25 @@ def test_onboard_kill_in_guided(sim: Sim) -> None:
 # cylinder in its middle that the mission goes around.
 _SILENT_BOX_M = (40.0, 60.0, 100.0)  # half side, east, north
 _SILENT_PERSON = (60.0, 100.0, 15.0)  # east, north, radius (m)
-_HOLD_S = 40.0  # longer than the old end's 30 s hover before it flew home
+
+
+async def _hang() -> None:
+    await asyncio.Event().wait()
 
 
 @pytest.mark.budget_s(330)
-def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim) -> None:
-    """Option A: the executor's loop stops mid-search (its heartbeat with it; the MAVLink
-    channel stays open). The ground stops the AUTO flight within 4 s through STOP's steps;
-    then it holds there for 40 s, never flies home, and never enters the cylinder."""
+@pytest.mark.parametrize("how", ["tick_hung", "onboard_dead"])
+def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim, how: str) -> None:
+    """Option A, mid-search in AUTO:
+
+    * ``tick_hung``: the executor's tick hangs; sd-onboard, its MAVLink channel and SD-link
+      (with its snapshots) stay up. The heartbeat goes out only while the tick runs, so it
+      stops within 1 s.
+    * ``onboard_dead``: sd-onboard is gone.
+
+    Either way the ground stops the AUTO flight within 4.5 s through STOP's steps with
+    ONBOARD_SILENT and MISSION_FALLBACK; then it holds there for 40 s, never flies home,
+    and never enters the cylinder."""
 
     async def run() -> None:
         async with emergency(sim) as e:
@@ -489,28 +523,25 @@ def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim) -> None
             try:
                 await f.until(lambda: (e.fc.mission_seq_current or 0) >= 4, 120, "mid-search")
                 assert e.mode() == "AUTO"
-                for task in e.executor_tasks:  # the loop stops; its heartbeat stops with it
-                    task.cancel()
-                await asyncio.gather(*e.executor_tasks, return_exceptions=True)
+                if how == "tick_hung":
+                    f.ex.tick = _hang  # type: ignore[method-assign]  # the next tick hangs
+                else:
+                    await e.kill_onboard()
                 silent = time.monotonic()
                 await e.wait(lambda: e.mode() in ("BRAKE", "LOITER"), 4.5, "watchdog stop")
                 assert time.monotonic() - silent <= 4.5
                 latch = e.actions.latches.get(VID)
                 assert latch is not None and latch.action == "watchdog_stop"
-                await e.wait(lambda: e.fc.groundspeed_ms < 0.5, 10, "standing")
-                t = e.fc
-                stood = (t.lat, t.lon)
-                end = time.monotonic() + _HOLD_S
-                while time.monotonic() < end:
-                    assert e.mode() in ("BRAKE", "LOITER"), f"{e.mode()} while held"
+
+                def cylinder() -> None:
                     if watcher.done():
                         watcher.result()  # the cylinder check failed: raise it here
-                    await asyncio.sleep(0.2)
-                t = e.fc
-                assert distance_m(stood[0], stood[1], t.lat, t.lon) <= 3.0
-                assert e.core.watchdog.alarm_active and e.core.watchdog.phase == "stopped"
-                latch = e.actions.latches.get(VID)
-                assert latch is not None and latch.action == "watchdog_stop"
+
+                await _holds(e, cylinder)
+                assert "alarm.ONBOARD_SILENT" in e.events
+                assert "alarm.MISSION_FALLBACK" in e.events
+                if how == "tick_hung":
+                    assert not e.onboard_dead and all(not t.done() for t in e.executor_tasks)
             finally:
                 watcher.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

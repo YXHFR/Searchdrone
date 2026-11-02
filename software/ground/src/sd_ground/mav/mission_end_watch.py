@@ -10,7 +10,9 @@ operator presses STOP or FLY HOME, takes over, or the battery failsafe brings it
 
 ``MissionEndWatch`` follows ``MISSION_CURRENT`` on the ground's own MAVLink channel, so it
 works whatever state the onboard computer is in. It only raises the alarm (once per
-episode); it never sends anything to the flight controller.
+episode); it never sends anything to the flight controller. When the onboard computer
+falls silent mid-search, the companion watchdog stops the search at once and raises the
+same alarm (``fallback_alarm``).
 """
 
 from __future__ import annotations
@@ -29,14 +31,14 @@ __all__ = ["FALLBACK_GRACE_MS", "MISSION_FALLBACK_SV", "MissionEndWatch", "fallb
 FALLBACK_GRACE_MS: Final = 10_000
 
 MISSION_FALLBACK_SV: Final = (
-    "Ombordsdatorn styr inte drönaren längre. Flygkontrollen har avslutat sökningen själv och "
-    "svävar vid sista sökpunkten. Den flyger inte hem av sig själv. Tryck STOPP för att landa "
-    "där, FLYG HEM för att flyga hem (rakt, även genom förbudszoner runt personer) eller ta "
-    "över med RC."
+    "Ombordsdatorn styr inte drönaren längre. Sökningen har avbrutits och drönaren svävar där "
+    "den är. Den flyger inte hem av sig själv. Tryck FLYG HEM för att flyga hem (rakt, även "
+    "genom förbudszoner runt personer) eller ta över med RC."
 )
 
 
-def fallback_alarm(seq: int, total: int) -> tuple[str, str, dict[str, Any]]:
+def fallback_alarm(seq: int | None, total: int | None) -> tuple[str, str, dict[str, Any]]:
+    """Here, and from the companion watchdog when it stops a search mid-way in AUTO."""
     return alarm(
         str(AlertCode.MISSION_FALLBACK),
         "critical",
