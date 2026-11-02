@@ -158,12 +158,15 @@ The tele camera takes pictures only in a run that has the stills camera: a searc
 scenario, or `just sim detector=model` in the flat world. It needs `physics=gz` and
 `vehicle=sd_quad14`. Its pictures go to `runs/<run>/stills_tele/` through their own
 `gz_stills capture` process (topics `/sd_i<N>/tele` and `/sd_i<N>/tele_boxes`), and
-`sd-onboard` gets the folder as `[perception.tele]`: each round its perception task runs
-the detector on the newest main still, then on the newest tele still, and sends a report
-for each, placed on the ground with that camera's own view. Tele stills count as searched
+`sd-onboard` gets the folder as `[perception.tele]`: each round its perception task
+takes the newest main still and the newest tele still, stamps each with its time as it
+takes it, then runs the detector on both and sends a report for each, placed on the
+ground with that camera's own view. The two cameras are not triggered together, so the
+stills of a round are close in time, not simultaneous. Tele stills count as searched
 ground on the probability map, over their narrower footprint and with their higher
-detail; a main and a tele still of the same moment count as one look, each camera with
-its own chance of seeing a person. `inspect_detection` and `capture_stills` take their
+detail; a main and a tele still stamped within 0.3 s of each other, with the tele view
+inside the main one, count as one look, each camera with its own chance of seeing a
+person. Further apart they count as two looks. `inspect_detection` and `capture_stills` take their
 stills with the main camera, also with the tele camera on: an inspection hovers so that
 the target is 24–28° from straight down, and the fixed tele camera sees only about ±10°
 across and ±7.5° along, so its stills would not show the target. Revisit with a gimbal.

@@ -10,10 +10,12 @@ within one pass (one order) ``POD_pass = 1 - (1 - max_i p_still_i)^min(k, 2)`` w
 the number of stills that saw the cell, at most two independent looks per pass. Between
 passes ``POD_tot = 1 - prod(1 - POD_pass)``.
 
-A drone with a tele camera beside the main one takes two stills of one moment: they are
+A drone with a tele camera beside the main one sends a main and a tele still from each
+round of its loop, taken close together (the cameras are not triggered together). When
+they are close enough in time and the tele view lies inside the main one, the two are
 one look, not two, and each camera counts with its own ``p``: ``1 - (1 - p_main)(1 -
 p_tele)`` inside the tele still's footprint, ``p_main`` outside it
-(``same_moment_groups``).
+(``same_moment_groups``). Stills that do not pair count as looks of their own.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ __all__ = [
     "DETECTORS",
     "PERSON_WIDTH_M",
     "PLAN_CAMERA",
+    "SAME_MOMENT_S",
     "SIDELAP",
     "Camera",
     "DetectorProfile",
@@ -47,10 +50,12 @@ __all__ = [
 PERSON_WIDTH_M: Final = 0.5  # shoulder width: standing or sitting, the hardest case
 MAX_LOOKS_PER_PASS: Final = 2
 # A tele still and a main still of the same moment are one look (``same_moment_groups``):
-# taken at most this far apart (both are processed in one round of the onboard loop),
-# the tele still with at least this much more detail and this share of its view inside
-# the main still's.
-SAME_MOMENT_S: Final = 1.0
+# taken at most this far apart, the tele still with at least this much more detail and
+# this share of its view inside the main still's. The onboard loop stamps both stills of
+# a round as it polls them, one right after the other, so their gap is the time to read
+# one still; the next round's still is at least a loop period (0.5 s) plus the
+# detector's time later, and the cameras take a still a second. Well under all three.
+SAME_MOMENT_S: Final = 0.3
 PAIR_DETAIL_RATIO: Final = 1.5
 PAIR_INSIDE_SHARE: Final = 0.8
 SIDELAP: Final = 0.2  # survey lines overlap by a fifth of a still's ground width
@@ -150,23 +155,31 @@ def _pairs_with(tele: Still, main: Still) -> bool:
 
 def same_moment_groups(stills: Iterable[Still]) -> list[list[Still]]:
     """The pass's stills as looks: each still alone, except a tele still with the main
-    still of the same moment (``_pairs_with``, the nearest in time), which make one look
-    together. The report says nothing about the camera, so the pair is recognised by its
-    time, detail and footprint."""
+    still of the same moment (``_pairs_with``), which make one look together. Pairs are
+    taken closest in time first, each still in at most one.
+
+    Limitation: the report carries no camera or loop round, so the pair is recognised by
+    time, detail and footprint only. A pair is missed (counted as two looks) when the
+    two stamps are more than ``SAME_MOMENT_S`` apart, and the stamps are when the loop
+    read the stills unless the camera's sidecar gives its own time: two free-running
+    cameras may have taken their newest stills up to a camera period apart."""
     ordered = sorted(stills, key=lambda s: s.px_per_m)  # main stills first
+    candidates = sorted(
+        (
+            (_gap_s(tele, main), j, i)
+            for j, tele in enumerate(ordered)
+            for i, main in enumerate(ordered)
+            if i != j and _pairs_with(tele, main)
+        ),
+    )
     groups: list[list[Still]] = []
     taken: set[int] = set()
-    for tele in reversed(ordered):  # the most detailed first
-        if id(tele) in taken:
+    for _, j, i in candidates:
+        if j in taken or i in taken:
             continue
-        partners = [
-            m for m in ordered if id(m) not in taken and m is not tele and _pairs_with(tele, m)
-        ]
-        if partners:
-            main = min(partners, key=lambda m: _gap_s(tele, m))
-            taken |= {id(tele), id(main)}
-            groups.append([main, tele])
-    groups += [[s] for s in ordered if id(s) not in taken]
+        taken |= {i, j}
+        groups.append([ordered[i], ordered[j]])
+    groups += [[s] for k, s in enumerate(ordered) if k not in taken]
     return groups
 
 

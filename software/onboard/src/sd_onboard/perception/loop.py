@@ -23,12 +23,18 @@ An order can ask for a still of its own (``capture``: ``capture_stills`` and
 ``on_targets`` too: the executor puts a keep-out cylinder around each that is sure enough.
 
 A second camera (``extra``: the tele camera beside the main one, looking the same way)
-has its own still source and pinhole camera. Each round the loop polls every camera's
-source in turn; a tele still goes through the same steps as a main one, georeferenced
-with its own camera, and its report says so only through its smaller footprint and
-higher ``px_per_m``. An order's still (``capture``) always comes from the main camera,
-``inspect_detection``'s too: it looks at its target 24-28 degrees from straight down,
-outside the fixed tele camera's view (about +-10 by +-7.5 degrees). Revisit with a gimbal.
+has its own still source and pinhole camera. Each round the loop first polls every
+camera's source, one after the other, and stamps each still with its capture time (the
+source's own, else the clock right after the poll, before any detection), then runs
+the detector on each. The stills of one round are close in time but not synchronised:
+each source gives its newest still, and the cameras are not triggered together. A tele
+still goes through the same steps as a main one, georeferenced with its own camera,
+and its report says so only through its smaller footprint and higher ``px_per_m``.
+A failing streak (``stills_failing``) is counted per camera, so a dead main camera is
+reported even while the tele camera works. An order's still (``capture``) always comes
+from the main camera, ``inspect_detection``'s too: it looks at its target 24-28 degrees
+from straight down, outside the fixed tele camera's view (about +-10 by +-7.5 degrees).
+Revisit with a gimbal.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -43,6 +49,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -87,6 +94,18 @@ class Feed:
     source: StillSource
     camera: PinholeCamera
     name: str = "tele"
+
+
+@dataclass(frozen=True)
+class _Polled:
+    """A still just taken from a camera's source, before the detector."""
+
+    camera: str
+    captured: CapturedStill
+    t: FcTelemetry
+    now_ms: int
+    rate: float  # the attitude rate around the poll (degrees per second)
+    utc: datetime  # when it was taken
 
 
 @dataclass
@@ -187,7 +206,8 @@ class PerceptionLoop:
         self.env = env
         self.off = off  # (reason code, error class) when perception cannot work
         self.on = on  # perception works again after ``stills_failing``
-        self._failing = 0
+        self._failing: dict[str, int] = {}  # stills failing in a row, per camera
+        self._reported: set[str] = set()  # cameras whose streak the ground was told of
         self._built: BuiltSources | None = sources
         self._build_failed = False  # ``run`` could not build the sources: no stills at all
         self.stats = PerceptionStats()
@@ -227,10 +247,14 @@ class PerceptionLoop:
         turn_rate_dps: float = 0.0,
         command_id: UUID | None = None,
         camera: str = MAIN,
+        captured_utc: datetime | None = None,
     ) -> Perception | None:
         """One still and the telemetry read when it arrived (with the attitude rate then):
         a report and its crops, or ``None`` when it cannot be placed on the ground well
-        enough. ``camera``: which camera took it (``MAIN`` or an ``extra`` feed's name)."""
+        enough. ``camera``: which camera took it (``MAIN`` or an ``extra`` feed's name).
+        ``captured_utc``: when it was taken (``_poll``); without it the source's time, else
+        now, before the detector runs."""
+        stamp = captured_utc or captured.taken_utc or self.clock.utc_now()
         pinhole = self._camera(camera)
         self.stats.stills += 1
         last = self._last_still_ms.get(camera)
@@ -255,7 +279,7 @@ class PerceptionLoop:
             pinhole,
             self.registry,
             still_id=new_id(),
-            captured_utc=self.clock.utc_now(),
+            captured_utc=stamp,
             synthetic=captured.synthetic,
             sources=sorted(self.built.sources),
             latency_ms=max(0, self.clock.monotonic_ms() - start),
@@ -306,22 +330,35 @@ class PerceptionLoop:
         if targets:
             self.on_targets(targets)
 
-    async def _one(self, command_id: UUID | None = None, camera: str = MAIN) -> Perception | None:
-        """Poll a camera's source once; the still's report, if there was one and it could
-        be placed."""
+    async def _poll(self, camera: str) -> _Polled | None:
+        """A camera's newest still, stamped with when it was taken (the source's time,
+        else now: right after the poll, before any detector runs) and the telemetry then."""
         rate = self.rate.update(self.telemetry())
         captured = await asyncio.to_thread(self._source(camera).poll)
         if captured is None:
             return None
+        stamp = captured.taken_utc or self.clock.utc_now()
         t, now_ms = self.telemetry(), self.clock.monotonic_ms()
         rate = max(rate, self.rate.update(t))
+        return _Polled(camera, captured, t, now_ms, rate, stamp)
+
+    async def _detect(self, p: _Polled, command_id: UUID | None = None) -> Perception | None:
+        """The detector on a polled still; its report, if it could be placed."""
         ran = self._detected()
-        out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate, command_id, camera)
+        out = await asyncio.to_thread(
+            self.handle, p.captured, p.t, p.now_ms, p.rate, command_id, p.camera, p.utc
+        )
         if out is not None:
             self._deliver(out)
         if self._detected() > ran:  # a skipped still says nothing either way
-            self._back(recovered=self._failing >= FAIL_REPORT)
+            self._back(p.camera)
         return out
+
+    async def _one(self, command_id: UUID | None = None, camera: str = MAIN) -> Perception | None:
+        """Poll a camera's source once; the still's report, if there was one and it could
+        be placed."""
+        polled = await self._poll(camera)
+        return None if polled is None else await self._detect(polled, command_id)
 
     async def capture(self, command_id: UUID) -> UUID | None:
         """One still for an order: its ``still_id``, or ``None`` when none came in
@@ -356,13 +393,35 @@ class PerceptionLoop:
         """Stills the detector ran on (a report, or a view that misses the ground)."""
         return self.stats.reports + self.stats.skipped_no_footprint
 
-    def _back(self, *, recovered: bool) -> None:
-        self._failing = 0
-        if recovered and self.on is not None:
+    def _back(self, camera: str) -> None:
+        """The detector ran on ``camera``'s still: its streak ends. The ground hears
+        detection is back once no camera's streak it was told of is left."""
+        self._failing[camera] = 0
+        if camera not in self._reported:
+            return
+        self._reported.discard(camera)
+        if not self._reported and self.on is not None:
             try:  # telling the ground never counts against the still
                 self.on()
             except Exception:
                 log.exception("perception: could not tell the ground detection is back")
+
+    def _fail(self, camera: str, exc: Exception) -> None:
+        """A still of ``camera`` failed: its streak grows; at ``FAIL_REPORT`` the ground
+        hears ``stills_failing`` (once while any camera's streak is told)."""
+        self.stats.failed += 1
+        n = self._failing.get(camera, 0) + 1
+        self._failing[camera] = n
+        log.exception("perception failed on a still (%s camera)", camera, exc_info=exc)
+        if n != FAIL_REPORT:
+            return
+        first = not self._reported
+        self._reported.add(camera)
+        if first and self.off is not None:
+            try:  # telling the ground never ends perception
+                self.off("stills_failing", type(exc).__name__)
+            except Exception:
+                log.exception("perception: could not tell the ground detection is off")
 
     async def run(self, stop: asyncio.Event) -> None:
         try:
@@ -380,20 +439,26 @@ class PerceptionLoop:
             self.built.skipped,
         )
         while not stop.is_set():
-            for camera in self.cameras:
-                await self._round(camera)
+            await self._round()
             await self.clock.sleep(self.period_s)
 
-    async def _round(self, camera: str) -> None:
-        try:  # one bad still must not end perception
-            async with self._lock:
-                await self._one(camera=camera)
-        except Exception as exc:
-            self.stats.failed += 1
-            self._failing += 1
-            log.exception("perception failed on a still (%s camera)", camera)
-            if self._failing == FAIL_REPORT and self.off is not None:
-                try:  # telling the ground never ends perception
-                    self.off("stills_failing", type(exc).__name__)
-                except Exception:
-                    log.exception("perception: could not tell the ground detection is off")
+    async def _round(self) -> None:
+        """Every camera's newest still first (stamped as it is polled), then the detector
+        on each, so a slow detector on one still never delays the next still's stamp. An
+        order's still may come between two detections (each holds the lock alone)."""
+        polled: list[_Polled] = []
+        async with self._lock:
+            for camera in self.cameras:
+                try:  # one bad still must not end perception
+                    got = await self._poll(camera)
+                except Exception as exc:
+                    self._fail(camera, exc)
+                    continue
+                if got is not None:
+                    polled.append(got)
+        for p in polled:
+            try:
+                async with self._lock:
+                    await self._detect(p)
+            except Exception as exc:
+                self._fail(p.camera, exc)

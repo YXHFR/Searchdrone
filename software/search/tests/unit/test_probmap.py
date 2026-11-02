@@ -20,6 +20,7 @@ from sd_search.probmap.grid import Grid, grid_around
 from sd_search.probmap.pod import (
     DETECTORS,
     PERSON_WIDTH_M,
+    SAME_MOMENT_S,
     Camera,
     Still,
     pass_pod,
@@ -494,7 +495,7 @@ def test_a_main_and_a_tele_still_of_one_moment_are_one_look() -> None:
         return replace(plane(g, s), captured_utc=when)
 
     main = shot(main_cam, 1, t0)
-    tele = shot(tele_cam, 2, t0 + timedelta(seconds=0.3))  # the same round onboard
+    tele = shot(tele_cam, 2, t0 + timedelta(seconds=0.1))  # polled right after the main
     assert [[s.still_id for s in grp] for grp in same_moment_groups([tele, main])] == [["s1", "s2"]]
 
     def p_at(s: Still, cell: tuple[int, int]) -> float:
@@ -518,9 +519,14 @@ def test_a_main_and_a_tele_still_of_one_moment_are_one_look() -> None:
     # Not two independent looks at the better camera's p, as before.
     assert pod[inside] < 1 - (1 - max(pm, pt)) ** 2
     # Stills of two moments (or of unknown time) stay two looks.
-    later = replace(tele, captured_utc=t0 + timedelta(seconds=5))
+    later = replace(tele, captured_utc=t0 + timedelta(seconds=SAME_MOMENT_S + 0.2))
     for other in (later, replace(tele, captured_utc=None)):
         two = pass_pod(g, [main, other], canopy, DET)
         assert two[inside] == pytest.approx(1 - (1 - max(pm, pt)) ** 2)
     # Two main stills of one moment never pair: one camera, the same detail.
     assert len(same_moment_groups([main, replace(main, still_id="s3")])) == 2
+    # A tele still near two main stills pairs with the closer one in time, and the
+    # other main still stays a look of its own.
+    closer = replace(main, still_id="s4", captured_utc=t0 + timedelta(seconds=0.15))
+    groups = same_moment_groups([main, tele, closer])
+    assert sorted([s.still_id for s in grp] for grp in groups) == [["s1"], ["s4", "s2"]]

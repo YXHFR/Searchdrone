@@ -14,6 +14,7 @@ import json
 import math
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,6 +22,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
+from sd_detect import detect_all
 from sd_geo import PinholeCamera
 from sd_mav.vehicle import FcTelemetry
 from sd_obs.clock import MonotonicClock
@@ -437,14 +439,131 @@ async def test_a_failing_model_is_reported_once_per_streak(tmp_path: Path) -> No
 
 def test_a_failing_on_only_logs_and_the_streak_still_ends(tmp_path: Path) -> None:
     lp = loop(tmp_path, FakeClock(), {})
-    lp._failing = FAIL_REPORT  # pyright: ignore[reportPrivateUsage]
+    told: list[str] = []
+    lp.off = lambda reason, _error: told.append(reason)
+    for _ in range(FAIL_REPORT):
+        lp._fail(MAIN, RuntimeError("inference failed"))  # pyright: ignore[reportPrivateUsage]
+    assert told == ["stills_failing"]
 
     def on() -> None:
         raise RuntimeError("link down")
 
     lp.on = on
-    lp._back(recovered=True)  # pyright: ignore[reportPrivateUsage]
-    assert lp._failing == 0 and lp.stats.failed == 0  # pyright: ignore[reportPrivateUsage]
+    lp._back(MAIN)  # pyright: ignore[reportPrivateUsage]
+    assert lp._failing[MAIN] == 0 and not lp._reported  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_capture_time_in_the_sidecar_is_the_reports_time(tmp_path: Path) -> None:
+    """A camera that writes when it took the still (``captured_utc``, with a zone) gives
+    the report that time; without one, or with one that has no zone, the still is
+    stamped as it is polled."""
+    taken = datetime(2026, 5, 1, 12, 0, 0, 250000, tzinfo=UTC)
+    clock = FakeClock()
+    sent: list[Any] = []
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        sent.append,
+        clock,
+        CAM,
+        env={},
+    )
+    for when in ("2026-05-01T14:00:00.25+02:00", "2026-05-01T12:00:00", None):
+        write_still(tmp_path, "block0_h30")
+        meta = tmp_path / "block0_h30.json"
+        doc = json.loads(meta.read_text(encoding="utf-8"))
+        meta.write_text(json.dumps({**doc, "captured_utc": when}), encoding="utf-8")
+        await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert [s.report.captured_utc for s in sent] == [taken, clock.utc_now(), clock.utc_now()]
+
+
+class _DeadCamera:
+    def __init__(self) -> None:
+        self.dead = True
+
+    def poll(self) -> Any:
+        if self.dead:
+            raise RuntimeError("camera gone")
+        return None
+
+
+async def test_a_dead_main_camera_is_reported_while_the_tele_camera_works(
+    tmp_path: Path,
+) -> None:
+    """The failing streak is per camera: the tele camera's stills going through do not
+    hide a main camera that fails every round."""
+    write_still(tmp_path, "block0_h30")
+    captured = DirStillSource(tmp_path, synthetic=True).poll()
+    assert captured is not None
+    clock = FakeClock()
+    main = _DeadCamera()
+    sent: list[Any] = []
+    lp = PerceptionLoop(
+        main,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        sent.append,
+        clock,
+        CAM,
+        env={},
+        extra=[Feed(SimpleNamespace(poll=lambda: captured), TELE_CAM)],  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+    )
+    told: list[tuple[str, str] | str] = []
+    lp.off = lambda reason, error: told.append((reason, error))
+    lp.on = lambda: told.append("on")
+    for _ in range(FAIL_REPORT + 2):
+        await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert lp.stats.by_camera == {"tele": FAIL_REPORT + 2}  # the tele camera worked
+    assert lp.stats.failed == FAIL_REPORT + 2
+    assert told == [("stills_failing", "RuntimeError")]  # told once, despite the tele
+    main.dead = False  # polls fine but has no still yet: nothing ran on it
+    await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert told == [("stills_failing", "RuntimeError")]
+    main.poll = lambda: captured  # type: ignore[method-assign]
+    await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert told == [("stills_failing", "RuntimeError"), "on"]
+
+
+async def test_a_slow_detector_does_not_split_a_main_and_tele_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both stills of a round are stamped when they are polled, before any detection: a
+    detector that takes seconds per still (as on the drone's computer) leaves the main
+    and tele stills of one moment a pair for the probability map."""
+    pod = pytest.importorskip("sd_search.probmap.pod")
+    main, tele = tmp_path / "main", tmp_path / "tele"
+    write_still(main, "block0_h30")
+    write_still(tele, "block0_h30")
+    clock = FakeClock()
+
+    def slow(*args: Any, **kwargs: Any) -> Any:
+        clock.advance(3.0)  # the detector's time on one still
+        return detect_all(*args, **kwargs)
+
+    monkeypatch.setattr(loop_module, "detect_all", slow)
+    sent: list[Any] = []
+    lp = PerceptionLoop(
+        DirStillSource(main, synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        sent.append,
+        clock,
+        CAM,
+        env={},
+        extra=[Feed(DirStillSource(tele, synthetic=True), TELE_CAM)],
+    )
+    polled_at = clock.utc_now()
+    await lp._round()  # pyright: ignore[reportPrivateUsage]
+    assert clock.utc_now() - polled_at >= timedelta(seconds=6)  # two slow detections
+    wide, narrow = (s.report for s in sent)
+    assert wide.captured_utc == narrow.captured_utc == polled_at
+
+    plane = Plane(*HOME)
+
+    def still(r: Any, n: int) -> Any:
+        corners = tuple(plane.xy(c.lat, c.lon) for c in r.footprint)
+        return pod.Still(f"s{n}", n, "p", corners, r.px_per_m, True, r.captured_utc)
+
+    a, b = still(wide, 1), still(narrow, 2)
+    assert pod.same_moment_groups([a, b]) == [[a, b]]  # one look
 
 
 class _TooLarge:
