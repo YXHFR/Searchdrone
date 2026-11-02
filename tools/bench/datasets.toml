@@ -132,6 +132,21 @@ publish_weights = false
 local_only = false
 
 [[dataset]]
+name = "simstills"
+title = "Photo farm pictures (Gazebo renders of people at a real Swedish site with boxes, `just sim-farm-stills`)"
+licence = "Apache-2.0"
+checked = "2026-11-02"
+licence_note = "Our own renders, trained on only (the locked test part stays HERIDAL and KIOS; kept only if the real test improves). The person models are CC0 or CC BY 4.0, the trees from Skogsstyrelsen's open data (CC BY 4.0), the ground pictures Poly Haven's (CC0); credits in each picture's meta/*.json."
+attribution = "Searchdrone photo farm; person models from Gazebo Fuel (Open Robotics: Rescue Randy CC BY 4.0, the others CC0); tree heights from Skogsstyrelsen (CC BY 4.0); map data from OpenStreetMap contributors (ODbL); ground textures from Poly Haven (CC0)"
+layout = "simfarm_stills"
+local_path = "build/simfarm/stills"
+use = ["train"]
+licence_confirmed = true  # our own renders of openly licensed models
+ranges = false
+publish_weights = true
+local_only = true
+
+[[dataset]]
 name = "simfarm"
 title = "Sim farm pictures (Gazebo renders with facit, `just sim-farm`)"
 licence = "Apache-2.0"

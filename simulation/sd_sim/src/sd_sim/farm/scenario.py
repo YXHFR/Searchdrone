@@ -85,6 +85,21 @@ def sun_position(lat_deg: float, day_of_year: int, solar_hour: float) -> Sun:
     return Sun(round(math.degrees(el), 2), round((math.degrees(az) + 180.0) % 360.0, 2))
 
 
+def light_of(weather: str, sun: Sun) -> dict[str, Any]:
+    """The light of a weather under a sun, as ``world.light_context`` reads it."""
+    intensity, ambient, clouds, haze, shadows = WEATHER[weather]
+    # A low sun is weaker: scale by the air mass, roughly.
+    low = max(0.2, min(1.0, math.sin(math.radians(sun.elevation_deg)) * 2.0))
+    return {
+        "sun_intensity": round(intensity * low, 3),
+        "ambient": ambient,
+        "clouds": clouds,
+        "haze": haze,
+        "shadows": shadows,
+        "sun_direction": [round(v, 4) for v in sun.direction()],
+    }
+
+
 @dataclass(frozen=True)
 class Decoy:
     name: str
@@ -123,17 +138,7 @@ class FarmScenario:
 
     @property
     def light(self) -> dict[str, Any]:
-        sun, ambient, clouds, haze, shadows = WEATHER[self.weather]
-        # A low sun is weaker: scale by the air mass, roughly.
-        low = max(0.2, min(1.0, math.sin(math.radians(self.sun.elevation_deg)) * 2.0))
-        return {
-            "sun_intensity": round(sun * low, 3),
-            "ambient": ambient,
-            "clouds": clouds,
-            "haze": haze,
-            "shadows": shadows,
-            "sun_direction": [round(v, 4) for v in self.sun.direction()],
-        }
+        return light_of(self.weather, self.sun)
 
     def objects(self) -> list[objects.WorldObject]:
         return [*self.people, *(d.box() for d in self.decoys)]

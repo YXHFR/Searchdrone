@@ -69,6 +69,22 @@ def test_simfarm_rounds_are_sequences() -> None:
     ]
 
 
+def test_photo_farm_scenes_are_sequences() -> None:
+    names = [
+        "s1/images/s1_0000.jpg",
+        "s1/labels/s1_0000.txt",
+        "s1/images/s1_0001.jpg",
+        "s1/meta/s1_0000.json",
+        "s1/images/x.png",
+        "s1/coco.json",
+    ]
+    members = LAYOUTS["simfarm_stills"].members(names)
+    assert [(m.image_id, m.seq, m.label) for m in members] == [
+        ("s1/s1_0000", "s1", "s1/labels/s1_0000.txt"),
+        ("s1/s1_0001", "s1", None),  # a picture with nobody in it
+    ]
+
+
 def test_heridal_members_carry_the_place_as_sequence() -> None:
     names = [
         "h/JPEGImages/train_TRS_0001.jpg",
@@ -313,7 +329,15 @@ def test_seadronessee_refuses_broken_labels() -> None:
 
 @pytest.mark.parametrize(
     "layout",
-    ["heridal_voc", "wisard_vis", "kios_yolo", "simfarm", "kios_carperson", "seadronessee_coco"],
+    [
+        "heridal_voc",
+        "wisard_vis",
+        "kios_yolo",
+        "simfarm",
+        "simfarm_stills",
+        "kios_carperson",
+        "seadronessee_coco",
+    ],
 )
 def test_members_use_the_one_sequence_rule(layout: str) -> None:
     if layout == "seadronessee_coco":
@@ -327,6 +351,7 @@ def test_members_use_the_one_sequence_rule(layout: str) -> None:
                 _kios_label("Images/Valid/3_peoplepegia_105.jpg"),
             ],
             "simfarm": ["r9/images/a.png"],
+            "simfarm_stills": ["s9/images/a.jpg"],
             "kios_carperson": [_kcp(40), _kcp_label(40)],
         }[layout]
         members = LAYOUTS[layout].members(names)

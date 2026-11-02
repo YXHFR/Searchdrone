@@ -8,6 +8,20 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- A photo farm for the person detector (the owner's decision of 2026-11-02: as
+  realistic as possible, with the right proportions): `just sim-farm-stills` takes
+  still pictures of people at the site with its real trees, without flying. People
+  have real body heights (adults 1.50-1.95 m, sometimes a child), stand, walk, sit or
+  lie in the open, at a forest edge, under a tree or on a path, and wear their own or
+  recoloured clothes. The camera is aimed from heights that give HERIDAL's and KIOS's
+  centimetres per pixel, the ground under it gets photographed grass, forest floor,
+  gravel or rock (`just ground-pictures-fetch`, Poly Haven CC0) and the light is
+  developed like a photo. The boxes are what the bounding-box camera sees of each
+  person. Each scene keeps Gazebo's full logs. The pictures are the training-only set
+  `simstills` (`just train-detector sets=heridal,kios,kios_carperson,simstills`): it
+  is never measured on and is kept only if the real test gets better. A growing set's
+  scenes are split by a hash of their names (`GROWING` in `tools/bench/splits.py`).
+
 - The ground station now fills the AI's "till hemgräns" minutes
   (`battery_to_reserve_s`), which it sent as empty before, so the commander's
   search-again battery check works in real flights. The estimate is the charge above

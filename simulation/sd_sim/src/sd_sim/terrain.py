@@ -1071,7 +1071,7 @@ def build(
         for name in forest_mod.ATLAS_FILES:
             shutil.copyfile(forest_mod.atlas_folder(repo) / name, meshes / name)
         woods = forest_mod.build_forest(
-            kept, np.array([t.z for t in trees]), site.half_size_m, atlas
+            kept, np.array([t.z for t in trees]), site.half_size_m, atlas, site.trees_near_m
         )
         tree_files = [f"{stem}.glb" for stem in forest_mod.write_tiles(woods, meshes, ".")]
         tree_stats = {

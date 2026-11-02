@@ -8,15 +8,18 @@ from typing import Any
 
 import pytest
 from bench.common import BenchError
+from bench.datasets import load_register
 from bench.layouts import LAYOUTS, sequence_of
 from bench.splits import (
     CURRENT,
+    GROWING,
     PARTS,
     RATIOS,
     RATIOS_TRAIN_ONLY,
     SPLITS,
     Split,
     extend_split_file,
+    hashed_part,
     ids_digest,
     load_mini,
     load_split,
@@ -88,6 +91,25 @@ def test_split_check_refuses_other_pictures() -> None:
         split.check("d", [("a", "s"), ("b", "s"), ("c", "other")])
     with pytest.raises(BenchError, match="andra bilder"):
         split.check("d", [("a", "s"), ("c", "s")])
+
+
+def test_a_growing_set_is_drawn_by_hash_not_listed() -> None:
+    split = load_split()
+    names = [f"20261102T{i:06d}Z-hellasgarden-s{i}" for i in range(2000)]
+    parts = [split.part_of("simstills", n) for n in names]
+    # the same scene always lands in the same part, however many come after it
+    assert parts == [split.part_of("simstills", n) for n in names]
+    assert set(parts) == {"train", "val"}  # trained on only: never a test part
+    assert 0.07 < parts.count("val") / len(parts) < 0.13
+    assert hashed_part("simstills", names[0], GROWING["simstills"]) == parts[0]
+    split.check("simstills", [("a", "new-scene")])  # not listed, not refused
+
+
+def test_only_training_sets_grow() -> None:
+    register = load_register()
+    for name, ratios in GROWING.items():
+        assert register[name].use == ("train",)
+        assert ratios["test"] == 0.0
 
 
 @pytest.mark.parametrize("version", VERSIONS)

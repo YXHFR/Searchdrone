@@ -10,7 +10,8 @@ back to its own plain trees.
 
 Every tree stands where the raster has it and is as tall as the raster says: each species
 has one model one metre tall, scaled by the tree's height and turned by a yaw of its own.
-Trees within ``NEAR_M`` of home, where the vehicle takes off and flies low, are branch
+Trees within ``NEAR_M`` of home (a site can set its own, ``trees.near_m`` in its
+``site.toml``), where the vehicle takes off and flies low, are branch
 cards (``*_near``, roughly a thousand triangles); the rest are the crown's picture from
 the side twice, crossed, and once from above (``*_far``, eight triangles), which from a
 search altitude looks the same. One material for all of them (the atlas, glTF PBR with
@@ -361,6 +362,7 @@ def build_forest(
     ground_z: NDArray[np.float64],
     half: float,
     atlas: dict[str, tuple[float, float, float, float]],
+    near_m: float = NEAR_M,
 ) -> Forest:
     """Every tree as a mesh, merged per tile; ``ground_z`` is the ground under each tree
     (world z)."""
@@ -370,7 +372,7 @@ def build_forest(
     tiles: dict[tuple[int, int], gltf.Primitive] = {}
     n_near = 0
     for tree, z in zip(trees, ground_z, strict=True):
-        is_near = math.hypot(tree.east, tree.north) < NEAR_M
+        is_near = math.hypot(tree.east, tree.north) < near_m
         n_near += is_near
         model = (near if is_near else far)[tree.species]
         ti = min(int((half - tree.north) / size), FOREST_TILES - 1)
