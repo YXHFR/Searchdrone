@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import math
 from itertools import pairwise
 from types import SimpleNamespace
@@ -35,7 +36,8 @@ from sd_onboard.executor.limits import LimitAction
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_onboard.executor.state import Trigger
 from sd_onboard.skills import inspect_detection, survey_sector
-from sd_onboard.skills.base import PlanError
+from sd_onboard.skills._common import STOP_WAIT_S
+from sd_onboard.skills.base import PlanError, SkillFailedError
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
@@ -446,6 +448,26 @@ async def test_no_way_out_over_a_person_climbs_straight_up_then_hovers(
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
 
 
+async def test_an_inspection_climb_starts_where_the_drone_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a flight controller that carries its speed, the inspection's climb is straight
+    up from where the drone stops: it never flies back along its leg to where it was when
+    the cylinder came, and the order still ends in the keep-out hover."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, _person, here, start = await _over_a_person_with_no_way_out(r, monkeypatch)
+        ve, vn = r.fc.vel
+        speed = math.hypot(ve, vn)
+        assert speed > 1.0  # flying the leg
+        ahead = (ve / speed, vn / speed)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
+        assert [h["inside"] for h in _holds(r)] == [True]
+        along = [(x - here[0]) * ahead[0] + (y - here[1]) * ahead[1] for x, y in track_xy(r, start)]
+        back = max(a - b for a, b in zip(itertools.accumulate(along, max), along, strict=True))
+        assert back <= 0.5, f"flew {back:.1f} m back along its leg"
+
+
 async def test_no_way_out_and_no_room_to_climb_hovers_where_it_is(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -608,6 +630,39 @@ async def test_a_new_end_while_goto_starts_keeps_its_deadline() -> None:
         with pytest.raises(_StopError):
             await goto.start(plan, io)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
         assert goto._deadline == pytest.approx(renewed)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_an_inspection_flies_a_leg_set_as_the_last_one_ended() -> None:
+    """The reflex sets a new leg as the goto switches to LOITER at the end of the last
+    one (``retarget``; the goto has not arrived at it): the inspection flies the new leg
+    instead of taking it as flown. Here the new leg is a climb, so the order then ends in
+    the keep-out hover; asked whether it arrived, not whether the ends match."""
+    handler = inspect_detection.InspectHandler()
+    lat, lon = at(50, 0)
+    first = inspect_detection._Leg(lat, lon, 30.0, 5.0, None, exit=False)  # pyright: ignore[reportPrivateUsage]
+    climb = inspect_detection._Leg(lat, lon, 60.0, 3.0, None, exit=False, climb=True)  # pyright: ignore[reportPrivateUsage]
+    plan = SimpleNamespace(expected_duration_s=10.0)
+    starts: list[Any] = []
+
+    class _Goto:
+        arrived = False
+        target: tuple[float, float, float] = (lat, lon, 30.0)
+
+        async def start(self, leg_plan: Any, io: Any) -> None:
+            starts.append(handler._leg)  # pyright: ignore[reportPrivateUsage]
+            if len(starts) == 1:  # the climb comes as the first leg ends
+                handler._leg = climb  # pyright: ignore[reportPrivateUsage]
+                self.target, self.arrived = (climb.lat, climb.lon, climb.alt_m), False
+            else:
+                self.arrived = True
+
+    handler.goto = _Goto()  # type: ignore[assignment]
+    handler.command_id = new_id()
+    handler._ctx, handler._leg, handler._leg_plan = SimpleNamespace(), first, plan  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    with pytest.raises(SkillFailedError) as failed:
+        await handler.start(plan, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+    assert starts == [first, climb]
+    assert failed.value.code == "KEEPOUT_VIOLATION"
 
 
 async def test_replans_of_one_inspection_have_a_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -844,7 +899,7 @@ async def test_a_drone_that_never_stands_still_is_planned_from_where_it_is(
         cmd, k, start = await _close_cylinder_ahead(r)
         came = r.clock.monotonic()
         await r.until(lambda: "executor.keepout_reroute_stopped" in r.up.kinds(), 60)
-        assert r.clock.monotonic() - came >= survey_sector.STOP_WAIT_S - 1.0
+        assert r.clock.monotonic() - came >= STOP_WAIT_S - 1.0
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
         assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
 
@@ -1239,11 +1294,16 @@ async def test_no_way_around_inside_the_charter_hovers(monkeypatch: pytest.Monke
 
 
 async def _search_over_a_person(
-    r: Rig, monkeypatch: pytest.MonkeyPatch, radius: float = 50.0, source: str = "candidate"
+    r: Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    radius: float = 50.0,
+    source: str = "candidate",
+    *,
+    speed_ms: float = 0.0,
 ) -> tuple[SkillCommand, Keepout, tuple[float, float], int]:
-    """A cylinder comes around the drone on a search leg and no way out is planned (the
-    search is no ``Replans``): the order, the cylinder, where the drone was and where the
-    track was then."""
+    """A cylinder comes around the drone on a search leg, once it flies faster than
+    ``speed_ms``, and no way out is planned (the search is no ``Replans``): the order, the
+    cylinder, where the drone was and where the track was then."""
     box = square(60, east=0, north=120)
     monkeypatch.setattr(survey_sector, "reroute", lambda *_a, **_k: None)
     await r.install(charter(allowed_skills=SKILLS))
@@ -1251,7 +1311,13 @@ async def _search_over_a_person(
     cmd = await r.send(
         r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
     )
-    await r.until(lambda: r.fc.mission_current >= 4, 120)  # on a search leg
+    await r.until(  # on a search leg
+        lambda: (
+            r.fc.mission_current >= 4
+            and (not speed_ms or r.ex.vehicle_state().groundspeed_ms > speed_ms)
+        ),
+        120,
+    )
     here = xy(r)
     person = keepout(here[0], here[1], radius, source=source)
     start = len(r.fc.track)
@@ -1286,6 +1352,34 @@ async def test_no_way_out_of_a_cylinder_around_a_search_climbs_then_hovers(
         await r.run(10)
         assert len(_holds(r)) == 1  # hovering there: told once
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+
+
+async def test_a_climb_over_the_top_starts_where_the_drone_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cylinder comes around a search leg whose height is already above the cylinder's
+    top and margin: the climb is to where the drone stops, never back to where it was when
+    the cylinder came. A flight controller that carries its speed brakes past that spot,
+    and the way back there can lie deeper in a cylinder that came meanwhile (SITL SK03:
+    E8)."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, person, here, start = await _search_over_a_person(
+            r, monkeypatch, radius=20.0, speed_ms=6.0
+        )
+        alt = r.ex.vehicle_state().alt_rel_home_m
+        assert alt > person.radius_m + KEEPOUT_CLIMB_MARGIN_M  # the climb is no climb
+        ve, vn = r.fc.vel
+        speed = math.hypot(ve, vn)
+        ahead = (ve / speed, vn / speed)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert [h["inside"] for h in _holds(r)] == [True]
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"
+        along = [(x - here[0]) * ahead[0] + (y - here[1]) * ahead[1] for x, y in track_xy(r, start)]
+        back = max(a - b for a, b in zip(itertools.accumulate(along, max), along, strict=True))
+        assert back <= 0.5, f"flew {back:.1f} m back along its leg"
+        assert along[-1] >= speed**2 / (2 * BRAKE_MS2) - 2.0  # hovers where it stopped
+        await r.run(10)
+        assert math.dist(xy(r), track_xy(r, start)[-1]) <= 0.5
 
 
 async def test_a_climb_with_the_ai_silent_still_ends_in_the_keepout_hover(

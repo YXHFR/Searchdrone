@@ -156,7 +156,7 @@ class InspectHandler:
                 raise RuntimeError("planned before running")
             await self.goto.start(leg_plan, io)  # ends in LOITER, still, at the leg's end
             leg = self._leg
-            if leg is None or self.goto.target != (leg.lat, leg.lon, leg.alt_m):
+            if leg is None or not self.goto.arrived:
                 continue  # the reflex planned the leg again as it ended: fly that one
             if leg.climb:  # up out of reach: the order ends in the keep-out hover
                 raise SkillFailedError("KEEPOUT_VIOLATION", CLIMBED_SV)
@@ -197,15 +197,18 @@ class InspectHandler:
         return self._leg is not None and self._leg.climb
 
     def climb(self, ctx: PlanContext, alt_m: float) -> bool:
-        """Straight up from where the drone is in ``ctx`` to ``alt_m``, flown from the next
-        tick; the order then ends in the keep-out hover. False when no leg is flown."""
+        """Straight up to ``alt_m`` from where the drone stops (``from_stop``), flown from
+        the next tick; the order then ends in the keep-out hover. False when no leg is
+        flown."""
         if self._leg is None or self._at_point:
             return False
         v = ctx.vehicle
         speed = min(INSPECT_SPEED_MS, ctx.charter.max_speed_ms)
         leg = _Leg(v.lat, v.lon, alt_m, speed, None, exit=False, climb=True)
         self._ctx, self._leg, self._leg_plan = ctx, leg, self._plan_of(ctx, leg)
-        self.goto.retarget(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, renew_deadline=True)
+        self.goto.retarget(
+            ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, renew_deadline=True, from_stop=True
+        )
         return True
 
     def replan(self, ctx: PlanContext, allowed: Callable[[list[LatLonAlt]], bool]) -> bool:

@@ -41,6 +41,7 @@ from itertools import pairwise
 from typing import Final, Protocol, runtime_checkable
 
 from sd_onboard.skills.base import PlanContext, SkillHandler, SkillPlan
+from sd_onboard.skills.goto import GotoHandler
 from sd_onboard.skills.survey_sector import SurveyRun
 from sd_safety.keepout import Circle, circles, reroute, xy_route_violation
 from sd_safety.targets import Plane, Polygon, Xy, point_segment_distance, polygon_from_geojson
@@ -142,6 +143,10 @@ def remaining(handler: SkillHandler, plan: SkillPlan, here: Xy, plane: Plane) ->
         if leg is None:
             return []
         end = plane.xy(*leg)
+    elif isinstance(handler, GotoHandler) and handler.target is not None:
+        # The leg's end as flown: a climb out of a keep-out cylinder is from where the
+        # drone stops (``GotoHandler._stop_first``), not where its plan began.
+        end = plane.xy(*handler.target[:2])
     elif not plan.path:
         return []
     else:
