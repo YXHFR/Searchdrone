@@ -273,8 +273,27 @@ def test_the_search_again_numbers_come_from_the_code() -> None:
     assert "never below 10 m" in system
     assert "minutes * (spacing / your `spacing_m`) * 1.25" in system
     assert "no minutes to the home limit" in system and "till hemgräns" in system
+    # The battery check only decides on another round; it never ends the first one.
+    assert "it never stops the first round or an order in progress" in system
     assert "the mission ends after the first round" in system
     assert "at once, also in the middle of a search" in system
+
+
+def test_the_sector_line_guards_odd_minutes_and_spacing() -> None:
+    def score(est_min: float, spacing: float) -> SectorScore:
+        return SectorScore(
+            sector_id="A",
+            poa=0.4,
+            covered_pct=0,
+            mean_pod=0,
+            pos_plan=0.1,
+            est_min=est_min,
+            psr=0.016,
+            spacing_m=spacing,
+        )
+
+    assert situation_line([score(0, 42)]).endswith("A 0,40/0%/0,00/0,016/0,1@42")
+    assert situation_line([score(6.3, 0.4)]).endswith("A 0,40/0%/0,00/0,016")
 
 
 def test_the_sector_line_shows_the_minutes_of_a_pass_and_their_spacing() -> None:

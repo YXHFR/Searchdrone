@@ -1,0 +1,40 @@
+id: EV-38
+title: Ingen tid till hemgräns i LÄGE mitt i första varvet - sök vidare
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+memory:
+  plan_note: 'Plan: sök sektor A, sedan sektor B.'
+  pending_operator_request:
+    mission:
+      text: Sök efter en försvunnen man i sektorerna.
+      message_id: 0192f49e-3000-7000-8000-000000000038
+      requested_at: '2026-01-01T00:00:00Z'
+      flown: true
+steps:
+- situation_patch:
+    vehicle:
+      battery_to_reserve_s: null
+    sectors:
+    - sector_id: A
+      name: A
+      status: done
+      progress: 1
+    - sector_id: B
+      name: B
+      status: pending
+      progress: 0
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): B 0,70/0%/0,00/0,070/3,0@40  A
+      0,30/100%/0,40/0,030/3,0@40'
+  event:
+    type: event.skill
+    body:
+      skill: survey_sector
+      status: done
+  expect:
+    tool: survey_sector
+    params:
+      sector:
+        equals: B
+    forbidden_tools:
+    - return_home
+    language: sv

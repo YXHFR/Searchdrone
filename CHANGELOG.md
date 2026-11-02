@@ -651,10 +651,11 @@ All notable changes to this project are listed here. The format follows
   now shown last in the "Sektorer (POA ...)" line of the situation together with the lane
   spacing they are planned for (`min@stråk m`), so the AI scales them to the closer
   spacing and adds a quarter for the flight there; with no minutes to the home limit it
-  flies home. A request that names
+  flies home; that check only decides on another round and never ends the first one.
+  A request that names
   the sectors or says to come home after the search ends the mission after the first
-  round, and "come home" from the operator ends it at once. Evaluations EV-34 to EV-37
-  cover the four cases.
+  round, and "come home" from the operator ends it at once. Evaluations EV-34 to EV-39
+  cover these cases, two of them without a time to the home limit.
 - The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
   the ground station's profile from its `server.hello`, not the brain's own: on until the
   ground station has said it, off only against a `sim` ground station, and on again while

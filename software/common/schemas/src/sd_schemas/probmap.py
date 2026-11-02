@@ -192,10 +192,18 @@ def situation_line(scores: Sequence[SectorScore]) -> str:
     another sector against the battery's time to the return limit."""
     parts = [
         f"{s.sector_id} {_sv(s.poa, 2)}/{s.covered_pct:.0f}%/{_sv(s.mean_pod, 2)}/{_sv(s.psr, 3)}"
-        f"/{_sv(s.est_min, 1)}@{s.spacing_m:.0f}"
+        f"{_pass_time(s)}"
         for s in suggest_sector_order(scores)
     ]
     return "Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): " + "  ".join(parts)
+
+
+def _pass_time(s: SectorScore) -> str:
+    """ "/minutes@spacing", with at least 0,1 minutes shown; left out when the spacing
+    rounds to under 1 m, which no real plan has."""
+    if s.spacing_m < 1:
+        return ""
+    return f"/{_sv(max(s.est_min, 0.1), 1)}@{s.spacing_m:.0f}"
 
 
 def _sv(x: float, n: int) -> str:

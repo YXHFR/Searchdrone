@@ -13,8 +13,8 @@ memory:
 steps:
 - situation_patch:
     vehicle:
-      battery_pct: 24.0
-      battery_to_reserve_s: 300
+      battery_pct: 22.0
+      battery_to_reserve_s: 240
     sectors:
     - sector_id: A
       name: A

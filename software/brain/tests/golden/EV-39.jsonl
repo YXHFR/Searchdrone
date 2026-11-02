@@ -1,0 +1,1 @@
+{"step": 0, "call": 0, "reply": {"content": "Allt är sökt utan fynd. Jag ser inte hur länge batteriet räcker, så jag flyger hem.", "tool_calls": [{"name": "return_home", "arguments": {"reason": "Okänd tid till hemgräns.", "rationale_sv": "Utan tid till hemgräns kan jag inte bedöma ett nytt varv."}}]}}
