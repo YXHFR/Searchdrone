@@ -75,6 +75,30 @@ def test_heartbeat_within_5s_and_telemetry_at_4hz() -> None:
     asyncio.run(run())
 
 
+def test_a_held_heartbeat_shows_the_mode_only_when_released() -> None:
+    """``heartbeat_held``: the mode the fake took shows at ``release_heartbeat``, not
+    before; the other telemetry goes on."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        assert await run_with_clock(clock, vehicle.wait_connected(5.0), max_s=5.0)
+        fc = vehicle.fc
+        fc.heartbeat_held = True
+        seen = vehicle.telemetry.fc_heartbeat_mono_ms
+        fc.mode = CopterMode.LOITER
+        updates: list[int] = []
+        vehicle.subscribe(lambda t: updates.append(clock.monotonic_ms()))
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.fc_mode == "STABILIZE"
+        assert vehicle.telemetry.fc_heartbeat_mono_ms == seen and updates
+        fc.release_heartbeat()
+        await clock.run_for(0.01)
+        assert vehicle.telemetry.fc_mode == "LOITER" and not fc.heartbeat_held
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_streams_requested_after_connect_and_reconnect() -> None:
     async def run() -> None:
         clock, vehicle, events = await _started()

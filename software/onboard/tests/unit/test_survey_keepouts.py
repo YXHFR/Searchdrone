@@ -9,7 +9,6 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
-from heartbeat_hold import HeartbeatHold
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
@@ -248,15 +247,30 @@ def _track(r: Rig, start: int) -> list[Xy]:
     return [PLANE.xy(lat, lon) for lat, lon, *_ in r.fc.track[start:]]
 
 
+def _straightens(monkeypatch: pytest.MonkeyPatch) -> list[Xy]:
+    """Where the executor tries a shorter rest after a lift (``_reroute`` with ``here``)."""
+    straightens: list[Xy] = []
+    reroute = executor_module.Executor._reroute
+
+    def spy(self: executor_module.Executor, *a: object, **kw: object) -> bool:
+        if kw.get("here") is not None:
+            straightens.append(kw["here"])  # type: ignore[arg-type]
+        return reroute(self, *a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(executor_module.Executor, "_reroute", spy)
+    return straightens
+
+
 @pytest.mark.parametrize("lift_after_s", [0.1, 0.3, 0.8])
 async def test_a_cylinder_lifted_while_the_search_stops_first_does_not_cut_the_stop(
-    lift_after_s: float,
+    lift_after_s: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#161 review: the search goes around a cylinder further on; then one comes 17 m
     ahead at 8 m/s, too close to go around (it stops first), and the one further on is
     lifted while it brakes. The lift must not straighten the route from where the drone
     was: that cancels the stop and flies into the close one. The plan from the stop takes
-    the lift into account."""
+    the lift into account. The lift is not dropped: tried once the stop has planned."""
+    straightens = _straightens(monkeypatch)
     # On a later leg, between pattern points: lifted, the rest is about 80 m shorter.
     far = keepout(-15, 120, 36)
     async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
@@ -293,6 +307,9 @@ async def test_a_cylinder_lifted_while_the_search_stops_first_does_not_cut_the_s
         kinds = r.up.kinds()
         assert "executor.keepout_straighten" not in kinds, kinds
         assert "executor.keepout_reroute_stopped" in kinds, kinds
+        assert not straightens
+        await r.run(_GAP_S)
+        assert straightens  # held back while it stopped, tried after
         assert xy_route_violation(_track(r, start), circles([close], PLANE)) is None
         # Planned from the stop around the close one only: nothing goes around the far one.
         assert all(
@@ -344,12 +361,11 @@ async def _cancel_auto_on_the_way(r: Rig, change: Callable[[], None], kind: str)
     await r.until(
         lambda: r.ex.auth.pending_mode == CopterMode.AUTO and r.fc.mode == CopterMode.AUTO, 10
     )
-    hold = HeartbeatHold(r.fc)
-    hold.held = True
+    r.fc.heartbeat_held = True
     assert r.ex.vehicle.telemetry.fc_custom_mode != int(CopterMode.AUTO)
     n = r.up.kinds().count(kind)
     change()
-    hold.release()
+    r.fc.release_heartbeat()
     await r.until(lambda: r.up.kinds().count(kind) > n, 1)
 
 
@@ -428,15 +444,7 @@ async def test_a_merged_cylinder_of_the_drones_own_is_not_a_lift(
 ) -> None:
     """The same person seen again: the drone's own cylinder grows into one with a new id.
     The old id is not a cylinder lifted, so the search tries no shorter rest for it."""
-    straightens: list[Xy] = []
-    reroute = executor_module.Executor._reroute
-
-    def spy(self: executor_module.Executor, *a: object, **kw: object) -> bool:
-        if kw.get("here") is not None:
-            straightens.append(kw["here"])  # type: ignore[arg-type]
-        return reroute(self, *a, **kw)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(executor_module.Executor, "_reroute", spy)
+    straightens = _straightens(monkeypatch)
     async with rig(fc_options=_ARDUCOPTER) as r:
         await _searching(r)
         k = _ahead(r, 80, 1)

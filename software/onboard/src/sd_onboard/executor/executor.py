@@ -189,6 +189,7 @@ _PREFLIGHT_EVERY_MS: Final = 1000
 _ALT_GOTO_SPEED_MS: Final = 3.0
 _ALT_GOTO_BELOW_M: Final = 5.0
 _RTL_RETRY_MS: Final = 3000
+_MODE_CONFIRM_MS: Final = int(MODE_CONFIRM_TIMEOUT_S * 1000)
 # A cylinder lifted (a candidate rejected): the search drops a way around it only when
 # that is at least this much shorter, so a cylinder handed from the drone to the ground
 # (the same person, another id) does not stop the search for nothing.
@@ -423,6 +424,8 @@ class Executor:
         self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
         self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
         self._keepouts_through: set[UUID] = set()  # came with the drone inside: left on the leg
+        # A lift a reroute that stops first held back: the order it is for (tried again).
+        self._lift_pending: UUID | None = None
         # Takes one still for an order (perception, ``PerceptionLoop.capture``).
         self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
@@ -550,22 +553,28 @@ class Executor:
                 return False
             await self.clock.sleep(0.05)
         self.auth.pending_mode = mode
+        rc_at_send = self.vehicle.telemetry.rc_mode_pwm
+        accepted_ms: int | None = None
         try:
             result = await self.vehicle.set_mode(mode, origin=origin)
             if result is not MavResult.ACCEPTED:
                 return False
+            accepted_ms = self.now_ms()
             deadline = self.clock.monotonic() + MODE_CONFIRM_TIMEOUT_S
             while self.clock.monotonic() <= deadline:
-                if self.vehicle.telemetry.fc_custom_mode == int(mode):
-                    self.auth.confirmed(mode)
+                t = self.vehicle.telemetry
+                if t.fc_custom_mode == int(mode):
+                    self.auth.confirmed(
+                        mode, accepted_ms=accepted_ms, seen_ms=t.fc_heartbeat_mono_ms
+                    )
                     return True
                 await self.clock.sleep(0.05)
             return False
         except asyncio.CancelledError:
-            # Sent (or on its way): the flight controller may take it after all. Its
-            # HEARTBEAT is then our own doing, not a takeover (``Authority``).
-            if self.auth.pending_mode == mode:
-                self.auth.sent_and_cancelled(mode, self.now_ms())
+            # Accepted: the flight controller may show it after all. A HEARTBEAT showing
+            # AUTO until this call's own deadline is then our own doing (``Authority``).
+            if accepted_ms is not None and self.auth.pending_mode == mode:
+                self.auth.sent_and_cancelled(mode, accepted_ms + _MODE_CONFIRM_MS, rc_at_send)
             raise
         finally:
             if self.auth.pending_mode == mode:
@@ -1270,7 +1279,7 @@ class Executor:
         self.auth.released()
         self.fallback.stop()
         if target in (S.HOLD, S.RTL) and fc_mode is not None:
-            self.auth.confirmed(CopterMode(fc_mode))
+            self.auth.confirmed(CopterMode(fc_mode), accepted_ms=None, seen_ms=None)
         self._enter(target, hold_reason="operator_released", cause="release")
         self._ack(ref_id, "done")
         if target == S.HOLD and fc_mode == int(CopterMode.BRAKE):
@@ -1638,7 +1647,9 @@ class Executor:
             self._take(Trigger.FC_SILENT, held_by="fc_silent", event="fc_silent")
         if t.fc_connected:
             self._watch_landing()
-            late = self.auth.adopt_late(t, now)
+            # Only while the executor steers: in HELD or FAILSAFE nothing is ours.
+            in_control = self.state in AIRBORNE_CONTROLLED and not self.control_suspended
+            late = self.auth.adopt_late(t, now) if in_control else None
             if late is not None:
                 self.emit("mode_late", {"fc_mode": late.name})
             self._classify(now)
@@ -1709,12 +1720,20 @@ class Executor:
             entry = entry_m([here, *rest], cyl)
             if entry is None:
                 stopping = isinstance(active.handler, SurveyHandler) and active.handler.stopping
-                if lifted and run.detours() and not stopping:
+                if lifted:
+                    self._lift_pending = active.command_id
+                if self._lift_pending != active.command_id or not run.detours():
+                    self._lift_pending = None
+                elif stopping:
+                    # Never while a reroute stops first: its route was judged from where
+                    # the drone was, not where it stops. The stop's own plan takes the
+                    # cylinders in force when it plans, which may be before this lift:
+                    # tried again on every tick until the stop has planned.
+                    self._keepout_watch = True
+                else:
                     # Around a cylinder that is gone: the rest from the pattern, around
                     # those still in force, if shorter; else flown on as it is (clear).
-                    # Never while a reroute stops first: its route was judged from where
-                    # the drone was, not where it stops, and the stop's own plan from
-                    # there takes the cylinders in force then (this lift included).
+                    self._lift_pending = None
                     self._reroute(active, run, charter, stop_first=False, here=here)
                 return
             # A cylinder ahead, closer than the drone can turn away from at this speed: it
@@ -2042,6 +2061,7 @@ class Executor:
         if isinstance(target, Refusal):
             return
         self._drop_active(stage="superseded", codes=("ONB_CONTROL_HELD",))
+        self.auth.drop_ours()  # a mode of ours that shows after this is not taken as ours
         self._taken_by = "fc_failsafe"
         self._enter(target, held_by=held_by, cause=str(key))
         self.emit(event, {})

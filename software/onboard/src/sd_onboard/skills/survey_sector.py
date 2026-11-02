@@ -285,7 +285,9 @@ class SurveyHandler:
     @property
     def stopping(self) -> bool:
         """A reroute that stops first and has not planned its rest from the stop yet: its
-        plan there takes the cylinders in force then, so nothing else replans it before."""
+        plan there takes the cylinders in force then, so nothing else replans it before.
+        Also ends when the drone is not still within ``STOP_WAIT_S`` (it plans from where
+        it is then), or when the plan from the stop fails."""
         return self._stop_first is not None
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
