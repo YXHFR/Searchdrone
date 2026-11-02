@@ -11,15 +11,25 @@ scores into centred ranks and takes an Adam step. Every ``val_every`` iterations
 current weights are scored on a fixed validation set, and the best ones are kept. The
 starting point is the greedy POS-per-minute rule, so the best checkpoint is never
 worse than greedy on the validation set.
+
+With ``checkpoint`` set, the whole state (weights, Adam moments, the random generator
+and the log) is written there after every validation, and a run that finds one picks
+up after its last saved iteration. A resumed run ends with the same weights as one
+that was never stopped. The checkpoint names the run (size, world, seed, step sizes),
+not the code version: resume with the code it was started with. ``train`` leaves the
+file in place when done; the command line removes it.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -74,6 +84,58 @@ def train_seeds(size: RunSize, seed: int, it: int) -> range:
     return range(base, base + size.train_scenarios)
 
 
+def _run_id(size: RunSize, cfg: SimConfig, seed: int, sigma: float, lr: float) -> str:
+    """What a checkpoint must match to be resumed: the same run, not just the same file."""
+    doc = {
+        "size": dataclasses.asdict(size),
+        "cfg": dataclasses.asdict(cfg),
+        "seed": seed,
+        "sigma": sigma,
+        "lr": lr,
+    }
+    return json.dumps(doc, sort_keys=True, default=str)
+
+
+def _save_checkpoint(
+    path: Path,
+    run_id: str,
+    it: int,
+    arrays: dict[str, np.ndarray],
+    rng: np.random.Generator,
+    log: TrainLog,
+) -> None:
+    meta = {
+        "run_id": run_id,
+        "iteration": it,
+        "rng": rng.bit_generator.state,
+        "log": dataclasses.asdict(log),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("wb") as f:
+        np.savez(
+            f,
+            meta=np.array(json.dumps(meta)),
+            theta=arrays["theta"],
+            m=arrays["m"],
+            v=arrays["v"],
+            best=arrays["best"],
+        )
+    tmp.replace(path)  # a stop mid-write leaves the previous checkpoint whole
+
+
+def _load_checkpoint(path: Path, run_id: str) -> tuple[int, dict[str, np.ndarray], dict, TrainLog]:
+    with np.load(path) as z:
+        meta = json.loads(str(z["meta"]))
+        arrays = {k: z[k] for k in ("theta", "m", "v", "best")}
+    if meta["run_id"] != run_id:
+        raise ValueError(
+            f"{path} är från en annan körning (storlek, värld, seed eller inställning skiljer); "
+            "ta bort den eller välj en annan checkpoint."
+        )
+    return int(meta["iteration"]), arrays, meta["rng"], TrainLog(**meta["log"])
+
+
 def train(
     size: RunSize,
     cfg: SimConfig | None = None,
@@ -82,6 +144,7 @@ def train(
     sigma: float = 0.05,
     lr: float = 0.02,
     progress: Callable[[str], None] | None = None,
+    checkpoint: Path | None = None,
 ) -> tuple[np.ndarray, TrainLog]:
     cfg = cfg or SimConfig()
     if size.population % 2:
@@ -94,14 +157,27 @@ def train(
     b1, b2, eps_adam = 0.9, 0.999, 1e-8
     val_seeds = [VAL_SEED_BASE + i for i in range(size.val_scenarios)]
     log = TrainLog()
-    t0 = time.monotonic()
+    run_id = _run_id(size, cfg, seed, sigma, lr)
+    first, resumed = 1, None
+    if checkpoint is not None and checkpoint.exists():
+        done, arrays, rng_state, log = _load_checkpoint(checkpoint, run_id)
+        theta, m, v = arrays["theta"], arrays["m"], arrays["v"]
+        rng.bit_generator.state = rng_state
+        resumed, first = arrays["best"], done + 1
+        if progress:
+            progress(f"fortsätter från varv {done}/{size.iterations} ({checkpoint})")
+    t0 = time.monotonic() - log.seconds
     workers = workers or os.cpu_count() or 1
     pool = ProcessPoolExecutor(workers) if workers > 1 else None
     try:
-        best = theta.copy()
-        log.start_val = log.best_val = float(score_candidates(pool, theta[None], val_seeds, cfg)[0])
+        if resumed is not None:
+            best = resumed
+        else:
+            best = theta.copy()
+            start = float(score_candidates(pool, theta[None], val_seeds, cfg)[0])
+            log.start_val = log.best_val = start
         half = size.population // 2
-        for it in range(1, size.iterations + 1):
+        for it in range(first, size.iterations + 1):
             eps = rng.standard_normal((half, theta.size))
             cands = np.concatenate([theta + sigma * eps, theta - sigma * eps])
             fit = score_candidates(pool, cands, train_seeds(size, seed, it), cfg)
@@ -119,6 +195,10 @@ def train(
                 if val > log.best_val:
                     log.best_val, log.best_iteration, best = val, it, theta.copy()
             log.iterations.append(row)
+            if checkpoint is not None and "val" in row:
+                log.seconds = time.monotonic() - t0
+                arrays = {"theta": theta, "m": m, "v": v, "best": best}
+                _save_checkpoint(checkpoint, run_id, it, arrays, rng, log)
             if progress:
                 progress(
                     f"varv {it}/{size.iterations}: träning {row['train_mean']:.4f}"

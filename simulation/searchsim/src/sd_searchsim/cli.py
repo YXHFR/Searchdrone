@@ -1,6 +1,7 @@
 """``sd-searchsim train|eval key=value ...`` (behind ``just rl-train`` and ``just rl-eval``).
 
-train: size=full|ci (default full), seed=<0..9>, workers=<int>, out=<policy file>
+train: size=full|ci (default full), seed=<0..9>, workers=<int>, out=<policy file>,
+       checkpoint=<file> (default <out>.ckpt.npz; a stopped run goes on from it; none: off)
 eval:  size=full|ci (default full), workers=<int>, policy=<policy file>, out=<result file>
 both:  world=synthetic|real (default synthetic), sites=<folder from just rl-maps>,
        belief_motion=diffuse|lpb (default diffuse; lpb walks the map by sd_motion, real only),
@@ -26,7 +27,7 @@ from sd_searchsim.realworld import load_sites
 DEFAULT_DIR = Path("build/rl")
 _WORLD_KEYS = {"world", "sites", "belief_motion", "miss_correlation"}
 KEYS = {
-    "train": {"size", "seed", "workers", "out", *_WORLD_KEYS},
+    "train": {"size", "seed", "workers", "out", "checkpoint", *_WORLD_KEYS},
     "eval": {"size", "workers", "policy", "out", *_WORLD_KEYS},
 }
 
@@ -111,9 +112,21 @@ def main(argv: list[str] | None = None) -> int:
         if seed > train.MAX_SEED:
             _fail(f"rl-train: seed ska vara 0 till {train.MAX_SEED}.")
         out = Path(args.get("out", DEFAULT_DIR / "policy.json"))
-        theta, log = train.train(
-            size, cfg, seed=seed, workers=workers, progress=lambda m: print(m, flush=True)
-        )
+        ckpt_arg = args.get("checkpoint", f"{out}.ckpt.npz")
+        ckpt = None if ckpt_arg == "none" else Path(ckpt_arg)
+        if ckpt is not None and ckpt.resolve() == out.resolve():
+            _fail("rl-train: checkpoint och out får inte vara samma fil.")
+        try:
+            theta, log = train.train(
+                size,
+                cfg,
+                seed=seed,
+                workers=workers,
+                progress=lambda m: print(m, flush=True),
+                checkpoint=ckpt,
+            )
+        except ValueError as exc:
+            _fail(f"rl-train: {exc}")
         meta = {
             "size": size_name,
             "world": cfg.world,
@@ -127,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
             "iterations": log.iterations,
         }
         policies.save(out, theta, meta)
+        if ckpt is not None:
+            ckpt.unlink(missing_ok=True)  # the run is done; the policy file holds the result
         print(
             f"klart på {log.seconds:.0f} s: validering {log.start_val:.4f} (girig) -> "
             f"{log.best_val:.4f} (varv {log.best_iteration}). Policyn ligger i {out}."
