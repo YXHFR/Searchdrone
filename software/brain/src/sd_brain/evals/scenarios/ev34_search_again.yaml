@@ -23,8 +23,8 @@ steps:
       name: B
       status: done
       progress: 1
-    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min): B 0,55/100%/0,40/0,050/3,0  A
-      0,45/100%/0,40/0,040/3,0'
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): B 0,55/100%/0,40/0,050/3,0@40  A
+      0,45/100%/0,40/0,040/3,0@40'
   event:
     type: event.skill
     body:
@@ -36,6 +36,6 @@ steps:
       sector:
         equals: B
       spacing_m:
-        min: 10
-        max: 25
+        min: 18
+        max: 22
     language: sv

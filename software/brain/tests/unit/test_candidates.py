@@ -115,7 +115,10 @@ async def test_every_decision_wakes_the_ai() -> None:
 
 def test_the_situation_shows_the_candidate_lines() -> None:
     lines = {
-        "probability_line": "Sektorer (POA kvar / täckt / medel-POD / PSR): A 40 %",
+        "probability_line": (
+            "Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): "
+            "A 0,40/0%/0,00/0,016/6,3@42"
+        ),
         "candidates_line": "Kandidater: K3 HÖG (2/3 bilder; kod) 120 m NO | att granska 1, låg 0",
         "finds_line": "Fynd: inga bekräftade",
     }

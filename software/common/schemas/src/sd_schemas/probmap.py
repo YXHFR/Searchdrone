@@ -187,14 +187,23 @@ def suggest_sector_order(scores: Sequence[SectorScore]) -> list[SectorScore]:
 
 def situation_line(scores: Sequence[SectorScore]) -> str:
     """The AI's situation line, in the suggested order (Swedish decimal commas). The last
-    number is the planned minutes of one pass (``est_min``), so the AI can weigh another
-    sector against the battery's time to the return limit."""
+    field is the planned minutes of one pass (``est_min``) and the lane spacing they are
+    planned for (``spacing_m``), so the AI can scale them to a closer search and weigh
+    another sector against the battery's time to the return limit."""
     parts = [
         f"{s.sector_id} {_sv(s.poa, 2)}/{s.covered_pct:.0f}%/{_sv(s.mean_pod, 2)}/{_sv(s.psr, 3)}"
-        f"/{_sv(s.est_min, 1)}"
+        f"{_pass_time(s)}"
         for s in suggest_sector_order(scores)
     ]
-    return "Sektorer (POA kvar / täckt / medel-POD / PSR / min): " + "  ".join(parts)
+    return "Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): " + "  ".join(parts)
+
+
+def _pass_time(s: SectorScore) -> str:
+    """ "/minutes@spacing", with at least 0,1 minutes shown; left out when the spacing
+    rounds to under 1 m, which no real plan has."""
+    if s.spacing_m < 1:
+        return ""
+    return f"/{_sv(max(s.est_min, 0.1), 1)}@{s.spacing_m:.0f}"
 
 
 def _sv(x: float, n: int) -> str:
