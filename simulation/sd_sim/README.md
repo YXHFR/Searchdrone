@@ -160,9 +160,11 @@ scenario, or `just sim detector=model` in the flat world. It needs `physics=gz` 
 `gz_stills capture` process (topics `/sd_i<N>/tele` and `/sd_i<N>/tele_boxes`), and
 `sd-onboard` gets the folder as `[perception.tele]`: each round its perception task runs
 the detector on the newest main still, then on the newest tele still, and sends a report
-for each, placed on the ground with that camera's own view. An order's still
-(`capture_stills`, `inspect_detection`) still comes from the main camera, and the sim
-farm's archive keeps the main camera's pictures only. The flight itself does not change:
+for each, placed on the ground with that camera's own view. Tele stills count as searched
+ground on the probability map, over their narrower footprint and with their higher
+detail. `inspect_detection` takes its stills with the tele camera (with the main camera
+when there is none); `capture_stills` uses the main camera. The sim farm's archive keeps
+the main camera's pictures only. The flight itself does not change:
 the same height, speed and search pattern.
 
 ## Parts

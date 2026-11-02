@@ -26,7 +26,8 @@ A second camera (``extra``: the tele camera beside the main one, looking the sam
 has its own still source and pinhole camera. Each round the loop polls every camera's
 source in turn; a tele still goes through the same steps as a main one, georeferenced
 with its own camera, and its report says so only through its smaller footprint and
-higher ``px_per_m``. An order's still (``capture``) always comes from the main camera.
+higher ``px_per_m``. An order's still (``capture``) comes from the main camera, but
+``inspect_detection`` asks for the tele camera, which takes it when there is one.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
@@ -61,6 +62,7 @@ __all__ = [
     "MAIN",
     "MAX_POSE_AGE_MS",
     "MAX_TURN_RATE_DPS",
+    "TELE",
     "AttitudeRate",
     "Feed",
     "PerceptionLoop",
@@ -76,6 +78,7 @@ CAPTURE_WAIT_S = 3.0  # an order's still: no still from the source this long -> 
 _CAPTURE_POLL_S = 0.1
 FAIL_REPORT = 10  # stills failing in a row before the ground is told
 MAIN = "main"  # the main camera's name (``source`` and ``camera``)
+TELE = "tele"  # the tele camera's name, when it is one of ``extra``
 
 
 @dataclass(frozen=True)
@@ -84,7 +87,7 @@ class Feed:
 
     source: StillSource
     camera: PinholeCamera
-    name: str = "tele"
+    name: str = TELE
 
 
 @dataclass
@@ -321,11 +324,14 @@ class PerceptionLoop:
             self._back(recovered=self._failing >= FAIL_REPORT)
         return out
 
-    async def capture(self, command_id: UUID) -> UUID | None:
+    async def capture(self, command_id: UUID, tele: bool = False) -> UUID | None:
         """One still for an order: its ``still_id``, or ``None`` when none came in
-        ``CAPTURE_WAIT_S`` or it could not be placed on the ground."""
+        ``CAPTURE_WAIT_S`` or it could not be placed on the ground. ``tele``
+        (``inspect_detection``): from the tele camera when there is one, else from the
+        main camera."""
         if self._build_failed:
             return None
+        camera = TELE if tele and TELE in self.cameras else MAIN
         deadline = self.clock.monotonic() + CAPTURE_WAIT_S
         # A still stuck in the loop must not hold the order past its wait: a watchdog, so on
         # the event loop's (wall) clock, which runs even when the stuck still holds the lock.
@@ -337,7 +343,7 @@ class PerceptionLoop:
         try:
             while True:
                 try:
-                    out = await self._one(command_id)
+                    out = await self._one(command_id, camera)
                 except Exception:
                     self.stats.failed += 1
                     log.exception("perception failed on an order's still")

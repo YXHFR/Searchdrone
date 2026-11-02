@@ -353,12 +353,12 @@ class _IO:
     def emit_event(self, type: str, data: dict[str, Any]) -> None:
         self._ex.emit(type, data)
 
-    async def capture_still(self, command_id: UUID) -> UUID | None:
+    async def capture_still(self, command_id: UUID, tele: bool = False) -> UUID | None:
         camera = self._ex.camera
         if camera is None:
             return None
         try:  # whatever the camera does, the order goes on without the still
-            return await asyncio.wait_for(camera(command_id), _CAPTURE_LIMIT_S)
+            return await asyncio.wait_for(camera(command_id, tele), _CAPTURE_LIMIT_S)
         except TimeoutError:
             self._ex.emit("capture_timeout", {"command_id": str(command_id)})
             return None
@@ -418,8 +418,9 @@ class Executor:
         self._keepout_watch = False  # an order heads for a cylinder, still far off: every tick
         self._keepouts_seen: set[UUID] = set()  # the cylinders the reflex has looked at
         self._keepouts_through: set[UUID] = set()  # came with the drone inside: left on the leg
-        # Takes one still for an order (perception, ``PerceptionLoop.capture``).
-        self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
+        # Takes one still for an order (perception, ``PerceptionLoop.capture``): the
+        # order's id and whether the tele camera should take it when there is one.
+        self.camera: Callable[[UUID, bool], Awaitable[UUID | None]] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way

@@ -7,8 +7,9 @@ down, the target along the picture's long side. ``ONB_INSPECT_GEOMETRY`` when no
 height in the charter's band (or under the order's ``alt_m``) gets within 28 degrees.
 
 The drone flies there in GUIDED at most ``INSPECT_SPEED_MS`` (``goto``), waits
-``SETTLE_S``, takes ``INSPECT_STILLS`` stills ``INSPECT_STILL_INTERVAL_S`` apart, and
-hovers (HOLD). An interrupted inspection is not resumed.
+``SETTLE_S``, takes ``INSPECT_STILLS`` stills ``INSPECT_STILL_INTERVAL_S`` apart (with
+the tele camera when the drone has one, else the main camera), and hovers (HOLD). An
+interrupted inspection is not resumed.
 
 A drone inside cylinders first leaves them along a straight leg that goes deeper into
 none and enters no other (``sd_safety.keepout.reroute``), ``EXIT_CLEAR_M`` past the last
@@ -173,7 +174,9 @@ class InspectHandler:
             self._fly(ctx, nxt, retarget=False)
         self._at_point = True
         await io.sleep(SETTLE_S)
-        taken = await take_stills(io, self.command_id, INSPECT_STILLS, INSPECT_STILL_INTERVAL_S)
+        taken = await take_stills(
+            io, self.command_id, INSPECT_STILLS, INSPECT_STILL_INTERVAL_S, tele=True
+        )
         self.taken = len(taken)
         io.emit_event(
             "inspect_done",

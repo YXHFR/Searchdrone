@@ -15,7 +15,7 @@ from sd_schemas.search import SubjectCategory
 from sd_search.probmap.bayes import HeadingPrior, MapState, OperatorArea, RingTerrainMap
 from sd_search.probmap.build import MapBuilder, MapCandidate, MapInputs
 from sd_search.probmap.grid import Grid, grid_around
-from sd_search.probmap.pod import DETECTORS, Still, pass_pod, still_pod
+from sd_search.probmap.pod import DETECTORS, PERSON_WIDTH_M, Camera, Still, pass_pod, still_pod
 from sd_search.probmap.rings import ring_mass, rings_for
 from sd_search.probmap.sectors import PlanSector, sector_scores, spacing_m
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
@@ -426,3 +426,43 @@ def test_the_prior_is_quick_and_an_update_quicker() -> None:
     t = time.perf_counter()
     MODEL.update_negative(state, pod)
     assert time.perf_counter() - t < 0.05
+
+
+def test_a_tele_still_counts_as_searched_ground() -> None:
+    """The owner's decision (2026-11-02): a still from the tele camera (Raspberry Pi HQ
+    Camera, 20-degree lens) counts as searched ground like a main still, over its own
+    narrower footprint and with the detail its pixels give there."""
+    g = grid(500)
+    canopy = NoTerrain().canopy(g)
+    alt_m = 40.0
+    main, tele = Camera(width_px=1280, hfov_deg=66.0), Camera(width_px=1128, hfov_deg=20.0)
+
+    def look(foot: Camera, px: Camera, seq: int) -> Still:
+        """A still over ``foot``'s footprint with ``px``'s detail, straight down."""
+        half = foot.ground_width_m(alt_m) / 2
+        corners = square(0, 0, half)
+        return plane(g, Still(f"s{seq}", seq, "p1", corners, px.px_per_m(alt_m), True))
+
+    cell = g.cell_of(0, 0)
+    assert cell is not None
+
+    def at_cell(s: Still) -> float:
+        got = still_pod(g, s, canopy, DET)
+        assert got is not None
+        win, p = got
+        return float(p[cell[0] - win[0].start, cell[1] - win[1].start])
+
+    tele_still = look(tele, tele, 1)
+    tele_p = at_cell(tele_still)
+    assert tele_p > 0  # searched ground
+    # Over the same (tele) footprint, the tele camera's detail counts, not the main one's.
+    blurred_p = at_cell(look(tele, main, 2))
+    detail = DET.p_det(PERSON_WIDTH_M * tele.px_per_m(alt_m))
+    assert detail == pytest.approx(0.889, abs=0.001)  # a person about 40 px across
+    assert tele_p / blurred_p == pytest.approx(
+        detail / DET.p_det(PERSON_WIDTH_M * main.px_per_m(alt_m))
+    )
+    pod = pass_pod(g, [tele_still], canopy, DET)
+    assert pod[cell] == pytest.approx(tele_p)
+    far = g.cell_of(100, 0)  # outside the tele footprint (about 14 m wide at 40 m)
+    assert far is not None and pod[far] == 0.0

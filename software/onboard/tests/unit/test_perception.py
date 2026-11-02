@@ -611,6 +611,27 @@ async def test_an_order_takes_its_still_from_the_main_camera(
     )
     assert await lp.capture(new_id()) is None  # only the tele folder had a still
     assert lp.stats.stills == 0
+    # inspect_detection asks for the tele camera: it takes the still.
+    command_id = new_id()
+    still_id = await lp.capture(command_id, tele=True)
+    assert still_id is not None and lp.stats.by_camera == {"tele": 1}
+
+
+async def test_without_a_tele_camera_an_inspection_still_comes_from_the_main_one(
+    tmp_path: Path,
+) -> None:
+    write_still(tmp_path, "block0_h30")
+    clock = MonotonicClock()
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path, synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        lambda _r: None,
+        clock,
+        CAM,
+        env={},
+    )
+    assert await lp.capture(new_id(), tele=True) is not None
+    assert lp.stats.by_camera == {MAIN: 1}
 
 
 def test_every_extra_camera_needs_its_own_name(tmp_path: Path) -> None:
