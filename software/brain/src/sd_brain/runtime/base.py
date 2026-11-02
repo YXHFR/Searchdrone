@@ -133,8 +133,16 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             cost_usd=cost_usd,
             usage_valid=usage_valid,
         )
-    # ArithmeticError: a backstop for a number no check above foresaw (an OverflowError).
-    except (KeyError, IndexError, TypeError, ValueError, ArithmeticError) as exc:
+    # Backstops for what no check above foresaw: ArithmeticError (an OverflowError) and
+    # RecursionError (arguments nested too deep for _dumps or str).
+    except (
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        ArithmeticError,
+        RecursionError,
+    ) as exc:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")
         err.kind = "parse_error"
         raise err from None
@@ -152,10 +160,13 @@ def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
     number from 0 to ``MAX_TOKEN_COUNT``) keeps the answer: its counts read 0 and
     ``valid`` is False, so the cloud budget books the call at its estimate. A broken
     count must neither make a good answer a parse error (a second, paid call to the
-    fallback model) nor book the call as free. A left-out part is no error: it reads 0.
+    fallback model) nor book the call as free. Usage left out, or without its prompt or
+    completion count, is not valid either (the stated counts are kept): a provider that
+    states nothing is booked at the estimate, not as free. Only the reasoning share and
+    the price may be left out.
     """
     if value is None:
-        return 0, 0, 0, None, True
+        return 0, 0, 0, None, False
     if not isinstance(value, Mapping):
         return 0, 0, 0, None, False
     details = value.get("completion_tokens_details")
@@ -166,7 +177,8 @@ def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
     reasoning = _count((details or {}).get("reasoning_tokens"))
     if prompt is None or completion is None or reasoning is None:
         return 0, 0, 0, None, False
-    return prompt, completion, reasoning, _price(value.get("cost")), True
+    stated = value.get("prompt_tokens") is not None and value.get("completion_tokens") is not None
+    return prompt, completion, reasoning, _price(value.get("cost")), stated
 
 
 # The highest price of one call the ground's budget books (``BudgetCommit.cost_usd``).
@@ -181,7 +193,7 @@ def _price(value: Any) -> float | None:
         return None
     if not 0 <= value <= MAX_COST_USD:  # also NaN, which compares False
         return None
-    price = float(value)
+    price = abs(float(value))  # abs: -0.0 is 0.0
     return price if math.isfinite(price) else None
 
 

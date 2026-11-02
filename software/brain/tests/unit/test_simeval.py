@@ -20,6 +20,7 @@ from shapely.geometry import Point
 from sd_brain.cli import main
 from sd_brain.config import BehaviourConfig, CloudConfig, LlmConfig
 from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling, llm_sampling
+from sd_brain.runtime.budget import estimate_prompt_tokens
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.simeval.bank import (
     BankError,
@@ -335,6 +336,42 @@ async def test_metered_runtime_charges_real_usage_and_stops_at_the_cap(tmp_path:
             with pytest.raises(BudgetExhaustedError):
                 await meter.chat([{"role": "user", "content": "hej"}], [], 5, Sampling())
     assert len(fake.requests) == 1
+
+
+class _UnusableUsage:
+    """A runtime whose answer states no usable counts."""
+
+    name = "cloud"
+    model_id = "m"
+    supports_images = False
+
+    async def chat(self, *_args: Any, **_kw: Any) -> ModelReply:
+        return ModelReply(
+            content="x", tool_calls=[], finish_reason="stop", cost_usd=None, usage_valid=False
+        )
+
+
+async def test_metered_runtime_books_unusable_usage_at_the_reservation(tmp_path: Path) -> None:
+    """As the ground does: the estimated prompt and the completion limit, never free."""
+    ledger = _ledger(tmp_path, cap=30.0)
+    meter = MeteredRuntime(_UnusableUsage(), ledger)  # type: ignore[arg-type]
+    msgs = [{"role": "user", "content": "hej " * 400}]
+    await meter.chat(msgs, [], 5, Sampling(max_tokens=300))
+    est_prompt, _ = estimate_prompt_tokens(msgs)
+    expected = reply_cost_sek(
+        ModelReply(
+            content="x",
+            tool_calls=[],
+            finish_reason="stop",
+            prompt_tokens=est_prompt,
+            completion_tokens=300,
+        )
+    )
+    assert est_prompt > 0 and (meter.cost_sek, meter.unmeasured_calls) == (
+        pytest.approx(expected[0]),
+        1,
+    )
+    assert ledger.spent_sek() == pytest.approx(expected[0], abs=1e-6)  # kept to 6 decimals
 
 
 async def test_cloud_runtime_asks_openrouter_for_the_price() -> None:

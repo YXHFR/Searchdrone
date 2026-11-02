@@ -131,6 +131,11 @@ async def test_a_timeout_is_committed_at_the_estimate() -> None:
         {"prompt_tokens": 10**400, "completion_tokens": 30},
         {"prompt_tokens": 10_000_001, "completion_tokens": 30, "cost": 0.0004},
         {"prompt_tokens": 120, "completion_tokens": -1, "cost": 0.0004},
+        # left out: a provider that states no counts is no free call either
+        None,
+        {},
+        {"prompt_tokens": 120},
+        {"completion_tokens": 30, "cost": 0.0004},
     ],
 )
 async def test_malformed_usage_is_booked_at_the_estimate(usage: object) -> None:

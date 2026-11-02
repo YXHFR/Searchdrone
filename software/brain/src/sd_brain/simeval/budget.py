@@ -24,6 +24,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from sd_brain.runtime.base import ModelError, ModelReply, ModelRuntime, Sampling
+from sd_brain.runtime.budget import estimate_prompt_tokens
 
 __all__ = [
     "DAILY_CAP_SEK",
@@ -178,7 +179,17 @@ class MeteredRuntime:
                 "reasoning_tokens": reply.reasoning_tokens,
             }
         )
-        sek, measured = reply_cost_sek(reply)
+        priced = reply
+        if not reply.usage_valid:  # booked at the whole reservation, as the ground does
+            est_prompt, _images = estimate_prompt_tokens(messages)
+            priced = reply.model_copy(
+                update={
+                    "prompt_tokens": est_prompt,
+                    "completion_tokens": sampling.max_tokens,
+                    "cost_usd": None,
+                }
+            )
+        sek, measured = reply_cost_sek(priced)
         self.ledger.charge(sek, measured=measured)
         self.cost_sek += sek
         self.calls += 1
