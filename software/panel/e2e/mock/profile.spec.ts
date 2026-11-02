@@ -35,8 +35,13 @@ async function pick(card: Locator, testId: string, value: string): Promise<void>
 async function openProfile(page: Page): Promise<void> {
   await showView(page, "map");
   const tab = page.getByTestId("profile-tab");
-  if ((await tab.count()) > 0) await tab.click(); // without WebGL the card is on the page
-  await expect(page.getByTestId("profile-card")).toBeVisible();
+  const card = page.getByTestId("profile-card");
+  // The map view loads lazily and the tab needs the mission: wait for one of them, or a
+  // count() taken while the view still says "loading" skips the tab. Without WebGL there
+  // is no tab and the card is on the page.
+  await expect(tab.or(card).first()).toBeVisible();
+  if ((await tab.count()) > 0) await tab.click();
+  await expect(card).toBeVisible();
 }
 
 test("the pilot corrects the AI's profile and approves it", async ({ page, ground }) => {
