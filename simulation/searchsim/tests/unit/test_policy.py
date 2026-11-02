@@ -80,6 +80,39 @@ def test_training_is_deterministic_and_never_worse_than_greedy() -> None:
     assert len(log_a.iterations) == TINY.iterations
 
 
+def test_a_stopped_run_resumes_to_the_same_weights(tmp_path: Path) -> None:
+    size = RunSize(
+        iterations=4,
+        population=4,
+        train_scenarios=2,
+        val_scenarios=3,
+        eval_scenarios=3,
+        val_every=2,
+    )
+    whole, log_whole = train(size, seed=1, workers=1)
+    ckpt = tmp_path / "run.ckpt.npz"
+
+    def stop_at_two(msg: str) -> None:
+        if msg.startswith("varv 2/"):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        train(size, seed=1, workers=1, checkpoint=ckpt, progress=stop_at_two)
+    lines: list[str] = []
+    resumed, log_resumed = train(size, seed=1, workers=1, checkpoint=ckpt, progress=lines.append)
+    assert lines[0].startswith("fortsätter från varv 2/4")
+    assert np.array_equal(resumed, whole)
+    assert log_resumed.best_val == log_whole.best_val
+    assert len(log_resumed.iterations) == size.iterations
+
+
+def test_a_checkpoint_from_another_run_is_refused(tmp_path: Path) -> None:
+    ckpt = tmp_path / "run.ckpt.npz"
+    train(TINY, seed=1, workers=1, checkpoint=ckpt)
+    with pytest.raises(ValueError, match="annan körning"):
+        train(TINY, seed=2, workers=1, checkpoint=ckpt)
+
+
 def test_evaluation_compares_on_the_same_scenarios() -> None:
     res = evaluate(3, initial_params(), workers=1)
     assert set(res["choosers"]) == {*BASELINES, "policy"}
@@ -93,6 +126,7 @@ def test_cli_train_then_eval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setitem(SIZES, "ci", TINY)
     pol, out = tmp_path / "policy.json", tmp_path / "eval.json"
     assert cli.main(["train", "size=ci", "workers=1", f"out={pol}"]) == 0
+    assert not (tmp_path / "policy.json.ckpt.npz").exists()  # removed once the run is done
     assert cli.main(["eval", "size=ci", "workers=1", f"policy={pol}", f"out={out}"]) == 0
     doc = json.loads(out.read_text())
     assert doc["scenarios"] == 3
