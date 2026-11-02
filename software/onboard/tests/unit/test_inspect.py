@@ -36,6 +36,7 @@ from sd_onboard.executor.limits import LimitAction
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_onboard.executor.state import Trigger
 from sd_onboard.skills import inspect_detection, survey_sector
+from sd_onboard.skills._common import STOP_WAIT_S
 from sd_onboard.skills.base import PlanError, SkillFailedError
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
@@ -898,7 +899,7 @@ async def test_a_drone_that_never_stands_still_is_planned_from_where_it_is(
         cmd, k, start = await _close_cylinder_ahead(r)
         came = r.clock.monotonic()
         await r.until(lambda: "executor.keepout_reroute_stopped" in r.up.kinds(), 60)
-        assert r.clock.monotonic() - came >= survey_sector.STOP_WAIT_S - 1.0
+        assert r.clock.monotonic() - came >= STOP_WAIT_S - 1.0
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
         assert xy_route_violation(track_xy(r, start), circles([k], PLANE)) is None
 
