@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import math
 from itertools import pairwise
 from types import SimpleNamespace
@@ -444,6 +445,26 @@ async def test_no_way_out_over_a_person_climbs_straight_up_then_hovers(
         await r.run(10)
         assert len(_holds(r)) == 1  # hovering there: told once
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+
+
+async def test_an_inspection_climb_starts_where_the_drone_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a flight controller that carries its speed, the inspection's climb is straight
+    up from where the drone stops: it never flies back along its leg to where it was when
+    the cylinder came, and the order still ends in the keep-out hover."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, _person, here, start = await _over_a_person_with_no_way_out(r, monkeypatch)
+        ve, vn = r.fc.vel
+        speed = math.hypot(ve, vn)
+        assert speed > 1.0  # flying the leg
+        ahead = (ve / speed, vn / speed)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert r.up.codes(cmd.command_id) == ("KEEPOUT_VIOLATION",)
+        assert [h["inside"] for h in _holds(r)] == [True]
+        along = [(x - here[0]) * ahead[0] + (y - here[1]) * ahead[1] for x, y in track_xy(r, start)]
+        back = max(a - b for a, b in zip(itertools.accumulate(along, max), along, strict=True))
+        assert back <= 0.5, f"flew {back:.1f} m back along its leg"
 
 
 async def test_no_way_out_and_no_room_to_climb_hovers_where_it_is(
@@ -1239,11 +1260,16 @@ async def test_no_way_around_inside_the_charter_hovers(monkeypatch: pytest.Monke
 
 
 async def _search_over_a_person(
-    r: Rig, monkeypatch: pytest.MonkeyPatch, radius: float = 50.0, source: str = "candidate"
+    r: Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    radius: float = 50.0,
+    source: str = "candidate",
+    *,
+    speed_ms: float = 0.0,
 ) -> tuple[SkillCommand, Keepout, tuple[float, float], int]:
-    """A cylinder comes around the drone on a search leg and no way out is planned (the
-    search is no ``Replans``): the order, the cylinder, where the drone was and where the
-    track was then."""
+    """A cylinder comes around the drone on a search leg, once it flies faster than
+    ``speed_ms``, and no way out is planned (the search is no ``Replans``): the order, the
+    cylinder, where the drone was and where the track was then."""
     box = square(60, east=0, north=120)
     monkeypatch.setattr(survey_sector, "reroute", lambda *_a, **_k: None)
     await r.install(charter(allowed_skills=SKILLS))
@@ -1251,7 +1277,13 @@ async def _search_over_a_person(
     cmd = await r.send(
         r.order("survey_sector", {"polygon": box, "spacing_m": 30, "speed_ms": 8}), 1
     )
-    await r.until(lambda: r.fc.mission_current >= 4, 120)  # on a search leg
+    await r.until(  # on a search leg
+        lambda: (
+            r.fc.mission_current >= 4
+            and (not speed_ms or r.ex.vehicle_state().groundspeed_ms > speed_ms)
+        ),
+        120,
+    )
     here = xy(r)
     person = keepout(here[0], here[1], radius, source=source)
     start = len(r.fc.track)
@@ -1286,6 +1318,34 @@ async def test_no_way_out_of_a_cylinder_around_a_search_climbs_then_hovers(
         await r.run(10)
         assert len(_holds(r)) == 1  # hovering there: told once
         assert abs(r.ex.vehicle_state().alt_rel_home_m - want) <= 1.5
+
+
+async def test_a_climb_over_the_top_starts_where_the_drone_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cylinder comes around a search leg whose height is already above the cylinder's
+    top and margin: the climb is to where the drone stops, never back to where it was when
+    the cylinder came. A flight controller that carries its speed brakes past that spot,
+    and the way back there can lie deeper in a cylinder that came meanwhile (SITL SK03:
+    E8)."""
+    async with rig(fc_options={"accel_ms2": BRAKE_MS2}) as r:
+        cmd, person, here, start = await _search_over_a_person(
+            r, monkeypatch, radius=20.0, speed_ms=6.0
+        )
+        alt = r.ex.vehicle_state().alt_rel_home_m
+        assert alt > person.radius_m + KEEPOUT_CLIMB_MARGIN_M  # the climb is no climb
+        ve, vn = r.fc.vel
+        speed = math.hypot(ve, vn)
+        ahead = (ve / speed, vn / speed)
+        await r.until(lambda: r.ex.state == S.HOLD, 120)
+        assert [h["inside"] for h in _holds(r)] == [True]
+        assert r.up.stages(cmd.command_id)[-1] == "superseded"
+        along = [(x - here[0]) * ahead[0] + (y - here[1]) * ahead[1] for x, y in track_xy(r, start)]
+        back = max(a - b for a, b in zip(itertools.accumulate(along, max), along, strict=True))
+        assert back <= 0.5, f"flew {back:.1f} m back along its leg"
+        assert along[-1] >= speed**2 / (2 * BRAKE_MS2) - 2.0  # hovers where it stopped
+        await r.run(10)
+        assert math.dist(xy(r), track_xy(r, start)[-1]) <= 0.5
 
 
 async def test_a_climb_with_the_ai_silent_still_ends_in_the_keepout_hover(

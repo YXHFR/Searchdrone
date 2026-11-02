@@ -1,9 +1,11 @@
 """``goto``: fly to a point in GUIDED and hover there (also a pure height change).
 
 Above a 5 m height difference the vehicle first climbs or sinks where it is, then flies
-straight. The target is sent again every 2 s, and at once when it changes
-(:meth:`GotoHandler.retarget`; the deadline still runs from the first end). Arrived =
-within 2 m, height within 1.5 m and slower than 0.5 m/s for 2 s; then LOITER.
+straight. A leg that ends where the drone is (a pure height change, e.g. the climb out of
+a keep-out cylinder) is flown from where the drone stops, not from where it was when the
+leg was set (:meth:`GotoHandler._stop_first`). The target is sent again every 2 s, and at once when
+it changes (:meth:`GotoHandler.retarget`; the deadline still runs from the first end).
+Arrived = within 2 m, height within 1.5 m and slower than 0.5 m/s for 2 s; then LOITER.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ ARRIVED_FOR_S: Final = 2.0
 DEFAULT_SPEED_MS: Final = 10.0
 CLIMB_MS: Final = 2.0  # for the expected duration only
 TICK_S: Final = 0.1
+STOP_WAIT_S: Final = 12.0  # ``_stop_first``: never still by then, the leg goes on from there
 
 
 def goto_plan(
@@ -85,6 +88,9 @@ class GotoHandler:
         self._start_dist = 0.0
         self._progress = 0.0
         self._resend = False  # the target changed: send it on the next tick
+        self._stopping = False  # the leg ends where the drone is and it has not stopped yet
+        self._legs = 0  # ends set (``prepare``)
+        self._arrived_leg = 0  # the end last arrived at, by that count
         self._deadline = math.inf  # monotonic seconds: not there by then, the order fails
 
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
@@ -110,6 +116,8 @@ class GotoHandler:
         self.yaw_deg = yaw_deg
         self._plane = ctx.plane
         self._start_dist = horizontal_m(ctx.plane, ctx.vehicle, lat, lon)
+        self._stopping = self._start_dist <= GOTO_ARRIVE_RADIUS_M  # ``_stop_first``
+        self._legs += 1
 
     def retarget(
         self,
@@ -148,6 +156,8 @@ class GotoHandler:
         ):
             raise mode_failed(CopterMode.GUIDED)
         await io.change_speed(self.speed_ms)
+        if self._stopping:
+            await self._stop_first(io)
         if abs(io.vehicle.alt_rel_home_m - self.target[2]) > ALT_STEP_FIRST_M:
             # Climb or sink on the spot first.
             v = io.vehicle
@@ -163,6 +173,8 @@ class GotoHandler:
         last = -math.inf
         arrived_since: float | None = None
         while True:
+            if self._stopping:  # an end where the drone is, set as the leg is flown
+                await self._stop_first(io)
             now = io.clock.monotonic()
             lat, lon, alt = self.target
             if self._resend:
@@ -181,6 +193,7 @@ class GotoHandler:
             if here and still(v):
                 arrived_since = now if arrived_since is None else arrived_since
                 if now - arrived_since >= ARRIVED_FOR_S:
+                    self._arrived_leg = self._legs
                     break
             else:
                 arrived_since = None
@@ -189,6 +202,33 @@ class GotoHandler:
         self._progress = 100.0
         if not await io.set_mode(CopterMode.LOITER):
             raise mode_failed(CopterMode.LOITER)
+
+    async def _stop_first(self, io: ExecutorIO) -> None:
+        """For a leg that ends where the drone is (within the arrival radius when set):
+        until the drone stands still its spot follows it, sent every tick at the leg's
+        height, so the flight controller brakes to a stop and climbs meanwhile. A spot fixed
+        while it still moves would be overshot and flown back to, and that way back can lie
+        deeper in a keep-out cylinder that came meanwhile (the climb out of one). Then the spot
+        is where it stands, and the leg goes on from there (sent on the next tick). A drone
+        never reported still goes on from where it is after ``STOP_WAIT_S``."""
+        if self.target is None:
+            raise RuntimeError("planned before running")
+        alt, leg = self.target[2], self._legs
+        until = io.clock.monotonic() + STOP_WAIT_S
+        while not still(v := io.vehicle) and io.clock.monotonic() < until:
+            await io.set_position_target(v.lat, v.lon, alt, self.yaw_deg)
+            self._timeout(io)
+            await io.sleep(TICK_S)
+            if self._legs != leg:
+                return  # a new end meanwhile (``retarget``): the loop flies that one
+        self.target = (v.lat, v.lon, alt)
+        self._stopping = False
+        self._resend = True
+
+    @property
+    def arrived(self) -> bool:
+        """``start`` ended at the end set last: no new one came as it ended."""
+        return self._arrived_leg == self._legs
 
     @staticmethod
     def _deadline_for(now: float, plan: SkillPlan) -> float:
