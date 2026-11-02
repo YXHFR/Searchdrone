@@ -11,14 +11,20 @@ that may be trained on, mixed), ``init`` (a ``best.pt`` of the same model to sta
 instead of the COCO weights; it must lie outside ``out``), ``simfarm`` (1: pre-train on
 the synthetic pictures first, ``simfarm_epochs`` of them, default 3), ``device`` (auto,
 cuda, cpu), ``data``, ``out`` (default ``<data>/train/<model>``), ``limit`` (only the
-first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``seed``.
+first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``seed``,
+``balance`` (``sets``, the default: each epoch draws as many tiles from every set, so a
+big set does not drown the others; ``tiles``: every tile once, so a set counts by its
+size; or weights, ``balance=heridal:2,kios:2,kios_carperson:1,seadronessee:1``, naming
+every set), ``pick`` (the sets whose val AP50 picks the best epoch; default the sets in
+``sets`` that are measured on, HERIDAL and KIOS, or all of them if none is).
 
 Stops and goes on: the state is saved to ``last.pt`` every few minutes and after every
 epoch. Run the same command again and it carries on from there (a different command,
 say another ``batch``, starts afresh in a new folder with ``fresh=1``). The best epoch
 on the val part goes to ``best.pt``; ``just export-detector`` makes the ONNX file from it.
-The val AP50 is printed per dataset; the best epoch is the one whose lowest dataset AP50
-is highest, so a gain on the set with the most people never hides a loss on another.
+The val AP50 is printed per dataset; the best epoch is the one whose lowest AP50 over the
+``pick`` sets is highest, so a gain on the set with the most people never hides a loss on
+another.
 
 Never trained on: the test part (locked in ``tools/bench/splits/``) and every set whose
 licence allows measuring only (a GPL or unlicensed one in ``sets`` is refused). The
@@ -49,8 +55,10 @@ from torch.utils.data import DataLoader, Dataset
 KEYS = (
     "model", "epochs", "batch", "sets", "simfarm", "simfarm_epochs", "device", "data",
     "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile", "init",
+    "balance", "pick",
 )  # fmt: skip
 SAVE_MINUTES = 10.0
+BALANCE_MODES = ("sets", "tiles")
 
 
 @dataclass(frozen=True)
@@ -65,12 +73,92 @@ class Settings:
     limit: int = 0
     tile: int = TILE_PX
     init: str = ""  # a best.pt to start from instead of COCO ("": COCO)
+    balance: str = "sets"  # sets, tiles, or weights "heridal:2,kios:1"
+    pick: tuple[str, ...] = ()  # the sets that pick the best epoch (): all
 
     def key(self) -> dict[str, Any]:
         body = json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
         if not self.init:
             del body["init"]  # a run started before init= existed carries on
+        # a run started before balance= and pick= existed did what these say: it carries on
+        if self.balance == "tiles":
+            del body["balance"]
+        if not self.pick or set(self.pick) == set(self.sets):
+            del body["pick"]
         return body
+
+
+def parse_balance(text: str, sets: Sequence[str]) -> dict[str, float] | None:
+    """Each set's share of an epoch's tiles (``None``: ``tiles``, every tile once)."""
+    if text == "tiles":
+        return None
+    if text == "sets":
+        return dict.fromkeys(sets, 1.0)
+    weights: dict[str, float] = {}
+    for part in text.split(","):
+        name, _, value = part.partition(":")
+        try:
+            weight = float(value)
+        except ValueError:
+            weight = -1.0
+        if not (weight > 0 and math.isfinite(weight)):
+            raise BenchError(
+                f"balance= ska vara sets, tiles eller vikter som heridal:2,kios:1 (fick {part})",
+                2,
+            )
+        weights[name] = weight
+    if set(weights) != set(sets):
+        raise BenchError(
+            f"balance= ska ge en vikt till varje set i sets= ({', '.join(sets)}), inga andra.", 2
+        )
+    return weights
+
+
+def epoch_order(sources: Sequence[str], balance: str, seed: int, epoch: int) -> list[int]:
+    """The tiles of one epoch, in order (``sources``: each tile's set). As many as there
+    are tiles, so an epoch has as many steps whatever the balance. ``tiles``: each once.
+    Otherwise each set gets its share of them: a smaller set is gone through whole, as
+    often as it fits, and the rest drawn at random; a bigger one is drawn from. The same
+    seed and epoch give the same order, so a stopped run carries on where it was."""
+    rng = random.Random(seed * 1000 + epoch)  # noqa: S311 - repeatable order
+    if balance == "tiles":
+        order = list(range(len(sources)))
+        rng.shuffle(order)
+        return order
+    by_set: dict[str, list[int]] = {}
+    for i, name in enumerate(sources):
+        by_set.setdefault(name, []).append(i)
+    names = sorted(by_set)
+    if balance == "sets":
+        weights = dict.fromkeys(names, 1.0)
+    else:  # weights for sets with no tiles here (limit=) are left out
+        given = parse_balance(balance, balance_sets(balance))
+        assert given is not None  # noqa: S101 - not tiles
+        weights = {n: given.get(n, 0.0) for n in names}
+        if not any(weights.values()):
+            raise BenchError("balance= ger ingen vikt till något set som har rutor.", 2)
+    total, share = len(sources), sum(weights.values())
+    exact = {n: total * weights[n] / share for n in names}
+    quota = {n: math.floor(exact[n]) for n in names}
+    # the tiles rounding left over go to the sets that lost the most to it
+    for n in sorted(names, key=lambda n: (quota[n] - exact[n], n))[: total - sum(quota.values())]:
+        quota[n] += 1
+    order: list[int] = []
+    for n in names:
+        whole, rest = divmod(quota[n], len(by_set[n]))
+        order.extend(by_set[n] * whole)
+        order.extend(rng.sample(by_set[n], rest))
+    rng.shuffle(order)
+    return order
+
+
+def balance_sets(balance: str) -> list[str]:
+    """The sets weights ``heridal:2,kios:1`` name."""
+    return [part.partition(":")[0] for part in balance.split(",")]
+
+
+def set_of(tile: Tile) -> str:
+    return tile.source.split(":", 1)[0]
 
 
 class TileSet(Dataset[tuple[np.ndarray, np.ndarray]]):
@@ -162,10 +250,26 @@ def evaluate_val(
     }
 
 
-def val_score(per_set: dict[str, float]) -> float:
-    """The best epoch's measure: the lowest per-dataset AP50, so a gain on one set never
-    makes up for a loss on another (``pick-detector`` ranks models the same way)."""
-    return min(per_set.values()) if per_set else 0.0
+def picked(per_set: dict[str, float], pick: Sequence[str] = ()) -> list[str]:
+    """The sets of ``per_set`` that pick the best epoch: those in ``pick``, or all of
+    them if none of those has val tiles (or ``pick`` is empty)."""
+    return [s for s in per_set if s in pick] or list(per_set)
+
+
+def val_score(per_set: dict[str, float], pick: Sequence[str] = ()) -> float:
+    """The best epoch's measure: the lowest per-dataset AP50 of the ``pick`` sets, so a
+    gain on one set never makes up for a loss on another (``pick-detector`` ranks models
+    the same way)."""
+    return min(per_set[s] for s in picked(per_set, pick)) if per_set else 0.0
+
+
+def default_pick(sets: Sequence[str]) -> tuple[str, ...]:
+    """The sets of ``sets`` that are measured on (the land sets), or all if none is."""
+    from bench.datasets import load_register
+
+    register = load_register()
+    measured = tuple(s for s in sets if s in register and "measure" in register[s].use)
+    return measured or tuple(sets)
 
 
 def save(path: Path, state: dict[str, Any]) -> None:
@@ -198,6 +302,9 @@ def run_stage(
     folder, tiles = train_tiles
     if not tiles:
         raise BenchError("Inga träningsrutor. Är bilderna hämtade? Kör: just bench-fetch yes=1", 2)
+    sources = [set_of(t) for t in tiles]
+    # the simulator's pictures are one set: nothing to balance, so its order stays as it was
+    balance = settings.balance if stage == "train" else "tiles"
     steps_per_epoch = max(1, len(tiles) // settings.batch)
     total = steps_per_epoch * epochs
     warmup = min(total // 10, 3 * steps_per_epoch) if stage == "train" else 0
@@ -232,6 +339,13 @@ def run_stage(
             batch_size=settings.batch,
             **loader_kw,
         )
+    if stage == "train":
+        drawn = [sources[i] for i in epoch_order(sources, balance, settings.seed, 0)]
+        say(
+            f"{stage}: rutor per epok (balance={balance}): "
+            + ", ".join(f"{n} {drawn.count(n)} av {sources.count(n)}" for n in sorted(set(sources)))
+            + f"; bästa epoken väljs på {', '.join(settings.pick) or 'alla'}"
+        )
     last_save = time.monotonic()
     dataset = TileSet(folder, tiles, settings.tile, fam.pad, augment=True)
 
@@ -250,8 +364,7 @@ def run_stage(
         }
 
     while epoch < epochs:
-        order = list(range(len(tiles)))
-        random.Random(settings.seed * 1000 + epoch).shuffle(order)  # noqa: S311 - repeatable order
+        order = epoch_order(sources, balance, settings.seed, epoch)
         order = order[step_in_epoch * settings.batch : steps_per_epoch * settings.batch]
         loader = DataLoader(
             torch.utils.data.Subset(dataset, order),
@@ -296,7 +409,7 @@ def run_stage(
             assert val_tiles is not None  # noqa: S101 - val_loader is made from it
             sets = [t.source.split(":", 1)[0] for t in val_tiles[1]]
             per_set = evaluate_val(ema.net, settings.model, val_loader, device, sets)
-            score = val_score(per_set)
+            score = val_score(per_set, settings.pick)
             if score > best:
                 best = score
                 save(
@@ -307,6 +420,8 @@ def run_stage(
                         "ema": ema.net.state_dict(),
                         "val_ap50": score,
                         "val_ap50_by_dataset": per_set,
+                        "val_ap50_pick": picked(per_set, settings.pick),
+                        "balance": settings.balance,
                         "epoch": epoch,
                         "stage": stage,
                         **lineage,
@@ -356,7 +471,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=int(args.get("limit", "0")),
             tile=int(args.get("tile", str(TILE_PX))),
             init=str(Path(args["init"]).expanduser().resolve()) if args.get("init") else "",
+            balance=args.get("balance", "sets"),
+            pick=tuple(s for s in args.get("pick", "").split(",") if s),
         )
+        parse_balance(settings.balance, settings.sets)  # a typo stops here, not hours later
+        stray = [s for s in settings.pick if s not in settings.sets]
+        if stray:
+            raise BenchError(f"pick= får bara nämna set i sets= (inte {', '.join(stray)}).", 2)
         if settings.tile % 32 or not 64 <= settings.tile <= 1280:
             raise BenchError("tile= ska vara delbart med 32 och mellan 64 och 1280", 2)
         out = Path(args.get("out") or data / "train" / model).expanduser().resolve()
@@ -476,7 +597,13 @@ def train(
     sets = _available(data, settings.sets)
     if not sets:
         raise BenchError("Inga bilder att träna på. Kör: just bench-fetch yes=1", 2)
-    settings = replace(settings, sets=tuple(sets))  # what is really trained on
+    # what is really trained on, and the sets among them that pick the best epoch
+    pick = tuple(s for s in sets if s in settings.pick) or default_pick(sets)
+    balance = settings.balance
+    if balance not in BALANCE_MODES:  # weights: only for the sets really there
+        weights = dict(zip(balance_sets(balance), balance.split(","), strict=True))
+        balance = ",".join(weights[s] for s in sets)
+    settings = replace(settings, sets=tuple(sets), pick=pick, balance=balance)
     state_file = out / "settings.json"
     last = out / "last.pt"
     resume: dict[str, Any] | None = None
