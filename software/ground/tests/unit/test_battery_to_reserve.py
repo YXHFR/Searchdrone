@@ -3,19 +3,31 @@ telemetry (level, the wind check's mean current, the pack's capacity), None with
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import datetime as dt
 import math
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
-from sd_ground.mav.thread import MavSnapshot
+from sd_ground.mav.thread import GroundMav, MavSnapshot, ThreadSafeMav
 from sd_ground.services.situation import (
     _vehicle,  # pyright: ignore[reportPrivateUsage]
     battery_to_reserve_s,
-    home_limit_pct,
+    build_situation,
 )
 from sd_ground.services.wind import CAPACITY_MAH, TILT_WINDOW_S, BatteryDrain, FcParams, WindWatch
 from sd_mav.vehicle import FcTelemetry
+from sd_schemas.api import Charter, Mission
+from sd_schemas.base import LatLon, LatLonAlt, new_id
+from sd_schemas.charter import AutonomyMode, MissionCharter
+from sd_schemas.mission import MissionState
+from sd_schemas.safety import SafetyLimits, home_limit_pct
+from sd_testing import FakeClock
+
+NOW = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 FLYING = FcTelemetry(
     armed=True,
@@ -145,3 +157,140 @@ def test_without_fresh_current_samples_there_is_no_drain() -> None:
     # On the ground the window starts over.
     watch.observe(dataclasses.replace(FLYING, armed=False, landed_state="on_ground"), now + 250)
     assert watch.drain(now + 250) is None
+
+
+def test_nan_currents_are_left_out_of_the_mean() -> None:
+    watch = WindWatch()
+    now = _feed(watch, dataclasses.replace(FLYING, battery_current_a=math.nan), 0, 2.0)
+    assert watch.drain(now) is None
+    now = _feed(watch, FLYING, now + 250, 2.0)
+    drain = watch.drain(now)
+    assert drain is not None and drain.current_a == 30.0
+
+
+def _mav(snap: MavSnapshot | None) -> ThreadSafeMav:
+    core = cast(
+        GroundMav, SimpleNamespace(clock=FakeClock(), vehicle=None, energy_short=lambda _: None)
+    )
+    mav = ThreadSafeMav(core, asyncio.new_event_loop(), WindWatch())
+    mav._wind_params = lambda: None  # type: ignore[method-assign]  # no flight controller
+    mav.snapshot = lambda: snap  # type: ignore[method-assign]
+    return mav
+
+
+def _flown(mav: ThreadSafeMav, snap: MavSnapshot) -> MavSnapshot:
+    """Feed the wind check 2 s of flight; returns the last snapshot."""
+    for now in range(snap.now_mono_ms, snap.now_mono_ms + 2_001, 250):
+        snap = dataclasses.replace(
+            snap,
+            now_mono_ms=now,
+            telemetry=dataclasses.replace(snap.telemetry, attitude_mono_ms=now),
+        )
+        mav.snapshot = lambda snap=snap: snap  # type: ignore[method-assign]
+        mav.update_wind("sim-01")
+    return snap
+
+
+def test_the_thread_hands_out_the_drain_of_this_vehicle_and_link_only() -> None:
+    mav = _mav(_snap(FLYING))
+    snap = _flown(mav, _snap(FLYING))
+    drain = mav.battery_drain("sim-01")
+    assert drain is not None and drain.current_a == 30.0
+    assert mav.battery_drain("sim-02") is None  # another vehicle
+    mav.snapshot = lambda: dataclasses.replace(snap, connected=False)  # type: ignore[method-assign]
+    assert mav.battery_drain("sim-01") is None  # no link
+    mav.snapshot = lambda: None  # type: ignore[method-assign]
+    assert mav.battery_drain("sim-01") is None
+    # A reconnect (or reboot) the wind check has not taken yet: the window is the old link's.
+    rebooted = dataclasses.replace(
+        snap,
+        telemetry=dataclasses.replace(
+            snap.telemetry, fc_link_epoch=snap.telemetry.fc_link_epoch + 1
+        ),
+    )
+    mav.snapshot = lambda: rebooted  # type: ignore[method-assign]
+    assert mav.battery_drain("sim-01") is None
+    mav.loop.close()
+
+
+def _charter_row(mission: Mission, rtl_pct: float) -> Charter:
+    body = MissionCharter(
+        charter_id=new_id(),
+        mission_id=mission.id,
+        vehicle_id=mission.vehicle_id,
+        version=1,
+        area={
+            "type": "Polygon",
+            "coordinates": [[[18.0, 59.0], [18.01, 59.0], [18.01, 59.01], [18.0, 59.0]]],
+        },
+        home=LatLonAlt(lat=59.0, lon=18.0, alt_amsl_m=10.0),
+        pilot_position=LatLon(lat=59.0, lon=18.0),
+        battery_rtl_pct=rtl_pct,
+        allowed_skills=["goto"],
+        autonomy_mode=AutonomyMode.WITHIN_CHARTER,
+        sectors=[],
+        fence_hash=None,
+        approved_by=None,
+        approved_at=None,
+    )
+    return Charter(
+        id=body.charter_id,
+        mission_id=mission.id,
+        version=1,
+        status="approved",
+        body=body,
+        proposed_by="operator:demo",
+        approved_by=None,
+        approved_at=None,
+        install_status="installed",
+        fence_hash=None,
+        fence_verified_at=None,
+        approval_id=None,
+        created_at=NOW,
+    )
+
+
+@pytest.mark.parametrize(("charter_pct", "want_s"), [(None, 360), (40.0, 240), (20.0, 360)])
+def test_the_situation_counts_down_to_the_charters_level(
+    charter_pct: float | None, want_s: int
+) -> None:
+    mission = Mission(
+        id=new_id(),
+        vehicle_id="sim-01",
+        title="test",
+        status=MissionState.ACTIVE,
+        paused_by=None,
+        returning_cause=None,
+        state_seq=1,
+        limits=SafetyLimits(battery_rtl_pct=30.0),
+        active_charter_id=None,
+        autonomy_mode=None,
+        ai_enabled=True,
+        created_by="operator:demo",
+        created_at=NOW,
+        activated_at=None,
+        landed_at=None,
+        closed_at=None,
+        closed_reason=None,
+        notes=None,
+    )
+    s = build_situation(
+        mission=mission,
+        charter=None if charter_pct is None else _charter_row(mission, charter_pct),
+        pending_proposal=None,
+        pending_approvals=[],
+        clearance=None,
+        now=NOW,
+        now_ms=1_000,
+        latch=None,
+        mav=_snap(FLYING),
+        snapshot=None,
+        sdlink_up=True,
+        drain=DRAIN,
+        active_command=None,
+        sectors=[],
+        annotations=[],
+        recent_events=[],
+    )
+    # 60 % now: 30 % above the mission's 30 %, or 20 % above a charter's 40 %.
+    assert s.vehicle.battery_to_reserve_s == want_s

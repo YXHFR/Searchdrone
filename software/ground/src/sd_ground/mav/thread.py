@@ -793,6 +793,10 @@ class ThreadSafeMav:
         if snap is None or snap.vehicle_id != vehicle_id or not snap.connected:
             return None
         with self._wind_lock:
+            if (snap.connected, snap.telemetry.fc_link_epoch) != self._wind_link:
+                # A new connection or a reboot that ``update_wind`` has not taken yet: the
+                # window still holds the last connection's samples.
+                return None
             return self.wind.drain(snap.now_mono_ms)
 
     def update_wind(self, vehicle_id: str) -> None:

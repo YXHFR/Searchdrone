@@ -200,7 +200,7 @@ def situation_line(scores: Sequence[SectorScore]) -> str:
 
 def _pass_time(s: SectorScore) -> str:
     """ "/minutes@spacing", with at least 0,1 minutes shown; left out when the spacing
-    rounds to under 1 m, which no real plan has."""
+    is under 1 m, which no real plan has."""
     if s.spacing_m < 1:
         return ""
     return f"/{_sv(max(s.est_min, 0.1), 1)}@{s.spacing_m:.0f}"

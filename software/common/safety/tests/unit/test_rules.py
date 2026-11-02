@@ -38,7 +38,7 @@ from sd_schemas.charter import AutonomyMode
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateContext, GateDecision, GateRequest, StateRef
 from sd_schemas.mission import MissionState
-from sd_schemas.safety import SafetyLimits
+from sd_schemas.safety import SafetyLimits, home_limit_pct
 
 
 def codes(r: GateRequest, c: GateContext) -> list[str]:
@@ -329,6 +329,23 @@ def test_battery_level_comes_from_the_charter_but_never_below_the_limit() -> Non
     assert codes(req(), c) == ["BATTERY_RESERVE"]
     no_charter = ctx(charter=None, vehicle=vehicle(battery_pct=18), mission_state=None)
     assert "BATTERY_RESERVE" in codes(req(charter_version=None), no_charter)
+
+
+@pytest.mark.parametrize(("charter_pct", "limit_pct"), [(30.0, 20.0), (15.0, 25.0), (20.0, 20.0)])
+def test_the_shared_home_limit_is_the_gates(charter_pct: float, limit_pct: float) -> None:
+    """``sd_schemas.safety.home_limit_pct`` (the ground's minutes, the brain's LÄGE line)
+    names the level the gate refuses at, so the AI counts down to the gate's own level."""
+    level = home_limit_pct(limit_pct, charter_pct)
+    c = ctx(
+        charter=CHARTER.model_copy(update={"battery_rtl_pct": charter_pct}),
+        limits=SafetyLimits(battery_rtl_pct=limit_pct),
+    )
+    # An operator's move is refused at the level itself (the AI's 5 % earlier, on top).
+    operator = req(issuer_kind="operator", issuer_ref="operator:demo")
+    above = c.model_copy(update={"vehicle": vehicle(battery_pct=level + 0.1)})
+    at = c.model_copy(update={"vehicle": vehicle(battery_pct=level)})
+    assert codes(operator, above) == []
+    assert codes(operator, at) == ["BATTERY_RESERVE"]
 
 
 def test_returning_on_battery_rejects_ai_moves() -> None:
