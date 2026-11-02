@@ -219,7 +219,8 @@ class GotoHandler:
         the spot is where it stands, and the leg goes on from there (sent on the next tick).
         A drone never reported still goes on from where it is after ``STOP_WAIT_S``. An end
         set meanwhile (``retarget``) is stopped for afresh when it is ``from_stop`` too, and
-        otherwise is flown as it was given."""
+        otherwise is flown as it was given. ``target`` follows the spot sent, so the
+        leg's end read meanwhile (the keep-out reflex) is where the drone is, not behind it."""
         if self.target is None:
             raise RuntimeError("planned before running")
         while self._stopping:
@@ -227,6 +228,7 @@ class GotoHandler:
             until = io.clock.monotonic() + STOP_WAIT_S
             v = io.vehicle
             while not still(v) and io.clock.monotonic() < until and self._legs == leg:
+                self.target = (v.lat, v.lon, alt)  # the leg as flown (``remaining``)
                 await io.set_position_target(v.lat, v.lon, alt, self.yaw_deg)
                 self._timeout(io)
                 await io.sleep(TICK_S)

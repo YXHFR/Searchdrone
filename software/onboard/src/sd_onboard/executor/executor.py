@@ -1800,6 +1800,9 @@ class Executor:
         goto = GotoHandler()
         ctx = self._plan_context(new_id())
         goto.prepare(ctx, v.lat, v.lon, alt, speed, from_stop=True)
+        # The plan is the climb as set (from here): where the drone stops is not known yet.
+        # The keep-out reflex reads the leg's end from the handler (``remaining``), which
+        # follows the drone while it stops, so no leg back to here is judged.
         plan = goto_plan(ctx, v.lat, v.lon, alt, speed)
         self._enter(target, cause="KEEPOUT_VIOLATION")
         self._internal(INTERNAL_KEEPOUT_CLIMB, goto, plan, SendOrigin.LIMIT)
