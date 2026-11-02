@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any
 
 import httpx
@@ -380,7 +381,7 @@ def test_a_good_tool_call_next_to_a_broken_one_is_a_parse_error() -> None:
     assert exc.value.kind == "parse_error"
 
 
-def test_well_formed_or_left_out_usage_is_valid() -> None:
+def test_well_formed_usage_is_valid() -> None:
     usage = {"prompt_tokens": MAX_TOKEN_COUNT, "completion_tokens": 512.0, "cost": 0.01}
     reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
     assert (reply.prompt_tokens, reply.completion_tokens, reply.cost_usd) == (
@@ -389,8 +390,55 @@ def test_well_formed_or_left_out_usage_is_valid() -> None:
         0.01,
     )
     assert reply.usage_valid
-    bare = parse_reply({"choices": [{"message": {"content": "ok"}}]}, latency_ms=1)
-    assert bare.usage_valid and bare.prompt_tokens == 0
+    no_reasoning = {"prompt_tokens": 9, "completion_tokens": 3, "completion_tokens_details": None}
+    reply = parse_reply(
+        {"choices": [{"message": {"content": "ok"}}], "usage": no_reasoning}, latency_ms=1
+    )
+    assert (
+        reply.usage_valid and reply.cost_usd is None
+    )  # the reasoning share and price may be left out
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"choices": [{"message": {"content": "ok"}}]},
+        {"choices": [{"message": {"content": "ok"}}], "usage": None},
+        {"choices": [{"message": {"content": "ok"}}], "usage": {}},
+        {"choices": [{"message": {"content": "ok"}}], "usage": {"completion_tokens": 3}},
+        {"choices": [{"message": {"content": "ok"}}], "usage": {"prompt_tokens": 9}},
+        {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": None},
+        },
+    ],
+)
+def test_left_out_counts_keep_the_answer_but_are_no_valid_usage(data: Any) -> None:
+    """A provider that states no counts is booked at the estimate, never as free."""
+    reply = parse_reply(data, latency_ms=1)
+    assert reply.content == "ok" and not reply.usage_valid
+    stated = data.get("usage") or {}
+    assert reply.prompt_tokens == (stated.get("prompt_tokens") or 0)  # the stated count stays
+
+
+def test_a_negative_zero_price_is_zero() -> None:
+    usage = {"prompt_tokens": 9, "completion_tokens": 3, "cost": -0.0}
+    reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
+    assert reply.cost_usd is not None and math.copysign(1.0, reply.cost_usd) == 1.0
+
+
+def test_arguments_nested_too_deep_are_a_parse_error() -> None:
+    deep: Any = {}
+    for _ in range(100_000):
+        deep = {"a": deep}
+    data = {
+        "choices": [
+            {"message": {"tool_calls": [{"function": {"name": "hold", "arguments": deep}}]}}
+        ]
+    }
+    with pytest.raises(ModelError) as exc:
+        parse_reply(data, latency_ms=1)
+    assert exc.value.kind == "parse_error"
 
 
 def test_the_token_limit_is_the_budgets() -> None:

@@ -255,13 +255,17 @@ All notable changes to this project are listed here. The format follows
   window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
   a choice, message or tool call is now a parse error (the fallback model answers),
   not an empty answer. Malformed usage metadata (`usage`, its token counts or
-  `completion_tokens_details`, also a count too large for a float or over the budget's
-  10,000,000) only drops those numbers: the answer stands, no second, paid call goes to
-  the fallback model, and the ground's cloud budget books the call at its whole
-  reservation (the estimated prompt and the completion limit), never as free. A
-  provider price outside 0 to 1000 USD (also one too large for a float) is dropped,
-  and the ground prices the tokens. A body nested too deep to read is a parse error,
-  not a RecursionError that escapes the call.
+  `completion_tokens_details`, also a count over the budget's 10,000,000 or too large
+  for a float) only drops those numbers: the answer stands, no second, paid call goes
+  to the fallback model, and the ground's cloud budget books the call at its whole
+  reservation (the estimated prompt and the completion limit), never as free. So do
+  usage left out and usage without its prompt or completion count; the eval ledger
+  books such a call the same way. A provider price outside 0 to 1000 USD is dropped
+  (a negative zero reads 0), and the ground prices the tokens. An answer with a number
+  longer than Python reads (4300 digits) is unreadable as a whole, so a parse error,
+  as is a body nested too deep to read: neither escapes the call. A tool call's
+  arguments string that cannot be read (also a number that long, or nested too deep)
+  goes to the repair round like any arguments that are not JSON.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

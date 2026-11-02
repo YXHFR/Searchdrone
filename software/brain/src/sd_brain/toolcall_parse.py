@@ -492,7 +492,8 @@ def parse_tool_calls(
         options = charter_options(s, said, lim) if tool.kind == "proposal" else ""
         try:
             args = json.loads(raw) if raw.strip() else {}
-        except json.JSONDecodeError:
+        # ValueError: also an integer too long to read; RecursionError: nested too deep.
+        except (ValueError, RecursionError):
             return [], _unreadable(name, "not JSON", tool.kind, options)
         if not isinstance(args, dict):
             return [], _unreadable(name, "not an object", tool.kind, options)
