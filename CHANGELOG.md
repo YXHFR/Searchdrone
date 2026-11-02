@@ -257,9 +257,11 @@ All notable changes to this project are listed here. The format follows
   not an empty answer. Malformed usage metadata (`usage`, its token counts or
   `completion_tokens_details`, also a count too large for a float or over the budget's
   10,000,000) only drops those numbers: the answer stands, no second, paid call goes to
-  the fallback model, and the ground's cloud budget books the call at its estimate, as
-  a failed call, never as free. A provider price that is no finite, non-negative
-  number (also one too large for a float) is dropped, and the ground prices the tokens.
+  the fallback model, and the ground's cloud budget books the call at its whole
+  reservation (the estimated prompt and the completion limit), never as free. A
+  provider price outside 0 to 1000 USD (also one too large for a float) is dropped,
+  and the ground prices the tokens. A body nested too deep to read is a parse error,
+  not a RecursionError that escapes the call.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

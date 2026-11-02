@@ -142,11 +142,12 @@ async def test_malformed_usage_is_booked_at_the_estimate(usage: object) -> None:
         body["usage"] = usage
         return httpx.Response(200, json=body)
 
-    reply = await _rt(ok, books).chat(MSG, [], 5, Sampling())
+    reply = await _rt(ok, books).chat(MSG, [], 5, Sampling(max_tokens=300))
     assert reply.content == "svar" and reply.cost_sek == 0.02
     (req,) = books.reserved
     (done,) = books.committed
-    assert (done.prompt_tokens, done.completion_tokens) == (req.est_prompt_tokens, 0)
+    assert (done.prompt_tokens, done.completion_tokens) == (req.est_prompt_tokens, 300)
+    assert req.est_completion_tokens == 300
     assert done.cost_usd is None and books.released == []
 
 

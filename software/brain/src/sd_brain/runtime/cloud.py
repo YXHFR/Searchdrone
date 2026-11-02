@@ -139,13 +139,14 @@ class CloudModelRuntime:
             reply.reasoning_tokens,
             sampling.max_tokens,
         )
+        if not reply.usage_valid:
+            log.warning("cloud_usage_malformed model=%r", reply.model_id)
         if reservation is not None and self.budget is not None:
             rid, est_prompt = reservation
             if reply.usage_valid:
                 done = _commit(rid, reply.prompt_tokens, reply.completion_tokens, reply.cost_usd)
-            else:  # a broken count is never a free call: booked at the estimate, as a failure
-                log.warning("cloud_usage_malformed model=%r", reply.model_id)
-                done = _commit(rid, est_prompt, 0, None)
+            else:  # a broken count is never a free call: booked at the whole reservation
+                done = _commit(rid, est_prompt, sampling.max_tokens, None)
             booked = await self.budget.commit(done)
             reply.cost_sek = booked.actual_sek if booked is not None else None
         return reply

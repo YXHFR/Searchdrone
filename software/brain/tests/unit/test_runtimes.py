@@ -345,13 +345,31 @@ def test_a_tool_call_comes_through_next_to_broken_usage() -> None:
     assert not reply.usage_valid
 
 
-@pytest.mark.parametrize("cost", [10**400, float("inf"), float("nan"), -0.01, True, "0.01"])
+@pytest.mark.parametrize(
+    "cost", [10**400, 1001, float("inf"), float("nan"), -0.01, True, "0.01", [1]]
+)
 def test_a_broken_price_is_dropped_and_the_counts_stay(cost: Any) -> None:
     """The ground then prices the tokens itself; never an OverflowError."""
     usage = {"prompt_tokens": 900, "completion_tokens": 30, "cost": cost}
     reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
     assert reply.content == "ok" and reply.cost_usd is None
     assert (reply.prompt_tokens, reply.completion_tokens, reply.usage_valid) == (900, 30, True)
+
+
+async def test_a_price_too_large_for_a_float_reaches_the_answer_over_http() -> None:
+    body = chat_reply("ok")
+    body["usage"] = {"prompt_tokens": 9, "completion_tokens": 3, "cost": 10**400}
+    rt = _cloud(lambda _r: httpx.Response(200, json=body), model="main/m")
+    reply = await rt.chat(MSG, [], 5, Sampling())
+    assert (reply.content, reply.cost_usd, reply.usage_valid) == ("ok", None, True)
+
+
+async def test_a_body_nested_too_deep_is_a_parse_error() -> None:
+    deep = b"[" * 100_000 + b"]" * 100_000
+    rt = _cloud(lambda _r: httpx.Response(200, content=deep), model="main/m")
+    with pytest.raises(ModelError) as exc:
+        await rt.chat(MSG, [], 5, Sampling())
+    assert exc.value.kind == "parse_error"
 
 
 def test_a_good_tool_call_next_to_a_broken_one_is_a_parse_error() -> None:

@@ -133,7 +133,8 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             cost_usd=cost_usd,
             usage_valid=usage_valid,
         )
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
+    # ArithmeticError: a backstop for a number no check above foresaw (an OverflowError).
+    except (KeyError, IndexError, TypeError, ValueError, ArithmeticError) as exc:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")
         err.kind = "parse_error"
         raise err from None
@@ -160,27 +161,28 @@ def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
     details = value.get("completion_tokens_details")
     if details is not None and not isinstance(details, Mapping):
         return 0, 0, 0, None, False
-    counts = (
-        _count(value.get("prompt_tokens")),
-        _count(value.get("completion_tokens")),
-        _count((details or {}).get("reasoning_tokens")),
-    )
-    if None in counts:
+    prompt = _count(value.get("prompt_tokens"))
+    completion = _count(value.get("completion_tokens"))
+    reasoning = _count((details or {}).get("reasoning_tokens"))
+    if prompt is None or completion is None or reasoning is None:
         return 0, 0, 0, None, False
-    prompt, completion, reasoning = (c or 0 for c in counts)
     return prompt, completion, reasoning, _price(value.get("cost")), True
 
 
+# The highest price of one call the ground's budget books (``BudgetCommit.cost_usd``).
+MAX_COST_USD = 1000
+
+
 def _price(value: Any) -> float | None:
-    """The provider's price; None (the ground prices the tokens) when it is no finite,
-    non-negative number, also one too large for a float, never an OverflowError."""
+    """The provider's price; None (the ground prices the tokens) unless it is a number
+    from 0 to ``MAX_COST_USD``. Compared before any float(), so a price too large for a
+    float is dropped too, never an OverflowError."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    try:
-        price = float(value)
-    except OverflowError:
+    if not 0 <= value <= MAX_COST_USD:  # also NaN, which compares False
         return None
-    return price if math.isfinite(price) and price >= 0 else None
+    price = float(value)
+    return price if math.isfinite(price) else None
 
 
 def _count(value: Any) -> int | None:
@@ -258,7 +260,7 @@ async def openai_chat(
         raise err
     try:
         data = resp.json()
-    except ValueError:
+    except (ValueError, RecursionError):  # RecursionError: a body nested too deep
         err = ModelError("model server answered with non-JSON")
         err.kind = "parse_error"
         raise err from None
