@@ -345,6 +345,23 @@ def test_a_tool_call_comes_through_next_to_broken_usage() -> None:
     assert not reply.usage_valid
 
 
+@pytest.mark.parametrize("cost", [10**400, float("inf"), float("nan"), -0.01, True, "0.01"])
+def test_a_broken_price_is_dropped_and_the_counts_stay(cost: Any) -> None:
+    """The ground then prices the tokens itself; never an OverflowError."""
+    usage = {"prompt_tokens": 900, "completion_tokens": 30, "cost": cost}
+    reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
+    assert reply.content == "ok" and reply.cost_usd is None
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.usage_valid) == (900, 30, True)
+
+
+def test_a_good_tool_call_next_to_a_broken_one_is_a_parse_error() -> None:
+    good = {"id": "call_1", "function": {"name": "hold", "arguments": "{}"}}
+    data = {"choices": [{"message": {"tool_calls": [good, {"function": "x"}]}}]}
+    with pytest.raises(ModelError) as exc:
+        parse_reply(data, latency_ms=1)
+    assert exc.value.kind == "parse_error"
+
+
 def test_well_formed_or_left_out_usage_is_valid() -> None:
     usage = {"prompt_tokens": MAX_TOKEN_COUNT, "completion_tokens": 512.0, "cost": 0.01}
     reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -167,9 +168,19 @@ def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
     if None in counts:
         return 0, 0, 0, None, False
     prompt, completion, reasoning = (c or 0 for c in counts)
-    cost = value.get("cost")
-    price = float(cost) if isinstance(cost, int | float) and not isinstance(cost, bool) else None
-    return prompt, completion, reasoning, price, True
+    return prompt, completion, reasoning, _price(value.get("cost")), True
+
+
+def _price(value: Any) -> float | None:
+    """The provider's price; None (the ground prices the tokens) when it is no finite,
+    non-negative number, also one too large for a float, never an OverflowError."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        price = float(value)
+    except OverflowError:
+        return None
+    return price if math.isfinite(price) and price >= 0 else None
 
 
 def _count(value: Any) -> int | None:
