@@ -7,13 +7,14 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
 import shapely
 
 from sd_sim import objects
-from sd_sim.farm import ground, looks, stills
+from sd_sim.farm import ground, labels, looks, people, stills
 from sd_sim.farm.camera import project
 from sd_sim.farm.people import BY_ID, Person
 
@@ -166,6 +167,16 @@ def test_a_ground_patch_is_not_turned() -> None:
     assert objects.yaw_enu(p.yaw_deg) == pytest.approx(0.0)
 
 
+def test_ground_patches_share_no_texture_or_material_name() -> None:
+    # The renderer keeps textures and materials by name: two patches with the same
+    # "patch.jpg" would both show the first one's ground.
+    feet = [(ground.footprint(e, 0.0, 40.0, 44.0, 0.75, 0.0), 1.5) for e in (0.0, 300.0)]
+    a, b = ground.plan(feet, "heridal", 6, 1)
+    assert a.name != b.name
+    for p in (a, b):
+        assert f"model://{p.name}/{p.name}.obj" in p.sdf(objects.Pose(0.0, 0.0, 0.0, 0.0))
+
+
 def test_develop_exposes_a_dark_render_like_a_photo() -> None:
     gen = np.random.default_rng(0)
     dark = (gen.random((120, 160, 3)) * 50).astype(np.uint8)
@@ -174,3 +185,84 @@ def test_develop_exposes_a_dark_render_like_a_photo() -> None:
     assert stills.EXPOSURE_MEAN[0] - 15 < out.mean() < stills.EXPOSURE_MEAN[1] + 15
     assert 1.0 < info["gain"] <= stills.MAX_GAIN
     assert stills.develop(dark, random.Random(2))[0].tobytes() == out.tobytes()
+
+
+def _one_person(pose: str = "lying") -> tuple[dict, stills.Shot, labels.ImageFacit]:
+    model = "sd_person_walking"
+    person = Person("person_0", model, pose, 0.0, 0.0, 30.0)
+    truth = {
+        "objects": [
+            {
+                "name": person.name,
+                "east_m": 0.0,
+                "north_m": 0.0,
+                "up_m": 0.0,
+                "yaw_deg": 30.0,
+                "ground_m": 0.0,
+                "truth": dict(person.truth),
+            }
+        ]
+    }
+    shot = stills.Shot("s000", "heridal", 0.0, 0.0, 30.0, 30.0, 0.0, 0.0, 0.0, "person_0")
+    cam = stills.PROFILES["heridal"].intrinsics
+    fac = labels.facit(truth, cam, shot.camera_pose(), [])
+    return truth, shot, fac
+
+
+def test_how_much_of_a_person_shows_is_counted_in_pixels() -> None:
+    truth, shot, fac = _one_person()
+    cam = stills.PROFILES["heridal"].intrinsics
+    pose = shot.camera_pose()
+    (p,) = fac.people
+    whole = stills.silhouette_px(*labels.people_in(truth)[0], cam, pose)
+    assert 0 < whole < p.box.area
+    label_map = np.zeros((cam.height, cam.width), np.uint8)
+    x0, y0 = int(p.box.x0) + 1, int(p.box.y0) + 1
+    side = int(math.sqrt(whole))
+    label_map[y0 : y0 + side, x0 : x0 + side // 2] = people.PERSON_LABEL  # half of it
+    shown = stills.shown_shares(truth, fac, cam, pose, label_map)
+    assert shown["person_0"] == pytest.approx(0.5, abs=0.05)
+    # Specks of the person seen through gaps in a crown are not a person in view.
+    specks = np.zeros_like(label_map)
+    specks[int(p.box.y0) + 1 : int(p.box.y1) - 1 : 9, int(p.box.x0) + 1 : int(p.box.x1) - 1 : 9] = 2
+    speck_share = stills.shown_shares(truth, fac, cam, pose, specks)["person_0"]
+    assert speck_share is not None and speck_share < stills.MIN_SHOWN
+    assert stills.shown_shares(truth, fac, cam, pose, None) == {"person_0": None}
+
+
+def test_a_person_mostly_under_a_crown_gets_no_label() -> None:
+    _, _, fac = _one_person()
+    (p,) = fac.people
+    seen = labels.PersonLabel(p.name, p.box, 1.0, p.box, p.model, p.pose)
+    fac = labels.ImageFacit([seen])
+    assert stills.label_boxes(fac, {p.name: 0.1}) == []
+    assert stills.label_boxes(fac, {p.name: 0.6}) == [p.box]
+    assert stills.label_boxes(fac, {p.name: None}) == [p.box]  # cannot tell: kept
+
+
+def test_the_rig_gives_a_label_map_for_the_farm() -> None:
+    text = stills.Rig(6, "heridal").sdf(objects.Pose(0.0, 0.0, 40.0, 0.0))
+    assert text.count("<sensor ") == 3
+    assert "<segmentation_type>semantic</segmentation_type>" in text
+
+
+def test_a_pgm_label_map_reads_back(tmp_path: Path) -> None:
+    (tmp_path / "m.pgm").write_bytes(b"P5 3 2 255\n" + bytes([0, 2, 0, 2, 2, 0]))
+    assert stills.read_pgm(tmp_path / "m.pgm").tolist() == [[0, 2, 0], [2, 2, 0]]
+
+
+def test_ground_photos_give_only_fine_detail() -> None:
+    from PIL import Image
+
+    gen = np.random.default_rng(1)
+    yy, xx = np.mgrid[0:512, 0:512] / 512
+    big = np.sin(2 * np.pi * 4 * xx) * np.sin(2 * np.pi * 4 * yy)  # patches 4 m across
+    fine = gen.random((512, 512)) * 0.2
+    im = Image.fromarray(((0.45 + 0.3 * big + fine) * 255).astype(np.uint8))
+    out = ground.fine_detail(im, size_m=32.0)
+    assert out.shape == (512, 512, 3)
+    low = out[..., 0].reshape(16, 32, 16, 32).mean(axis=(1, 3))
+    before = (0.45 + 0.3 * big).reshape(16, 32, 16, 32).mean(axis=(1, 3))
+    assert low.std() < 0.2 * (before / before.mean()).std()  # the patches are gone
+    assert float(out[..., 0].std()) > 0.05  # the grain stays
+    assert out.min() >= 1 - ground.DETAIL_RANGE and out.max() <= 1 + ground.DETAIL_RANGE

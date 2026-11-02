@@ -51,7 +51,7 @@ from sd_sim import forest as forest_mod
 from sd_sim import paths, png, raster
 from sd_sim.site import Site
 
-GENERATOR_VERSION = 6
+GENERATOR_VERSION = 7  # 7: tree tufts tipped every way, thinner trunks
 # Gazebo needs a square heightmap of 2^n + 1 pixels: 257 gives 4.7 m over 1.2 km.
 HEIGHTMAP_PX = 257
 HEIGHTMAP = "ground_collision.png"

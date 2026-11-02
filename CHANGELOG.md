@@ -17,7 +17,12 @@ All notable changes to this project are listed here. The format follows
   centimetres per pixel, the ground under it gets photographed grass, forest floor,
   gravel or rock (`just ground-pictures-fetch`, Poly Haven CC0) and the light is
   developed like a photo. The boxes are what the bounding-box camera sees of each
-  person. Each scene keeps Gazebo's full logs. The pictures are the training-only set
+  person; a person of whom less than 30 % is seen (counted in a segmentation camera's
+  pixels, against the body's outline unhidden) gets no box, like in the hand-drawn
+  sets. Each scene keeps Gazebo's full logs. For this the tree leaves are drawn at
+  about 6 cm (`just tree-pictures-fetch` again), the needle and leaf tufts are tipped
+  every way instead of standing upright (seen from above they were long streaks), the
+  birch trunks are thinner, and the world generator's version is 7 so worlds rebuild. The pictures are the training-only set
   `simstills` (`just train-detector sets=heridal,kios,kios_carperson,simstills`): it
   is never measured on and is kept only if the real test gets better. A growing set's
   scenes are split by a hash of their names (`GROWING` in `tools/bench/splits.py`).

@@ -143,6 +143,13 @@ CHILD_M = (1.10, 1.45)
 # Shots
 SHOTS_PER_PERSON = 3
 EMPTY_SHARE = 0.1
+# A person whose seen pixels are less than this share of what it would cover unhidden
+# (under a crown) gets no label: the real sets' hand-drawn boxes leave such people out.
+MIN_SHOWN = 0.3
+# The share of its turned model box's outline a body covers in the picture, per pose
+# (0.85 of the median for unhidden people in a test render, so they count as wholly seen;
+# see ``silhouette_px``).
+FILL = {"standing": 0.3, "sitting": 0.28, "lying": 0.42}
 EDGE_KEEP = 0.04  # a person's centre at least this share of the picture from its edge
 TILT_SD_DEG = 3.0
 TILT_MAX_DEG = 10.0
@@ -548,16 +555,62 @@ class Rig:
             height=prof.height,
             hfov_rad=round(math.radians(prof.hfov_deg), 6),
             rate_hz=RIG_RATE_HZ,
+            labels_map=True,
         ).strip()
 
 
 # --- the picture's facit ---------------------------------------------------------------
 
 
-def label_boxes(fac: labels.ImageFacit) -> list[Box]:
-    """The boxes to train on: what the camera sees of each labelled person, clipped."""
+def silhouette_px(person: Person, ground_m: float, cam: Intrinsics, pose: CameraPose) -> float:
+    """The picture area (pixels) inside the outline of the person's turned model box,
+    clipped to the picture: what the person would cover with nothing in the way, times
+    ``FILL`` (a body does not fill its box)."""
+    pts = [project(cam, pose, c) for c in person.corners(ground_m)]
+    if any(q is None for q in pts):
+        return 0.0
+    hull = shapely.MultiPoint([q for q in pts if q is not None]).convex_hull
+    frame = shapely.box(0.0, 0.0, float(cam.width), float(cam.height))
+    return float(hull.intersection(frame).area) * FILL[person.pose]
+
+
+def shown_shares(
+    truth: Mapping[str, Any],
+    fac: labels.ImageFacit,
+    cam: Intrinsics,
+    pose: CameraPose,
+    label_map: np.ndarray | None,
+) -> dict[str, float | None]:
+    """How much of each person the picture shows: the person pixels of the segmentation
+    camera's label map inside the person's box, over the pixels the person would cover
+    unhidden (``silhouette_px``). ``None`` without a label map."""
+    if label_map is None:
+        return {p.name: None for p in fac.people}
+    where = {person.name: (person, ground) for person, ground in labels.people_in(truth)}
+    out: dict[str, float | None] = {}
+    for p in fac.people:
+        person, ground = where[p.name]
+        b = p.box
+        x0, y0 = max(int(b.x0), 0), max(int(b.y0), 0)
+        x1, y1 = min(math.ceil(b.x1), cam.width), min(math.ceil(b.y1), cam.height)
+        seen = int(np.count_nonzero(label_map[y0:y1, x0:x1] == people.PERSON_LABEL))
+        whole = silhouette_px(person, ground, cam, pose)
+        out[p.name] = round(min(1.0, seen / whole), 3) if whole > 0 else 0.0
+    return out
+
+
+def _shown_enough(share: float | None) -> bool:
+    return share is None or share >= MIN_SHOWN
+
+
+def label_boxes(fac: labels.ImageFacit, shown: Mapping[str, float | None]) -> list[Box]:
+    """The boxes to train on: what the camera sees of each labelled person, clipped. A
+    person shown less than ``MIN_SHOWN`` (mostly under a crown) gets none: no one could
+    point at it in the picture either."""
     out = []
     for p in fac.labels:
+        if not _shown_enough(shown.get(p.name)):
+            continue
         b = p.seen if p.seen is not None else p.box
         if b.w >= labels.MIN_BOX_PX and b.h >= labels.MIN_BOX_PX:
             out.append(b)
@@ -565,10 +618,27 @@ def label_boxes(fac: labels.ImageFacit) -> list[Box]:
 
 
 def picture_facit(
-    truth: Mapping[str, Any], shot: Shot, cam: Intrinsics, raw_boxes: Any
-) -> tuple[labels.ImageFacit, list[Box]]:
-    fac = labels.facit(truth, cam, shot.camera_pose(), labels.camera_boxes(raw_boxes))
-    return fac, label_boxes(fac)
+    truth: Mapping[str, Any],
+    shot: Shot,
+    cam: Intrinsics,
+    raw: Mapping[str, Any],
+    label_map: np.ndarray | None = None,
+) -> tuple[labels.ImageFacit, list[Box], dict[str, float | None]]:
+    pose = shot.camera_pose()
+    fac = labels.facit(truth, cam, pose, labels.camera_boxes(raw.get("boxes")))
+    shown = shown_shares(truth, fac, cam, pose, label_map)
+    return fac, label_boxes(fac, shown), shown
+
+
+def read_pgm(path: Path) -> np.ndarray:
+    """A one-byte-per-pixel PGM (``gz_stills`` label map) as an array, rows first."""
+    data = path.read_bytes()
+    head = data.split(maxsplit=4)
+    if len(head) < 5 or head[0] != b"P5" or head[3] != b"255":
+        raise StillsError(f"{path.name}: ingen PGM")
+    width, height = int(head[1]), int(head[2])
+    pixels = data[len(data) - width * height :]
+    return np.frombuffer(pixels, np.uint8).reshape(height, width)
 
 
 def _gsd(prof: Profile, shot: Shot) -> float:
@@ -689,7 +759,10 @@ def finalize(scene: Scene, truth: Mapping[str, Any], shots_dir: Path, out: Path)
         if labels.is_black(image):
             tally["black"] += 1
             continue
-        fac, boxes = picture_facit(truth, shot, cam, raw.get("boxes"))
+        label_map = None
+        if raw.get("labels_map"):
+            label_map = read_pgm(shots_dir / str(raw["labels_map"]))
+        fac, boxes, shown = picture_facit(truth, shot, cam, raw, label_map)
         stem = f"{scene.scene_id}_{i:04d}"
         mean, std = labels.brightness(image)
         rng = random.Random(f"develop:{scene.scene_id}:{i}")  # noqa: S311 - not a secret
@@ -751,10 +824,18 @@ def finalize(scene: Scene, truth: Mapping[str, Any], shots_dir: Path, out: Path)
                 },
                 "brightness": {"mean": round(mean, 1), "std": round(std, 1)},
                 "develop": developed,
-                "people": [p.as_dict() for p in fac.people],
+                "people": [
+                    {
+                        **p.as_dict(),
+                        "shown": shown.get(p.name),
+                        "labelled": p.labelled and _shown_enough(shown.get(p.name)),
+                    }
+                    for p in fac.people
+                ],
                 "boxes_xyxy": [[round(v, 2) for v in (b.x0, b.y0, b.x1, b.y1)] for b in boxes],
                 "label_source": (
-                    "bounding-box camera (visible part), paired with the projected facit"
+                    "bounding-box camera (visible part), paired with the projected facit; "
+                    f"people with less than {MIN_SHOWN:g} of their body seen are left out"
                 ),
                 "credits": coco.data["info"]["credits"],
             },
@@ -892,6 +973,8 @@ def run_scene(
             f"{rig.topic_prefix}/stills",
             "--boxes-topic",
             f"{rig.topic_prefix}/boxes",
+            "--labels-topic",
+            f"{rig.topic_prefix}/labels/labels_map",
             "--out",
             str(shots_dir),
             "--keep-going",

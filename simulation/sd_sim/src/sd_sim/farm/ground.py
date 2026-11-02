@@ -3,9 +3,10 @@
 The site's terrain is painted at about 15 cm per pixel (``sd_sim.terrain``), which a
 camera at 1-5 cm per pixel shows as smooth colour. Under every picture of a scene the
 photo farm lays a **patch**: a copy of the terrain's own mesh over a square, a few
-centimetres above it, whose texture is the painted ground's colour times a photographed
-ground texture of the right kind (grass, forest floor, gravel; ``just
-ground-pictures-fetch``, Poly Haven CC0) at its real size on the ground. So the colours
+centimetres above it, whose texture is the painted ground's colour times the fine
+detail (``DETAIL_M``) of a photographed ground texture of the right kind (grass, forest
+floor, gravel; ``just ground-pictures-fetch``, Poly Haven CC0) at its real size on the
+ground. So the colours
 still follow the map and the trees, and the pixels show grass, needles and stones.
 
 ``plan(shots, ...)`` groups the shots' ground footprints into patches (``MAX_SIDE_M``);
@@ -43,6 +44,10 @@ LIFT_STEP_M = 0.01
 MARGIN = 1.15  # a footprint is grown by this much before it is covered
 KINDS = ("grass", "forest", "path", "rock")
 CROWN_FLOOR = 1.2  # forest floor out to this share of a crown's radius
+# The photos give only detail finer than this (their own larger patches are dropped)
+# and change the brightness by at most this share either way.
+DETAIL_M = 0.5
+DETAIL_RANGE = 0.45
 TEXTURES = Path("build") / "ground_textures"
 
 
@@ -89,7 +94,7 @@ class Patch:
     <link name="link">
       <visual name="visual">
         <cast_shadows>false</cast_shadows>
-        <geometry><mesh><uri>model://{self.name}/patch.obj</uri></mesh></geometry>
+        <geometry><mesh><uri>model://{self.name}/{self.name}.obj</uri></mesh></geometry>
       </visual>
     </link>
   </model>"""
@@ -105,15 +110,19 @@ class Patch:
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True)
         z0 = float(ground.at(np.array([self.east_m]), np.array([self.north_m]))[0])
-        (folder / "patch.obj").write_text(self._obj(ground, z0), encoding="utf-8")
-        (folder / "patch.mtl").write_text(
-            "newmtl patch\nKa 0.6 0.6 0.6\nKd 1 1 1\nKs 0.02 0.02 0.02\nmap_Kd patch.jpg\n",
+        # Every file and the material are named after the patch: the renderer keeps
+        # textures and materials by name, so patches sharing "patch.jpg" would all show
+        # the first one's picture.
+        name = self.name
+        (folder / f"{name}.obj").write_text(self._obj(ground, z0), encoding="utf-8")
+        (folder / f"{name}.mtl").write_text(
+            f"newmtl {name}\nKa 0.6 0.6 0.6\nKd 1 1 1\nKs 0.02 0.02 0.02\nmap_Kd {name}.jpg\n",
             encoding="utf-8",
         )
         texture = land.texture(self)
         from PIL import Image  # the dev group's Pillow
 
-        Image.fromarray(texture).save(folder / "patch.jpg", quality=92)
+        Image.fromarray(texture).save(folder / f"{name}.jpg", quality=92)
         (folder / "model.config").write_text(
             f'<?xml version="1.0"?>\n<model><name>{self.name}</name><sdf version="1.9">'
             "patch.sdf</sdf></model>\n",
@@ -135,7 +144,7 @@ class Patch:
         zz = ground.z[np.ix_(rows, cols)]
         u = (ee - x0) / self.side_m
         v = (nn - y0) / self.side_m
-        lines = ["mtllib patch.mtl", "usemtl patch"]
+        lines = [f"mtllib {self.name}.mtl", f"usemtl {self.name}"]
         for e, n, z in zip(ee.ravel(), nn.ravel(), zz.ravel(), strict=True):
             lines.append(
                 f"v {e - self.east_m:.3f} {n - self.north_m:.3f} {z - z0 + self.lift_m:.3f}"
@@ -227,6 +236,22 @@ class Photo:
     mean: NDArray[np.float32]  # its mean colour
 
 
+def fine_detail(im: Any, size_m: float) -> NDArray[np.float32]:
+    """A ground photo's brightness detail finer than ``DETAIL_M`` (around 1, grey): the
+    painted map gives the colour and the large patches, the photo only the grass blades,
+    needles and stones. Its own large patches (moss on rock, sand streaks) would
+    otherwise show from the air as blotches that are not on the map."""
+    from PIL import ImageFilter  # the dev group's Pillow
+
+    grey = im.convert("L")
+    width = grey.size[0]
+    sigma = min(max(DETAIL_M / (size_m / width), 2.0), width / 8)
+    lum = np.asarray(grey, np.float32) + 1.0
+    soft = np.asarray(grey.filter(ImageFilter.GaussianBlur(sigma)), np.float32) + 1.0
+    ratio = np.clip(lum / soft, 1 - DETAIL_RANGE, 1 + DETAIL_RANGE)
+    return np.repeat(ratio[..., None], 3, axis=2).astype(np.float32)
+
+
 class Land:
     """The painted ground and the kinds of ground of a site, for the patches' textures."""
 
@@ -249,15 +274,10 @@ class Land:
         for asset, row in sorted(info["textures"].items()):
             if row["kind"] not in self.photos:
                 continue
+            size = (float(row["size_m"][0]), float(row["size_m"][1]))
             with Image.open(repo / TEXTURES / row["file"]) as im:
-                pix = np.asarray(im.convert("RGB"), np.float32) / 255.0
-            self.photos[row["kind"]].append(
-                Photo(
-                    pix,
-                    (float(row["size_m"][0]), float(row["size_m"][1])),
-                    pix.reshape(-1, 3).mean(0),
-                )
-            )
+                pix = fine_detail(im, size[0])
+            self.photos[row["kind"]].append(Photo(pix, size, np.ones(3, np.float32)))
             del asset
         asphalt, gravel, _ = terrain.road_geometry(s)
         self.asphalt = asphalt
