@@ -226,6 +226,15 @@ export class FakeGround {
         return ws.close();
       },
     );
+    // Any other socket on the test host is not the ground's live feed: recorded and closed,
+    // never sent on. (Registered first, so the live route below takes precedence.)
+    await page.routeWebSocket(
+      (url) => url.host === host,
+      (ws) => {
+        this.unknown.push(`WS ${new URL(ws.url()).pathname}`);
+        return ws.close();
+      },
+    );
     await page.routeWebSocket(
       (url) => url.host === host && url.pathname === "/ws/v1/live",
       (ws) => this.onSocket(ws),

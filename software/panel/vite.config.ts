@@ -43,7 +43,8 @@ function testBuildMarker(enabled: boolean): Plugin {
 
 // The mock e2e suite (playwright.config.ts) sets this: the fake ground answers /api, /ws and
 // /tiles inside the page, and nothing runs on :8080. A request that escapes it is answered
-// 502, logged and written here, and the suite's teardown fails on it (e2e/helpers/unrouted.ts).
+// 502 (sockets are closed), logged and written here; see e2e/helpers/unrouted.ts for what
+// fails the run.
 const UNROUTED_LOG = process.env.SD_E2E_UNROUTED_LOG;
 const GROUND_PATH = /^\/(api|ws|tiles)(\/|\?|$)/;
 
@@ -51,10 +52,10 @@ function unroutedGuard(logFile: string): Plugin {
   return {
     name: "sd-unrouted-guard",
     configurePreviewServer(server) {
-      const record = (req: IncomingMessage): void => {
+      const record = (req: IncomingMessage, method = req.method): void => {
         const h = req.headers;
         const from = `${h["x-sd-test"] ?? "no test header"}; referer ${h.referer ?? "-"}; ${h["sec-fetch-dest"] ?? "-"}/${h["sec-fetch-mode"] ?? "-"}`;
-        const line = `${new Date().toISOString()} ${req.method} ${req.url} (${from})`;
+        const line = `${new Date().toISOString()} ${method} ${req.url} (${from})`;
         appendFileSync(logFile, `${line}\n`);
         server.config.logger.error(`[sd] request escaped the fake ground: ${line}`);
       };
@@ -67,7 +68,7 @@ function unroutedGuard(logFile: string): Plugin {
       });
       server.httpServer.on("upgrade", (req, socket) => {
         if (!GROUND_PATH.test(req.url ?? "")) return;
-        record(req);
+        record(req, "WS");
         socket.destroy();
       });
     },

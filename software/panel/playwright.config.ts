@@ -16,7 +16,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
-  // Fails the run if any request escaped the fake ground (see vite.config.ts).
+  // Checks the preview server's guard against requests that escape the fake ground and
+  // reports what reached it at the end (see e2e/helpers/unrouted.ts).
   globalSetup: "./e2e/helpers/unrouted.ts",
   webServer: {
     command: "pnpm exec vite preview --outDir dist-test --port 4173 --strictPort --host 127.0.0.1",

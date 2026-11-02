@@ -14,13 +14,17 @@ export const UNROUTED_LOG = join(
   `sd-panel-e2e-unrouted-${createHash("sha256").update(PANEL_DIR).digest("hex").slice(0, 12)}.log`,
 );
 
+/** Lines a closing page can produce: reads only. A request that changes something, or a
+ * socket, escaping is never page-close noise, so it fails the run. */
+const READ_ONLY = /^\S+ (GET|HEAD) /;
+
 /** Global setup: check the preview server has the guard (a reused server started without
  * it would send escaped requests to :8080 and nothing would see them) and start from an
- * empty log. During a test every /api and /tiles request is routed (fakeGround), and one
- * that reaches the server fails that test in verify(). What the returned teardown lists
- * are requests Playwright let through while a test's page was closing: from then on it
- * stops handling the page's routes and sends in-flight requests to the network, whatever
- * the test does, so they are reported here, not failed. */
+ * empty log. During a test every /api, /ws and /tiles request is routed (fakeGround), and
+ * one that reaches the server fails that test in verify(). Once a test's page starts
+ * closing, Playwright stops handling its routes and sends in-flight requests to the
+ * network whatever the test does, so the returned teardown only reports GET and HEAD
+ * lines; any other method, or a socket, fails the run. */
 export default async function globalSetup(config: FullConfig): Promise<() => void> {
   const base = config.webServer?.url ?? "http://127.0.0.1:4173";
   const probe = await fetch(`${base}/api/__sd_guard_probe`);
@@ -38,10 +42,17 @@ export default async function globalSetup(config: FullConfig): Promise<() => voi
     } catch {
       return; // nothing reached the server
     }
-    if (seen.trim()) {
+    const lines = seen.split("\n").filter((l) => l.trim());
+    const serious = lines.filter((l) => !READ_ONLY.test(l));
+    if (serious.length) {
+      throw new Error(
+        `Requests that change something, or sockets, escaped the fake ground:\n${serious.join("\n")}`,
+      );
+    }
+    if (lines.length) {
       console.warn(
-        "Requests that reached the preview server (answered 502). One made during a test failed " +
-          `that test; the others were sent on while a page was closing:\n${seen}`,
+        "Reads that reached the preview server (answered 502). One made during a test failed " +
+          `that test; the others were sent on while a page was closing:\n${lines.join("\n")}`,
       );
     }
   };
