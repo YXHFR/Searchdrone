@@ -201,6 +201,76 @@ def test_the_answer_to_our_mode_command_is_recorded_as_it_is_received() -> None:
     asyncio.run(run())
 
 
+def test_a_lost_answer_to_the_mode_already_shown_is_recorded_at_the_retry() -> None:
+    """#161 round-7 review: our command asks for the mode the telemetry already shows (it
+    is stale: the flight controller took another mode whose HEARTBEAT was held back), and
+    its answer is lost. No HEARTBEAT can count as the answer while it waits (it shows the
+    mode at send), so the retry that sees the mode records that HEARTBEAT as the answer,
+    and the next HEARTBEAT carries it."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.set_mode_external(CopterMode.GUIDED)
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.fc_mode == "GUIDED"
+        fc.heartbeat_held = True
+        fc.mode = CopterMode.AUTO  # taken, its HEARTBEAT held back
+        before = vehicle.telemetry.mode_answer_seq
+        fc.drop_acks = 1
+        task = asyncio.ensure_future(
+            vehicle.set_mode_ordered(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        await clock.run_for(0.3)
+        assert fc.mode == CopterMode.GUIDED and not task.done()
+        fc.release_heartbeat()
+        await clock.run_for(0.05)
+        assert vehicle.telemetry.mode_answer_seq == before  # shows the mode at send
+        result, seq = await run_with_clock(clock, task)
+        assert result is MavResult.ACCEPTED and seq is not None
+        assert before is None or before < seq
+        await clock.run_for(1.5)
+        t = vehicle.telemetry
+        assert t.fc_heartbeat_seq is not None and t.fc_heartbeat_seq > seq
+        assert t.mode_answer_seq == seq
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
+def test_each_heartbeat_carries_the_newest_one_that_showed_another_mode() -> None:
+    """``other_mode_seq``: recorded as received, so a reader that runs only after a newer
+    HEARTBEAT still sees that another mode showed in between."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.set_mode_external(CopterMode.GUIDED)
+        await clock.run_for(1.0)
+        t = vehicle.telemetry
+        assert t.fc_mode == "GUIDED"
+        guided_before = t.fc_heartbeat_seq
+        fc.set_mode_external(CopterMode.LOITER)
+        await clock.run_for(0.0)
+        assert vehicle.telemetry.fc_mode == "LOITER"
+        loiter = vehicle.telemetry.fc_heartbeat_seq
+        assert vehicle.telemetry.other_mode_seq is not None
+        assert guided_before is not None and vehicle.telemetry.other_mode_seq >= guided_before
+        assert loiter is not None and vehicle.telemetry.other_mode_seq < loiter
+        # LOITER, then AUTO before any reader runs: AUTO carries LOITER's HEARTBEAT.
+        fc.set_mode_external(CopterMode.AUTO)
+        await clock.run_for(0.0)
+        assert vehicle.telemetry.fc_mode == "AUTO"
+        assert vehicle.telemetry.other_mode_seq == loiter
+        await clock.run_for(2.0)  # more AUTO HEARTBEATs: unchanged
+        assert vehicle.telemetry.other_mode_seq == loiter
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_streams_requested_after_connect_and_reconnect() -> None:
     async def run() -> None:
         clock, vehicle, events = await _started()

@@ -221,13 +221,21 @@ _OWN = 7
 
 
 def _shows(
-    mode: CopterMode, at_ms: int, rc: int | None = None, answer: int | None = _OWN
+    mode: CopterMode,
+    at_ms: int,
+    rc: int | None = None,
+    answer: int | None = _OWN,
+    seq: int | None = None,
+    other: int | None = None,
 ) -> FcTelemetry:
-    """A HEARTBEAT received at ``at_ms``; ``answer`` is the newest answer to a mode command
-    of ours received before it (by default the cancelled AUTO's own)."""
+    """A HEARTBEAT received at ``at_ms`` (receive order ``seq``); ``answer`` is the newest
+    answer to a mode command of ours received before it (by default the cancelled AUTO's
+    own), ``other`` the newest HEARTBEAT before it that showed another mode."""
     return FcTelemetry(
         fc_heartbeat_mono_ms=at_ms,
+        fc_heartbeat_seq=seq,
         mode_answer_seq=answer,
+        other_mode_seq=other,
         fc_custom_mode=int(mode),
         rc_mode_pwm=rc,
     )
@@ -307,6 +315,34 @@ def test_a_notice_a_change_from_outside_or_a_hold_ends_a_cancelled_auto() -> Non
     a.pending_mode = CopterMode.LOITER
     a.drop_ours()
     assert a.late is None and a.pending_mode is None
+    assert a.unexpected_mode(t, 1100) is not None
+
+
+def test_another_mode_shown_after_its_own_answer_ends_a_cancelled_auto() -> None:
+    """#161 round-7 review: the flight controller was in AUTO when it answered the
+    cancelled switch, so a HEARTBEAT received after that answer that shows another mode
+    means it left AUTO, even with no newer answer of ours recorded (it was lost). AUTO
+    showing later is from outside, also when the HEARTBEAT that showed the other mode was
+    followed by the AUTO one before the executor ran (``other_mode_seq``)."""
+    # Before its own answer (or no order known): another mode is the stale view, ours.
+    a = _late_auto()
+    assert a.unexpected_mode(_shows(CopterMode.GUIDED, 1050, seq=_OWN - 1), 1050) is None
+    assert a.unexpected_mode(_shows(CopterMode.GUIDED, 1060), 1060) is None
+    assert a.late is not None
+    assert (
+        a.unexpected_mode(_shows(CopterMode.AUTO, 1100, seq=_OWN + 1, other=_OWN - 1), 1100) is None
+    )
+    assert a.late is not None
+    # After it, showing GUIDED: AUTO was left; the AUTO after it is a takeover.
+    a = _late_auto()
+    assert a.unexpected_mode(_shows(CopterMode.GUIDED, 1050, seq=_OWN + 1), 1050) is None
+    assert a.late is None
+    t = _shows(CopterMode.AUTO, 1100, seq=_OWN + 2, other=_OWN + 1)
+    assert a.adopt_late(t, 1100) is None and a.unexpected_mode(t, 1100) is not None
+    # The GUIDED HEARTBEAT came and went unseen: the AUTO one still says so.
+    a = _late_auto()
+    t = _shows(CopterMode.AUTO, 1100, seq=_OWN + 2, other=_OWN + 1)
+    assert a.adopt_late(t, 1100) is None and a.late is None
     assert a.unexpected_mode(t, 1100) is not None
 
 
@@ -570,6 +606,45 @@ async def test_tick_between_heartbeat_and_set_mode_resume(newer: CopterMode) -> 
         await r.run(3.0)
         _taken(r)
         await r.until(t2.done, 3)
+
+
+@pytest.mark.parametrize("release_s", [0.3, 0.9])
+async def test_late_then_lost_ack_to_the_mode_shown_then_gcs_auto(release_s: float) -> None:
+    """#161 round-7 review MAJOR: a cancelled AUTO, the telemetry still showing GUIDED.
+    The executor's set_mode(GUIDED) acts, but its answer is lost; the held HEARTBEAT then
+    shows GUIDED and the retry takes it as the answer. A ground station's AUTO after that
+    is a takeover, not the late AUTO."""
+    async with rig() as r:
+        await _late_auto_live(r)
+        r.fc.drop_acks = 1
+        t2 = asyncio.ensure_future(r.ex.set_mode(CopterMode.GUIDED, SendOrigin.SKILL))
+        await r.run(release_s)
+        r.fc.release_heartbeat()
+        await r.until(t2.done, 3)
+        assert t2.result()
+        r.fc.set_mode_external(CopterMode.AUTO)
+        await r.run(1.0)
+        _taken(r)
+
+
+async def test_lost_ack_then_gcs_auto_before_the_retry_is_a_takeover() -> None:
+    """#161 round-7 review MINOR: a cancelled AUTO; the executor's set_mode(GUIDED) acts
+    and its answer is lost; the HEARTBEAT showing GUIDED and a ground station's AUTO come
+    one right after the other, before the executor runs, so the retry is cancelled. The
+    AUTO HEARTBEAT still carries that GUIDED showed after the late AUTO's answer: a
+    takeover."""
+    async with rig() as r:
+        await _late_auto_live(r)
+        r.fc.drop_acks = 1
+        t2 = asyncio.ensure_future(r.ex.set_mode(CopterMode.GUIDED, SendOrigin.SKILL))
+        await r.run(0.3)
+        assert r.fc.mode == CopterMode.GUIDED and not t2.done()
+        r.fc.release_heartbeat()
+        r.fc.set_mode_external(CopterMode.AUTO)
+        await r.until(t2.done, 3)
+        assert not t2.result()  # the retry saw a mode from outside
+        await r.run(1.0)
+        _taken(r)
 
 
 async def test_a_pilots_rc_auto_ahead_of_its_rc_sample_is_a_takeover() -> None:

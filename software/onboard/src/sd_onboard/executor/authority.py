@@ -17,13 +17,16 @@ have taken it, and a HEARTBEAT showing AUTO then is our own doing, not a takeove
 becomes the expected mode. Only AUTO: the executor never steers by holding a mode, so a
 LOITER, BRAKE, RTL or LAND the drone was not asked for is always a person's or a
 failsafe's. It ends at once with a notice from the ground, a change from outside, a hold
-the executor enters itself, the RC mode switch moving, or any HEARTBEAT received after the
-answer that settled a newer mode command of ours: the flight controller handles commands
-in order, so a HEARTBEAT received after that answer left after the command was handled,
-and AUTO in it is from outside. "After" is the order the messages were received in,
-never a time: two messages can share a millisecond. The vehicle records each answer as it
-is received and every HEARTBEAT carries the newest one before it
-(``FcTelemetry.mode_answer_seq``), so it holds before the executor gets to run again.
+the executor enters itself, the RC mode switch moving, any HEARTBEAT received after its
+own answer that shows another mode (the flight controller was in AUTO when it answered, so
+it left it), or any HEARTBEAT received after the answer that settled a newer mode command
+of ours: the flight controller handles commands in order, so a HEARTBEAT received after
+that answer left after the command was handled, and AUTO in it is from outside. A lost
+answer whose mode a HEARTBEAT already shows counts as received with that HEARTBEAT.
+"After" is the order the messages were received in, never a time: two messages can share
+a millisecond. The vehicle records each answer as it is received and every HEARTBEAT
+carries the newest one before it (``FcTelemetry.mode_answer_seq``) and the newest one that
+showed another mode (``other_mode_seq``), so it holds before the executor runs again.
 After AUTO was taken as ours the RC mode switch is still watched for ``RC_RECHECK_MS``
 past that (or to the deadline): a pilot's RC AUTO whose HEARTBEAT came before the next
 RC_CHANNELS sample is then a takeover after all.
@@ -111,13 +114,21 @@ class Authority:
         where it was (a person who moved it chose the mode, ``sd_mav.chain``), and no
         newer answer of ours received before this HEARTBEAT: the flight controller handles
         mode commands in order, so after a newer one was answered the late one cannot
-        show. "Before" is the receive order, recorded as received (``sd_mav.Vehicle``)."""
+        show. Nor any HEARTBEAT after its own answer that shows another mode: the flight
+        controller left it. "Before" and "after" are the receive order, recorded as
+        received (``sd_mav.Vehicle``)."""
         late = self.late
         if late is None:
             return None
         moved = switch_moved(late.rc_mode_pwm, t.rc_mode_pwm)
         after_newer = t.mode_answer_seq is not None and t.mode_answer_seq > late.answer_seq
-        if now_ms > late.until_ms or moved or after_newer:
+        # The flight controller was in the late mode when it sent that answer: a HEARTBEAT
+        # received after it that showed another mode means it left it, so the mode showing
+        # later is from outside. This holds even when a newer answer of ours was lost, and
+        # also when that HEARTBEAT was followed by a newer one before this check ran.
+        other = t.other_mode_seq if t.fc_custom_mode == int(late.mode) else t.fc_heartbeat_seq
+        left = other is not None and other > late.answer_seq
+        if now_ms > late.until_ms or moved or after_newer or left:
             self.late = None
             return None
         return late.mode

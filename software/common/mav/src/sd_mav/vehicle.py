@@ -208,6 +208,11 @@ class FcTelemetry:
     # ours received before it (its accepted COMMAND_ACK, or, the answer lost, a HEARTBEAT
     # that showed the mode). Recorded as it is received, not when the caller runs again.
     mode_answer_seq: int | None = None
+    # The receive order of the newest HEARTBEAT that showed a mode other than the one this
+    # HEARTBEAT shows (None if none did). With ``fc_heartbeat_seq`` it tells whether the
+    # flight controller showed another mode after a given message, even when no reader ran
+    # between that HEARTBEAT and a newer one.
+    other_mode_seq: int | None = None
     # Counts the flight controller's connections: one more at each new connection and at
     # a reboot seen without a lost connection (ATTITUDE's time_boot_ms going back).
     # Readers that keep something per flight controller start over when it changes.
@@ -602,8 +607,15 @@ class Vehicle:
                         )
                         if fresh and wanted_mode is not None and t.fc_custom_mode == wanted_mode:
                             # The answer was lost, but the HEARTBEAT already shows the mode.
+                            # Not recorded yet when the mode at send was the one asked
+                            # for (no HEARTBEAT could tell): that HEARTBEAT is the answer,
+                            # so a later one carries it (``mode_answer_seq``).
+                            seq = t.fc_heartbeat_seq
+                            if self._mode_command is not None and seq is not None:
+                                self._mode_answer_seq = max(seq, self._mode_answer_seq or seq)
+                                self._mode_command = None
                             self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
-                            return MavResult.ACCEPTED, t.fc_heartbeat_seq
+                            return MavResult.ACCEPTED, seq
                         changed = t.fc_custom_mode not in (start_mode, wanted_mode)
                         new_failsafe = t.failsafe_onset_mono_ms != start_onset
                         if new_failsafe or changed:
@@ -901,7 +913,13 @@ class Vehicle:
 
     def _note_mode_ack(self, msg: Any, seq: int) -> None:
         """Our mode command accepted: recorded here, as it is received, so a HEARTBEAT
-        handled before the caller runs again already carries it (``mode_answer_seq``)."""
+        handled before the caller runs again already carries it (``mode_answer_seq``).
+
+        Limit: any accepted DO_SET_MODE ACK addressed to us while our command waits counts
+        as its answer, a late duplicate of an earlier one or a (0, 0)-addressed ACK that
+        may be the GCS's included. A newer answer only ends a late mode record sooner
+        (``sd_onboard`` Authority), so a wrong one fails safe: a late AUTO is then taken
+        as a takeover."""
         if (
             self._mode_command is not None
             and int(msg.command) == mavlink.MAV_CMD_DO_SET_MODE
@@ -941,6 +959,11 @@ class Vehicle:
                     fc_heartbeat_mono_ms=now,
                     fc_heartbeat_seq=seq,
                     mode_answer_seq=self._mode_answer_seq,
+                    other_mode_seq=(
+                        t.other_mode_seq
+                        if t.fc_custom_mode in (None, int(msg.custom_mode))
+                        else t.fc_heartbeat_seq
+                    ),
                     armed=bool(int(msg.base_mode) & _ARMED_FLAG),
                     fc_custom_mode=int(msg.custom_mode),
                     fc_system_status=int(msg.system_status),
@@ -949,6 +972,8 @@ class Vehicle:
                 asked = self._mode_command
                 if asked is not None and asked[1] != asked[0] == int(msg.custom_mode):
                     # Our mode shows while its answer may be lost: the command was handled.
+                    # A GCS or RC choosing that same mode meanwhile counts too; that only
+                    # ends a late mode record sooner, so it fails safe.
                     self._mode_answer_seq = seq
                     self._mode_command = None
                 if not was_connected:
