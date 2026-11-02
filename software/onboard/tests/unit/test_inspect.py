@@ -12,6 +12,7 @@ from uuid import UUID
 import pytest
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
+from sd_mav import fake as fake_module
 from sd_mav.mission import MISSION
 from sd_mav.modes import HOME_MODES, CopterMode
 from sd_mav.vehicle import SendOrigin
@@ -1319,7 +1320,7 @@ async def test_a_link_loss_during_a_climb_lets_it_end_in_the_keepout_hold(
     up (another person's cylinder in the way to the find). A climb slower than the find
     move's deadline is not cut short by it either (``slow``)."""
     if slow:
-        monkeypatch.setattr("sd_mav.fake._CLIMB_MS", 1.0)  # 20 m up: past the deadline
+        monkeypatch.setattr(fake_module, "_CLIMB_MS", 1.0)  # 20 m up: past the deadline
     async with rig() as r:
         _, person, here, start = await _search_over_a_person(
             r, monkeypatch, source="confirmed" if own else "candidate"
@@ -1371,7 +1372,7 @@ async def test_a_link_loss_with_no_find_lets_the_climb_end_then_holds_and_flies_
     takes longer than that (about 70 s)."""
     async with rig() as r:
         _, person, here, start = await _search_over_a_person(r, monkeypatch, radius=radius)
-        monkeypatch.setattr("sd_mav.fake._CLIMB_MS", 1.0)  # after the takeoff
+        monkeypatch.setattr(fake_module, "_CLIMB_MS", 1.0)  # after the takeoff
         await r.run(0.5)
         assert r.ex.state == S.TRANSIT  # climbing
         want = person.radius_m + KEEPOUT_CLIMB_MARGIN_M
@@ -1416,7 +1417,7 @@ async def test_a_stalled_climb_still_flies_home_on_a_link_loss(
         monkeypatch.setattr(GotoHandler, "_deadline_for", staticmethod(lambda now, _p: now + 1e6))
     async with rig() as r:
         _, person, _, _ = await _search_over_a_person(r, monkeypatch, radius=80.0)
-        monkeypatch.setattr("sd_mav.fake._CLIMB_MS", 0.05)  # after the takeoff
+        monkeypatch.setattr(fake_module, "_CLIMB_MS", 0.05)  # after the takeoff
         await r.run(0.5)
         assert r.ex.state == S.TRANSIT and r.ex.active is not None
         assert r.ex.active.skill == INTERNAL_KEEPOUT_CLIMB
