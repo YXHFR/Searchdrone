@@ -175,7 +175,7 @@ class Camera:
         self.poses: list[tuple[float, float, float]] = []
         sc.r.onboard.ex.camera = self.capture
 
-    async def capture(self, command_id: UUID, tele: bool = False) -> UUID | None:
+    async def capture(self, command_id: UUID) -> UUID | None:
         tel = self.sc.r.onboard.vehicle.telemetry
         self.poses.append((tel.lat, tel.lon, tel.alt_rel_home_m))
         rep = report(self.sc, [], command_id=command_id)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -15,7 +17,15 @@ from sd_schemas.search import SubjectCategory
 from sd_search.probmap.bayes import HeadingPrior, MapState, OperatorArea, RingTerrainMap
 from sd_search.probmap.build import MapBuilder, MapCandidate, MapInputs
 from sd_search.probmap.grid import Grid, grid_around
-from sd_search.probmap.pod import DETECTORS, PERSON_WIDTH_M, Camera, Still, pass_pod, still_pod
+from sd_search.probmap.pod import (
+    DETECTORS,
+    PERSON_WIDTH_M,
+    Camera,
+    Still,
+    pass_pod,
+    same_moment_groups,
+    still_pod,
+)
 from sd_search.probmap.rings import ring_mass, rings_for
 from sd_search.probmap.sectors import PlanSector, sector_scores, spacing_m
 from sd_search.probmap.terrain import NoTerrain, SimTerrainSource
@@ -466,3 +476,51 @@ def test_a_tele_still_counts_as_searched_ground() -> None:
     assert pod[cell] == pytest.approx(tele_p)
     far = g.cell_of(100, 0)  # outside the tele footprint (about 14 m wide at 40 m)
     assert far is not None and pod[far] == 0.0
+
+
+def test_a_main_and_a_tele_still_of_one_moment_are_one_look() -> None:
+    """The main and the tele camera take a still of the same ground at the same moment:
+    one look, each camera with its own p (both inside the tele footprint, the main
+    camera alone outside it), not two independent looks at the tele camera's p."""
+    g = grid(500)
+    canopy = NoTerrain().canopy(g)
+    alt_m = 60.0
+    main_cam, tele_cam = Camera(width_px=1280, hfov_deg=66.0), Camera(1128, 20.0)
+    t0 = datetime(2026, 11, 2, 12, 0, 0, tzinfo=UTC)
+
+    def shot(cam: Camera, seq: int, when: datetime | None) -> Still:
+        corners = square(0, 0, cam.ground_width_m(alt_m) / 2)
+        s = Still(f"s{seq}", seq, "p1", corners, cam.px_per_m(alt_m), True, when)
+        return replace(plane(g, s), captured_utc=when)
+
+    main = shot(main_cam, 1, t0)
+    tele = shot(tele_cam, 2, t0 + timedelta(seconds=0.3))  # the same round onboard
+    assert [[s.still_id for s in grp] for grp in same_moment_groups([tele, main])] == [["s1", "s2"]]
+
+    def p_at(s: Still, cell: tuple[int, int]) -> float:
+        got = still_pod(g, s, canopy, DET)
+        assert got is not None
+        (rows, cols), p = got
+        j, i = cell
+        if not (rows.start <= j < rows.stop and cols.start <= i < cols.stop):
+            return 0.0
+        return float(p[j - rows.start, i - cols.start])
+
+    inside, outside = g.cell_of(0, 0), g.cell_of(30, 0)
+    assert inside is not None and outside is not None
+    pm, pt = p_at(main, inside), p_at(tele, inside)
+    assert pm > 0 and pt > 0  # both cameras see this cell (the tele one a part of it)
+    assert tele.px_per_m > 2.5 * main.px_per_m  # with much more detail where it looks
+    pod = pass_pod(g, [main, tele], canopy, DET)
+    assert pod[inside] == pytest.approx(1 - (1 - pm) * (1 - pt))
+    assert p_at(tele, outside) == 0.0
+    assert pod[outside] == pytest.approx(p_at(main, outside))  # the main camera alone
+    # Not two independent looks at the better camera's p, as before.
+    assert pod[inside] < 1 - (1 - max(pm, pt)) ** 2
+    # Stills of two moments (or of unknown time) stay two looks.
+    later = replace(tele, captured_utc=t0 + timedelta(seconds=5))
+    for other in (later, replace(tele, captured_utc=None)):
+        two = pass_pod(g, [main, other], canopy, DET)
+        assert two[inside] == pytest.approx(1 - (1 - max(pm, pt)) ** 2)
+    # Two main stills of one moment never pair: one camera, the same detail.
+    assert len(same_moment_groups([main, replace(main, still_id="s3")])) == 2

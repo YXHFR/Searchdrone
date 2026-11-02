@@ -114,6 +114,14 @@ def test_the_tele_camera_needs_perception_and_its_own_folder(
     assert any("still_dir" in e for e in check(load(root, {**env, **on})))
     same = {**on, "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": "${SD_DATA_DIR}/stills"}
     assert any("egen still_dir" in e for e in check(load(root, {**env, **same})))
+    # The same folder written two ways is still the same folder.
+    for main_dir, tele_dir in (("stills", "./stills"), ("stills", "x/../stills/")):
+        spelled = {
+            **on,
+            "SD_ONBOARD__PERCEPTION__STILL_DIR": main_dir,
+            "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": tele_dir,
+        }
+        assert any("egen still_dir" in e for e in check(load(root, {**env, **spelled})))
     good = {
         **on,
         "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": "${SD_DATA_DIR}/tele",

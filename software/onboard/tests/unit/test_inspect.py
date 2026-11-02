@@ -72,19 +72,16 @@ def install(r: Rig, *keepouts: Keepout) -> None:
 
 
 class Camera:
-    """``Executor.camera``: one still id per call, the order's id kept (and whether
-    the order asked for the tele camera)."""
+    """``Executor.camera``: one still id per call, the order's id kept."""
 
     def __init__(self, works: bool = True) -> None:
         self.works = works
         self.asked: list[tuple[UUID, float]] = []
-        self.tele: list[bool] = []
         self.rig: Rig | None = None
 
-    async def __call__(self, command_id: UUID, tele: bool = False) -> UUID | None:
+    async def __call__(self, command_id: UUID) -> UUID | None:
         assert self.rig is not None
         self.asked.append((command_id, self.rig.clock.monotonic()))
-        self.tele.append(tele)
         return new_id() if self.works else None
 
 
@@ -117,7 +114,6 @@ async def test_capture_stills_in_hold() -> None:
         assert r.ex.state == S.HOLD and r.ex.hold_reason == reason
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 10)
         assert [c for c, _ in cam.asked] == [cmd.command_id] * 3
-        assert cam.tele == [False] * 3  # capture_stills: the main camera
         gaps = [b - a for (_, a), (_, b) in pairwise(cam.asked)]
         assert all(abs(g - 1.0) < 0.1 for g in gaps)
         assert r.ex.state == S.HOLD and r.ex.hold_reason == reason
@@ -141,7 +137,7 @@ async def test_a_camera_that_hangs_does_not_hold_the_order(
 ) -> None:
     monkeypatch.setattr(executor_module, "_CAPTURE_LIMIT_S", 0.05)
 
-    async def stuck(_command_id: UUID, _tele: bool = False) -> UUID | None:
+    async def stuck(_command_id: UUID) -> UUID | None:
         await asyncio.Event().wait()
         return None
 
@@ -203,7 +199,6 @@ async def test_inspect_flies_to_the_edge_looks_down_and_takes_stills() -> None:
         assert INSPECT_AIM_DEG - 1.5 < view <= INSPECT_VIEW_DEG
         assert r.fc.target_yaw_deg is not None and abs(r.fc.target_yaw_deg) < 1
         assert [c for c, _ in cam.asked] == [cmd.command_id] * 5
-        assert cam.tele == [True] * 5  # the tele camera, when the drone has one
         cyl = circles([keepout(150, 0, 35)], PLANE)
         assert xy_route_violation(track_xy(r, start), cyl) is None
         assert "executor.inspect_done" in r.up.kinds()

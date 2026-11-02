@@ -31,15 +31,12 @@ __all__ = ["CaptureStillsHandler", "take_stills"]
 NO_STILLS: Final = "Kameran gav inga bilder."
 
 
-async def take_stills(
-    io: ExecutorIO, command_id: Id, count: int, interval_s: float, *, tele: bool = False
-) -> list[UUID]:
-    """``count`` stills, one every ``interval_s`` (the first at once); the ids that came.
-    ``tele``: from the tele camera when the drone has one (``inspect_detection``)."""
+async def take_stills(io: ExecutorIO, command_id: Id, count: int, interval_s: float) -> list[UUID]:
+    """``count`` stills, one every ``interval_s`` (the first at once); the ids that came."""
     taken: list[UUID] = []
     for i in range(count):
         started = io.clock.monotonic()
-        still_id = await io.capture_still(command_id, tele)
+        still_id = await io.capture_still(command_id)
         if still_id is not None:
             taken.append(still_id)
         if i < count - 1:

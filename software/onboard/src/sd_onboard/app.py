@@ -25,7 +25,7 @@ from sd_onboard.io.params import effective_params
 from sd_onboard.io.persistence import StateStore
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.logs import setup_logging
-from sd_onboard.perception.loop import TELE, Feed, PerceptionLoop
+from sd_onboard.perception.loop import Feed, PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
 
 __all__ = ["main", "serve"]
@@ -139,7 +139,7 @@ def _perception(
                     max_size=(tele.width_px, tele.height_px),
                 ),
                 PinholeCamera(tele.width_px, tele.height_px, tele.hfov_deg),
-                TELE,
+                "tele",
             )
         ]
         if tele.enabled

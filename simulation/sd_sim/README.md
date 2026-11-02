@@ -162,9 +162,12 @@ scenario, or `just sim detector=model` in the flat world. It needs `physics=gz` 
 the detector on the newest main still, then on the newest tele still, and sends a report
 for each, placed on the ground with that camera's own view. Tele stills count as searched
 ground on the probability map, over their narrower footprint and with their higher
-detail. `inspect_detection` takes its stills with the tele camera (with the main camera
-when there is none); `capture_stills` uses the main camera. The sim farm's archive keeps
-the main camera's pictures only. The flight itself does not change:
+detail; a main and a tele still of the same moment count as one look, each camera with
+its own chance of seeing a person. `inspect_detection` and `capture_stills` take their
+stills with the main camera, also with the tele camera on: an inspection hovers so that
+the target is 24–28° from straight down, and the fixed tele camera sees only about ±10°
+across and ±7.5° along, so its stills would not show the target. Revisit with a gimbal.
+The sim farm's archive keeps the main camera's pictures only. The flight itself does not change:
 the same height, speed and search pattern.
 
 ## Parts

@@ -596,6 +596,9 @@ async def test_the_tele_camera_is_polled_after_the_main_one(tmp_path: Path) -> N
 async def test_an_order_takes_its_still_from_the_main_camera(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """``capture`` is the executor's camera for ``capture_stills`` and
+    ``inspect_detection`` alike: with the tele camera on it still takes the main camera's
+    still (an inspection's target is 24-28 degrees off nadir, outside the tele view)."""
     monkeypatch.setattr(loop_module, "CAPTURE_WAIT_S", 0.05)
     tele = tmp_path / "tele"
     write_still(tele, "block0_h30")
@@ -611,27 +614,10 @@ async def test_an_order_takes_its_still_from_the_main_camera(
     )
     assert await lp.capture(new_id()) is None  # only the tele folder had a still
     assert lp.stats.stills == 0
-    # inspect_detection asks for the tele camera: it takes the still.
-    command_id = new_id()
-    still_id = await lp.capture(command_id, tele=True)
-    assert still_id is not None and lp.stats.by_camera == {"tele": 1}
-
-
-async def test_without_a_tele_camera_an_inspection_still_comes_from_the_main_one(
-    tmp_path: Path,
-) -> None:
-    write_still(tmp_path, "block0_h30")
-    clock = MonotonicClock()
-    lp = PerceptionLoop(
-        DirStillSource(tmp_path, synthetic=True),
-        lambda: telemetry("block0_h30", clock.monotonic_ms()),
-        lambda _r: None,
-        clock,
-        CAM,
-        env={},
-    )
-    assert await lp.capture(new_id(), tele=True) is not None
+    write_still(tmp_path / "main", "block0_h30")
+    assert await lp.capture(new_id()) is not None
     assert lp.stats.by_camera == {MAIN: 1}
+    assert list(tele.glob("*.json"))  # the tele still was never taken for the order
 
 
 def test_every_extra_camera_needs_its_own_name(tmp_path: Path) -> None:

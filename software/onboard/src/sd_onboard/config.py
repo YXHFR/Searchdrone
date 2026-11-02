@@ -228,7 +228,12 @@ def check(loaded: Loaded) -> list[str]:
         )
     if tele.enabled and not tele.still_dir:
         errors.append("[perception.tele] still_dir saknas / still_dir is required when enabled.")
-    if tele.enabled and tele.still_dir and tele.still_dir == cfg.perception.still_dir:
+    same_dir = (
+        tele.still_dir
+        and cfg.perception.still_dir
+        and loaded.path(tele.still_dir).resolve() == loaded.path(cfg.perception.still_dir).resolve()
+    )
+    if tele.enabled and same_dir:
         errors.append(
             "[perception.tele] behöver en egen still_dir / the tele camera needs its own folder."
         )
