@@ -6,7 +6,10 @@ from typing import Any, Protocol
 
 from sd_brain.turn import TurnInput, TurnOutput
 
-__all__ = ["BackendCrashError", "CommanderBackend", "ToolExecutor"]
+__all__ = ["PARSE_FAIL_TEXT", "BackendCrashError", "CommanderBackend", "ToolExecutor"]
+
+# The operator's line when the AI's answer could not be read (``turn_failed: parse``).
+PARSE_FAIL_TEXT = "Jag fick inte ihop ordern. Kan du säga det på ett annat sätt?"
 
 
 class BackendCrashError(RuntimeError):

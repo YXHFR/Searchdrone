@@ -31,7 +31,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from sd_brain.backends.base import BackendCrashError, CommanderBackend
+from sd_brain.backends.base import PARSE_FAIL_TEXT, BackendCrashError, CommanderBackend
 from sd_brain.charter_draft import (
     CharterDraft,
     CharterError,
@@ -538,6 +538,17 @@ class CommanderLoop:
                 if exc.status == 401:
                     raise
                 log.warning("turen (%s) avbröts, markstationen svarade inte: %s", trigger, exc)
+            except AssertionError:
+                raise  # a test harness out of answers must fail loudly
+            except Exception as exc:
+                # Backstop: no single turn ends the loop. The turn is lost; the next one
+                # runs. Type and a short message only (the text may be the model's).
+                log.error(
+                    "turn_failed trigger=%s: %s: %s",
+                    trigger,
+                    type(exc).__name__,
+                    truncate(str(exc), 200),
+                )
             finally:
                 self._turn_task = None
                 self._turn_events = []
@@ -858,6 +869,24 @@ class CommanderLoop:
                 messages=[_deadline("http_error")],
                 diagnostics=TurnDiagnostics(
                     backend=_wire_backend(backend.name), error="http_error"
+                ),
+            )
+        except AssertionError:
+            raise  # a test harness out of answers (ReplayExhaustedError) must fail loudly
+        except Exception as exc:
+            # Last resort: no single model answer may end the brain. A fault the backend
+            # did not foresee counts as an answer it could not read; the loop goes on.
+            # The type and a short message only: a traceback may quote the hostile text.
+            log.error(
+                "backend_decide_failed backend=%s: %s: %s",
+                backend.name,
+                type(exc).__name__,
+                truncate(str(exc), 200),
+            )
+            out = TurnOutput(
+                messages=[OutMessage(text=PARSE_FAIL_TEXT, refs={"turn_failed": "parse"})],
+                diagnostics=TurnDiagnostics(
+                    backend=_wire_backend(backend.name), error="parse_error"
                 ),
             )
         if out.diagnostics.latency_ms == 0:
@@ -1194,9 +1223,22 @@ class CommanderLoop:
     async def _log_decision(self, mid: str, record: TurnRecord, out: TurnOutput) -> None:
         d = out.diagnostics
         prompt = d.prompt_json or {"trigger": record.trigger, "texts": record.texts}
-        prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        try:
+            prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+            entry = self._decision_entry(record, d, prompt_bytes)
+        except Exception as exc:  # e.g. an entry too large: the log is lost, not the turn
+            log.warning("decision_log_unbuilt: %s", type(exc).__name__)
+            return
+        try:
+            await self.ground.post_decision(mid, entry)
+        except (GroundError, ValueError) as exc:
+            log.warning("kunde inte spara beslutsloggen: %s", exc)
+
+    def _decision_entry(
+        self, record: TurnRecord, d: TurnDiagnostics, prompt_bytes: str
+    ) -> DecisionLog:
         result = record.result
-        entry = DecisionLog(
+        return DecisionLog(
             id=new_id(),
             turn_id=uuid.UUID(record.turn_id),
             trigger=record.trigger,
@@ -1204,7 +1246,7 @@ class CommanderLoop:
             engine=d.engine,
             model_id=d.model_id,
             ai_config_hash=self.ai_hash,
-            prompt_sha256=hashlib.sha256(prompt_bytes.encode()).hexdigest(),
+            prompt_sha256=hashlib.sha256(prompt_bytes.encode(errors="replace")).hexdigest(),
             prompt_tokens=d.prompt_tokens,
             completion_tokens=d.completion_tokens,
             latency_ms=d.latency_ms,
@@ -1223,10 +1265,6 @@ class CommanderLoop:
             proposal_draft=_logged_draft(record.proposal_draft or record.refused_draft),
             prompt_json=json.loads(prompt_bytes) if len(prompt_bytes) < 900_000 else None,
         )
-        try:
-            await self.ground.post_decision(mid, entry)
-        except (GroundError, ValueError) as exc:
-            log.warning("kunde inte spara beslutsloggen: %s", exc)
 
     # --- the quick stop check -------------------------------------------------------------
 
@@ -1387,7 +1425,10 @@ class _ReadTools:
                 skill = str(args.get("skill"))
                 if skill not in self.loop.reg or skill == PROPOSAL_TOOL:
                     return {"error": f"unknown skill {skill}"}
-                params = adapt(skill, dict(args.get("params") or {}), self.turn.situation)
+                raw_params = args.get("params") or {}
+                if not isinstance(raw_params, dict):
+                    return {"error": "invalid arguments: params must be an object"}
+                params = adapt(skill, dict(raw_params), self.turn.situation)
                 req = SkillRequest(
                     command_id=new_id(),
                     skill=skill,
@@ -1438,8 +1479,9 @@ def _logged_draft(draft: Any) -> dict[str, Any] | None:
     body = draft.model_dump(mode="json") if isinstance(draft, CharterDraft) else draft
     if not isinstance(body, dict):
         return None
-    raw = json.dumps(body, ensure_ascii=False, default=str)
-    return json.loads(raw) if len(raw.encode()) <= PARAMS_MAX_BYTES else None
+    # errors="replace": a lone surrogate ("\ud800") from the model becomes "?", not an error.
+    raw = json.dumps(body, ensure_ascii=False, default=str).encode(errors="replace")
+    return json.loads(raw) if len(raw) <= PARAMS_MAX_BYTES else None
 
 
 def _deadline(why: str) -> OutMessage:

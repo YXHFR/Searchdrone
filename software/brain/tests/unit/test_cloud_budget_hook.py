@@ -111,16 +111,34 @@ async def test_an_error_answer_releases_and_the_fallback_reserves_again() -> Non
     assert len(books.released) == 1 and len(books.committed) == 1
 
 
-async def test_a_timeout_is_committed_at_the_estimate() -> None:
+async def test_a_timeout_is_committed_at_the_whole_reservation() -> None:
     books = Books()
 
     def slow(_r: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow")
 
     with pytest.raises(ModelTimeoutError):
-        await _rt(slow, books).chat(MSG, [], 5, Sampling())
+        await _rt(slow, books).chat(MSG, [], 5, Sampling(max_tokens=300))
     (done,) = books.committed
-    assert done.completion_tokens == 0 and done.prompt_tokens == books.reserved[0].est_prompt_tokens
+    (asked,) = books.reserved
+    assert (done.prompt_tokens, done.completion_tokens) == (asked.est_prompt_tokens, 300)
+    assert books.released == []
+
+
+async def test_a_broken_answer_is_committed_at_the_whole_reservation() -> None:
+    """The provider generated it to its end and may bill it in full: never booked below
+    what was reserved (also not with 0 completion tokens)."""
+    books = Books()
+
+    def broken(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="inte json")
+
+    with pytest.raises(ModelError) as exc:
+        await _rt(broken, books).chat(MSG, [], 5, Sampling(max_tokens=300))
+    assert exc.value.kind == "parse_error"
+    assert books.committed and len(books.committed) == len(books.reserved)  # fallback too
+    for done, asked in zip(books.committed, books.reserved, strict=True):
+        assert (done.prompt_tokens, done.completion_tokens) == (asked.est_prompt_tokens, 300)
     assert books.released == []
 
 
@@ -131,6 +149,11 @@ async def test_a_timeout_is_committed_at_the_estimate() -> None:
         {"prompt_tokens": 10**400, "completion_tokens": 30},
         {"prompt_tokens": 10_000_001, "completion_tokens": 30, "cost": 0.0004},
         {"prompt_tokens": 120, "completion_tokens": -1, "cost": 0.0004},
+        # left out: a provider that states no counts is no free call either
+        None,
+        {},
+        {"prompt_tokens": 120},
+        {"completion_tokens": 30, "cost": 0.0004},
     ],
 )
 async def test_malformed_usage_is_booked_at_the_estimate(usage: object) -> None:
@@ -149,6 +172,22 @@ async def test_malformed_usage_is_booked_at_the_estimate(usage: object) -> None:
     assert (done.prompt_tokens, done.completion_tokens) == (req.est_prompt_tokens, 300)
     assert req.est_completion_tokens == 300
     assert done.cost_usd is None and books.released == []
+
+
+@pytest.mark.parametrize(
+    ("usage", "reason"),
+    [(None, "absent"), ({"prompt_tokens": 9}, "absent"), ({"prompt_tokens": -1}, "malformed")],
+)
+async def test_the_warning_says_why_the_usage_is_not_valid(
+    usage: object, reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    def ok(_r: httpx.Request) -> httpx.Response:
+        body = chat_reply("svar")
+        body["usage"] = usage
+        return httpx.Response(200, json=body)
+
+    await _rt(ok, Books()).chat(MSG, [], 5, Sampling())
+    assert f"cloud_usage_invalid model='test-model' reason={reason}" in caplog.text
 
 
 async def test_a_denied_main_model_never_tries_the_fallback() -> None:

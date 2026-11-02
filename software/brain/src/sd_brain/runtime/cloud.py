@@ -140,13 +140,15 @@ class CloudModelRuntime:
             sampling.max_tokens,
         )
         if not reply.usage_valid:
-            log.warning("cloud_usage_malformed model=%r", reply.model_id)
+            log.warning(
+                "cloud_usage_invalid model=%r reason=%s", reply.model_id, reply.usage_problem
+            )
         if reservation is not None and self.budget is not None:
-            rid, est_prompt = reservation
+            rid, est_prompt, est_completion = reservation
             if reply.usage_valid:
                 done = _commit(rid, reply.prompt_tokens, reply.completion_tokens, reply.cost_usd)
             else:  # a broken count is never a free call: booked at the whole reservation
-                done = _commit(rid, est_prompt, sampling.max_tokens, None)
+                done = _commit(rid, est_prompt, est_completion, None)
             booked = await self.budget.commit(done)
             reply.cost_sek = booked.actual_sek if booked is not None else None
         return reply
@@ -157,8 +159,9 @@ class CloudModelRuntime:
         messages: list[dict[str, Any]],
         sampling: Sampling,
         ctx: BudgetContext,
-    ) -> tuple[str, int] | None:
-        """(reservation id, estimated prompt tokens), or None without a budget hook."""
+    ) -> tuple[str, int, int] | None:
+        """(reservation id, estimated prompt and completion tokens), or None without a
+        budget hook."""
         if self.budget is None:
             return None
         prompt_tokens, images = estimate_prompt_tokens(messages)
@@ -178,23 +181,24 @@ class CloudModelRuntime:
         grant = await self.budget.reserve(req)
         if not grant.granted or grant.reservation_id is None:
             raise BudgetDeniedError(grant.reason or "nekad")
-        return str(grant.reservation_id), prompt_tokens
+        return str(grant.reservation_id), prompt_tokens, sampling.max_tokens
 
     async def _settle_failed(
-        self, reservation: tuple[str, int] | None, exc: ModelError | None
+        self, reservation: tuple[str, int, int] | None, exc: ModelError | None
     ) -> None:
         """A failed call: released when the provider surely got nothing to bill (it was
         unreachable or answered with an error), otherwise (a timeout, a broken answer,
-        a cancel) committed at the estimate, since it may have been billed."""
+        a cancel) committed at the whole reservation, since it may have been billed in
+        full (a broken answer was generated to its end)."""
         if reservation is None or self.budget is None:
             return
-        rid, prompt_tokens = reservation
+        rid, prompt_tokens, completion_tokens = reservation
         never_billed = exc is not None and exc.kind == "http_error"
         try:
             if never_billed:
                 await self.budget.release(rid)
             else:
-                await self.budget.commit(_commit(rid, prompt_tokens, 0, None))
+                await self.budget.commit(_commit(rid, prompt_tokens, completion_tokens, None))
         except Exception as err:  # unbooked, it expires at its estimate on the ground
             log.warning("cloud_budget_settle_failed: %s", type(err).__name__)
 

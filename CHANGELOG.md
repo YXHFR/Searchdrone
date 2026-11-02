@@ -263,13 +263,34 @@ All notable changes to this project are listed here. The format follows
   window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
   a choice, message or tool call is now a parse error (the fallback model answers),
   not an empty answer. Malformed usage metadata (`usage`, its token counts or
-  `completion_tokens_details`, also a count too large for a float or over the budget's
-  10,000,000) only drops those numbers: the answer stands, no second, paid call goes to
-  the fallback model, and the ground's cloud budget books the call at its whole
-  reservation (the estimated prompt and the completion limit), never as free. A
-  provider price outside 0 to 1000 USD (also one too large for a float) is dropped,
-  and the ground prices the tokens. A body nested too deep to read is a parse error,
-  not a RecursionError that escapes the call.
+  `completion_tokens_details`, also a count over the budget's 10,000,000 or too large
+  for a float) only drops those numbers: the answer stands, no second, paid call goes
+  to the fallback model, and the ground's cloud budget books the call at its whole
+  reservation (the estimated prompt and the completion limit), never as free. So do
+  usage left out and usage without its prompt or completion count; the eval ledger
+  books such a call the same way. A provider price outside 0 to 1000 USD is dropped
+  (a negative zero reads 0), and the ground prices the tokens. An answer with a number
+  longer than Python reads (4300 digits) is unreadable as a whole, so a parse error,
+  as is a body nested too deep to read: neither escapes the call. A tool call's
+  arguments string that cannot be read (also a number that long, or nested too deep)
+  goes to the repair round like any arguments that are not JSON, also when it is
+  written as a `<tool_call>` in the text, and the decision log and the repeat check
+  read such arguments without failing (also arguments that load but are nested too
+  deep to write back). A fault no part of the AI's turn foresaw is now logged
+  (`backend_decide_failed`, its type and a short message only) and counts as an answer
+  that could not be read; a turn that fails after the answer (`turn_failed`) is lost,
+  not the turn loop: no single model answer can end the brain. A test harness out of
+  recorded answers still fails. The decision log caps a search profile's key names
+  (32 names of at most 64 characters), writes a lone surrogate in a draft as "?", and a
+  log entry that cannot be built is dropped with a warning, not the turn. The
+  `estimate` read tool answers params that are no object with a tool error, so the
+  model gets its repair round. Counts no real call has (no prompt tokens, or
+  no completion tokens next to an answer) are no valid usage either; all invalid usage
+  reads 0 tokens, and its warning (`cloud_usage_invalid`) gives the reason: `absent`,
+  `malformed` or `implausible`. A failed cloud call that may have been billed (a timeout, a broken
+  answer, a cancel) is booked at its whole reservation, no longer at the prompt alone,
+  and the eval ledger now charges such calls too and prices images in its estimate as
+  the ground does (400 tokens per crop).
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning
