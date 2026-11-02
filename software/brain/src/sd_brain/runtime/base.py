@@ -46,7 +46,7 @@ class Sampling(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     temperature: float = 0.2
     top_p: float = 0.8
-    max_tokens: int = 512
+    max_tokens: int = 4096  # [llm]'s default (LlmConfig): what a flight sends
     seed: int | None = None
 
 
@@ -135,9 +135,9 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
-    """An object of the answer; empty when left out, a TypeError (a parse error) when it
-    is something else."""
-    if not value:
+    """An object of the answer; empty when left out (absent or null), a TypeError (a parse
+    error) when it is anything else, also an empty string, list or 0."""
+    if value is None:
         return {}
     if not isinstance(value, Mapping):
         raise TypeError("not an object")

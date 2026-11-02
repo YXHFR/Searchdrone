@@ -193,7 +193,7 @@ class LlmCommander:
         behaviour: BehaviourConfig,
         sampling: Sampling,
         *,
-        context_tokens: int = 8192,
+        context_tokens: int = 16384,  # [llm]'s default (LlmConfig), as Sampling's
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.runtime = runtime

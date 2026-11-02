@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_brain.ai_config import ai_config_hash
-from sd_brain.config import BrainConfig, ConfigError, load_config
+from sd_brain.config import BrainConfig, ConfigError, LlmConfig, load_config
 from sd_brain.secrets import (
     SecretError,
     Secrets,
@@ -177,7 +177,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         from sd_brain.simeval.golden import load_fixture
 
         sims = [load_fixture(p) for p in sorted((Path(args.golden) / "sim").glob("SIM-*.json"))]
-        report.update(asyncio.run(_replay_sim(sims, report["failures"])))
+        report.update(asyncio.run(_replay_sim(sims, report["failures"], cfg.llm)))
         report["passed"] = bool(report["passed"] and not report["sim_failed"])
     if args.backend == "cloud":
         h = ai_config_hash(SKILL_REGISTRY, llm_sampling(cfg.llm), cloud=cfg.cloud)
@@ -203,13 +203,13 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 
 async def _replay_sim(
-    fixtures: list[dict[str, Any]], failures: dict[str, list[str]]
+    fixtures: list[dict[str, Any]], failures: dict[str, list[str]], llm: LlmConfig
 ) -> dict[str, Any]:
     """Fly the simulator replay fixtures again (``tests/golden/sim``)."""
     from sd_brain.simeval.golden import replay_golden
 
     for fx in fixtures:
-        bad = await replay_golden(fx)
+        bad = await replay_golden(fx, llm=llm)
         _out(f"{fx['id']}: {'ok' if not bad else 'FEL'} {'; '.join(bad)[:300]}")
         if bad:
             failures[str(fx["id"])] = bad
@@ -342,7 +342,12 @@ async def _eval_safety_cloud(
             CloudModelRuntime(cfg.cloud, key, client), ledger, run_cap_sek=args.max_cost_sek
         )
         report = await run_safety(
-            cases, lambda _: meter, defaults, can_continue=meter.can_afford, on_case=keep
+            cases,
+            lambda _: meter,
+            defaults,
+            can_continue=meter.can_afford,
+            on_case=keep,
+            llm=cfg.llm,
         )
     report.update(
         backend="cloud",

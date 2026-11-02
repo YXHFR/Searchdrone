@@ -99,6 +99,16 @@ async def test_cloud_openrouter_call() -> None:
             "usage": {"completion_tokens": 9, "completion_tokens_details": "many"},
         },
         ["not", "an", "object"],
+        # an empty string, list or 0 is no object either: never an empty, good answer
+        {"choices": [{"message": ""}]},
+        {"choices": [{"message": []}]},
+        {"choices": [0]},
+        {"choices": [{"message": {"content": "ok"}}], "usage": ""},
+        {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"completion_tokens": 9, "completion_tokens_details": 0},
+        },
+        "",
     ],
 )
 async def test_an_answer_of_the_wrong_shape_is_a_parse_error(bad: Any) -> None:
@@ -285,3 +295,29 @@ def test_parse_reply_reads_the_reasoning_tokens() -> None:
     assert parse_reply(data, latency_ms=1).reasoning_tokens == 0
     data["usage"] = {"completion_tokens": 40, "completion_tokens_details": None}
     assert parse_reply(data, latency_ms=1).reasoning_tokens == 0
+
+
+def test_left_out_or_null_parts_are_absent() -> None:
+    bare = parse_reply({"choices": [{"message": None}], "usage": None}, latency_ms=1)
+    assert (bare.content, bare.tool_calls, bare.completion_tokens) == (None, [], 0)
+    no_details = {"completion_tokens": 9, "completion_tokens_details": None}
+    reply = parse_reply({"choices": [{"message": {}}], "usage": no_details}, latency_ms=1)
+    assert (reply.completion_tokens, reply.reasoning_tokens) == (9, 0)
+
+
+def test_the_defaults_are_a_flights() -> None:
+    """Sampling() and a bare LlmCommander send what [llm]'s defaults send."""
+    from sd_brain.backends.llm import LlmCommander
+    from sd_brain.config import BehaviourConfig, LlmConfig
+    from sd_brain.context import ContextBuilder
+    from sd_brain.runtime.base import llm_sampling
+    from sd_schemas.skills import SKILL_REGISTRY
+
+    llm = LlmConfig()
+    assert Sampling() == llm_sampling(llm).model_copy(update={"seed": None})
+    budget = llm.prompt_budget_tokens
+    ctx = ContextBuilder(
+        SKILL_REGISTRY, takeoff_policy=BehaviourConfig().takeoff_policy, prompt_budget_tokens=budget
+    )
+    cmd = LlmCommander(ReplayRuntime([]), ctx, SKILL_REGISTRY, BehaviourConfig(), Sampling())
+    assert cmd.context_tokens == llm.context_tokens

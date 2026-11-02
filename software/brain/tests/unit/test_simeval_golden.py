@@ -11,8 +11,10 @@ from typing import Any
 import pytest
 
 from sd_brain.cli import main
+from sd_brain.config import LlmConfig
 from sd_brain.geo import from_enu
 from sd_brain.secrets import BRAIN_KEYS
+from sd_brain.simeval import golden
 from sd_brain.simeval.decider import DecisionMaker
 from sd_brain.simeval.farm import RoundError, brain_record, grade_round
 from sd_brain.simeval.golden import (
@@ -315,3 +317,17 @@ def test_cli_eval_grade(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert main(["eval", "grade"]) == 2
     assert main(["eval", "grade", "--round", str(tmp_path / "none")]) == 1
     assert "round.json saknas" in capsys.readouterr().err
+
+
+async def test_a_replay_flies_with_the_given_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[LlmConfig | None] = []
+    from sd_brain.simeval.decider import cloud_commander as real
+
+    def spy(*args: Any, **kw: Any) -> Any:
+        seen.append(kw.get("llm"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(golden, "cloud_commander", spy)
+    llm = LlmConfig(context_tokens=12000)
+    assert await replay_golden(load_fixture(GOLDEN / "SIM-01.json"), llm=llm) == []
+    assert seen == [llm]

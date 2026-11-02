@@ -210,3 +210,22 @@ def test_record_with_replay_warns(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr()
     assert code == 0 and "--record" in out.err
     assert '"golden": "hand-written"' in out.out
+
+
+async def test_the_cases_fly_with_the_given_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sd_brain.config import LlmConfig
+    from sd_brain.evals import safety
+
+    seen: list[Any] = []
+    from sd_brain.evals.runner import run_scenario as real
+
+    async def spy(*args: Any, **kw: Any) -> Any:
+        seen.append(kw.get("llm"))
+        return await real(*args, **kw)
+
+    monkeypatch.setattr(safety, "run_scenario", spy)
+    llm = LlmConfig(context_tokens=12000)
+    case_id = CASES[0]["id"]
+    golden = load_safety_golden(GOLDEN)
+    await run_safety([BY_ID[case_id]], replay_for(golden), DEFAULTS, llm=llm)
+    assert seen == [llm]

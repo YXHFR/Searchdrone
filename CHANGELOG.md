@@ -249,6 +249,11 @@ All notable changes to this project are listed here. The format follows
   budget and context window (16384, not 8192). A drill turn that ran into 512 was cut
   short where a flight's turn would not be, and a prompt over 4096 tokens never reached
   the model in the drill. The eval report's AI config hash is that of the same sampling.
+- The safety exam, the golden sim replays (with `sd-brain eval`'s config) and the SITL
+  farm flight now pass `[llm]` on as the drill does. `Sampling()` and a bare
+  `LlmCommander` default to `[llm]`'s 4096 completion tokens and 16384-token context
+  window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
+  an object is now a parse error (the fallback model answers), not an empty answer.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning
