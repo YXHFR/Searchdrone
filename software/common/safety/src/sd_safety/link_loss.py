@@ -26,6 +26,7 @@ from sd_safety.constants import (
     FIND_HOVER_EDGE_MARGIN_M,
     FIND_HOVER_S,
     FIND_MOVE_DEADLINE_S,
+    KEEPOUT_CLIMB_LINK_ALLOWANCE_S,
     LINK_LOSS_DETECT_S,
     SDLINK_GRACE_S,
     SDLINK_HOLD_S,
@@ -50,6 +51,8 @@ HOLD_MS = round((LINK_LOSS_DETECT_S + SDLINK_GRACE_S) * 1000)
 HOME_MS = round((LINK_LOSS_DETECT_S + SDLINK_GRACE_S + SDLINK_HOLD_S) * 1000)
 FIND_MOVE_DEADLINE_MS = round((LINK_LOSS_DETECT_S + FIND_MOVE_DEADLINE_S) * 1000)
 FIND_HOVER_UNTIL_MS = round((LINK_LOSS_DETECT_S + FIND_HOVER_S) * 1000)
+# Home regardless, also while the keep-out climb is still under way (113 s).
+HOME_CLIMBING_MS = HOME_MS + round(KEEPOUT_CLIMB_LINK_ALLOWANCE_S * 1000)
 
 
 @dataclass(frozen=True, slots=True)
