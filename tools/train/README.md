@@ -248,6 +248,7 @@ Useful keys for `just train-detector`:
 | `sets=heridal,kios` | Which fetched sets to train on (default: every one that may be trained on). |
 | `balance=sets` | How each epoch draws its tiles: `sets` (default) as many from every set, `tiles` every tile once (a big set counts more), or weights such as `heridal:2,kios:2,kios_carperson:1,seadronessee:1` naming every set. |
 | `pick=heridal,kios` | The sets whose val AP50 picks the best epoch (default: those in `sets=` that are measured on, or all of them if none is). Every set's AP50 is still printed. |
+| `upscale=2` | Each tile covers 320×320 picture pixels and is enlarged to 640 px, so a person of 15 px is trained on (and, on the drone, looked for) as 30 px. The manifest carries it, so `bench-detector`, the simulator and the drone enlarge their tiles the same way. Costs about 3.8 times the tiles: 170 instead of 45 per 12 MP picture. Default 1 (as before). |
 | `init=<best.pt>` | Start from an earlier run's weights instead of COCO's; use with a new `out=`. |
 | `out=<folder>` | Where the run is saved (default `<data_dir>/train/<model>`). |
 | `simfarm=1` | First pre-trains for `simfarm_epochs=3` epochs on the simulator's pictures (`just sim-farm`, then `just bench-fetch yes=1 sets=simfarm`). Those pictures are never measured on. |

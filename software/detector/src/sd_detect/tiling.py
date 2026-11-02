@@ -13,6 +13,13 @@ creates (the idea of SAHI, own code, no extra dependency):
 2. non-maximum suppression per label (IoU >= ``nms_iou``): a person inside the overlap
    seen whole by both tiles is one box.
 
+With ``upscale`` above 1 each tile covers ``tile_px / upscale`` picture pixels and is
+enlarged ``upscale`` times (bilinear) before the inner detector sees it, so a person of
+15 px reaches the model as 30 px; the boxes are shrunk back the same way. The model must
+have been trained on tiles enlarged the same way (``tools/train/tiles.py``); its manifest
+says by how much (``upscale``, 1 when missing). At 2x a 12 MP still takes 170 tiles
+instead of 45.
+
 Tiles can be skipped (``skip_mask``), for example those wholly outside the search
 frame. ``last_tiles`` and ``last_latency_ms`` say how many tiles the last picture took
 and how long it took, for the perception report.
@@ -36,16 +43,21 @@ from sd_detect.boxes import Boxes, from_bbox, nms, to_bbox
 __all__ = [
     "DEFAULT_OVERLAP",
     "DEFAULT_TILE_PX",
+    "MAX_UPSCALE",
     "NMS_IOU",
     "SEAM_PX",
     "Tile",
     "TiledDetector",
+    "check_upscale",
+    "enlarge",
     "tile_grid",
+    "tile_to_picture",
 ]
 
 DEFAULT_TILE_PX = 640
 DEFAULT_OVERLAP = 0.15
 NMS_IOU = 0.5
+MAX_UPSCALE = 4
 SEAM_PX = 2.0  # a box edge this close to a tile's inner edge counts as cut off by it
 SEAM_SPAN = 0.5  # share of the shorter span along the seam two halves must have in common
 
@@ -85,6 +97,34 @@ def tile_grid(
         for y in _origins(height, th, overlap)
         for x in _origins(width, tw, overlap)
     ]
+
+
+def check_upscale(tile_px: int, upscale: int) -> int:
+    """The picture pixels one tile side covers, ``tile_px / upscale``. Refuses a factor
+    that is not a whole number from 1 to ``MAX_UPSCALE`` or does not divide ``tile_px``."""
+    if type(upscale) is not int or not 1 <= upscale <= MAX_UPSCALE:
+        raise ValueError(f"upscale must be a whole number from 1 to {MAX_UPSCALE}")
+    if tile_px % upscale:
+        raise ValueError("upscale must divide tile_px")
+    return tile_px // upscale
+
+
+def tile_to_picture(xyxy: Boxes, tile: Tile, upscale: int = 1) -> Boxes:
+    """Boxes ``(x0, y0, x1, y1)`` in the (enlarged) tile's pixels, in the picture's."""
+    offset = np.array([tile.x0, tile.y0, tile.x0, tile.y0], dtype=np.float64)
+    return np.asarray(xyxy, dtype=np.float64) / upscale + offset
+
+
+def enlarge(rgb: np.ndarray, upscale: int) -> np.ndarray:
+    """``rgb`` (``[h, w, 3]``, uint8) enlarged ``upscale`` times, bilinear, as the
+    training tiles are (``tools/train/tiles.py``)."""
+    if upscale == 1:
+        return rgb
+    from PIL import Image
+
+    h, w = rgb.shape[:2]
+    big = Image.fromarray(rgb).resize((w * upscale, h * upscale), Image.Resampling.BILINEAR)
+    return np.ascontiguousarray(np.asarray(big))
 
 
 @dataclass
@@ -194,10 +234,14 @@ class TiledDetector:
         nms_iou: float = NMS_IOU,
         skip_mask: Callable[[Tile], bool] | None = None,
         clock: Callable[[], float] = time.perf_counter,
+        upscale: int = 1,
     ) -> None:
-        tile_grid(tile_px, tile_px, tile_px, overlap)  # validates the settings
+        span = check_upscale(tile_px, upscale)
+        tile_grid(span, span, span, overlap)  # validates the settings
         self.inner = inner
         self.tile_px = tile_px
+        self.upscale = upscale
+        self.span = span  # picture pixels per tile side
         self.overlap = overlap
         self.nms_iou = nms_iou
         self.skip_mask = skip_mask
@@ -206,7 +250,7 @@ class TiledDetector:
         self.last_latency_ms = 0.0
 
     def tiles(self, width: int, height: int) -> list[Tile]:
-        grid = tile_grid(width, height, self.tile_px, self.overlap)
+        grid = tile_grid(width, height, self.span, self.overlap)
         if self.skip_mask is None:
             return grid
         return [t for t in grid if not self.skip_mask(t)]
@@ -218,14 +262,15 @@ class TiledDetector:
         found: list[_Box] = []
         for index, tile in enumerate(tiles):
             crop = np.ascontiguousarray(pixels[tile.y0 : tile.y1, tile.x0 : tile.x1])
+            crop = enlarge(crop, self.upscale)
             frame = Frame(
-                width=tile.x1 - tile.x0,
-                height=tile.y1 - tile.y0,
+                width=crop.shape[1],
+                height=crop.shape[0],
                 rgb=crop.tobytes(),
                 ts_mono_ms=image.ts_mono_ms,
             )
             for det in self.inner.detect(frame):
-                xyxy = from_bbox([det.bbox])[0] + np.array([tile.x0, tile.y0, tile.x0, tile.y0])
+                xyxy = tile_to_picture(from_bbox([det.bbox])[0], tile, self.upscale)
                 xyxy = np.clip(xyxy, 0, [image.width, image.height, image.width, image.height])
                 if xyxy[2] - xyxy[0] <= 0 or xyxy[3] - xyxy[1] <= 0:
                     continue

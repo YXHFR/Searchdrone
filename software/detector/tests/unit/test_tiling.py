@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 
 from sd_detect import BBox, Detection, Detector, Frame
 from sd_detect.boxes import iou_matrix, nms
-from sd_detect.tiling import Tile, TiledDetector, tile_grid
+from sd_detect.tiling import Tile, TiledDetector, check_upscale, enlarge, tile_grid, tile_to_picture
 
 
 class BrightBlobs:
@@ -147,3 +147,117 @@ def test_nms_and_iou() -> None:
     boxes = np.array([[0, 0, 10, 10], [1, 1, 11, 11], [50, 50, 60, 60]], dtype=np.float64)
     assert nms(boxes, [0.5, 0.9, 0.1], 0.5) == [1, 2]
     assert iou_matrix(boxes[:1], boxes[:1])[0, 0] == pytest.approx(1.0)
+
+
+# --- upscale: each tile covers tile_px / upscale picture pixels, enlarged to tile_px ---
+
+
+class Sizes(BrightBlobs):
+    """``BrightBlobs`` that also notes the size of every tile it is given."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sizes: list[tuple[int, int]] = []
+
+    def detect(self, image: Frame) -> list[Detection]:
+        self.sizes.append((image.width, image.height))
+        return super().detect(image)
+
+
+def test_twelve_megapixels_at_2x_is_170_tiles_of_320_picture_pixels() -> None:
+    det = TiledDetector(BrightBlobs(), upscale=2)
+    grid = det.tiles(4608, 2592)
+    assert det.span == 320 and len(grid) == 170  # 17 x 10, against 45 at 1x
+    assert grid[0] == Tile(0, 0, 320, 320)
+    assert grid[-1] == Tile(4608 - 320, 2592 - 320, 4608, 2592)
+    assert len(TiledDetector(BrightBlobs()).tiles(4608, 2592)) == 45
+
+
+@pytest.mark.parametrize(("width", "height"), [(4608, 2592), (1000, 333), (321, 700), (100, 50)])
+def test_2x_tiles_cover_the_picture_and_overlap_up_to_the_edges(width: int, height: int) -> None:
+    grid = TiledDetector(BrightBlobs(), upscale=2).tiles(width, height)
+    covered = np.zeros((height, width), dtype=bool)
+    for t in grid:
+        assert 0 <= t.x0 < t.x1 <= width and 0 <= t.y0 < t.y1 <= height
+        assert t.x1 - t.x0 == min(320, width) and t.y1 - t.y0 == min(320, height)
+        covered[t.y0 : t.y1, t.x0 : t.x1] = True
+    assert covered.all()
+    for xs in (sorted({t.x0 for t in grid}), sorted({t.y0 for t in grid})):
+        # neighbours overlap by at least 15 %, the last pair (at the edge) too
+        assert all(b - a <= 320 * 0.85 for a, b in itertools.pairwise(xs))
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    x0=st.integers(0, 2000),
+    y0=st.integers(0, 2000),
+    box=st.tuples(*[st.floats(0, 640, allow_nan=False)] * 4),
+    upscale=st.integers(1, 4),
+)
+def test_tile_boxes_map_back_to_the_picture_and_round_trip(
+    x0: int, y0: int, box: tuple[float, float, float, float], upscale: int
+) -> None:
+    tile = Tile(x0, y0, x0 + 640 // upscale, y0 + 640 // upscale)
+    xyxy = np.array(box)
+    picture = tile_to_picture(xyxy, tile, upscale)
+    offset = np.array([x0, y0, x0, y0])
+    assert picture == pytest.approx(xyxy / upscale + offset)
+    assert (picture - offset) * upscale == pytest.approx(xyxy)  # back to the tile
+
+
+def test_enlarge_is_bilinear_and_keeps_a_block_in_place() -> None:
+    rgb = np.zeros((10, 20, 3), np.uint8)
+    rgb[2:5, 6:9] = 255
+    big = enlarge(rgb, 2)
+    assert big.shape == (20, 40, 3) and big.dtype == np.uint8
+    mask = big[:, :, 0] > 128
+    rows, cols = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+    assert (rows[0], rows[-1] + 1, cols[0], cols[-1] + 1) == (4, 10, 12, 18)
+    assert enlarge(rgb, 1) is rgb
+
+
+def test_at_2x_the_engine_sees_enlarged_tiles_and_boxes_come_back_in_picture_pixels() -> None:
+    inner = Sizes()
+    det = TiledDetector(inner, upscale=2)
+    people = [(40, 30, 52, 58), (900, 500, 915, 530)]  # 12 and 15 px wide
+    found = det.detect(_frame(1000, 600, people))
+    assert det.last_tiles == len(inner.sizes) == 4 * 3
+    assert max(inner.sizes) == (640, 640)  # each 320 px tile enlarged to 640
+    assert sorted(_xyxy(d) for d in found) == [pytest.approx(p) for p in people]
+
+
+def test_at_2x_a_person_across_a_seam_is_one_box() -> None:
+    det = TiledDetector(BrightBlobs(), upscale=2)
+    # 592 = 320 + 272: two tiles side by side, [0, 320) and [272, 592)
+    person = (250, 100, 350, 130)
+    found = det.detect(_frame(592, 320, [person]))
+    assert det.last_tiles == 2
+    assert [_xyxy(d) for d in found] == [pytest.approx(person)]
+
+
+@settings(max_examples=150, deadline=None)
+@given(
+    x=st.integers(0, 600 - 20),
+    y=st.integers(0, 600 - 20),
+    w=st.integers(6, 120),
+    h=st.integers(6, 120),
+)
+def test_at_2x_one_person_anywhere_is_one_box(x: int, y: int, w: int, h: int) -> None:
+    person = (x, y, min(x + w, 600), min(y + h, 600))
+    found = TiledDetector(BrightBlobs(), upscale=2).detect(_frame(600, 600, [person]))
+    assert len(found) == 1
+    assert _xyxy(found[0]) == pytest.approx(person)
+
+
+@pytest.mark.parametrize("upscale", [0, 5, 3, 2.0, True])
+def test_a_bad_upscale_is_refused(upscale: object) -> None:
+    with pytest.raises(ValueError, match="upscale"):
+        TiledDetector(BrightBlobs(), upscale=upscale)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="upscale"):
+        check_upscale(640, upscale)  # type: ignore[arg-type]
+
+
+def test_upscale_may_not_leave_a_tile_under_32_picture_pixels() -> None:
+    with pytest.raises(ValueError):
+        TiledDetector(BrightBlobs(), tile_px=64, upscale=4)  # 16 px
+    assert TiledDetector(BrightBlobs(), tile_px=128, upscale=4).span == 32

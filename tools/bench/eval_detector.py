@@ -198,9 +198,12 @@ def model_detector(model: str, data: Path) -> Detector:
     from sd_detect.onnx import ModelError, load_model
 
     try:
-        return load_model(manifest).tiled
+        tiled = load_model(manifest).tiled
     except ModelError as exc:
         raise BenchError(str(exc), 1) from exc
+    if tiled.upscale > 1:  # from the manifest: as the model was trained, as on the drone
+        say(f"{model}: varje ruta på {tiled.span} px förstoras {tiled.upscale}x")
+    return tiled
 
 
 def measure(model: str, items: Sequence[Picture], data: Path | None = None) -> Summary:
