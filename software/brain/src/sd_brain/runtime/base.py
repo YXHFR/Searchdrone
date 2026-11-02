@@ -59,6 +59,7 @@ class ModelReply(BaseModel):
     finish_reason: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    reasoning_tokens: int = 0  # the share of completion_tokens the model spent reasoning
     latency_ms: int = 0
     engine: Engine | None = None
     model_id: str | None = None
@@ -102,12 +103,14 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
         ]
         usage = data.get("usage") or {}
         cost = usage.get("cost")
+        details = usage.get("completion_tokens_details") or {}
         return ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
             finish_reason=str(choice.get("finish_reason") or "stop"),
             prompt_tokens=int(usage.get("prompt_tokens") or 0),
             completion_tokens=int(usage.get("completion_tokens") or 0),
+            reasoning_tokens=int(details.get("reasoning_tokens") or 0),
             latency_ms=latency_ms,
             model_id=data.get("model"),
             cost_usd=float(cost) if isinstance(cost, int | float) else None,

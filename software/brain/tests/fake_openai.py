@@ -3,7 +3,8 @@
 ``FakeOpenAI`` answers ``POST /v1/chat/completions``. What it does is set per model name
 in ``behaviour``: ``"ok"`` (default) answers with ``reply`` (and ``usage.cost`` when
 ``reply_cost`` is set), ``"500"`` answers HTTP 500, ``"401"`` refuses the key,
-``"slow"`` waits ``slow_s`` before answering. Every request body and its
+``"slow"`` waits ``slow_s`` before answering. ``reply_reasoning_tokens`` adds
+``usage.completion_tokens_details.reasoning_tokens``. Every request body and its
 ``Authorization`` header are kept in ``requests`` so a test can check the fields sent.
 """
 
@@ -19,11 +20,17 @@ __all__ = ["FakeOpenAI"]
 
 
 def _answer(
-    model: str, content: str | None, calls: list[dict[str, Any]], cost: float | None = None
+    model: str,
+    content: str | None,
+    calls: list[dict[str, Any]],
+    cost: float | None = None,
+    reasoning: int | None = None,
 ) -> dict[str, Any]:
     usage: dict[str, Any] = {"prompt_tokens": 100, "completion_tokens": 10}
     if cost is not None:
         usage["cost"] = cost
+    if reasoning is not None:
+        usage["completion_tokens_details"] = {"reasoning_tokens": reasoning}
     return {
         "id": "chatcmpl-fake",
         "object": "chat.completion",
@@ -46,6 +53,7 @@ class FakeOpenAI:
         self.reply_content: str | None = "Batteriet är 80 procent."
         self.reply_calls: list[dict[str, Any]] = []
         self.reply_cost: float | None = None  # usage.cost in US dollars, as OpenRouter states it
+        self.reply_reasoning_tokens: int | None = None
         self.requests: list[dict[str, Any]] = []
         self.auth: list[str] = []
         fake = self
@@ -72,7 +80,13 @@ class FakeOpenAI:
                     return
                 if how == "slow":
                     time.sleep(fake.slow_s)
-                answer = _answer(model, fake.reply_content, fake.reply_calls, fake.reply_cost)
+                answer = _answer(
+                    model,
+                    fake.reply_content,
+                    fake.reply_calls,
+                    fake.reply_cost,
+                    fake.reply_reasoning_tokens,
+                )
                 self._send(200, answer)
 
             def _send(self, status: int, data: dict[str, Any]) -> None:

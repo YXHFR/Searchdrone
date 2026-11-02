@@ -111,8 +111,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -> dict[str, Any]:
     import httpx
 
+    from sd_brain.app import sampling_of
     from sd_brain.evals.runner import run_scenario, summarize
-    from sd_brain.runtime.base import Sampling
     from sd_brain.runtime.cloud import CloudModelRuntime
 
     runs: list[list[Any]] = []
@@ -140,7 +140,7 @@ async def _eval(args: argparse.Namespace, paths: list[Path], cfg: BrainConfig) -
                     runtime_factory=factory,
                     golden_dir=Path(args.golden) if args.golden else None,
                     backend="replay" if args.backend == "replay" else "llm",
-                    sampling=Sampling(temperature=0.2, top_p=0.8, max_tokens=512, seed=seed),
+                    sampling=sampling_of(cfg).model_copy(update={"seed": seed}),
                 )
                 results.append(r)
                 _out(f"{r.id}: {'ok' if r.ok else 'FEL'} {'; '.join(r.failures)[:300]}")
@@ -159,7 +159,7 @@ def _cloud_key() -> str:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    from sd_brain.runtime.base import Sampling
+    from sd_brain.app import sampling_of
     from sd_schemas.skills import SKILL_REGISTRY
 
     if args.action == "grade":
@@ -179,7 +179,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         report.update(asyncio.run(_replay_sim(sims, report["failures"])))
         report["passed"] = bool(report["passed"] and not report["sim_failed"])
     if args.backend == "cloud":
-        h = ai_config_hash(SKILL_REGISTRY, Sampling(), cloud=cfg.cloud)
+        h = ai_config_hash(SKILL_REGISTRY, sampling_of(cfg), cloud=cfg.cloud)
         report.update(
             backend="cloud",
             ai_config_hash=h,
@@ -374,7 +374,7 @@ def cmd_eval_grade(args: argparse.Namespace) -> int:
 async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
     import httpx
 
-    from sd_brain.runtime.base import Sampling
+    from sd_brain.app import sampling_of
     from sd_brain.runtime.cloud import CloudModelRuntime
     from sd_brain.simeval.bank import bank_from_env, bank_name, example_record, worth_keeping
     from sd_brain.simeval.budget import CostLedger, MeteredRuntime
@@ -387,7 +387,7 @@ async def _eval_sim(args: argparse.Namespace, cfg: BrainConfig) -> list[Any]:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
     install_log_masking(Secrets(brain_token="", cloud_api_key=key))
     ledger = CostLedger(Path(args.ledger), cap_sek=args.cap_sek)
-    sampling = Sampling(temperature=0.2, top_p=0.8, max_tokens=512)
+    sampling = sampling_of(cfg)  # what flies, so the drill meets the same token limit
     h = ai_config_hash(SKILL_REGISTRY, sampling, cloud=cfg.cloud)
     bank = bank_from_env(os.environ, Path(args.bank_dir)) if args.bank_dir else None
     seed = args.seed if args.seed is not None else int(dt.datetime.now(dt.UTC).timestamp())
@@ -520,6 +520,7 @@ def cmd_perf_cloud(args: argparse.Namespace) -> int:
     """Time ``runs`` small chat calls to the cloud model; skip with exit 0 without a key."""
     import httpx
 
+    from sd_brain.app import sampling_of
     from sd_brain.perf import measure_cloud, skip_line
 
     cfg = _eval_config(args)
@@ -532,7 +533,9 @@ def cmd_perf_cloud(args: argparse.Namespace) -> int:
 
     async def go() -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
-            return await measure_cloud(cfg.cloud, key, client, runs=args.runs)
+            return await measure_cloud(
+                cfg.cloud, key, client, runs=args.runs, sampling=sampling_of(cfg)
+            )
 
     report = asyncio.run(go())
     out_dir = Path(args.report_dir)

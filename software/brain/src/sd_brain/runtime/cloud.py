@@ -128,6 +128,17 @@ class CloudModelRuntime:
             raise
         reply.engine = "cloud"
         reply.model_id = reply.model_id or model
+        log.info(
+            "cloud_call model=%s finish=%s latency_ms=%d prompt_tokens=%d"
+            " completion_tokens=%d reasoning_tokens=%d max_tokens=%d",
+            reply.model_id,
+            reply.finish_reason,
+            reply.latency_ms,
+            reply.prompt_tokens,
+            reply.completion_tokens,
+            reply.reasoning_tokens,
+            sampling.max_tokens,
+        )
         if reservation is not None and self.budget is not None:
             booked = await self.budget.commit(
                 _commit(

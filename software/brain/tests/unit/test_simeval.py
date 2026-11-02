@@ -323,8 +323,12 @@ async def test_metered_runtime_charges_real_usage_and_stops_at_the_cap(tmp_path:
         async with httpx.AsyncClient(trust_env=False) as client:
             cloud = CloudModelRuntime(CloudConfig(base_url=fake.base_url), KEY, client)
             meter = MeteredRuntime(cloud, ledger)
+            fake.reply_reasoning_tokens = 6
             reply = await meter.chat([{"role": "user", "content": "hej"}], [], 5, Sampling())
             assert reply.cost_usd == 0.01
+            [kept] = meter.replies  # each answer's length and reasoning share, for slow turns
+            assert (kept["completion_tokens"], kept["reasoning_tokens"]) == (10, 6)
+            assert kept["finish_reason"] == "stop" and kept["latency_ms"] >= 0
             assert meter.cost_sek == pytest.approx(0.01 * USD_SEK)
             assert ledger.spent_sek() == pytest.approx(0.01 * USD_SEK)
             ledger.charge(0.8, measured=True)  # the day now has 1 - 0.915 kr left
@@ -542,6 +546,28 @@ def test_cli_sim_without_a_key_flies_the_script(
     assert "script" in capsys.readouterr().out
     assert main(["scores", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["flights"] == 2
+
+
+def test_cli_sim_flies_with_the_configured_sampling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drill meets the token limit of a real flight, not one of its own."""
+    from sd_brain.simeval import decider
+
+    seen: list[Sampling | None] = []
+    real = decider.make_decision_maker
+
+    def spy(meter: Any, behaviour: BehaviourConfig, **kw: Any) -> DecisionMaker:
+        seen.append(kw.get("sampling"))
+        return real(meter, behaviour, **kw)
+
+    monkeypatch.setattr(decider, "make_decision_maker", spy)
+    monkeypatch.delenv("SD_CLOUD_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "brain.toml").write_text("[llm]\nmax_tokens = 2048\n", encoding="utf-8")
+    args = ["eval", "--backend", "sim", "--flights", "1", "--seed", "7", "--config", "brain.toml"]
+    assert main([*args, "--report-dir", "reports"]) == 0
+    assert [s.max_tokens if s else None for s in seen] == [2048]
 
 
 # --- candidates and the turn cap --------------------------------------------------------
