@@ -1697,9 +1697,13 @@ class Executor:
         if active.skill in REROUTABLE and run is not None:
             entry = entry_m([here, *rest], cyl)
             if entry is None:
-                if lifted and run.detours():
+                stopping = isinstance(active.handler, SurveyHandler) and active.handler.stopping
+                if lifted and run.detours() and not stopping:
                     # Around a cylinder that is gone: the rest from the pattern, around
                     # those still in force, if shorter; else flown on as it is (clear).
+                    # Never while a reroute stops first: its route was judged from where
+                    # the drone was, not where it stops, and the stop's own plan from
+                    # there takes the cylinders in force then (this lift included).
                     self._reroute(active, run, charter, stop_first=False, here=here)
                 return
             # A cylinder ahead, closer than the drone can turn away from at this speed: it
