@@ -1,0 +1,474 @@
+{
+  "schema": "bench.split/v1",
+  "version": "v3",
+  "seed": "v3",
+  "base": "v2",
+  "ratios": {
+    "train": 0.7,
+    "val": 0.1,
+    "test": 0.2
+  },
+  "rule": "whole sequences per part, largest first, to the part furthest below its share; the datasets of v2 as they were",
+  "datasets": {
+    "heridal": {
+      "sequences": {
+        "BLA": {
+          "part": "test",
+          "images": 13,
+          "ids_sha256": "fe782c0823fe69f1a53d710f1b92bc68d0e7bd5deda4f2c93009a78d879154d9"
+        },
+        "BLI": {
+          "part": "train",
+          "images": 9,
+          "ids_sha256": "4c316340e8a7c71529f00669301651e3e5badc231eae8e3a776f5b8d7706e276"
+        },
+        "BRA": {
+          "part": "train",
+          "images": 84,
+          "ids_sha256": "edcaa9b42c08f159fd8349882a9405f1d111807b153ffb0242cc89e61f4dbf99"
+        },
+        "BRK": {
+          "part": "train",
+          "images": 168,
+          "ids_sha256": "e8ce56fcbc1e479552b74999a985d2d2087b852cc59791688523c26affb0b0cb"
+        },
+        "BRS": {
+          "part": "train",
+          "images": 77,
+          "ids_sha256": "f596f70bd82d6e2d8a1f5ff87258f18007f9b1e99b2e9f00cdda0963e155e7c8"
+        },
+        "CAB": {
+          "part": "train",
+          "images": 8,
+          "ids_sha256": "1fa6f4d0d560dce2c9a98cc25c1de3d8ac72341f022f8616b65a1bf17cf9bd21"
+        },
+        "CAP": {
+          "part": "train",
+          "images": 68,
+          "ids_sha256": "42b780dc14d1444c8ba9901c8d475e791ad9db5d4be178ce44eef08527bb8e15"
+        },
+        "GOR": {
+          "part": "val",
+          "images": 221,
+          "ids_sha256": "ec982d5357c7dc8b228c382f3e65a04df6d647cf0792cbb362088715f5d1b5c6"
+        },
+        "GRO": {
+          "part": "train",
+          "images": 10,
+          "ids_sha256": "a67cc4891c1bed8dfffce00ec0af1df48268c2c70c2cc2e39e1eed459b1220b3"
+        },
+        "JAS": {
+          "part": "test",
+          "images": 186,
+          "ids_sha256": "7ab6bb743b36df2d56043bfa9924680844db692001464b3cd205504296b68e0a"
+        },
+        "MED": {
+          "part": "train",
+          "images": 182,
+          "ids_sha256": "d359fe52701dcf3bb2eccbb083f90d4a433bfd3f0c9fb464009e7dba79b5dff0"
+        },
+        "MOB": {
+          "part": "train",
+          "images": 5,
+          "ids_sha256": "d2a2fb6efaa282d334bb065fa97d606418f74ea630b63470b9cd2d03175a0a80"
+        },
+        "RAK": {
+          "part": "train",
+          "images": 80,
+          "ids_sha256": "d1f825f3bd6e2b010cb1d86c106b874310a4589887c131416c119905a0982ec0"
+        },
+        "SB": {
+          "part": "train",
+          "images": 50,
+          "ids_sha256": "ce54020fadecabe16c5c24ac197a552232735771300d2d0dca4c687e44f208b6"
+        },
+        "TRS": {
+          "part": "train",
+          "images": 55,
+          "ids_sha256": "eeba1af25429e59955a3a8923386b3c6019818f1f443b2da4842f906bcffbda0"
+        },
+        "VRD": {
+          "part": "train",
+          "images": 340,
+          "ids_sha256": "1d85133723d871a7be6c9762abede4bfab81079c26f9d1817e551e479e63657d"
+        },
+        "ZRI": {
+          "part": "test",
+          "images": 128,
+          "ids_sha256": "85ecbbf53c8cfe2a3d508f13304e20d989837ea05e81fa1c3ce90684151d7d5b"
+        }
+      },
+      "seed": "v1/heridal"
+    },
+    "kios": {
+      "seed": "v2/kios",
+      "sequences": {
+        "campus_exercise": {
+          "part": "train",
+          "images": 2131,
+          "ids_sha256": "63f59d3a87348a74cf247603361414b72300986b7a7b9f47c0f64f46f1880035"
+        },
+        "meadow": {
+          "part": "test",
+          "images": 118,
+          "ids_sha256": "f70cc0530b569e5323d346a536fd9e0e16a8e58c71bc81871fbec9e7ae934940"
+        },
+        "pegia_coast": {
+          "part": "val",
+          "images": 608,
+          "ids_sha256": "6f41978e6e04feea1f88b337ca9aa43612b154aacc93d1f2d0d75f8e3c064c6c"
+        },
+        "shore": {
+          "part": "test",
+          "images": 151,
+          "ids_sha256": "d1115c65be5a830c20edb9061422c5c9ae9dea06e00588c3d1a85c07c8d88c6c"
+        },
+        "yard": {
+          "part": "test",
+          "images": 128,
+          "ids_sha256": "b27bdb00d112d17323256ed393343b6bd473ba10a8a046e17c5c0e5f3ad14278"
+        }
+      }
+    },
+    "kios_carperson": {
+      "seed": "v3/kios_carperson",
+      "ratios": {
+        "train": 0.9,
+        "val": 0.1,
+        "test": 0.0
+      },
+      "sequences": {
+        "DJI_20250326112218_0001_D": {
+          "part": "train",
+          "images": 96,
+          "ids_sha256": "fdac6e1b15bbfce1fa76e9bbf706437fa7ef9b3faca291fb9d4a7e4fea6e2ff7"
+        },
+        "DJI_20250326112303_0002_D": {
+          "part": "train",
+          "images": 95,
+          "ids_sha256": "9c98eec2adcfa7114c7eeb25749dd012bc82a0d540265fd7b44f13307057ab02"
+        },
+        "DJI_20250326112350_0003_D": {
+          "part": "train",
+          "images": 96,
+          "ids_sha256": "1de357dc6a912dea011ad4ca7c031e4b9ef3864c769cc1c3b86244f0e0c8929f"
+        },
+        "DJI_20250326112438_0004_D": {
+          "part": "train",
+          "images": 96,
+          "ids_sha256": "7da2a2ae36c6ee49b597b84592dc5f54cb6c5f1ac33713b001dde8eaa58124a1"
+        },
+        "DJI_20250326112525_0005_D": {
+          "part": "train",
+          "images": 93,
+          "ids_sha256": "adc741c2d9f04bfd164a9afc962d103b4a7a7ab903cf66c46e03dbf8a07c1f90"
+        },
+        "DJI_20250326112630_0006_D": {
+          "part": "train",
+          "images": 103,
+          "ids_sha256": "d193a761097877521fe991ccf7811345aa0379f18d5a807872ddaf97f782658a"
+        },
+        "DJI_20250326112731_0007_D": {
+          "part": "train",
+          "images": 94,
+          "ids_sha256": "9f0435a190cc4295986b34b9202262cce383c72d44767547a45e5fec0697283c"
+        },
+        "DJI_20250326112821_0008_D": {
+          "part": "train",
+          "images": 98,
+          "ids_sha256": "8917c9e99874b09b65b21d6fdf7c898cbacc82ae00b757a18342d8570630c4d7"
+        },
+        "DJI_20250326112908_0009_D": {
+          "part": "val",
+          "images": 95,
+          "ids_sha256": "201732b2112885f61161f39fc7d52845e42497498c5d55bb3c3ec6e3c919d01d"
+        },
+        "DJI_20250326112948_0010_D": {
+          "part": "val",
+          "images": 105,
+          "ids_sha256": "30a4880b24ce628dc6f85ce6141f9ce711f8aab4ff7496e33ac5f2e8e1736c25"
+        },
+        "DJI_20250326113158_0011_D": {
+          "part": "train",
+          "images": 408,
+          "ids_sha256": "af7af64956f9a38b8f0884b1ca9a83cb7f4288103bb6e1b2d7545a6ab30293d0"
+        }
+      }
+    },
+    "seadronessee": {
+      "seed": "v3/seadronessee",
+      "ratios": {
+        "train": 0.9,
+        "val": 0.1,
+        "test": 0.0
+      },
+      "sequences": {
+        "DJI_0001": {
+          "part": "train",
+          "images": 15,
+          "ids_sha256": "a236c9202d83ad6e3de8cb4e4f695b72e6bbd502b129d36ef6ffec18972a6d07"
+        },
+        "DJI_0001_d3": {
+          "part": "train",
+          "images": 94,
+          "ids_sha256": "e8c8bb84fad863271bbfecdf5003e170e6602b84aec95ccd1eee6b4df323c8bf"
+        },
+        "DJI_0003": {
+          "part": "train",
+          "images": 60,
+          "ids_sha256": "2b731fc40d7991ff4a7fd03354c72d0dfc5cab13099924152943a344fcf357ef"
+        },
+        "DJI_0003_d3": {
+          "part": "train",
+          "images": 1,
+          "ids_sha256": "e5241ba01bc04fe27f8883e9d75615c7cadfb57d3ae556fd5933ec5097a3c345"
+        },
+        "DJI_0006_d3": {
+          "part": "train",
+          "images": 94,
+          "ids_sha256": "a3bb89928523296ba29da2e6ff178b2386434f5dcc189a3e087eac1206ec8f79"
+        },
+        "DJI_0010_d3": {
+          "part": "train",
+          "images": 113,
+          "ids_sha256": "cdc00dbd3ef4b3f864aaacc8157574c09f0180e9bdfb76be51b7389101ac7944"
+        },
+        "DJI_0011_d3": {
+          "part": "train",
+          "images": 394,
+          "ids_sha256": "980de17e14b173c61a1b4a3c59270ebd4ff0260992913e3ccadb4ec948e51dc7"
+        },
+        "DJI_0032": {
+          "part": "train",
+          "images": 136,
+          "ids_sha256": "bb214c2fe049150fdb7556313eead1295f0e91515af702619ce82507efb1d428"
+        },
+        "DJI_0038": {
+          "part": "train",
+          "images": 40,
+          "ids_sha256": "b42905c4df158a363de1bfc3ea6c8dd45c3c761d3b439df6b4dfd80a6b8ca679"
+        },
+        "DJI_0039": {
+          "part": "train",
+          "images": 47,
+          "ids_sha256": "b64222e8f5857c8dad85ea80d76b62357dff942bc2a8a13a8196f016d11c9a1d"
+        },
+        "DJI_0041": {
+          "part": "train",
+          "images": 47,
+          "ids_sha256": "0bc9c546755623db75c9dc9d020d2c441864be5b8a2583f53d3d35207162aa5a"
+        },
+        "DJI_0050": {
+          "part": "train",
+          "images": 67,
+          "ids_sha256": "e738d5668a832fb92e80dbc2daf3c20ae89ebd7ff755334df5825a298c4e6580"
+        },
+        "DJI_0055": {
+          "part": "train",
+          "images": 47,
+          "ids_sha256": "bf3e1a9d9739986331ba64dff671da18970fb503eb0b61dca5c7352f0f997c47"
+        },
+        "DJI_0057": {
+          "part": "train",
+          "images": 26,
+          "ids_sha256": "a0b30117ff71decf4a9ab83b103705cc87500bf5fb4d2c8eef8d9fd57d215a4f"
+        },
+        "DJI_0059": {
+          "part": "train",
+          "images": 47,
+          "ids_sha256": "b526bde15142b26279a578bffe7921e0495abce6584d780b5519eb3b49bf949c"
+        },
+        "DJI_0062": {
+          "part": "train",
+          "images": 67,
+          "ids_sha256": "466845b6cc7c7e9879d10eb8baee7e0cf1715eb0dc82f32fd70d57b201eada88"
+        },
+        "DJI_0063": {
+          "part": "train",
+          "images": 219,
+          "ids_sha256": "ac7a71bfbca5c50d78cd67745fd9cab6a94128087756bc2f9b878d33d4200432"
+        },
+        "DJI_0064": {
+          "part": "train",
+          "images": 19,
+          "ids_sha256": "23fdf7b28e21a46fd72e087d72f7071a84419050592065fdb3e1002d5f5d56e1"
+        },
+        "DJI_0065": {
+          "part": "train",
+          "images": 47,
+          "ids_sha256": "de53edb4e8be7852e2ac11f5701338df5797df63f20b493d2e3e3adb7f2a86ce"
+        },
+        "DJI_0069": {
+          "part": "train",
+          "images": 243,
+          "ids_sha256": "25fa8a410042300bf2e59ed2a795e6195774d8bd3c5ed9f288b618b3b3a20f3d"
+        },
+        "NorthSea_Fri_DJI_0110": {
+          "part": "train",
+          "images": 297,
+          "ids_sha256": "ac56ffbbd6a13b766aaea2fdb9db76c44aeb816eea591eb864e09b844f0efbf1"
+        },
+        "NorthSea_Fri_DJI_0112": {
+          "part": "train",
+          "images": 413,
+          "ids_sha256": "42894d83279b0d770be6f13c40b029fb2b60be4723b4def4dfaf548a1f052615"
+        },
+        "NorthSea_Fri_DJI_0113": {
+          "part": "train",
+          "images": 417,
+          "ids_sha256": "4591bd7185073c4f58c52327225a343a5882059310b005d7f5df5a710dd8d113"
+        },
+        "NorthSea_Fri_DJI_0114": {
+          "part": "train",
+          "images": 421,
+          "ids_sha256": "8e36c7a0c7301af92abf4e1b9be15aa88db8e32bcd2a25a96e8c3b2f931fa8aa"
+        },
+        "NorthSea_Fri_DJI_0115": {
+          "part": "train",
+          "images": 339,
+          "ids_sha256": "417a31ce9ba489c21f553bb38876db44a6fa61323a744f160c7918bd080fa8c1"
+        },
+        "NorthSea_Fri_DJI_0116": {
+          "part": "train",
+          "images": 421,
+          "ids_sha256": "21caa104591307f066c85808c68a90343a10eefbd107801c4d3eabd1010a6a78"
+        },
+        "NorthSea_Fri_DJI_0117": {
+          "part": "train",
+          "images": 138,
+          "ids_sha256": "e3bc80e2d465ab1929a93e77921c7d95f1ac6b29a3cb5f27d49c74890b195d4e"
+        },
+        "NorthSea_Sat_DJI_0122": {
+          "part": "train",
+          "images": 336,
+          "ids_sha256": "f5599c2bca587c7ce43c2fd2ad7493d7624f29a56bac929c8a2e8a3249263ee6"
+        },
+        "NorthSea_Sat_DJI_0126": {
+          "part": "train",
+          "images": 347,
+          "ids_sha256": "5eab5dbbcb4a94a89ce5060c32e8f63177de27ca2df23d74ff2d08e2d7ba0c40"
+        },
+        "NorthSea_Sat_DJI_0129": {
+          "part": "train",
+          "images": 421,
+          "ids_sha256": "070a0cb0c17d93d208aa4b7a54143605b9fac785aefe7840dce72affe509ef96"
+        },
+        "NorthSea_Sat_DJI_0131": {
+          "part": "train",
+          "images": 416,
+          "ids_sha256": "eb0775172f71c57d3f14cc52366105a2b3b01c60209197e3fbd3dffa726f5548"
+        },
+        "NorthSea_Sat_Z30_DJI003": {
+          "part": "val",
+          "images": 1268,
+          "ids_sha256": "7f1fdea8e2e23d1bf9ef33edbbeb512c5d66012c66f5bc6e84de13a235a0aa6e"
+        },
+        "NorthSea_Sat_Z30_DJI005": {
+          "part": "train",
+          "images": 566,
+          "ids_sha256": "4b3bc81585fb4830d20f0b5a24f3935c2a4118bb6ada6bec210e6b7b189f2c77"
+        },
+        "NorthSea_Thu_DJI_0106": {
+          "part": "train",
+          "images": 79,
+          "ids_sha256": "ea25845565854e3e4377f68d5f3b461443d2a8310e9c2a8998e94699896bf5f8"
+        },
+        "NorthSea_Thu_DJI_0107": {
+          "part": "train",
+          "images": 363,
+          "ids_sha256": "66b1291d4e6f7731317c825acd191dbbc90d5af84b76eb8f8b75e1463b4fa1db"
+        },
+        "NorthSea_Thu_DJI_0108": {
+          "part": "train",
+          "images": 292,
+          "ids_sha256": "59c810b94427d6d076914cad5ed4acf36431d087a4ae436fa758bf892fa2605f"
+        },
+        "NorthSea_Thu_DJI_0109": {
+          "part": "train",
+          "images": 307,
+          "ids_sha256": "43a7a4199662404291681ff22d4b7fb549eeff542c043e3a24062940d5183c02"
+        },
+        "multispectral": {
+          "part": "train",
+          "images": 475,
+          "ids_sha256": "2af5fac55e18309ff93cc8a442cd9a628a6c263c3cc779e5a6c220a461a16db9"
+        },
+        "rgb": {
+          "part": "train",
+          "images": 1338,
+          "ids_sha256": "e316d5cf69c4c22ea4fd26b65f03f4d06ace8505b675c72f399130ec862a326e"
+        }
+      }
+    },
+    "wisard": {
+      "sequences": {
+        "200321_Baker": {
+          "part": "train",
+          "images": 517,
+          "ids_sha256": "4a4a1a08bbeafa94492d5876aad58bb1691705d28e9fbf5db8a8b7f23c9607bc"
+        },
+        "200402_Carnation": {
+          "part": "train",
+          "images": 544,
+          "ids_sha256": "3e20448e3dd8605773e20b5b6d7fc782f2bd50c2cdf4b83f474d0608deff8f02"
+        },
+        "200402_Karen": {
+          "part": "test",
+          "images": 2226,
+          "ids_sha256": "9e8a92bdd30d009eebc0ea1b0a12518ab602bf9bf3d833422eda8a13a019f00b"
+        },
+        "200426_SkookumCreek": {
+          "part": "val",
+          "images": 2803,
+          "ids_sha256": "52a0bfe89f8e8c744a4d87293eec4a153de9dca384f32a4d476253c866e3b9fb"
+        },
+        "200505_Bellingham": {
+          "part": "train",
+          "images": 757,
+          "ids_sha256": "3d731c36837cc4eb53aa95f1c632352fd5706da7f0b16b6ccd6dd69558fe6c76"
+        },
+        "200528_Everson": {
+          "part": "train",
+          "images": 1473,
+          "ids_sha256": "712738ff6273a8783732e542b4d854b0b4709e735856d3c32075df34b474569a"
+        },
+        "200614_SuddenValley": {
+          "part": "train",
+          "images": 1105,
+          "ids_sha256": "9dc4523bbc69b74049c4fa809b51173a26f07823eba2acf0b0e5486a6c301538"
+        },
+        "200717_Mission": {
+          "part": "test",
+          "images": 363,
+          "ids_sha256": "44e63c59d0dbf0a261f531f5efd1f0a6f959b25da9abc73223fdf048213e230d"
+        },
+        "210327_Airfield": {
+          "part": "test",
+          "images": 1620,
+          "ids_sha256": "2740cb40706f88c89fecff7483da552f45c34afe22dc6a3c8406ea5353e6f813"
+        },
+        "210417_MtErie": {
+          "part": "train",
+          "images": 708,
+          "ids_sha256": "0199e4895f7eb697333c6083477049a6b9034d4ba73bb4663f5663c10179efc6"
+        },
+        "210529_Carnation": {
+          "part": "train",
+          "images": 2054,
+          "ids_sha256": "07ef2da8d6f4db0741b55e7e3bbb5f6e483629eaae5ae05c0e81fd1da3ffdd38"
+        },
+        "210924_FHL": {
+          "part": "train",
+          "images": 4154,
+          "ids_sha256": "b2004ec08e09dfd7f4589caf8982115bff87733e6d4ae7982c16bc5aff224309"
+        },
+        "220109_Baker": {
+          "part": "train",
+          "images": 2180,
+          "ids_sha256": "7edba70619f23519058665bd2f24fa106b12c6134f34580117f445cac4a4820d"
+        }
+      },
+      "seed": "v1/wisard"
+    }
+  }
+}

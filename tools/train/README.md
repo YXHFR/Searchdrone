@@ -159,6 +159,29 @@ just bench-detector model=person_yolox_s_mix part=val
 just pick-detector
 ```
 
+## Train with the two extra sets
+
+Two more sets of real pictures can be trained on (the owner's decision of 2026-11-01):
+KIOS car/person (people on a parking lot in Cyprus, 21–31 px, every tenth video frame,
+about 1,400 pictures) and SeaDronesSee (swimmers in open water, about 10,500 pictures).
+They are never measured on: the locked test part stays HERIDAL's and KIOS's land
+pictures, so the new model is kept only if it beats the current one there.
+
+```bash
+just bench-fetch yes=1 sets=kios_carperson,seadronessee   # about 19 GB, 1-3 hours
+just train-detector model=yolox_s sets=heridal,kios,kios_carperson,seadronessee out="$(just data-dir)/train/yolox_s_more"
+just export-detector model=yolox_s train="$(just data-dir)/train/yolox_s_more" name=person_yolox_s_more
+just bench-detector model=person_yolox_s part=test
+just bench-detector model=person_yolox_s_more part=test compare=build/bench/det_person_yolox_s_test.json
+```
+
+The val AP50 is printed for all four sets after each epoch, and the epoch kept is the
+one whose weakest set is best, as before. SeaDronesSee's pictures are large (mostly
+3840×2160), so its tiles take far more room and time than the other sets: expect the
+tile cache under `out=` to grow by several GB and each epoch to take several times
+longer (a rough guess, not measured). The training does not know whether swimmers help on land; only the test part
+says so.
+
 ## Try your trained detector in the simulator
 
 The simulator's default person detector is a stand-in (the oracle, which knows where
@@ -225,6 +248,10 @@ Useful keys for `just train-detector`:
   HERIDAL is credited.
 - **KIOS** (CC BY 4.0, University of Cyprus) is trained on. Weights trained on it may be
   published if KIOS is credited (the manifest carries the credit).
+- **KIOS car/person** (CC BY 4.0, University of Cyprus) and **SeaDronesSee** (CC0 1.0,
+  University of Tübingen) are trained on only when `sets=` names them, never measured
+  on. Weights trained on them may be published with their credit (the manifest carries
+  it). See "Train with the two extra sets" above.
 - **AOS** (JKU Linz, CC BY 4.0) is not used: it has no person boxes for single colour
   pictures (see `tools/bench/README.md`).
 - **WiSARD** is only measured on for now, never trained on, because its data licence is

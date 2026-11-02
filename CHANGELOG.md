@@ -8,6 +8,19 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Two training-only sets of real pictures for the person detector (the owner's
+  decision of 2026-11-01): KIOS Aerial Dataset for Car and Person Detection (University
+  of Cyprus, Zenodo 21216709, CC BY 4.0; people on a parking lot, every tenth video
+  frame) and SeaDronesSee Object Detection v2 (University of Tübingen, CC0 1.0;
+  swimmers in open water). Fetched only by name (`just bench-fetch yes=1
+  sets=kios_carperson,seadronessee`) and trained on with `just train-detector
+  sets=heridal,kios,kios_carperson,seadronessee`. They are never measured on: the new
+  split `tools/bench/splits/v3.json` keeps every v2 row as it was and gives the two
+  sets only train and val parts, split by video. The register now takes a set in
+  several archives (`more_archives`), zips inside an archive, labels in one COCO file
+  for all pictures, and a set of loose files on a WebDAV share pinned by one SHA-256
+  over all of them. `just bench-fetch yes=1` without `sets=` now fetches only the
+  measured sets.
 - `just dev`: one command for the local development stack. It starts the database,
   `sd-ground`, `sd-onboard`, `sd-search`, the scripted AI commander and the panel's Vite
   dev server (hot reload), then prints the login link. The default `physics=mock`
