@@ -18,8 +18,8 @@ from fake_openai import FakeOpenAI
 from shapely.geometry import Point
 
 from sd_brain.cli import main
-from sd_brain.config import BehaviourConfig, CloudConfig
-from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling
+from sd_brain.config import BehaviourConfig, CloudConfig, LlmConfig
+from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling, llm_sampling
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.simeval.bank import (
     BankError,
@@ -323,8 +323,12 @@ async def test_metered_runtime_charges_real_usage_and_stops_at_the_cap(tmp_path:
         async with httpx.AsyncClient(trust_env=False) as client:
             cloud = CloudModelRuntime(CloudConfig(base_url=fake.base_url), KEY, client)
             meter = MeteredRuntime(cloud, ledger)
+            fake.reply_reasoning_tokens = 6
             reply = await meter.chat([{"role": "user", "content": "hej"}], [], 5, Sampling())
             assert reply.cost_usd == 0.01
+            [kept] = meter.replies  # each answer's length and reasoning share, for slow turns
+            assert (kept["completion_tokens"], kept["reasoning_tokens"]) == (10, 6)
+            assert kept["finish_reason"] == "stop" and kept["latency_ms"] >= 0
             assert meter.cost_sek == pytest.approx(0.01 * USD_SEK)
             assert ledger.spent_sek() == pytest.approx(0.01 * USD_SEK)
             ledger.charge(0.8, measured=True)  # the day now has 1 - 0.915 kr left
@@ -542,6 +546,46 @@ def test_cli_sim_without_a_key_flies_the_script(
     assert "script" in capsys.readouterr().out
     assert main(["scores", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["flights"] == 2
+
+
+def test_cli_sim_flies_with_the_configured_sampling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drill meets the token limit of a real flight, not one of its own."""
+    from sd_brain.simeval import decider
+
+    seen: list[LlmConfig | None] = []
+    real = decider.make_decision_maker
+
+    def spy(meter: Any, behaviour: BehaviourConfig, **kw: Any) -> DecisionMaker:
+        seen.append(kw.get("llm"))
+        return real(meter, behaviour, **kw)
+
+    monkeypatch.setattr(decider, "make_decision_maker", spy)
+    monkeypatch.delenv("SD_CLOUD_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    toml = "[llm]\nmax_tokens = 2048\ncontext_tokens = 12000\n"
+    (tmp_path / "brain.toml").write_text(toml, encoding="utf-8")
+    args = ["eval", "--backend", "sim", "--flights", "1", "--seed", "7", "--config", "brain.toml"]
+    assert main([*args, "--report-dir", "reports"]) == 0
+    assert [(c.max_tokens, c.context_tokens) if c else None for c in seen] == [(2048, 12000)]
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [None, LlmConfig(max_tokens=2048, context_tokens=12000, prompt_budget_tokens=5000)],
+)
+def test_the_drills_commander_is_a_flights(llm: LlmConfig | None) -> None:
+    """Sampling, prompt budget and context window of [llm]: every prompt the builder
+    allows still reaches the model with room for the answer, as in a flight."""
+    want = llm or LlmConfig()
+    cmd = cloud_commander(_CloudLike([], habit="silent"), BehaviourConfig(), llm=llm)
+    assert cmd.sampling == llm_sampling(want)
+    assert (cmd.context_tokens, cmd.context.budget) == (
+        want.context_tokens,
+        want.prompt_budget_tokens,
+    )
+    assert cmd.context.budget + cmd.sampling.max_tokens <= cmd.context_tokens
 
 
 # --- candidates and the turn cap --------------------------------------------------------

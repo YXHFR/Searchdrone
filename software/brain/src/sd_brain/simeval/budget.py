@@ -171,6 +171,11 @@ class MeteredRuntime:
                 "tool_calls": [
                     {"name": c.name, "arguments": c.arguments_json} for c in reply.tool_calls
                 ],
+                # Why a turn is slow: a long answer, and how much of it was reasoning.
+                "finish_reason": reply.finish_reason,
+                "latency_ms": reply.latency_ms,
+                "completion_tokens": reply.completion_tokens,
+                "reasoning_tokens": reply.reasoning_tokens,
             }
         )
         sek, measured = reply_cost_sek(reply)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from typing import Any
 
 import httpx
 import pytest
@@ -82,6 +84,58 @@ async def test_cloud_openrouter_call() -> None:
     assert reply.engine == "cloud" and reply.content == "moln"
     assert seen[0].url.host == "openrouter.ai" and seen[0].headers["x-title"] == "Searchdrone"
     assert '"seed"' not in seen[0].read().decode()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"choices": [{"message": "text"}]},
+        {"choices": ["text"]},
+        {"choices": [{"message": {"tool_calls": ["x"]}}]},
+        {"choices": [{"message": {"tool_calls": [{"function": "x"}]}}]},
+        {"choices": [{"message": {"content": "ok"}}], "usage": ["x"]},
+        {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"completion_tokens": 9, "completion_tokens_details": "many"},
+        },
+        ["not", "an", "object"],
+    ],
+)
+async def test_an_answer_of_the_wrong_shape_is_a_parse_error(bad: Any) -> None:
+    with pytest.raises(ModelError) as exc:
+        parse_reply(bad, latency_ms=1)
+    assert exc.value.kind == "parse_error"
+    # ... so the fallback model answers, as after any broken answer.
+    asked: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        model = json.loads(req.read())["model"]
+        asked.append(model)
+        return httpx.Response(200, json=bad if len(asked) == 1 else chat_reply("spare"))
+
+    rt = _cloud(handler, model="main/m", fallback_model="spare/m")
+    assert (await rt.chat(MSG, [], 5, Sampling())).content == "spare"
+    assert asked == ["main/m", "spare/m"]
+
+
+async def test_cloud_logs_the_tokens_of_each_call(caplog: pytest.LogCaptureFixture) -> None:
+    body = chat_reply("hemligt svar")
+    body["usage"] = {
+        "prompt_tokens": 900,
+        "completion_tokens": 512,
+        "completion_tokens_details": {"reasoning_tokens": 470},
+    }
+    rt = CloudModelRuntime(
+        CloudConfig(model="vendor/model"),
+        KEY,
+        mock_client(lambda _r: httpx.Response(200, json=body)),
+    )
+    with caplog.at_level(logging.INFO, logger="sd_brain.runtime"):
+        await rt.chat(MSG, [], 5, Sampling(max_tokens=512))
+    [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("cloud_call")]
+    assert "completion_tokens=512 reasoning_tokens=470 max_tokens=512" in line
+    assert "prompt_tokens=900" in line and "finish='stop'" in line
+    assert KEY not in line and "hemligt" not in line and "hej" not in line
 
 
 async def test_cloud_sends_reasoning_provider_and_tools() -> None:
@@ -214,3 +268,20 @@ def test_parse_reply_dict_arguments() -> None:
         ]
     }
     assert parse_reply(data, latency_ms=1).tool_calls[0].arguments_json == '{"a": 1}'
+
+
+def test_parse_reply_reads_the_reasoning_tokens() -> None:
+    data: dict[str, Any] = {
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {
+            "prompt_tokens": 900,
+            "completion_tokens": 512,
+            "completion_tokens_details": {"reasoning_tokens": 470},
+        },
+    }
+    reply = parse_reply(data, latency_ms=1)
+    assert (reply.completion_tokens, reply.reasoning_tokens) == (512, 470)
+    data["usage"] = {"completion_tokens": 40}  # a model that states no reasoning share
+    assert parse_reply(data, latency_ms=1).reasoning_tokens == 0
+    data["usage"] = {"completion_tokens": 40, "completion_tokens_details": None}
+    assert parse_reply(data, latency_ms=1).reasoning_tokens == 0

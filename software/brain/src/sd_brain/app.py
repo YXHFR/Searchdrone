@@ -24,7 +24,7 @@ from sd_brain.decide import DecisionService, JevEngine, OpenAiDecisionsEngine, Q
 from sd_brain.ground_client import GroundClient, GroundError
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop
-from sd_brain.runtime.base import Sampling
+from sd_brain.runtime.base import llm_sampling
 from sd_brain.runtime.budget import BudgetContext, HttpBudgetClient
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.runtime.fallback import BestAvailableRuntime
@@ -51,15 +51,6 @@ class Brain:
     cloud_http: httpx.AsyncClient | None
     budget: HttpBudgetClient
     ai_hash_of: Callable[[], str]  # again once the ground station's profile is known
-
-
-def sampling_of(cfg: BrainConfig) -> Sampling:
-    return Sampling(
-        temperature=cfg.llm.temperature,
-        top_p=cfg.llm.top_p,
-        max_tokens=cfg.llm.max_tokens,
-        seed=cfg.llm.seed,
-    )
 
 
 def _engines(
@@ -97,7 +88,7 @@ def build(cfg: BrainConfig, secrets: Secrets, reg: SkillRegistry = SKILL_REGISTR
     runtime = BestAvailableRuntime(
         cloud, retry_after_s=cfg.cloud.retry_after_s or CLOUD_RETRY_AFTER_S
     )
-    sampling = sampling_of(cfg)
+    sampling = llm_sampling(cfg.llm)
 
     def ai_hash_of() -> str:
         return ai_config_hash(reg, sampling, cloud=cfg.cloud if cloud.configured else None)
