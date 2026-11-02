@@ -28,9 +28,11 @@ from sd_onboard.link_client import OnboardLink
 from sd_onboard.perception import loop as loop_module
 from sd_onboard.perception.loop import (
     FAIL_REPORT,
+    MAIN,
     MAX_POSE_AGE_MS,
     MAX_TURN_RATE_DPS,
     AttitudeRate,
+    Feed,
     PerceptionLoop,
     pose_from,
 )
@@ -541,3 +543,78 @@ async def test_an_order_takes_its_own_still(
     flaky = _FlakySource(tmp_path)
     lp.source = flaky
     assert await lp.capture(command_id) is None and lp.stats.failed == 1
+
+
+TELE_CAM = PinholeCamera(1280, 720, 20.0)  # the test still's size, a 20-degree tele lens
+
+
+async def test_the_tele_camera_is_polled_after_the_main_one(tmp_path: Path) -> None:
+    """A second camera (the tele camera) gets its own folder and pinhole model: the loop
+    runs the same detector on its stills and places them with its own (narrower) view;
+    an order's still still comes from the main camera."""
+    main, tele = tmp_path / "main", tmp_path / "tele"
+    write_still(main, "block0_h30")
+    write_still(tele, "block0_h30")
+    clock = MonotonicClock()
+    sent: list[Any] = []
+    lp = PerceptionLoop(
+        DirStillSource(main, synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        sent.append,
+        clock,
+        CAM,
+        period_s=0.01,
+        env={},
+        extra=[Feed(DirStillSource(tele, synthetic=True), TELE_CAM)],
+    )
+    assert lp.cameras == [MAIN, "tele"]
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(lp.run(stop))
+    for _ in range(500):
+        if len(sent) == 2:
+            break
+        await asyncio.sleep(0.01)
+    stop.set()
+    await asyncio.wait_for(task, 2)
+    assert lp.stats.by_camera == {MAIN: 1, "tele": 1}
+    wide, narrow = (s.report for s in sent)
+    zoom = math.tan(math.radians(33.0)) / math.tan(math.radians(10.0))
+    assert narrow.px_per_m == pytest.approx(wide.px_per_m * zoom, rel=0.02)
+
+    def area(r: Any) -> float:
+        plane = Plane(*HOME)
+        pts = [plane.xy(c.lat, c.lon) for c in r.footprint]
+        return 0.5 * abs(
+            sum(
+                x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1], strict=True)
+            )
+        )
+
+    assert area(narrow) == pytest.approx(area(wide) / zoom**2, rel=0.05)
+
+
+async def test_an_order_takes_its_still_from_the_main_camera(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop_module, "CAPTURE_WAIT_S", 0.05)
+    tele = tmp_path / "tele"
+    write_still(tele, "block0_h30")
+    clock = MonotonicClock()
+    lp = PerceptionLoop(
+        DirStillSource(tmp_path / "main", synthetic=True),
+        lambda: telemetry("block0_h30", clock.monotonic_ms()),
+        lambda _r: None,
+        clock,
+        CAM,
+        env={},
+        extra=[Feed(DirStillSource(tele, synthetic=True), TELE_CAM)],
+    )
+    assert await lp.capture(new_id()) is None  # only the tele folder had a still
+    assert lp.stats.stills == 0
+
+
+def test_every_extra_camera_needs_its_own_name(tmp_path: Path) -> None:
+    feed = Feed(DirStillSource(tmp_path, synthetic=True), TELE_CAM)
+    for extra in ([feed, feed], [Feed(feed.source, TELE_CAM, MAIN)]):
+        with pytest.raises(ValueError, match="own name"):
+            PerceptionLoop(feed.source, FcTelemetry, lambda _r: None, FakeClock(), CAM, extra=extra)

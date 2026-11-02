@@ -28,6 +28,7 @@ import yaml
 
 from sd_sim import config, objects, paths, site, terrain, world
 from sd_sim import forest as forest_mod
+from sd_sim.cameras import StillsCamera
 from sd_sim.util import say
 
 TEMPLATE = "worlds/sd_site.sdf.jinja"
@@ -113,6 +114,7 @@ def render(
     vehicle: str = world.MODEL_NAME,
     stills: bool = False,
     video: bool = True,
+    tele: StillsCamera | None = None,
     light: Mapping[str, Any] | None = None,
     gi: str = "off",
 ) -> Path:
@@ -124,7 +126,7 @@ def render(
         )
     terrain.build(s, repo, progress=progress)
     ground = terrain.load_ground(s, repo)
-    world.render_model(instance, repo, vehicle, stills=stills, video=video)
+    world.render_model(instance, repo, vehicle, stills=stills, video=video, tele=tele)
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)
     sdf = world_sdf(s, ground, instance, placed, cameras, vehicle, light, gi)

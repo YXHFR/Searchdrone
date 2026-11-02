@@ -74,6 +74,10 @@ ALLOWED_KEYS = (
     "gi",
     "detector",
     "model",
+    "tele",
+    "tele_hfov_deg",
+    "tele_width",
+    "tele_height",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db", "--dev")
@@ -164,6 +168,10 @@ class Stack:
         # camera instead of its video camera, and the stills captured into stills_dir.
         self.scene = scene
         self.stills_dir = run_dir / "stills"
+        # tele: the tele camera beside the stills camera (``tele=true``), only with a
+        # scene; its stills go to tele_dir and sd-onboard runs the detector on them too.
+        self.tele = cfg.tele_camera() if scene is not None else None
+        self.tele_dir = run_dir / "stills_tele"
         # light: the world's sun and ambient light for this run (``world.light_context``).
         self.light = light
         # stills_archive: also keep every still with the camera's pose there, unpruned
@@ -320,6 +328,7 @@ class Stack:
                 placed,
                 vehicle=self.cfg.vehicle,
                 stills=self.scene is not None,
+                tele=self.tele,
                 # A search scenario's tests fly without video; the launcher keeps it.
                 video=self.scene is None or (self.services and self.cfg.video == "camera"),
                 light=self.light,
@@ -353,21 +362,26 @@ class Stack:
         if self.scene is not None:
             self.start_stills_capture(env)
 
-    def stills_capture_argv(self) -> list[str]:
+    def stills_capture_argv(self, tele: bool = False) -> list[str]:
+        """The capture process of the stills camera, or (``tele``) of the tele camera.
+        Only the stills camera's pictures go to the archive."""
         prefix = world.stills_topic_prefix(self.cfg.instance)
         script = Path(__file__).with_name("gz_stills.py")
+        cam = self.tele if tele else world.MAIN_STILLS
+        if cam is None:
+            raise InfraError("ingen telekamera i den här körningen (tele=true)")
         argv = [
             gazebo.GZ_PYTHON,
             str(script),
             "capture",
             "--image-topic",
-            f"{prefix}/stills",
+            f"{prefix}/{cam.sensor}",
             "--boxes-topic",
-            f"{prefix}/boxes",
+            f"{prefix}/{cam.boxes}",
             "--out",
-            str(self.stills_dir),
+            str(self.tele_dir if tele else self.stills_dir),
         ]
-        if self.stills_archive is not None and self.world is not None:
+        if not tele and self.stills_archive is not None and self.world is not None:
             argv += [
                 "--poses-topic",
                 f"/world/{self.world.name}/dynamic_pose/info",
@@ -380,9 +394,13 @@ class Stack:
 
     def start_stills_capture(self, env: dict[str, str]) -> None:
         """The stills camera's pictures and labelled boxes into ``stills_dir`` (and, for
-        ``stills_archive``, with the camera's pose into the archive)."""
+        ``stills_archive``, with the camera's pose into the archive); the tele camera's
+        into ``tele_dir`` when the run has one."""
         self.stills_dir.mkdir(parents=True, exist_ok=True)
         self.group.start("stills", self.stills_capture_argv(), env=env)
+        if self.tele is not None:
+            self.tele_dir.mkdir(parents=True, exist_ok=True)
+            self.group.start("stills_tele", self.stills_capture_argv(tele=True), env=env)
 
     def start_link_processes(self) -> None:
         py = sys.executable
@@ -809,9 +827,14 @@ class Stack:
 
     def start_onboard(self) -> None:
         still_dir = self.stills_dir if self.scene is not None else None
+        tele = (self.tele, self.tele_dir) if self.tele is not None else None
         env = procs.clean_env(
             services.onboard_env(
-                self.ports, self.stack_paths(), model=self.detector.env(), still_dir=still_dir
+                self.ports,
+                self.stack_paths(),
+                model=self.detector.env(),
+                still_dir=still_dir,
+                tele=tele,
             )
         )
         proc = self._start_service("sd-onboard", [sys.executable, "-m", "sd_onboard"], env)
@@ -1057,6 +1080,11 @@ def main(argv: list[str] | None = None) -> int:
         detector=detector,
         panel_dev=dev,
     )
+    if cfg.tele and stack.tele is None:
+        say(
+            "Obs: tele=true, men körningen har ingen stillbildskamera (den kommer med "
+            "detector=model), så telekameran tar inga bilder."
+        )
     return _run_foreground(stack)
 
 

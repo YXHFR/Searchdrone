@@ -34,6 +34,7 @@ __all__ = [
     "Loaded",
     "OnboardConfig",
     "PerceptionConfig",
+    "TeleConfig",
     "TestHooks",
     "check",
     "load",
@@ -56,6 +57,20 @@ class TestHooks(BaseModel):
     takeoff_delay_after_arm_s: float = Field(default=0.0, ge=0, le=30)
 
 
+class TeleConfig(BaseModel):
+    """A second stills camera beside the main one, looking the same way (straight down)
+    through a tele lens: a Raspberry Pi HQ Camera (Sony IMX477, 4056 x 3040) behind an M12
+    lens of about 20 degrees. Off unless that camera exists."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = False
+    still_dir: str = ""  # its own folder, written like the main camera's
+    width_px: int = Field(default=4056, ge=16, le=8192)
+    height_px: int = Field(default=3040, ge=16, le=8192)
+    hfov_deg: float = Field(default=20.0, gt=0, lt=180)
+
+
 class PerceptionConfig(BaseModel):
     """Stills, detector sources and reports to the ground (off unless a camera exists)."""
 
@@ -69,6 +84,7 @@ class PerceptionConfig(BaseModel):
     hfov_deg: float = Field(default=66.0, gt=0, lt=180)
     period_s: float = Field(default=0.5, ge=0.05, le=10)
     keep_stills: bool = False  # save stills with detections in the state folder
+    tele: TeleConfig = Field(default_factory=TeleConfig)
 
 
 class OnboardConfig(BaseModel):
@@ -205,6 +221,17 @@ def check(loaded: Loaded) -> list[str]:
         errors.append("[test_hooks] gäller bara i tester (SD_TEST=1) / test hooks need SD_TEST=1.")
     if cfg.perception.enabled and not cfg.perception.still_dir:
         errors.append("[perception] still_dir saknas / still_dir is required when enabled.")
+    tele = cfg.perception.tele
+    if tele.enabled and not cfg.perception.enabled:
+        errors.append(
+            "[perception.tele] kräver [perception] enabled / the tele camera needs perception."
+        )
+    if tele.enabled and not tele.still_dir:
+        errors.append("[perception.tele] still_dir saknas / still_dir is required when enabled.")
+    if tele.enabled and tele.still_dir and tele.still_dir == cfg.perception.still_dir:
+        errors.append(
+            "[perception.tele] behöver en egen still_dir / the tele camera needs its own folder."
+        )
     files = loaded.param_files()
     if not files:
         errors.append("expected_param_files får inte vara tom / no parameter file given.")

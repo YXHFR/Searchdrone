@@ -25,7 +25,7 @@ from sd_onboard.io.params import effective_params
 from sd_onboard.io.persistence import StateStore
 from sd_onboard.link_client import OnboardLink
 from sd_onboard.logs import setup_logging
-from sd_onboard.perception.loop import PerceptionLoop
+from sd_onboard.perception.loop import Feed, PerceptionLoop
 from sd_onboard.perception.sources import DirStillSource
 
 __all__ = ["main", "serve"]
@@ -128,10 +128,27 @@ def _perception(
     p = loaded.config.perception
     if not p.enabled:
         return None
+    synthetic = loaded.config.profile == "sim"
+    tele = p.tele
+    extra = (
+        [
+            Feed(
+                DirStillSource(
+                    loaded.path(tele.still_dir),
+                    synthetic=synthetic,
+                    max_size=(tele.width_px, tele.height_px),
+                ),
+                PinholeCamera(tele.width_px, tele.height_px, tele.hfov_deg),
+                "tele",
+            )
+        ]
+        if tele.enabled
+        else []
+    )
     return PerceptionLoop(
         DirStillSource(
             loaded.path(p.still_dir),
-            synthetic=loaded.config.profile == "sim",
+            synthetic=synthetic,
             max_size=(p.width_px, p.height_px),
         ),
         lambda: vehicle.telemetry,
@@ -145,6 +162,7 @@ def _perception(
             "executor.perception_off", "warning", {"reason": reason, "error": error}
         ),
         on=lambda: link.event("executor.perception_on", "info", {}),
+        extra=extra,
     )
 
 

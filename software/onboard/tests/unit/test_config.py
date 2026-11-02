@@ -94,6 +94,43 @@ def test_perception_needs_a_still_folder(root: Path, env: dict[str, str]) -> Non
     assert off is None
 
 
+def test_the_tele_camera_is_off_unless_asked_for(root: Path, env: dict[str, str]) -> None:
+    tele = load(root, env).config.perception.tele
+    assert not tele.enabled
+    # The owner's tele camera: Raspberry Pi HQ Camera (IMX477) with a 20-degree M12 lens.
+    assert (tele.width_px, tele.height_px, tele.hfov_deg) == (4056, 3040, 20.0)
+
+
+def test_the_tele_camera_needs_perception_and_its_own_folder(
+    root: Path, env: dict[str, str]
+) -> None:
+    tele = {"SD_ONBOARD__PERCEPTION__TELE__ENABLED": "true"}
+    assert any("perception.tele" in e for e in check(load(root, {**env, **tele})))
+    on = {
+        **tele,
+        "SD_ONBOARD__PERCEPTION__ENABLED": "true",
+        "SD_ONBOARD__PERCEPTION__STILL_DIR": "${SD_DATA_DIR}/stills",
+    }
+    assert any("still_dir" in e for e in check(load(root, {**env, **on})))
+    same = {**on, "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": "${SD_DATA_DIR}/stills"}
+    assert any("egen still_dir" in e for e in check(load(root, {**env, **same})))
+    good = {
+        **on,
+        "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": "${SD_DATA_DIR}/tele",
+        "SD_ONBOARD__PERCEPTION__TELE__WIDTH_PX": "1128",
+        "SD_ONBOARD__PERCEPTION__TELE__HEIGHT_PX": "846",
+        "SD_ONBOARD__PERCEPTION__TELE__HFOV_DEG": "20",
+    }
+    loaded = load(root, {**env, **good})
+    assert check(loaded) == []
+    link = SimpleNamespace(perception=lambda _r: None)
+    made = app._perception(loaded, SimpleNamespace(), link, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert made is not None and made.cameras == ["main", "tele"]
+    (feed,) = made.extra
+    assert (feed.camera.width_px, feed.camera.height_px, feed.camera.hfov_deg) == (1128, 846, 20.0)
+    assert made.camera.hfov_deg == 66.0  # the main camera is as before
+
+
 def test_a_wrong_detector_model_never_stops_the_start(
     root: Path, env: dict[str, str], tmp_path: Path
 ) -> None:

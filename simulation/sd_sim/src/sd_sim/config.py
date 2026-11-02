@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sd_sim import paths, site
+from sd_sim import cameras, paths, site
 from sd_sim.detector_choice import DETECTORS
 from sd_sim.sitl import CMAC_HOME
 
@@ -39,6 +39,10 @@ SCRIPTED_SITE_REFUSED = (
 GI_SITE_ONLY = (
     "gi=vct (global belysning för kameran) fungerar bara med physics=gz i en platsvärld, "
     "t.ex. world=sd_hellasgarden."
+)
+TELE_GZ_QUAD14 = (
+    "tele=true (telekameran) finns bara med physics=gz och vehicle=sd_quad14, "
+    "bredvid stillbildskameran."
 )
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
@@ -81,6 +85,18 @@ class SimConfig:
     gi: str = "off"  # "off" | "vct": global illumination for the cameras (sd_sim.site_world)
     detector: str = "oracle"  # "oracle" | "model": the person detector (sd_sim.detector_choice)
     model: str = ""  # detector=model: the manifest (.json); else SD_DETECTOR_MODEL
+    # The tele camera beside the stills camera (sd_sim.cameras), off by default. It only
+    # takes pictures in a run with a stills camera (a search scenario, detector=model).
+    tele: bool = False
+    tele_hfov_deg: float = cameras.TELE_HFOV_DEG
+    tele_width: int = cameras.TELE_SIZE_PX[0]
+    tele_height: int = cameras.TELE_SIZE_PX[1]
+
+    def tele_camera(self) -> cameras.StillsCamera | None:
+        """The tele camera this run asks for, or ``None``."""
+        if not self.tele:
+            return None
+        return cameras.tele(self.tele_width, self.tele_height, self.tele_hfov_deg)
 
 
 def _bool(key: str, value: Any) -> bool:
@@ -206,6 +222,22 @@ def load(
     cfg.gi = _choice("gi", merged.get("gi", "off"), GI_MODES)
     cfg.detector = _choice("detector", merged.get("detector", "oracle"), DETECTORS)
     cfg.model = str(merged.get("model", "")).strip()
+    cfg.tele = _bool("tele", merged.get("tele", False))
+    try:
+        cfg.tele_hfov_deg = float(merged.get("tele_hfov_deg", cfg.tele_hfov_deg))
+        cfg.tele_width = int(merged.get("tele_width", cfg.tele_width))
+        cfg.tele_height = int(merged.get("tele_height", cfg.tele_height))
+    except ValueError as exc:
+        raise ConfigError(
+            "tele_hfov_deg= ska vara ett tal, tele_width= och tele_height= heltal"
+        ) from exc
+    if cfg.tele:
+        if (cfg.physics, cfg.vehicle) != ("gz", "sd_quad14"):
+            raise ConfigError(TELE_GZ_QUAD14)
+        try:
+            cfg.tele_camera()
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
     home = str(merged.get("home_override", "")).strip()
     if home and not demo:
         if not _HOME.match(home):

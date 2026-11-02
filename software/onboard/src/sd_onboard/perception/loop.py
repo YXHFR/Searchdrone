@@ -22,6 +22,12 @@ An order can ask for a still of its own (``capture``: ``capture_stills`` and
 ``command_id``, at most ``CAPTURE_WAIT_S`` after the asking. Target detections go to
 ``on_targets`` too: the executor puts a keep-out cylinder around each that is sure enough.
 
+A second camera (``extra``: the tele camera beside the main one, looking the same way)
+has its own still source and pinhole camera. Each round the loop polls every camera's
+source in turn; a tele still goes through the same steps as a main one, georeferenced
+with its own camera, and its report says so only through its smaller footprint and
+higher ``px_per_m``. An order's still (``capture``) always comes from the main camera.
+
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly
 (a turn, braking, yawing towards a find) it does: 10 degrees of attitude at 40 m move a
@@ -33,7 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
@@ -52,9 +58,11 @@ __all__ = [
     "CAPTURE_WAIT_S",
     "FAIL_REPORT",
     "KEEP_MAX",
+    "MAIN",
     "MAX_POSE_AGE_MS",
     "MAX_TURN_RATE_DPS",
     "AttitudeRate",
+    "Feed",
     "PerceptionLoop",
     "PerceptionStats",
     "pose_from",
@@ -67,6 +75,16 @@ MAX_TURN_RATE_DPS = 10.0  # faster attitude change: the still is skipped
 CAPTURE_WAIT_S = 3.0  # an order's still: no still from the source this long -> none
 _CAPTURE_POLL_S = 0.1
 FAIL_REPORT = 10  # stills failing in a row before the ground is told
+MAIN = "main"  # the main camera's name (``source`` and ``camera``)
+
+
+@dataclass(frozen=True)
+class Feed:
+    """A camera beyond the main one: where its stills come from and its pinhole model."""
+
+    source: StillSource
+    camera: PinholeCamera
+    name: str = "tele"
 
 
 @dataclass
@@ -80,6 +98,7 @@ class PerceptionStats:
     skipped_no_footprint: int = 0  # the camera's view does not reach the ground
     failed: int = 0
     by_label: dict[str, int] = field(default_factory=dict[str, int])
+    by_camera: dict[str, int] = field(default_factory=dict[str, int])  # reports per camera
 
 
 def pose_from(t: FcTelemetry, now_ms: int) -> Pose | None:
@@ -146,9 +165,15 @@ class PerceptionLoop:
         off: Callable[[str, str], None] | None = None,
         on: Callable[[], None] | None = None,
         sources: BuiltSources | None = None,
+        extra: Sequence[Feed] = (),
     ) -> None:
         """``sources``: detector sources built by the caller (the simulator's oracle);
-        without them they are built from ``registry`` on first use."""
+        without them they are built from ``registry`` on first use. ``extra``: cameras
+        beside ``source`` and ``camera`` (the tele camera), polled after it each round
+        with the same detector sources."""
+        if any(f.name == MAIN for f in extra) or len({f.name for f in extra}) != len(extra):
+            raise ValueError("every extra camera needs its own name, not 'main'")
+        self.extra = tuple(extra)
         self.source = source
         self.telemetry = telemetry
         self.send = send
@@ -165,7 +190,7 @@ class PerceptionLoop:
         self._build_failed = False  # ``run`` could not build the sources: no stills at all
         self.stats = PerceptionStats()
         self.rate = AttitudeRate()
-        self._last_still_ms: int | None = None
+        self._last_still_ms: dict[str, int] = {}  # per camera
         self.on_targets = on_targets
         self._lock = asyncio.Lock()  # one still at a time: the loop's or an order's
 
@@ -177,6 +202,21 @@ class PerceptionLoop:
             self._built = build_sources(self.registry, env=self.env)
         return self._built
 
+    def _camera(self, name: str) -> PinholeCamera:
+        if name == MAIN:
+            return self.camera
+        return next(f.camera for f in self.extra if f.name == name)
+
+    def _source(self, name: str) -> StillSource:
+        if name == MAIN:
+            return self.source
+        return next(f.source for f in self.extra if f.name == name)
+
+    @property
+    def cameras(self) -> list[str]:
+        """Every camera's name, the main one first: the order the loop polls them in."""
+        return [MAIN, *(f.name for f in self.extra)]
+
     def handle(
         self,
         captured: CapturedStill,
@@ -184,12 +224,15 @@ class PerceptionLoop:
         now_ms: int,
         turn_rate_dps: float = 0.0,
         command_id: UUID | None = None,
+        camera: str = MAIN,
     ) -> Perception | None:
         """One still and the telemetry read when it arrived (with the attitude rate then):
         a report and its crops, or ``None`` when it cannot be placed on the ground well
-        enough."""
+        enough. ``camera``: which camera took it (``MAIN`` or an ``extra`` feed's name)."""
+        pinhole = self._camera(camera)
         self.stats.stills += 1
-        last, self._last_still_ms = self._last_still_ms, now_ms
+        last = self._last_still_ms.get(camera)
+        self._last_still_ms[camera] = now_ms
         rate_hz = 1000.0 / (now_ms - last) if last is not None and now_ms > last else 0.0
         pose = pose_from(t, now_ms)
         if pose is None:
@@ -207,7 +250,7 @@ class PerceptionLoop:
             captured.still.frame,
             found,
             pose,
-            self.camera,
+            pinhole,
             self.registry,
             still_id=new_id(),
             captured_utc=self.clock.utc_now(),
@@ -222,6 +265,7 @@ class PerceptionLoop:
             return None
         report = out.report
         self.stats.reports += 1
+        self.stats.by_camera[camera] = self.stats.by_camera.get(camera, 0) + 1
         self.stats.detections += len(report.detections)
         for d in report.detections:
             label = d.label or "?"
@@ -260,16 +304,17 @@ class PerceptionLoop:
         if targets:
             self.on_targets(targets)
 
-    async def _one(self, command_id: UUID | None = None) -> Perception | None:
-        """Poll the source once; the still's report, if there was one and it could be placed."""
+    async def _one(self, command_id: UUID | None = None, camera: str = MAIN) -> Perception | None:
+        """Poll a camera's source once; the still's report, if there was one and it could
+        be placed."""
         rate = self.rate.update(self.telemetry())
-        captured = await asyncio.to_thread(self.source.poll)
+        captured = await asyncio.to_thread(self._source(camera).poll)
         if captured is None:
             return None
         t, now_ms = self.telemetry(), self.clock.monotonic_ms()
         rate = max(rate, self.rate.update(t))
         ran = self._detected()
-        out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate, command_id)
+        out = await asyncio.to_thread(self.handle, captured, t, now_ms, rate, command_id, camera)
         if out is not None:
             self._deliver(out)
         if self._detected() > ran:  # a skipped still says nothing either way
@@ -327,19 +372,26 @@ class PerceptionLoop:
                 self.off("sources_failed", type(exc).__name__)
             return
         log.info(
-            "perception on: sources %s, skipped %s", sorted(self.built.sources), self.built.skipped
+            "perception on: cameras %s, sources %s, skipped %s",
+            self.cameras,
+            sorted(self.built.sources),
+            self.built.skipped,
         )
         while not stop.is_set():
-            try:  # one bad still must not end perception
-                async with self._lock:
-                    await self._one()
-            except Exception as exc:
-                self.stats.failed += 1
-                self._failing += 1
-                log.exception("perception failed on a still")
-                if self._failing == FAIL_REPORT and self.off is not None:
-                    try:  # telling the ground never ends perception
-                        self.off("stills_failing", type(exc).__name__)
-                    except Exception:
-                        log.exception("perception: could not tell the ground detection is off")
+            for camera in self.cameras:
+                await self._round(camera)
             await self.clock.sleep(self.period_s)
+
+    async def _round(self, camera: str) -> None:
+        try:  # one bad still must not end perception
+            async with self._lock:
+                await self._one(camera=camera)
+        except Exception as exc:
+            self.stats.failed += 1
+            self._failing += 1
+            log.exception("perception failed on a still (%s camera)", camera)
+            if self._failing == FAIL_REPORT and self.off is not None:
+                try:  # telling the ground never ends perception
+                    self.off("stills_failing", type(exc).__name__)
+                except Exception:
+                    log.exception("perception: could not tell the ground detection is off")

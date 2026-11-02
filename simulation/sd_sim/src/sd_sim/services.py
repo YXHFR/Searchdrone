@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from sd_sim import world
+from sd_sim.cameras import StillsCamera
 from sd_sim.errors import InfraError
 from sd_sim.util import LOOPBACK_OPENER
 
@@ -128,11 +129,15 @@ def onboard_env(
     *,
     model: Mapping[str, str] | None = None,
     still_dir: Path | None = None,
+    tele: tuple[StillsCamera, Path] | None = None,
 ) -> dict[str, str]:
     """``sd-onboard`` in the simulator: MAVLink through mavtap, SD-link through linksim.
     ``model``: the trained detector's environment (``DetectorChoice.env``), passed on
     only when ``detector=model`` chose it. ``still_dir``: perception on, reading the
-    vehicle's stills camera there."""
+    vehicle's stills camera there. ``tele`` (with ``still_dir``): the tele camera and the
+    folder its stills go to; perception runs the detector on them too."""
+    if tele is not None and still_dir is None:
+        raise ValueError("telekamerans bilder läses bara med stillbildskameran (still_dir)")
     env = {
         "SD_ONBOARD__VEHICLE_ID": VEHICLE_ID,
         "SD_ONBOARD__PROFILE": "sim",
@@ -153,6 +158,15 @@ def onboard_env(
             "SD_ONBOARD__PERCEPTION__WIDTH_PX": str(cam["width"]),
             "SD_ONBOARD__PERCEPTION__HEIGHT_PX": str(cam["height"]),
             "SD_ONBOARD__PERCEPTION__HFOV_DEG": str(cam["hfov_deg"]),
+        }
+    if tele is not None:
+        tcam, tele_dir = tele
+        env |= {
+            "SD_ONBOARD__PERCEPTION__TELE__ENABLED": "true",
+            "SD_ONBOARD__PERCEPTION__TELE__STILL_DIR": str(tele_dir),
+            "SD_ONBOARD__PERCEPTION__TELE__WIDTH_PX": str(tcam.width),
+            "SD_ONBOARD__PERCEPTION__TELE__HEIGHT_PX": str(tcam.height),
+            "SD_ONBOARD__PERCEPTION__TELE__HFOV_DEG": str(tcam.hfov_deg),
         }
     return env
 
