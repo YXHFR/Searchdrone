@@ -560,6 +560,7 @@ class Executor:
             if result is not MavResult.ACCEPTED:
                 return False
             accepted_ms = self.now_ms()
+            self.auth.accepted(mode, accepted_ms)  # a cancelled one before it can no longer show
             deadline = self.clock.monotonic() + MODE_CONFIRM_TIMEOUT_S
             while self.clock.monotonic() <= deadline:
                 t = self.vehicle.telemetry

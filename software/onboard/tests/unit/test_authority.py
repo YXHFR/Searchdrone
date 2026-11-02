@@ -293,23 +293,62 @@ def test_a_notice_a_change_from_outside_or_a_hold_ends_a_cancelled_auto() -> Non
     assert a.unexpected_mode(t, 1100) is not None
 
 
-def test_a_newer_mode_confirmed_after_it_was_accepted_ends_a_cancelled_auto() -> None:
-    """The flight controller handles mode commands in order: a HEARTBEAT after a newer
-    switch was accepted shows it, so AUTO can no longer come from us. A confirm from
-    telemetry older than the accept (the mode from before) proves nothing."""
+def test_any_heartbeat_after_a_newer_accept_ends_a_cancelled_auto() -> None:
+    """The flight controller handles mode commands in order: after a newer mode command of
+    ours was accepted, the cancelled AUTO can no longer show. Any HEARTBEAT received after
+    that ACCEPTED ends the record, whatever mode it shows; AUTO in it is from outside."""
     t = _shows(CopterMode.AUTO, 1100)
-    a = _late_auto()
-    a.confirmed(CopterMode.LOITER, accepted_ms=1050, seen_ms=1040)  # the telemetry before
-    assert a.late is not None and a.unexpected_mode(t, 1100) is None
-    a.confirmed(CopterMode.LOITER, accepted_ms=1050, seen_ms=1060)
-    assert a.late is None and a.unexpected_mode(t, 1100) is not None
-    # Confirmed from the telemetry before; the HEARTBEAT after the accept shows it later.
+    # #161 round-4 review: GUIDED confirmed from the telemetry before its accept.
     a = _late_auto()
     a.confirmed(CopterMode.GUIDED, accepted_ms=1050, seen_ms=1000)
-    assert a.unexpected_mode(_shows(CopterMode.GUIDED, 1040), 1045) is None
     assert a.late is not None
-    assert a.unexpected_mode(_shows(CopterMode.GUIDED, 1060), 1060) is None
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1040), 1045) is None  # before the accept
+    # Received in the accept's own millisecond: it may have left before the command.
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1050), 1050) is None
+    assert a.unexpected_mode(t, 1100) is not None and a.late is None
+    # Recorded at the ACCEPTED, with no confirm (yet): the same.
+    a = _late_auto()
+    a.accepted(CopterMode.LOITER, 1050)
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1040), 1045) is None
+    assert a.unexpected_mode(t, 1100) is not None and a.late is None
+    # Confirmed from a HEARTBEAT after the accept: ended at once.
+    a = _late_auto()
+    a.confirmed(CopterMode.LOITER, accepted_ms=1050, seen_ms=1060)
     assert a.late is None and a.unexpected_mode(t, 1100) is not None
+    # The earliest newer accept counts.
+    a = _late_auto()
+    a.accepted(CopterMode.LOITER, 1050)
+    a.accepted(CopterMode.GUIDED, 1200)
+    assert a.unexpected_mode(t, 1100) is not None
+    # A new switch to AUTO itself: it is pending now, the old record ends.
+    a = _late_auto()
+    a.accepted(CopterMode.AUTO, 1050)
+    assert a.late is None
+
+
+def test_a_pilots_rc_auto_seen_before_the_rc_sample_is_a_takeover() -> None:
+    """A late AUTO taken as ours, then RC_CHANNELS shows the mode switch moved: the pilot
+    chose AUTO, a takeover. The switch is watched to the deadline, and at least
+    ``RC_RECHECK_MS`` after the adopt; noise on the channel is not a move."""
+    a = _late_auto(rc=1100)
+    assert a.adopt_late(_shows(CopterMode.AUTO, 1100, rc=1100), 1100) == CopterMode.AUTO
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1200, rc=1150), 1200) is None
+    change = a.unexpected_mode(_shows(CopterMode.AUTO, 1300, rc=1700), 1300)
+    assert change is not None and change.mode == "AUTO"
+    # Adopted near the deadline: watched RC_RECHECK_MS past it.
+    a = _late_auto(rc=1100)
+    assert a.adopt_late(_shows(CopterMode.AUTO, 2900, rc=1100), 2900) == CopterMode.AUTO
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 3800, rc=1700), 3800) is not None
+    # After the watch: the switch is the pilot's own business again (no mode change).
+    a = _late_auto(rc=1100)
+    assert a.adopt_late(_shows(CopterMode.AUTO, 1100, rc=1100), 1100) == CopterMode.AUTO
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 3001, rc=1100), 3001) is None
+    assert a.adopted is None
+    # A notice ends the watch.
+    a = _late_auto(rc=1100)
+    a.adopt_late(_shows(CopterMode.AUTO, 1100, rc=1100), 1100)
+    a.notice(1150)
+    assert a.adopted is None
 
 
 def test_the_rc_mode_switch_moving_ends_a_cancelled_auto() -> None:
@@ -414,6 +453,58 @@ async def test_auto_from_outside_after_a_newer_own_mode_is_a_takeover() -> None:
         r.fc.set_mode_external(CopterMode.AUTO)
         await r.run(1.0)
         _taken(r)
+
+
+async def test_auto_from_outside_after_a_stale_confirm_is_a_takeover() -> None:
+    """#161 round-4 review: a cancelled AUTO; the executor's own GUIDED is confirmed from
+    the telemetry before its accept (the HEARTBEAT is still held); then AUTO from outside
+    before that HEARTBEAT comes. The HEARTBEAT after the accept showing AUTO is a takeover."""
+    async with rig() as r:
+        await _late_auto_live(r)
+        t2 = asyncio.ensure_future(r.ex.set_mode(CopterMode.GUIDED, SendOrigin.SKILL))
+        await r.until(t2.done, 3)
+        assert t2.result() and r.ex.auth.late is not None
+        r.fc.set_mode_external(CopterMode.AUTO)
+        r.fc.release_heartbeat()
+        await r.run(1.0)
+        _taken(r)
+
+
+async def test_auto_from_outside_after_a_newer_accept_not_confirmed_is_a_takeover() -> None:
+    """A cancelled AUTO; the executor's own LOITER is accepted and still waits for its
+    confirm; AUTO from outside comes first. The HEARTBEAT after that ACCEPTED showing AUTO
+    is a takeover: the record of the newer switch is made at its ACCEPTED."""
+    async with rig() as r:
+        await _late_auto_live(r)
+        t2 = asyncio.ensure_future(r.ex.set_mode(CopterMode.LOITER, SendOrigin.SKILL))
+        await r.until(lambda: r.fc.mode == CopterMode.LOITER, 2)
+        await r.run(0.05)
+        assert not t2.done()
+        late = r.ex.auth.late
+        assert late is not None and late.newer_ms is not None
+        r.fc.set_mode_external(CopterMode.AUTO)
+        r.fc.release_heartbeat()
+        await r.run(1.0)
+        _taken(r)
+        await r.until(t2.done, 3)
+
+
+async def test_a_pilots_rc_auto_ahead_of_its_rc_sample_is_a_takeover() -> None:
+    """A cancelled AUTO; the pilot picks AUTO on the RC switch and the HEARTBEAT showing it
+    comes before the RC_CHANNELS sample that shows the switch moved. AUTO is first taken as
+    ours; the sample then makes it a takeover."""
+    async with rig() as r:
+        r.fc.rc_mode_pwm = 1100
+        await _late_auto_live(r)
+        late = r.ex.auth.late
+        assert late is not None and late.rc_mode_pwm == 1100
+        r.fc.release_heartbeat()
+        await r.until(lambda: r.ex.auth.expected_mode == CopterMode.AUTO, 1)
+        assert r.ex.state == S.TRANSIT
+        r.fc.rc_mode_pwm = 1700  # the switch, seen in the next RC_CHANNELS
+        await r.run(1.0)
+        assert r.ex.state == S.HELD and r.ex.held_by == "external", (r.ex.state, r.ex.held_by)
+        assert "executor.control_taken" in r.up.kinds()
 
 
 async def test_a_loiter_recorded_as_cancelled_does_not_hide_rc_loiter() -> None:

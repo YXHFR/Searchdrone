@@ -17,8 +17,12 @@ have taken it, and a HEARTBEAT showing AUTO then is our own doing, not a takeove
 becomes the expected mode. Only AUTO: the executor never steers by holding a mode, so a
 LOITER, BRAKE, RTL or LAND the drone was not asked for is always a person's or a
 failsafe's. It ends at once with a notice from the ground, a change from outside, a hold
-the executor enters itself, a later mode of ours that a HEARTBEAT shows after the flight
-controller accepted it (it handles mode commands in order), or the RC mode switch moving.
+the executor enters itself, the RC mode switch moving, or any HEARTBEAT received after the
+flight controller accepted a newer mode command of ours: it handles mode commands in
+order, so the cancelled AUTO can no longer show after that, and AUTO then is from outside.
+After AUTO was taken as ours the RC mode switch is still watched for ``RC_RECHECK_MS``
+past that (or to the deadline): a pilot's RC AUTO whose HEARTBEAT came before the next
+RC_CHANNELS sample is then a takeover after all.
 
 A mode change nobody here asked for suspends control at once (HELD, ``external``). A
 failsafe signal up to 2 s before or after it makes it FAILSAFE instead; a notice from the
@@ -33,13 +37,14 @@ from typing import Final
 from sd_mav.chain import RC_SWITCH_MOVED_US
 from sd_mav.modes import CopterMode, mode_name
 from sd_mav.vehicle import MODE_FRESH_S, FcTelemetry
-from sd_safety.constants import MODE_CONFIRM_TIMEOUT_S, OVERRIDE_NOTICE_WINDOW_S
+from sd_safety.constants import OVERRIDE_NOTICE_WINDOW_S
 
 __all__ = ["Authority", "LateMode", "ModeChange"]
 
 _WINDOW_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
 _FRESH_MS: Final = int(MODE_FRESH_S * 1000)
-_LATE_MS: Final = int(MODE_CONFIRM_TIMEOUT_S * 1000)
+# RC_CHANNELS comes at 4 Hz: after a late AUTO is taken, this long covers several samples.
+RC_RECHECK_MS: Final = 1000
 LATE_MODES: Final = frozenset({CopterMode.AUTO})  # the only modes a late HEARTBEAT may show
 
 
@@ -59,9 +64,15 @@ class LateMode:
     mode: CopterMode
     until_ms: int  # that switch's own confirm deadline (monotonic ms)
     rc_mode_pwm: int | None  # the RC mode switch when it was sent
-    # A newer switch of ours the flight controller accepted (mode, monotonic ms): a
-    # HEARTBEAT received after that showing it ends this one.
-    newer: tuple[CopterMode, int] | None = None
+    # When the flight controller accepted a newer mode command of ours (monotonic ms): any
+    # HEARTBEAT received after that ends this one, whatever mode it shows. One received in
+    # the same millisecond may have left before the command was handled: it does not.
+    newer_ms: int | None = None
+
+
+def _switch_moved(base: int | None, rc: int | None) -> bool:
+    """The RC mode switch is not where it was (``sd_mav.chain``)."""
+    return rc is not None and (base is None or abs(rc - base) > RC_SWITCH_MOVED_US)
 
 
 class Authority:
@@ -69,6 +80,7 @@ class Authority:
         self.expected_mode: CopterMode | None = None
         self.pending_mode: CopterMode | None = None
         self.late: LateMode | None = None  # accepted, then cancelled before it showed
+        self.adopted: LateMode | None = None  # a late AUTO taken as ours: the RC switch watch
         self.notice_mono_ms: int | None = None  # the last OperatorOverrideNotice or takeover
         self.change: ModeChange | None = None  # the change being classified
 
@@ -78,11 +90,26 @@ class Authority:
         self.notice_mono_ms = now_ms
         self.pending_mode = None
         self.late = None  # a mode of ours that shows after this is not taken as ours
+        self.adopted = None
 
     def drop_ours(self) -> None:
         """The executor holds (fc_silent, a limit): no mode change of ours is on the way."""
         self.pending_mode = None
         self.late = None
+        self.adopted = None
+
+    def accepted(self, mode: CopterMode, accepted_ms: int) -> None:
+        """The flight controller accepted a mode command of ours at ``accepted_ms``. It
+        handles mode commands in order, so a cancelled one before it can only show in a
+        HEARTBEAT received before this one's ACCEPTED. A new command for the late mode
+        itself ends the record: it is pending now, and cancelled it is recorded anew."""
+        late = self.late
+        if late is None:
+            return
+        if late.mode == mode:
+            self.late = None
+        elif late.newer_ms is None or accepted_ms < late.newer_ms:
+            self.late = replace(late, newer_ms=accepted_ms)
 
     def sent_and_cancelled(self, mode: CopterMode, until_ms: int, rc_mode_pwm: int | None) -> None:
         """A switch the flight controller accepted, cancelled before a HEARTBEAT showed it:
@@ -96,18 +123,10 @@ class Authority:
         late = self.late
         if late is None:
             return None
-        rc = t.rc_mode_pwm
-        moved = rc is not None and (
-            late.rc_mode_pwm is None or abs(rc - late.rc_mode_pwm) > RC_SWITCH_MOVED_US
-        )
+        moved = _switch_moved(late.rc_mode_pwm, t.rc_mode_pwm)
         seen = t.fc_heartbeat_mono_ms
-        newer_shown = (
-            late.newer is not None
-            and seen is not None
-            and seen >= late.newer[1]
-            and t.fc_custom_mode == int(late.newer[0])
-        )
-        if now_ms > late.until_ms or moved or newer_shown:
+        after_newer = late.newer_ms is not None and seen is not None and seen > late.newer_ms
+        if now_ms > late.until_ms or moved or after_newer:
             self.late = None
             return None
         return late.mode
@@ -132,9 +151,30 @@ class Authority:
         pending = self.pending_mode
         if t.fc_custom_mode != int(late) or late in (self.expected_mode, pending):
             return None
+        record = self.late
         self.late = None
         self.expected_mode = late
+        if record is not None:
+            # Keep the RC baseline: a pilot's RC AUTO may show before RC_CHANNELS does.
+            until = max(record.until_ms, now_ms + RC_RECHECK_MS)
+            self.adopted = replace(record, until_ms=until, newer_ms=None)
         return late
+
+    def _rc_takeover(self, t: FcTelemetry, now_ms: int) -> bool:
+        """The RC mode switch moved after a late AUTO was taken as ours while the flight
+        controller still flies it: the pilot chose it, a takeover."""
+        watch = self.adopted
+        if watch is None:
+            return False
+        if now_ms > watch.until_ms:
+            self.adopted = None
+            return False
+        if t.fc_custom_mode != int(watch.mode) or not _switch_moved(
+            watch.rc_mode_pwm, t.rc_mode_pwm
+        ):
+            return False
+        self.adopted = None
+        return True
 
     def notice_recent(self, now_ms: int) -> bool:
         return self.notice_mono_ms is not None and now_ms - self.notice_mono_ms <= _WINDOW_MS
@@ -162,27 +202,28 @@ class Authority:
         HEARTBEAT received after the accept ends a late mode: the flight controller handles
         mode commands in order, so the cancelled one can no longer show. One older than
         that (the telemetry still shows the mode from before) does not; the first
-        HEARTBEAT after the accept that shows ``mode`` then does (``newer``)."""
+        HEARTBEAT received after the accept then does, whatever it shows (``newer_ms``)."""
         self.expected_mode = mode
-        late = self.late
-        if late is None:
+        if self.pending_mode == mode:
+            self.pending_mode = None
+        if accepted_ms is None:
+            self.late = None  # a pilot's Resume: nothing of ours is on the way
+            self.adopted = None
             return
-        if (
-            late.mode == mode
-            or accepted_ms is None
-            or (seen_ms is not None and seen_ms >= accepted_ms)
+        late = self.late
+        if late is not None and (
+            late.mode == mode or (seen_ms is not None and seen_ms > accepted_ms)
         ):
             self.late = None
         else:
-            self.late = replace(late, newer=(mode, accepted_ms))
-        if self.pending_mode == mode:
-            self.pending_mode = None
+            self.accepted(mode, accepted_ms)
 
     def reset(self) -> None:
         """On the ground after landing: nothing is expected any more."""
         self.expected_mode = None
         self.pending_mode = None
         self.late = None
+        self.adopted = None
         self.change = None
 
     # --- classification ---------------------------------------------------------------
@@ -194,6 +235,8 @@ class Authority:
         fresh = t.fc_heartbeat_mono_ms is not None and now_ms - t.fc_heartbeat_mono_ms <= _FRESH_MS
         if not fresh:
             return None
+        if self._rc_takeover(t, now_ms):
+            return ModeChange(mode_name(t.fc_custom_mode), now_ms)
         if t.fc_custom_mode in self._ours(t, self.expected_mode, now_ms):
             return None
         return ModeChange(mode_name(t.fc_custom_mode), now_ms)
@@ -202,6 +245,7 @@ class Authority:
         self.change = change
         self.pending_mode = None
         self.late = None
+        self.adopted = None
 
     def in_window(self, now_ms: int) -> bool:
         return self.change is not None and now_ms - self.change.at_mono_ms <= _WINDOW_MS
