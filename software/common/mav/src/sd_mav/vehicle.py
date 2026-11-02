@@ -201,6 +201,9 @@ class FcTelemetry:
 
     fc_connected: bool = False
     fc_heartbeat_mono_ms: int | None = None
+    # That HEARTBEAT's place in the order the flight controller's messages were received
+    # (``Vehicle.set_mode_ordered``): unlike a time, never the same for two messages.
+    fc_heartbeat_seq: int | None = None
     # Counts the flight controller's connections: one more at each new connection and at
     # a reboot seen without a lost connection (ATTITUDE's time_boot_ms going back).
     # Readers that keep something per flight controller start over when it changes.
@@ -320,11 +323,12 @@ def _text(value: Any) -> str:
 
 
 class _Waiter:
-    __slots__ = ("future", "predicate")
+    __slots__ = ("future", "predicate", "seq")
 
     def __init__(self, predicate: Callable[[Any], bool], future: asyncio.Future[Any]) -> None:
         self.predicate = predicate
         self.future = future
+        self.seq: int | None = None  # the receive order of the message that matched
 
 
 class Vehicle:
@@ -358,6 +362,7 @@ class Vehicle:
         self._t = FcTelemetry()
         self._subscribers: list[Callable[[FcTelemetry], None]] = []
         self._waiters: list[_Waiter] = []
+        self._rx_seq = 0  # counts the flight controller's messages as they are received
         self._command_locks: dict[int, asyncio.Lock] = {}
         self._tasks: list[asyncio.Task[None]] = []
         self._streams_task: asyncio.Task[None] | None = None
@@ -451,6 +456,13 @@ class Vehicle:
 
     async def wait_message(self, predicate: Callable[[Any], bool], within_s: float) -> Any | None:
         """The next message from the flight controller matching ``predicate``, or ``None``."""
+        found = await self._wait_message_seq(predicate, within_s)
+        return None if found is None else found[0]
+
+    async def _wait_message_seq(
+        self, predicate: Callable[[Any], bool], within_s: float
+    ) -> tuple[Any, int] | None:
+        """``wait_message`` with the message's receive order (``fc_heartbeat_seq``)."""
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         waiter = _Waiter(predicate, future)
         self._waiters.append(waiter)
@@ -461,8 +473,8 @@ class Vehicle:
             sleeper.cancel()
             if waiter in self._waiters:
                 self._waiters.remove(waiter)
-        if future.done() and not future.cancelled():
-            return future.result()
+        if future.done() and not future.cancelled() and waiter.seq is not None:
+            return future.result(), waiter.seq
         future.cancel()
         return None
 
@@ -547,9 +559,20 @@ class Vehicle:
         command arrived.
         Other messages return ``None``.
         """
+        result, _ = await self._send_ordered(
+            msg, origin=origin, attempts=attempts, ack_timeout_s=ack_timeout_s
+        )
+        return result
+
+    async def _send_ordered(
+        self, msg: Any, *, origin: SendOrigin, attempts: int, ack_timeout_s: float
+    ) -> tuple[MavResult | None, int | None]:
+        """``send``, with the receive order of the message that settled the command: its
+        COMMAND_ACK, or the HEARTBEAT that already showed the mode when the answer was
+        lost (None when nothing did)."""
         if msg.get_type() != "COMMAND_LONG":
             self._check_and_write(msg, origin)
-            return None
+            return None, None
         if not 1 <= attempts <= ACK_ATTEMPTS:
             raise ValueError(f"attempts must be 1..{ACK_ATTEMPTS}")
         command = int(msg.command)
@@ -570,7 +593,7 @@ class Vehicle:
                     if fresh and wanted_mode is not None and t.fc_custom_mode == wanted_mode:
                         # The answer was lost, but the HEARTBEAT already shows the mode.
                         self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
-                        return MavResult.ACCEPTED
+                        return MavResult.ACCEPTED, t.fc_heartbeat_seq
                     changed = t.fc_custom_mode not in (start_mode, wanted_mode)
                     new_failsafe = t.failsafe_onset_mono_ms != start_onset
                     if new_failsafe or changed:
@@ -578,10 +601,10 @@ class Vehicle:
                             "mav.retry_cancelled",
                             {"command": command, "mode": t.fc_mode, "failsafe": new_failsafe},
                         )
-                        return MavResult.CANCELLED
+                        return MavResult.CANCELLED, None
                 msg.confirmation = attempt
                 self._check_and_write(msg, origin)
-                ack = await self.wait_message(
+                found = await self._wait_message_seq(
                     lambda m: (
                         m.get_type() == "COMMAND_ACK"
                         and int(m.command) == command
@@ -590,19 +613,31 @@ class Vehicle:
                     ),
                     ack_timeout_s,
                 )
-                if ack is not None:
-                    return MavResult.of(int(ack.result))
-        return MavResult.TIMEOUT
+                if found is not None:
+                    return MavResult.of(int(found[0].result)), found[1]
+        return MavResult.TIMEOUT, None
 
     def _command(self, command: int, *params: float) -> Any:
         p = [*params, *([0.0] * (7 - len(params)))]
         return mavlink.MAVLink_command_long_message(self.fc_sysid, FC_COMPID, command, 0, *p[:7])
 
     async def set_mode(self, mode: CopterMode, *, origin: SendOrigin) -> MavResult:
+        result, _ = await self.set_mode_ordered(mode, origin=origin)
+        return result
+
+    async def set_mode_ordered(
+        self, mode: CopterMode, *, origin: SendOrigin
+    ) -> tuple[MavResult, int | None]:
+        """``set_mode``, with the receive order (``fc_heartbeat_seq``) of the answer that
+        settled it. The flight controller handles commands in order, so a HEARTBEAT
+        received after that answer left after the command was handled."""
         msg = self._command(
             mavlink.MAV_CMD_DO_SET_MODE, mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, int(mode)
         )
-        return await self._send_command(msg, origin)
+        result, seq = await self._send_ordered(
+            msg, origin=origin, attempts=ACK_ATTEMPTS, ack_timeout_s=MAV_ACK_TIMEOUT_S
+        )
+        return (MavResult.TIMEOUT, None) if result is None else (result, seq)
 
     async def arm(self, *, origin: SendOrigin) -> MavResult:
         return await self._send_command(
@@ -824,9 +859,12 @@ class Vehicle:
         src = (msg.get_srcSystem(), msg.get_srcComponent())
         kind = msg.get_type()
         if src == (self.fc_sysid, FC_COMPID):
-            self._from_fc(msg, kind)
+            self._rx_seq += 1
+            seq = self._rx_seq
+            self._from_fc(msg, kind, seq)
             for waiter in list(self._waiters):
                 if not waiter.future.done() and waiter.predicate(msg):
+                    waiter.seq = seq
                     waiter.future.set_result(msg)
                     self._waiters.remove(waiter)
             return
@@ -846,7 +884,7 @@ class Vehicle:
                 {"sysid": src[0], "compid": src[1], "command": int(msg.command)},
             )
 
-    def _from_fc(self, msg: Any, kind: str) -> None:
+    def _from_fc(self, msg: Any, kind: str, seq: int) -> None:
         now = self._clock.monotonic_ms()
         t = self._t
         signal = signal_from(msg)
@@ -874,6 +912,7 @@ class Vehicle:
                     t,
                     fc_connected=True,
                     fc_heartbeat_mono_ms=now,
+                    fc_heartbeat_seq=seq,
                     armed=bool(int(msg.base_mode) & _ARMED_FLAG),
                     fc_custom_mode=int(msg.custom_mode),
                     fc_system_status=int(msg.system_status),

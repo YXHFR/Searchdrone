@@ -99,6 +99,45 @@ def test_a_held_heartbeat_shows_the_mode_only_when_released() -> None:
     asyncio.run(run())
 
 
+def test_a_heartbeat_queued_behind_the_ack_is_ordered_after_it() -> None:
+    """``set_mode_ordered``: the flight controller answers and then sends a HEARTBEAT at
+    once. Both are handled before the caller runs again, in the same millisecond, so
+    only the receive order tells that the HEARTBEAT came after the answer."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(3.0)
+        fc = vehicle.fc
+        fc.heartbeat_held = True
+        fc.after_ack = lambda _command: fc.release_heartbeat()
+        before = vehicle.telemetry.fc_heartbeat_seq
+        result, seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.LOITER, origin=SendOrigin.SKILL)
+        )
+        t = vehicle.telemetry
+        assert result is MavResult.ACCEPTED and seq is not None
+        assert before is not None and before < seq
+        assert t.fc_mode == "LOITER" and t.fc_heartbeat_seq is not None
+        assert t.fc_heartbeat_seq > seq
+        assert t.fc_heartbeat_mono_ms == clock.monotonic_ms()  # a time cannot order them
+        fc.after_ack = None
+        fc.drop_acks = 1  # the answer is lost; the retry sees the mode in the HEARTBEAT
+        await clock.run_for(0.5)
+        result, seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.GUIDED, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.ACCEPTED
+        assert seq is not None and seq == vehicle.telemetry.fc_heartbeat_seq
+        fc.drop_commands = 5
+        result, seq = await run_with_clock(
+            clock, vehicle.set_mode_ordered(CopterMode.LOITER, origin=SendOrigin.SKILL)
+        )
+        assert result is MavResult.TIMEOUT and seq is None
+        await vehicle.close()
+
+    asyncio.run(run())
+
+
 def test_streams_requested_after_connect_and_reconnect() -> None:
     async def run() -> None:
         clock, vehicle, events = await _started()
@@ -487,10 +526,10 @@ def test_mission_current_with_and_without_total() -> None:
 
     async def run() -> None:
         _, vehicle, _ = await _started()
-        vehicle._from_fc(mavlink.MAVLink_mission_current_message(14, 15), "MISSION_CURRENT")  # pyright: ignore[reportPrivateUsage]
+        vehicle._from_fc(mavlink.MAVLink_mission_current_message(14, 15), "MISSION_CURRENT", 1)  # pyright: ignore[reportPrivateUsage]
         t = vehicle.telemetry
         assert (t.mission_seq_current, t.mission_total) == (14, 15)
-        vehicle._from_fc(mavlink.MAVLink_mission_current_message(3, 0), "MISSION_CURRENT")  # pyright: ignore[reportPrivateUsage]
+        vehicle._from_fc(mavlink.MAVLink_mission_current_message(3, 0), "MISSION_CURRENT", 2)  # pyright: ignore[reportPrivateUsage]
         t = vehicle.telemetry
         assert (t.mission_seq_current, t.mission_total) == (3, None)
         await vehicle.close()

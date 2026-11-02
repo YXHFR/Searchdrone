@@ -136,6 +136,9 @@ class FakeFlightController:
         self.intervals_us: dict[int, int] = {}
         self.refuse_modes: set[int] = set()
         self.drop_acks = 0  # the next n COMMAND_ACKs are lost (the command still acts)
+        # Called with the command right after its COMMAND_ACK is sent: what the flight
+        # controller sends next (a ground station's mode, a HEARTBEAT) is queued behind it.
+        self.after_ack: Callable[[int], None] | None = None
         self.drop_commands = 0  # the next n COMMAND_LONGs are lost on the way
         self.drop_mission_items = 0  # the next n mission item answers are lost (a slow read)
         self.silent = False  # no heartbeat or telemetry, no answers
@@ -402,6 +405,8 @@ class FakeFlightController:
             ),
             link,
         )
+        if self.after_ack is not None:
+            self.after_ack(command)
 
     def _handle(self, link: FakeLink, msg: Any) -> None:
         kind = msg.get_type()

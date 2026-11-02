@@ -556,18 +556,18 @@ class Executor:
         rc_at_send = self.vehicle.telemetry.rc_mode_pwm
         accepted_ms: int | None = None
         try:
-            result = await self.vehicle.set_mode(mode, origin=origin)
+            result, answer_seq = await self.vehicle.set_mode_ordered(mode, origin=origin)
             if result is not MavResult.ACCEPTED:
                 return False
             accepted_ms = self.now_ms()
-            self.auth.accepted(mode, accepted_ms)  # a cancelled one before it can no longer show
+            if answer_seq is not None:
+                # A cancelled one before it can only show in a HEARTBEAT received before.
+                self.auth.accepted(mode, answer_seq)
             deadline = self.clock.monotonic() + MODE_CONFIRM_TIMEOUT_S
             while self.clock.monotonic() <= deadline:
                 t = self.vehicle.telemetry
                 if t.fc_custom_mode == int(mode):
-                    self.auth.confirmed(
-                        mode, accepted_ms=accepted_ms, seen_ms=t.fc_heartbeat_mono_ms
-                    )
+                    self.auth.confirmed(mode, accepted_seq=answer_seq, seen_seq=t.fc_heartbeat_seq)
                     return True
                 await self.clock.sleep(0.05)
             return False
@@ -1280,7 +1280,7 @@ class Executor:
         self.auth.released()
         self.fallback.stop()
         if target in (S.HOLD, S.RTL) and fc_mode is not None:
-            self.auth.confirmed(CopterMode(fc_mode), accepted_ms=None, seen_ms=None)
+            self.auth.confirmed(CopterMode(fc_mode), accepted_seq=None, seen_seq=None)
         self._enter(target, hold_reason="operator_released", cause="release")
         self._ack(ref_id, "done")
         if target == S.HOLD and fc_mode == int(CopterMode.BRAKE):
