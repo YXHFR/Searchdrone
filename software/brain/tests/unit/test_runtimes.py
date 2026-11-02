@@ -93,21 +93,11 @@ async def test_cloud_openrouter_call() -> None:
         {"choices": ["text"]},
         {"choices": [{"message": {"tool_calls": ["x"]}}]},
         {"choices": [{"message": {"tool_calls": [{"function": "x"}]}}]},
-        {"choices": [{"message": {"content": "ok"}}], "usage": ["x"]},
-        {
-            "choices": [{"message": {"content": "ok"}}],
-            "usage": {"completion_tokens": 9, "completion_tokens_details": "many"},
-        },
         ["not", "an", "object"],
         # an empty string, list or 0 is no object either: never an empty, good answer
         {"choices": [{"message": ""}]},
         {"choices": [{"message": []}]},
         {"choices": [0]},
-        {"choices": [{"message": {"content": "ok"}}], "usage": ""},
-        {
-            "choices": [{"message": {"content": "ok"}}],
-            "usage": {"completion_tokens": 9, "completion_tokens_details": 0},
-        },
         "",
     ],
 )
@@ -303,6 +293,47 @@ def test_left_out_or_null_parts_are_absent() -> None:
     no_details = {"completion_tokens": 9, "completion_tokens_details": None}
     reply = parse_reply({"choices": [{"message": {}}], "usage": no_details}, latency_ms=1)
     assert (reply.completion_tokens, reply.reasoning_tokens) == (9, 0)
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        "",
+        0,
+        ["x"],
+        "many",
+        {"completion_tokens": "many"},
+        {"prompt_tokens": -5, "completion_tokens": "9"},
+        {"completion_tokens": True, "cost": "1.0"},
+        {"completion_tokens_details": ""},
+        {"completion_tokens_details": 0},
+        {"completion_tokens_details": "many"},
+        {"completion_tokens_details": {"reasoning_tokens": "many"}},
+    ],
+)
+async def test_malformed_usage_keeps_the_answer(usage: Any) -> None:
+    """Usage is metadata: a broken count drops the numbers, never the answer."""
+    data = {"choices": [{"message": {"content": "ok"}}], "usage": usage}
+    reply = parse_reply(data, latency_ms=1)
+    assert reply.content == "ok"
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.reasoning_tokens) == (0, 0, 0)
+    assert reply.cost_usd is None
+    # ... and no second, paid call goes to the fallback model.
+    asked: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        asked.append(json.loads(req.read())["model"])
+        return httpx.Response(200, json=data)
+
+    rt = _cloud(handler, model="main/m", fallback_model="spare/m")
+    assert (await rt.chat(MSG, [], 5, Sampling())).content == "ok"
+    assert asked == ["main/m"]
+
+
+def test_good_usage_parts_survive_a_broken_neighbour() -> None:
+    usage = {"prompt_tokens": 900, "completion_tokens": 512, "completion_tokens_details": 0}
+    reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.reasoning_tokens) == (900, 512, 0)
 
 
 def test_the_defaults_are_a_flights() -> None:

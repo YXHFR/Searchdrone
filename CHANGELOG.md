@@ -253,7 +253,10 @@ All notable changes to this project are listed here. The format follows
   farm flight now pass `[llm]` on as the drill does. `Sampling()` and a bare
   `LlmCommander` default to `[llm]`'s 4096 completion tokens and 16384-token context
   window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
-  an object is now a parse error (the fallback model answers), not an empty answer.
+  a choice, message or tool call is now a parse error (the fallback model answers),
+  not an empty answer. Malformed usage metadata (`usage`, its token counts or
+  `completion_tokens_details`) only drops those numbers: the answer stands and no
+  second, paid call goes to the fallback model.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

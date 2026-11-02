@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -114,24 +115,50 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
                     arguments_json=args if isinstance(args, str) else _dumps(args or {}),
                 )
             )
-        usage = _mapping(data.get("usage"))
-        cost = usage.get("cost")
-        details = _mapping(usage.get("completion_tokens_details"))
+        prompt_tokens, completion_tokens, reasoning_tokens, cost_usd = _usage(data.get("usage"))
         return ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
             finish_reason=str(choice.get("finish_reason") or "stop"),
-            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
-            reasoning_tokens=int(details.get("reasoning_tokens") or 0),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
             latency_ms=latency_ms,
             model_id=data.get("model"),
-            cost_usd=float(cost) if isinstance(cost, int | float) else None,
+            cost_usd=cost_usd,
         )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")
         err.kind = "parse_error"
         raise err from None
+
+
+def _usage(value: Any) -> tuple[int, int, int, float | None]:
+    """The token counts and price of a call: (prompt, completion, reasoning, cost).
+
+    Usage is metadata only. A malformed part drops just that number (0, or no price) and
+    keeps the answer: a broken count must not make a good answer a parse error and pay
+    for a second call to the fallback model.
+    """
+    usage = value if isinstance(value, Mapping) else {}
+    details = usage.get("completion_tokens_details")
+    details = details if isinstance(details, Mapping) else {}
+    cost = usage.get("cost")
+    return (
+        _count(usage.get("prompt_tokens")),
+        _count(usage.get("completion_tokens")),
+        _count(details.get("reasoning_tokens")),
+        float(cost) if isinstance(cost, int | float) and not isinstance(cost, bool) else None,
+    )
+
+
+def _count(value: Any) -> int:
+    """A token count; 0 when left out or not a finite, non-negative number."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0
+    if not math.isfinite(value) or value < 0:
+        return 0
+    return int(value)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
