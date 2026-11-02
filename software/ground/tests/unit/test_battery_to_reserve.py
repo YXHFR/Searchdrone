@@ -221,10 +221,12 @@ def _charter_row(mission: Mission, rtl_pct: float) -> Charter:
         version=1,
         area={
             "type": "Polygon",
-            "coordinates": [[[18.0, 59.0], [18.01, 59.0], [18.01, 59.01], [18.0, 59.0]]],
+            "coordinates": [
+                [[149.165, -35.364], [149.166, -35.364], [149.166, -35.363], [149.165, -35.364]]
+            ],
         },
-        home=LatLonAlt(lat=59.0, lon=18.0, alt_amsl_m=10.0),
-        pilot_position=LatLon(lat=59.0, lon=18.0),
+        home=LatLonAlt(lat=-35.363261, lon=149.165230, alt_amsl_m=584.0),
+        pilot_position=LatLon(lat=-35.363261, lon=149.165230),
         battery_rtl_pct=rtl_pct,
         allowed_skills=["goto"],
         autonomy_mode=AutonomyMode.WITHIN_CHARTER,

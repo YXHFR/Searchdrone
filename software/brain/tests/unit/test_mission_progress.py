@@ -290,9 +290,11 @@ def test_the_search_again_numbers_come_from_the_code() -> None:
     assert "never below 10 m" in system
     assert "minutes * (spacing / your `spacing_m`) * 1.25" in system
     assert "no minutes to the home limit" in system and "till hemgräns" in system
-    # The battery check only decides on another round; it never ends the first one.
-    assert "it never stops the first round or an order in progress" in system
-    assert "the mission ends after the first round" in system
+    # The battery check only decides on another sector; it never ends a first search.
+    assert "it never stops the first search of a sector or an order in progress" in system
+    assert "the mission ends when every sector is searched once" in system
+    assert "the battery does not allow another sector" in system
+    assert "round" not in system.split("FINISHING.")[1].split("WAITING CARDS.")[0]
     assert "at once, also in the middle of a search" in system
 
 
