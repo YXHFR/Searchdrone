@@ -129,7 +129,7 @@ class CloudModelRuntime:
         reply.engine = "cloud"
         reply.model_id = reply.model_id or model
         log.info(
-            "cloud_call model=%s finish=%s latency_ms=%d prompt_tokens=%d"
+            "cloud_call model=%r finish=%r latency_ms=%d prompt_tokens=%d"
             " completion_tokens=%d reasoning_tokens=%d max_tokens=%d",
             reply.model_id,
             reply.finish_reason,

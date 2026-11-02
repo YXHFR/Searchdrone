@@ -25,14 +25,14 @@ import yaml
 
 from sd_brain.backends import GrammarBackend, LlmCommander, ScriptedBackend
 from sd_brain.backends.base import CommanderBackend
-from sd_brain.config import BrainConfig
+from sd_brain.config import BrainConfig, LlmConfig
 from sd_brain.context import ContextBuilder
 from sd_brain.decide.service import DecisionService
 from sd_brain.evals.fake_ground import FakeGround
 from sd_brain.health import HealthState
 from sd_brain.loop import CommanderLoop, TurnRecord
 from sd_brain.memory import pending_request
-from sd_brain.runtime.base import ModelRuntime, Sampling
+from sd_brain.runtime.base import ModelRuntime, Sampling, llm_sampling
 from sd_brain.runtime.replay import ReplayRuntime, load_golden
 from sd_schemas.skills import SKILL_REGISTRY
 
@@ -303,6 +303,7 @@ async def run_scenario(
     golden_dir: Path | None = None,
     backend: str = "replay",
     sampling: Sampling | None = None,
+    llm: LlmConfig | None = None,
     scenario: dict[str, Any] | None = None,
     on_step: Callable[[int], None] | None = None,
 ) -> ScenarioResult:
@@ -335,9 +336,12 @@ async def run_scenario(
         runtime = runtime_factory(sc)
     else:
         raise ValueError("no runtime")
-    smp = sampling or Sampling(temperature=0.2, top_p=0.8, max_tokens=512, seed=42)
+    llm = llm or cfg.llm  # as a flight: [llm]'s sampling, prompt budget and context window
+    smp = sampling or llm_sampling(llm)
     ctx = ContextBuilder(
-        reg, takeoff_policy=cfg.behaviour.takeoff_policy, prompt_budget_tokens=6000
+        reg,
+        takeoff_policy=cfg.behaviour.takeoff_policy,
+        prompt_budget_tokens=llm.prompt_budget_tokens,
     )
     commander: CommanderBackend
     if backend == "grammar":
@@ -345,7 +349,9 @@ async def run_scenario(
     elif backend == "scripted" and sc.get("script"):
         commander = ScriptedBackend.from_file(path.parent / sc["script"])
     else:
-        commander = LlmCommander(runtime, ctx, reg, cfg.behaviour, smp)
+        commander = LlmCommander(
+            runtime, ctx, reg, cfg.behaviour, smp, context_tokens=llm.context_tokens
+        )
     health = HealthState(clock.monotonic)
     loop = CommanderLoop(
         fg,

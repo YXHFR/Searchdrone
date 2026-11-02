@@ -243,11 +243,12 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
-- The simulator drill (`sd-brain eval --backend sim`), the scenario evaluation and
-  `perf-cloud` now ask the cloud model with the sampling a real flight uses
-  (`[llm]`, so a completion limit of 4096 tokens), not a fixed 512: a drill turn that
-  ran into 512 was cut short where a flight's turn would not be. The eval report's AI
-  config hash is that of the same sampling.
+- The simulator drill (`sd-brain eval --backend sim`), its golden replays, the
+  scenario evaluation and `perf-cloud` now ask the cloud model as a real flight does:
+  `[llm]`'s sampling (a completion limit of 4096 tokens, not a fixed 512), prompt
+  budget and context window (16384, not 8192). A drill turn that ran into 512 was cut
+  short where a flight's turn would not be, and a prompt over 4096 tokens never reached
+  the model in the drill. The eval report's AI config hash is that of the same sampling.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

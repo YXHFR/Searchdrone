@@ -18,8 +18,8 @@ from fake_openai import FakeOpenAI
 from shapely.geometry import Point
 
 from sd_brain.cli import main
-from sd_brain.config import BehaviourConfig, CloudConfig
-from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling
+from sd_brain.config import BehaviourConfig, CloudConfig, LlmConfig
+from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling, llm_sampling
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.simeval.bank import (
     BankError,
@@ -554,20 +554,38 @@ def test_cli_sim_flies_with_the_configured_sampling(
     """The drill meets the token limit of a real flight, not one of its own."""
     from sd_brain.simeval import decider
 
-    seen: list[Sampling | None] = []
+    seen: list[LlmConfig | None] = []
     real = decider.make_decision_maker
 
     def spy(meter: Any, behaviour: BehaviourConfig, **kw: Any) -> DecisionMaker:
-        seen.append(kw.get("sampling"))
+        seen.append(kw.get("llm"))
         return real(meter, behaviour, **kw)
 
     monkeypatch.setattr(decider, "make_decision_maker", spy)
     monkeypatch.delenv("SD_CLOUD_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "brain.toml").write_text("[llm]\nmax_tokens = 2048\n", encoding="utf-8")
+    toml = "[llm]\nmax_tokens = 2048\ncontext_tokens = 12000\n"
+    (tmp_path / "brain.toml").write_text(toml, encoding="utf-8")
     args = ["eval", "--backend", "sim", "--flights", "1", "--seed", "7", "--config", "brain.toml"]
     assert main([*args, "--report-dir", "reports"]) == 0
-    assert [s.max_tokens if s else None for s in seen] == [2048]
+    assert [(c.max_tokens, c.context_tokens) if c else None for c in seen] == [(2048, 12000)]
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [None, LlmConfig(max_tokens=2048, context_tokens=12000, prompt_budget_tokens=5000)],
+)
+def test_the_drills_commander_is_a_flights(llm: LlmConfig | None) -> None:
+    """Sampling, prompt budget and context window of [llm]: every prompt the builder
+    allows still reaches the model with room for the answer, as in a flight."""
+    want = llm or LlmConfig()
+    cmd = cloud_commander(_CloudLike([], habit="silent"), BehaviourConfig(), llm=llm)
+    assert cmd.sampling == llm_sampling(want)
+    assert (cmd.context_tokens, cmd.context.budget) == (
+        want.context_tokens,
+        want.prompt_budget_tokens,
+    )
+    assert cmd.context.budget + cmd.sampling.max_tokens <= cmd.context_tokens
 
 
 # --- candidates and the turn cap --------------------------------------------------------

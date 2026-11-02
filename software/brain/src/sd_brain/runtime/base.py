@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Literal, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict
+
+if TYPE_CHECKING:
+    from sd_brain.config import LlmConfig
 
 __all__ = [
     "ModelError",
@@ -16,6 +20,7 @@ __all__ = [
     "NotConfiguredError",
     "RawToolCall",
     "Sampling",
+    "llm_sampling",
     "openai_chat",
 ]
 
@@ -43,6 +48,13 @@ class Sampling(BaseModel):
     top_p: float = 0.8
     max_tokens: int = 512
     seed: int | None = None
+
+
+def llm_sampling(llm: LlmConfig) -> Sampling:
+    """The sampling of ``[llm]``: what a flight sends, so a drill or evaluation sends it too."""
+    return Sampling(
+        temperature=llm.temperature, top_p=llm.top_p, max_tokens=llm.max_tokens, seed=llm.seed
+    )
 
 
 class RawToolCall(BaseModel):
@@ -87,23 +99,24 @@ class ModelRuntime(Protocol):
 def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
     """An OpenAI ``chat/completions`` response body as a :class:`ModelReply`."""
     try:
-        choice = data["choices"][0]
-        msg = choice.get("message") or {}
-        calls = [
-            RawToolCall(
-                id=str(c.get("id") or f"call_{i}"),
-                name=str(c["function"]["name"]),
-                arguments_json=(
-                    c["function"].get("arguments")
-                    if isinstance(c["function"].get("arguments"), str)
-                    else _dumps(c["function"].get("arguments") or {})
-                ),
+        data = _mapping(data)
+        choice = _mapping(data["choices"][0])
+        msg = _mapping(choice.get("message"))
+        calls = []
+        for i, raw in enumerate(msg.get("tool_calls") or []):
+            c = _mapping(raw)
+            fn = _mapping(c["function"])
+            args = fn.get("arguments")
+            calls.append(
+                RawToolCall(
+                    id=str(c.get("id") or f"call_{i}"),
+                    name=str(fn["name"]),
+                    arguments_json=args if isinstance(args, str) else _dumps(args or {}),
+                )
             )
-            for i, c in enumerate(msg.get("tool_calls") or [])
-        ]
-        usage = data.get("usage") or {}
+        usage = _mapping(data.get("usage"))
         cost = usage.get("cost")
-        details = usage.get("completion_tokens_details") or {}
+        details = _mapping(usage.get("completion_tokens_details"))
         return ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
@@ -119,6 +132,16 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
         err = ModelError(f"unexpected answer from the model server: {type(exc).__name__}")
         err.kind = "parse_error"
         raise err from None
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    """An object of the answer; empty when left out, a TypeError (a parse error) when it
+    is something else."""
+    if not value:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError("not an object")
+    return value  # type: ignore[return-value]
 
 
 def _dumps(value: Any) -> str:

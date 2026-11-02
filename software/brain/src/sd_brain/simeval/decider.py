@@ -19,9 +19,9 @@ from typing import Any, Literal
 
 from sd_brain.backends.base import ToolExecutor
 from sd_brain.backends.llm import LlmCommander
-from sd_brain.config import BehaviourConfig
+from sd_brain.config import BehaviourConfig, LlmConfig
 from sd_brain.context import ContextBuilder
-from sd_brain.runtime.base import ModelRuntime, Sampling
+from sd_brain.runtime.base import ModelRuntime, llm_sampling
 from sd_brain.simeval.budget import MeteredRuntime
 from sd_brain.state_view import motion_block
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
@@ -153,16 +153,14 @@ def make_decision_maker(
     behaviour: BehaviourConfig,
     *,
     reg: SkillRegistry = SKILL_REGISTRY,
-    sampling: Sampling | None = None,
+    llm: LlmConfig | None = None,
 ) -> DecisionMaker:
     """A decision maker for one flight. No key, or a key refused before, gives the script."""
     if meter is None or meter.key_invalid:
         return DecisionMaker(None, None, reg=reg)
     if not meter.can_afford():
         return DecisionMaker(None, None, reg=reg, no_cloud_reason="budget")
-    return DecisionMaker(
-        cloud_commander(meter, behaviour, reg=reg, sampling=sampling), meter, reg=reg
-    )
+    return DecisionMaker(cloud_commander(meter, behaviour, reg=reg, llm=llm), meter, reg=reg)
 
 
 def cloud_commander(
@@ -170,9 +168,14 @@ def cloud_commander(
     behaviour: BehaviourConfig,
     *,
     reg: SkillRegistry = SKILL_REGISTRY,
-    sampling: Sampling | None = None,
+    llm: LlmConfig | None = None,
 ) -> LlmCommander:
-    """The model side of an exam: the same context and sampling in a live run and a replay."""
-    ctx = ContextBuilder(reg, takeoff_policy=behaviour.takeoff_policy, prompt_budget_tokens=6000)
-    smp = sampling or Sampling(temperature=0.2, top_p=0.8, max_tokens=512)
-    return LlmCommander(runtime, ctx, reg, behaviour, smp)
+    """The model side of an exam: the context, sampling and context window of ``[llm]``
+    (its defaults without one), as in a flight, in a live run and a replay alike."""
+    llm = llm or LlmConfig()
+    ctx = ContextBuilder(
+        reg, takeoff_policy=behaviour.takeoff_policy, prompt_budget_tokens=llm.prompt_budget_tokens
+    )
+    return LlmCommander(
+        runtime, ctx, reg, behaviour, llm_sampling(llm), context_tokens=llm.context_tokens
+    )

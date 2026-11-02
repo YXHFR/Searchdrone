@@ -86,6 +86,38 @@ async def test_cloud_openrouter_call() -> None:
     assert '"seed"' not in seen[0].read().decode()
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"choices": [{"message": "text"}]},
+        {"choices": ["text"]},
+        {"choices": [{"message": {"tool_calls": ["x"]}}]},
+        {"choices": [{"message": {"tool_calls": [{"function": "x"}]}}]},
+        {"choices": [{"message": {"content": "ok"}}], "usage": ["x"]},
+        {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"completion_tokens": 9, "completion_tokens_details": "many"},
+        },
+        ["not", "an", "object"],
+    ],
+)
+async def test_an_answer_of_the_wrong_shape_is_a_parse_error(bad: Any) -> None:
+    with pytest.raises(ModelError) as exc:
+        parse_reply(bad, latency_ms=1)
+    assert exc.value.kind == "parse_error"
+    # ... so the fallback model answers, as after any broken answer.
+    asked: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        model = json.loads(req.read())["model"]
+        asked.append(model)
+        return httpx.Response(200, json=bad if len(asked) == 1 else chat_reply("spare"))
+
+    rt = _cloud(handler, model="main/m", fallback_model="spare/m")
+    assert (await rt.chat(MSG, [], 5, Sampling())).content == "spare"
+    assert asked == ["main/m", "spare/m"]
+
+
 async def test_cloud_logs_the_tokens_of_each_call(caplog: pytest.LogCaptureFixture) -> None:
     body = chat_reply("hemligt svar")
     body["usage"] = {
@@ -102,7 +134,7 @@ async def test_cloud_logs_the_tokens_of_each_call(caplog: pytest.LogCaptureFixtu
         await rt.chat(MSG, [], 5, Sampling(max_tokens=512))
     [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("cloud_call")]
     assert "completion_tokens=512 reasoning_tokens=470 max_tokens=512" in line
-    assert "prompt_tokens=900" in line and "finish=stop" in line
+    assert "prompt_tokens=900" in line and "finish='stop'" in line
     assert KEY not in line and "hemligt" not in line and "hej" not in line
 
 
