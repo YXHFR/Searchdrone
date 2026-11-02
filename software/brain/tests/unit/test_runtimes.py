@@ -441,6 +441,23 @@ def test_counts_no_real_call_has_are_no_valid_usage(message: Any, usage: Any) ->
     assert (reply.prompt_tokens, reply.completion_tokens, reply.cost_usd) == (0, 0, None)
 
 
+@pytest.mark.parametrize(
+    ("usage", "problem"),
+    [
+        (None, "absent"),
+        ({"prompt_tokens": 9}, "absent"),
+        ({"prompt_tokens": 9, "completion_tokens": "many"}, "malformed"),
+        ("", "malformed"),
+        ({"prompt_tokens": 0, "completion_tokens": 3}, "implausible"),
+        ({"prompt_tokens": 9, "completion_tokens": 3}, None),
+    ],
+)
+def test_the_reply_says_why_its_usage_is_not_valid(usage: Any, problem: str | None) -> None:
+    data = {"choices": [{"message": {"content": "ok"}}], "usage": usage}
+    reply = parse_reply(data, latency_ms=1)
+    assert (reply.usage_valid, reply.usage_problem) == (problem is None, problem)
+
+
 def test_an_empty_answer_may_cost_no_completion_tokens() -> None:
     usage = {"prompt_tokens": 9, "completion_tokens": 0}
     reply = parse_reply({"choices": [{"message": {"content": " "}}], "usage": usage}, latency_ms=1)

@@ -174,6 +174,22 @@ async def test_malformed_usage_is_booked_at_the_estimate(usage: object) -> None:
     assert done.cost_usd is None and books.released == []
 
 
+@pytest.mark.parametrize(
+    ("usage", "reason"),
+    [(None, "absent"), ({"prompt_tokens": 9}, "absent"), ({"prompt_tokens": -1}, "malformed")],
+)
+async def test_the_warning_says_why_the_usage_is_not_valid(
+    usage: object, reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    def ok(_r: httpx.Request) -> httpx.Response:
+        body = chat_reply("svar")
+        body["usage"] = usage
+        return httpx.Response(200, json=body)
+
+    await _rt(ok, Books()).chat(MSG, [], 5, Sampling())
+    assert f"cloud_usage_invalid model='test-model' reason={reason}" in caplog.text
+
+
 async def test_a_denied_main_model_never_tries_the_fallback() -> None:
     calls: list[httpx.Request] = []
     books = Books(grant=False)

@@ -140,7 +140,9 @@ class CloudModelRuntime:
             sampling.max_tokens,
         )
         if not reply.usage_valid:
-            log.warning("cloud_usage_malformed model=%r", reply.model_id)
+            log.warning(
+                "cloud_usage_invalid model=%r reason=%s", reply.model_id, reply.usage_problem
+            )
         if reservation is not None and self.budget is not None:
             rid, est_prompt, est_completion = reservation
             if reply.usage_valid:

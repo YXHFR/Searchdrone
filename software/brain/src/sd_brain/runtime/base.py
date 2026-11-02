@@ -65,6 +65,11 @@ class RawToolCall(BaseModel):
     arguments_json: str
 
 
+# Why a reply's usage is not valid: left out (no usage, or a count missing), malformed
+# (a part that is no object or no count), or counts no real call has.
+UsageProblem = Literal["absent", "malformed", "implausible"]
+
+
 class ModelReply(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: str | None
@@ -78,9 +83,11 @@ class ModelReply(BaseModel):
     model_id: str | None = None
     cost_usd: float | None = None  # the provider's own price for the call (OpenRouter usage)
     cost_sek: float | None = None  # what the ground's cloud budget booked for the call
-    # False when the answer's usage was malformed: its counts read 0 and the cloud
-    # budget books the call at its estimate, so a broken count never makes a call free.
+    # False when the answer's usage was left out, malformed or implausible (``usage_problem``
+    # says which): its counts read 0 and the cloud budget books the call at its estimate,
+    # so a broken count never makes a call free.
     usage_valid: bool = True
+    usage_problem: UsageProblem | None = None
 
 
 class ModelRuntime(Protocol):
@@ -118,7 +125,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
                     arguments_json=args if isinstance(args, str) else _dumps(args or {}),
                 )
             )
-        prompt_tokens, completion_tokens, reasoning_tokens, cost_usd, usage_valid = _usage(
+        prompt_tokens, completion_tokens, reasoning_tokens, cost_usd, problem = _usage(
             data.get("usage")
         )
         reply = ModelReply(
@@ -131,10 +138,11 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             latency_ms=latency_ms,
             model_id=data.get("model"),
             cost_usd=cost_usd,
-            usage_valid=usage_valid,
+            usage_valid=problem is None,
+            usage_problem=problem,
         )
         if reply.usage_valid and _implausible(reply):
-            reply = reply.model_copy(update=_NO_USAGE)
+            reply = reply.model_copy(update=_NO_USAGE | {"usage_problem": "implausible"})
         return reply
     # Backstops for what no check above foresaw: ArithmeticError (an OverflowError) and
     # RecursionError (arguments nested too deep for _dumps or str).
@@ -156,33 +164,33 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
 MAX_TOKEN_COUNT = 10_000_000
 
 
-def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
-    """The token counts and price of a call: (prompt, completion, reasoning, cost, valid).
+def _usage(value: Any) -> tuple[int, int, int, float | None, UsageProblem | None]:
+    """The token counts and price of a call: (prompt, completion, reasoning, cost, problem).
 
     Usage is metadata only. A malformed part (also a count that is no finite whole
-    number from 0 to ``MAX_TOKEN_COUNT``) keeps the answer: its counts read 0 and
-    ``valid`` is False, so the cloud budget books the call at its estimate. A broken
+    number from 0 to ``MAX_TOKEN_COUNT``) keeps the answer: its counts read 0 and the
+    problem is "malformed", so the cloud budget books the call at its estimate. A broken
     count must neither make a good answer a parse error (a second, paid call to the
     fallback model) nor book the call as free. Usage left out, or without its prompt or
-    completion count, is not valid either and reads 0 the same way: a provider that
+    completion count, is "absent" and reads 0 the same way: a provider that
     states nothing is booked at the estimate, not as free. Only the reasoning share and
     the price may be left out.
     """
     if value is None:
-        return 0, 0, 0, None, False
+        return 0, 0, 0, None, "absent"
     if not isinstance(value, Mapping):
-        return 0, 0, 0, None, False
+        return 0, 0, 0, None, "malformed"
     details = value.get("completion_tokens_details")
     if details is not None and not isinstance(details, Mapping):
-        return 0, 0, 0, None, False
+        return 0, 0, 0, None, "malformed"
     prompt = _count(value.get("prompt_tokens"))
     completion = _count(value.get("completion_tokens"))
     reasoning = _count((details or {}).get("reasoning_tokens"))
     if prompt is None or completion is None or reasoning is None:
-        return 0, 0, 0, None, False
+        return 0, 0, 0, None, "malformed"
     if value.get("prompt_tokens") is None or value.get("completion_tokens") is None:
-        return 0, 0, 0, None, False
-    return prompt, completion, reasoning, _price(value.get("cost")), True
+        return 0, 0, 0, None, "absent"
+    return prompt, completion, reasoning, _price(value.get("cost")), None
 
 
 # Invalid usage as the reply states it: no counts, no price (as malformed usage reads).

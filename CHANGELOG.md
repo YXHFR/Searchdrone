@@ -271,7 +271,8 @@ All notable changes to this project are listed here. The format follows
   logged (`backend_decide_failed`) and counts as an answer that could not be read: no
   single model answer can end the brain. Counts no real call has (no prompt tokens, or
   no completion tokens next to an answer) are no valid usage either; all invalid usage
-  reads 0 tokens. A failed cloud call that may have been billed (a timeout, a broken
+  reads 0 tokens, and its warning (`cloud_usage_invalid`) gives the reason: `absent`,
+  `malformed` or `implausible`. A failed cloud call that may have been billed (a timeout, a broken
   answer, a cancel) is booked at its whole reservation, no longer at the prompt alone,
   and the eval ledger now charges such calls too and prices images in its estimate as
   the ground does (400 tokens per crop).
