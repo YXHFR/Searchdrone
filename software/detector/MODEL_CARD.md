@@ -28,10 +28,13 @@ one class: person.
 
 ## Training
 
-- **Data.** The `train` part of the image bank's locked split (`tools/bench/splits/v2.json`),
-  from every set whose licence allows training and is confirmed (today: HERIDAL,
+- **Data.** The `train` part of the image bank's locked split (`tools/bench/splits/v3.json`),
+  from every set whose licence allows training and is confirmed (by default HERIDAL,
   CC BY 3.0, and KIOS, CC BY 4.0), mixed. The split is by site: no site has pictures in
-  two parts.
+  two parts. Two training-only sets can be added with `sets=`: KIOS car/person (a
+  parking lot, CC BY 4.0, every tenth video frame) and SeaDronesSee (swimmers in open
+  water, CC0 1.0). They are never measured on: a model trained with them is judged on
+  HERIDAL's and KIOS's land test part like any other.
   - Each picture is cut into 640 px tiles with 15 % overlap.
   - A person is kept in a tile when at least half of their box is in it.
   - Every tile with a person is kept, plus a quarter of the empty tiles.
@@ -102,6 +105,8 @@ targets, to be revisited after the first measurement, are recall ≥ 0.85 over 3
 | DAMO-YOLO code and weights | Apache-2.0 | Xu, Jiang, Chen, Huang, Zhang and Sun, "DAMO-YOLO: A Report on Real-Time Object Detection Design", Alibaba Group |
 | HERIDAL | CC BY 3.0 | Božić-Štulić, Marušić and Gotovac, IJCV 2019, University of Split (FESB) |
 | KIOS Small Object Aerial Person Detection | CC BY 4.0 | Makrigiorgis, Kyrkou and Kolios, KIOS CoE, University of Cyprus, Zenodo record 7740081 (2023) |
+| KIOS Aerial Dataset for Car and Person Detection (training only, when `sets=` names it) | CC BY 4.0 | Vasileiadis, Savva and Kyrkou, KIOS CoE, University of Cyprus, Zenodo record 21216709 (2026) |
+| SeaDronesSee Object Detection v2 (training only, when `sets=` names it) | CC0 1.0 | Varga, Kiefer, Messmer and Zell, "SeaDronesSee: A Maritime Benchmark for Detecting Humans in Open Water", WACV 2022, University of Tübingen |
 | WiSARD (measuring only) | MIT for the software; the data licence is not confirmed | Broyles, Hayner and Leung, IROS 2022, University of Washington |
 | COCO, which the starting weights were trained on | CC BY 4.0 (annotations) | Lin et al., "Microsoft COCO", ECCV 2014 |
 

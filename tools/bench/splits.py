@@ -13,8 +13,10 @@ is measured again.
 order fixed by a SHA-256 of the seed and the name, each to the part furthest below its
 target share of pictures (70/10/20). ``v2`` adds KIOS: it keeps every dataset of ``v1``
 exactly as it was (``extend_split_file``; so HERIDAL's test part, and every number
-measured on it, stays comparable) and draws only the new one. A dataset's own ``seed``
-says how it was drawn.
+measured on it, stays comparable) and draws only the new one. ``v3`` adds the two
+training-only sets (KIOS car/person, SeaDronesSee) the same way, with no test part
+(``RATIOS_TRAIN_ONLY``: they are never measured on). A dataset's own ``seed`` (and
+``ratios``, where not ``RATIOS``) says how it was drawn.
 
 ``splits/mini_v1.json`` (schema ``bench.mini/v1``) is the small, fixed test set for the
 nightly CPU run: picture and label members with their SHA-256, read straight out of the
@@ -34,12 +36,15 @@ from typing import Literal
 from bench.common import BENCH, BenchError
 
 SPLITS = BENCH / "splits"
-CURRENT = "v2"
+CURRENT = "v3"
 SPLIT_SCHEMA = "bench.split/v1"
 MINI_SCHEMA = "bench.mini/v1"
 Part = Literal["train", "val", "test"]
 PARTS: tuple[Part, ...] = ("train", "val", "test")
 RATIOS: dict[Part, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
+# A set that is trained on but never measured on has no test part: its val part helps
+# pick the best epoch, and the rest is trained on.
+RATIOS_TRAIN_ONLY: dict[Part, float] = {"train": 0.9, "val": 0.1, "test": 0.0}
 
 
 @dataclass(frozen=True)
@@ -96,19 +101,25 @@ def make_split(
 
 
 def build_split_file(
-    version: str, seed: str, listing: Mapping[str, Mapping[str, list[str]]]
+    version: str,
+    seed: str,
+    listing: Mapping[str, Mapping[str, list[str]]],
+    ratios: Mapping[str, Mapping[Part, float]] | None = None,
 ) -> dict[str, object]:
-    """The body of ``splits/<version>.json`` from dataset -> sequence -> image ids."""
+    """The body of ``splits/<version>.json`` from dataset -> sequence -> image ids.
+    ``ratios``: the shares of a dataset drawn to other shares than ``RATIOS`` (saved in
+    its entry)."""
     datasets: dict[str, object] = {}
     for name in sorted(listing):
         seqs = listing[name]
-        parts = make_split(seqs, f"{seed}/{name}")
-        datasets[name] = {
-            "sequences": {
-                s: {"part": parts[s], "images": len(seqs[s]), "ids_sha256": ids_digest(seqs[s])}
-                for s in sorted(seqs)
-            },
+        own = (ratios or {}).get(name)
+        parts = make_split(seqs, f"{seed}/{name}", own or RATIOS)
+        entry: dict[str, object] = {"ratios": dict(own)} if own else {}
+        entry["sequences"] = {
+            s: {"part": parts[s], "images": len(seqs[s]), "ids_sha256": ids_digest(seqs[s])}
+            for s in sorted(seqs)
         }
+        datasets[name] = entry
     return {
         "schema": SPLIT_SCHEMA,
         "version": version,
@@ -124,6 +135,7 @@ def extend_split_file(
     seed: str,
     base: Mapping[str, object],
     listing: Mapping[str, Mapping[str, list[str]]],
+    ratios: Mapping[str, Mapping[Part, float]] | None = None,
 ) -> dict[str, object]:
     """A new split version: every dataset of ``base`` (a published split file) as it
     was, plus ``listing``'s datasets drawn afresh. A dataset already in ``base`` is never
@@ -138,7 +150,7 @@ def extend_split_file(
         entry = dict(old[name])
         entry.setdefault("seed", f"{base['seed']}/{name}")
         datasets[name] = entry
-    added = build_split_file(version, seed, listing)["datasets"]
+    added = build_split_file(version, seed, listing, ratios)["datasets"]
     assert isinstance(added, dict)  # noqa: S101 - built just above
     for name in sorted(added):
         datasets[name] = {"seed": f"{seed}/{name}", **added[name]}

@@ -10,6 +10,7 @@ import io
 import json
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -18,7 +19,7 @@ from typing import Any
 import pytest
 from bench import common, fetch
 from bench.common import BenchError, RangeFile, download, safe_relpath
-from bench.datasets import load_register, read_index
+from bench.datasets import Archive, load_register, read_index
 from bench.splits import Split, ids_digest
 from PIL import Image as PILImage
 
@@ -114,16 +115,25 @@ def test_nothing_is_fetched_without_yes(
     assert "CC-BY-3.0" in out
 
 
-def test_by_default_only_pinned_archives_are_fetched(
+def test_by_default_only_pinned_measured_archives_are_fetched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fetched: list[str] = []
     monkeypatch.setattr(fetch, "fetch_archive", lambda ds, data, keep: fetched.append(ds.name))
     assert fetch.main(["yes=1", f"data={tmp_path}"]) == 0
     register = load_register()
-    assert fetched == [n for n, ds in register.items() if ds.url and fetch.pinned(ds)]
+    assert fetched == [
+        n for n, ds in register.items() if ds.url and fetch.pinned(ds) and "measure" in ds.use
+    ]
     assert "wisard" not in fetched  # its SHA-256 is not pinned yet
-    assert "wisard hoppas över" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "wisard hoppas över" in out
+    # the training-only sets (tens of GB) come only when named
+    assert "kios_carperson" not in fetched and "seadronessee" not in fetched
+    assert "hämtas med sets=: kios_carperson, seadronessee" in out
+    fetched.clear()
+    assert fetch.main(["yes=1", f"data={tmp_path}", "sets=kios_carperson,seadronessee"]) == 0
+    assert fetched == ["kios_carperson", "seadronessee"]
 
 
 def test_unknown_key_or_set_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
@@ -750,3 +760,234 @@ def test_a_set_is_pinned_only_with_its_labels_archive() -> None:
     assert fetch.pinned(ds)
     assert not fetch.pinned(dataclasses.replace(ds, labels_sha256="PENDING"))
     assert not fetch.pinned(dataclasses.replace(ds, sha256="PENDING"))
+
+
+# --- a set in several archives of zips (KIOS car/person) ---------------------------------
+
+_KCP_VIDEOS = {
+    "40m-random-walking": "DJI_20250326112630_0006_D",
+    "60m-random-walking": "DJI_20250326112218_0001_D",
+}
+
+
+def _zip(files: dict[str, bytes]) -> bytes:
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, body in files.items():
+            zf.writestr(name, body)
+    return out.getvalue()
+
+
+def _kcp_zips() -> tuple[list[bytes], bytes]:
+    """One picture archive per flight, each a zip per video; the labels apart."""
+    archives = []
+    for flight, video in _KCP_VIDEOS.items():
+        inner = _zip({f"{video}/frame_{n:06d}.jpg": _jpeg(200, 100) for n in (0, 5, 10)})
+        archives.append(_zip({f"{flight}/": b"", f"{flight}/{video}.zip": inner}))
+    labels = {"YOLO/obj.names": b"Human\nCar\n"}
+    for video in _KCP_VIDEOS.values():
+        for n in (0, 5, 10):
+            labels[f"YOLO/{video[-4:-2]}D/frame_{n:06d}.txt"] = (
+                b"0 0.5 0.5 0.1 0.2\n1 0.1 0.1 0.2 0.2\n"
+            )
+    return archives, _zip(labels)
+
+
+def _kcp_row(archives: list[bytes], labels: bytes) -> Any:
+    first, *rest = archives
+    return dataclasses.replace(
+        load_register()["kios_carperson"],
+        url="https://example.test/a0.zip",
+        size_bytes=len(first),
+        sha256=_sha(first),
+        more_archives=tuple(
+            Archive(f"https://example.test/a{n}.zip", len(body), _sha(body))
+            for n, body in enumerate(rest, 1)
+        ),
+        labels_url="https://example.test/YOLO.zip",
+        labels_size_bytes=len(labels),
+        labels_sha256=_sha(labels),
+    )
+
+
+def test_fetch_opens_the_zips_inside_every_archive_and_keeps_every_tenth_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archives, labels = _kcp_zips()
+    ds = _kcp_row(archives, labels)
+    files = {f"https://example.test/a{n}.zip": body for n, body in enumerate(archives)}
+    server = TwoFiles({**files, "https://example.test/YOLO.zip": labels})
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))
+    assert fetch.fetch_archive(ds, tmp_path, keep=False) == 0
+    images = {i.image_id: i for i in read_index(tmp_path, "kios_carperson")}
+    assert set(images) == {
+        f"kios_carperson:{v}/frame_{n:06d}" for v in _KCP_VIDEOS.values() for n in (0, 10)
+    }
+    one = images["kios_carperson:DJI_20250326112630_0006_D/frame_000010"]
+    assert (one.seq, one.width, one.height) == ("DJI_20250326112630_0006_D", 200, 100)
+    assert one.boxes == ((90.0, 40.0, 110.0, 60.0),)  # the person, not the car
+    folder = tmp_path / "datasets" / "kios_carperson"
+    assert not list(folder.glob("*.zip")) and not (folder / "nested").exists()
+    raw = folder / "raw" / "40m-random-walking" / _KCP_VIDEOS["40m-random-walking"]
+    assert sorted(p.name for p in raw.rglob("*.jpg")) == ["frame_000000.jpg", "frame_000010.jpg"]
+
+
+def test_a_set_is_pinned_only_with_all_its_archives() -> None:
+    ds = _kcp_row(*_kcp_zips())
+    assert fetch.pinned(ds)
+    wrong = dataclasses.replace(ds.more_archives[0], sha256="PENDING")
+    assert not fetch.pinned(dataclasses.replace(ds, more_archives=(wrong,)))
+
+
+def test_a_wrong_second_archive_unpacks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archives, labels = _kcp_zips()
+    ds = _kcp_row(archives, labels)
+    bad = dataclasses.replace(ds.more_archives[0], sha256="3" * 64)
+    ds = dataclasses.replace(ds, more_archives=(bad,))
+    files = {f"https://example.test/a{n}.zip": body for n, body in enumerate(archives)}
+    server = TwoFiles({**files, "https://example.test/YOLO.zip": labels})
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))
+    with pytest.raises(BenchError, match="Kontrollsumman"):
+        fetch.fetch_archive(ds, tmp_path, keep=False)
+    assert not (tmp_path / "datasets" / "kios_carperson" / "raw").exists()
+
+
+# --- a set of loose files on a WebDAV share (SeaDronesSee) -------------------------------
+
+SHARE = "https://example.test/s/TOKEN/Compressed%20Version/"
+SHARE_PATH = "/s/TOKEN/Compressed Version/"
+
+
+def _sds_share() -> dict[str, bytes]:
+    def coco(images: list[tuple[int, str, str]], boxes: list[tuple[int, list[int]]]) -> bytes:
+        return json.dumps(
+            {
+                "categories": [{"id": 1, "name": "swimmer"}, {"id": 2, "name": "boat"}],
+                "images": [
+                    {"id": i, "file_name": f, "source": {"folder_name": v}} for i, f, v in images
+                ],
+                "annotations": [{"image_id": i, "category_id": 1, "bbox": b} for i, b in boxes],
+            }
+        ).encode()
+
+    return {
+        "annotations/instances_train.json": coco([(1, "1.jpg", "DJI_0032")], [(1, [8, 4, 10, 20])]),
+        "annotations/instances_val.json": coco([(2, "2.jpg", "DJI_0063")], []),
+        "images/train/1.jpg": _jpeg(64, 48),
+        "images/val/2.jpg": _jpeg(64, 48),
+    }
+
+
+class Share:
+    """A WebDAV share: PROPFIND lists a folder one level down, GET serves a file."""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+        self.servers = {SHARE + urllib.parse.quote(k): FakeServer(v) for k, v in files.items()}
+
+    def propfind(self, url: str) -> list[tuple[str, int | None]]:
+        folder = urllib.parse.unquote(url).removeprefix(urllib.parse.unquote(SHARE))
+        out: list[tuple[str, int | None]] = [(SHARE_PATH + folder, None)]
+        subs = set()
+        for rel, body in self.files.items():
+            if not rel.startswith(folder):
+                continue
+            rest = rel[len(folder) :]
+            if "/" in rest:
+                subs.add(folder + rest.split("/")[0] + "/")
+            else:
+                out.append((SHARE_PATH + rel, len(body)))
+        return out + [(SHARE_PATH + s, None) for s in sorted(subs)]
+
+    def __call__(self, req: urllib.request.Request) -> FakeResponse:
+        return self.servers[req.full_url](req)
+
+
+def _share_digest(files: dict[str, bytes]) -> str:
+    lines = "".join(f"{_sha(files[k])}  {k}\n" for k in sorted(files))
+    return _sha(lines.encode())
+
+
+def _sds_row(files: dict[str, bytes], **kw: Any) -> Any:
+    row = dataclasses.replace(
+        load_register()["seadronessee"],
+        url=SHARE,
+        share_folders=("annotations", "images/train", "images/val"),
+        share_files=len(files),
+        size_bytes=sum(len(b) for b in files.values()),
+        sha256=_share_digest(files),
+    )
+    return dataclasses.replace(row, **kw)
+
+
+def _serve_share(monkeypatch: pytest.MonkeyPatch, files: dict[str, bytes]) -> Share:
+    share = Share(files)
+    monkeypatch.setattr(fetch, "propfind", share.propfind)
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=share))
+    return share
+
+
+def test_fetch_downloads_a_share_file_by_file_and_indexes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = _sds_share()
+    _serve_share(monkeypatch, {**files, "images/test/3.jpg": _jpeg()})  # test: not fetched
+    ds = _sds_row(files)
+    assert fetch.fetch_archive(ds, tmp_path, keep=False) == 0
+    images = {i.image_id: i for i in read_index(tmp_path, "seadronessee")}
+    assert set(images) == {"seadronessee:DJI_0032/1", "seadronessee:DJI_0063/2"}
+    one = images["seadronessee:DJI_0032/1"]
+    assert (one.seq, one.file, one.boxes) == ("DJI_0032", "images/train/1.jpg", ((8, 4, 18, 24),))
+    assert images["seadronessee:DJI_0063/2"].boxes == ()
+    assert not (tmp_path / "datasets" / "seadronessee" / "raw" / "images" / "test").exists()
+    # a second run finds it done and downloads nothing
+    monkeypatch.setattr(fetch, "propfind", lambda *a, **k: pytest.fail("listed twice"))
+    assert fetch.fetch_archive(ds, tmp_path, keep=False) == 0
+
+
+def test_a_share_with_a_wrong_checksum_is_not_indexed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = _sds_share()
+    _serve_share(monkeypatch, files)
+    with pytest.raises(BenchError, match="Kontrollsumman"):
+        fetch.fetch_archive(_sds_row(files, sha256="4" * 64), tmp_path, keep=False)
+    assert not (tmp_path / "datasets" / "seadronessee" / "index.json").exists()
+
+
+def test_a_share_that_changed_is_not_downloaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = _sds_share()
+    _serve_share(monkeypatch, {**files, "images/train/9.jpg": _jpeg()})
+    with pytest.raises(BenchError, match="har ändrats"):
+        fetch.fetch_archive(_sds_row(files), tmp_path, keep=False)
+    assert not (tmp_path / "datasets" / "seadronessee" / "raw").exists()
+
+
+def test_a_share_listing_outside_the_share_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    files = _sds_share()
+    monkeypatch.setattr(fetch, "propfind", lambda url: [("/elsewhere/a.jpg", 1)])
+    with pytest.raises(BenchError, match="utanför"):
+        fetch.share_listing(_sds_row(files))
+
+
+def test_propfind_reads_names_and_sizes_and_refuses_a_dtd() -> None:
+    body = (
+        b'<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">'
+        b"<d:response><d:href>/s/a%20b/</d:href><d:propstat><d:prop>"
+        b"<d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>"
+        b"<d:response><d:href>/s/a%20b/1.jpg</d:href><d:propstat><d:prop>"
+        b"<d:getcontentlength>12</d:getcontentlength><d:resourcetype/></d:prop></d:propstat>"
+        b"</d:response></d:multistatus>"
+    )
+    server = FakeServer(body, ranges=False, ctype="application/xml")
+    assert common.propfind("https://example.test/s/a%20b/", server) == [
+        ("/s/a b/", None),
+        ("/s/a b/1.jpg", 12),
+    ]
+    bomb = FakeServer(b'<!DOCTYPE a [<!ENTITY x "y">]><a/>', ranges=False)
+    with pytest.raises(BenchError, match="DTD"):
+        common.propfind("https://example.test/s/", bomb)

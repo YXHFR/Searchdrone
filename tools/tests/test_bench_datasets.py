@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from bench.common import BenchError
-from bench.datasets import Dataset, licence_problems, load_register
+from bench.datasets import Archive, Dataset, licence_problems, load_register
 
 
 def _row(**kw: object) -> Dataset:
@@ -53,6 +53,25 @@ def test_kios_is_open_credited_and_pinned_with_its_labels() -> None:
     assert kios.labels_size_bytes and kios.labels_sha256 and len(kios.labels_sha256) == 64
 
 
+def test_the_training_only_sets_are_open_credited_and_pinned() -> None:
+    """The owner's decision of 2026-11-01: KIOS car/person and SeaDronesSee are trained
+    on, never measured on, so the locked test part stays HERIDAL and KIOS."""
+    register = load_register()
+    kcp, sds = register["kios_carperson"], register["seadronessee"]
+    assert (kcp.licence, sds.licence) == ("CC-BY-4.0", "CC0-1.0")
+    for ds in (kcp, sds):
+        assert ds.use == ("train",) and ds.licence_confirmed and ds.publish_weights
+        assert ds.sha256 and len(ds.sha256) == 64
+    assert "Vasileiadis" in kcp.attribution and "21216709" in kcp.attribution
+    assert "Varga" in sds.attribution and "CC0" in sds.attribution
+    for url in (kcp.url, kcp.labels_url, *(a.url for a in kcp.more_archives)):
+        assert url and url.startswith("https://zenodo.org/api/records/21216709/")
+    assert len(kcp.more_archives) == 2
+    assert all(len(a.sha256) == 64 for a in kcp.more_archives)
+    assert sds.is_share and sds.url and sds.url.startswith("https://cloud.cs.uni-tuebingen.de/")
+    assert "images/test" not in sds.share_folders  # the authors keep its labels
+
+
 def test_sim_farm_is_only_for_pre_training() -> None:
     simfarm = load_register()["simfarm"]
     assert simfarm.use == ("pretrain",)
@@ -89,6 +108,14 @@ def test_sim_farm_is_only_for_pre_training() -> None:
         (_row(attribution=" "), "attribution"),
         (_row(labels_url="http://example.org/l.zip", labels_size_bytes=1), "labels_url"),
         (_row(labels_url="https://example.org/l.zip"), "labels_url"),
+        (_row(more_archives=(Archive("http://example.org/2.zip", 1, "0" * 64),)), "more_archives"),
+        (_row(more_archives=(Archive("https://example.org/2.zip", 0, "0" * 64),)), "more_archives"),
+        (_row(share_folders=("images",), share_files=1), "share"),  # url is not a folder
+        (_row(url="https://example.org/s/", share_folders=("images",)), "share"),
+        (
+            _row(url="https://example.org/s/", share_folders=("../images",), share_files=1),
+            "plain relative path",
+        ),
     ],
 )
 def test_licence_rule_refuses(row: Dataset, why: str) -> None:

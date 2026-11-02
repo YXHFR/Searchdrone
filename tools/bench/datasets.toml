@@ -11,6 +11,13 @@
 #   url, size_bytes, sha256   the archive
 #   labels_url, labels_size_bytes, labels_sha256   the labels' own archive, for a set
 #                 published as pictures and labels apart (both are checked and unpacked)
+#   more_archives  more picture archives ({url, size_bytes, sha256} each), for a set
+#                 published as several; every one is checked and unpacked
+#   share_folders, share_files   a set published as loose files on a WebDAV share, not
+#                 as an archive: url is the share's folder, share_folders the folders
+#                 fetched under it, share_files how many files they hold, size_bytes
+#                 their total and sha256 the SHA-256 of their `sha256sum` lines sorted by
+#                 path (tools/bench/README.md says how it is made)
 #   ranges        the host serves byte ranges (single files can be read without the
 #                 whole archive; the CI mini bank needs it)
 #   publish_weights  whether weights trained on it may be published (false until the
@@ -57,6 +64,51 @@ labels_sha256 = "9ea8b52d83a34dd8dee85a0b5f18a780c164482a8ea0b91ebed446e5b2ca2bf
 layout = "kios_yolo"
 use = ["train", "measure"]
 licence_confirmed = true  # the Zenodo record licenses the dataset itself
+ranges = true
+publish_weights = true
+local_only = false
+
+[[dataset]]
+name = "kios_carperson"
+title = "KIOS Aerial Dataset for Car and Person Detection (parking lot, University of Cyprus)"
+licence = "CC-BY-4.0"
+checked = "2026-11-01"
+licence_note = "Trained on only: the locked test part stays HERIDAL and KIOS. Every tenth video frame is taken."
+attribution = "Aerial Dataset for Car and Person Detection, Vasileiadis, Savva and Kyrkou, KIOS Research and Innovation Center of Excellence, University of Cyprus; Zenodo record 21216709 (doi:10.5281/zenodo.21216709), CC BY 4.0"
+source_page = "https://zenodo.org/records/21216709"
+url = "https://zenodo.org/api/records/21216709/files/40m-random-walking.zip/content"
+size_bytes = 4075202145
+sha256 = "497da23658c4cd14f5f927d0bf494a2f8b960a3a056529bad8018e9197060a23"
+more_archives = [
+  { url = "https://zenodo.org/api/records/21216709/files/60m-random-walking.zip/content", size_bytes = 3822722122, sha256 = "69d2f1a6997276f94197faa5b425d37d227a4938a1faaef7a5b7249f351374dd" },
+  { url = "https://zenodo.org/api/records/21216709/files/60m-crowd-moving-forward.zip/content", size_bytes = 3596615038, sha256 = "c28d9cc01d41adb4d9023147b7e552b0493c91fe4afa1e0d15e22ac76bedb97f" },
+]
+labels_url = "https://zenodo.org/api/records/21216709/files/YOLO.zip/content"
+labels_size_bytes = 21653986
+labels_sha256 = "99fff0f5ff6103c6a7857dd46701efb7ec62422f68970a42aabd829732335bfc"
+layout = "kios_carperson"
+use = ["train"]
+licence_confirmed = true  # the Zenodo record licenses the dataset itself
+ranges = true
+publish_weights = true
+local_only = false
+
+[[dataset]]
+name = "seadronessee"
+title = "SeaDronesSee Object Detection v2, JPEG version (swimmers in open water, University of Tübingen)"
+licence = "CC0-1.0"
+checked = "2026-11-01"
+licence_note = "Trained on only: the locked test part stays HERIDAL and KIOS. People in water only (the class swimmer); the authors' test part has no labels and is not fetched."
+attribution = "SeaDronesSee, Varga, Kiefer, Messmer and Zell, \"SeaDronesSee: A Maritime Benchmark for Detecting Humans in Open Water\", WACV 2022, University of Tübingen; Object Detection v2, CC0 1.0 (github.com/Ben93kie/SeaDronesSee)"
+source_page = "https://seadronessee.cs.uni-tuebingen.de/dataset"
+url = "https://cloud.cs.uni-tuebingen.de/public.php/dav/files/ZZxX65FGnQ8zjBP/Compressed%20Version/"
+share_folders = ["annotations", "images/train", "images/val"]
+share_files = 10479
+size_bytes = 7421885254
+sha256 = "bc63f218bb8d50ba407a41b3a40d67076c34c756d3b48aeeeb52b4396d7e493d"
+layout = "seadronessee_coco"
+use = ["train"]
+licence_confirmed = true  # the authors' README licenses the dataset itself
 ranges = true
 publish_weights = true
 local_only = false

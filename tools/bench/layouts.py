@@ -22,6 +22,20 @@ in one part, so no near-copy of a test picture is ever trained on.
   the exercise are one sequence. Every KIOS picture shows people, so a picture without
   its YOLO file, of a recording with no site, or with a name of another form refuses
   the whole set.
+* ``kios_carperson``: KIOS's parking-lot flights (Zenodo 21216709). Three picture
+  archives hold one zip per video (``<flight>/DJI_<time>_<NNNN>_D.zip``, opened as
+  nested zips: ``<flight>/DJI_<time>_<NNNN>_D/DJI_<time>_<NNNN>_D/frame_<n>.jpg``); the
+  labels are ``YOLO/<NN>D/frame_<n>.txt`` (class 0 = Human, 1 = Car; only Human is read).
+  Neighbouring frames of a video are near-copies, so only every tenth frame is taken
+  (``KIOS_CARPERSON_STEP``). The id is ``<video>/frame_<n>``, the sequence the video:
+  a whole video is in one part. A frame without its label file refuses the set.
+* ``seadronessee_coco``: SeaDronesSee Object Detection v2 (``images/<part>/<n>.jpg``
+  with ``annotations/instances_<part>.json``, COCO). The labels are one file for all
+  pictures, so this layout reads them (``Layout.find`` with a reader). Only the class
+  ``swimmer`` is a person; boats, jet skis, buoys and life-saving appliances are left
+  out, and a picture with none of them is an empty picture (water, no person). The
+  authors' own train and val parts hold frames of the same videos, so they are pooled:
+  the id is ``<video>/<n>`` and the sequence the video (``source.folder_name``).
 * ``simfarm``: the sim farm's rounds (``<round>/images/<stem>.png`` with
   ``<round>/labels/<stem>.txt``, YOLO class 0). The id is ``<round>/<stem>``, the
   sequence the round. Only for pre-training, never measured on.
@@ -31,6 +45,7 @@ Boxes are ``(x0, y0, x1, y1)`` in picture pixels; there is one class, person.
 
 from __future__ import annotations
 
+import json
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -47,12 +62,18 @@ MAX_BOXES = 500
 
 @dataclass(frozen=True)
 class Member:
-    """A picture in an archive and its label file (``None``: no label, no persons)."""
+    """A picture in an archive and its label file (``None``: no label, no persons).
+    ``boxes``: the person boxes when the layout has read them already (one label file
+    for all pictures); they are clipped to the picture when it is indexed."""
 
     image_id: str
     seq: str
     image: str
     label: str | None
+    boxes: tuple[Box, ...] | None = None
+
+
+Reader = Callable[[str], bytes]
 
 
 @dataclass
@@ -60,9 +81,23 @@ class Layout:
     name: str
     members: Callable[[list[str]], list[Member]]
     boxes: Callable[[bytes | None, int, int], list[Box]]
+    # pictures in zips inside the archive: each ``<a>.zip`` member is opened and its
+    # files are named ``<a>/<name>``
+    nested: bool = False
+    # a set whose labels are one file for all pictures: its members from the names and
+    # a reader of those label files
+    catalogue: Callable[[list[str], Reader], list[Member]] | None = None
+
+    def find(self, names: list[str], read: Reader | None = None) -> list[Member]:
+        """The members among ``names`` (``read``: reads a label file, for a catalogue)."""
+        if self.catalogue is None:
+            return self.members(names)
+        if read is None:
+            raise BenchError(f"{self.name}: etiketterna måste läsas för att hitta bilderna")
+        return self.catalogue(names, read)
 
 
-def _clip(box: Box, width: int, height: int) -> Box | None:
+def clip(box: Box, width: int, height: int) -> Box | None:
     x0, y0, x1, y1 = box
     x0, x1 = max(0.0, min(x0, x1)), min(float(width), max(x0, x1))
     y0, y1 = max(0.0, min(y0, y1)), min(float(height), max(y0, y1))
@@ -85,7 +120,7 @@ def yolo_boxes(data: bytes | None, width: int, height: int, classes: frozenset[i
         cls, cx, cy, w, h = int(parts[0]), *(float(p) for p in parts[1:])
         if cls not in classes:
             continue
-        box = _clip(
+        box = clip(
             (
                 (cx - w / 2) * width,
                 (cy - h / 2) * height,
@@ -117,7 +152,7 @@ def voc_boxes(data: bytes | None, width: int, height: int) -> list[Box]:
         if bb is None:
             continue
         vals = [float(bb.findtext(k) or "nan") for k in ("xmin", "ymin", "xmax", "ymax")]
-        box = _clip((vals[0], vals[1], vals[2], vals[3]), width, height)
+        box = clip((vals[0], vals[1], vals[2], vals[3]), width, height)
         if box:
             out.append(box)
     if len(out) > MAX_BOXES:
@@ -210,6 +245,97 @@ def _kios(names: list[str]) -> list[Member]:
     return out
 
 
+# KIOS car/person: only every tenth frame (a video's neighbouring frames are near-copies)
+KIOS_CARPERSON_STEP = 10
+_KCP_FLIGHTS = ("40m-random-walking", "60m-random-walking", "60m-crowd-moving-forward")
+_KCP_VIDEO = re.compile(r"DJI_\d{14}_(?P<n>\d{4})_D")
+_KCP_FRAME = re.compile(r"frame_(?P<n>\d{6})")
+
+
+def _kios_carperson(names: list[str]) -> list[Member]:
+    present = set(names)
+    out: list[Member] = []
+    for name in names:
+        p = PurePosixPath(name)
+        if len(p.parts) != 4 or p.parts[0] not in _KCP_FLIGHTS or p.suffix.lower() != ".jpg":
+            continue
+        video = _KCP_VIDEO.fullmatch(p.parts[1])
+        frame = _KCP_FRAME.fullmatch(p.stem)
+        if video is None or p.parts[2] != p.parts[1] or frame is None or p.suffix != ".jpg":
+            # a picture named in a way not seen before could be a video of another kind
+            raise BenchError(f"kios_carperson: {name} har ett okänt namn")
+        if int(frame["n"]) % KIOS_CARPERSON_STEP:
+            continue
+        label = f"YOLO/{video['n'][-2:]}D/{p.stem}.txt"
+        # every frame shows people; one without its labels would count as empty
+        if label not in present:
+            raise BenchError(f"kios_carperson: {name} saknar etikettfil {label}")
+        image_id = f"{p.parts[1]}/{p.stem}"
+        out.append(Member(image_id, sequence_of("kios_carperson", image_id), name, label))
+    return out
+
+
+# SeaDronesSee: the COCO class that is a person, and a video folder name safe in an id
+SDS_PERSON = "swimmer"
+_SDS_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,80}")
+_SDS_FILE = re.compile(r"\d{1,9}\.jpg")
+_SDS_LABELS = re.compile(r"annotations/instances_(?P<part>train|val)\.json")
+MAX_COCO_BYTES = 64 << 20
+
+
+def _labels_first(names: list[str]) -> list[Member]:
+    raise BenchError("seadronessee: etiketterna måste läsas för att hitta bilderna")
+
+
+def _coco(data: bytes, where: str) -> tuple[list[tuple[int, str, str]], dict[int, list[Box]]]:
+    """A SeaDronesSee COCO file: its pictures ``(id, file name, video folder)`` and the
+    person boxes ``(x0, y0, x1, y1)`` by picture id."""
+    if len(data) > MAX_COCO_BYTES:
+        raise BenchError(f"seadronessee: {where} är orimligt stor")
+    try:
+        body = json.loads(data)
+        person = {int(c["id"]) for c in body["categories"] if c["name"] == SDS_PERSON}
+        if len(person) != 1:
+            raise ValueError(f"no single class {SDS_PERSON!r}")
+        boxes: dict[int, list[Box]] = {}
+        for a in body["annotations"]:
+            if int(a["category_id"]) in person:
+                x, y, w, h = (float(v) for v in a["bbox"])
+                boxes.setdefault(int(a["image_id"]), []).append((x, y, x + w, y + h))
+        images = [
+            (int(im["id"]), str(im["file_name"]), str(im["source"]["folder_name"]))
+            for im in body["images"]
+        ]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise BenchError(f"seadronessee: {where} går inte att läsa ({exc})") from exc
+    return images, boxes
+
+
+def _seadronessee(names: list[str], read: Reader) -> list[Member]:
+    present = set(names)
+    out: list[Member] = []
+    for labels in sorted(n for n in names if _SDS_LABELS.fullmatch(n)):
+        part = labels.removeprefix("annotations/instances_").removesuffix(".json")
+        images, boxes = _coco(read(labels), labels)
+        for key, file_name, folder in images:
+            image = f"images/{part}/{file_name}"
+            if not _SDS_FOLDER.fullmatch(folder) or not _SDS_FILE.fullmatch(file_name):
+                raise BenchError(f"seadronessee: {image} har ett okänt namn ({folder})")
+            if image not in present:
+                raise BenchError(f"seadronessee: {image} saknas")
+            found = boxes.get(key, [])
+            if len(found) > MAX_BOXES:
+                raise BenchError(f"seadronessee: för många personer i {image}")
+            image_id = f"{folder}/{PurePosixPath(file_name).stem}"
+            seq = sequence_of("seadronessee_coco", image_id)
+            out.append(Member(image_id, seq, image, labels, tuple(found)))
+    if not out:
+        raise BenchError("seadronessee: inga etiketter (annotations/instances_*.json) hittades")
+    if len({m.image_id for m in out}) != len(out):
+        raise BenchError("seadronessee: samma bild står två gånger i etiketterna")
+    return out
+
+
 def _simfarm(names: list[str]) -> list[Member]:
     present = set(names)
     out: list[Member] = []
@@ -231,6 +357,17 @@ LAYOUTS: dict[str, Layout] = {
     "wisard_vis": Layout("wisard_vis", _wisard, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
     "kios_yolo": Layout("kios_yolo", _kios, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
     "simfarm": Layout("simfarm", _simfarm, lambda d, w, h: yolo_boxes(d, w, h, PERSON)),
+    # class 0 is Human, 1 Car
+    "kios_carperson": Layout(
+        "kios_carperson",
+        _kios_carperson,
+        lambda d, w, h: yolo_boxes(d, w, h, PERSON),
+        nested=True,
+    ),
+    # the boxes come with the members (``Member.boxes``), read from the COCO files
+    "seadronessee_coco": Layout(
+        "seadronessee_coco", _labels_first, lambda d, w, h: [], catalogue=_seadronessee
+    ),
 }
 
 
@@ -245,6 +382,6 @@ def sequence_of(layout: str, image_id: str) -> str:
         if m is None or m["rec"] not in KIOS_SITES:
             raise ValueError(f"KIOS picture of an unknown recording: {image_id!r}")
         return KIOS_SITES[m["rec"]]
-    if layout == "simfarm":
+    if layout in ("simfarm", "kios_carperson", "seadronessee_coco"):
         return image_id.split("/")[0]
     raise KeyError(layout)

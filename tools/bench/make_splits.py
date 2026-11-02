@@ -11,7 +11,11 @@ heridal > heridal.txt``), without downloading the archive.
 
 ``extend`` writes a new version that keeps every dataset of ``base`` exactly as it was
 and draws only the datasets given (for a set published as two archives, the second
-listing is ``<name>_labels``).
+listing is ``<name>_labels``). ``<name>=index`` takes a fetched set's index instead of
+a listing (in ``data=``): SeaDronesSee's sequences are in its labels, not its member
+names. A set that is only trained on gets no test part (``RATIOS_TRAIN_ONLY``):
+
+    python -m bench.make_splits extend version=v3 base=v2 kios_carperson=index seadronessee=index
 
 ``mini`` picks ``n`` pictures of the HERIDAL test part, spread evenly over its
 sequences, reads each picture and label out of the archive on the server and writes
@@ -30,10 +34,17 @@ from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 
-from bench.common import BenchError, RangeFile, parse_args, say, warn
-from bench.datasets import load_register
+from bench.common import BenchError, RangeFile, data_dir, parse_args, say, warn
+from bench.datasets import load_register, read_index
 from bench.layouts import LAYOUTS
-from bench.splits import MINI_SCHEMA, SPLITS, build_split_file, extend_split_file, load_split
+from bench.splits import (
+    MINI_SCHEMA,
+    RATIOS_TRAIN_ONLY,
+    SPLITS,
+    build_split_file,
+    extend_split_file,
+    load_split,
+)
 
 
 def _listing(path: Path) -> list[str]:
@@ -61,17 +72,22 @@ def cmd_list(name: str, labels: bool = False) -> int:
 
 
 def _sequences(args: dict[str, str]) -> dict[str, dict[str, list[str]]]:
-    """Dataset -> sequence -> image ids, for every measured dataset given a listing."""
+    """Dataset -> sequence -> image ids, for every measured or trained-on dataset given
+    a listing, or ``index`` (its index from ``just bench-fetch``, in ``data=``)."""
     listing: dict[str, dict[str, list[str]]] = {}
     for name, ds in load_register().items():
-        if name not in args or "measure" not in ds.use:
+        if name not in args or not {"measure", "train"} & set(ds.use):
             continue
-        names = _listing(Path(args[name]))
-        if args.get(f"{name}_labels"):
-            names += _listing(Path(args[f"{name}_labels"]))
         seqs: dict[str, list[str]] = defaultdict(list)
-        for m in LAYOUTS[ds.layout].members(names):
-            seqs[m.seq].append(m.image_id)
+        if args[name] == "index":
+            for im in read_index(data_dir(args), name):
+                seqs[im.seq].append(im.local_id)
+        else:
+            names = _listing(Path(args[name]))
+            if args.get(f"{name}_labels"):
+                names += _listing(Path(args[f"{name}_labels"]))
+            for m in LAYOUTS[ds.layout].members(names):
+                seqs[m.seq].append(m.image_id)
         listing[name] = dict(seqs)
         say(f"{name}: {sum(len(v) for v in seqs.values())} bilder i {len(seqs)} sekvenser")
     return listing
@@ -90,9 +106,13 @@ def cmd_extend(args: dict[str, str]) -> int:
     load_split(base)  # a published, well-formed file
     body = json.loads((SPLITS / f"{base}.json").read_text(encoding="utf-8"))
     version = args.get("version", "v2")
+    listing = _sequences(args)
+    register = load_register()
+    # a set that is never measured on gets no test part (splits.RATIOS_TRAIN_ONLY)
+    ratios = {n: RATIOS_TRAIN_ONLY for n in listing if "measure" not in register[n].use}
     _write(
         SPLITS / f"{version}.json",
-        extend_split_file(version, args.get("seed", version), body, _sequences(args)),
+        extend_split_file(version, args.get("seed", version), body, listing, ratios),
     )
     return 0
 
@@ -175,7 +195,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if cmd == "split":
             return cmd_split(parse_args(rest, ("version", "seed", *sets), "make_splits split"))
         if cmd == "extend":
-            keys = ("version", "seed", "base", *sets)
+            keys = ("version", "seed", "base", "data", *sets)
             return cmd_extend(parse_args(rest, keys, "make_splits extend"))
         if cmd == "mini":
             return cmd_mini(parse_args(rest, ("version", "split", "n"), "make_splits mini"))
