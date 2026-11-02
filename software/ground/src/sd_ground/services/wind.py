@@ -385,10 +385,12 @@ class WindWatch:
     def drain(self, now_mono_ms: int) -> BatteryDrain | None:
         """The mean measured current of the samples of the last ``TILT_WINDOW_S`` (so a
         moment of descent or low load does not stand for the flight), with the capacity;
-        None without a current in that window (on the ground, or no measured current)."""
+        None without a finite current in that window (on the ground, or none measured)."""
         since = now_mono_ms - TILT_WINDOW_S * 1000
         currents = [
-            s.current_a for s in self._tilt if s.current_a is not None and s.mono_ms >= since
+            s.current_a
+            for s in self._tilt
+            if s.current_a is not None and math.isfinite(s.current_a) and s.mono_ms >= since
         ]
         if not currents:
             return None

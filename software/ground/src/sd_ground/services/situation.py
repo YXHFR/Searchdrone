@@ -17,8 +17,9 @@ from sd_schemas.base import LatLon
 from sd_schemas.commander import MapPin, Situation, VehicleSummary
 from sd_schemas.link import StateSnapshot
 from sd_schemas.mission import OperatorLatch
+from sd_schemas.safety import home_limit_pct
 
-__all__ = ["battery_to_reserve_s", "build_situation", "home_limit_pct"]
+__all__ = ["battery_to_reserve_s", "build_situation"]
 
 _MIN_SATS = 8
 # Below this the measured current is no flight's (on the ground, or a sensor reading
@@ -42,12 +43,6 @@ def battery_to_reserve_s(
         return None
     left_mah = max(battery_pct - rtl_pct, 0.0) / 100.0 * capacity
     return round(left_mah * 3.6 / current)  # 1 mAh at 1 A lasts 3.6 s
-
-
-def home_limit_pct(limit_pct: float, charter_pct: float | None) -> float:
-    """The level the drone flies home at: the charter's, never below the mission limit
-    (as the gate's ``rtl_pct`` in ``sd_safety.rules``)."""
-    return limit_pct if charter_pct is None else max(charter_pct, limit_pct)
 
 
 def _vehicle(

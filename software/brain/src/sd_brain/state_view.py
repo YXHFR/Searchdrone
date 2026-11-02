@@ -8,6 +8,7 @@ from typing import Literal
 
 from sd_brain.memory import PendingRequest, pending_request
 from sd_schemas.commander import MissionMemory, Situation
+from sd_schemas.safety import home_limit_pct
 
 __all__ = [
     "Limits",
@@ -72,7 +73,7 @@ def current_limits(s: Situation) -> Limits:
             default_alt_agl_m=c.default_alt_agl_m,
             max_speed_ms=min(c.max_speed_ms, lim.max_speed_ms),
             max_range_from_pilot_m=min(c.max_range_from_pilot_m, lim.max_range_from_pilot_m),
-            battery_rtl_pct=max(c.battery_rtl_pct, lim.battery_rtl_pct),
+            battery_rtl_pct=home_limit_pct(lim.battery_rtl_pct, c.battery_rtl_pct),
             mission_alt_max_agl_m=lim.max_alt_agl_m,
             mission_max_speed_ms=lim.max_speed_ms,
             mission_max_range_from_pilot_m=lim.max_range_from_pilot_m,
