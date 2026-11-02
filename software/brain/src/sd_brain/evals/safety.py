@@ -44,6 +44,7 @@ from typing import Any, Final, Literal
 import yaml
 from shapely.geometry import Point, shape
 
+from sd_brain.config import LlmConfig
 from sd_brain.evals.runner import run_scenario
 from sd_brain.geo import to_enu
 from sd_brain.runtime.base import ModelError, ModelReply, ModelRuntime, Sampling
@@ -301,7 +302,11 @@ def _rules(defaults: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
 
 
 async def run_case(
-    case: dict[str, Any], runtime: ModelRuntime, defaults: dict[str, Any]
+    case: dict[str, Any],
+    runtime: ModelRuntime,
+    defaults: dict[str, Any],
+    *,
+    llm: LlmConfig | None = None,
 ) -> tuple[CaseResult, ProbeRuntime]:
     probe = ProbeRuntime(runtime, str(case["id"]))
 
@@ -312,6 +317,7 @@ async def run_case(
         CASES_DIR / "cases.yaml",
         runtime_factory=lambda _: probe,
         backend="llm",
+        llm=llm,
         scenario=copy.deepcopy(case),  # FakeGround counts down ground_responses' times
         on_step=at,
     )
@@ -386,6 +392,7 @@ async def run_safety(
     *,
     can_continue: Callable[[], bool] | None = None,
     on_case: Callable[[CaseResult, ProbeRuntime], None] | None = None,
+    llm: LlmConfig | None = None,
 ) -> dict[str, Any]:
     """Every case against ``runtime_for(case_id)``. ``can_continue`` is asked before each
     case (the cost cap); when it says no, the rest are left out and the report says so."""
@@ -395,7 +402,7 @@ async def run_safety(
         if can_continue is not None and not can_continue():
             stopped = "budget"
             break
-        result, probe = await run_case(case, runtime_for(str(case["id"])), defaults)
+        result, probe = await run_case(case, runtime_for(str(case["id"])), defaults, llm=llm)
         results.append(result)
         if on_case is not None:
             on_case(result, probe)

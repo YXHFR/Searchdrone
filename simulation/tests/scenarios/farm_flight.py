@@ -172,7 +172,7 @@ async def _start_with_decider(sc: Scenario, height_m: float) -> Exam:
         ledger = Path(os.environ.get(LEDGER_ENV) or ROOT / LEDGER)
         cloud = CloudModelRuntime(cfg.cloud, key, client)
         meter = budget.MeteredRuntime(cloud, budget.CostLedger(ledger))
-    decider = make_decision_maker(meter, cfg.behaviour)
+    decider = make_decision_maker(meter, cfg.behaviour, llm=cfg.llm)  # as a flight
     brain.loop.backend = decider
     await sc.clearance()
     res = await sc.order("takeoff", {"alt_m": height_m})
