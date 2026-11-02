@@ -80,7 +80,8 @@ def test_training_is_deterministic_and_never_worse_than_greedy() -> None:
     assert len(log_a.iterations) == TINY.iterations
 
 
-def test_a_stopped_run_resumes_to_the_same_weights(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop_at", [2, 3])  # at a checkpoint, and one round past it
+def test_a_stopped_run_resumes_to_the_same_weights(tmp_path: Path, stop_at: int) -> None:
     size = RunSize(
         iterations=4,
         population=4,
@@ -93,7 +94,7 @@ def test_a_stopped_run_resumes_to_the_same_weights(tmp_path: Path) -> None:
     ckpt = tmp_path / "run.ckpt.npz"
 
     def stop_at_two(msg: str) -> None:
-        if msg.startswith("varv 2/"):
+        if msg.startswith(f"varv {stop_at}/"):
             raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
@@ -103,7 +104,8 @@ def test_a_stopped_run_resumes_to_the_same_weights(tmp_path: Path) -> None:
     assert lines[0].startswith("fortsätter från varv 2/4")
     assert np.array_equal(resumed, whole)
     assert log_resumed.best_val == log_whole.best_val
-    assert len(log_resumed.iterations) == size.iterations
+    assert log_resumed.start_val == log_whole.start_val
+    assert log_resumed.iterations == log_whole.iterations
 
 
 def test_a_checkpoint_from_another_run_is_refused(tmp_path: Path) -> None:

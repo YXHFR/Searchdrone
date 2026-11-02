@@ -15,7 +15,9 @@ worse than greedy on the validation set.
 With ``checkpoint`` set, the whole state (weights, Adam moments, the random generator
 and the log) is written there after every validation, and a run that finds one picks
 up after its last saved iteration. A resumed run ends with the same weights as one
-that was never stopped.
+that was never stopped. The checkpoint names the run (size, world, seed, step sizes),
+not the code version: resume with the code it was started with. ``train`` leaves the
+file in place when done; the command line removes it.
 """
 
 from __future__ import annotations

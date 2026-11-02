@@ -114,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         out = Path(args.get("out", DEFAULT_DIR / "policy.json"))
         ckpt_arg = args.get("checkpoint", f"{out}.ckpt.npz")
         ckpt = None if ckpt_arg == "none" else Path(ckpt_arg)
+        if ckpt is not None and ckpt.resolve() == out.resolve():
+            _fail("rl-train: checkpoint och out får inte vara samma fil.")
         try:
             theta, log = train.train(
                 size,
