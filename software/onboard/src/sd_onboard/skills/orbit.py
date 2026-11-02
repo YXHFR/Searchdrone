@@ -3,7 +3,7 @@
 The ring is ``sd_schemas.skills.orbit_ring``: 24 corners just outside the circle,
 starting at the one nearest the drone, flown ``turns`` times and back to the first
 corner, at ``ORBIT_SPEED_MS`` (the charter's limit if lower). It is a mission of plain
-waypoints (``SurveyRun``), so it ends with the same loiter and return-to-launch if the
+waypoints (``SurveyRun``), so it ends with the same hover at the last point if the
 onboard computer stops, and its speed is the speed item's. The gate has checked the
 whole ring before it starts: inside the charter and 10 m from every keep-out cylinder.
 """

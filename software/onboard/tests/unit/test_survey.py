@@ -40,7 +40,8 @@ async def test_survey_mission_shape_and_hold_resume_coverage() -> None:
         assert r.ex.state == S.SURVEY
         items = r.fc.missions[MISSION]
         assert [i.command for i in items[:2]] == [16, 178] and items[1].param2 == 6
-        assert [i.command for i in items[-2:]] == [19, 20] and items[-2].param1 == 30
+        assert [i.command for i in items[-2:]] == [16, 17]  # the last point, then a hover
+        assert (items[-1].x, items[-1].y) == (items[-2].x, items[-2].y)
         assert r.fc.mission_current >= 1
         await r.run(25)
         hold = await r.send(r.order("hold", {}))

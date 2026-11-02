@@ -12,7 +12,9 @@ its MAVLink channel (no more heartbeats from 1/191).
 * STOP armed on the ground disarms; BRAKE holds for 60 s without RC;
 * only the ground's MAVLink cut: STOP still arrives through the onboard fallback;
 * the companion watchdog: BRAKE within 4 s and FLY HOME within 21 s when the onboard
-  computer dies in GUIDED, nothing while the operator's STOP stands;
+  computer dies in GUIDED, nothing while the operator's STOP stands; the executor
+  falling silent mid-search (AUTO): BRAKE within 4 s, then it holds there, never flies
+  home and never enters the keep-out cylinder the search goes around;
 * the ground station dies: the flight controller's GCS failsafe flies home.
 """
 
@@ -64,7 +66,8 @@ from sd_onboard.link_client import OnboardLink
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.base import SdModel, new_id
 from sd_schemas.executor import ExecutorState as S
-from sd_schemas.link import ClearanceConfirmation
+from sd_schemas.keepout import Keepout
+from sd_schemas.link import ClearanceConfirmation, KeepoutInstall
 from sd_sim.util import LOOPBACK_OPENER
 
 pytestmark = [pytest.mark.sitl, pytest.mark.slow]
@@ -429,6 +432,91 @@ def test_onboard_kill_in_guided(sim: Sim) -> None:
             assert time.monotonic() - killed <= 21.0
             await e.wait(lambda: not e.fc.armed, 150, "landed")
             assert e.from_home_m() <= 3.0
+
+    asyncio.run(run())
+
+
+# The search for the silent-executor test: a box north-east of home with a person's
+# cylinder in its middle that the mission goes around.
+_SILENT_BOX_M = (40.0, 60.0, 100.0)  # half side, east, north
+_SILENT_PERSON = (60.0, 100.0, 15.0)  # east, north, radius (m)
+_HOLD_S = 40.0  # longer than the old end's 30 s hover before it flew home
+
+
+@pytest.mark.budget_s(330)
+def test_executor_silent_mid_search_holds_clear_of_the_keepout(sim: Sim) -> None:
+    """Option A: the executor's loop stops mid-search (its heartbeat with it; the MAVLink
+    channel stays open). The ground stops the AUTO flight within 4 s through STOP's steps;
+    then it holds there for 40 s, never flies home, and never enters the cylinder."""
+
+    async def run() -> None:
+        async with emergency(sim) as e:
+            f = e.f
+            await _install(f)
+            await _takeoff(f, 25)
+            await f.until(lambda: f.ex.state == S.HOLD, 60, "takeoff done")
+            east, north, r = _SILENT_PERSON
+            lat, lon = f.at(east, north)
+            person = Keepout(
+                keepout_id=new_id(),
+                lat=lat,
+                lon=lon,
+                radius_m=r,
+                source="candidate",
+                source_id=new_id(),
+            )
+            f.ex.on_keepouts(
+                KeepoutInstall(install_seq=f.ex.keepout_seq + 1, keepouts=[person]), new_id()
+            )
+            assert person in f.ex.keepouts
+            box = f.square(*_SILENT_BOX_M)
+            await f.order("survey_sector", {"polygon": box, "spacing_m": 20, "speed_ms": 5})
+            await f.until(lambda: f.ex.state == S.SURVEY and e.mode() == "AUTO", 20, "search")
+            closest = [float("inf")]
+
+            def clear() -> None:
+                t = e.fc
+                d = distance_m(lat, lon, t.lat, t.lon)
+                closest[0] = min(closest[0], d)
+                assert d >= r, f"inside the cylinder: {d:.1f} m from its centre"
+
+            async def watch() -> None:
+                while True:
+                    clear()
+                    await asyncio.sleep(0.1)
+
+            watcher = asyncio.ensure_future(watch())
+            try:
+                await f.until(lambda: (e.fc.mission_seq_current or 0) >= 4, 120, "mid-search")
+                assert e.mode() == "AUTO"
+                for task in e.executor_tasks:  # the loop stops; its heartbeat stops with it
+                    task.cancel()
+                await asyncio.gather(*e.executor_tasks, return_exceptions=True)
+                silent = time.monotonic()
+                await e.wait(lambda: e.mode() in ("BRAKE", "LOITER"), 4.5, "watchdog stop")
+                assert time.monotonic() - silent <= 4.5
+                latch = e.actions.latches.get(VID)
+                assert latch is not None and latch.action == "watchdog_stop"
+                await e.wait(lambda: e.fc.groundspeed_ms < 0.5, 10, "standing")
+                t = e.fc
+                stood = (t.lat, t.lon)
+                end = time.monotonic() + _HOLD_S
+                while time.monotonic() < end:
+                    assert e.mode() in ("BRAKE", "LOITER"), f"{e.mode()} while held"
+                    if watcher.done():
+                        watcher.result()  # the cylinder check failed: raise it here
+                    await asyncio.sleep(0.2)
+                t = e.fc
+                assert distance_m(stood[0], stood[1], t.lat, t.lon) <= 3.0
+                assert e.core.watchdog.alarm_active and e.core.watchdog.phase == "stopped"
+                latch = e.actions.latches.get(VID)
+                assert latch is not None and latch.action == "watchdog_stop"
+            finally:
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watcher
+            clear()
+            assert closest[0] >= r, closest[0]
 
     asyncio.run(run())
 

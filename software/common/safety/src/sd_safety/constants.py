@@ -34,7 +34,6 @@ MAV_ACK_TIMEOUT_S: Final = 1.0
 MODE_CONFIRM_TIMEOUT_S: Final = 2.0
 MISSION_UPLOAD_TIMEOUT_S: Final = 10.0
 MISSION_MAX_ITEMS: Final = 400
-MISSION_END_LOITER_S: Final = 30
 EXECUTOR_DEFAULT_SPEED_MS: Final = 5.0  # mirrors WP_SPD; used when an order gives no speed
 GOTO_ARRIVE_RADIUS_M: Final = 2.0
 GOTO_ALT_STEP_TOL_M: Final = 1.5
