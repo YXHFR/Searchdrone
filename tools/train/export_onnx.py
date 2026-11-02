@@ -41,6 +41,17 @@ RECALL_RULE = (
 )
 
 
+def val_ap50_rule(ck: dict[str, Any]) -> str:
+    """How ``val_ap50`` was made: the lowest of each dataset's AP50 (``min_over_datasets``),
+    the lowest over only some of them (``min_over_pick``: ``val_ap50_pick`` names them), or
+    (older runs) pooled over all tiles."""
+    by_dataset = ck.get("val_ap50_by_dataset")
+    if not by_dataset:
+        return "pooled"
+    pick = ck.get("val_ap50_pick")
+    return "min_over_pick" if pick and set(pick) != set(by_dataset) else "min_over_datasets"
+
+
 def export(
     best: Path, out_dir: Path, name: str, check_images: int = 2, seed: int = 0
 ) -> tuple[Path, Path]:
@@ -104,8 +115,11 @@ def export(
         "started_from": ck.get("started_from"),
         "val_ap50": ck.get("val_ap50"),
         "val_ap50_by_dataset": ck.get("val_ap50_by_dataset"),
-        # how val_ap50 was made: the lowest of each dataset's AP50, or (older runs) pooled
-        "val_ap50_rule": "min_over_datasets" if ck.get("val_ap50_by_dataset") else "pooled",
+        "val_ap50_rule": val_ap50_rule(ck),
+        # the sets val_ap50 is the lowest of (all of val_ap50_by_dataset in older runs)
+        "val_ap50_pick": ck.get("val_ap50_pick", list(ck.get("val_ap50_by_dataset") or [])),
+        # how the epochs drew their tiles: "tiles" (each once) in runs before balance=
+        "balance": ck.get("balance", settings.get("balance", "tiles")),
         # AP50 needs no threshold; recall does, and the bench sets one per dataset
         "recall_rule": RECALL_RULE,
         "epoch": ck.get("epoch"),

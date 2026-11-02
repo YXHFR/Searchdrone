@@ -169,14 +169,25 @@ pictures, so the new model is kept only if it beats the current one there.
 
 ```bash
 just bench-fetch yes=1 sets=kios_carperson,seadronessee   # about 19 GB, 1-3 hours
-just train-detector model=yolox_s sets=heridal,kios,kios_carperson,seadronessee out="$(just data-dir)/train/yolox_s_more"
-just export-detector model=yolox_s train="$(just data-dir)/train/yolox_s_more" name=person_yolox_s_more
+just train-detector model=yolox_s sets=heridal,kios,kios_carperson,seadronessee out="$(just data-dir)/train/yolox_s_balanced"
+just export-detector model=yolox_s train="$(just data-dir)/train/yolox_s_balanced" name=person_yolox_s_more
 just bench-detector model=person_yolox_s part=test
 just bench-detector model=person_yolox_s_more part=test compare=build/bench/det_person_yolox_s_test.json
 ```
 
-The val AP50 is printed for all four sets after each epoch, and the epoch kept is the
-one whose weakest set is best, as before. SeaDronesSee's pictures are large (mostly
+Each epoch draws as many tiles from every set (`balance=sets`, the default). Without
+that, SeaDronesSee, with about 70 % of the tiles, drowned the land sets: after 4 epochs
+the val AP50 on land fell (HERIDAL 0.42, KIOS 0.31, against 0.64 and 0.38 for the model
+before) while the sea and parking-lot sets rose (0.76 and 0.78). An epoch still has as
+many steps as there are tiles; the small sets are gone through more than once, the big
+one only in part (a new part each epoch). `balance=tiles` takes every tile once, as
+before; `balance=heridal:2,kios:2,kios_carperson:1,seadronessee:1` gives each set its
+own share.
+
+The val AP50 is printed for all four sets after each epoch, but the epoch kept is the
+one whose weakest *land* set (HERIDAL, KIOS: the sets that are measured on, `pick=`) is
+best, since the land is where the model is used. The manifest names those sets
+(`val_ap50_pick`) and the balance. SeaDronesSee's pictures are large (mostly
 3840×2160), so its tiles take far more room and time than the other sets: expect the
 tile cache under `out=` to grow by several GB and each epoch to take several times
 longer (a rough guess, not measured). The training does not know whether swimmers help on land; only the test part
@@ -223,7 +234,7 @@ simulator.
 |---|---|
 | "Grafikkortets minne räckte inte" | Run it again with `batch=4 fresh=1`. |
 | "COCO-vikterna saknas" | Run step 2. |
-| "har en träning med andra inställningar" | You changed a setting (`batch`, `epochs`, …) of a run that was already started. Run it with the old settings, or start over with `fresh=1`. |
+| "har en träning med andra inställningar" | You changed a setting (`batch`, `epochs`, …) of a run that was already started. Run it with the old settings, or start over with `fresh=1`. A run started before `balance=` existed carries on with `balance=tiles` and `pick=` naming all its sets. |
 | "Inga bilder att träna på" | Run step 1. |
 | "ONNX-filen räknar inte som PyTorch" | Nothing was written. Run step 4 again. If it happens twice, report it. |
 | "Tränar på processorn (cpu)" at the start, or "Inget grafikkort syns" | PyTorch does not see the card. Check `nvidia-smi` in WSL and update the Windows driver; stop with Ctrl+C before it starts on the processor. |
@@ -235,6 +246,8 @@ Useful keys for `just train-detector`:
 | `epochs=20` | Passes over the training tiles. |
 | `batch=8` | Tiles per step; 8 fits in 8 GB. |
 | `sets=heridal,kios` | Which fetched sets to train on (default: every one that may be trained on). |
+| `balance=sets` | How each epoch draws its tiles: `sets` (default) as many from every set, `tiles` every tile once (a big set counts more), or weights such as `heridal:2,kios:2,kios_carperson:1,seadronessee:1` naming every set. |
+| `pick=heridal,kios` | The sets whose val AP50 picks the best epoch (default: those in `sets=` that are measured on, or all of them if none is). Every set's AP50 is still printed. |
 | `init=<best.pt>` | Start from an earlier run's weights instead of COCO's; use with a new `out=`. |
 | `out=<folder>` | Where the run is saved (default `<data_dir>/train/<model>`). |
 | `simfarm=1` | First pre-trains for `simfarm_epochs=3` epochs on the simulator's pictures (`just sim-farm`, then `just bench-fetch yes=1 sets=simfarm`). Those pictures are never measured on. |

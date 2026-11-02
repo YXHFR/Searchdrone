@@ -527,7 +527,7 @@ data-dir *args:
 detector-fetch *args:
     PYTHONPATH=tools uv run --no-sync python tools/train/fetch_weights.py "$@"
 
-# Train the person detector on this computer's graphics card (keys: model, epochs, batch, sets, init, out, simfarm, ...; see tools/train/README.md)
+# Train the person detector on this computer's graphics card (keys: model, epochs, batch, sets, balance, pick, init, out, simfarm, ...; see tools/train/README.md)
 train-detector *args:
     @just _train train_detector.py "$@"
 
