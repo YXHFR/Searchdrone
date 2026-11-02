@@ -134,13 +134,17 @@ class Authority:
 
     def adopt_late(self, t: FcTelemetry, now_ms: int) -> CopterMode | None:
         """A fresh HEARTBEAT shows a switch of ours that was cancelled after the flight
-        controller accepted it: it took it, so it is the expected mode now."""
+        controller accepted it: it took it, so it is the expected mode now. Never while a
+        newer mode command of ours is on the way (``pending_mode``): its answer may already
+        be on its way too, and the late AUTO stays ours meanwhile (``_ours``), so waiting
+        holds nothing."""
         late = self._late(t, now_ms)
         fresh = t.fc_heartbeat_mono_ms is not None and now_ms - t.fc_heartbeat_mono_ms <= _FRESH_MS
         if late is None or self.expected_mode is None or not fresh:
             return None
-        pending = self.pending_mode
-        if t.fc_custom_mode != int(late) or late in (self.expected_mode, pending):
+        if self.pending_mode is not None:
+            return None
+        if t.fc_custom_mode != int(late) or late == self.expected_mode:
             return None
         record = self.late
         self.late = None

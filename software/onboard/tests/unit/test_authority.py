@@ -347,6 +347,24 @@ def test_any_heartbeat_after_a_newer_answer_ends_a_cancelled_auto() -> None:
     assert a.unexpected_mode(_shows(CopterMode.AUTO, 1100, answer=9), 1100) is not None
 
 
+@pytest.mark.parametrize("pending", [CopterMode.GUIDED, CopterMode.LOITER, CopterMode.AUTO])
+def test_a_late_auto_is_not_taken_while_a_newer_command_is_on_the_way(
+    pending: CopterMode,
+) -> None:
+    """#161 round-6 review, the second fix: while a newer mode command of ours waits for
+    its answer, AUTO showing is not taken as ours (its answer may be just behind it), but
+    it is not a takeover either: the late AUTO is still ours. Once nothing is pending, it
+    is taken."""
+    a = _late_auto()
+    a.pending_mode = pending
+    t = _shows(CopterMode.AUTO, 1100)
+    assert a.adopt_late(t, 1100) is None
+    assert a.unexpected_mode(t, 1100) is None and a.mode_problem(t, 1100) is None
+    assert a.expected_mode == CopterMode.GUIDED and a.late is not None
+    a.pending_mode = None
+    assert a.adopt_late(t, 1150) == CopterMode.AUTO
+
+
 def test_a_pilots_rc_auto_seen_before_the_rc_sample_is_a_takeover() -> None:
     """A late AUTO taken as ours, then RC_CHANNELS shows the mode switch moved: the pilot
     chose AUTO, a takeover. The switch is watched to the deadline, and at least
