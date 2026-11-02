@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { UNROUTED_LOG } from "./e2e/helpers/unrouted";
 
 // Screenshots of every panel state at the sizes the panel is designed for, dark and light
 // (`pnpm screens`). They are a review aid, uploaded by CI; nothing is compared.
@@ -16,10 +17,13 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   timeout: 90_000,
   reporter: "list",
+  // The same guard as the mock suite: nothing may reach :8080 (see e2e/helpers/unrouted.ts).
+  globalSetup: "./e2e/helpers/unrouted.ts",
   webServer: {
     command: "pnpm exec vite preview --outDir dist-test --port 4173 --strictPort --host 127.0.0.1",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
+    env: { SD_E2E_UNROUTED_LOG: UNROUTED_LOG },
   },
   use: { baseURL: "http://127.0.0.1:4173", launchOptions: chromium },
   projects: [

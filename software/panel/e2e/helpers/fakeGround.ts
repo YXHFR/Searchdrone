@@ -3,7 +3,7 @@
 // /ws/v1/live. Every test also checks, when it ends, that the panel
 // made no request to another host, read no geolocation, sent the CSRF header on every
 // changing request, never sent Idempotency-Key, and called no path the fake does not know.
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -39,6 +39,7 @@ import {
   vehicleLive,
 } from "../fixtures";
 import { syntheticImagery } from "../fixtures/syntheticImagery";
+import { endMarker, UNROUTED_LOG } from "./unrouted";
 
 export interface SeenRequest {
   method: string;
@@ -829,15 +830,27 @@ export class FakeGround {
 }
 
 export const test = base.extend<{ ground: FakeGround }>({
-  ground: async ({ page, baseURL }, use, testInfo) => {
-    // Names the test in the preview server's log if one of its requests escapes the routes.
-    const where = `${testInfo.project.name} ${basename(testInfo.file)}:${testInfo.line}`;
-    await page.setExtraHTTPHeaders({ "x-sd-test": where });
-    const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
-    await g.install();
-    await use(g);
-    await g.verify();
-  },
+  // Automatic: no test in a suite that uses this fixture talks to anything but the fake.
+  ground: [
+    async ({ page, baseURL }, use, testInfo) => {
+      // Names the test in the preview server's log if one of its requests escapes the
+      // routes; the id is unique per run of a test (retries, --repeat-each).
+      const id = `${testInfo.testId}.${testInfo.retry}.${testInfo.repeatEachIndex}`;
+      const where = `${id} ${testInfo.project.name} ${basename(testInfo.file)}:${testInfo.line}`;
+      await page.setExtraHTTPHeaders({ "x-sd-test": where });
+      const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
+      await g.install();
+      try {
+        await use(g);
+        await g.verify();
+      } finally {
+        // The page closes after this: what the server logs for this test from now on was
+        // sent while it closed (e2e/helpers/unrouted.ts).
+        appendFileSync(UNROUTED_LOG, endMarker(id));
+      }
+    },
+    { auto: true },
+  ],
 });
 
 export { expect };

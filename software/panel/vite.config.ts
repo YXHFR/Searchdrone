@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { appendFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
+import { basename } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 // The same file sd-ground reads, so dev preview and the server send identical headers.
@@ -63,7 +64,8 @@ function unroutedGuard(logFile: string): Plugin {
         if (!GROUND_PATH.test(req.url ?? "")) return next();
         record(req);
         res.statusCode = 502;
-        res.setHeader("x-sd-unrouted", "1");
+        // Names this checkout's log, so global setup can tell a server reused from elsewhere.
+        res.setHeader("x-sd-unrouted", basename(logFile));
         res.end();
       });
       server.httpServer.on("upgrade", (req, socket) => {

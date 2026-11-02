@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FullConfig } from "@playwright/test";
 
@@ -14,45 +14,80 @@ export const UNROUTED_LOG = join(
   `sd-panel-e2e-unrouted-${createHash("sha256").update(PANEL_DIR).digest("hex").slice(0, 12)}.log`,
 );
 
-/** Lines a closing page can produce: reads only. A request that changes something, or a
- * socket, escaping is never page-close noise, so it fails the run. */
-const READ_ONLY = /^\S+ (GET|HEAD) /;
+/** The line fakeGround writes once a test's own checks have run, just before its page
+ * closes. Requests the server logs for that test after it were sent while the page closed. */
+export function endMarker(testId: string, at = new Date()): string {
+  return `${at.toISOString()} END ${testId}\n`;
+}
 
-/** Global setup: check the preview server has the guard (a reused server started without
- * it would send escaped requests to :8080 and nothing would see them) and start from an
- * empty log. During a test every /api, /ws and /tiles request is routed (fakeGround), and
- * one that reaches the server fails that test in verify(). Once a test's page starts
- * closing, Playwright stops handling its routes and sends in-flight requests to the
- * network whatever the test does, so the returned teardown only reports GET and HEAD
- * lines; any other method, or a socket, fails the run. */
+/** Splits the log: requests that escaped while their test ran (they fail the run) and
+ * requests sent while a page was closing. Once a page starts closing, Playwright stops
+ * handling its routes and sends what is in flight on to the network whatever the test
+ * does (the panel's POST .../missions/open on load among them), so those are reported,
+ * not failed. A request is "while closing" when it was logged after its test's END marker
+ * or carries no test header (sent after the page's headers were dropped). One whose test
+ * never wrote END (the worker died mid-test) counts as during the test. */
+export function classify(log: string): { during: string[]; closing: string[] } {
+  const ends = new Map<string, string>();
+  const requests: { at: string; test: string | null; line: string }[] = [];
+  for (const line of log.split("\n")) {
+    if (!line.trim()) continue;
+    const [, endAt, endOf] = /^(\S+) END (\S+)$/.exec(line) ?? [];
+    if (endAt && endOf) {
+      ends.set(endOf, endAt);
+      continue;
+    }
+    const req = /^(\S+) \S+ \S+ \((.*?); referer /.exec(line);
+    const header = req?.[2] ?? "";
+    requests.push({
+      at: req?.[1] ?? "",
+      test: header && header !== "no test header" ? (header.split(" ")[0] ?? null) : null,
+      line,
+    });
+  }
+  const during: string[] = [];
+  const closing: string[] = [];
+  for (const r of requests) {
+    const end = r.test ? ends.get(r.test) : undefined;
+    const afterEnd = r.test === null || (end !== undefined && r.at > end);
+    (afterEnd ? closing : during).push(r.line);
+  }
+  return { during, closing };
+}
+
+/** Global setup: check that the preview server has the guard and writes to this checkout's
+ * log (a server reused from elsewhere would send escaped requests to :8080, or log them
+ * where nothing reads them), and start from an empty log. During a test every /api, /ws
+ * and /tiles request is routed (fakeGround), and a response from the guard fails that
+ * test in verify(). The returned teardown also fails the run on anything else that
+ * escaped while a test ran, e.g. a request whose answer never came back. */
 export default async function globalSetup(config: FullConfig): Promise<() => void> {
   const base = config.webServer?.url ?? "http://127.0.0.1:4173";
   const probe = await fetch(`${base}/api/__sd_guard_probe`);
-  if (probe.headers.get("x-sd-unrouted") !== "1") {
+  if (probe.headers.get("x-sd-unrouted") !== basename(UNROUTED_LOG)) {
     throw new Error(
-      `The preview server at ${base} has no unrouted-request guard (a server started without ` +
-        "SD_E2E_UNROUTED_LOG is being reused): stop it and run again.",
+      `The preview server at ${base} does not guard against requests that escape the fake ` +
+        `ground into ${UNROUTED_LOG} (a server started elsewhere, or without ` +
+        "SD_E2E_UNROUTED_LOG, is being reused): stop it and run again.",
     );
   }
   rmSync(UNROUTED_LOG, { force: true });
   return () => {
-    let seen: string;
+    let log: string;
     try {
-      seen = readFileSync(UNROUTED_LOG, "utf8");
+      log = readFileSync(UNROUTED_LOG, "utf8");
     } catch {
-      return; // nothing reached the server
+      return; // nothing written
     }
-    const lines = seen.split("\n").filter((l) => l.trim());
-    const serious = lines.filter((l) => !READ_ONLY.test(l));
-    if (serious.length) {
-      throw new Error(
-        `Requests that change something, or sockets, escaped the fake ground:\n${serious.join("\n")}`,
+    const { during, closing } = classify(log);
+    if (closing.length) {
+      console.warn(
+        `Requests sent on while a test's page was closing (answered 502):\n${closing.join("\n")}`,
       );
     }
-    if (lines.length) {
-      console.warn(
-        "Reads that reached the preview server (answered 502). One made during a test failed " +
-          `that test; the others were sent on while a page was closing:\n${lines.join("\n")}`,
+    if (during.length) {
+      throw new Error(
+        `Requests escaped the fake ground while their test ran:\n${during.join("\n")}`,
       );
     }
   };
