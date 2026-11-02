@@ -555,27 +555,31 @@ class Executor:
         self.auth.pending_mode = mode
         rc_at_send = self.vehicle.telemetry.rc_mode_pwm
         accepted_ms: int | None = None
+        answer_seq: int | None = None
         try:
             result, answer_seq = await self.vehicle.set_mode_ordered(mode, origin=origin)
             if result is not MavResult.ACCEPTED:
                 return False
             accepted_ms = self.now_ms()
-            if answer_seq is not None:
-                # A cancelled one before it can only show in a HEARTBEAT received before.
-                self.auth.accepted(mode, answer_seq)
             deadline = self.clock.monotonic() + MODE_CONFIRM_TIMEOUT_S
             while self.clock.monotonic() <= deadline:
                 t = self.vehicle.telemetry
                 if t.fc_custom_mode == int(mode):
-                    self.auth.confirmed(mode, accepted_seq=answer_seq, seen_seq=t.fc_heartbeat_seq)
+                    self.auth.confirmed(mode)
                     return True
                 await self.clock.sleep(0.05)
             return False
         except asyncio.CancelledError:
             # Accepted: the flight controller may show it after all. A HEARTBEAT showing
             # AUTO until this call's own deadline is then our own doing (``Authority``).
-            if accepted_ms is not None and self.auth.pending_mode == mode:
-                self.auth.sent_and_cancelled(mode, accepted_ms + _MODE_CONFIRM_MS, rc_at_send)
+            if (
+                accepted_ms is not None
+                and answer_seq is not None
+                and self.auth.pending_mode == mode
+            ):
+                self.auth.sent_and_cancelled(
+                    mode, accepted_ms + _MODE_CONFIRM_MS, rc_at_send, answer_seq
+                )
             raise
         finally:
             if self.auth.pending_mode == mode:
@@ -1280,7 +1284,7 @@ class Executor:
         self.auth.released()
         self.fallback.stop()
         if target in (S.HOLD, S.RTL) and fc_mode is not None:
-            self.auth.confirmed(CopterMode(fc_mode), accepted_seq=None, seen_seq=None)
+            self.auth.confirmed(CopterMode(fc_mode), resumed=True)
         self._enter(target, hold_reason="operator_released", cause="release")
         self._ack(ref_id, "done")
         if target == S.HOLD and fc_mode == int(CopterMode.BRAKE):

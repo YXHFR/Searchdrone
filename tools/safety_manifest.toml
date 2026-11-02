@@ -51,7 +51,7 @@ sha256 = "6b81d81b9d040365a2e4a296d0257851e64702c349edc150710f7717af65a148"
 # layers' allowlist check and the checks themselves (the list they must keep pinned).
 [[pinned]]
 path = "software/common/mav/src/sd_mav/vehicle.py"
-sha256 = "1d44e15f575835114bb51aeaa201ea9ad3b676828b45434406d0d51be9f24b16"
+sha256 = "088d4c59a2112b96078a68317f55066aac3ec9484b422b5bcbbae8efd46ce9ed"
 
 [[pinned]]
 path = "software/common/mav/src/sd_mav/connection.py"

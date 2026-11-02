@@ -204,6 +204,10 @@ class FcTelemetry:
     # That HEARTBEAT's place in the order the flight controller's messages were received
     # (``Vehicle.set_mode_ordered``): unlike a time, never the same for two messages.
     fc_heartbeat_seq: int | None = None
+    # As of that HEARTBEAT: the receive order of the newest answer to a mode command of
+    # ours received before it (its accepted COMMAND_ACK, or, the answer lost, a HEARTBEAT
+    # that showed the mode). Recorded as it is received, not when the caller runs again.
+    mode_answer_seq: int | None = None
     # Counts the flight controller's connections: one more at each new connection and at
     # a reboot seen without a lost connection (ATTITUDE's time_boot_ms going back).
     # Readers that keep something per flight controller start over when it changes.
@@ -363,6 +367,9 @@ class Vehicle:
         self._subscribers: list[Callable[[FcTelemetry], None]] = []
         self._waiters: list[_Waiter] = []
         self._rx_seq = 0  # counts the flight controller's messages as they are received
+        # A mode command of ours not answered yet: (the mode asked for, the mode at send).
+        self._mode_command: tuple[int, int | None] | None = None
+        self._mode_answer_seq: int | None = None
         self._command_locks: dict[int, asyncio.Lock] = {}
         self._tasks: list[asyncio.Task[None]] = []
         self._streams_task: asyncio.Task[None] | None = None
@@ -582,39 +589,45 @@ class Vehicle:
         async with lock:
             start_mode = self._t.fc_custom_mode
             start_onset = self._t.failsafe_onset_mono_ms
-            for attempt in range(attempts):
-                if attempt and moves:
-                    t = self._t
-                    fresh = (
-                        t.fc_heartbeat_mono_ms is not None
-                        and self._clock.monotonic_ms() - t.fc_heartbeat_mono_ms
-                        <= MODE_FRESH_S * 1000
-                    )
-                    if fresh and wanted_mode is not None and t.fc_custom_mode == wanted_mode:
-                        # The answer was lost, but the HEARTBEAT already shows the mode.
-                        self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
-                        return MavResult.ACCEPTED, t.fc_heartbeat_seq
-                    changed = t.fc_custom_mode not in (start_mode, wanted_mode)
-                    new_failsafe = t.failsafe_onset_mono_ms != start_onset
-                    if new_failsafe or changed:
-                        self._event(
-                            "mav.retry_cancelled",
-                            {"command": command, "mode": t.fc_mode, "failsafe": new_failsafe},
+            if wanted_mode is not None:
+                self._mode_command = (wanted_mode, start_mode)
+            try:
+                for attempt in range(attempts):
+                    if attempt and moves:
+                        t = self._t
+                        fresh = (
+                            t.fc_heartbeat_mono_ms is not None
+                            and self._clock.monotonic_ms() - t.fc_heartbeat_mono_ms
+                            <= MODE_FRESH_S * 1000
                         )
-                        return MavResult.CANCELLED, None
-                msg.confirmation = attempt
-                self._check_and_write(msg, origin)
-                found = await self._wait_message_seq(
-                    lambda m: (
-                        m.get_type() == "COMMAND_ACK"
-                        and int(m.command) == command
-                        and self.addressed_to_us(m)
-                        and int(m.result) != mavlink.MAV_RESULT_IN_PROGRESS
-                    ),
-                    ack_timeout_s,
-                )
-                if found is not None:
-                    return MavResult.of(int(found[0].result)), found[1]
+                        if fresh and wanted_mode is not None and t.fc_custom_mode == wanted_mode:
+                            # The answer was lost, but the HEARTBEAT already shows the mode.
+                            self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
+                            return MavResult.ACCEPTED, t.fc_heartbeat_seq
+                        changed = t.fc_custom_mode not in (start_mode, wanted_mode)
+                        new_failsafe = t.failsafe_onset_mono_ms != start_onset
+                        if new_failsafe or changed:
+                            self._event(
+                                "mav.retry_cancelled",
+                                {"command": command, "mode": t.fc_mode, "failsafe": new_failsafe},
+                            )
+                            return MavResult.CANCELLED, None
+                    msg.confirmation = attempt
+                    self._check_and_write(msg, origin)
+                    found = await self._wait_message_seq(
+                        lambda m: (
+                            m.get_type() == "COMMAND_ACK"
+                            and int(m.command) == command
+                            and self.addressed_to_us(m)
+                            and int(m.result) != mavlink.MAV_RESULT_IN_PROGRESS
+                        ),
+                        ack_timeout_s,
+                    )
+                    if found is not None:
+                        return MavResult.of(int(found[0].result)), found[1]
+            finally:
+                if wanted_mode is not None:
+                    self._mode_command = None
         return MavResult.TIMEOUT, None
 
     def _command(self, command: int, *params: float) -> Any:
@@ -862,6 +875,8 @@ class Vehicle:
             self._rx_seq += 1
             seq = self._rx_seq
             self._from_fc(msg, kind, seq)
+            if kind == "COMMAND_ACK":
+                self._note_mode_ack(msg, seq)
             for waiter in list(self._waiters):
                 if not waiter.future.done() and waiter.predicate(msg):
                     waiter.seq = seq
@@ -883,6 +898,18 @@ class Vehicle:
                 f"{self._event_prefix}.inbound_command_ignored",
                 {"sysid": src[0], "compid": src[1], "command": int(msg.command)},
             )
+
+    def _note_mode_ack(self, msg: Any, seq: int) -> None:
+        """Our mode command accepted: recorded here, as it is received, so a HEARTBEAT
+        handled before the caller runs again already carries it (``mode_answer_seq``)."""
+        if (
+            self._mode_command is not None
+            and int(msg.command) == mavlink.MAV_CMD_DO_SET_MODE
+            and int(msg.result) == mavlink.MAV_RESULT_ACCEPTED
+            and self.addressed_to_us(msg)
+        ):
+            self._mode_answer_seq = seq
+            self._mode_command = None  # answered: a later message is no answer to it
 
     def _from_fc(self, msg: Any, kind: str, seq: int) -> None:
         now = self._clock.monotonic_ms()
@@ -913,11 +940,17 @@ class Vehicle:
                     fc_connected=True,
                     fc_heartbeat_mono_ms=now,
                     fc_heartbeat_seq=seq,
+                    mode_answer_seq=self._mode_answer_seq,
                     armed=bool(int(msg.base_mode) & _ARMED_FLAG),
                     fc_custom_mode=int(msg.custom_mode),
                     fc_system_status=int(msg.system_status),
                 )
                 notify = True
+                asked = self._mode_command
+                if asked is not None and asked[1] != asked[0] == int(msg.custom_mode):
+                    # Our mode shows while its answer may be lost: the command was handled.
+                    self._mode_answer_seq = seq
+                    self._mode_command = None
                 if not was_connected:
                     t = replace(t, fc_link_epoch=t.fc_link_epoch + 1, fc_boot_ms=None)
                     self._t = t

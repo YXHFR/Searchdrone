@@ -20,9 +20,10 @@ failsafe's. It ends at once with a notice from the ground, a change from outside
 the executor enters itself, the RC mode switch moving, or any HEARTBEAT received after the
 answer that settled a newer mode command of ours: the flight controller handles commands
 in order, so a HEARTBEAT received after that answer left after the command was handled,
-and AUTO in it is from outside. "After" is the order the messages were received in
-(``FcTelemetry.fc_heartbeat_seq``), never a time: two messages can share a millisecond,
-and the executor only stamps a time when it gets to run.
+and AUTO in it is from outside. "After" is the order the messages were received in,
+never a time: two messages can share a millisecond. The vehicle records each answer as it
+is received and every HEARTBEAT carries the newest one before it
+(``FcTelemetry.mode_answer_seq``), so it holds before the executor gets to run again.
 After AUTO was taken as ours the RC mode switch is still watched for ``RC_RECHECK_MS``
 past that (or to the deadline): a pilot's RC AUTO whose HEARTBEAT came before the next
 RC_CHANNELS sample is then a takeover after all.
@@ -67,9 +68,9 @@ class LateMode:
     mode: CopterMode
     until_ms: int  # that switch's own confirm deadline (monotonic ms)
     rc_mode_pwm: int | None  # the RC mode switch when it was sent
-    # The receive order of the answer that settled a newer mode command of ours: any
-    # HEARTBEAT received after it ends this one, whatever mode it shows.
-    newer_seq: int | None = None
+    # The receive order of the answer that settled it. A HEARTBEAT received after a newer
+    # answer (``FcTelemetry.mode_answer_seq`` past this) ends it, whatever mode it shows.
+    answer_seq: int
 
 
 class Authority:
@@ -95,35 +96,27 @@ class Authority:
         self.late = None
         self.adopted = None
 
-    def accepted(self, mode: CopterMode, seq: int) -> None:
-        """The flight controller accepted a mode command of ours; ``seq`` is the receive
-        order of the answer that said so (``Vehicle.set_mode_ordered``). It handles
-        commands in order, so a cancelled one before it can only show in a HEARTBEAT
-        received before that answer. A new command for the late mode itself ends the
-        record: it is pending now, and cancelled it is recorded anew."""
-        late = self.late
-        if late is None:
-            return
-        if late.mode == mode:
-            self.late = None
-        elif late.newer_seq is None or seq < late.newer_seq:
-            self.late = replace(late, newer_seq=seq)
-
-    def sent_and_cancelled(self, mode: CopterMode, until_ms: int, rc_mode_pwm: int | None) -> None:
+    def sent_and_cancelled(
+        self, mode: CopterMode, until_ms: int, rc_mode_pwm: int | None, answer_seq: int
+    ) -> None:
         """A switch the flight controller accepted, cancelled before a HEARTBEAT showed it:
         it may show until ``until_ms``, that switch's own confirm deadline. Only AUTO
-        (``LATE_MODES``); any other mode that shows later is not taken as ours."""
-        self.late = LateMode(mode, until_ms, rc_mode_pwm) if mode in LATE_MODES else None
+        (``LATE_MODES``); any other mode that shows later is not taken as ours.
+        ``answer_seq`` is the receive order of the answer that accepted it."""
+        late = LateMode(mode, until_ms, rc_mode_pwm, answer_seq)
+        self.late = late if mode in LATE_MODES else None
 
     def _late(self, t: FcTelemetry, now_ms: int) -> CopterMode | None:
         """The late mode while it may still show: before its deadline, the RC mode switch
-        where it was (a person who moved it chose the mode, ``sd_mav.chain``)."""
+        where it was (a person who moved it chose the mode, ``sd_mav.chain``), and no
+        newer answer of ours received before this HEARTBEAT: the flight controller handles
+        mode commands in order, so after a newer one was answered the late one cannot
+        show. "Before" is the receive order, recorded as received (``sd_mav.Vehicle``)."""
         late = self.late
         if late is None:
             return None
         moved = switch_moved(late.rc_mode_pwm, t.rc_mode_pwm)
-        seen = t.fc_heartbeat_seq
-        after_newer = late.newer_seq is not None and seen is not None and seen > late.newer_seq
+        after_newer = t.mode_answer_seq is not None and t.mode_answer_seq > late.answer_seq
         if now_ms > late.until_ms or moved or after_newer:
             self.late = None
             return None
@@ -155,7 +148,7 @@ class Authority:
         if record is not None:
             # Keep the RC baseline: a pilot's RC AUTO may show before RC_CHANNELS does.
             until = max(record.until_ms, now_ms + RC_RECHECK_MS)
-            self.adopted = replace(record, until_ms=until, newer_seq=None)
+            self.adopted = replace(record, until_ms=until)
         return late
 
     def _rc_takeover(self, t: FcTelemetry, now_ms: int) -> bool:
@@ -194,30 +187,17 @@ class Authority:
             return f"mode_{mode_name(t.fc_custom_mode)}"
         return None
 
-    def confirmed(
-        self, mode: CopterMode, *, accepted_seq: int | None, seen_seq: int | None
-    ) -> None:
-        """The telemetry shows ``mode``, which we asked for; ``accepted_seq`` is the receive
-        order of the answer that settled it (None: not a switch of ours, a pilot's
-        Resume) and ``seen_seq`` that of the HEARTBEAT showing it. A HEARTBEAT received
-        after the answer ends a late mode: the flight controller handles commands in
-        order, so the cancelled one can no longer show. One received before it (the
-        telemetry still shows the mode from before) does not; the first HEARTBEAT
-        received after the answer then does, whatever it shows (``newer_seq``)."""
+    def confirmed(self, mode: CopterMode, *, resumed: bool = False) -> None:
+        """The telemetry shows ``mode``, which we asked for (``resumed``: a pilot's Resume,
+        nothing of ours is on the way). A late AUTO ends once AUTO itself is confirmed;
+        otherwise the next HEARTBEAT received after a newer answer ends it (``_late``)."""
         self.expected_mode = mode
         if self.pending_mode == mode:
             self.pending_mode = None
-        if accepted_seq is None:
-            self.late = None  # a pilot's Resume: nothing of ours is on the way
-            self.adopted = None
-            return
-        late = self.late
-        if late is not None and (
-            late.mode == mode or (seen_seq is not None and seen_seq > accepted_seq)
-        ):
+        if resumed or (self.late is not None and self.late.mode == mode):
             self.late = None
-        else:
-            self.accepted(mode, accepted_seq)
+        if resumed:
+            self.adopted = None
 
     def reset(self) -> None:
         """On the ground after landing: nothing is expected any more."""

@@ -212,25 +212,33 @@ def test_no_control_when_held(ops: list[str]) -> None:
 
 # --- a mode of ours, sent and cancelled before a HEARTBEAT showed it -------------------
 
+_NEVER = 10**9  # an answer's receive order no newer answer passes
+
+
+# The receive order of the answer that accepted the cancelled AUTO. Receive orders are
+# counted on their own, never derived from the times below.
+_OWN = 7
+
 
 def _shows(
-    mode: CopterMode, at_ms: int, rc: int | None = None, seq: int | None = None
+    mode: CopterMode, at_ms: int, rc: int | None = None, answer: int | None = _OWN
 ) -> FcTelemetry:
-    """A HEARTBEAT received at ``at_ms``; its receive order ``seq`` follows the time
-    unless given."""
+    """A HEARTBEAT received at ``at_ms``; ``answer`` is the newest answer to a mode command
+    of ours received before it (by default the cancelled AUTO's own)."""
     return FcTelemetry(
         fc_heartbeat_mono_ms=at_ms,
-        fc_heartbeat_seq=at_ms if seq is None else seq,
+        mode_answer_seq=answer,
         fc_custom_mode=int(mode),
         rc_mode_pwm=rc,
     )
 
 
 def _late_auto(rc: int | None = None) -> Authority:
-    """GUIDED expected; a switch to AUTO accepted and cancelled, its deadline at 3000."""
+    """GUIDED expected; a switch to AUTO accepted (answer ``_OWN``) and cancelled, its
+    deadline at 3000."""
     a = Authority()
-    a.confirmed(CopterMode.GUIDED, accepted_seq=None, seen_seq=None)
-    a.sent_and_cancelled(CopterMode.AUTO, 3000, rc)
+    a.confirmed(CopterMode.GUIDED, resumed=True)
+    a.sent_and_cancelled(CopterMode.AUTO, 3000, rc, _OWN)
     return a
 
 
@@ -276,8 +284,8 @@ def test_only_a_cancelled_auto_is_kept(mode: CopterMode) -> None:
     """A cancelled LOITER (or any mode but AUTO) that shows later is a change from outside:
     the executor never steers by holding a mode, and a person's LOITER must stop it."""
     a = Authority()
-    a.confirmed(CopterMode.AUTO, accepted_seq=None, seen_seq=None)
-    a.sent_and_cancelled(mode, 3000, None)
+    a.confirmed(CopterMode.AUTO, resumed=True)
+    a.sent_and_cancelled(mode, 3000, None, _OWN)
     assert a.late is None
     t = _shows(mode, 1100)
     assert a.adopt_late(t, 1100) is None and a.unexpected_mode(t, 1100) is not None
@@ -302,43 +310,41 @@ def test_a_notice_a_change_from_outside_or_a_hold_ends_a_cancelled_auto() -> Non
     assert a.unexpected_mode(t, 1100) is not None
 
 
-def test_any_heartbeat_after_a_newer_accept_ends_a_cancelled_auto() -> None:
+def test_any_heartbeat_after_a_newer_answer_ends_a_cancelled_auto() -> None:
     """The flight controller handles mode commands in order: after a newer mode command of
-    ours was accepted, the cancelled AUTO can no longer show. Any HEARTBEAT received after
+    ours was answered, the cancelled AUTO can no longer show. A HEARTBEAT received after
     that answer ends the record, whatever mode it shows; AUTO in it is from outside.
-    "After" is the receive order (``fc_heartbeat_seq``), not the time."""
-    t = _shows(CopterMode.AUTO, 1100)
-    # #161 round-4 review: GUIDED confirmed from the telemetry before its accept.
+    "After" is the receive order the vehicle recorded, not the time, and not when the
+    executor got to run."""
+    # Received before any newer answer, late in time: still ours.
     a = _late_auto()
-    a.confirmed(CopterMode.GUIDED, accepted_seq=1050, seen_seq=1000)
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 2900, answer=_OWN), 2900) is None
     assert a.late is not None
-    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1040), 1045) is None  # before the accept
-    # Later in time but received before the answer (the executor ran late): still ours.
-    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1100, seq=1049), 1100) is None
-    assert a.late is not None
-    # In the answer's own millisecond but received after it: from outside.
-    a2 = _late_auto()
-    a2.accepted(CopterMode.GUIDED, 1050)
-    assert a2.unexpected_mode(_shows(CopterMode.AUTO, 1050, seq=1051), 1050) is not None
+    # Received after a newer answer (receive order 9), in the same millisecond: outside.
+    t = _shows(CopterMode.AUTO, 1100, answer=9)
+    assert a.adopt_late(t, 1100) is None
     assert a.unexpected_mode(t, 1100) is not None and a.late is None
-    # Recorded at the ACCEPTED, with no confirm (yet): the same.
+    # A HEARTBEAT after the newer answer showing another mode ends it too.
     a = _late_auto()
-    a.accepted(CopterMode.LOITER, 1050)
-    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1040), 1045) is None
-    assert a.unexpected_mode(t, 1100) is not None and a.late is None
-    # Confirmed from a HEARTBEAT after the accept: ended at once.
-    a = _late_auto()
-    a.confirmed(CopterMode.LOITER, accepted_seq=1050, seen_seq=1060)
-    assert a.late is None and a.unexpected_mode(t, 1100) is not None
-    # The earliest newer accept counts.
-    a = _late_auto()
-    a.accepted(CopterMode.LOITER, 1050)
-    a.accepted(CopterMode.GUIDED, 1200)
-    assert a.unexpected_mode(t, 1100) is not None
-    # A new switch to AUTO itself: it is pending now, the old record ends.
-    a = _late_auto()
-    a.accepted(CopterMode.AUTO, 1050)
+    assert a.unexpected_mode(_shows(CopterMode.GUIDED, 1050, answer=9), 1050) is None
     assert a.late is None
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1100, answer=9), 1100) is not None
+    # Nothing recorded yet (no answer ever received): the record holds.
+    a = _late_auto()
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1100, answer=None), 1100) is None
+    # AUTO itself confirmed, or a pilot's Resume: nothing late is left.
+    a = _late_auto()
+    a.confirmed(CopterMode.AUTO)
+    assert a.late is None
+    a = _late_auto()
+    a.confirmed(CopterMode.GUIDED, resumed=True)
+    assert a.late is None
+    # GUIDED confirmed from a HEARTBEAT before its answer (#161 round 4): kept until a
+    # HEARTBEAT after the answer comes.
+    a = _late_auto()
+    a.confirmed(CopterMode.GUIDED)
+    assert a.late is not None
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1100, answer=9), 1100) is not None
 
 
 def test_a_pilots_rc_auto_seen_before_the_rc_sample_is_a_takeover() -> None:
@@ -495,8 +501,7 @@ async def test_auto_from_outside_after_a_newer_accept_not_confirmed_is_a_takeove
         await r.until(lambda: r.fc.mode == CopterMode.LOITER, 2)
         await r.run(0.05)
         assert not t2.done()
-        late = r.ex.auth.late
-        assert late is not None and late.newer_seq is not None
+        assert r.ex.auth.late is not None  # the HEARTBEAT after the answer ends it
         r.fc.set_mode_external(CopterMode.AUTO)
         r.fc.release_heartbeat()
         await r.run(1.0)
@@ -527,6 +532,28 @@ async def test_a_gcs_auto_right_after_our_newer_ack_is_a_takeover(newer: CopterM
         assert not t2.result()  # the HEARTBEAT never showed it
 
 
+@pytest.mark.parametrize("newer", [CopterMode.GUIDED, CopterMode.LOITER])
+async def test_tick_between_heartbeat_and_set_mode_resume(newer: CopterMode) -> None:
+    """#161 round-6 review: as above, and a tick runs in the same loop iteration as the
+    HEARTBEAT queued behind the answer, before ``set_mode`` runs again. The answer is
+    recorded as it is received, so that tick already sees AUTO as from outside."""
+    async with rig() as r:
+        await _late_auto_live(r)
+        loop = asyncio.get_running_loop()
+
+        def gcs_auto(command: int) -> None:
+            r.fc.after_ack = None
+            r.fc.mode = CopterMode.AUTO
+            r.fc.release_heartbeat()
+            loop.call_soon(lambda: asyncio.ensure_future(r.ex.tick()))
+
+        r.fc.after_ack = gcs_auto
+        t2 = asyncio.ensure_future(r.ex.set_mode(newer, SendOrigin.SKILL))
+        await r.run(3.0)
+        _taken(r)
+        await r.until(t2.done, 3)
+
+
 async def test_a_pilots_rc_auto_ahead_of_its_rc_sample_is_a_takeover() -> None:
     """A cancelled AUTO; the pilot picks AUTO on the RC switch and the HEARTBEAT showing it
     comes before the RC_CHANNELS sample that shows the switch moved. AUTO is first taken as
@@ -550,7 +577,7 @@ async def test_a_loiter_recorded_as_cancelled_does_not_hide_rc_loiter() -> None:
     takeover, and the next order is refused."""
     async with rig() as r:
         await _in_goto(r)
-        r.ex.auth.sent_and_cancelled(CopterMode.LOITER, r.ex.now_ms() + 2000, None)
+        r.ex.auth.sent_and_cancelled(CopterMode.LOITER, r.ex.now_ms() + 2000, None, _OWN)
         r.fc.rc_mode_switch(1300, CopterMode.LOITER)
         await r.run(1.0)
         _taken(r)
@@ -582,14 +609,15 @@ async def test_a_hold_of_the_executors_own_ends_a_cancelled_auto() -> None:
     the executor does not steer."""
     async with rig() as r:
         await _in_goto(r)
-        # A deadline past the 3 s to fc_silent, so only the hold can end it.
-        r.ex.auth.sent_and_cancelled(CopterMode.AUTO, r.ex.now_ms() + 10_000, None)
+        # A deadline past the 3 s to fc_silent and an answer no newer one passes, so only
+        # the hold can end it.
+        r.ex.auth.sent_and_cancelled(CopterMode.AUTO, r.ex.now_ms() + 10_000, None, _NEVER)
         r.ex.auth.pending_mode = CopterMode.LOITER
         r.fc.silent = True
         await r.until(lambda: r.ex.state == S.HELD, 10)
         assert r.ex.held_by == "fc_silent"
         assert r.ex.auth.late is None and r.ex.auth.pending_mode is None
-        r.ex.auth.late = LateMode(CopterMode.AUTO, r.ex.now_ms() + 10_000, None)
+        r.ex.auth.late = LateMode(CopterMode.AUTO, r.ex.now_ms() + 10_000, None, _NEVER)
         r.fc.mode = CopterMode.AUTO
         r.fc.silent = False
         await r.run(1.0)
