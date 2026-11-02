@@ -16,8 +16,17 @@ steps:
       params:
         sector_id: A
         spacing_m: 20
-    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min): A 0,50/100%/0,45/0,030/3,0  B
-      0,50/100%/0,45/0,030/3,0'
+    sectors:
+    - sector_id: A
+      name: A
+      status: active
+      progress: 0.52
+    - sector_id: B
+      name: B
+      status: done
+      progress: 1
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): A 0,50/100%/0,45/0,030/3,0@40  B
+      0,50/100%/0,45/0,030/3,0@40'
   operator: Kom hem nu
   expect:
     tool: return_home

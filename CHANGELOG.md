@@ -648,7 +648,10 @@ All notable changes to this project are listed here. The format follows
 - The AI commander's search-again rule: the lane spacing never goes below the survey
   tool's 10 m minimum, and the 30 m default and the 10 m floor are filled into the prompt
   from the code. The battery check compares "till hemgräns" with the minutes of a pass,
-  now shown last in the "Sektorer (POA ...)" line of the situation. A request that names
+  now shown last in the "Sektorer (POA ...)" line of the situation together with the lane
+  spacing they are planned for (`min@stråk m`), so the AI scales them to the closer
+  spacing and adds a quarter for the flight there; with no minutes to the home limit it
+  flies home. A request that names
   the sectors or says to come home after the search ends the mission after the first
   round, and "come home" from the operator ends it at once. Evaluations EV-34 to EV-37
   cover the four cases.
