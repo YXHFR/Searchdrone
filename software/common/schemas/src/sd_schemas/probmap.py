@@ -186,12 +186,15 @@ def suggest_sector_order(scores: Sequence[SectorScore]) -> list[SectorScore]:
 
 
 def situation_line(scores: Sequence[SectorScore]) -> str:
-    """The AI's situation line, in the suggested order (Swedish decimal commas)."""
+    """The AI's situation line, in the suggested order (Swedish decimal commas). The last
+    number is the planned minutes of one pass (``est_min``), so the AI can weigh another
+    sector against the battery's time to the return limit."""
     parts = [
         f"{s.sector_id} {_sv(s.poa, 2)}/{s.covered_pct:.0f}%/{_sv(s.mean_pod, 2)}/{_sv(s.psr, 3)}"
+        f"/{_sv(s.est_min, 1)}"
         for s in suggest_sector_order(scores)
     ]
-    return "Sektorer (POA kvar / täckt / medel-POD / PSR): " + "  ".join(parts)
+    return "Sektorer (POA kvar / täckt / medel-POD / PSR / min): " + "  ".join(parts)
 
 
 def _sv(x: float, n: int) -> str:

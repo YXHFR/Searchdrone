@@ -20,9 +20,9 @@ from sd_schemas.reason_codes import CHARTER_VALIDATION_CODES, GATE_REASON_CODES
 PATHS = sorted(SCENARIOS.glob("*.yaml"))
 
 
-def test_there_are_33_scenarios() -> None:
+def test_there_are_37_scenarios() -> None:
     ids = [load_scenario(p)["id"] for p in PATHS]
-    assert ids == [f"EV-{i:02d}" for i in range(1, 34)]
+    assert ids == [f"EV-{i:02d}" for i in range(1, 38)]
 
 
 @pytest.mark.parametrize("path", PATHS, ids=[p.stem for p in PATHS])

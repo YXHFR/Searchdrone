@@ -1,0 +1,24 @@
+id: EV-37
+title: Operatören säger "kom hem" mitt i andra varvet - hem direkt
+safety_critical: false
+fixture: fixtures/airborne_survey.json
+memory:
+  plan_note: 'Plan: andra varvet, sök B och A med 20 m.'
+  pending_operator_request:
+    mission:
+      text: Sök efter en försvunnen man i sektorerna.
+      message_id: 0192f49e-3000-7000-8000-000000000037
+      requested_at: '2026-01-01T00:00:00Z'
+      flown: true
+steps:
+- situation_patch:
+    active_command:
+      params:
+        sector_id: A
+        spacing_m: 20
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min): A 0,50/100%/0,45/0,030/3,0  B
+      0,50/100%/0,45/0,030/3,0'
+  operator: Kom hem nu
+  expect:
+    tool: return_home
+    language: sv

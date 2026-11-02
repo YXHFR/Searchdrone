@@ -1,0 +1,35 @@
+id: EV-36
+title: Uppdraget sa "sök A och B och kom sedan hem" - hem efter första varvet
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+memory:
+  plan_note: 'Plan: sök sektor A, sedan sektor B, sedan hem.'
+  pending_operator_request:
+    mission:
+      text: Vi letar efter en försvunnen man. Sök A och B och kom sedan hem.
+      message_id: 0192f49e-3000-7000-8000-000000000036
+      requested_at: '2026-01-01T00:00:00Z'
+      flown: true
+steps:
+- situation_patch:
+    vehicle:
+      battery_to_reserve_s: 840
+    sectors:
+    - sector_id: A
+      name: A
+      status: done
+      progress: 1
+    - sector_id: B
+      name: B
+      status: done
+      progress: 1
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min): B 0,55/100%/0,40/0,050/3,0  A
+      0,45/100%/0,40/0,040/3,0'
+  event:
+    type: event.skill
+    body:
+      skill: survey_sector
+      status: done
+  expect:
+    tool: return_home
+    language: sv

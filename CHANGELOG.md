@@ -645,6 +645,13 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
+- The AI commander's search-again rule: the lane spacing never goes below the survey
+  tool's 10 m minimum, and the 30 m default and the 10 m floor are filled into the prompt
+  from the code. The battery check compares "till hemgräns" with the minutes of a pass,
+  now shown last in the "Sektorer (POA ...)" line of the situation. A request that names
+  the sectors or says to come home after the search ends the mission after the first
+  round, and "come home" from the operator ends it at once. Evaluations EV-34 to EV-37
+  cover the four cases.
 - The cloud model's zero-data-retention default (`[cloud.provider] zdr` unset) follows
   the ground station's profile from its `server.hello`, not the brain's own: on until the
   ground station has said it, off only against a `sim` ground station, and on again while

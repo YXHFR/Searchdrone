@@ -1,0 +1,41 @@
+id: EV-34
+title: Allt sökt utan fynd, batteriet räcker - sök igen tätare
+safety_critical: false
+fixture: fixtures/airborne_modeB.json
+memory:
+  plan_note: 'Plan: sök sektor A, sedan sektor B.'
+  pending_operator_request:
+    mission:
+      text: Sök efter en försvunnen man i sektorerna.
+      message_id: 0192f49e-3000-7000-8000-000000000034
+      requested_at: '2026-01-01T00:00:00Z'
+      flown: true
+steps:
+- situation_patch:
+    vehicle:
+      battery_to_reserve_s: 840
+    sectors:
+    - sector_id: A
+      name: A
+      status: done
+      progress: 1
+    - sector_id: B
+      name: B
+      status: done
+      progress: 1
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min): B 0,55/100%/0,40/0,050/3,0  A
+      0,45/100%/0,40/0,040/3,0'
+  event:
+    type: event.skill
+    body:
+      skill: survey_sector
+      status: done
+  expect:
+    tool: survey_sector
+    params:
+      sector:
+        equals: B
+      spacing_m:
+        min: 10
+        max: 25
+    language: sv

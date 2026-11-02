@@ -389,7 +389,7 @@ def test_sector_order_and_the_situation_line() -> None:
     order = suggest_sector_order(built.sectors)
     assert [s.psr for s in order] == sorted((s.psr for s in order), reverse=True)
     line = situation_line(built.sectors)
-    assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR): ")
+    assert line.startswith("Sektorer (POA kvar / täckt / medel-POD / PSR / min): ")
     assert " A " in f" {line} " and " B " in f" {line} "
 
 
