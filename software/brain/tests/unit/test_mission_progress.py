@@ -271,12 +271,13 @@ def test_the_search_again_numbers_come_from_the_code() -> None:
     assert "{" not in system.split("EXEMPEL")[0]  # every placeholder filled
     assert "one without `spacing_m` flew 30 m, so 20 m" in system
     assert "never below 10 m" in system
-    assert "three times the minutes" in system and "till hemgräns" in system
+    assert "minutes * (spacing / your `spacing_m`) * 1.25" in system
+    assert "no minutes to the home limit" in system and "till hemgräns" in system
     assert "the mission ends after the first round" in system
     assert "at once, also in the middle of a search" in system
 
 
-def test_the_sector_line_shows_the_minutes_of_a_pass() -> None:
+def test_the_sector_line_shows_the_minutes_of_a_pass_and_their_spacing() -> None:
     score = SectorScore(
         sector_id="A",
         poa=0.4,
@@ -288,7 +289,9 @@ def test_the_sector_line_shows_the_minutes_of_a_pass() -> None:
         spacing_m=41.6,
     )
     line = situation_line([score])
-    assert line == "Sektorer (POA kvar / täckt / medel-POD / PSR / min): A 0,40/100%/0,30/0,016/6,3"
+    assert line == (
+        "Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): A 0,40/100%/0,30/0,016/6,3@42"
+    )
 
 
 async def test_a_plan_note_sent_with_the_action_is_kept() -> None:

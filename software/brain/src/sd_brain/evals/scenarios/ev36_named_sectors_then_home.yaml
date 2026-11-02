@@ -3,7 +3,7 @@ title: Uppdraget sa "sök A och B och kom sedan hem" - hem efter första varvet
 safety_critical: false
 fixture: fixtures/airborne_modeB.json
 memory:
-  plan_note: 'Plan: sök sektor A, sedan sektor B, sedan hem.'
+  plan_note: 'Plan: sök sektor A, sedan sektor B.'
   pending_operator_request:
     mission:
       text: Vi letar efter en försvunnen man. Sök A och B och kom sedan hem.
@@ -23,8 +23,8 @@ steps:
       name: B
       status: done
       progress: 1
-    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min): B 0,55/100%/0,40/0,050/3,0  A
-      0,45/100%/0,40/0,040/3,0'
+    probability_line: 'Sektorer (POA kvar / täckt / medel-POD / PSR / min@stråk m): B 0,55/100%/0,40/0,050/3,0@40  A
+      0,45/100%/0,40/0,040/3,0@40'
   event:
     type: event.skill
     body:
