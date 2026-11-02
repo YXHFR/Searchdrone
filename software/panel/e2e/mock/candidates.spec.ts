@@ -141,8 +141,10 @@ test.describe("every size", () => {
     await expectSafetyVisible(page, "confirm dialog open");
     await page.getByTestId("cand-confirm-yes").click();
 
-    const post = ground.calls(/^POST \/api\/v1\/candidates\/[^/]+\/decision$/);
-    expect(post).toHaveLength(1);
+    // The click returns before the page's POST reaches the fake ground: wait for it.
+    const decisions = () => ground.calls(/^POST \/api\/v1\/candidates\/[^/]+\/decision$/);
+    await expect.poll(() => decisions().length).toBe(1);
+    const post = decisions();
     expect(post[0]?.body).toEqual({ decision: "confirm", note: "", subject_rev: 1 });
     const found = page.getByTestId("cand-found");
     await expect(found).toContainText("Fynd F1: K3");
