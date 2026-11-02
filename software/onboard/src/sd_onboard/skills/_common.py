@@ -8,9 +8,10 @@ from typing import Final
 from sd_safety.targets import Plane
 from sd_schemas.vehicle import VehicleState
 
-__all__ = ["STILL_MS", "horizontal_m", "is_airborne", "still"]
+__all__ = ["STILL_MS", "STOP_WAIT_S", "horizontal_m", "is_airborne", "still"]
 
 STILL_MS: Final = 0.5  # slower than this counts as standing still
+STOP_WAIT_S: Final = 12.0  # a drone never reported still by then goes on from where it is
 _AIRBORNE_STATES: Final = frozenset({"in_air", "takeoff", "landing"})
 _AIRBORNE_ALT_M: Final = 0.5
 

@@ -36,7 +36,7 @@ from sd_onboard.executor.limits import LimitAction
 from sd_onboard.executor.link_loss import INTERNAL_FIND_GOTO
 from sd_onboard.executor.state import Trigger
 from sd_onboard.skills import inspect_detection, survey_sector
-from sd_onboard.skills.base import PlanError
+from sd_onboard.skills.base import PlanError, SkillFailedError
 from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_onboard.skills.inspect_detection import EXITS_MAX
 from sd_safety import evaluate
@@ -629,6 +629,39 @@ async def test_a_new_end_while_goto_starts_keeps_its_deadline() -> None:
         with pytest.raises(_StopError):
             await goto.start(plan, io)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
         assert goto._deadline == pytest.approx(renewed)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_an_inspection_flies_a_leg_set_as_the_last_one_ended() -> None:
+    """The reflex sets a new leg as the goto switches to LOITER at the end of the last
+    one (``retarget``; the goto has not arrived at it): the inspection flies the new leg
+    instead of taking it as flown. Here the new leg is a climb, so the order then ends in
+    the keep-out hover; asked whether it arrived, not whether the ends match."""
+    handler = inspect_detection.InspectHandler()
+    lat, lon = at(50, 0)
+    first = inspect_detection._Leg(lat, lon, 30.0, 5.0, None, exit=False)  # pyright: ignore[reportPrivateUsage]
+    climb = inspect_detection._Leg(lat, lon, 60.0, 3.0, None, exit=False, climb=True)  # pyright: ignore[reportPrivateUsage]
+    plan = SimpleNamespace(expected_duration_s=10.0)
+    starts: list[Any] = []
+
+    class _Goto:
+        arrived = False
+        target: tuple[float, float, float] = (lat, lon, 30.0)
+
+        async def start(self, leg_plan: Any, io: Any) -> None:
+            starts.append(handler._leg)  # pyright: ignore[reportPrivateUsage]
+            if len(starts) == 1:  # the climb comes as the first leg ends
+                handler._leg = climb  # pyright: ignore[reportPrivateUsage]
+                self.target, self.arrived = (climb.lat, climb.lon, climb.alt_m), False
+            else:
+                self.arrived = True
+
+    handler.goto = _Goto()  # type: ignore[assignment]
+    handler.command_id = new_id()
+    handler._ctx, handler._leg, handler._leg_plan = SimpleNamespace(), first, plan  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+    with pytest.raises(SkillFailedError) as failed:
+        await handler.start(plan, SimpleNamespace())  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+    assert starts == [first, climb]
+    assert failed.value.code == "KEEPOUT_VIOLATION"
 
 
 async def test_replans_of_one_inspection_have_a_cap(monkeypatch: pytest.MonkeyPatch) -> None:

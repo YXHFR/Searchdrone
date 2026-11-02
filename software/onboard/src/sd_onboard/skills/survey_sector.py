@@ -25,7 +25,7 @@ from sd_geo import PatternError, lawnmower
 from sd_mav.mission import last_nav_seq, survey_mission
 from sd_mav.modes import CopterMode
 from sd_onboard.skills import register_handler
-from sd_onboard.skills._common import still
+from sd_onboard.skills._common import STOP_WAIT_S, still
 from sd_onboard.skills.base import (
     ExecutorIO,
     MavAction,
@@ -51,7 +51,6 @@ DEFAULT_SPEED_MS: Final = 7.0
 TICK_S: Final = 0.1
 # A reroute that stops first waits at most this long for LOITER to stop the drone (from
 # 15 m/s at ArduCopter's braking: about 6 s), then plans from wherever it is.
-STOP_WAIT_S: Final = 12.0
 FIRST_SEARCH_SEQ: Final = 2  # seq 0 = home, seq 1 = speed
 
 

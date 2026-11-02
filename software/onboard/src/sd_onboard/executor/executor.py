@@ -1770,8 +1770,9 @@ class Executor:
         ``_keepout_climb`` does, to the cylinders' top and its margin (``climb_alt``),
         never above the charter's height less the altitude limit's margin, in an internal
         goto that replaces the order (superseded, ``KEEPOUT_VIOLATION``) and ends in the
-        keep-out hover there; the operator is told at once. False when the drone is in no
-        cylinder or cannot climb (the caller hovers where it is)."""
+        keep-out hover there; the operator is told at once. The climb starts where the
+        drone stops (``from_stop``), never back where it was when the cylinder came. False
+        when the drone is in no cylinder or cannot climb (the caller hovers where it is)."""
         plane, charter = self.plane(), self.charter
         if plane is None or charter is None:
             return False
@@ -1798,7 +1799,7 @@ class Executor:
         speed = min(_ALT_GOTO_SPEED_MS, charter.max_speed_ms)
         goto = GotoHandler()
         ctx = self._plan_context(new_id())
-        goto.prepare(ctx, v.lat, v.lon, alt, speed)
+        goto.prepare(ctx, v.lat, v.lon, alt, speed, from_stop=True)
         plan = goto_plan(ctx, v.lat, v.lon, alt, speed)
         self._enter(target, cause="KEEPOUT_VIOLATION")
         self._internal(INTERNAL_KEEPOUT_CLIMB, goto, plan, SendOrigin.LIMIT)

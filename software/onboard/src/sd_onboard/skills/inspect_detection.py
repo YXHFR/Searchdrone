@@ -197,16 +197,18 @@ class InspectHandler:
         return self._leg is not None and self._leg.climb
 
     def climb(self, ctx: PlanContext, alt_m: float) -> bool:
-        """Straight up to ``alt_m`` from where the drone stops (the goto stops it first: the
-        leg ends where it is), flown from the next tick; the order then ends in the keep-out
-        hover. False when no leg is flown."""
+        """Straight up to ``alt_m`` from where the drone stops (``from_stop``), flown from
+        the next tick; the order then ends in the keep-out hover. False when no leg is
+        flown."""
         if self._leg is None or self._at_point:
             return False
         v = ctx.vehicle
         speed = min(INSPECT_SPEED_MS, ctx.charter.max_speed_ms)
         leg = _Leg(v.lat, v.lon, alt_m, speed, None, exit=False, climb=True)
         self._ctx, self._leg, self._leg_plan = ctx, leg, self._plan_of(ctx, leg)
-        self.goto.retarget(ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, renew_deadline=True)
+        self.goto.retarget(
+            ctx, leg.lat, leg.lon, leg.alt_m, leg.speed_ms, renew_deadline=True, from_stop=True
+        )
         return True
 
     def replan(self, ctx: PlanContext, allowed: Callable[[list[LatLonAlt]], bool]) -> bool:
