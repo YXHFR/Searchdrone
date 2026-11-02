@@ -267,9 +267,16 @@ All notable changes to this project are listed here. The format follows
   arguments string that cannot be read (also a number that long, or nested too deep)
   goes to the repair round like any arguments that are not JSON, also when it is
   written as a `<tool_call>` in the text, and the decision log and the repeat check
-  read such arguments without failing. A fault no part of the AI's turn foresaw is now
-  logged (`backend_decide_failed`) and counts as an answer that could not be read: no
-  single model answer can end the brain. Counts no real call has (no prompt tokens, or
+  read such arguments without failing (also arguments that load but are nested too
+  deep to write back). A fault no part of the AI's turn foresaw is now logged
+  (`backend_decide_failed`, its type and a short message only) and counts as an answer
+  that could not be read; a turn that fails after the answer (`turn_failed`) is lost,
+  not the turn loop: no single model answer can end the brain. A test harness out of
+  recorded answers still fails. The decision log caps a search profile's key names
+  (32 names of at most 64 characters), writes a lone surrogate in a draft as "?", and a
+  log entry that cannot be built is dropped with a warning, not the turn. The
+  `estimate` read tool answers params that are no object with a tool error, so the
+  model gets its repair round. Counts no real call has (no prompt tokens, or
   no completion tokens next to an answer) are no valid usage either; all invalid usage
   reads 0 tokens, and its warning (`cloud_usage_invalid`) gives the reason: `absent`,
   `malformed` or `implausible`. A failed cloud call that may have been billed (a timeout, a broken
