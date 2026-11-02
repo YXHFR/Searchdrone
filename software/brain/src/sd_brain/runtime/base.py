@@ -121,7 +121,7 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
         prompt_tokens, completion_tokens, reasoning_tokens, cost_usd, usage_valid = _usage(
             data.get("usage")
         )
-        return ModelReply(
+        reply = ModelReply(
             content=msg.get("content"),
             tool_calls=calls,
             finish_reason=str(choice.get("finish_reason") or "stop"),
@@ -133,6 +133,9 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             cost_usd=cost_usd,
             usage_valid=usage_valid,
         )
+        if reply.usage_valid and _implausible(reply):
+            reply = reply.model_copy(update=_NO_USAGE)
+        return reply
     # Backstops for what no check above foresaw: ArithmeticError (an OverflowError) and
     # RecursionError (arguments nested too deep for _dumps or str).
     except (
@@ -161,7 +164,7 @@ def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
     ``valid`` is False, so the cloud budget books the call at its estimate. A broken
     count must neither make a good answer a parse error (a second, paid call to the
     fallback model) nor book the call as free. Usage left out, or without its prompt or
-    completion count, is not valid either (the stated counts are kept): a provider that
+    completion count, is not valid either and reads 0 the same way: a provider that
     states nothing is booked at the estimate, not as free. Only the reasoning share and
     the price may be left out.
     """
@@ -177,8 +180,29 @@ def _usage(value: Any) -> tuple[int, int, int, float | None, bool]:
     reasoning = _count((details or {}).get("reasoning_tokens"))
     if prompt is None or completion is None or reasoning is None:
         return 0, 0, 0, None, False
-    stated = value.get("prompt_tokens") is not None and value.get("completion_tokens") is not None
-    return prompt, completion, reasoning, _price(value.get("cost")), stated
+    if value.get("prompt_tokens") is None or value.get("completion_tokens") is None:
+        return 0, 0, 0, None, False
+    return prompt, completion, reasoning, _price(value.get("cost")), True
+
+
+# Invalid usage as the reply states it: no counts, no price (as malformed usage reads).
+_NO_USAGE: dict[str, Any] = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "reasoning_tokens": 0,
+    "cost_usd": None,
+    "usage_valid": False,
+}
+
+
+def _implausible(reply: ModelReply) -> bool:
+    """Well-formed counts no real call has: no prompt (every request has one), or no
+    completion next to an answer (text or a tool call). Booked as free they would leave
+    the call out of the budget, so they count as invalid usage."""
+    if reply.prompt_tokens == 0:
+        return True
+    answered = bool((reply.content or "").strip()) or bool(reply.tool_calls)
+    return reply.completion_tokens == 0 and answered
 
 
 # The highest price of one call the ground's budget books (``BudgetCommit.cost_usd``).

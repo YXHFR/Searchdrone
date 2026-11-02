@@ -42,6 +42,9 @@ USD_SEK = 11.5
 UNKNOWN_USD_PER_MTOK_IN = 15.0
 UNKNOWN_USD_PER_MTOK_OUT = 75.0
 MIN_RESERVE_SEK = 0.25
+# Prompt tokens per image crop in an estimate: the ground's default price per crop
+# (``ModelPrice.image_tokens_per_crop``), as its cloud budget reserves them.
+IMAGE_TOKENS_PER_CROP = 400
 _TZ = ZoneInfo("Europe/Stockholm")
 
 
@@ -165,6 +168,8 @@ class MeteredRuntime:
         except ModelError as exc:
             if exc.status in (401, 403):
                 self.key_invalid = True
+            if exc.kind != "http_error":  # a timeout or a broken answer may be billed
+                self._charge(_estimate(messages, sampling))
             raise
         self.replies.append(
             {
@@ -179,20 +184,28 @@ class MeteredRuntime:
                 "reasoning_tokens": reply.reasoning_tokens,
             }
         )
-        priced = reply
-        if not reply.usage_valid:  # booked at the whole reservation, as the ground does
-            est_prompt, _images = estimate_prompt_tokens(messages)
-            priced = reply.model_copy(
-                update={
-                    "prompt_tokens": est_prompt,
-                    "completion_tokens": sampling.max_tokens,
-                    "cost_usd": None,
-                }
-            )
+        # Broken usage is booked at the whole reservation, as the ground does.
+        self._charge(reply if reply.usage_valid else _estimate(messages, sampling))
+        return reply
+
+    def _charge(self, priced: ModelReply) -> None:
         sek, measured = reply_cost_sek(priced)
         self.ledger.charge(sek, measured=measured)
         self.cost_sek += sek
         self.calls += 1
         self.unmeasured_calls += 0 if measured else 1
         self.dearest_sek = max(self.dearest_sek, sek)
-        return reply
+
+
+def _estimate(messages: list[dict[str, Any]], sampling: Sampling) -> ModelReply:
+    """A call priced at its whole reservation: the prompt with its images, and every
+    completion token it was allowed."""
+    text, images = estimate_prompt_tokens(messages)
+    return ModelReply(
+        content=None,
+        tool_calls=[],
+        finish_reason="stop",
+        prompt_tokens=text + images * IMAGE_TOKENS_PER_CROP,
+        completion_tokens=sampling.max_tokens,
+        usage_valid=False,
+    )

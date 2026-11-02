@@ -32,6 +32,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from sd_brain.backends.base import BackendCrashError, CommanderBackend
+from sd_brain.backends.llm import PARSE_FAIL_TEXT
 from sd_brain.charter_draft import (
     CharterDraft,
     CharterError,
@@ -858,6 +859,16 @@ class CommanderLoop:
                 messages=[_deadline("http_error")],
                 diagnostics=TurnDiagnostics(
                     backend=_wire_backend(backend.name), error="http_error"
+                ),
+            )
+        except Exception as exc:
+            # Last resort: no single model answer may end the brain. A fault the backend
+            # did not foresee counts as an answer it could not read; the loop goes on.
+            log.exception("backend_decide_failed backend=%s: %s", backend.name, type(exc).__name__)
+            out = TurnOutput(
+                messages=[OutMessage(text=PARSE_FAIL_TEXT, refs={"turn_failed": "parse"})],
+                diagnostics=TurnDiagnostics(
+                    backend=_wire_backend(backend.name), error="parse_error"
                 ),
             )
         if out.diagnostics.latency_ms == 0:

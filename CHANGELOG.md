@@ -265,7 +265,16 @@ All notable changes to this project are listed here. The format follows
   longer than Python reads (4300 digits) is unreadable as a whole, so a parse error,
   as is a body nested too deep to read: neither escapes the call. A tool call's
   arguments string that cannot be read (also a number that long, or nested too deep)
-  goes to the repair round like any arguments that are not JSON.
+  goes to the repair round like any arguments that are not JSON, also when it is
+  written as a `<tool_call>` in the text, and the decision log and the repeat check
+  read such arguments without failing. A fault no part of the AI's turn foresaw is now
+  logged (`backend_decide_failed`) and counts as an answer that could not be read: no
+  single model answer can end the brain. Counts no real call has (no prompt tokens, or
+  no completion tokens next to an answer) are no valid usage either; all invalid usage
+  reads 0 tokens. A failed cloud call that may have been billed (a timeout, a broken
+  answer, a cancel) is booked at its whole reservation, no longer at the prompt alone,
+  and the eval ledger now charges such calls too and prices images in its estimate as
+  the ground does (400 tokens per crop).
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

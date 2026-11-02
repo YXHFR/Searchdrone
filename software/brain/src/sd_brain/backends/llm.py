@@ -85,7 +85,7 @@ def _logged_call(c: RawToolCall) -> dict[str, Any]:
         return {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
     try:
         args = json.loads(c.arguments_json)
-    except ValueError:
+    except (ValueError, RecursionError):  # also a number too long or nesting too deep
         args = None
     keys = sorted(args) if isinstance(args, dict) else []
     return {"name": c.name, "arguments": json.dumps({"redacted": keys})}
@@ -169,7 +169,7 @@ def _calls_key(reply: ModelReply) -> str | None:
     for c in reply.tool_calls:
         try:
             args: Any = json.loads(c.arguments_json) if c.arguments_json.strip() else {}
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # also a number too long or nesting too deep
             args = c.arguments_json
         calls.append([c.name, args])
     return json.dumps(calls, sort_keys=True, default=str)

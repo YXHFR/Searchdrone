@@ -293,7 +293,7 @@ def test_parse_reply_reads_the_reasoning_tokens() -> None:
 def test_left_out_or_null_parts_are_absent() -> None:
     bare = parse_reply({"choices": [{"message": None}], "usage": None}, latency_ms=1)
     assert (bare.content, bare.tool_calls, bare.completion_tokens) == (None, [], 0)
-    no_details = {"completion_tokens": 9, "completion_tokens_details": None}
+    no_details = {"prompt_tokens": 4, "completion_tokens": 9, "completion_tokens_details": None}
     reply = parse_reply({"choices": [{"message": {}}], "usage": no_details}, latency_ms=1)
     assert (reply.completion_tokens, reply.reasoning_tokens) == (9, 0)
 
@@ -414,11 +414,37 @@ def test_well_formed_usage_is_valid() -> None:
     ],
 )
 def test_left_out_counts_keep_the_answer_but_are_no_valid_usage(data: Any) -> None:
-    """A provider that states no counts is booked at the estimate, never as free."""
+    """A provider that states no counts is booked at the estimate, never as free; its
+    counts read 0, as malformed usage does."""
     reply = parse_reply(data, latency_ms=1)
     assert reply.content == "ok" and not reply.usage_valid
-    stated = data.get("usage") or {}
-    assert reply.prompt_tokens == (stated.get("prompt_tokens") or 0)  # the stated count stays
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cost_usd) == (0, 0, None)
+
+
+_CALL = {"id": "c1", "function": {"name": "goto", "arguments": "{}"}}
+
+
+@pytest.mark.parametrize(
+    ("message", "usage"),
+    [
+        ({"content": "ok"}, {"prompt_tokens": 0, "completion_tokens": 0}),
+        ({"content": "ok"}, {"prompt_tokens": 9, "completion_tokens": 0, "cost": 0.0}),
+        ({"content": None, "tool_calls": [_CALL]}, {"prompt_tokens": 9, "completion_tokens": 0}),
+        ({"content": ""}, {"prompt_tokens": 0, "completion_tokens": 3}),
+    ],
+)
+def test_counts_no_real_call_has_are_no_valid_usage(message: Any, usage: Any) -> None:
+    """No prompt, or an answer without completion tokens: booked as free, the call would
+    be left out of the budget, so it is booked at the estimate."""
+    reply = parse_reply({"choices": [{"message": message}], "usage": usage}, latency_ms=1)
+    assert not reply.usage_valid
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cost_usd) == (0, 0, None)
+
+
+def test_an_empty_answer_may_cost_no_completion_tokens() -> None:
+    usage = {"prompt_tokens": 9, "completion_tokens": 0}
+    reply = parse_reply({"choices": [{"message": {"content": " "}}], "usage": usage}, latency_ms=1)
+    assert reply.usage_valid and (reply.prompt_tokens, reply.completion_tokens) == (9, 0)
 
 
 def test_a_negative_zero_price_is_zero() -> None:

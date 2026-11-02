@@ -111,16 +111,34 @@ async def test_an_error_answer_releases_and_the_fallback_reserves_again() -> Non
     assert len(books.released) == 1 and len(books.committed) == 1
 
 
-async def test_a_timeout_is_committed_at_the_estimate() -> None:
+async def test_a_timeout_is_committed_at_the_whole_reservation() -> None:
     books = Books()
 
     def slow(_r: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow")
 
     with pytest.raises(ModelTimeoutError):
-        await _rt(slow, books).chat(MSG, [], 5, Sampling())
+        await _rt(slow, books).chat(MSG, [], 5, Sampling(max_tokens=300))
     (done,) = books.committed
-    assert done.completion_tokens == 0 and done.prompt_tokens == books.reserved[0].est_prompt_tokens
+    (asked,) = books.reserved
+    assert (done.prompt_tokens, done.completion_tokens) == (asked.est_prompt_tokens, 300)
+    assert books.released == []
+
+
+async def test_a_broken_answer_is_committed_at_the_whole_reservation() -> None:
+    """The provider generated it to its end and may bill it in full: never booked below
+    what was reserved (also not with 0 completion tokens)."""
+    books = Books()
+
+    def broken(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="inte json")
+
+    with pytest.raises(ModelError) as exc:
+        await _rt(broken, books).chat(MSG, [], 5, Sampling(max_tokens=300))
+    assert exc.value.kind == "parse_error"
+    assert books.committed and len(books.committed) == len(books.reserved)  # fallback too
+    for done, asked in zip(books.committed, books.reserved, strict=True):
+        assert (done.prompt_tokens, done.completion_tokens) == (asked.est_prompt_tokens, 300)
     assert books.released == []
 
 

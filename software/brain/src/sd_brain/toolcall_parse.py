@@ -42,6 +42,7 @@ __all__ = [
 
 _THINK = re.compile(r"<think>.*?(</think>|$)", re.DOTALL | re.IGNORECASE)
 _RAW_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+_RAW_NAME = re.compile(r'^\{\s*"name"\s*:\s*"([A-Za-z0-9_]{1,64})"')
 # The heights the ground station uses for a proposal that leaves them out.
 _PROPOSAL_ALT_MIN = float(CharterProposal.model_fields["alt_min_agl_m"].default)
 _PROPOSAL_ALT = float(CharterProposal.model_fields["default_alt_agl_m"].default)
@@ -146,7 +147,13 @@ def _raw_calls(reply: ModelReply) -> list[tuple[str, str, str]]:
     for i, m in enumerate(_RAW_CALL.finditer(reply.content)):
         try:
             obj = json.loads(m.group(1))
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # also a number too long or nesting too deep
+            obj = None
+        if not isinstance(obj, dict):
+            # Unreadable: kept as a call the parser refuses ("not JSON"), so the model
+            # gets its repair round instead of a turn that silently says nothing.
+            named = _RAW_NAME.search(m.group(1))
+            calls.append((f"raw_{i}", named.group(1) if named else "", m.group(1)))
             continue
         args = obj.get("arguments", {})
         calls.append((f"raw_{i}", str(obj.get("name", "")), json.dumps(args)))

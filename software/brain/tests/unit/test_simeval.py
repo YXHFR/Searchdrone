@@ -19,7 +19,7 @@ from shapely.geometry import Point
 
 from sd_brain.cli import main
 from sd_brain.config import BehaviourConfig, CloudConfig, LlmConfig
-from sd_brain.runtime.base import ModelReply, RawToolCall, Sampling, llm_sampling
+from sd_brain.runtime.base import ModelError, ModelReply, RawToolCall, Sampling, llm_sampling
 from sd_brain.runtime.budget import estimate_prompt_tokens
 from sd_brain.runtime.cloud import CloudModelRuntime
 from sd_brain.simeval.bank import (
@@ -33,6 +33,7 @@ from sd_brain.simeval.bank import (
 )
 from sd_brain.simeval.budget import (
     DAILY_CAP_SEK,
+    IMAGE_TOKENS_PER_CROP,
     USD_SEK,
     BudgetExhaustedError,
     CostLedger,
@@ -355,9 +356,12 @@ async def test_metered_runtime_books_unusable_usage_at_the_reservation(tmp_path:
     """As the ground does: the estimated prompt and the completion limit, never free."""
     ledger = _ledger(tmp_path, cap=30.0)
     meter = MeteredRuntime(_UnusableUsage(), ledger)  # type: ignore[arg-type]
-    msgs = [{"role": "user", "content": "hej " * 400}]
+    image = {"type": "image_url", "image_url": {"url": "data:"}}
+    msgs = [{"role": "user", "content": [{"type": "text", "text": "hej " * 400}, image, image]}]
     await meter.chat(msgs, [], 5, Sampling(max_tokens=300))
-    est_prompt, _ = estimate_prompt_tokens(msgs)
+    text, images = estimate_prompt_tokens(msgs)
+    assert images == 2
+    est_prompt = text + images * IMAGE_TOKENS_PER_CROP  # the images too, as the ground
     expected = reply_cost_sek(
         ModelReply(
             content="x",
@@ -372,6 +376,52 @@ async def test_metered_runtime_books_unusable_usage_at_the_reservation(tmp_path:
         1,
     )
     assert ledger.spent_sek() == pytest.approx(expected[0], abs=1e-6)  # kept to 6 decimals
+
+
+class _Failing:
+    """A runtime whose call fails with ``kind``."""
+
+    name = "cloud"
+    model_id = "m"
+    supports_images = False
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+    async def chat(self, *_args: Any, **_kw: Any) -> ModelReply:
+        err = ModelError("broken")
+        err.kind = self.kind  # type: ignore[assignment]
+        raise err
+
+
+@pytest.mark.parametrize("kind", ["timeout", "parse_error"])
+async def test_metered_runtime_charges_a_call_that_may_be_billed(tmp_path: Path, kind: str) -> None:
+    """A timeout or a broken answer may still be billed: charged at the reservation."""
+    ledger = _ledger(tmp_path, cap=30.0)
+    meter = MeteredRuntime(_Failing(kind), ledger)  # type: ignore[arg-type]
+    msgs = [{"role": "user", "content": "hej " * 400}]
+    with pytest.raises(ModelError):
+        await meter.chat(msgs, [], 5, Sampling(max_tokens=300))
+    text, _ = estimate_prompt_tokens(msgs)
+    expected, _ = reply_cost_sek(
+        ModelReply(
+            content=None,
+            tool_calls=[],
+            finish_reason="stop",
+            prompt_tokens=text,
+            completion_tokens=300,
+        )
+    )
+    assert (meter.calls, meter.cost_sek) == (1, pytest.approx(expected))
+    assert ledger.spent_sek() == pytest.approx(expected, abs=1e-6)
+
+
+async def test_metered_runtime_charges_nothing_for_an_unsent_call(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path, cap=30.0)
+    meter = MeteredRuntime(_Failing("http_error"), ledger)  # type: ignore[arg-type]
+    with pytest.raises(ModelError):
+        await meter.chat([{"role": "user", "content": "hej"}], [], 5, Sampling())
+    assert (meter.calls, meter.cost_sek, ledger.spent_sek()) == (0, 0, 0)
 
 
 async def test_cloud_runtime_asks_openrouter_for_the_price() -> None:
