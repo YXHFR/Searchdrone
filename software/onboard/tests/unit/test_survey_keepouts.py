@@ -5,12 +5,15 @@ every rejected candidate's way around stayed in the search and it ran out of tim
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
+from heartbeat_hold import HeartbeatHold
 from onboard_helpers import ONBOARD_SKILLS, PLANE, Rig, at, charter, rig, square
 
 from sd_mav.mission import MISSION
+from sd_mav.modes import CopterMode
 from sd_onboard.executor import executor as executor_module
 from sd_onboard.executor.keepout_reflex import stop_m, survey_run
 from sd_onboard.skills.survey_sector import SurveyRun
@@ -21,12 +24,13 @@ from sd_schemas.base import LatLon, new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.gate import GateContext, GateDecision, GateRequest
 from sd_schemas.keepout import Keepout
-from sd_schemas.link import KeepoutInstall, SkillCommand
+from sd_schemas.link import BBox, GeoDetectionMsg, KeepoutInstall, SkillCommand
 
 BOX = square(60, east=0, north=120)
-# Each change waits for the reroute before it to fly: a new mission cancelled while its
-# switch to AUTO is still on the way is a separate race (it ends in HELD, "external").
-_SETTLE_S = 2.0
+# Between one change and the next: short, so a change often comes while the reroute
+# before it is still switching to AUTO (the executor's own mode, never a takeover).
+_GAP_S = 0.3
+_SETTLE_S = 2.0  # long enough for a reroute to fly
 
 
 def keepout(east: float, north: float, r: float) -> Keepout:
@@ -77,7 +81,7 @@ async def _search_around(r: Rig, k: Keepout) -> tuple[SkillCommand, list[Xy]]:
     assert r.ex.state == S.SURVEY
     pattern = [PLANE.xy(p.lat, p.lon) for p in run_of(r).pattern]
     install(r, k)
-    await r.run(_SETTLE_S)
+    await r.run(_GAP_S)
     assert r.up.kinds().count("executor.keepout_reroute") == 1, r.up.kinds()
     assert run_of(r).detours() and corners(run_of(r))
     return cmd, pattern
@@ -151,7 +155,7 @@ async def test_a_straighten_keeps_the_way_around_a_cylinder_still_in_force() -> 
         cmd, _ = await _search_around(r, lifted)
         kept = keepout(-45, 80, 8)  # on the last leg
         install(r, lifted, kept)
-        await r.run(_SETTLE_S)
+        await r.run(_GAP_S)
         assert any(math.dist(p, centre(kept)) < 25 for p in corners(run_of(r))), "around both"
         install(r, kept)
         await r.run(0.5)
@@ -262,7 +266,7 @@ async def test_a_cylinder_lifted_while_the_search_stops_first_does_not_cut_the_s
             r.order("survey_sector", {"polygon": BOX, "spacing_m": 30, "speed_ms": 8}), 1
         )
         install(r, far)
-        await r.run(_SETTLE_S)
+        await r.run(_GAP_S)
         assert run_of(r).detours()
 
         def on_a_long_leg() -> bool:  # at full speed along it, 60 m or more to go
@@ -296,3 +300,153 @@ async def test_a_cylinder_lifted_while_the_search_stops_first_does_not_cut_the_s
         ), corners(run_of(r))
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
         assert xy_route_violation(_track(r, start), circles([close], PLANE)) is None
+
+
+WIDE = square(120, east=0, north=60)  # legs of 240 m
+_ARDUCOPTER = {"accel_ms2": BRAKE_MS2}
+
+
+def _ahead(r: Rig, m: float, radius: float) -> Keepout:
+    """A cylinder ``m`` ahead of the drone along its velocity."""
+    here, (ve, vn) = _xy(r), r.fc.vel
+    speed = math.hypot(ve, vn)
+    return keepout(here[0] + m * ve / speed, here[1] + m * vn / speed, radius)
+
+
+def _on_route(r: Rig, radius: float) -> Keepout:
+    """A cylinder on the search's route, halfway along the second leg still to fly."""
+    run = run_of(r)
+    a, b = (PLANE.xy(p.lat, p.lon) for p in run.waypoints[run.next_index : run.next_index + 2])
+    return keepout((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, radius)
+
+
+async def _searching(r: Rig) -> SkillCommand:
+    """A search on a long leg at full speed, 150 m or more to go."""
+    await r.install(charter(allowed_skills=ONBOARD_SKILLS))
+    await r.takeoff()
+    cmd = await r.send(
+        r.order("survey_sector", {"polygon": WIDE, "spacing_m": 60, "speed_ms": 8}), 1
+    )
+
+    def on_a_long_leg() -> bool:
+        ahead = r.fc.missions[MISSION][r.fc.mission_current]
+        to = PLANE.xy(ahead.x / 1e7, ahead.y / 1e7)
+        speed = math.hypot(*r.fc.vel)
+        return r.fc.mission_current >= 1 and math.dist(_xy(r), to) > 150 and speed > 7.9
+
+    await r.until(on_a_long_leg, 300)
+    return cmd
+
+
+async def _cancel_auto_on_the_way(r: Rig, change: Callable[[], None], kind: str) -> None:
+    """``change`` as the HEARTBEAT showing the executor's switch to AUTO comes, before
+    the switch has seen it: the reroute ``change`` starts (``kind``) cancels the switch."""
+    await r.until(
+        lambda: r.ex.auth.pending_mode == CopterMode.AUTO and r.fc.mode == CopterMode.AUTO, 10
+    )
+    hold = HeartbeatHold(r.fc)
+    hold.held = True
+    assert r.ex.vehicle.telemetry.fc_custom_mode != int(CopterMode.AUTO)
+    n = r.up.kinds().count(kind)
+    change()
+    hold.release()
+    await r.until(lambda: r.up.kinds().count(kind) > n, 1)
+
+
+def _never_taken(r: Rig) -> None:
+    """Every mode change here was the executor's own: it is never HELD by one, and it
+    steers the search on."""
+    kinds = r.up.kinds()
+    assert "executor.control_taken" not in kinds, kinds
+    assert r.ex.state == S.SURVEY, (r.ex.state, r.ex.held_by, r.fc.mode)
+
+
+async def test_reroutes_in_quick_succession_keep_steering() -> None:
+    """Three cylinders on the route, each installed while the reroute for the one before
+    is switching to AUTO: every reroute cancels the one before after its AUTO went out.
+    That late AUTO is the executor's own, not a takeover; the search steers on and keeps
+    out of a cylinder that comes after."""
+    async with rig(fc_options=_ARDUCOPTER) as r:
+        cmd = await _searching(r)
+        start = len(r.fc.track)
+        put = [_ahead(r, 50, 6)]
+        install(r, *put)
+        for _ in range(2):
+            await r.until(lambda: r.ex.active is not None and run_of(r).detours(), 5)
+            put.append(_on_route(r, 6))
+            await _cancel_auto_on_the_way(r, lambda: install(r, *put), "executor.keepout_reroute")
+        await r.run(_SETTLE_S)
+        assert r.up.kinds().count("executor.keepout_reroute") == 3, r.up.kinds()
+        _never_taken(r)
+        later = _ahead(r, 60, 8)
+        install(r, *put, later)
+        await r.run(_SETTLE_S)
+        _never_taken(r)
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        assert "executor.control_taken" not in r.up.kinds(), r.up.kinds()
+        assert xy_route_violation(_track(r, start), circles([*put, later], PLANE)) is None
+
+
+async def test_a_lift_while_a_reroute_switches_to_auto_keeps_steering() -> None:
+    """#161 round 2: a cylinder comes on the route (a way around it, no stop) and is
+    lifted while the reroute's switch to AUTO is on the way. The straighten cancels that
+    reroute; the late AUTO is the executor's own, so the search steers on and goes
+    around a cylinder that comes after."""
+    async with rig(fc_options=_ARDUCOPTER) as r:
+        cmd = await _searching(r)
+        start = len(r.fc.track)
+        install(r, _ahead(r, 115, 60))
+        await _cancel_auto_on_the_way(r, lambda: install(r), "executor.keepout_straighten")
+        await r.run(_SETTLE_S)
+        _never_taken(r)
+        later = _ahead(r, 60, 8)
+        install(r, later)
+        await r.run(_SETTLE_S)
+        _never_taken(r)
+        await r.until(lambda: "done" in r.up.stages(cmd.command_id), 600)
+        assert "executor.control_taken" not in r.up.kinds(), r.up.kinds()
+        assert xy_route_violation(_track(r, start), circles([later], PLANE)) is None
+
+
+def _detection(east: float, north: float) -> GeoDetectionMsg:
+    lat, lon = at(east, north)
+    return GeoDetectionMsg(
+        detection_id=new_id(),
+        bbox=BBox(x=10, y=10, w=20, h=40),
+        score=0.9,
+        lat=lat,
+        lon=lon,
+        sigma95_m=5.0,
+        px_size=40,
+        crop_inline=False,
+        label="person",
+    )
+
+
+async def test_a_merged_cylinder_of_the_drones_own_is_not_a_lift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same person seen again: the drone's own cylinder grows into one with a new id.
+    The old id is not a cylinder lifted, so the search tries no shorter rest for it."""
+    straightens: list[Xy] = []
+    reroute = executor_module.Executor._reroute
+
+    def spy(self: executor_module.Executor, *a: object, **kw: object) -> bool:
+        if kw.get("here") is not None:
+            straightens.append(kw["here"])  # type: ignore[arg-type]
+        return reroute(self, *a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(executor_module.Executor, "_reroute", spy)
+    async with rig(fc_options=_ARDUCOPTER) as r:
+        await _searching(r)
+        k = _ahead(r, 80, 1)
+        east, north = centre(k)
+        r.ex.on_detections([_detection(east, north)])
+        await r.run(_SETTLE_S)
+        assert r.up.kinds().count("executor.keepout_reroute") == 1, r.up.kinds()
+        assert run_of(r).detours()
+        r.ex.on_detections([_detection(east + 6, north)])
+        await r.run(0.5)
+        assert "executor.keepout_merged" in r.up.kinds(), r.up.kinds()
+        assert straightens == [], straightens
+        _never_taken(r)

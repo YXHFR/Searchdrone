@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 
+from heartbeat_hold import HeartbeatHold
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from onboard_helpers import Rig, at, rig
 
 from sd_mav.modes import CopterMode
+from sd_mav.vehicle import FcTelemetry, SendOrigin
+from sd_onboard.executor.authority import Authority
+from sd_safety.constants import MODE_CONFIRM_TIMEOUT_S
 from sd_schemas.base import new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.link import OperatorRelease
@@ -205,3 +209,78 @@ async def _restart_rig_case(ops: list[str]) -> None:
 @given(ops=_OPS)
 def test_no_control_when_held(ops: list[str]) -> None:
     asyncio.run(_restart_rig_case(ops))
+
+
+# --- a mode of ours, sent and cancelled before a HEARTBEAT showed it -------------------
+
+
+def _shows(mode: CopterMode, at_ms: int) -> FcTelemetry:
+    return FcTelemetry(fc_heartbeat_mono_ms=at_ms, fc_custom_mode=int(mode))
+
+
+def test_a_cancelled_mode_of_ours_is_ours_until_its_confirm_timeout() -> None:
+    """Sent and cancelled: a HEARTBEAT showing it within MODE_CONFIRM_TIMEOUT_S is ours (it
+    becomes the expected mode); after that, or another mode, is a change from outside."""
+    late_ms = int(MODE_CONFIRM_TIMEOUT_S * 1000)
+    a = Authority()
+    a.confirmed(CopterMode.LOITER)
+    a.sent_and_cancelled(CopterMode.AUTO, 1000)
+    t = _shows(CopterMode.AUTO, 1000 + late_ms)
+    assert a.unexpected_mode(t, 1000 + late_ms) is None
+    assert a.mode_problem(t, 1000 + late_ms) is None
+    assert a.adopt_late(t, 1000 + late_ms) == CopterMode.AUTO
+    assert a.expected_mode == CopterMode.AUTO and not a.cancelled
+    # Too late: a person's (or a failsafe's).
+    a = Authority()
+    a.confirmed(CopterMode.LOITER)
+    a.sent_and_cancelled(CopterMode.AUTO, 1000)
+    t = _shows(CopterMode.AUTO, 1001 + late_ms)
+    assert a.adopt_late(t, 1001 + late_ms) is None
+    assert a.unexpected_mode(t, 1001 + late_ms) is not None
+    # Another mode in the window is not ours either.
+    a = Authority()
+    a.confirmed(CopterMode.LOITER)
+    a.sent_and_cancelled(CopterMode.AUTO, 1000)
+    t = _shows(CopterMode.ALT_HOLD, 1100)
+    assert a.adopt_late(t, 1100) is None
+    assert a.unexpected_mode(t, 1100) is not None
+    assert a.mode_problem(t, 1100) == "mode_ALT_HOLD"
+
+
+def test_a_notice_or_a_change_from_outside_ends_a_cancelled_mode_being_ours() -> None:
+    """After an OperatorOverrideNotice (STOP, FLY HOME, a takeover) or a change from
+    outside, a late HEARTBEAT showing the cancelled mode is not taken as ours."""
+    a = Authority()
+    a.confirmed(CopterMode.LOITER)
+    a.sent_and_cancelled(CopterMode.AUTO, 1000)
+    a.notice(1050)
+    t = _shows(CopterMode.AUTO, 1100)
+    assert a.adopt_late(t, 1100) is None and a.unexpected_mode(t, 1100) is not None
+    a = Authority()
+    a.confirmed(CopterMode.LOITER)
+    a.sent_and_cancelled(CopterMode.AUTO, 1000)
+    change = a.unexpected_mode(_shows(CopterMode.ALT_HOLD, 1050), 1050)
+    assert change is not None
+    a.start_classification(change)
+    assert a.unexpected_mode(_shows(CopterMode.AUTO, 1100), 1100) is not None
+
+
+async def test_a_switch_cancelled_after_the_flight_controller_took_it_is_not_a_takeover() -> None:
+    """The executor's set_mode(AUTO) is cancelled after the flight controller took AUTO but
+    before a HEARTBEAT showed it: the HEARTBEAT that then shows AUTO is not a takeover,
+    and the executor steers on with AUTO expected."""
+    async with rig() as r:
+        await _in_goto(r)
+        hold = HeartbeatHold(r.fc)
+        hold.held = True
+        task = asyncio.ensure_future(r.ex.set_mode(CopterMode.AUTO, SendOrigin.SKILL))
+        await r.until(lambda: r.fc.mode == CopterMode.AUTO, 2)
+        task.cancel()
+        await r.run(0.05)
+        assert task.cancelled() and r.ex.auth.pending_mode is None
+        hold.release()
+        await r.run(0.5)
+        assert r.ex.state == S.TRANSIT, (r.ex.state, r.ex.held_by)
+        assert r.ex.auth.expected_mode == CopterMode.AUTO
+        assert "executor.mode_late" in r.up.kinds()
+        assert "executor.control_taken" not in r.up.kinds()

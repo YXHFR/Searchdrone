@@ -561,6 +561,12 @@ class Executor:
                     return True
                 await self.clock.sleep(0.05)
             return False
+        except asyncio.CancelledError:
+            # Sent (or on its way): the flight controller may take it after all. Its
+            # HEARTBEAT is then our own doing, not a takeover (``Authority``).
+            if self.auth.pending_mode == mode:
+                self.auth.sent_and_cancelled(mode, self.now_ms())
+            raise
         finally:
             if self.auth.pending_mode == mode:
                 self.auth.pending_mode = None
@@ -1411,6 +1417,8 @@ class Executor:
                 inside = math.dist(here, centre) < old.radius_m
                 if old.keepout_id in self._keepouts_through or (not seen and inside):
                     self._keepouts_through.add(grown.keepout_id)
+                # Grown, not lifted: the reflex does not try a shorter rest for the old id.
+                self._keepouts_seen.discard(old.keepout_id)
                 self._keepouts_seen.add(grown.keepout_id)
                 self._keepouts_changed = True
                 self.emit(
@@ -1630,6 +1638,9 @@ class Executor:
             self._take(Trigger.FC_SILENT, held_by="fc_silent", event="fc_silent")
         if t.fc_connected:
             self._watch_landing()
+            late = self.auth.adopt_late(t, now)
+            if late is not None:
+                self.emit("mode_late", {"fc_mode": late.name})
             self._classify(now)
             self._keep_flying_home(now)
             self._check_gnss(now)
