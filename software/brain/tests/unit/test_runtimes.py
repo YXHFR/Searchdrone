@@ -12,9 +12,11 @@ from brain_helpers import chat_reply, mock_client
 
 from sd_brain.config import BrainConfig, CloudConfig
 from sd_brain.runtime.base import (
+    MAX_TOKEN_COUNT,
     ModelError,
     ModelTimeoutError,
     NotConfiguredError,
+    RawToolCall,
     Sampling,
     parse_reply,
 )
@@ -93,21 +95,11 @@ async def test_cloud_openrouter_call() -> None:
         {"choices": ["text"]},
         {"choices": [{"message": {"tool_calls": ["x"]}}]},
         {"choices": [{"message": {"tool_calls": [{"function": "x"}]}}]},
-        {"choices": [{"message": {"content": "ok"}}], "usage": ["x"]},
-        {
-            "choices": [{"message": {"content": "ok"}}],
-            "usage": {"completion_tokens": 9, "completion_tokens_details": "many"},
-        },
         ["not", "an", "object"],
         # an empty string, list or 0 is no object either: never an empty, good answer
         {"choices": [{"message": ""}]},
         {"choices": [{"message": []}]},
         {"choices": [0]},
-        {"choices": [{"message": {"content": "ok"}}], "usage": ""},
-        {
-            "choices": [{"message": {"content": "ok"}}],
-            "usage": {"completion_tokens": 9, "completion_tokens_details": 0},
-        },
         "",
     ],
 )
@@ -303,6 +295,110 @@ def test_left_out_or_null_parts_are_absent() -> None:
     no_details = {"completion_tokens": 9, "completion_tokens_details": None}
     reply = parse_reply({"choices": [{"message": {}}], "usage": no_details}, latency_ms=1)
     assert (reply.completion_tokens, reply.reasoning_tokens) == (9, 0)
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        "",
+        0,
+        ["x"],
+        "many",
+        {"completion_tokens": "many"},
+        {"prompt_tokens": -5, "completion_tokens": "9"},
+        {"completion_tokens": True, "cost": "1.0"},
+        {"completion_tokens_details": ""},
+        {"completion_tokens_details": 0},
+        {"completion_tokens_details": "many"},
+        {"completion_tokens_details": {"reasoning_tokens": "many"}},
+        # too large for a float, or for the budget's books: malformed, never an error
+        {"prompt_tokens": 10**400},
+        {"prompt_tokens": MAX_TOKEN_COUNT + 1},
+        {"completion_tokens": 1e300},
+        {"completion_tokens": 1.5},
+    ],
+)
+async def test_malformed_usage_keeps_the_answer(usage: Any) -> None:
+    """Usage is metadata: a broken count drops the numbers, never the answer."""
+    data = {"choices": [{"message": {"content": "ok"}}], "usage": usage}
+    reply = parse_reply(data, latency_ms=1)
+    assert reply.content == "ok"
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.reasoning_tokens) == (0, 0, 0)
+    assert reply.cost_usd is None and not reply.usage_valid
+    # ... and no second, paid call goes to the fallback model.
+    asked: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        asked.append(json.loads(req.read())["model"])
+        return httpx.Response(200, json=data)
+
+    rt = _cloud(handler, model="main/m", fallback_model="spare/m")
+    assert (await rt.chat(MSG, [], 5, Sampling())).content == "ok"
+    assert asked == ["main/m"]
+
+
+def test_a_tool_call_comes_through_next_to_broken_usage() -> None:
+    call = {"id": "call_7", "function": {"name": "hold", "arguments": '{"s": 30}'}}
+    data = {"choices": [{"message": {"tool_calls": [call]}}], "usage": {"prompt_tokens": 10**400}}
+    reply = parse_reply(data, latency_ms=1)
+    assert reply.tool_calls == [RawToolCall(id="call_7", name="hold", arguments_json='{"s": 30}')]
+    assert not reply.usage_valid
+
+
+@pytest.mark.parametrize(
+    "cost", [10**400, 1001, float("inf"), float("nan"), -0.01, True, "0.01", [1]]
+)
+def test_a_broken_price_is_dropped_and_the_counts_stay(cost: Any) -> None:
+    """The ground then prices the tokens itself; never an OverflowError."""
+    usage = {"prompt_tokens": 900, "completion_tokens": 30, "cost": cost}
+    reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
+    assert reply.content == "ok" and reply.cost_usd is None
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.usage_valid) == (900, 30, True)
+
+
+async def test_a_price_too_large_for_a_float_reaches_the_answer_over_http() -> None:
+    body = chat_reply("ok")
+    body["usage"] = {"prompt_tokens": 9, "completion_tokens": 3, "cost": 10**400}
+    rt = _cloud(lambda _r: httpx.Response(200, json=body), model="main/m")
+    reply = await rt.chat(MSG, [], 5, Sampling())
+    assert (reply.content, reply.cost_usd, reply.usage_valid) == ("ok", None, True)
+
+
+async def test_a_body_nested_too_deep_is_a_parse_error() -> None:
+    deep = b"[" * 100_000 + b"]" * 100_000
+    rt = _cloud(lambda _r: httpx.Response(200, content=deep), model="main/m")
+    with pytest.raises(ModelError) as exc:
+        await rt.chat(MSG, [], 5, Sampling())
+    assert exc.value.kind == "parse_error"
+
+
+def test_a_good_tool_call_next_to_a_broken_one_is_a_parse_error() -> None:
+    good = {"id": "call_1", "function": {"name": "hold", "arguments": "{}"}}
+    data = {"choices": [{"message": {"tool_calls": [good, {"function": "x"}]}}]}
+    with pytest.raises(ModelError) as exc:
+        parse_reply(data, latency_ms=1)
+    assert exc.value.kind == "parse_error"
+
+
+def test_well_formed_or_left_out_usage_is_valid() -> None:
+    usage = {"prompt_tokens": MAX_TOKEN_COUNT, "completion_tokens": 512.0, "cost": 0.01}
+    reply = parse_reply({"choices": [{"message": {"content": "ok"}}], "usage": usage}, latency_ms=1)
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.cost_usd) == (
+        MAX_TOKEN_COUNT,
+        512,
+        0.01,
+    )
+    assert reply.usage_valid
+    bare = parse_reply({"choices": [{"message": {"content": "ok"}}]}, latency_ms=1)
+    assert bare.usage_valid and bare.prompt_tokens == 0
+
+
+def test_the_token_limit_is_the_budgets() -> None:
+    from sd_schemas.cloud_budget import BudgetCommit
+
+    fields = BudgetCommit.model_json_schema()["properties"]
+    assert fields["prompt_tokens"]["maximum"] == MAX_TOKEN_COUNT
+    assert fields["completion_tokens"]["maximum"] == MAX_TOKEN_COUNT
 
 
 def test_the_defaults_are_a_flights() -> None:

@@ -253,7 +253,15 @@ All notable changes to this project are listed here. The format follows
   farm flight now pass `[llm]` on as the drill does. `Sampling()` and a bare
   `LlmCommander` default to `[llm]`'s 4096 completion tokens and 16384-token context
   window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
-  an object is now a parse error (the fallback model answers), not an empty answer.
+  a choice, message or tool call is now a parse error (the fallback model answers),
+  not an empty answer. Malformed usage metadata (`usage`, its token counts or
+  `completion_tokens_details`, also a count too large for a float or over the budget's
+  10,000,000) only drops those numbers: the answer stands, no second, paid call goes to
+  the fallback model, and the ground's cloud budget books the call at its whole
+  reservation (the estimated prompt and the completion limit), never as free. A
+  provider price outside 0 to 1000 USD (also one too large for a float) is dropped,
+  and the ground prices the tokens. A body nested too deep to read is a parse error,
+  not a RecursionError that escapes the call.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning
