@@ -514,3 +514,111 @@ def test_the_manifest_says_which_sets_picked_the_epoch() -> None:
     assert val_ap50_rule({"val_ap50_by_dataset": by_dataset}) == "min_over_datasets"
     ck = {"val_ap50_by_dataset": by_dataset, "val_ap50_pick": ["heridal"]}
     assert val_ap50_rule(ck) == "min_over_pick"
+
+
+# --- upscale: each tile covers tile / upscale picture pixels, enlarged to tile -------
+
+
+def test_2x_tiles_cover_half_the_pixels_and_their_boxes_are_enlarged() -> None:
+    boxes = [(10.0, 10.0, 30.0, 40.0), (100.0, 120.0, 112.0, 150.0)]
+    plain = tiles.cut(300, 200, boxes, 128)
+    big = tiles.cut(300, 200, boxes, 128, upscale=2)
+    assert len(big) > len(plain)
+    covered = np.zeros((200, 300), dtype=bool)
+    for (x0, y0, x1, y1), kept in big:
+        assert x1 - x0 == 64 and y1 - y0 == 64  # 128 / 2 picture pixels
+        covered[y0:y1, x0:x1] = True
+        for b in kept:
+            assert 0 <= b[0] < b[2] <= 128 and 0 <= b[1] < b[3] <= 128
+            # back in the picture, the box lies on a person
+            back = (b[0] / 2 + x0, b[1] / 2 + y0, b[2] / 2 + x0, b[3] / 2 + y0)
+            assert any(
+                p[0] <= back[0] < back[2] <= p[2] and p[1] <= back[1] < back[3] <= p[3]
+                for p in boxes
+            )
+    assert covered.all()  # every pixel up to the edges
+    first = big[0]
+    assert first[0] == (0, 0, 64, 64) and first[1] == [(20.0, 20.0, 60.0, 80.0)]
+
+
+@pytest.mark.parametrize("upscale", [0, 3, 5])
+def test_a_bad_upscale_cuts_nothing(upscale: int) -> None:
+    with pytest.raises(ValueError, match="upscale"):
+        tiles.cut(300, 200, [], 128, upscale=upscale)
+
+
+def test_the_cache_key_is_unchanged_at_1x_and_differs_at_2x(bank: Path) -> None:
+    items = tiles.pictures(bank, "train", ["heridal"])
+    import hashlib
+
+    old = hashlib.sha256(f"{tiles.CACHE_SCHEMA}|128|0.25".encode())  # before upscale=
+    for im, _ in items:
+        old.update(f"|{im.image_id}:{len(im.boxes)}".encode())
+    assert tiles.cache_key(items, 128, 0.25) == old.hexdigest()[:16]
+    assert tiles.cache_key(items, 128, 0.25, upscale=2) != old.hexdigest()[:16]
+
+
+def test_the_2x_cache_holds_enlarged_tiles_with_the_people_under_their_boxes(
+    bank: Path, tmp_path: Path
+) -> None:
+    items = tiles.pictures(bank, "train", ["heridal"], limit=1)
+    cut = tiles.build_cache(
+        items, tmp_path / "x2", TILE, empty_share=1.0, progress=False, upscale=2
+    )
+    plain = tiles.build_cache(items, tmp_path / "x1", TILE, empty_share=1.0, progress=False)
+    assert len(cut) > len(plain)
+    with_people = [t for t in cut if t.boxes]
+    assert with_people
+    for t in with_people:
+        with PILImage.open(tmp_path / "x2" / t.file) as pic:
+            rgb = np.asarray(pic.convert("RGB")).astype(int)
+        assert rgb.shape[0] <= TILE and rgb.shape[1] <= TILE
+        for x0, y0, x1, y1 in t.boxes:
+            inner = rgb[int(y0) + 2 : int(y1) - 2, int(x0) + 2 : int(x1) - 2]
+            assert inner.size and (inner[..., 0] - inner[..., 1]).mean() > 120  # red person
+    # read back, the same tiles
+    again = tiles.build_cache(
+        items, tmp_path / "x2", TILE, empty_share=1.0, progress=False, upscale=2
+    )
+    assert again == cut
+
+
+def test_upscale_is_part_of_the_settings_only_when_it_is_used() -> None:
+    assert "upscale" not in train_detector.Settings("yolox_s").key()  # old runs carry on
+    assert train_detector.Settings("yolox_s", upscale=2).key()["upscale"] == 2
+
+
+@pytest.mark.parametrize("bad", ["upscale=3", "upscale=5", "upscale=0", "upscale=two"])
+def test_a_bad_upscale_stops_before_training(bank: Path, tmp_path: Path, bad: str) -> None:
+    argv = ["model=yolox_s", f"data={bank}", f"out={tmp_path / 'run'}", f"tile={TILE}", bad]
+    assert train_detector.main(argv) == 2
+    assert not (tmp_path / "run").exists()
+
+
+def test_tile_over_upscale_may_not_be_under_32(bank: Path, tmp_path: Path) -> None:
+    argv = ["model=yolox_s", f"data={bank}", f"out={tmp_path / 'run'}", "tile=64", "upscale=4"]
+    assert train_detector.main(argv) == 2
+
+
+@pytest.mark.parametrize("upscale", [1, 2])
+def test_the_manifest_carries_the_runs_upscale(bank: Path, tmp_path: Path, upscale: int) -> None:
+    best = tmp_path / "run" / "best.pt"
+    best.parent.mkdir()
+    _earlier_best(best)
+    ck = torch.load(best, weights_only=True)
+    ck["settings"] = train_detector.Settings("yolox_s", tile=TILE, upscale=upscale).key()
+    torch.save(ck, best)
+    _, manifest_path = export(best, tmp_path / "models", "person_x", check_images=1)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["upscale"] == upscale and manifest["tile_px"] == TILE
+
+
+def test_weights_from_before_upscale_export_as_1x(bank: Path, tmp_path: Path) -> None:
+    best = tmp_path / "old" / "best.pt"
+    best.parent.mkdir()
+    _earlier_best(best)
+    ck = torch.load(best, weights_only=True)
+    ck["settings"] = {"sets": ["heridal"], "tile": TILE}  # no upscale key
+    torch.save(ck, best)
+    _, manifest_path = export(best, tmp_path / "models", "person_x", check_images=1)
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["upscale"] == 1

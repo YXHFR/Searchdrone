@@ -25,9 +25,11 @@ never takes the whole CPU from the flight executor on the companion computer.
 
 ``load_model`` reads a model's manifest (``<name>.json`` next to ``<name>.onnx``, written
 by ``tools/train/export_onnx.py``) and gives the ``model`` source: the engine behind a
-``TiledDetector``. Like every detector it gives hints, never decisions, so a model
-that cannot be used only turns perception off; it never stops ``sd_onboard``, which
-may be restarted in the air.
+``TiledDetector``, which enlarges each tile ``upscale`` times when the manifest says so
+(the model was trained on tiles enlarged that much; a manifest without it means 1).
+Like every detector it gives hints, never decisions, so a model that cannot be used
+only turns perception off; it never stops ``sd_onboard``, which may be restarted in
+the air.
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ import numpy.typing as npt
 from sd_detect.api import Detection, Frame, SourceKind
 from sd_detect.boxes import nms, to_bbox
 from sd_detect.still import Still
-from sd_detect.tiling import TiledDetector
+from sd_detect.tiling import MAX_UPSCALE, TiledDetector, check_upscale
 
 __all__ = [
     "MANIFEST_SCHEMA",
@@ -57,6 +59,7 @@ __all__ = [
     "OnnxDetector",
     "check_model",
     "load_model",
+    "manifest_upscale",
     "sha256_of",
 ]
 
@@ -268,7 +271,23 @@ def _read_manifest(manifest_path: Path) -> dict[str, Any]:
     _check_input_px(sizes.get("input_px", 640))
     if sizes.get("tile_px", 32) < 32:
         raise ModelError(f"tile_px ska vara minst 32, inte {sizes['tile_px']}")
+    tile_px = sizes.get("tile_px", sizes.get("input_px", 640))
+    try:
+        span = check_upscale(tile_px, manifest.get("upscale", 1))
+    except ValueError:
+        raise ModelError(
+            f"Manifestets upscale ska vara ett heltal 1-{MAX_UPSCALE} som delar tile_px "
+            f"({tile_px}), inte {manifest.get('upscale')!r}"
+        ) from None
+    if span < 32:
+        raise ModelError(f"tile_px / upscale ska vara minst 32, inte {span}")
     return dict(manifest)
+
+
+def manifest_upscale(manifest: dict[str, Any]) -> int:
+    """How many times the model's tiles are enlarged: the manifest's ``upscale``, 1 for a
+    model exported before the field existed."""
+    return int(manifest.get("upscale", 1))
 
 
 def check_model(manifest_path: Path) -> Path:
@@ -298,5 +317,9 @@ def load_model(
         providers=providers,
         person_index=classes.index("person"),
     )
-    tiled = TiledDetector(engine, tile_px=int(manifest.get("tile_px", engine.input_px)))
+    tiled = TiledDetector(
+        engine,
+        tile_px=int(manifest.get("tile_px", engine.input_px)),
+        upscale=manifest_upscale(manifest),
+    )
     return ModelSource(tiled, manifest)

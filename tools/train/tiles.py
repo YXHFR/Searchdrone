@@ -8,6 +8,14 @@ as a JPEG with its person boxes. A person is kept in a tile when at least half o
 box is in it. Every tile with a person is kept; of the empty ones (grass, rock, forest)
 a share ``empty_share`` is kept so the model also learns what is not a person.
 
+With ``upscale`` above 1 (``just train-detector upscale=2``) each tile covers
+``tile_px / upscale`` picture pixels and is enlarged ``upscale`` times, bilinear, to
+``tile_px``, with its boxes: a 15 px person is trained on as 30 px. The drone does the
+same before the model sees a tile (``sd_detect.tiling.enlarge``, read from the model's
+manifest); ``enlarge`` here is the same resize, written out because the training
+environment has no ``sd_detect`` (``tools/tests/test_detector_upscale.py`` keeps the
+two equal).
+
 The tiles go to ``<out>/tiles/<part>/`` with ``tiles.json``; a finished cache is reused
 (its ``key`` says what it was cut from). Nothing here is ever in git: the tiles are
 cut from the downloaded datasets on the owner's computer.
@@ -33,6 +41,7 @@ OVERLAP = 0.15
 MIN_VISIBLE = 0.5
 EMPTY_SHARE = 0.25
 CACHE_SCHEMA = "train.tiles/v1"
+MAX_UPSCALE = 4  # as sd_detect.tiling
 
 
 @dataclass(frozen=True)
@@ -51,18 +60,43 @@ def starts(side: int, tile: int, overlap: float) -> list[int]:
     return sorted(set(out))
 
 
+def check_upscale(tile: int, upscale: int) -> int:
+    """The picture pixels one tile side covers, ``tile / upscale`` (``ValueError``: a
+    factor that is not a whole number from 1 to ``MAX_UPSCALE`` or does not divide
+    ``tile``)."""
+    if type(upscale) is not int or not 1 <= upscale <= MAX_UPSCALE:
+        raise ValueError(f"upscale must be a whole number from 1 to {MAX_UPSCALE}")
+    if tile % upscale:
+        raise ValueError("upscale must divide the tile")
+    return tile // upscale
+
+
+def enlarge(rgb: np.ndarray, upscale: int) -> np.ndarray:
+    """``rgb`` (``[h, w, 3]``, uint8) enlarged ``upscale`` times, bilinear: the same
+    resize as ``sd_detect.tiling.enlarge`` on the drone."""
+    if upscale == 1:
+        return rgb
+    h, w = rgb.shape[:2]
+    big = PILImage.fromarray(rgb).resize((w * upscale, h * upscale), PILImage.Resampling.BILINEAR)
+    return np.ascontiguousarray(np.asarray(big))
+
+
 def cut(
     width: int,
     height: int,
     boxes: Sequence[tuple[float, float, float, float]],
     tile: int = TILE_PX,
     overlap: float = OVERLAP,
+    upscale: int = 1,
 ) -> list[tuple[tuple[int, int, int, int], list[tuple[float, float, float, float]]]]:
-    """Tiles ``(x0, y0, x1, y1)`` of a picture and the boxes kept in each."""
+    """Tiles ``(x0, y0, x1, y1)`` of a picture (picture pixels) and the boxes kept in
+    each, in the pixels of the tile enlarged ``upscale`` times. Each tile covers
+    ``tile / upscale`` picture pixels, so enlarged it is ``tile`` px (less at an edge)."""
+    span = check_upscale(tile, upscale)
     out = []
-    for y in starts(height, tile, overlap):
-        for x in starts(width, tile, overlap):
-            x1, y1 = min(x + tile, width), min(y + tile, height)
+    for y in starts(height, span, overlap):
+        for x in starts(width, span, overlap):
+            x1, y1 = min(x + span, width), min(y + span, height)
             kept = []
             for b in boxes:
                 cx0, cy0 = max(b[0], x), max(b[1], y)
@@ -71,7 +105,14 @@ def cut(
                     continue
                 area = (b[2] - b[0]) * (b[3] - b[1])
                 if area > 0 and (cx1 - cx0) * (cy1 - cy0) / area >= MIN_VISIBLE:
-                    kept.append((cx0 - x, cy0 - y, cx1 - x, cy1 - y))
+                    kept.append(
+                        (
+                            (cx0 - x) * upscale,
+                            (cy0 - y) * upscale,
+                            (cx1 - x) * upscale,
+                            (cy1 - y) * upscale,
+                        )
+                    )
             out.append(((x, y, x1, y1), kept))
     return out
 
@@ -103,8 +144,12 @@ def pictures(
     return out
 
 
-def cache_key(items: Sequence[tuple[Image, Path]], tile: int, empty_share: float) -> str:
-    digest = hashlib.sha256(f"{CACHE_SCHEMA}|{tile}|{empty_share}".encode())
+def cache_key(
+    items: Sequence[tuple[Image, Path]], tile: int, empty_share: float, upscale: int = 1
+) -> str:
+    # upscale=1 leaves the key as it was, so a cache cut before upscale= is reused
+    up = f"|x{upscale}" if upscale != 1 else ""
+    digest = hashlib.sha256(f"{CACHE_SCHEMA}|{tile}|{empty_share}{up}".encode())
     for im, _ in items:
         digest.update(f"|{im.image_id}:{len(im.boxes)}".encode())
     return digest.hexdigest()[:16]
@@ -117,9 +162,11 @@ def build_cache(
     empty_share: float = EMPTY_SHARE,
     seed: int = 0,
     progress: bool = True,
+    upscale: int = 1,
 ) -> list[Tile]:
-    """Cut every picture once; a cache with the same key is read back instead."""
-    key = cache_key(items, tile, empty_share)
+    """Cut every picture once (each tile enlarged ``upscale`` times, as ``sd_detect``
+    enlarges it on the drone); a cache with the same key is read back instead."""
+    key = cache_key(items, tile, empty_share, upscale)
     listing = folder / "tiles.json"
     if listing.is_file():
         body = json.loads(listing.read_text(encoding="utf-8"))
@@ -133,11 +180,12 @@ def build_cache(
     for n, (im, root) in enumerate(items, 1):
         with PILImage.open(inside(root, safe_relpath(im.file))) as pic:
             rgb = pic.convert("RGB")
-        for (x0, y0, x1, y1), kept in cut(im.width, im.height, im.boxes, tile):
+        for (x0, y0, x1, y1), kept in cut(im.width, im.height, im.boxes, tile, upscale=upscale):
             if not kept and rng.random() >= empty_share:
                 continue
             name = f"{len(tiles):07d}.jpg"
-            rgb.crop((x0, y0, x1, y1)).save(folder / name, quality=92)
+            crop = np.asarray(rgb.crop((x0, y0, x1, y1)))
+            PILImage.fromarray(enlarge(crop, upscale)).save(folder / name, quality=92)
             tiles.append(Tile(name, tuple(kept), im.image_id))
         if progress and (n % 50 == 0 or n == len(items)):
             print(f"  skär bilder i rutor: {n}/{len(items)}", flush=True)

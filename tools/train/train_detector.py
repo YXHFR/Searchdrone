@@ -16,7 +16,11 @@ first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``
 big set does not drown the others; ``tiles``: every tile once, so a set counts by its
 size; or weights, ``balance=heridal:2,kios:2,kios_carperson:1,seadronessee:1``, naming
 every set), ``pick`` (the sets whose val AP50 picks the best epoch; default the sets in
-``sets`` that are measured on, HERIDAL and KIOS, or all of them if none is).
+``sets`` that are measured on, HERIDAL and KIOS, or all of them if none is),
+``upscale`` (1, the default, or 2-4: each tile covers ``tile / upscale`` picture pixels
+and is enlarged to ``tile``, so a small person is seen larger; the exported manifest
+carries it, so the drone enlarges its tiles the same way, and a 12 MP still takes about
+``upscale``² times as many tiles).
 
 Stops and goes on: the state is saved to ``last.pt`` every few minutes and after every
 epoch. Run the same command again and it carries on from there (a different command,
@@ -49,13 +53,13 @@ import numpy as np
 import torch
 from bench.common import BenchError, parse_args, say, warn
 from evaluate import ap50
-from tiles import TILE_PX, Tile, build_cache, load_tile, pictures
+from tiles import MAX_UPSCALE, TILE_PX, Tile, build_cache, check_upscale, load_tile, pictures
 from torch.utils.data import DataLoader, Dataset
 
 KEYS = (
     "model", "epochs", "batch", "sets", "simfarm", "simfarm_epochs", "device", "data",
     "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile", "init",
-    "balance", "pick",
+    "balance", "pick", "upscale",
 )  # fmt: skip
 SAVE_MINUTES = 10.0
 BALANCE_MODES = ("sets", "tiles")
@@ -75,6 +79,7 @@ class Settings:
     init: str = ""  # a best.pt to start from instead of COCO ("": COCO)
     balance: str = "sets"  # sets, tiles, or weights "heridal:2,kios:1"
     pick: tuple[str, ...] = ()  # the sets that pick the best epoch (): all
+    upscale: int = 1  # each tile covers tile / upscale picture pixels, enlarged to tile
 
     def key(self) -> dict[str, Any]:
         body = json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
@@ -85,6 +90,8 @@ class Settings:
             del body["balance"]
         if not self.pick or set(self.pick) == set(self.sets):
             del body["pick"]
+        if self.upscale == 1:
+            del body["upscale"]  # a run started before upscale= carries on
         return body
 
 
@@ -450,6 +457,14 @@ def run_stage(
         )
 
 
+def _int_key(args: dict[str, str], key: str, default: int) -> int:
+    raw = args.get(key, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise BenchError(f"{key}= ska vara ett heltal, inte {raw!r}", 2) from None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv, KEYS, "train-detector")
@@ -473,6 +488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             init=str(Path(args["init"]).expanduser().resolve()) if args.get("init") else "",
             balance=args.get("balance", "sets"),
             pick=tuple(s for s in args.get("pick", "").split(",") if s),
+            upscale=_int_key(args, "upscale", 1),
         )
         parse_balance(settings.balance, settings.sets)  # a typo stops here, not hours later
         stray = [s for s in settings.pick if s not in settings.sets]
@@ -480,6 +496,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise BenchError(f"pick= får bara nämna set i sets= (inte {', '.join(stray)}).", 2)
         if settings.tile % 32 or not 64 <= settings.tile <= 1280:
             raise BenchError("tile= ska vara delbart med 32 och mellan 64 och 1280", 2)
+        try:
+            span = check_upscale(settings.tile, settings.upscale)
+        except ValueError:
+            raise BenchError(
+                f"upscale= ska vara 1-{MAX_UPSCALE} och dela tile= ({settings.tile})", 2
+            ) from None
+        if span < 32:
+            raise BenchError(f"tile= / upscale= ska vara minst 32 bildpunkter, inte {span}", 2)
         out = Path(args.get("out") or data / "train" / model).expanduser().resolve()
         if settings.init and Path(settings.init).is_relative_to(out):
             raise BenchError(
@@ -662,19 +686,29 @@ def train(
             items = pictures(data, "pretrain", ["simfarm"], settings.limit)
             train_tiles = (
                 out / "tiles" / "simfarm",
-                build_cache(items, out / "tiles" / "simfarm", settings.tile),
+                build_cache(
+                    items, out / "tiles" / "simfarm", settings.tile, upscale=settings.upscale
+                ),
             )
             val = None
         else:
             items = pictures(data, "train", sets, settings.limit)
             train_tiles = (
                 out / "tiles" / "train",
-                build_cache(items, out / "tiles" / "train", settings.tile),
+                build_cache(
+                    items, out / "tiles" / "train", settings.tile, upscale=settings.upscale
+                ),
             )
             val_items = pictures(data, "val", sets, settings.limit)
             val = (
                 out / "tiles" / "val",
-                build_cache(val_items, out / "tiles" / "val", settings.tile, empty_share=0.1),
+                build_cache(
+                    val_items,
+                    out / "tiles" / "val",
+                    settings.tile,
+                    empty_share=0.1,
+                    upscale=settings.upscale,
+                ),
             )
         say(f"{stage}: {len(train_tiles[1])} rutor från {len(items)} bilder")
         run_stage(
