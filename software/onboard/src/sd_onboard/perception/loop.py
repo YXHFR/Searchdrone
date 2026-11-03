@@ -189,8 +189,9 @@ def _tiles_for(sources: Iterable[object], width: int, height: int) -> int:
     counts = [1]
     for s in sources:
         tiles_for = getattr(s, "tiles_for", None)
-        if callable(tiles_for):
-            counts.append(int(tiles_for(width, height)))  # pyright: ignore[reportUnknownArgumentType]
+        n: object = tiles_for(width, height) if callable(tiles_for) else None
+        if isinstance(n, int):
+            counts.append(n)
     return max(counts)
 
 
@@ -358,7 +359,7 @@ class PerceptionLoop:
         task.add_done_callback(self._free)
         return await asyncio.shield(task)
 
-    def _free(self, task: asyncio.Future[object]) -> None:
+    def _free[U](self, task: asyncio.Future[U]) -> None:
         self._slot.release()
         if not task.cancelled():
             task.exception()  # retrieved: a caller that gave up must not log it as lost
