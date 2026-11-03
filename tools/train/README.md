@@ -1,16 +1,17 @@
 # Training the person detector (`tools/train`)
 
-This turns two published detectors into person detectors for pictures taken from the
-air. Training runs on your computer's graphics card. You choose the better of the two
+This turns published detectors into person detectors for pictures taken from the
+air. Training runs on your computer's graphics card. You choose the best of them
 with numbers measured on the image bank (`tools/bench`). The pictures, the weights and
 the trained models never go into git or CI: they stay in your data folder
 (`<data_dir>`, set by `just setup-config`).
 
-The two candidates, both Apache-2.0 and both started from their authors' COCO weights:
+The candidates, all Apache-2.0 and all started from their authors' COCO weights:
 
 | Name | What | Size |
 |---|---|---|
 | `yolox_s` | YOLOX-s, Megvii (2021) | 9 M parameters |
+| `yolox_m` | YOLOX-m, Megvii (2021) | 25 M parameters, about 2.8 times slower than `yolox_s` |
 | `damoyolo_s` | DAMO-YOLO-S, Alibaba (2022) | 16 M parameters |
 
 Each is trained on 640 px tiles of the same size and overlap as the drone looks at, made from the image bank's
@@ -42,7 +43,8 @@ home internet line.
    just bench-fetch yes=1
    ```
 
-2. **Download the starting weights** (2–5 minutes, about 250 MB). Without `yes=1` it
+2. **Download the starting weights** (2–5 minutes, about 450 MB; `only=yolox_m` fetches
+   just YOLOX-m's 200 MB). Without `yes=1` it
    only shows what it would download.
 
    ```bash
@@ -129,6 +131,32 @@ home internet line.
    loaded. The simulator keeps its stand-in detector unless you ask for yours (next
    section).
 
+## The larger YOLOX-m
+
+`yolox_m` is the same network as `yolox_s`, deeper and wider. It is trained, exported
+and measured the same way:
+
+```bash
+just detector-fetch yes=1 only=yolox_m
+just train-detector model=yolox_m epochs=20
+just export-detector model=yolox_m
+just bench-detector model=person_yolox_m part=val
+```
+
+- **Batch 4 by default**, not 8. In a short test on an RTX 3070, batch 4 took about
+  2.1 GB of the card and batch 8 about 3.6 GB, on top of what Windows already used
+  (2.9 GB). Batch 8 fits there, but leaves little room for tiles crowded with people,
+  and running out of memory hours into a run means starting over with `fresh=1`.
+  `batch=8` is yours to try.
+- **It starts from Megvii's COCO YOLOX-m weights.** `init=` with a `yolox_s` run is
+  refused: the layers have other widths, so the weights cannot be moved over.
+- **Slower on the drone.** Megvii's README gives 73.8 GFLOPs per 640 px tile against
+  26.8 for `yolox_s`, so each tile takes roughly 2.8 times as long on the Raspberry Pi 5.
+  Measure it with `just bench-detector` before choosing it; `pick-detector` prefers the
+  faster model when two find people equally well.
+- The ONNX file is about 100 MB (`yolox_s`: 36 MB), under the 128 MB the on-board
+  computer accepts.
+
 ## Go on from a model you already trained
 
 The training mixes every fetched set that may be trained on (today HERIDAL and KIOS).
@@ -193,6 +221,66 @@ tile cache under `out=` to grow by several GB and each epoch to take several tim
 longer (a rough guess, not measured). The training does not know whether swimmers help on land; only the test part
 says so.
 
+## Train at our cameras' scales
+
+The real pictures were taken with other cameras at other heights, so their people are
+not the size ours will see. Half of HERIDAL's hikers are 56-87 px long (median 71),
+half of KIOS's people 12-23 px (median 15), SeaDronesSee's swimmers 26-57 px. Our wide camera (Camera Module 3 at full resolution, 4608 px over 66°) sees a
+standing person at about 33 px from 50 m, and the tele (Pi HQ with a lens of about 20°)
+at about 100 px. `scales=` makes the training see people at those sizes (the owner's
+decision of 2026-11-03):
+
+```bash
+just train-detector model=yolox_s sets=heridal,kios,kios_carperson,uit_drone4 scales=native,wide,tele out="$(just data-dir)/train/yolox_s_scales"
+just export-detector model=yolox_s train="$(just data-dir)/train/yolox_s_scales" name=person_yolox_s_scales
+just bench-detector model=person_yolox_s_scales part=test compare=build/bench/det_person_yolox_s_test.json
+```
+
+- **What happens.** Each training picture is cut as it is (`native`) and once more for
+  each camera, resampled so its people are as many pixels as that camera sees them.
+  The height is drawn for each picture between 30 and 60 m, the search heights: `wide`
+  gives about 59-118 px per metre (a person about 28-56 px), `tele` about 192-383 px
+  per metre (about 90-180 px). A number such as `scales=native,150` is a fixed scale in
+  pixels per metre.
+- **How a picture's scale is known.** HERIDAL's source gives about 2 cm per pixel
+  (50 px per metre, `px_per_m` in `tools/bench/datasets.toml`). The other sets state no
+  scale, so it is read off their person boxes: the median longest side over 0.47 m (a
+  standing person seen from above, from the owner's figures). A picture with at least
+  three people uses its own, one with fewer its sequence's (the same flight or site),
+  and an empty picture its set's. HERIDAL shows why the register's figure wins when
+  there is one: many of its people lie or sit, so their boxes are about 1.4 m long and
+  would put the scale three times too high.
+- **Never enlarged more than twice** (`max_up=2`). An enlarged person is blurred, not
+  sharper, so a KIOS person of 15 px does not become a tele person of 100 px; it stops
+  at 30 px. Shrinking has no limit: it is what a coarser camera does. Two scales that
+  end up within 15 % of each other are cut once. So for `wide`, HERIDAL is enlarged
+  1.2-2 times and KIOS twice (to about 30 px); for `tele` both stop at twice, which
+  `wide` mostly gave already, so it is cut once. UIT-Drone4's pedestrians (median
+  59 px) are shrunk for `wide` and enlarged up to twice for `tele`. Real pictures with
+  people as large as the tele will see them are rare; flights with our own tele camera
+  will fill that gap.
+- **The val and test parts are not resampled.** The best epoch is picked on the val
+  pictures as they are, the same way the locked test part is measured.
+- **More tiles.** Each extra scale adds roughly (factor)² as many tiles of that
+  picture: a picture enlarged twice gives about four times the tiles. The tile cache
+  under `out=` and each epoch grow accordingly.
+- **See the effect.** After cutting, the run prints for each set and scale how many
+  people it gave and their size (quartiles of the longest side).
+  `just bench-detector` prints the recall per person size (0-16, 16-24, 24-32, 32-48,
+  48-64, 64-96, 96-128, 128-192 and 192+ px); compare the new model's table with the
+  old one's.
+
+**UIT-Drone4** (CC BY 4.0, Zenodo 14862652) adds real people at the sizes between our
+two cameras: city traffic in Vietnam at 3840×2160, every tenth frame, 1,523 pictures
+with 7,193 pedestrians. Its motorcycles are boxed with their riders, people who are
+not boxed as persons; a tile that touches a motorcycle is left out, so the model is
+never taught that a rider is not a person. It is trained on only, never measured on.
+Fetch it once (37 GB, several hours on a home line):
+
+```bash
+just bench-fetch yes=1 sets=uit_drone4
+```
+
 ## Try your trained detector in the simulator
 
 The simulator's default person detector is a stand-in (the oracle, which knows where
@@ -248,6 +336,9 @@ Useful keys for `just train-detector`:
 | `sets=heridal,kios` | Which fetched sets to train on (default: every one that may be trained on). |
 | `balance=sets` | How each epoch draws its tiles: `sets` (default) as many from every set, `tiles` every tile once (a big set counts more), or weights such as `heridal:2,kios:2,kios_carperson:1,seadronessee:1` naming every set. |
 | `pick=heridal,kios` | The sets whose val AP50 picks the best epoch (default: those in `sets=` that are measured on, or all of them if none is). Every set's AP50 is still printed. |
+| `upscale=2` | Each tile covers 320×320 picture pixels and is enlarged to 640 px, so a person of 15 px is trained on (and, on the drone, looked for) as 30 px. The manifest carries it, so `bench-detector`, the simulator and the drone enlarge their tiles the same way. Costs about 3.8 times the tiles: 170 instead of 45 per 12 MP picture. Default 1 (as before). |
+| `scales=native,wide,tele` | Also cut each training picture resampled so its people are as large as the wide camera (about 33 px) or tele camera (about 100 px) sees them at 30-60 m; a number is pixels per metre. Default `native` (as before). See "Train at our cameras' scales". |
+| `max_up=2` | The most a picture is enlarged to reach a scale (1-8). |
 | `init=<best.pt>` | Start from an earlier run's weights instead of COCO's; use with a new `out=`. |
 | `out=<folder>` | Where the run is saved (default `<data_dir>/train/<model>`). |
 | `simfarm=1` | First pre-trains for `simfarm_epochs=3` epochs on the simulator's pictures (`just sim-farm`, then `just bench-fetch yes=1 sets=simfarm`). Those pictures are never measured on. |
@@ -265,6 +356,9 @@ Useful keys for `just train-detector`:
   University of Tübingen) are trained on only when `sets=` names them, never measured
   on. Weights trained on them may be published with their credit (the manifest carries
   it). See "Train with the two extra sets" above.
+- **UIT-Drone4** (CC BY 4.0, University of Information Technology, VNU-HCM) is trained
+  on only when `sets=` names it, never measured on, with the same rule for its credit.
+  See "Train at our cameras' scales" above.
 - **AOS** (JKU Linz, CC BY 4.0) is not used: it has no person boxes for single colour
   pictures (see `tools/bench/README.md`).
 - **WiSARD** is only measured on for now, never trained on, because its data licence is

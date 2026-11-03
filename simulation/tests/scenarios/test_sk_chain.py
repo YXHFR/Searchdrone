@@ -83,6 +83,9 @@ async def test_sk04_chain_right_person(
     m = await _run(sim, migrated_db, tmp_path, "SK04", seed)
     assert m.confirmed_thing == "target"
     hiker = m.fields_by_thing.get("green-jacket")
+    # The oracle draws the hiker's top once per seed (keyed by seed, thing and field) and a
+    # match is its designed false match (p = 0.15): seeds 1-3 happen to draw conflict. The
+    # share over many seeds is the nightly requirement's (eval_search, SK04).
     if hiker is not None and hiker.get("garment:0") not in (None, "not_visible"):
         assert hiker["garment:0"] == "conflict", hiker
 

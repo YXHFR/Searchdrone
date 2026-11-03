@@ -638,7 +638,10 @@ class Scenario:
         cmds = await self.commands()
         gates = {c["id"]: await self.gate(c["id"]) for c in cmds}
         events = await self.events()
-        broken = check_all(self.track, charters, cmds, gates, events, exempt=exempt)
+        approvals = (await r.panel.get(f"/api/v1/missions/{self.mid}/approvals")).json()
+        broken = check_all(
+            self.track, charters, cmds, gates, events, exempt=exempt, approvals=approvals
+        )
         assert not broken, broken
 
 
@@ -744,6 +747,8 @@ async def scenario(
         serve_commander(r, sock),
     ):
         r.commander.base_url = httpx.URL(f"http://127.0.0.1:{port}")  # the bound port
+        if r.search is not None:  # the search API shares the commander listener
+            r.search.base_url = r.commander.base_url
         sink.append(vehicle_events(r.actions.on_event))
         sc = Scenario(r, sim, port)
         publish = r.g.bus.publish

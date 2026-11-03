@@ -21,9 +21,18 @@ __all__ = [
     "UNDER_OVERRIDE_ALLOWED",
 ]
 
-# Always an approval card, in every autonomy mode.
+# Always an approval card, in every autonomy mode. inspect_detection: the AI only
+# proposes a closer look, the pilot clicks.
 ALWAYS_REQUIRE_APPROVAL: Final = frozenset(
-    {"follow_track", "follow_me", "find_me", "land_at", "propose_charter_change", "follow_path"}
+    {
+        "follow_track",
+        "follow_me",
+        "find_me",
+        "land_at",
+        "propose_charter_change",
+        "follow_path",
+        "inspect_detection",
+    }
 )
 
 # Never skills: they would let an order bypass the gate's model of the vehicle (arming, modes,

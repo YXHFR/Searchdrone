@@ -17,6 +17,8 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just sim-farm [commander=script\|sd-brain] [rounds=N] [max_minutes=N] [seed=N] [idle_only=true] [update=off]` | The sim farm: randomized search rounds from the newest `main`, one after another, until Ctrl+C. Each passed round keeps camera pictures with YOLO and COCO person boxes and a metadata file per picture. Pauses while the GPU or CPU is busy; stops after `max_failures` (3) failed rounds in a row, and at `max_minutes` (the running round is stopped and dropped, exit 0). Settings in `config/simfarm.toml` (copy `config/simfarm.example.toml`). |
 | `just sim-farm-status` | What the farm is doing: running or paused and why, pictures and labels kept, rounds per hour, AI-commander exams and their cost, the upload backlog, the latest errors. |
 | `just sim-farm-setup` | Fetches the person models (pinned by SHA-256) from Gazebo Fuel into `build/simfarm/assets/`. |
+| `just sim-farm-stills [scenes=N] [seed=N] [profile=heridal\|kios] [shots=N] [site=hellasgarden]` | The photo farm: still pictures for training the person detector, without a flight. Each scene puts 12-18 people (body heights 1.50-1.95 m, sometimes a child; standing, walking, sitting or lying; their own or recoloured clothes) in the open, at a forest edge, under a tree or on a path at the site with its real trees, and photographs each from HERIDAL's or KIOS's heights, so the people come out the size they have in those sets. The camera's light is developed like a photo (exposure, soft highlights, lens softness, noise). Pictures (JPEG), YOLO and COCO boxes of the visible part of each person and a metadata file per picture go to `build/simfarm/stills/<scene>/`, with Gazebo's full logs in `logs/`. About 2 s a picture plus 2-3 min to build each scene. Trained on as the set `simstills` (`just bench-fetch yes=1 sets=simstills`). Needs `just sim-farm-setup`, `just trees-fetch` and `just tree-pictures-fetch`; `just ground-pictures-fetch` adds the detailed ground. |
+| `just ground-pictures-fetch` | Fetches Poly Haven's CC0 ground pictures (grass, forest floor, gravel, rock) into `build/ground_textures/` for the photo farm. |
 | `just world-fetch site=<site>` | Fetches a site's heights and map layers (see Worlds). |
 | `just dev [physics=mock\|builtin\|gz] [brain=scripted\|cloud\|grammar\|none] [instance=N]` | The development stack with one command: `sim`'s services plus the panel's Vite dev server on the instance's `panel_dev` port (5173 + 10N), whose login link it prints. `physics=mock` (the default) runs `sd_sim.mockfc`, sd_mav's fake flight controller on SITL's ports with the safety layer's parameters: it starts in a second, but has no flight model, failsafes or fence, so flight safety is tested in SITL (and no other recipe accepts `physics=mock`). Brain `scripted` (SC01) by default, so no cloud key is needed; a missing `.env` is created with random local secrets. |
 | `just sim` / `just sim-headless` | Starts the simulator stack for one instance in the foreground (Ctrl-C stops it). |
@@ -56,7 +58,8 @@ OpenStreetMap). `just world-fetch site=<site>` fetches the last two again (needs
   height, and its species (spruce, pine or deciduous) from Naturvårdsverket's land cover map
   NMD 2023 (CC0). `just tree-pictures-fetch` makes one texture atlas (colour with alpha,
   normal, occlusion-roughness-metallic) from Poly Haven's CC0 tree and bark scans. Trees
-  within 150 m of home are card models of 580–950 triangles, the rest 6-triangle
+  within 150 m of home (`[trees] near_m` in `site.toml`; 330 m at hellasgarden, where the
+  photo farm stands its people) are card models of 580–950 triangles, the rest 6-triangle
   impostors, in 64 glTF tiles sharing one material. Both go to `build/` only, never into
   the repository (see `ATTRIBUTION`): `sd_hellasgarden` gets about 14 700 trees of up to
   34 m, with a mean height error of 0.3 m against the raster.
@@ -141,6 +144,65 @@ in CI, and images outside the test data are kept out of git anyway. The sim farm
 uploads a round flown over the photo: its facit says so. With an R2 key such a round moves
 from `build/simfarm/rounds/` to `build/simfarm/draped/`, where it stays (not retried, not
 in the rounds' disk budget) until you remove it.
+
+## Tele camera
+
+`tele=true` (or `SD_SIM__TELE=1`) puts a second stills camera on `sd_quad14`, beside the
+main one and looking straight down like it: a Raspberry Pi HQ Camera (Sony IMX477,
+4056 × 3040 px, 1.55 µm pixels) behind an M12 tele lens of about 20° horizontally. It is
+off by default. The simulator renders it at 1128 × 846, the main camera's scale (1280 of
+the Camera Module 3's 4608 px), so the two keep their real ratio of pixels per degree:
+from the same height a person is about three times as many pixels across in the tele
+still (at 40 m, about 40 px against 12 px for a person 0.5 m across seen from above).
+`tele_hfov_deg=` sets the lens's field of view (once it is measured), and `tele_width=`
+and `tele_height=` the picture (`4056`, `3040` for the full sensor, slow to render).
+
+The tele camera takes pictures only in a run that has the stills camera: a search
+scenario, or `just sim detector=model` in the flat world. It needs `physics=gz` and
+`vehicle=sd_quad14`. Its pictures go to `runs/<run>/stills_tele/` through their own
+`gz_stills capture` process (topics `/sd_i<N>/tele` and `/sd_i<N>/tele_boxes`), and
+`sd-onboard` gets the folder as `[perception.tele]`: each round its perception task
+takes the newest main still and the newest tele still, stamps each with its time as it
+takes it, then runs the detector on both and sends a report for each, placed on the
+ground with that camera's own view. The two cameras are not triggered together, so the
+stills of a round are close in time, not simultaneous. Tele stills count as searched
+ground on the probability map, over their narrower footprint and with their higher
+detail; a main and a tele still stamped within 0.3 s of each other, with the tele view
+inside the main one, count as one look, each camera with its own chance of seeing a
+person. Further apart they count as two looks. `capture_stills` and the side look of
+`inspect_detection` (its look in a live search without the overflight permit) take their
+stills with the main camera, also with the tele camera on: the side look hovers so that
+the target is 24–28° from straight down, and the fixed tele camera sees only about ±10°
+across and ±7.5° along, so its stills would not show the target. Neither camera tilts.
+The step-wise closer look straight over the target takes stills with both cameras.
+The sim farm's archive keeps the main camera's pictures only. The flight itself does not change:
+the same height, speed and search pattern.
+
+## Laser and map packs
+
+`rangefinder=tf02` or `rangefinder=grf250` (or `SD_SIM__RANGEFINDER`) fits a simulated
+laser pointing down; `none` is the default. It needs SITL (`physics=builtin`, or `gz`
+with the same wiring), not `mock`. The laser (`sd_sim.rangefinder`) is its own process: SITL
+sends it its true position (`SIM_STATE`) on serial6 (port `rangefinder_mavlink`), it
+casts a ray through the world's solids (`sd_sim.obstacles`: the ground, every tree as
+Gazebo draws it, power lines) and answers with `DISTANCE_SENSOR`, which ArduPilot's
+MAVLink rangefinder driver reads and reports to the onboard computer like a real one.
+SITL gets the parameter layer `rangefinder.parm` and `sd-onboard` its `[rangefinder]`
+settings with the layer among the parameter files it reads back. The profiles follow the
+data sheets: TF02-Pro 0.1–40 m over a light surface and 13.5 m over dark ground (±5 cm,
+100 Hz), GRF-250 10–250 m (±0.5 m, 50 Hz, first return). A test can switch faults on at
+start (`Stack(rangefinder_faults={"rf_dropout_at_s": 20, ...})`) or at once
+(`stack.set_rangefinder_fault("dropout" | "stuck" | "garbage" | "out_of_range" | None)`).
+Every reading goes to `runs/<run>/rangefinder.csv`.
+
+`python -m sd_sim.floor_pack --world <world> --out <folder>` writes a map pack in the
+format the drone loads (`sd_safety.floor_pack`) from the simulated world itself: its
+ground and its trees' real heights, so the map is right unless a test puts errors in
+(`--tree-bias-m`, `--missing-trees`, `--hole east,north,radius`, `--scan-year`).
+`Stack.write_floor_pack()` writes the run's pack, with the run's tree stands and power
+lines, to the data folder. `sd_sim.inspect_metrics` measures a closer look against the
+same truth: the nearest distance to a tree or line, how far under the height floor the
+drone went and how close it came to the target.
 
 ## Parts
 

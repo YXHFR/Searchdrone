@@ -77,6 +77,9 @@ GROUND_TO_VEHICLE: Final = frozenset(
         "ManualControl",
         "CropRequest",
         "KeepoutInstall",
+        "InspectOutcome",
+        "InspectLower",
+        "InspectStay",
         "Ack",
         "Heartbeat",
     }

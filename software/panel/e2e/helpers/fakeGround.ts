@@ -3,7 +3,8 @@
 // /ws/v1/live. Every test also checks, when it ends, that the panel
 // made no request to another host, read no geolocation, sent the CSRF header on every
 // changing request, never sent Idempotency-Key, and called no path the fake does not know.
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   test as base,
@@ -22,8 +23,11 @@ import type {
   Clearance,
   Command,
   Find,
+  FloorPackInfo,
+  Inspection,
   Mission,
   PanelConfig,
+  Permit,
   Session,
 } from "@searchdrone/schemas";
 import {
@@ -38,6 +42,7 @@ import {
   vehicleLive,
 } from "../fixtures";
 import { syntheticImagery } from "../fixtures/syntheticImagery";
+import { endMarker, UNROUTED_LOG } from "./unrouted";
 
 export interface SeenRequest {
   method: string;
@@ -95,6 +100,10 @@ export class FakeGround {
   readonly requests: SeenRequest[] = [];
   readonly external: string[] = [];
   readonly unknown: string[] = [];
+  /** Requests that got past the routes to the preview server (answered 502 there). */
+  readonly escaped: string[] = [];
+  /** /api and /tiles requests on the test origin the browser has not finished yet. */
+  private readonly inFlight = new Set<Request>();
   readonly cspErrors: string[] = [];
   /** Every /tiles/ request and its status (glyph and tile failures make a test fail). */
   readonly tiles: { path: string; status: number }[] = [];
@@ -117,6 +126,14 @@ export class FakeGround {
   /** Candidate cards and, per candidate, what its detail adds (pictures, assessments). */
   candidates: CandidateCard[] = [];
   candidateDetail: Record<string, Pick<CandidateDetail, "observations" | "assessments">> = {};
+  /** The closer looks ("Titta närmare") as GET .../inspections answers them. */
+  inspections: Inspection[] = [];
+  /** The height-floor map packs the ground holds (GET /floor_packs). */
+  floorPacks: FloorPackInfo[] = [];
+  /** The overflight permit (GET/PUT /permit). */
+  permit: Permit = { specific_category_ref: "", allow_overflight_live: false };
+  /** The gate's no to the next Titta närmare (codes), like the ground's INSPECT_REFUSED. */
+  refuseInspect: { code: string; text: string } | null = null;
   /** Detections opened in large size (a confirmation needs one of the candidate's). */
   readonly viewed = new Set<string>();
   /** The search profile: the version in force and a newer proposal (the AI's). */
@@ -180,6 +197,25 @@ export class FakeGround {
         },
       });
     });
+    const toGround = (r: Request): boolean => {
+      const url = new URL(r.url());
+      return url.origin === this.origin && /^\/(api|tiles)(\/|$)/.test(url.pathname);
+    };
+    page.on("request", (r) => {
+      if (toGround(r)) this.inFlight.add(r);
+    });
+    page.on("requestfinished", (r) => this.inFlight.delete(r));
+    page.on("requestfailed", (r) => this.inFlight.delete(r));
+    // A reload or navigation cuts the old document's requests off without either event.
+    // This also fires on history.replaceState and hash changes; settle() then just
+    // returns early, as it did before it waited at all.
+    page.on("framenavigated", (f) => {
+      if (f === page.mainFrame()) this.inFlight.clear();
+    });
+    page.on("response", (res) => {
+      if (res.headers()["x-sd-unrouted"])
+        this.escaped.push(`${res.request().method()} ${res.url()}`);
+    });
     page.on("console", (msg) => {
       if (/Content[- ]Security[- ]Policy/i.test(msg.text())) this.cspErrors.push(msg.text());
     });
@@ -202,6 +238,13 @@ export class FakeGround {
         return route.abort();
       },
     );
+    // Any other /api path is not the ground's API: recorded and answered 404, never sent on.
+    // (Registered first, so the routes below take precedence.)
+    await page.route(`${this.origin}/api/**`, (route) => {
+      const req = route.request();
+      this.unknown.push(`${req.method()} ${new URL(req.url()).pathname}`);
+      return route.fulfill({ status: 404, json: { code: "NOT_FOUND" } });
+    });
     await page.route(`${this.origin}/api/v1/**`, (route) => this.handle(route));
     await page.route(`${this.origin}/tiles/**`, (route) => this.handleTiles(route));
     const host = new URL(this.origin).host;
@@ -209,6 +252,15 @@ export class FakeGround {
       (url) => url.host !== host,
       (ws) => {
         this.external.push(ws.url());
+        return ws.close();
+      },
+    );
+    // Any other socket on the test host is not the ground's live feed: recorded and closed,
+    // never sent on. (Registered first, so the live route below takes precedence.)
+    await page.routeWebSocket(
+      (url) => url.host === host,
+      (ws) => {
+        this.unknown.push(`WS ${new URL(ws.url()).pathname}`);
         return ws.close();
       },
     );
@@ -295,7 +347,11 @@ export class FakeGround {
       const f = data as Find;
       this.finds = [...this.finds.filter((x) => x.find_id !== f.find_id), f];
     }
-    if (type.startsWith("candidate.")) {
+    if (type === "inspection.updated") {
+      const l = data as Inspection;
+      this.inspections = [...this.inspections.filter((x) => x.command_id !== l.command_id), l];
+    }
+    if (type.startsWith("candidate.") && type !== "candidate.inspect_progress") {
       const c = data as CandidateCard;
       this.candidates = [...this.candidates.filter((x) => x.candidate_id !== c.candidate_id), c];
     }
@@ -323,12 +379,31 @@ export class FakeGround {
     const pics = this.candidateDetail[id]?.observations ?? [];
     if (body.decision === "confirm" && !pics.some((o) => this.viewed.has(o.detection_id)))
       return { status: 409, body: { code: "NOT_VIEWED", detail_sv: "Titta på bilden först." } };
+    const pilotOnly = ["inspect", "resume", "reopen"];
+    if (pilotOnly.includes(body.decision) && this.session?.role !== "pilot")
+      return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
+    if (body.decision === "inspect" && this.refuseInspect)
+      return {
+        status: 409,
+        body: {
+          code: "INSPECT_REFUSED",
+          detail_sv: this.refuseInspect.text,
+          errors: [{ code: this.refuseInspect.code }],
+        },
+      };
     const to: Record<string, CandidateCard["state"]> = {
       confirm: "confirmed",
       reject: "rejected",
       reopen: "ready",
+      inspect: "inspecting",
+      resume: "ready",
+      ...(c.state === "inspecting" ? { unsure: "ready" as const } : {}),
     };
-    const next = to[body.decision];
+    if (body.decision === "inspect") this.startLook(c);
+    else if (this.session?.role === "pilot") this.endLook(c.candidate_id, body.decision);
+    // During a look only the pilot's decision moves the card; an observer's is a note.
+    const note = c.state === "inspecting" && this.session?.role !== "pilot";
+    const next = note ? undefined : to[body.decision];
     const card = next ? { ...c, state: next, rev: c.rev + 1 } : c;
     this.decisions[id] = [
       ...(this.decisions[id] ?? []),
@@ -346,6 +421,45 @@ export class FakeGround {
       decision: { decision: body.decision, candidate_id: id, seq: c.seq },
     });
     return { status: 200, body: this.candidateDetailOf(card) };
+  }
+
+  /** Like the ground when the order goes: the look opens, the drone flies. */
+  private startLook(c: CandidateCard): void {
+    const look: Inspection = {
+      command_id: `0192f4a1-7b90-7a22-b1c3-1000000000${String(c.seq).padStart(2, "0")}`,
+      candidate_id: c.candidate_id,
+      mission_id: MISSION,
+      seq: c.seq,
+      started_at: new Date().toISOString(),
+      started_by: this.session?.issuer_ref ?? "operator:demo",
+      operation_mode: "exercise",
+      overflight: true,
+      phase: "flying",
+    };
+    this.pushLive("candidates", "inspection.updated", look);
+  }
+
+  /** The pilot's decision ends the open look on the candidate. */
+  private endLook(candidateId: string, decision: string): void {
+    const outcome = {
+      confirm: "confirmed",
+      reject: "rejected",
+      unsure: "unsure",
+      resume: "resume",
+    }[decision] as Inspection["outcome"] | undefined;
+    const look = this.inspections.find((l) => l.candidate_id === candidateId && !l.ended_at);
+    if (!look || !outcome) return;
+    this.pushLive("candidates", "inspection.updated", {
+      ...look,
+      phase: "ended",
+      ended_at: new Date().toISOString(),
+      outcome,
+    });
+  }
+
+  /** The open look (the newest one not ended). */
+  openLook(): Inspection | undefined {
+    return this.inspections.find((l) => !l.ended_at);
   }
 
   async dropSocket(): Promise<void> {
@@ -369,10 +483,21 @@ export class FakeGround {
     await this.page.goto(path);
   }
 
+  /** Waits, up to `ms`, for a moment with no /api or /tiles request in flight, so a
+   * request the test body sent last is answered (or logged by the guard) before verify()
+   * and the END marker, and counts as part of the test. */
+  async settle(ms = 2_000): Promise<void> {
+    const until = Date.now() + ms;
+    while (this.inFlight.size > 0 && Date.now() < until && !this.page.isClosed()) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
   /** Checks that run after every test. */
   async verify(): Promise<void> {
     expect(this.external, "requests to other hosts").toEqual([]);
     expect(this.unknown, "paths the fake ground does not know").toEqual([]);
+    expect(this.escaped, "requests that escaped the fake ground's routes").toEqual([]);
     const cspDetails = this.cspErrors.length
       ? await this.page
           .evaluate(() => (window as unknown as { __cspDetails?: string[] }).__cspDetails ?? [])
@@ -496,7 +621,10 @@ export class FakeGround {
     }
     if (this.contract && !this.contract.some((re) => re.test(key)))
       this.unknown.push(`${key} (not in OpenAPI)`);
-    if (res === "hang") return; // never answered; the panel's own timeout aborts it
+    if (res === "hang") {
+      this.inFlight.delete(req); // never answered; the panel's own timeout aborts it
+      return;
+    }
     if (res === null) {
       this.unknown.push(key);
       await route.fulfill({
@@ -601,6 +729,30 @@ export class FakeGround {
           },
         },
       };
+    }
+    if (k === `GET ${ms}/inspections`) return { status: 200, body: this.inspections };
+    const lower = /^POST \/api\/v1\/inspections\/([^/]+)\/(lower|stay)$/.exec(k);
+    if (lower) {
+      if (this.session?.role !== "pilot")
+        return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
+      const look = this.inspections.find((l) => l.command_id === lower[1] && !l.ended_at);
+      if (!look) return { status: 404, body: { code: "INSPECTION_NOT_FOUND" } };
+      if (!look.lower_offer)
+        return { status: 409, body: { code: "NO_LOWER_OFFER", detail_sv: "Frågar inte nu." } };
+      const next: Inspection = {
+        ...look,
+        phase: "flying",
+        lower_offer: null,
+        lower_offer_until: null,
+      };
+      this.pushLive("candidates", "inspection.updated", next);
+      return { status: 200, body: next };
+    }
+    if (k === `GET ${API}/floor_packs`) return { status: 200, body: this.floorPacks };
+    if (k === `GET ${API}/permit`) return { status: 200, body: this.permit };
+    if (k === `PUT ${API}/permit`) {
+      this.permit = req.body as Permit;
+      return { status: 200, body: this.permit };
     }
     const cand = /^(GET|POST) \/api\/v1\/candidates\/([^/]+)(\/decision|\/export\.gpx)?$/.exec(k);
     if (cand) {
@@ -805,12 +957,28 @@ export class FakeGround {
 }
 
 export const test = base.extend<{ ground: FakeGround }>({
-  ground: async ({ page, baseURL }, use) => {
-    const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
-    await g.install();
-    await use(g);
-    await g.verify();
-  },
+  // Automatic: no test in a suite that uses this fixture talks to anything but the fake.
+  ground: [
+    async ({ page, baseURL }, use, testInfo) => {
+      // Names the test in the preview server's log if one of its requests escapes the
+      // routes; the id is unique per run of a test (retries, --repeat-each).
+      const id = `${testInfo.testId}.${testInfo.retry}.${testInfo.repeatEachIndex}`;
+      const where = `${id} ${testInfo.project.name} ${basename(testInfo.file)}:${testInfo.line}`;
+      await page.setExtraHTTPHeaders({ "x-sd-test": where });
+      const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
+      await g.install();
+      try {
+        await use(g);
+        await g.settle();
+        await g.verify();
+      } finally {
+        // The page closes after this: what the server logs for this test from now on was
+        // sent while it closed (e2e/helpers/unrouted.ts).
+        appendFileSync(UNROUTED_LOG, endMarker(id));
+      }
+    },
+    { auto: true },
+  ],
 });
 
 export { expect };

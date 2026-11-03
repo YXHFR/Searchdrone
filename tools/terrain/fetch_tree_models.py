@@ -255,6 +255,9 @@ def _blank(px: int = CELL) -> tuple[Rgba, NDArray[np.float32]]:
 
 TWIG_RGB = (0.22, 0.16, 0.11)
 BIG = 2 * CELL  # crowns are drawn on a larger canvas and fitted into a cell
+# A deciduous card's leaves: their length as a share of the canvas, and how many.
+LEAF_SHARE = (0.02, 0.03)
+LEAVES = 2400
 
 
 def fit(
@@ -370,15 +373,18 @@ def tuft_card(
 
 
 def leaf_card(leaves: Sequence[Rgba], rng: np.random.Generator) -> tuple[Rgba, NDArray[np.float32]]:
-    """A cluster of leaves on thin twigs, roughly round, the twigs meeting at the bottom."""
+    """A branch end full of leaves on thin twigs, roughly round, the twigs meeting at the
+    bottom. The card is a tenth of the tree's height across (two metres on a 20 m birch),
+    so a leaf (``LEAF_SHARE`` of the canvas, the card about 0.7 of it) is 6-9 cm."""
     c, o = _blank(BIG)
     centre = (BIG / 2, BIG / 2)
-    for _ in range(9):
+    for _ in range(24):
         ang = rng.uniform(0, 2 * math.pi)
-        end = (centre[0] + math.cos(ang) * BIG * 0.25, centre[1] + math.sin(ang) * BIG * 0.25)
-        _line(c, (BIG / 2, BIG * 0.8), end, 3, TWIG_RGB)
-    for i in range(110):
-        rad = BIG * 0.27 * math.sqrt(rng.uniform(0, 1))
+        reach = BIG * rng.uniform(0.2, 0.34)
+        end = (centre[0] + math.cos(ang) * reach, centre[1] + math.sin(ang) * reach)
+        _line(c, (BIG / 2, BIG * 0.8), end, 2, TWIG_RGB)
+    for i in range(LEAVES):
+        rad = BIG * 0.34 * math.sqrt(rng.uniform(0, 1))
         ang = rng.uniform(0, 2 * math.pi)
         x, y = centre[0] + rad * math.cos(ang), centre[1] + rad * math.sin(ang)
         stamp(
@@ -386,9 +392,9 @@ def leaf_card(leaves: Sequence[Rgba], rng: np.random.Generator) -> tuple[Rgba, N
             leaves[int(rng.integers(len(leaves)))],
             x,
             y,
-            rng.uniform(0.09, 0.13) * BIG,
+            rng.uniform(*LEAF_SHARE) * BIG,
             rng.uniform(0, 360),
-            0.65 + 0.4 * i / 110,
+            0.65 + 0.4 * i / LEAVES,
             o,
         )
     return fit(c, o, BIG / 2, BIG * 0.8)

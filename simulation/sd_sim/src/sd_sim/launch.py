@@ -26,21 +26,25 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol
 
+from sd_safety.floor_pack import FloorPack
 from sd_sim import (
     _args,
     config,
     detector_choice,
+    floor_pack,
     gazebo,
     objects,
     paths,
     people_scene,
     ports,
     procs,
+    rangefinder,
     search_world,
     services,
     site,
     world,
 )
+from sd_sim import obstacles as obstacles_mod
 from sd_sim.config import SimConfig
 from sd_sim.detector_choice import DetectorChoice
 from sd_sim.errors import InfraError, StopRequestedError
@@ -74,6 +78,11 @@ ALLOWED_KEYS = (
     "gi",
     "detector",
     "model",
+    "tele",
+    "tele_hfov_deg",
+    "tele_width",
+    "tele_height",
+    "rangefinder",
 )
 COMMANDS = ("up", "down", "status")
 FLAGS = ("--demo", "--with-db", "--dev")
@@ -154,8 +163,16 @@ class Stack:
         stills_archive: Path | None = None,
         detector: DetectorChoice = detector_choice.ORACLE,
         panel_dev: bool = False,
+        obstacles: Sequence[objects.WorldObject] = (),
+        rangefinder_faults: Mapping[str, Any] | None = None,
     ) -> None:
         self.cfg = cfg
+        # obstacles: tree stands and power lines (sd_sim.obstacles) the laser and the map
+        # pack see in every physics, and Gazebo draws when it renders the world.
+        self.obstacles = tuple(obstacles)
+        # rangefinder_faults: the simulated laser's faults (rf_* keys, rangefinder.Faults).
+        self.rangefinder_faults = dict(rangefinder_faults or {})
+        self._obstacle_scene: obstacles_mod.Scene | None = None
         # panel_dev: also the panel's Vite dev server (hot reload) in front of sd-ground.
         self.panel_dev = panel_dev
         # detector: the person detector sd-onboard runs (detector=model: the owner's).
@@ -164,6 +181,10 @@ class Stack:
         # camera instead of its video camera, and the stills captured into stills_dir.
         self.scene = scene
         self.stills_dir = run_dir / "stills"
+        # tele: the tele camera beside the stills camera (``tele=true``), only with a
+        # scene; its stills go to tele_dir and sd-onboard runs the detector on them too.
+        self.tele = cfg.tele_camera() if scene is not None else None
+        self.tele_dir = run_dir / "stills_tele"
         # light: the world's sun and ambient light for this run (``world.light_context``).
         self.light = light
         # stills_archive: also keep every still with the camera's pose there, unpruned
@@ -253,6 +274,8 @@ class Stack:
         ]
         if self.observer:  # otherwise the caller's own harness already holds the port
             names.append("harness_mavlink")
+        if self.cfg.rangefinder != "none":
+            names.append("rangefinder_mavlink")
         if self.panel_dev:
             names.append("panel_dev")
         busy = busy_ports(self.ports, names)
@@ -320,6 +343,7 @@ class Stack:
                 placed,
                 vehicle=self.cfg.vehicle,
                 stills=self.scene is not None,
+                tele=self.tele,
                 # A search scenario's tests fly without video; the launcher keeps it.
                 video=self.scene is None or (self.services and self.cfg.video == "camera"),
                 light=self.light,
@@ -353,21 +377,26 @@ class Stack:
         if self.scene is not None:
             self.start_stills_capture(env)
 
-    def stills_capture_argv(self) -> list[str]:
+    def stills_capture_argv(self, tele: bool = False) -> list[str]:
+        """The capture process of the stills camera, or (``tele``) of the tele camera.
+        Only the stills camera's pictures go to the archive."""
         prefix = world.stills_topic_prefix(self.cfg.instance)
         script = Path(__file__).with_name("gz_stills.py")
+        cam = self.tele if tele else world.MAIN_STILLS
+        if cam is None:
+            raise InfraError("ingen telekamera i den här körningen (tele=true)")
         argv = [
             gazebo.GZ_PYTHON,
             str(script),
             "capture",
             "--image-topic",
-            f"{prefix}/stills",
+            f"{prefix}/{cam.sensor}",
             "--boxes-topic",
-            f"{prefix}/boxes",
+            f"{prefix}/{cam.boxes}",
             "--out",
-            str(self.stills_dir),
+            str(self.tele_dir if tele else self.stills_dir),
         ]
-        if self.stills_archive is not None and self.world is not None:
+        if not tele and self.stills_archive is not None and self.world is not None:
             argv += [
                 "--poses-topic",
                 f"/world/{self.world.name}/dynamic_pose/info",
@@ -380,9 +409,13 @@ class Stack:
 
     def start_stills_capture(self, env: dict[str, str]) -> None:
         """The stills camera's pictures and labelled boxes into ``stills_dir`` (and, for
-        ``stills_archive``, with the camera's pose into the archive)."""
+        ``stills_archive``, with the camera's pose into the archive); the tele camera's
+        into ``tele_dir`` when the run has one."""
         self.stills_dir.mkdir(parents=True, exist_ok=True)
         self.group.start("stills", self.stills_capture_argv(), env=env)
+        if self.tele is not None:
+            self.tele_dir.mkdir(parents=True, exist_ok=True)
+            self.group.start("stills_tele", self.stills_capture_argv(tele=True), env=env)
 
     def start_link_processes(self) -> None:
         py = sys.executable
@@ -446,10 +479,94 @@ class Stack:
             "linksim eller mavtap svarar inte.",
         )
 
+    # --- the laser and the map (sd_sim.rangefinder, sd_sim.floor_pack) ----------------
+
+    @property
+    def rangefinder_layer(self) -> Path:
+        """The laser's SITL parameter layer, which sd-onboard also reads back."""
+        return self.inst_dir / "rangefinder.parm"
+
+    @property
+    def rangefinder_control(self) -> Path:
+        return self.inst_dir / "rangefinder_control.json"
+
+    def obstacle_scene(self) -> obstacles_mod.Scene:
+        """What the drone can hit in this run's world (built once)."""
+        if self._obstacle_scene is None:
+            try:
+                self._obstacle_scene = obstacles_mod.for_world(
+                    self.cfg.world, self.cfg.home, self.obstacles, self.repo
+                )
+            except (ValueError, site.SiteError) as exc:
+                raise InfraError(f"Världens hinder gick inte att bygga: {exc}") from exc
+        return self._obstacle_scene
+
+    @property
+    def floor_dir(self) -> Path:
+        """Where this run's map packs go: inside the run folder, whatever the video."""
+        return self.run_dir / "floor"
+
+    def write_floor_pack(self, name: str, errors: floor_pack.MapErrors | None = None) -> FloorPack:
+        """The run's map pack, from its own world, in the run's own ``floor/<name>/``.
+
+        Never in ``${SD_DATA_DIR}``: with video on, the run's data folder is the owner's
+        real one, where the real ground station and drone read their packs, and a sim
+        pack (often with map errors on purpose) must never land among them."""
+        folder = self.floor_dir / name
+        return floor_pack.build(
+            self.obstacle_scene(), folder, name=name, errors=errors or floor_pack.MapErrors()
+        )
+
+    def start_rangefinder(self) -> None:
+        """The simulated laser on SITL's serial6, before SITL sends to it."""
+        model = self.cfg.rangefinder
+        rangefinder.write_param_layer(self.inst_dir, model, self.cfg.qgc and self.cfg.instance == 0)
+        rangefinder.Faults.from_mapping(self.rangefinder_faults)  # refuse a bad key here
+        scene_dir = self.obstacle_scene().save(self.run_dir / "obstacles").parent
+        self.rangefinder_control.unlink(missing_ok=True)
+        proc = self.group.start(
+            "rangefinder",
+            [
+                sys.executable,
+                "-m",
+                "sd_sim.rangefinder",
+                "--instance",
+                str(self.cfg.instance),
+                "--model",
+                model,
+                "--scene",
+                str(scene_dir),
+                "--faults",
+                json.dumps(self.rangefinder_faults),
+                "--control",
+                str(self.rangefinder_control),
+                "--log",
+                str(self.run_dir / "rangefinder.csv"),
+            ],
+            env=procs.clean_env(),
+        )
+        self._wait(
+            "rangefinder",
+            proc,
+            HEALTH_LINK_S,
+            lambda: udp_port_taken(self.ports["rangefinder_mavlink"]),
+            "Den simulerade lasern svarar inte.",
+        )
+
+    def set_rangefinder_fault(self, fault: str | None) -> None:
+        """Switch a laser fault on now (``rangefinder.FAULTS``), or off with ``None``."""
+        if fault is not None and fault not in rangefinder.FAULTS:
+            raise ValueError(f"okänt laserfel {fault!r}")
+        tmp = self.rangefinder_control.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"fault": fault}), encoding="utf-8")
+        tmp.replace(self.rangefinder_control)
+
     def sitl_layout(self) -> SitlLayout:
         extra: tuple[Path, ...] = ()
         if self.cfg.qgc and self.cfg.instance == 0:
             extra = (write_qgc_params(self.inst_dir),)
+        if self.cfg.rangefinder != "none":
+            extra = (*extra, self.rangefinder_layer)
         return SitlLayout(
             arducopter=paths.arducopter_bin(),
             ardupilot_home=paths.ardupilot_home(),
@@ -467,6 +584,7 @@ class Stack:
             speedup=self.cfg.speedup,
             home=self.cfg.home,
             qgc=self.cfg.qgc,
+            rangefinder=self.cfg.rangefinder != "none",
         )
         return build_sitl_argv(opts, self.ports, layout)
 
@@ -809,9 +927,18 @@ class Stack:
 
     def start_onboard(self) -> None:
         still_dir = self.stills_dir if self.scene is not None else None
+        tele = (self.tele, self.tele_dir) if self.tele is not None else None
+        laser = None
+        if self.cfg.rangefinder != "none":
+            laser = (rangefinder.PROFILES[self.cfg.rangefinder].tested_m, self.rangefinder_layer)
         env = procs.clean_env(
             services.onboard_env(
-                self.ports, self.stack_paths(), model=self.detector.env(), still_dir=still_dir
+                self.ports,
+                self.stack_paths(),
+                model=self.detector.env(),
+                still_dir=still_dir,
+                tele=tele,
+                laser=laser,
             )
         )
         proc = self._start_service("sd-onboard", [sys.executable, "-m", "sd_onboard"], env)
@@ -885,6 +1012,12 @@ class Stack:
     def up(self) -> None:
         os.umask(0o077)
         self.placed = self.world_objects()
+        if self.obstacles and self.renders_world():
+            try:
+                objects.check([*self.placed, *self.obstacles], self.world_half_m())
+            except objects.ObjectError as exc:
+                raise InfraError(f"Hindren går inte att placera: {exc}") from exc
+            self.placed += self.obstacles
         self.check_people_fetched()
         if not self.renders_world():
             world.clear_truth(self.cfg.instance, self.repo)  # no world, so no facit
@@ -909,6 +1042,9 @@ class Stack:
             if self.cfg.physics == "mock"
             else "==> arducopter (SITL)"
         )
+        if self.cfg.rangefinder != "none":
+            say(f"==> lasern ({self.cfg.rangefinder})")
+            self.start_rangefinder()
         sitl = self.start_sitl()
         if self.observer:
             self.wait_vehicle_observed(sitl)
@@ -1057,6 +1193,11 @@ def main(argv: list[str] | None = None) -> int:
         detector=detector,
         panel_dev=dev,
     )
+    if cfg.tele and stack.tele is None:
+        say(
+            "Obs: tele=true, men körningen har ingen stillbildskamera (den kommer med "
+            "detector=model), så telekameran tar inga bilder."
+        )
     return _run_foreground(stack)
 
 

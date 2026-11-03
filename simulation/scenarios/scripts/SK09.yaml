@@ -25,7 +25,7 @@ turns:
   - on: candidate
     when: {priority_class: high}
     say: ["K{seq} HÖG. Tittar närmare, granska bilden."]
-    action: {skill: inspect_detection, params: {detection_id: "event:detection_id", standoff_m: 20}}
+    action: {skill: inspect_detection, params: {candidate_id: "event:candidate_id"}}
   - on: candidate
     when: {priority_class: high}
     once: false

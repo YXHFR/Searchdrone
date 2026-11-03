@@ -29,6 +29,10 @@ Fetched by the tools into build/ and never committed. Simulator pictures made wi
 - tools/terrain/fetch_tree_models.py (just tree-pictures-fetch): tree pictures made from
   Poly Haven's fir_tree_01, pine_tree_01, island_tree_02, pine_bark and bark_brown_02,
   CC0, https://polyhaven.com/license
+- tools/terrain/fetch_ground_textures.py (just ground-pictures-fetch): ground pictures
+  for the photo farm from Poly Haven's aerial_grass_rock, sparse_grass, forest_floor,
+  forest_leaves_02, forest_ground_04, gravel_road, dirt_aerial_02 and
+  aerial_ground_rock, CC0, https://polyhaven.com/license
 - tools/terrain/fetch_site.py with [dem] source = "lantmateriet-mhm": Markhöjdmodell
   (c) Lantmäteriet, CC BY 4.0; processed. A public site that switches to it commits a
   dem.asc under CC BY 4.0: change its REUSE.toml annotation and this file with it.
@@ -37,6 +41,12 @@ Fetched by the tools into build/ and never committed. Simulator pictures made wi
   with the owner's own Geotorget login and never committed, uploaded or cached anywhere
   (tools/check_no_orthophotos.py); pictures of a world draped with it stay on the
   owner's computer too and say so in their ATTRIBUTION.txt.
+- tools/terrain/fetch_floor_map.py (just floor-fetch): floor packs (tree heights and
+  ground heights for the height floor of a closer look) from Laserdata Nedladdning, skog
+  and Markhöjdmodell (grid 1) (c) Lantmäteriet, CC BY 4.0; processed (tree height) by
+  Searchdrone. Power lines from OpenStreetMap (c) OpenStreetMap contributors, ODbL-1.0.
+  Fetched with each user's own Geotorget login into ${SD_DATA_DIR}/floor/, never
+  committed; every pack carries this attribution in its floor_pack.toml.
 - simulation/sd_sim/src/sd_sim/farm/people.py (just sim-farm-setup): person models from
   Gazebo Fuel (Open Robotics), CC0 1.0 and CC BY 4.0 (Rescue Randy), placed in the sim
   farm's worlds and, with detector=model, in the search scenario's world. Each model's

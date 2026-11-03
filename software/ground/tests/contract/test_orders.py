@@ -119,7 +119,16 @@ async def approve_each(r: Rig, mid: str) -> None:
         f"/api/v1/missions/{mid}/autonomy", json={"mode": "APPROVE_EACH"}, headers=H
     )
     assert res.status_code == 200, res.text
-    await r.until(lambda: len(r.onboard.charters) > installed, 10, "charter installed")
+    await r.until(lambda: len(r.onboard.charters) > installed, 10, "charter sent onboard")
+    version = r.onboard.charters[-1].charter.version
+
+    async def recorded() -> bool:
+        # The fake drone stores the install before it acks, and the gate trusts only
+        # the ground's record of that ack: wait for the record, not the fake.
+        charter = (await r.mission(mid))["charter"]
+        return charter["version"] == version and charter["install_status"] == "installed"
+
+    await r.until(recorded, 10, "charter install recorded by the ground")
     if r.flow.in_flight(VID):
         await settle(r, ExecutorState.TRANSIT)
 

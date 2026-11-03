@@ -37,6 +37,7 @@ from sd_schemas.base import (
 from sd_schemas.charter import MissionCharter
 from sd_schemas.executor import ExecutorState, HeldBy, HoldReason, LinkLossPhase
 from sd_schemas.gate import CLEARANCE_VALID_MS, GateDecision, StateRef
+from sd_schemas.inspect import InspectOutcomeKind, InspectProgress
 from sd_schemas.keepout import Keepout
 from sd_schemas.mission import LatchAction
 
@@ -68,6 +69,9 @@ __all__ = [
     "Heartbeat",
     "Hello",
     "HelloAck",
+    "InspectLower",
+    "InspectOutcome",
+    "InspectStay",
     "Keepout",
     "KeepoutInstall",
     "LatchRef",
@@ -236,10 +240,12 @@ class StateSnapshot(SdModel):
     sector_progress: dict[str, float]
     link_loss_phase: LinkLossPhase = LinkLossPhase.NONE  # the onboard link-loss rule
     find_hold_keepout_id: Id | None = None  # the find it hovers beside without a link
+    inspect: InspectProgress | None = None  # a closer look under way (sd_schemas.inspect)
 
 
 class OnboardEvent(SdModel):
-    type: str = Field(pattern=r"^executor\.[a-z_]+$")
+    # "executor.*", and "inspect.*" for a closer look (sd_schemas.inspect.EVENT_*)
+    type: str = Field(pattern=r"^(executor|inspect)\.[a-z_]+$")
     severity: Literal["debug", "info", "warning", "critical"]
     data: dict[str, Any] = Field(default_factory=dict[str, Any])
 
@@ -295,6 +301,32 @@ class OperatorPosition(SdModel):
 class CommanderStatus(SdModel):
     connected: bool
     state: Literal["ready", "busy", "degraded", "down"]
+
+
+class InspectOutcome(SdModel):
+    """Ground -> onboard, reliable: the pilot's decision on a closer look while the drone
+    hovers for it (``hold_reason`` "inspect_await"). The drone flies back to where the
+    search broke off, except after "confirmed": then it hovers over the find."""
+
+    command_id: Id  # the inspect_detection order
+    outcome: InspectOutcomeKind
+
+
+class InspectLower(SdModel):
+    """Ground -> onboard, reliable: the pilot's yes to going below 30 m above ground
+    (``inspect.lower_offer``). Only from the pilot's own click, never from the AI."""
+
+    command_id: Id  # the inspect_detection order
+
+
+class InspectStay(SdModel):
+    """Ground -> onboard, reliable: the pilot's no to "Gå lägre?" ("Nej, stanna här"). The
+    drone stops waiting for an answer at once and the look ends where it is
+    (``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.
+    A kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a
+    yes. Only from the pilot's own click."""
+
+    command_id: Id  # the inspect_detection order
 
 
 class ManualTakeover(SdModel):
@@ -445,6 +477,7 @@ class PerceptionReport(SdModel):
 
     still_id: Id
     command_id: Id | None  # the order the still was taken during
+    inspect_step: int | None = Field(default=None, ge=0)  # a closer look's step (0, 1, 2 ...)
     captured_utc: AwareDatetime
     sensor: Literal["rgb"]  # a thermal camera comes later, with its own migration
     pose: Pose
@@ -519,6 +552,9 @@ KIND_MODELS: dict[str, type[SdModel]] = {
         CropData,
         CropRequest,
         KeepoutInstall,
+        InspectOutcome,
+        InspectLower,
+        InspectStay,
     )
 }
 
@@ -537,6 +573,9 @@ RELIABLE_KINDS = frozenset(
         "CropData",
         "CropRequest",
         "KeepoutInstall",
+        "InspectOutcome",
+        "InspectLower",
+        "InspectStay",
     }
 )
 

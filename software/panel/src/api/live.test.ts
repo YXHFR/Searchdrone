@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { actionBus } from "../state/actionBus";
 import { useChatStore } from "../state/chatStore";
+import { useInspectStore } from "../state/inspectStore";
 import { useLiveStore } from "../state/liveStore";
 import { useMissionStore } from "../state/missionStore";
 import { useSessionStore } from "../state/sessionStore";
@@ -253,6 +254,88 @@ describe("startLive", () => {
       "GPS är borta.",
     ]);
     expect(ui.eventLog[2]?.level).toBe("critical");
+    stop();
+  });
+
+  it("an observer's confirm during a look is a note for the pilot, not a confirmed find", async () => {
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    const stop = startLive("sim-01");
+    await settle();
+    const decided = (state: string, noted: boolean) =>
+      send({
+        seq: null,
+        topic: "candidates",
+        type: "candidate.decided",
+        vehicle_id: "sim-01",
+        data: {
+          candidate_id: "c3",
+          seq: 3,
+          rev: 2,
+          state,
+          decision: { decision: "confirm", noted },
+        },
+      });
+    decided("inspecting", true);
+    decided("confirmed", false);
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toEqual([
+      "K3 markerad som bekräftad under titten. Piloten bestämmer.",
+      "Fynd bekräftat: K3",
+    ]);
+    stop();
+  });
+
+  it("a look's Gå lägre and its end are told once each; progress goes to the store", async () => {
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    useInspectStore.getState().reset(null);
+    const stop = startLive("sim-01");
+    await settle();
+    const look = (phase: string) =>
+      send({
+        seq: null,
+        topic: "candidates",
+        type: "inspection.updated",
+        vehicle_id: "sim-01",
+        data: { command_id: "cmd1", candidate_id: "c3", seq: 3, phase },
+      });
+    look("flying");
+    look("lower_offer");
+    look("lower_offer");
+    look("flying");
+    look("await");
+    look("await");
+    look("ended");
+    send({
+      seq: null,
+      topic: "candidates",
+      type: "candidate.inspect_progress",
+      vehicle_id: "sim-01",
+      data: { command_id: "cmd1", candidate_id: "c3", step: 2, phase: "step" },
+    });
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toEqual([
+      "K3: drönaren frågar om den får gå lägre. Svara under Granska.",
+      "Titten på K3 är klar. Beslut inom 2 minuter under Granska.",
+    ]);
+    expect(useInspectStore.getState().looks.cmd1?.phase).toBe("ended");
+    expect(useInspectStore.getState().progress.cmd1?.step).toBe(2);
+    stop();
+  });
+
+  it("an observer is told that the pilot answers Gå lägre", async () => {
+    useSessionStore.getState().set({ session: { role: "observer" } as never });
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    useInspectStore.getState().reset(null);
+    const stop = startLive("sim-01");
+    await settle();
+    send({
+      seq: null,
+      topic: "candidates",
+      type: "inspection.updated",
+      vehicle_id: "sim-01",
+      data: { command_id: "cmd2", candidate_id: "c4", seq: 4, phase: "lower_offer" },
+    });
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toEqual([
+      "K4: drönaren frågar om den får gå lägre. Piloten svarar.",
+    ]);
     stop();
   });
 

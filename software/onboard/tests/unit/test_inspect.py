@@ -170,8 +170,7 @@ async def test_capture_stills_only_while_hovering() -> None:
 def inspect(east: float, north: float, radius: float, **kw: Any) -> dict[str, Any]:
     lat, lon = at(east, north)
     params: dict[str, Any] = {
-        "detection_id": str(new_id()),
-        "standoff_m": 30,
+        "candidate_id": str(new_id()),
         "lat": lat,
         "lon": lon,
         "target_radius_m": radius,
@@ -188,7 +187,7 @@ async def test_inspect_flies_to_the_edge_looks_down_and_takes_stills() -> None:
         cam = camera(r)
         start = len(r.fc.track)
         cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
-        assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+        assert r.ex.state == S.INSPECT, r.up.acks[-2:]
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 120)
         assert r.ex.state == S.HOLD
         # On the drone's side (west), 35 + 10 m from the target, within 25 degrees.
@@ -201,7 +200,8 @@ async def test_inspect_flies_to_the_edge_looks_down_and_takes_stills() -> None:
         assert [c for c, _ in cam.asked] == [cmd.command_id] * 5
         cyl = circles([keepout(150, 0, 35)], PLANE)
         assert xy_route_violation(track_xy(r, start), cyl) is None
-        assert "executor.inspect_done" in r.up.kinds()
+        assert "inspect.done" in r.up.kinds()
+        assert r.ex.hold_reason == "inspect_await"
 
 
 async def test_inspect_without_a_target_or_a_view_is_refused() -> None:
@@ -249,7 +249,7 @@ async def test_inspect_inside_new_cylinders_leaves_them_first_then_plans_from_th
         cam = camera(r)
         start = len(r.fc.track)
         cmd = await r.send(r.order("inspect_detection", inspect(20, 0, 35)), 0.5)
-        assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+        assert r.ex.state == S.INSPECT, r.up.acks[-2:]
         await r.until(lambda: "done" in r.up.stages(cmd.command_id), 240)
         assert len(cam.asked) == 5 and "executor.keepout_hold" not in r.up.kinds()
         track = track_xy(r, start)
@@ -278,7 +278,7 @@ async def _inspect_with_a_cylinder_moved_onto_the_leg(
     install(r, target, off)
     camera(r)
     cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
-    assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+    assert r.ex.state == S.INSPECT, r.up.acks[-2:]
     await r.until(lambda: xy(r)[0] >= 15.0, 60)
     moved = off.model_copy(update=dict(zip(("lat", "lon"), at(60, -12), strict=True)))
     install(r, target, moved)
@@ -352,7 +352,7 @@ async def test_cylinders_that_keep_coming_under_an_inspection_stop_it() -> None:
         camera(r)
         r.ex.on_detections([detection(*xy(r), 0.9, 3.0)])
         cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
-        assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+        assert r.ex.state == S.INSPECT, r.up.acks[-2:]
 
         def ended() -> bool:
             return r.up.stages(cmd.command_id)[-1] in ("failed", "superseded")
@@ -404,7 +404,7 @@ async def _over_a_person_with_no_way_out(
     install(r, target)
     camera(r)
     cmd = await r.send(r.order("inspect_detection", inspect(150, 0, 10)), 0.5)
-    assert r.ex.state == S.TRANSIT, r.up.acks[-2:]
+    assert r.ex.state == S.INSPECT, r.up.acks[-2:]
     await r.until(lambda: xy(r)[0] >= 15.0, 60)
     monkeypatch.setattr(executor_module, "evaluate", _refused)
     here = xy(r)
@@ -531,7 +531,7 @@ async def test_fly_home_during_the_climb_flies_home(monkeypatch: pytest.MonkeyPa
     async with rig() as r:
         await _over_a_person_with_no_way_out(r, monkeypatch)
         await r.until(lambda: len(_holds(r)) == 1, 30)
-        assert r.ex.state == S.TRANSIT  # climbing
+        assert r.ex.state == S.INSPECT  # climbing
         r.ex.on_override(r.notice("return_home"))
         await r.ground.set_mode(CopterMode.SMART_RTL, origin=SendOrigin.GROUND)
         await r.run(1)
@@ -548,7 +548,7 @@ async def test_the_battery_limit_during_the_climb_flies_home(
     async with rig() as r:
         await _over_a_person_with_no_way_out(r, monkeypatch)
         await r.until(lambda: len(_holds(r)) == 1, 30)
-        assert r.ex.state == S.TRANSIT  # climbing
+        assert r.ex.state == S.INSPECT  # climbing
         r.fc.battery_pct = r.ex.charter.battery_rtl_pct - 1  # pyright: ignore[reportOptionalMemberAccess]
         await r.until(lambda: r.ex.state == S.RTL, 30)
         await r.run(5)
@@ -1543,7 +1543,7 @@ async def test_an_inspection_held_over_a_person_does_not_take_the_order_climb(
         install(r, keepout(150, 0, 35))
         camera(r)
         await r.send(r.order("inspect_detection", inspect(150, 0, 35)), 0.5)
-        assert r.ex.state == S.TRANSIT and r.ex.active is not None
+        assert r.ex.state == S.INSPECT and r.ex.active is not None
         assert isinstance(r.ex.active.handler, Replans)
         climbs: list[str] = []
 

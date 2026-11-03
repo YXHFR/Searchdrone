@@ -51,7 +51,7 @@ from sd_sim import forest as forest_mod
 from sd_sim import paths, png, raster
 from sd_sim.site import Site
 
-GENERATOR_VERSION = 6
+GENERATOR_VERSION = 7  # 7: tree tufts tipped every way, thinner trunks
 # Gazebo needs a square heightmap of 2^n + 1 pixels: 257 gives 4.7 m over 1.2 km.
 HEIGHTMAP_PX = 257
 HEIGHTMAP = "ground_collision.png"
@@ -608,6 +608,67 @@ def plant_trees(site: Site, ground: Ground, blocked: Any) -> list[Tree]:
     return trees
 
 
+def layout_trees(
+    site: Site,
+    ground: Ground,
+    real: Sequence[forest_mod.RealTree] | None,
+    asphalt: Any,
+    gravel: Any,
+    footprints: Any,
+) -> tuple[list[Tree], list[forest_mod.RealTree]]:
+    """The world's trees: the site's real trees (``real``, from ``just trees-fetch``)
+    off roads, roofs, water and parking, else the generated forest away from them; and
+    the real trees kept (empty without them). Each stands on the ground where it is."""
+    if real is None:
+        blocked = shapely.union_all(
+            [
+                asphalt.buffer(TREE_KEEP_OUT_M),
+                gravel.buffer(1.0),
+                footprints.buffer(TREE_KEEP_OUT_M),
+                site.union("water", "parking", "pitch").buffer(1.0),
+                shapely.Point(0, 0).buffer(40.0),
+            ]
+        )
+        return plant_trees(site, ground, blocked), []
+    no_tree = shapely.union_all(
+        [
+            asphalt.buffer(REAL_TREE_ROAD_M),
+            gravel,
+            footprints.buffer(REAL_TREE_ROOF_M),
+            site.union("water", "parking"),
+            shapely.Point(0, 0).buffer(40.0),
+        ]
+    )
+    inside = shapely.contains_xy(
+        no_tree, np.array([t.east for t in real]), np.array([t.north for t in real])
+    )
+    kept = [t for t, out in zip(real, inside, strict=True) if not out]
+    trees = [
+        Tree(
+            t.east,
+            t.north,
+            round(float(z), 2),
+            "birch" if t.species == "deciduous" else t.species,
+            t.height,
+            round(t.yaw, 4),
+        )
+        for t, z in zip(
+            kept,
+            ground.at(np.array([t.east for t in kept]), np.array([t.north for t in kept])),
+            strict=True,
+        )
+    ]
+    return trees, kept
+
+
+def site_trees(site: Site, ground: Ground) -> list[Tree]:
+    """The trees a site's world stands with: ``build`` draws exactly these."""
+    asphalt, gravel, _ = road_geometry(site)
+    buildings = plan_buildings(site, ground)
+    footprints = shapely.union_all([b.footprint for b in buildings]) if buildings else Polygon()
+    return layout_trees(site, ground, forest_mod.load_trees(site), asphalt, gravel, footprints)[0]
+
+
 def _cone(
     base_r: float, z0: float, z1: float, sides: int, yaw: float
 ) -> tuple[Grid, NDArray[np.int64]]:
@@ -1001,50 +1062,9 @@ def build(
     cars = park_cars(site, ground)
     asphalt, gravel, markings = road_geometry(site)
     footprints = shapely.union_all([b.footprint for b in buildings]) if buildings else Polygon()
-    blocked = shapely.union_all(
-        [
-            asphalt.buffer(TREE_KEEP_OUT_M),
-            gravel.buffer(1.0),
-            footprints.buffer(TREE_KEEP_OUT_M),
-            site.union("water", "parking", "pitch").buffer(1.0),
-            shapely.Point(0, 0).buffer(40.0),
-        ]
-    )
     progress("skog")
-    if real is None:
-        trees = plant_trees(site, ground, blocked)
-        crowns = [(t.east, t.north, t.crown_radius) for t in trees]
-        kept: list[forest_mod.RealTree] = []
-    else:
-        no_tree = shapely.union_all(
-            [
-                asphalt.buffer(REAL_TREE_ROAD_M),
-                gravel,
-                footprints.buffer(REAL_TREE_ROOF_M),
-                site.union("water", "parking"),
-                shapely.Point(0, 0).buffer(40.0),
-            ]
-        )
-        inside = shapely.contains_xy(
-            no_tree, np.array([t.east for t in real]), np.array([t.north for t in real])
-        )
-        kept = [t for t, out in zip(real, inside, strict=True) if not out]
-        crowns = [(t.east, t.north, t.crown_radius) for t in kept]
-        trees = [
-            Tree(
-                t.east,
-                t.north,
-                round(float(z), 2),
-                "birch" if t.species == "deciduous" else t.species,
-                t.height,
-                round(t.yaw, 4),
-            )
-            for t, z in zip(
-                kept,
-                ground.at(np.array([t.east for t in kept]), np.array([t.north for t in kept])),
-                strict=True,
-            )
-        ]
+    trees, kept = layout_trees(site, ground, real, asphalt, gravel, footprints)
+    crowns = [(t.east, t.north, t.crown_radius) for t in trees]
     paint = Paint(
         areas={kind: site.union(kind) for kind in PAINT_ORDER},
         asphalt=asphalt,
@@ -1071,7 +1091,7 @@ def build(
         for name in forest_mod.ATLAS_FILES:
             shutil.copyfile(forest_mod.atlas_folder(repo) / name, meshes / name)
         woods = forest_mod.build_forest(
-            kept, np.array([t.z for t in trees]), site.half_size_m, atlas
+            kept, np.array([t.z for t in trees]), site.half_size_m, atlas, site.trees_near_m
         )
         tree_files = [f"{stem}.glb" for stem in forest_mod.write_tiles(woods, meshes, ".")]
         tree_stats = {

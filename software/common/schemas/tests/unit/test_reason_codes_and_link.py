@@ -33,7 +33,7 @@ def test_codes_are_upper_snake_with_text() -> None:
             assert text.strip()
     for code in ONBOARD_REASON_CODES:
         assert code.startswith("ONB_")
-    assert len(ONBOARD_REASON_CODES) == 36
+    assert len(ONBOARD_REASON_CODES) == 41
 
 
 def test_text_lookup() -> None:
@@ -85,6 +85,9 @@ def test_kind_models_cover_the_catalogue() -> None:
         "CropData",
         "CropRequest",
         "KeepoutInstall",
+        "InspectOutcome",
+        "InspectLower",
+        "InspectStay",
     }
     assert set(link.KIND_MODELS) >= link.RELIABLE_KINDS
     assert link.RELIABLE_KINDS >= link.TTL_REQUIRED_KINDS

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from sd_safety.constants import OPERATOR_ABSENT_S
 
@@ -149,6 +149,20 @@ class RemoteConfig(_Section):
     enabled: bool = False  # reserved; true is refused in v0.1.0
 
 
+class PermitConfig(_Section):
+    # The operator's permit in the specific category (Transportstyrelsen). Only with it
+    # may a closer look fly straight over a possible person in a live search; sim and
+    # exercise always may.
+    specific_category_ref: str = Field(default="", max_length=64)
+    allow_overflight_live: bool = False
+
+    @model_validator(mode="after")
+    def _needs_the_permit(self) -> PermitConfig:
+        if self.allow_overflight_live and not self.specific_category_ref.strip():
+            raise ValueError("allow_overflight_live needs specific_category_ref")
+        return self
+
+
 class GroundConfig(_Section):
     profile: str = "sim"
     data_dir: str = "~/.local/share/searchdrone"
@@ -168,6 +182,7 @@ class GroundConfig(_Section):
     wind: WindConfig = WindConfig()
     cloud_budget: CloudBudgetConfig = CloudBudgetConfig()
     remote: RemoteConfig = RemoteConfig()
+    permit: PermitConfig = PermitConfig()
 
 
 class ConfigError(Exception):

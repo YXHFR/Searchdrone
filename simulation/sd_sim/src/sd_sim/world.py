@@ -35,6 +35,7 @@ from sd_hwcalc.calc import compute
 from sd_hwcalc.model import Drone, load_drone
 from sd_safety.targets import Plane
 from sd_sim import fixture, fpv7, meadow, objects, paths, ports, site
+from sd_sim.cameras import StillsCamera
 
 GAZEBO_DIR = paths.REPO / "simulation" / "gazebo"
 DRONE_YAML = paths.REPO / "hardware" / "drone.yaml"
@@ -64,6 +65,14 @@ BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
 # The stills camera a search scenario adds (the real camera's 66 degrees; 1280 x 720 in CI).
 STILLS = {"width": 1280, "height": 720, "hfov_deg": 66.0, "rate_hz": 1}
+MAIN_STILLS = StillsCamera(
+    "stills",
+    "boxes",
+    int(STILLS["width"]),
+    int(STILLS["height"]),
+    STILLS["hfov_deg"],
+    STILLS["rate_hz"],
+)
 
 # The world, in metres east/north of the landing pad.
 GROUND_SIZE_M = 1200.0
@@ -140,16 +149,23 @@ def model_context(
     *,
     stills: bool = False,
     video: bool = True,
+    tele: StillsCamera | None = None,
 ) -> dict[str, Any]:
-    """``stills`` adds the stills camera and its bounding-box camera; ``video = False``
-    leaves out the video camera (it costs rendering time and a search does not need it).
-    Only sd_quad14 has that choice; sd_fpv7 always carries its video camera."""
+    """``stills`` adds the stills camera and its bounding-box camera; ``tele`` (with
+    ``stills``) a second stills camera beside it, looking the same way
+    (``sd_sim.cameras``); ``video = False`` leaves out the video camera (it costs
+    rendering time and a search does not need it). Only sd_quad14 has that choice;
+    sd_fpv7 always carries its video camera."""
     if vehicle == fpv7.MODEL_NAME:
-        if stills or not video:
+        if stills or tele is not None or not video:
             raise ValueError("sd_fpv7 har bara videokameran; stillskameran finns på sd_quad14")
         return fpv7_context(instance)
     if vehicle != MODEL_NAME:
         raise ValueError(f"okänt fordon {vehicle!r}")
+    if tele is not None and not stills:
+        raise ValueError("telekameran sitter bredvid stillbildskameran och kräver den")
+    if tele is not None and {tele.sensor, tele.boxes} & {MAIN_STILLS.sensor, MAIN_STILLS.boxes}:
+        raise ValueError("telekameran behöver egna sensornamn")
     drone = load_drone(DRONE_YAML) if drone is None else drone
     if drone.motors.count != 4:
         raise ValueError("sd_quad14 är en quad: fyra motorer och fyra propellrar")
@@ -196,15 +212,11 @@ def model_context(
         "air_density": AIR_DENSITY,
         "camera": {**CAMERA, "hfov_rad": round(math.radians(CAMERA["hfov_deg"]), 6)},
         "video": video,
-        "stills": (
-            {
-                **STILLS,
-                "hfov_rad": round(math.radians(STILLS["hfov_deg"]), 6),
-                "topic_prefix": stills_topic_prefix(instance),
-            }
-            if stills
-            else None
-        ),
+        # The stills cameras, main first; empty without ``stills``.
+        "stills": [
+            cam.context(stills_topic_prefix(instance))
+            for cam in ([MAIN_STILLS] if stills else []) + ([tele] if tele is not None else [])
+        ],
     }
 
 
@@ -377,8 +389,9 @@ def model_sdf(
     *,
     stills: bool = False,
     video: bool = True,
+    tele: StillsCamera | None = None,
 ) -> str:
-    context = model_context(instance, drone, vehicle, stills=stills, video=video)
+    context = model_context(instance, drone, vehicle, stills=stills, video=video, tele=tele)
     return _env().get_template(f"models/{vehicle}/model.sdf.jinja").render(**context)
 
 
@@ -476,12 +489,14 @@ def render_model(
     *,
     stills: bool = False,
     video: bool = True,
+    tele: StillsCamera | None = None,
 ) -> Path:
     """Write the instance's model; returns its folder (``model://<vehicle>_i<N>``)."""
     out = repo / "build" / "sim" / "models" / f"{vehicle}_i{instance}"
     out.mkdir(parents=True, exist_ok=True)
     (out / "model.sdf").write_text(
-        model_sdf(instance, vehicle=vehicle, stills=stills, video=video), encoding="utf-8"
+        model_sdf(instance, vehicle=vehicle, stills=stills, video=video, tele=tele),
+        encoding="utf-8",
     )
     (out / "model.config").write_text(model_config(instance, vehicle), encoding="utf-8")
     return out
@@ -511,11 +526,12 @@ def render_world(
     *,
     stills: bool = False,
     video: bool = True,
+    tele: StillsCamera | None = None,
     light: Mapping[str, Any] | None = None,
     gi: str = "off",
 ) -> Path:
     """Write the instance's world and model, the objects' facit and the GeoJSON layer.
-    ``stills`` and ``video`` choose the vehicle's cameras; ``light`` replaces the world's
+    ``stills``, ``tele`` and ``video`` choose the vehicle's cameras; ``light`` replaces the world's
     sun and ambient light (``light_context``); ``gi`` the global illumination of a site
     world (``sd_sim.site_world.GI_VCT``).
 
@@ -535,12 +551,13 @@ def render_world(
             vehicle=vehicle,
             stills=stills,
             video=video,
+            tele=tele,
             light=light,
             gi=gi,
         )
     if gi != "off":
         raise ValueError(f"{name}: global belysning finns bara i platsvärldar")
-    render_model(instance, repo, vehicle, stills=stills, video=video)
+    render_model(instance, repo, vehicle, stills=stills, video=video, tele=tele)
     fix = fixture.load()
     out = repo / "build" / "sim" / "worlds"
     out.mkdir(parents=True, exist_ok=True)

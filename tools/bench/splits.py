@@ -15,8 +15,16 @@ target share of pictures (70/10/20). ``v2`` adds KIOS: it keeps every dataset of
 exactly as it was (``extend_split_file``; so HERIDAL's test part, and every number
 measured on it, stays comparable) and draws only the new one. ``v3`` adds the two
 training-only sets (KIOS car/person, SeaDronesSee) the same way, with no test part
-(``RATIOS_TRAIN_ONLY``: they are never measured on). A dataset's own ``seed`` (and
+(``RATIOS_TRAIN_ONLY``: they are never measured on). ``v4`` adds UIT-Drone4 the same
+way. The measured sets' parts are the same in v3 and v4, so the measurement keeps
+reading ``MEASURED`` (v3): a result measured before v4 stays comparable with one
+measured after it. A dataset's own ``seed`` (and
 ``ratios``, where not ``RATIOS``) says how it was drawn.
+
+A set that grows (``GROWING``: the photo farm's renders, made again and again) cannot be
+listed once: its sequences are drawn by a SHA-256 of the set's name and the sequence
+(``hashed_part``), so a scene keeps its part however many come after it. Such a set is
+trained on only, never measured on, so no measured number depends on it.
 
 ``splits/mini_v1.json`` (schema ``bench.mini/v1``) is the small, fixed test set for the
 nightly CPU run: picture and label members with their SHA-256, read straight out of the
@@ -36,7 +44,10 @@ from typing import Literal
 from bench.common import BENCH, BenchError
 
 SPLITS = BENCH / "splits"
-CURRENT = "v3"
+CURRENT = "v4"
+# the split the measurement reads: the newest version that changed a measured set's
+# parts (v4 only adds a training set), so results stay comparable across versions
+MEASURED = "v3"
 SPLIT_SCHEMA = "bench.split/v1"
 MINI_SCHEMA = "bench.mini/v1"
 Part = Literal["train", "val", "test"]
@@ -45,6 +56,20 @@ RATIOS: dict[Part, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
 # A set that is trained on but never measured on has no test part: its val part helps
 # pick the best epoch, and the rest is trained on.
 RATIOS_TRAIN_ONLY: dict[Part, float] = {"train": 0.9, "val": 0.1, "test": 0.0}
+# Sets whose sequences are drawn by hash, not listed (they grow): name -> shares.
+GROWING: dict[str, dict[Part, float]] = {"simstills": RATIOS_TRAIN_ONLY}
+
+
+def hashed_part(dataset: str, seq: str, ratios: Mapping[Part, float]) -> Part:
+    """A growing set's part of a sequence: a fixed draw from a SHA-256 of the names."""
+    digest = hashlib.sha256(f"{dataset}/{seq}".encode()).digest()
+    u = int.from_bytes(digest[:8], "big") / 2**64
+    edge = 0.0
+    for part in PARTS:
+        edge += ratios.get(part, 0.0)
+        if u < edge:
+            return part
+    return "train"
 
 
 @dataclass(frozen=True)
@@ -55,11 +80,16 @@ class Split:
     digests: dict[tuple[str, str], str]
 
     def part_of(self, dataset: str, seq: str) -> Part | None:
+        if dataset in GROWING:
+            return hashed_part(dataset, seq, GROWING[dataset])
         return self.sequences.get((dataset, seq))
 
     def check(self, dataset: str, images: Iterable[tuple[str, str]]) -> None:
         """``images``: ``(local id, sequence)`` of a whole indexed dataset. Every
-        sequence must be in the split with the same pictures."""
+        sequence must be in the split with the same pictures (a growing set's are
+        drawn, not listed)."""
+        if dataset in GROWING:
+            return
         found: dict[str, list[str]] = defaultdict(list)
         for local, seq in images:
             found[seq].append(local)

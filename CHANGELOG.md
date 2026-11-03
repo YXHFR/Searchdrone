@@ -8,6 +8,64 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- Training at our cameras' scales (the owner's decision of 2026-11-03: more real
+  aerial pictures, resampled so people have the pixel sizes our cameras will see):
+  `just train-detector scales=native,wide,tele` also cuts each training picture
+  resampled so its people are as large as the wide Camera Module 3 (about 71 px/m at
+  50 m, a person about 33 px) or the tele (about 230 px/m, a person about 100 px) sees
+  them, each picture at a height drawn between 30 and 60 m. A picture's scale is its
+  set's `px_per_m` in the register (HERIDAL: about 2 cm per pixel) or read off its
+  person boxes, and it is enlarged at
+  most `max_up=2` times, since an enlarged person is blurred. The val and the locked
+  test part are never resampled. The tile builder prints how many people of what size
+  each set gave at each scale.
+- Recall by person size: `just bench-detector` prints, and its result holds
+  (`recall_by_size`, and `by_size` per dataset), the recall in bins of the box's
+  longest side (0-16, 16-24, 24-32, 32-48, 48-64, 64-96, 96-128, 128-192, 192+ px), so
+  the effect of `scales=` can be seen.
+- UIT-Drone4 to train on (Zenodo 14862652, CC BY 4.0, University of Information
+  Technology, VNU-HCM): city traffic in Vietnam filmed from drones at 3840x2160. Every
+  tenth video frame is taken: 1,523 pictures with 7,193 pedestrians, half of them
+  between 36 and 86 px (median 59 px), between our wide and tele cameras' sizes. Its
+  motorcycles are boxed with their riders, who are people but not boxed as persons, so
+  they are kept as ignore regions and a tile that overlaps one is never trained on. It
+  is never measured on: the new split v4 keeps every set of v3 as it was and gives
+  UIT-Drone4 only train and val parts by video. The measurement still reads v3, so
+  results measured before stay comparable.
+
+- A larger person detector to train (the owner's decision of 2026-11-03):
+  `just train-detector model=yolox_m` trains YOLOX-m, started from Megvii's COCO
+  weights (Apache-2.0, fetched and checked by `just detector-fetch only=yolox_m`), with
+  batch 4 by default so it fits an 8 GB graphics card. It exports and is measured like
+  `yolox_s`, and the drone reads it the same way, but each tile costs about 2.8 times
+  the arithmetic (73.8 against 26.8 GFLOPs at 640 px). `init=` from a `yolox_s` run is
+  refused with a plain reason: the two sizes cannot share weights.
+- A photo farm for the person detector (the owner's decision of 2026-11-02: as
+  realistic as possible, with the right proportions): `just sim-farm-stills` takes
+  still pictures of people at the site with its real trees, without flying. People
+  have real body heights (adults 1.50-1.95 m, sometimes a child), stand, walk, sit or
+  lie in the open, at a forest edge, under a tree or on a path, and wear their own or
+  recoloured clothes. The camera is aimed from heights that give HERIDAL's and KIOS's
+  centimetres per pixel, the ground under it gets photographed grass, forest floor,
+  gravel or rock (`just ground-pictures-fetch`, Poly Haven CC0) and the light is
+  developed like a photo. The boxes are what the bounding-box camera sees of each
+  person; a person of whom less than 30 % is seen (counted in a segmentation camera's
+  pixels, against the body's outline unhidden) gets no box, like in the hand-drawn
+  sets. Each scene keeps Gazebo's full logs. For this the tree leaves are drawn at
+  about 6 cm (`just tree-pictures-fetch` again), the needle and leaf tufts are tipped
+  every way instead of standing upright (seen from above they were long streaks), the
+  birch trunks are thinner, and the world generator's version is 7 so worlds rebuild. The pictures are the training-only set
+  `simstills` (`just train-detector sets=heridal,kios,kios_carperson,simstills`): it
+  is never measured on and is kept only if the real test gets better. A growing set's
+  scenes are split by a hash of their names (`GROWING` in `tools/bench/splits.py`).
+- The person detector can enlarge its tiles 2x so small people are seen larger:
+  `just train-detector upscale=2` cuts tiles of 320×320 picture pixels and enlarges them
+  to 640 px (bilinear) with their boxes, `just export-detector` writes `upscale` into the
+  model's manifest, and `TiledDetector` (on the drone, in the simulator and in
+  `just bench-detector`) enlarges each tile the same way and shrinks the boxes back. A
+  12 MP still then takes 170 tiles instead of 45. A manifest without `upscale` means 1,
+  so models already exported run as before; a manifest whose `upscale` is not a whole
+  number from 1 to 4 that divides `tile_px` is refused.
 - The ground station now fills the AI's "till hemgräns" minutes
   (`battery_to_reserve_s`), which it sent as empty before, so the commander's
   search-again battery check works in real flights. The estimate is the charge above
@@ -253,7 +311,49 @@ All notable changes to this project are listed here. The format follows
   farm flight now pass `[llm]` on as the drill does. `Sampling()` and a bare
   `LlmCommander` default to `[llm]`'s 4096 completion tokens and 16384-token context
   window, not 512 and 8192. An empty string, list or 0 where the cloud's answer holds
-  an object is now a parse error (the fallback model answers), not an empty answer.
+  a choice, message or tool call is now a parse error (the fallback model answers),
+  not an empty answer. Malformed usage metadata (`usage`, its token counts or
+  `completion_tokens_details`, also a count over the budget's 10,000,000 or too large
+  for a float) only drops those numbers: the answer stands, no second, paid call goes
+  to the fallback model, and the ground's cloud budget books the call at its whole
+  reservation (the estimated prompt and the completion limit), never as free. So do
+  usage left out and usage without its prompt or completion count; the eval ledger
+  books such a call the same way. A provider price outside 0 to 1000 USD is dropped
+  (a negative zero reads 0), and the ground prices the tokens. An answer with a number
+  longer than Python reads (4300 digits) is unreadable as a whole, so a parse error,
+  as is a body nested too deep to read: neither escapes the call. A tool call's
+  arguments string that cannot be read (also a number that long, or nested too deep)
+  goes to the repair round like any arguments that are not JSON, also when it is
+  written as a `<tool_call>` in the text, and the decision log and the repeat check
+  read such arguments without failing (also arguments that load but are nested too
+  deep to write back). A fault no part of the AI's turn foresaw is now logged
+  (`backend_decide_failed`, its type and a short message only) and counts as an answer
+  that could not be read; a turn that fails after the answer (`turn_failed`) is lost,
+  not the turn loop: no single model answer can end the brain. A test harness out of
+  recorded answers still fails. The decision log caps a search profile's key names
+  (32 names of at most 64 characters), writes a lone surrogate in a draft as "?", and a
+  log entry that cannot be built is dropped with a warning, not the turn. The
+  `estimate` read tool answers params that are no object with a tool error, so the
+  model gets its repair round. Counts no real call has (no prompt tokens, or
+  no completion tokens next to an answer) are no valid usage either; all invalid usage
+  reads 0 tokens, and its warning (`cloud_usage_invalid`) gives the reason: `absent`,
+  `malformed` or `implausible`. A failed cloud call that may have been billed (a timeout, a broken
+  answer, a cancel) is booked at its whole reservation, no longer at the prompt alone,
+  and the eval ledger now charges a timeout or a broken answer too (not a cancel) and
+  prices images in its estimate as the ground does (400 tokens per crop).
+- The decision log reaches the ground whatever the model wrote: the entry is made safe
+  to send once (every string valid UTF-8, a lone surrogate as "?", no NaN, nested at
+  most 64 deep, deeper parts as "…"), and an entry that still cannot be encoded is sent
+  reduced (no prompt, draft or arguments) instead of being lost. A lone surrogate in the
+  provider's answer text, a tool-call id, name or arguments reads "?", so the answer is
+  used as usual. Only a replay harness out of answers (`ReplayExhaustedError`,
+  `ReplayNotConsumedError`) ends the turn loop; any other `AssertionError` counts as a
+  failed turn. A refused token (401) ends the loop also when the AI's turn or a write
+  (a chat line, an order, a charter, the memory, the decision log) meets it, not only on
+  the next read. The `backend_decide_failed` and `turn_failed` log lines quote the
+  error's text with `repr`, so it cannot start a log line of its own. A prompt value
+  that is not JSON (a UUID, a datetime) is logged as its text, also when that text
+  holds a lone surrogate.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

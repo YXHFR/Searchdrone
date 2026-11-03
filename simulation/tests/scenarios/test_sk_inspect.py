@@ -6,8 +6,12 @@ report for it (``command_id`` set), as the perception task would. The detection 
 is a synthetic person report sent the real way (the onboard link, SD-link, the ground's
 perception queue and table).
 
+A look is only for an open candidate (R-INSPECT-TARGET): each detection is made a
+``ready`` candidate the way the search service writes it (its id is the detection's), and
+the pilot orders the look on that candidate.
+
 * ``test_inspect_detection_geometry``: the pilot asks for a closer look at a person
-  detection that a confirmed find's keep-out cylinder surrounds. The drone flies to the
+  candidate that a confirmed find's keep-out cylinder surrounds. The drone flies to the
   cylinder's edge on its own side, high enough that the target is within 25 degrees of
   straight down in every still, never with a track sample inside the cylinder, and
   hovers there when done.
@@ -167,6 +171,33 @@ async def a_detection(sc: Scenario, where: tuple[float, float]) -> GeoDetectionM
     return det
 
 
+async def a_candidate(sc: Scenario, where: tuple[float, float]) -> str:
+    """A person detection at ``where`` that the search service made a ``ready`` candidate
+    (fusion names a candidate after its first detection). Returns the candidate id."""
+    det = await a_detection(sc, where)
+    now = sc.r.clock.utc_now().isoformat()
+    revision = {
+        "candidate_id": str(det.detection_id),
+        "base_rev": 0,
+        "state": "ready",
+        "lat": det.lat,
+        "lon": det.lon,
+        "sigma95_m": det.sigma95_m,
+        "n_seen": 1,
+        "best_detector_score": det.score,
+        "priority": 0.7,
+        "first_seen_utc": now,
+        "last_seen_utc": now,
+        "observations": [{"detection_id": str(det.detection_id), "distance_m": 0.0}],
+    }
+    assert sc.r.search is not None
+    res = await sc.r.search.post(
+        f"/search/v1/missions/{sc.mid}/candidates", json={"revisions": [revision]}
+    )
+    assert res.status_code == 200, res.text
+    return str(det.detection_id)
+
+
 class Camera:
     """The onboard executor's camera: where the drone was at each still."""
 
@@ -211,10 +242,9 @@ async def flooded(sc: Scenario) -> AsyncIterator[None]:
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def inspecting(sc: Scenario, det: GeoDetectionMsg) -> dict[str, Any]:
-    res = await sc.operator_order(
-        "inspect_detection", {"detection_id": str(det.detection_id), "standoff_m": 20}
-    )
+async def inspecting(sc: Scenario, candidate_id: str) -> dict[str, Any]:
+    """The pilot's closer look at an open candidate, through the gate."""
+    res = await sc.operator_order("inspect_detection", {"candidate_id": candidate_id})
     assert res["gate"]["decision"] == "ALLOW", res
     return await sc.wait_command("inspect_detection", "running", 30)
 
@@ -233,11 +263,11 @@ async def test_inspect_detection_geometry(sim: Any, migrated_db: Any, tmp_path: 
         target = sc.at(*TARGET_ENU)
         await sc.confirm_find(*target, sigma95_m=SIGMA_M)
         radius = PERSON_KEEPOUT_M + SIGMA_M
-        det = await a_detection(sc, target)
+        cid = await a_candidate(sc, target)
         cam = Camera(sc)
 
         since = time.monotonic()
-        await inspecting(sc, det)
+        await inspecting(sc, cid)
         await sc.wait_command("inspect_detection", "done", 180)
 
         async def holding() -> bool:  # the snapshot may still be the one before the end
@@ -274,12 +304,12 @@ async def test_sk08_stop_and_fly_home_during_an_inspection(
     de, dn = seed_offset(seed, 15.0, "SK08")  # the person moves with the seed
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await airborne_for_inspection(sc)
-        det = await a_detection(sc, sc.at(TARGET_ENU[0] + de, TARGET_ENU[1] + dn))
+        cid = await a_candidate(sc, sc.at(TARGET_ENU[0] + de, TARGET_ENU[1] + dn))
         Camera(sc)
         link = sc.r.onboard.link
 
         # STOP mid-inspection with the queue full.
-        first = await inspecting(sc, det)
+        first = await inspecting(sc, cid)
         async with flooded(sc):
             await sc.until(lambda: sc.from_home_m() >= 20.0, 60, "on the way")
             dropped = link.dropped_perception
@@ -301,7 +331,7 @@ async def test_sk08_stop_and_fly_home_during_an_inspection(
         await sc.until(let_go, 30, "released onboard")
 
         # FLY HOME mid-inspection with the queue full.
-        second = await inspecting(sc, det)
+        second = await inspecting(sc, cid)
         async with flooded(sc):
             await asyncio.sleep(3.0)
             dropped = link.dropped_perception

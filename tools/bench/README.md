@@ -17,6 +17,8 @@ setup-config`, outside the repository).
 | `kios` | KIOS Small Object Aerial Person Detection: 3,136 pictures (1920×1080 to 3840×2160) with 61,708 people from drone flights in Cyprus, from the University of Cyprus | CC BY 4.0 | training, tuning, measuring |
 | `kios_carperson` | KIOS Aerial Dataset for Car and Person Detection: a parking lot at the University of Cyprus filmed from 40 and 60 m, 11 videos, 13,755 frames; every tenth frame is taken | CC BY 4.0 | training and tuning only |
 | `seadronessee` | SeaDronesSee Object Detection v2 (JPEG version): 10,477 pictures of swimmers in open water (Lake Constance and the North Sea), from the University of Tübingen | CC0 1.0 | training and tuning only |
+| `uit_drone4` | UIT-Drone4: city traffic in Vietnam filmed from drones (3840×2160), 25 videos, 15,370 frames; every tenth frame is taken (1,523 pictures, 7,193 pedestrians, median 59 px). Pedestrians are the persons; motorcycles, boxed with their riders, are ignore regions (a training tile that overlaps one is left out). From the University of Information Technology, VNU-HCM | CC BY 4.0 | training and tuning only |
+| `simstills` | Our own photo farm's renders (`just sim-farm-stills`), indexed where they lie in `build/simfarm/stills/`; a scene is one sequence, drawn to train or val by a hash of its name since the set keeps growing | Apache-2.0 (models CC0 / CC BY 4.0) | training and tuning only |
 | `wisard` | WiSARD v1, visible-light part: 20,504 pictures with labels from wilderness search flights in Washington, from the University of Washington | MIT (see below) | measuring only, for now |
 | `simfarm` | Our own simulator pictures (`just sim-farm`) | Apache-2.0 | pre-training only, never measured on |
 
@@ -119,7 +121,7 @@ Humans in Open Water", WACV 2022, University of Tübingen, CC0 1.0; credit is no
 required by CC0 but given). The manifest of each model carries the credit of every set
 it was trained on.
 
-## The split (`splits/v3.json`)
+## The split (`splits/v4.json`)
 
 Pictures from the same flight look nearly alike, so the split is by **sequence**, never
 by picture: all of a sequence's pictures are in the same part. A sequence is the place
@@ -143,8 +145,12 @@ WiSARD's parts are copied from v1 unchanged (`test_v2_keeps_every_v1_dataset_as_
 so a HERIDAL number measured on v1 still compares with one measured on v2. `v3.json` is
 `v2.json` with the two training-only sets added the same way: HERIDAL's, KIOS's and
 WiSARD's rows are copied unchanged (`test_v3_keeps_every_v2_dataset_as_it_was`), so
-every test and val number measured on v2 still holds. Changing a locked part means a
-new file and every number measured again.
+every test and val number measured on v2 still holds. `v4.json` is `v3.json` with
+UIT-Drone4 added the same way (`test_v4_keeps_every_v3_dataset_as_it_was`). Since v4
+changes no measured set, the measurement keeps reading v3 (`MEASURED` in `splits.py`):
+a result's source stays `splits/v3 test (...)`, so results measured before and after v4
+compare with each other. Changing a locked part means a new file and every number
+measured again.
 
 The training-only sets have no test part: they are never measured on, so their videos
 go 90 % to train and 10 % to val (`RATIOS_TRAIN_ONLY` in `splits.py`, saved as
@@ -153,7 +159,9 @@ go 90 % to train and 10 % to val (`RATIOS_TRAIN_ONLY` in `splits.py`, saved as
 dataset AP50 is highest; a model is still kept or dropped on the land test part alone.
 A sequence is a video for both: KIOS car/person's `DJI_<time>_<n>_D`, SeaDronesSee's
 `source.folder_name` (`DJI_0032`, `NorthSea_Fri_DJI_0110`, and two collections of
-stills named `rgb` and `multispectral`).
+stills named `rgb` and `multispectral`), and UIT-Drone4's video, the start of the file
+name (`DJI_0606`, `363`, `AIUit000061`; the archive's own train, val and test_all
+folders hold frames of the same videos, so they are pooled).
 
 `splits/mini_v1.json` is the mini bank: 64 pictures of the HERIDAL test part (about 330
 MB) with the SHA-256 of each picture and label. The nightly CI job `bench-mini` reads
@@ -169,6 +177,12 @@ sizes count by area). At that threshold the result gives:
 
 - **recall per size class** of the person box's longest side: under 16 px, 16–32 px and
   over 32 px, with a 95 % interval, and per dataset;
+- **recall by person size** in finer bins of the longest side (0-16, 16-24, 24-32,
+  32-48, 48-64, 64-96, 96-128, 128-192 and 192+ px), pooled and per dataset, printed as
+  a table after the per-dataset lines (`recall_by_size` and `by_size` in the result).
+  Our wide camera sees a standing person at about 30-35 px, the tele at about 100 px,
+  so this shows where a change helps, for example training at our cameras' scales
+  (`just train-detector scales=`, `tools/train/README.md`);
 - AP50, precision at score 0.25 (an assumed on-board score floor), time per picture
   (median and 95th percentile);
 - the score distributions of hits and false alarms (for the simulator's stand-in).

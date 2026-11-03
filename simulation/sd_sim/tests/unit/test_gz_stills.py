@@ -164,3 +164,13 @@ def test_capture_needs_the_model_with_the_poses(monkeypatch: pytest.MonkeyPatch)
     argv = ["capture", "--image-topic", "a", "--boxes-topic", "b", "--out", "c"]
     with pytest.raises(SystemExit):
         gz_stills.main([*argv, "--poses-topic", "/world/w/dynamic_pose/info"])
+
+
+def test_a_label_map_keeps_one_byte_a_pixel(tmp_path: Path) -> None:
+    rgb = bytes([9, 9, 2, 9, 9, 0, 9, 9, 2, 9, 9, 2])  # 2 x 2, the label in the last channel
+    assert gz_stills.label_channel(2, 2, rgb) == bytes([2, 0, 2, 2])
+    assert gz_stills.label_channel(2, 2, bytes([2, 0, 2, 2])) == bytes([2, 0, 2, 2])
+    name = gz_stills.write_labels(tmp_path, "s001", 2, 2, rgb)
+    assert (tmp_path / name).read_bytes() == b"P5 2 2 255\n" + bytes([2, 0, 2, 2])
+    with pytest.raises(ValueError):
+        gz_stills.label_channel(2, 2, bytes(5))

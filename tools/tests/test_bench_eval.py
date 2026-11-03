@@ -16,6 +16,7 @@ from bench.metrics import (
     PictureResult,
     ap50,
     match_picture,
+    size_bin,
     size_class,
     summarise,
     threshold_for,
@@ -546,3 +547,40 @@ def test_selfcheck_warns_too_when_it_writes_private_rows_into_the_repo(
     assert "kept, som inte får publiceras" in capsys.readouterr().err
     assert ev.main(["model=selfcheck", f"data={root}", f"out={root / 'build' / 'r.json'}"]) == 0
     assert "publiceras" not in capsys.readouterr().err
+
+
+# --- recall by person size -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("side", "label"),
+    [(0, "0-16"), (15.9, "0-16"), (16, "16-24"), (33, "32-48"), (100, "96-128"), (500, "192+")],
+)
+def test_size_bins_by_longest_side(side: float, label: str) -> None:
+    assert size_bin(side) == label
+
+
+def test_recall_is_given_by_person_size_pooled_and_per_dataset() -> None:
+    small = match_picture("a", 100, 100, [(0, 0, 10, 20)], [])  # 20 px, missed
+    big = match_picture("a", 100, 100, [(0, 0, 100, 40)], [(0.9, (0, 0, 100, 40))])
+    other = match_picture("b", 100, 100, [(0, 0, 30, 10)], [(0.9, (0, 0, 30, 10))])
+    s = summarise([small, big, other])
+    body = s.as_dict()
+    by_size = body["recall_by_size"]
+    assert {k: (v["n"], v["hits"]) for k, v in by_size.items()} == {  # type: ignore[union-attr]
+        "16-24": (1, 0),
+        "24-32": (1, 1),
+        "96-128": (1, 1),
+    }
+    assert set(s.recall_by_dataset["a"]["by_size"]) == {"16-24", "96-128"}  # type: ignore[arg-type]
+    lines = ev.size_table(body)
+    assert lines[0].startswith("Recall per personstorlek")
+    assert "16-24" in lines[1] and "192+" not in lines[1]  # only bins with people
+    assert any(line.strip().startswith("a ") and "0.00 (1)" in line for line in lines)
+
+
+def test_an_older_result_without_sizes_prints_no_size_table() -> None:
+    assert ev.size_table({"recall_by_dataset": {"a": {"recall": 0.5}}}) == []
+    # a result made by hand without sides counts in no bin
+    s = summarise(_two_sets())
+    assert s.recall_by_size == {}

@@ -34,6 +34,7 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "SCHEMA_INVALID": "Ordern har fel parametrar.",
         "SKILL_NOT_IMPLEMENTED": "Färdigheten finns inte än.",
         "FORBIDDEN_ACTION": "AI:n får inte använda den här färdigheten.",
+        "INSPECT_NEEDS_PILOT": "Bara piloten kan starta Titta närmare.",
         "AUTONOMY_CHANGE_FORBIDDEN": "Bara operatören kan ändra autonomiläget.",
         "SKILL_NOT_ALLOWED": "Färdigheten är inte tillåten i uppdragsramen.",
         "AI_DISABLED": "AI:n är avstängd för uppdraget.",
@@ -52,6 +53,8 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "STATE_STALE": "Lägesbilden är för gammal.",
         "STATE_CHANGED": "Läget har ändrats sedan ordern skapades.",
         "INVALID_TRANSITION": "Färdigheten går inte i drönarens nuvarande läge.",
+        "INSPECT_BUSY": "En annan titt pågår eller väntar på beslut.",
+        "INSPECT_TARGET_CLOSED": "Kandidaten finns inte eller är redan avgjord.",
         "CLEARANCE_REQUIRED": "Någon måste bekräfta att det är fritt runt drönaren.",
         "CLEARANCE_EXPIRED": "Bekräftelsen att det är fritt runt drönaren har gått ut.",
         "RC_LINK_DOWN": (
@@ -68,9 +71,15 @@ GATE_REASON_CODES: Final = MappingProxyType(
         "ALT_ABOVE_LIMIT": "Höjden är över uppdragets gräns.",
         "ALT_ABOVE_CHARTER": "Höjden är över uppdragsramens tak.",
         "ALT_BELOW_CHARTER": "Höjden är under uppdragsramens golv.",
+        "FLOOR_ABOVE_CEILING": "Lägsta tillåtna höjd på platsen ligger över uppdragsramens tak.",
+        "FLOOR_VIOLATION": "Vägen går lägre än höjdgolvet tillåter (träd, mark och marginaler).",
         "OUTSIDE_CHARTER": "Målet ligger utanför sökområdet.",
         "AREA_BEYOND_FC_FENCE": "Området ligger för långt från hemplatsen för staketet.",
         "KEEPOUT_VIOLATION": "Vägen går in i en förbudscylinder runt en möjlig person.",
+        "OVERFLIGHT_NOT_ALLOWED": (
+            "I skarpt läge får drönaren inte flyga över en möjlig person utan tillstånd."
+        ),
+        "POWERLINE_ZONE": "Drönaren får inte sjunka nära en känd kraftledning.",
         "PILOT_DISTANCE": "Målet ligger för långt från piloten.",
         "SPEED_ABOVE_LIMIT": "Farten är över uppdragets gräns.",
         "SPEED_ABOVE_CHARTER": "Farten är över uppdragsramens gräns.",
@@ -144,6 +153,11 @@ ONBOARD_REASON_CODES: Final = MappingProxyType(
             "Det går inte att se målet rakt nog uppifrån inom ramens höjder och utanför "
             "förbudscylindrarna."
         ),
+        "ONB_INSPECT_TIMEOUT": "Titten tog för lång tid och avslutades.",
+        "ONB_FLOOR_PACK_MISSING": ("Ingen höjdkarta ombord: tittar bara från nuvarande höjd."),
+        "ONB_FLOOR_PACK_MISMATCH": "Höjdkartan ombord är inte samma som i uppdraget.",
+        "ONB_LASER_LOST": "Lasern tappade marken: drönaren steg till säker höjd.",
+        "ONB_OPERATION_MODE_MISMATCH": "Uppdragets driftläge passar inte drönarens profil.",
         "ONB_CAMERA_UNAVAILABLE": "Kameran tar inga bilder just nu.",
         "ONB_NOTHING_TO_RESUME": "Det finns inget att fortsätta med.",
         "ONB_SKILL_TIMEOUT": "Färdigheten tog för lång tid.",

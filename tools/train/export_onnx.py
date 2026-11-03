@@ -1,14 +1,16 @@
 """Make the ONNX file from the best training epoch: ``just export-detector model=yolox_s``.
 
-Keys: ``model`` (yolox_s, damoyolo_s), ``data``, ``train`` (the training folder,
+Keys: ``model`` (yolox_s, yolox_m, damoyolo_s), ``data``, ``train`` (the training folder,
 default ``<data>/train/<model>``), ``name`` (default ``person_<model>``), ``out``
 (default ``<data>/models/detector``).
 
 Writes ``<name>.onnx`` and its manifest ``<name>.json`` (``sd.detector-model/v1``: the
-family, the input size, the classes, the SHA-256 of the ONNX file, what it was trained
-on and under which licences, and that recall is measured per dataset, each at its own
-threshold). Before writing, the ONNX file is run with ONNX Runtime
-next to PyTorch on the same pictures; if they disagree, nothing is written. Point
+family, the input size, how many times each tile is enlarged (``upscale``: the
+training run's, so the drone enlarges its tiles as the model was trained), the classes,
+the SHA-256 of the ONNX file, what it was trained on and under which licences, and that
+recall is measured per dataset, each at its own threshold). Before writing, the ONNX
+file is run with ONNX Runtime next to PyTorch on the same pictures; if they disagree,
+nothing is written. Point
 ``SD_DETECTOR_MODEL`` at the manifest to use the model (``tools/train/README.md``).
 """
 
@@ -72,6 +74,7 @@ def export(
         shown["init"] = Path(shown["init"]).name  # the run's local path stays local
     fam = families.FAMILIES[model]
     tile = int(settings["tile"])
+    upscale = int(settings.get("upscale", 1))  # runs before upscale= did not enlarge
     net = families.build(model)
     net.load_state_dict(ck["ema"])
     net.eval()
@@ -104,6 +107,7 @@ def export(
         "model": model,
         "input_px": tile,
         "tile_px": tile,
+        "upscale": upscale,  # each tile covers tile_px / upscale picture pixels
         "classes": ["person"],
         "licence": fam.licence,
         "trained_on": [

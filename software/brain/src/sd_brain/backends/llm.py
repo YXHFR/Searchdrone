@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from sd_brain.backends.base import ToolExecutor
+from sd_brain.backends.base import PARSE_FAIL_TEXT, ToolExecutor
 from sd_brain.charter_draft import CharterError
 from sd_brain.config import BehaviourConfig
 from sd_brain.constants import (
@@ -67,7 +67,6 @@ from sd_schemas.skills import SkillRegistry
 __all__ = ["LlmCommander"]
 
 CALL_GUARD_SLACK_S = 0.5
-PARSE_FAIL_TEXT = "Jag fick inte ihop ordern. Kan du säga det på ett annat sätt?"
 # The model sent the same refused order twice: another repair text will not help.
 REPEAT_FAIL_TEXT = (
     "Jag försökte samma felaktiga order två gånger och slutar här. Säg vad jag ska göra, "
@@ -78,17 +77,27 @@ REPEAT_FAIL_TEXT = (
 REQUEST_LIMIT_CODES = frozenset({"CHARTER_EXCEEDS_LIMITS", "AREA_BEYOND_RANGE"})
 
 
+LOGGED_KEYS_MAX = 32
+LOGGED_KEY_MAX_CHARS = 64
+
+
 def _logged_call(c: RawToolCall) -> dict[str, Any]:
     """A tool call as the decision log keeps it. A search profile's values may hold health
     details, so only its field names are kept."""
     if c.name != PROFILE_TOOL:
-        return {"name": c.name, "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS]}
+        return {
+            "name": truncate(c.name, LOGGED_KEY_MAX_CHARS),
+            "arguments": c.arguments_json[:TOOL_RESULT_MAX_CHARS],
+        }
     try:
         args = json.loads(c.arguments_json)
-    except ValueError:
+    except (ValueError, RecursionError):  # also a number too long or nesting too deep
         args = None
     keys = sorted(args) if isinstance(args, dict) else []
-    return {"name": c.name, "arguments": json.dumps({"redacted": keys})}
+    # The model writes the key names too: capped in count and length, so no answer can
+    # make the decision log too large to keep.
+    kept = [truncate(k, LOGGED_KEY_MAX_CHARS) for k in keys[:LOGGED_KEYS_MAX]]
+    return {"name": c.name, "arguments": json.dumps({"redacted": kept})}
 
 
 def _logged_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -169,10 +178,13 @@ def _calls_key(reply: ModelReply) -> str | None:
     for c in reply.tool_calls:
         try:
             args: Any = json.loads(c.arguments_json) if c.arguments_json.strip() else {}
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # also a number too long or nesting too deep
             args = c.arguments_json
         calls.append([c.name, args])
-    return json.dumps(calls, sort_keys=True, default=str)
+    try:
+        return json.dumps(calls, sort_keys=True, default=str)
+    except (ValueError, RecursionError):  # loads, yet too deep to dump: the raw text then
+        return json.dumps([[c.name, c.arguments_json] for c in reply.tool_calls])
 
 
 def _failed(err: CallError) -> FailedProposal:

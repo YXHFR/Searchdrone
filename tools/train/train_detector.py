@@ -1,22 +1,33 @@
 """Fine-tune a person detector on the image bank: ``just train-detector model=yolox_s``.
 
-    just train-detector model=yolox_s          # or model=damoyolo_s
+    just train-detector model=yolox_s          # or model=yolox_m, model=damoyolo_s
     just train-detector model=yolox_s simfarm=1   # first a few epochs on the sim farm
     just train-detector model=yolox_s init=<old>/best.pt out=<new folder>   # go on from
                                                   # earlier weights, in a new folder
 
-Keys: ``model`` (yolox_s, damoyolo_s), ``epochs`` (default 20), ``batch`` (default 8,
-fits an 8 GB graphics card), ``sets`` (default heridal,kios,wisard: the fetched ones
-that may be trained on, mixed), ``init`` (a ``best.pt`` of the same model to start from
-instead of the COCO weights; it must lie outside ``out``), ``simfarm`` (1: pre-train on
-the synthetic pictures first, ``simfarm_epochs`` of them, default 3), ``device`` (auto,
-cuda, cpu), ``data``, ``out`` (default ``<data>/train/<model>``), ``limit`` (only the
-first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``seed``,
+Keys: ``model`` (yolox_s, yolox_m, damoyolo_s), ``epochs`` (default 20), ``batch``
+(default 8, 4 for yolox_m: what fits an 8 GB graphics card with room to spare), ``sets`` (default
+heridal,kios,wisard: the fetched ones that may be trained on, mixed), ``init`` (a
+``best.pt`` of the same model to start from instead of the COCO weights; it must lie
+outside ``out``; one of another size, say a yolox_s run for yolox_m, is refused: the
+layers differ in width), ``simfarm`` (1: pre-train on the synthetic pictures first,
+``simfarm_epochs`` of them, default 3), ``device`` (auto, cuda, cpu), ``data``, ``out``
+(default ``<data>/train/<model>``), ``limit`` (only the first pictures: for trying it
+out), ``workers`` (picture loaders, default 4), ``seed``,
 ``balance`` (``sets``, the default: each epoch draws as many tiles from every set, so a
 big set does not drown the others; ``tiles``: every tile once, so a set counts by its
 size; or weights, ``balance=heridal:2,kios:2,kios_carperson:1,seadronessee:1``, naming
 every set), ``pick`` (the sets whose val AP50 picks the best epoch; default the sets in
-``sets`` that are measured on, HERIDAL and KIOS, or all of them if none is).
+``sets`` that are measured on, HERIDAL and KIOS, or all of them if none is),
+``upscale`` (1, the default, or 2-4: each tile covers ``tile / upscale`` picture pixels
+and is enlarged to ``tile``, so a small person is seen larger; the exported manifest
+carries it, so the drone enlarges its tiles the same way, and a 12 MP still takes about
+``upscale``² times as many tiles), ``scales`` (``native``, the default, or a list such as
+``native,wide,tele``: each training picture is also resampled so its people are as many
+pixels as our wide camera, about 30-35 px, or tele camera, about 100 px, sees them at
+the search heights; a number is pixels per metre; the val and test parts are never
+resampled; see ``tiles.py``), ``max_up`` (default 2: the most a picture is enlarged to
+reach a scale, since an enlarged person is blurred, not sharper).
 
 Stops and goes on: the state is saved to ``last.pt`` every few minutes and after every
 epoch. Run the same command again and it carries on from there (a different command,
@@ -49,13 +60,24 @@ import numpy as np
 import torch
 from bench.common import BenchError, parse_args, say, warn
 from evaluate import ap50
-from tiles import TILE_PX, Tile, build_cache, load_tile, pictures
+from tiles import (
+    MAX_UP,
+    MAX_UPSCALE,
+    NATIVE,
+    TILE_PX,
+    Tile,
+    build_cache,
+    check_upscale,
+    load_tile,
+    parse_scales,
+    pictures,
+)
 from torch.utils.data import DataLoader, Dataset
 
 KEYS = (
     "model", "epochs", "batch", "sets", "simfarm", "simfarm_epochs", "device", "data",
     "out", "limit", "workers", "seed", "fresh", "lr", "save_minutes", "tile", "init",
-    "balance", "pick",
+    "balance", "pick", "upscale", "scales", "max_up",
 )  # fmt: skip
 SAVE_MINUTES = 10.0
 BALANCE_MODES = ("sets", "tiles")
@@ -75,6 +97,11 @@ class Settings:
     init: str = ""  # a best.pt to start from instead of COCO ("": COCO)
     balance: str = "sets"  # sets, tiles, or weights "heridal:2,kios:1"
     pick: tuple[str, ...] = ()  # the sets that pick the best epoch (): all
+    upscale: int = 1  # each tile covers tile / upscale picture pixels, enlarged to tile
+    # the scales the training pictures are resampled to (tiles.parse_scales): native, our
+    # cameras (wide, tele) or pixels per metre; and the most a picture is enlarged
+    scales: tuple[str, ...] = (NATIVE,)
+    max_up: float = MAX_UP
 
     def key(self) -> dict[str, Any]:
         body = json.loads(json.dumps(asdict(self)))  # as saved: lists, not tuples
@@ -85,6 +112,10 @@ class Settings:
             del body["balance"]
         if not self.pick or set(self.pick) == set(self.sets):
             del body["pick"]
+        if self.upscale == 1:
+            del body["upscale"]  # a run started before upscale= carries on
+        if self.scales == (NATIVE,):
+            del body["scales"], body["max_up"]  # a run started before scales= carries on
         return body
 
 
@@ -450,6 +481,36 @@ def run_stage(
         )
 
 
+def _int_key(args: dict[str, str], key: str, default: int) -> int:
+    raw = args.get(key, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise BenchError(f"{key}= ska vara ett heltal, inte {raw!r}", 2) from None
+
+
+def _scales_key(args: dict[str, str]) -> tuple[str, ...]:
+    try:
+        return parse_scales(args.get("scales", NATIVE))
+    except ValueError as exc:
+        raise BenchError(
+            f"scales= ska vara native, wide, tele eller bildpunkter per meter, "
+            f"kommaseparerade ({exc})",
+            2,
+        ) from None
+
+
+def _max_up_key(args: dict[str, str]) -> float:
+    raw = args.get("max_up", f"{MAX_UP:g}")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 1.0 <= value <= 8.0:
+        raise BenchError(f"max_up= ska vara ett tal från 1 till 8, inte {raw!r}", 2)
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv, KEYS, "train-detector")
@@ -463,7 +524,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = Settings(
             model=model,
             epochs=int(args.get("epochs", "20")),
-            batch=int(args.get("batch", "8")),
+            batch=_int_key(args, "batch", families.FAMILIES[model].batch),
             sets=tuple(s for s in args.get("sets", "heridal,kios,wisard").split(",") if s),
             simfarm_epochs=int(args.get("simfarm_epochs", "3")) if simfarm else 0,
             lr=float(args.get("lr", "0.01")),
@@ -473,6 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             init=str(Path(args["init"]).expanduser().resolve()) if args.get("init") else "",
             balance=args.get("balance", "sets"),
             pick=tuple(s for s in args.get("pick", "").split(",") if s),
+            upscale=_int_key(args, "upscale", 1),
+            scales=_scales_key(args),
+            max_up=_max_up_key(args),
         )
         parse_balance(settings.balance, settings.sets)  # a typo stops here, not hours later
         stray = [s for s in settings.pick if s not in settings.sets]
@@ -480,6 +544,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise BenchError(f"pick= får bara nämna set i sets= (inte {', '.join(stray)}).", 2)
         if settings.tile % 32 or not 64 <= settings.tile <= 1280:
             raise BenchError("tile= ska vara delbart med 32 och mellan 64 och 1280", 2)
+        try:
+            span = check_upscale(settings.tile, settings.upscale)
+        except ValueError:
+            raise BenchError(
+                f"upscale= ska vara 1-{MAX_UPSCALE} och dela tile= ({settings.tile})", 2
+            ) from None
+        if span < 32:
+            raise BenchError(f"tile= / upscale= ska vara minst 32 bildpunkter, inte {span}", 2)
         out = Path(args.get("out") or data / "train" / model).expanduser().resolve()
         if settings.init and Path(settings.init).is_relative_to(out):
             raise BenchError(
@@ -560,9 +632,19 @@ def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise BenchError(f"init={path} finns inte.", 2)
     ck: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
-    if ck.get("model") != model or "ema" not in ck:
+    if "ema" not in ck:
         raise BenchError(f"init={path} är inte en best.pt för {model}.", 2)
-    net.load_state_dict(ck["ema"])
+    if ck.get("model") != model:
+        raise BenchError(
+            f"init={path} är tränad som {ck.get('model')}, inte {model}. De är olika "
+            "nätverk (yolox_s och yolox_m har olika bredd) och kan inte ta varandras vikter. "
+            f"Ta bort init= så startar {model} från COCO-vikterna.",
+            2,
+        )
+    try:
+        net.load_state_dict(ck["ema"])
+    except RuntimeError:  # same name, other shapes: never half-loaded
+        raise BenchError(f"init={path} passar inte nätverket {model}.", 2) from None
     trained_on, pretrained_on = seen_by(ck)
     seen: dict[str, Any] = {
         "trained_on": trained_on,
@@ -662,19 +744,39 @@ def train(
             items = pictures(data, "pretrain", ["simfarm"], settings.limit)
             train_tiles = (
                 out / "tiles" / "simfarm",
-                build_cache(items, out / "tiles" / "simfarm", settings.tile),
+                build_cache(
+                    items, out / "tiles" / "simfarm", settings.tile, upscale=settings.upscale
+                ),
             )
             val = None
         else:
             items = pictures(data, "train", sets, settings.limit)
+            if settings.scales != (NATIVE,):
+                say(
+                    f"train: bilderna skalas om till {', '.join(settings.scales)} "
+                    f"(högst {settings.max_up:g} gånger större)"
+                )
             train_tiles = (
                 out / "tiles" / "train",
-                build_cache(items, out / "tiles" / "train", settings.tile),
+                build_cache(
+                    items,
+                    out / "tiles" / "train",
+                    settings.tile,
+                    upscale=settings.upscale,
+                    scales=settings.scales,
+                    max_up=settings.max_up,
+                ),
             )
             val_items = pictures(data, "val", sets, settings.limit)
             val = (
                 out / "tiles" / "val",
-                build_cache(val_items, out / "tiles" / "val", settings.tile, empty_share=0.1),
+                build_cache(
+                    val_items,
+                    out / "tiles" / "val",
+                    settings.tile,
+                    empty_share=0.1,
+                    upscale=settings.upscale,
+                ),
             )
         say(f"{stage}: {len(train_tiles[1])} rutor från {len(items)} bilder")
         run_stage(

@@ -64,7 +64,7 @@ from bench.datasets import (
     read_source,
     write_index,
 )
-from bench.layouts import LAYOUTS, Member, Reader, clip
+from bench.layouts import LAYOUTS, Box, Member, Reader, clip
 from bench.splits import load_mini, load_split
 
 KEYS = ("yes", "sets", "mini", "data", "keep")
@@ -92,6 +92,7 @@ def _index_members(ds: Dataset, members: list[Member], raw: Path) -> list[Image]
         if not file.is_file():
             continue
         width, height = _image_size(file)
+        ignore: list[Box] = []
         if m.boxes is not None:  # read with the members (one label file for all)
             boxes = [b for b in (clip(b, width, height) for b in m.boxes) if b]
         else:
@@ -101,6 +102,8 @@ def _index_members(ds: Dataset, members: list[Member], raw: Path) -> list[Image]
                 label = lpath.read_bytes() if lpath.is_file() else None
             try:
                 boxes = layout.boxes(label, width, height)
+                if layout.ignore is not None:
+                    ignore = layout.ignore(label, width, height)
             except ValueError as exc:
                 raise BenchError(f"{ds.name}: felaktig etikett för {m.image_id} ({exc})") from exc
         images.append(
@@ -112,6 +115,7 @@ def _index_members(ds: Dataset, members: list[Member], raw: Path) -> list[Image]
                 width=width,
                 height=height,
                 boxes=tuple(boxes),
+                ignore=tuple(ignore),
             )
         )
     return images
@@ -379,7 +383,8 @@ def index_local(ds: Dataset, data: Path) -> int:
     members, _ = _wanted(ds, names)
     images = _index_members(ds, members, base)
     path = write_index(data, ds, images, f"local:{ds.local_path}")
-    say(f"{ds.name}: {len(images)} bilder (bara förträning) -> {path}")
+    use = "bara förträning" if "pretrain" in ds.use else "bara träning"
+    say(f"{ds.name}: {len(images)} bilder ({use}) -> {path}")
     return 0
 
 

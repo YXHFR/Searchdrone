@@ -283,7 +283,7 @@ def test_moving_skill_without_position_is_unresolved(name: str) -> None:
 @pytest.mark.parametrize(
     ("name", "data"),
     [
-        ("inspect_detection", {"detection_id": str(OTHER), "alt_m": 30, "standoff_m": 20}),
+        ("inspect_detection", {"candidate_id": str(OTHER)}),
         (
             "follow_track",
             {"track_id": str(OTHER), "standoff_m": 20, "alt_m": 30, "max_speed_ms": 5},

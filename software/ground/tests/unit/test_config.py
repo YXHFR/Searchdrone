@@ -66,6 +66,17 @@ def test_refused_settings(root: Path, toml: str, needle: str) -> None:
     assert any(needle in e for e in errors), errors
 
 
+def test_overflight_in_live_needs_the_permit(root: Path) -> None:
+    with pytest.raises(ConfigError, match="allow_overflight_live"):
+        _errors(root, "[permit]\nallow_overflight_live = true\n")
+
+
+def test_overflight_in_live_with_the_permit(root: Path) -> None:
+    toml = '[permit]\nspecific_category_ref = "TEST-0001"\nallow_overflight_live = true\n'
+    assert _errors(root, toml) == []
+    assert load(root, {}).config.permit.allow_overflight_live
+
+
 def test_login_code_ttl_allowed_in_test_rig(root: Path) -> None:
     assert _errors(root, "[auth]\ncli_may_confirm = true\nlogin_code_ttl_s = 5\n") == []
 

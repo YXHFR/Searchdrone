@@ -20,12 +20,18 @@ needed (so the rest can be tested anywhere); ``sd_sim`` starts it as a separate 
         stills.
 
     shots --world W --model M --poses FILE --image-topic T --boxes-topic B --out DIR
+          [--keep-going] [--start-wait S] [--labels-topic L]
         Moves the static camera model M to every pose in FILE (a JSON list of
         ``{"name", "x", "y", "z", "roll", "pitch", "yaw"}``, metres and radians in the
         world frame) and saves one picture per pose, named after the pose: ``DIR/<name>.ppm``
         plus ``DIR/<name>.json`` (simulator time, size, the pose and the bounding-box
         camera's labelled boxes of the same moment). The JSON file is written last, by
-        rename, so a reader that sees it also finds the whole picture.
+        rename, so a reader that sees it also finds the whole picture. A pose that fails
+        stops the run; with ``--keep-going`` it is left out (the reason on stderr) and
+        the rest are taken, and the exit code is 1 only when no picture was taken. With
+        ``--labels-topic`` (a segmentation camera's label map) every picture also gets
+        ``DIR/<name>.labels.pgm``: each pixel's label at the same moment, so the caller
+        can count how much of each person is seen.
 
 Gazebo Transport stays on loopback: the caller sets ``GZ_IP=127.0.0.1`` and the
 instance's ``GZ_PARTITION``.
@@ -141,6 +147,27 @@ class Recorder:
             for old in [s for s in self.images if s < stamp - 10_000_000_000]:
                 del self.images[old]
             self.lock.notify_all()
+
+    def on_any_image(self, msg: Any) -> None:
+        """Like ``on_image`` for any pixel format (a segmentation camera's label map)."""
+        stamp = _stamp_ns(msg)
+        with self.lock:
+            self.images[stamp] = (int(msg.width), int(msg.height), bytes(msg.data))
+            self.newest = max(self.newest, stamp)
+            for old in [s for s in self.images if s < stamp - 10_000_000_000]:
+                del self.images[old]
+            self.lock.notify_all()
+
+    def image_at(self, stamp: int, timeout: float) -> tuple[int, int, bytes] | None:
+        """The picture of exactly ``stamp``, waiting for it up to ``timeout``."""
+        end = time.monotonic() + timeout
+        with self.lock:
+            while stamp not in self.images:
+                left = end - time.monotonic()
+                if left <= 0:
+                    return None
+                self.lock.wait(left)
+            return self.images[stamp]
 
     def on_boxes(self, msg: Any) -> None:
         stamp = _stamp_ns(msg)
@@ -298,52 +325,102 @@ def shots(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     poses = json.loads(Path(args.poses).read_text(encoding="utf-8"))
     rec = Recorder()
+    maps = Recorder() if args.labels_topic else None
     node = Node()
     node.subscribe(Image, args.image_topic, rec.on_image)
     node.subscribe(AnnotatedAxisAligned2DBox_V, args.boxes_topic, rec.on_boxes)
-    if rec.wait_image_after(-1, SHOT_WAIT_S) is None:
-        sys.stderr.write("ingen bild från kameran\n")
+    if maps is not None:
+        node.subscribe(Image, args.labels_topic, maps.on_any_image)
+    if rec.wait_image_after(-1, args.start_wait) is None:
+        sys.stderr.write(f"ingen bild från kameran på {args.start_wait:g} s\n")
         return 1
+    taken = 0
     for pose in poses:
-        req = Pose()
-        req.name = args.model
-        req.position.x, req.position.y, req.position.z = pose["x"], pose["y"], pose["z"]
-        w, x, y, z = quat(pose["roll"], pose["pitch"], pose["yaw"])
-        req.orientation.w, req.orientation.x = w, x
-        req.orientation.y, req.orientation.z = y, z
-        for _ in range(SET_POSE_TRIES):
-            ok, rep = node.request(f"/world/{args.world}/set_pose", req, Pose, Boolean, 5000)
-            if ok and rep.data:
-                break
-            time.sleep(1.0)
-        else:
-            sys.stderr.write(f"set_pose misslyckades för {pose['name']}\n")
+        started = time.monotonic()
+        error = _shot(node, rec, args.world, args.model, pose, out, Pose, Boolean, maps)
+        if error is None:
+            taken += 1
+            sys.stderr.write(f"bild {pose['name']} ({time.monotonic() - started:.1f} s)\n")
+            continue
+        sys.stderr.write(f"{error}\n")
+        if not args.keep_going:
             return 1
-        # The bounding-box camera can lag the picture by a frame or two after a move, so
-        # wait several pictures and keep one whose boxes match the next picture's.
-        stamp = rec.newest
-        for _ in range(SETTLE_FRAMES):
-            newer = rec.wait_image_after(stamp, SHOT_WAIT_S)
-            if newer is None:
-                sys.stderr.write(f"ingen ny bild efter flytten till {pose['name']}\n")
-                return 1
-            stamp = newer
-        for _ in range(MAX_SETTLE_TRIES):
-            boxes = rec.boxes_at(stamp, BOX_WAIT_S)
-            nxt = rec.wait_image_after(stamp, SHOT_WAIT_S)
-            if nxt is None:
-                sys.stderr.write(f"inga fler bilder vid {pose['name']}\n")
-                return 1
-            if boxes is not None and rec.boxes_at(nxt, BOX_WAIT_S) == boxes:
-                break
-            stamp = nxt
-        else:
-            sys.stderr.write(f"facitrutorna blev aldrig stilla vid {pose['name']}\n")
-            return 1
-        with rec.lock:
-            image = rec.images[stamp]
-        write_still(out, pose["name"], stamp, image, boxes, {"pose": pose})
-    return 0
+    return 0 if taken else 1
+
+
+def _shot(
+    node: Any,
+    rec: Recorder,
+    world: str,
+    model: str,
+    pose: dict[str, Any],
+    out: Path,
+    pose_msg: Any,
+    boolean_msg: Any,
+    maps: Recorder | None = None,
+) -> str | None:
+    """Move the camera model to ``pose`` and save its picture; why it failed, if it did."""
+    req = pose_msg()
+    req.name = model
+    req.position.x, req.position.y, req.position.z = pose["x"], pose["y"], pose["z"]
+    w, x, y, z = quat(pose["roll"], pose["pitch"], pose["yaw"])
+    req.orientation.w, req.orientation.x = w, x
+    req.orientation.y, req.orientation.z = y, z
+    for _ in range(SET_POSE_TRIES):
+        ok, rep = node.request(f"/world/{world}/set_pose", req, pose_msg, boolean_msg, 5000)
+        if ok and rep.data:
+            break
+        time.sleep(1.0)
+    else:
+        return f"set_pose misslyckades för {pose['name']}"
+    # The bounding-box camera can lag the picture by a frame or two after a move, so
+    # wait several pictures and keep one whose boxes match the next picture's.
+    stamp = rec.newest
+    for _ in range(SETTLE_FRAMES):
+        newer = rec.wait_image_after(stamp, SHOT_WAIT_S)
+        if newer is None:
+            return f"ingen ny bild efter flytten till {pose['name']}"
+        stamp = newer
+    for _ in range(MAX_SETTLE_TRIES):
+        boxes = rec.boxes_at(stamp, BOX_WAIT_S)
+        nxt = rec.wait_image_after(stamp, SHOT_WAIT_S)
+        if nxt is None:
+            return f"inga fler bilder vid {pose['name']}"
+        if boxes is not None and rec.boxes_at(nxt, BOX_WAIT_S) == boxes:
+            break
+        stamp = nxt
+    else:
+        return f"facitrutorna blev aldrig stilla vid {pose['name']}"
+    with rec.lock:
+        image = rec.images[stamp]
+    extra: dict[str, Any] = {"pose": pose}
+    if maps is not None:
+        found = maps.image_at(stamp, BOX_WAIT_S)
+        if found is None:
+            return f"ingen etikettkarta vid {pose['name']}"
+        extra["labels_map"] = write_labels(out, pose["name"], *found)
+    write_still(out, pose["name"], stamp, image, boxes, extra)
+    return None
+
+
+def label_channel(width: int, height: int, data: bytes) -> bytes:
+    """A segmentation camera's labels, one byte per pixel: the last channel holds the
+    label in both its semantic and its panoptic map."""
+    channels = len(data) // (width * height)
+    if channels < 1 or channels * width * height != len(data):
+        raise ValueError(f"etikettkartan har fel storlek ({len(data)} byte)")
+    return data[channels - 1 :: channels]
+
+
+def write_labels(out: Path, name: str, width: int, height: int, data: bytes) -> str:
+    """``<name>.labels.pgm`` (written before the picture's JSON); returns its file name."""
+    target = out / f"{name}.labels.pgm"
+    tmp = out / f".{name}.labels.pgm.tmp"
+    with tmp.open("wb") as f:
+        f.write(b"P5 %d %d 255\n" % (width, height))
+        f.write(label_channel(width, height, data))
+    tmp.replace(target)
+    return target.name
 
 
 def main(argv: list[str]) -> int:
@@ -363,6 +440,9 @@ def main(argv: list[str]) -> int:
     sh = sub.add_parser("shots")
     for key in ("--world", "--model", "--poses", "--image-topic", "--boxes-topic", "--out"):
         sh.add_argument(key, required=True)
+    sh.add_argument("--keep-going", action="store_true")
+    sh.add_argument("--start-wait", type=float, default=SHOT_WAIT_S)
+    sh.add_argument("--labels-topic", default="")
     args = parser.parse_args(argv)
     if args.mode == "capture" and bool(args.poses_topic) != bool(args.model):
         parser.error("--poses-topic och --model hör ihop")

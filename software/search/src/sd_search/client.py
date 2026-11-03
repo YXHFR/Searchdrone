@@ -16,6 +16,7 @@ from typing import Any, Protocol
 import httpx
 from pydantic import TypeAdapter
 
+from sd_schemas.inspect import InspectDone
 from sd_schemas.probmap import (
     ProbabilityMapInputs,
     ProbabilityMapWrite,
@@ -39,6 +40,7 @@ _DETECTIONS = TypeAdapter(list[SearchDetection])
 _TRACKS = TypeAdapter(list[SearchTrack])
 _WRITTEN = TypeAdapter(list[CandidateWritten])
 _STILLS = TypeAdapter(list[SearchStill])
+_LOOKS = TypeAdapter(list[InspectDone])
 
 
 class GroundError(RuntimeError):
@@ -59,6 +61,7 @@ class SearchApi(Protocol):
     ) -> list[SearchDetection]: ...
     async def crop(self, detection_id: str) -> bytes | None: ...
     async def tracks(self, mission_id: str) -> list[SearchTrack]: ...
+    async def inspections(self, mission_id: str) -> list[InspectDone]: ...
     async def write(self, mission_id: str, batch: CandidateBatch) -> list[CandidateWritten]: ...
     async def profile(self, mission_id: str) -> SearchProfile | None: ...
     async def map_inputs(self, mission_id: str) -> ProbabilityMapInputs: ...
@@ -147,6 +150,12 @@ class GroundClient:
         res = self._ok(await self._request("GET", f"/missions/{mission_id}/candidates"))
         with self._body(res):
             return _TRACKS.validate_python(res.json())
+
+    async def inspections(self, mission_id: str) -> list[InspectDone]:
+        """The mission's closer looks the drone reported done (``inspect.done``)."""
+        res = self._ok(await self._request("GET", f"/missions/{mission_id}/inspections"))
+        with self._body(res):
+            return _LOOKS.validate_python(res.json())
 
     async def write(self, mission_id: str, batch: CandidateBatch) -> list[CandidateWritten]:
         res = self._ok(

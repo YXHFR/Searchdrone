@@ -68,7 +68,12 @@ def progress_pct(next_idx: int, n_waypoints: int) -> float:
 
 class SurveyRun:
     """One AUTO mission over ``waypoints[base_index:]`` (after ``interrupted_at`` when
-    resumed). Shared by ``survey_sector``, ``follow_path`` and ``resume``."""
+    resumed). Shared by ``survey_sector``, ``follow_path`` and ``resume``.
+
+    ``pattern`` is the search as planned, before any way around a cylinder, and
+    ``origin`` says which of its points each waypoint is (None: a corner of a way around).
+    The rest is planned around the cylinders from the pattern (:meth:`pattern_rest`), not
+    from the last way around, so a way around a cylinder that is gone is not flown on."""
 
     def __init__(
         self,
@@ -91,6 +96,8 @@ class SurveyRun:
         self.next_index = base_index
         self.mission_hash: str | None = None
         self.target_state = target_state
+        self.pattern: list[LatLon] = list(waypoints)
+        self.origin: list[int | None] = list(range(len(waypoints)))
 
     @property
     def flown_points(self) -> list[LatLon]:
@@ -100,6 +107,18 @@ class SurveyRun:
     @property
     def last_nav_seq(self) -> int:
         return FIRST_SEARCH_SEQ + self.seq_offset + (len(self.waypoints) - self.base_index) - 1
+
+    def pattern_rest(self) -> list[LatLon]:
+        """The pattern's points after the last one reached: what the search still has to
+        cover, whatever ways around the cylinders the waypoints take now. Points a way
+        around left out (inside a cylinder) are in it again."""
+        done = [o for o in self.origin[: self.next_index] if o is not None]
+        return self.pattern[max(done, default=-1) + 1 :]
+
+    def detours(self) -> bool:
+        """The waypoints still to fly are not the pattern's rest (a way around)."""
+        rest = self.origin[self.next_index :]
+        return None in rest or len(rest) != len(self.pattern_rest())
 
     def around_keepouts(self, ctx: PlanContext) -> None:
         """Replace the points still to fly with a way around the cylinders in force, if
@@ -117,6 +136,9 @@ class SurveyRun:
         if out is None or len(out) < 2:
             raise PlanError("KEEPOUT_VIOLATION", "ingen väg runt förbudscylindrarna")
         points = [LatLon(lat=lat, lon=lon) for lat, lon in (plane.latlon(*p) for p in out[1:])]
+        lead: list[int | None] = [] if self.interrupted_at is None else [None]
+        origins = dict(zip(route[1:], [*lead, *self.origin[self.base_index :]], strict=True))
+        self.origin = [origins.get(p) for p in out[1:]]  # the route's own points, kept as they are
         self.waypoints, self.base_index, self.next_index = points, 0, 0
         self.interrupted_at, self.seq_offset = None, 0
 
@@ -181,16 +203,24 @@ class SurveyRun:
         return progress_pct(self.next_index, len(self.waypoints))
 
     def resume_point(self, vehicle: VehicleState) -> SurveyResumePoint | None:
+        """Where a resume goes on. On a way around a cylinder it goes on from the pattern
+        (:meth:`pattern_rest`): the resume plans its own way around the cylinders in force
+        then, and a way around one lifted meanwhile is not flown."""
         if self.next_index >= len(self.waypoints):
             return None
+        waypoints, base, nxt = self.waypoints, self.base_index, self.next_index
+        rest = self.pattern_rest()
+        if self.detours() and rest:
+            waypoints = self.pattern
+            base = nxt = len(self.pattern) - len(rest)
         return SurveyResumePoint(
             command_id=self.command_id,
-            waypoints=self.waypoints,
+            waypoints=waypoints,
             alt_m=self.alt_m,
             speed_ms=self.speed_ms,
-            base_index=self.base_index,
+            base_index=base,
             seq_offset=self.seq_offset,
-            next_index=self.next_index,
+            next_index=nxt,
             interrupted_at=LatLon(lat=vehicle.lat, lon=vehicle.lon),
             path=self.target_state is ExecutorState.TRANSIT,
         )
@@ -252,6 +282,14 @@ class SurveyHandler:
         handler._stop_first = stop_first
         return handler
 
+    @property
+    def stopping(self) -> bool:
+        """A reroute that stops first and has not planned its rest from the stop yet: its
+        plan there takes the cylinders in force then, so nothing else replans it before.
+        Also ends when the drone is not still within ``STOP_WAIT_S`` (it plans from where
+        it is then), or when the plan from the stop fails."""
+        return self._stop_first is not None
+
     def plan(self, params: SkillParams, ctx: PlanContext) -> SkillPlan:
         if not isinstance(params, SurveySectorParams):
             raise TypeError("expected SurveySectorParams")
@@ -273,7 +311,10 @@ class SurveyHandler:
         if self._brake and not await io.set_mode(CopterMode.LOITER):
             raise mode_failed(CopterMode.LOITER)
         if self._stop_first is not None:
-            plan = await self._from_stop(io, *self._stop_first)
+            try:
+                plan = await self._from_stop(io, *self._stop_first)
+            finally:
+                self._stop_first = None
         await self.run.fly(plan, io, self._home)
 
     async def _from_stop(self, io: ExecutorIO, rest: list[LatLon], ctx: PlanContext) -> SkillPlan:

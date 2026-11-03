@@ -636,6 +636,32 @@
             "title": "Decision",
             "type": "string"
           },
+          "floor_pack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FloorPackChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operation_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sim",
+                  "exercise",
+                  "live"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Mode"
+          },
           "reason": {
             "anyOf": [
               {
@@ -1006,7 +1032,8 @@
               "reject",
               "inspect",
               "unsure",
-              "reopen"
+              "reopen",
+              "resume"
             ],
             "title": "Decision",
             "type": "string"
@@ -2224,6 +2251,7 @@
           "TAKEOFF",
           "TRANSIT",
           "SURVEY",
+          "INSPECT",
           "HOLD",
           "RTL",
           "LAND",
@@ -2354,6 +2382,82 @@
           "synthetic"
         ],
         "title": "Find",
+        "type": "object"
+      },
+      "FloorPackChoice": {
+        "additionalProperties": false,
+        "description": "The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the\nhash the list showed, or neither (\"Ingen höjdkarta\": a closer look does not come\ndown). The ground refuses a pack it does not have whole or whose hash has changed.",
+        "properties": {
+          "floor_pack_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Id"
+          },
+          "floor_pack_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Sha256"
+          }
+        },
+        "title": "FloorPackChoice",
+        "type": "object"
+      },
+      "FloorPackInfo": {
+        "additionalProperties": false,
+        "description": "``GET /floor_packs``: a height-floor map pack the ground station holds under\n``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the\npilot's choice on the charter card. ``attribution`` is the data's source credit (it\nis shown wherever the pack is picked).",
+        "properties": {
+          "attribution": {
+            "maxLength": 500,
+            "title": "Attribution",
+            "type": "string"
+          },
+          "floor_pack_id": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "title": "Floor Pack Id",
+            "type": "string"
+          },
+          "floor_pack_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Floor Pack Sha256",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/LatLon"
+          },
+          "size_east_m": {
+            "minimum": 1.0,
+            "title": "Size East M",
+            "type": "integer"
+          },
+          "size_north_m": {
+            "minimum": 1.0,
+            "title": "Size North M",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "floor_pack_id",
+          "floor_pack_sha256",
+          "attribution",
+          "origin",
+          "size_east_m",
+          "size_north_m"
+        ],
+        "title": "FloorPackInfo",
         "type": "object"
       },
       "Garment": {
@@ -2610,6 +2714,404 @@
           "test_rig"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "InspectDone": {
+        "additionalProperties": false,
+        "description": "``inspect.done``: the steps are over and the drone hovers for the pilot's decision.\nThe candidate stays ``inspecting`` until it comes, or ``AWAIT_DECISION_S`` passes.",
+        "properties": {
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "clear": {
+            "title": "Clear",
+            "type": "boolean"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "end": {
+            "enum": [
+              "clear",
+              "floor",
+              "lower_declined",
+              "steps_max",
+              "timeout",
+              "keepout",
+              "laser_lost",
+              "side_look"
+            ],
+            "title": "End",
+            "type": "string"
+          },
+          "lowest_above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lowest Above Ground M"
+          },
+          "steps": {
+            "minimum": 0.0,
+            "title": "Steps",
+            "type": "integer"
+          },
+          "still_ids": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Still Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "command_id",
+          "candidate_id",
+          "end",
+          "steps",
+          "clear"
+        ],
+        "title": "InspectDone",
+        "type": "object"
+      },
+      "InspectLowerOffer": {
+        "additionalProperties": false,
+        "description": "``inspect.lower_offer``: the next step would go below the automatic floor (30 m\nabove ground); the drone hovers and asks the pilot (``link.InspectLower``).",
+        "properties": {
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "lowest_above_ground_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Lowest Above Ground M",
+            "type": "number"
+          },
+          "now_above_ground_m": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Now Above Ground M",
+            "type": "number"
+          },
+          "reason": {
+            "enum": [
+              "map",
+              "unknown",
+              "powerline",
+              "laser",
+              "no_map",
+              "laser_lost"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "now_above_ground_m",
+          "lowest_above_ground_m",
+          "reason"
+        ],
+        "title": "InspectLowerOffer",
+        "type": "object"
+      },
+      "InspectProgress": {
+        "additionalProperties": false,
+        "description": "How a look is going, in the onboard computer's state snapshot (at most 2 Hz).",
+        "properties": {
+          "above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Above Ground M"
+          },
+          "await_left_s": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Await Left S"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "floor_auto_above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Auto Above Ground M"
+          },
+          "floor_lowest_above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Lowest Above Ground M"
+          },
+          "floor_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "map",
+                  "unknown",
+                  "powerline",
+                  "laser",
+                  "no_map",
+                  "laser_lost"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Reason"
+          },
+          "laser_confirmed": {
+            "default": false,
+            "title": "Laser Confirmed",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "approach",
+              "step",
+              "lower_offer",
+              "await",
+              "return"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "step": {
+            "minimum": 0.0,
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command_id",
+          "candidate_id",
+          "step",
+          "phase"
+        ],
+        "title": "InspectProgress",
+        "type": "object"
+      },
+      "Inspection": {
+        "additionalProperties": false,
+        "description": "A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``\nand ``inspection.updated`` on the live topic ``candidates``). At most one is open per\nmission (``ended_at`` None).",
+        "properties": {
+          "await_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Await Until"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "done": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InspectDone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "lower_offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InspectLowerOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lower_offer_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lower Offer Until"
+          },
+          "mission_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "operation_mode": {
+            "enum": [
+              "sim",
+              "exercise",
+              "live"
+            ],
+            "title": "Operation Mode",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirmed",
+                  "rejected",
+                  "unsure",
+                  "resume",
+                  "timeout",
+                  "resumed_by_pilot",
+                  "aborted",
+                  "refused_onboard",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "overflight": {
+            "title": "Overflight",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "flying",
+              "lower_offer",
+              "await",
+              "ended"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "started_by": {
+            "title": "Started By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "candidate_id",
+          "mission_id",
+          "seq",
+          "started_at",
+          "started_by",
+          "operation_mode",
+          "overflight",
+          "phase"
+        ],
+        "title": "Inspection",
         "type": "object"
       },
       "Item": {
@@ -3438,6 +3940,30 @@
             ],
             "title": "Fence Hash"
           },
+          "floor_pack_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Id"
+          },
+          "floor_pack_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Sha256"
+          },
           "geofence_buffer_m": {
             "default": 20,
             "maximum": 50.0,
@@ -3487,6 +4013,27 @@
             ],
             "title": "On Ai Silent",
             "type": "string"
+          },
+          "operation_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sim",
+                  "exercise",
+                  "live"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Mode"
+          },
+          "overflight_allowed": {
+            "default": false,
+            "title": "Overflight Allowed",
+            "type": "boolean"
           },
           "pilot_position": {
             "$ref": "#/components/schemas/LatLon"
@@ -3983,6 +4530,25 @@
           "since"
         ],
         "title": "PartStatus",
+        "type": "object"
+      },
+      "Permit": {
+        "additionalProperties": false,
+        "description": "The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the\nreference of the operator's permit in the specific category (Transportstyrelsen) and\nwhether a closer look may then fly straight over its candidate. A charter approved\nin ``live`` carries ``overflight_allowed`` from it; sim and exercise always may.",
+        "properties": {
+          "allow_overflight_live": {
+            "default": false,
+            "title": "Allow Overflight Live",
+            "type": "boolean"
+          },
+          "specific_category_ref": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Specific Category Ref",
+            "type": "string"
+          }
+        },
+        "title": "Permit",
         "type": "object"
       },
       "ProbabilityGrid": {
@@ -4933,7 +5499,8 @@
                   "find_hold",
                   "ai_silent",
                   "startup",
-                  "manual_input_lost"
+                  "manual_input_lost",
+                  "inspect_await"
                 ],
                 "type": "string"
               },
@@ -4942,6 +5509,16 @@
               }
             ],
             "title": "Hold Reason"
+          },
+          "inspect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InspectProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_transition_state_seq": {
             "title": "Last Transition State Seq",
@@ -5202,7 +5779,8 @@
               "reject",
               "inspect",
               "unsure",
-              "reopen"
+              "reopen",
+              "resume"
             ],
             "title": "Decision",
             "type": "string"
@@ -5994,7 +6572,7 @@
     },
     "/api/v1/candidates/{candidate_id}/decision": {
       "post": {
-        "description": "Only a person in the panel decides (never the AI, the search service or a script\noutside the test rig). Observers confirm, reject and mark unsure; inspect and reopen\nare the pilot's. Confirming needs a large view from the same session first (409\n``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.",
+        "description": "Only a person in the panel decides (never the AI, the search service or a script\noutside the test rig). Observers confirm, reject and mark unsure; inspect, resume and\nreopen are the pilot's. Confirming needs a large view from the same session first\n(409 ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.\n``inspect`` sends the drone for a closer look (409 ``INSPECT_REFUSED`` with the\ngate's codes in ``errors`` when it may not). During the look only the pilot's\ndecision ends it and reaches the drone; an observer's is a note for the pilot.",
         "operationId": "post_candidate_decision_api_v1_candidates__candidate_id__decision_post",
         "parameters": [
           {
@@ -6229,6 +6807,29 @@
         "summary": "Post Detection View"
       }
     },
+    "/api/v1/floor_packs": {
+      "get": {
+        "description": "The height-floor map packs the ground holds whole (``<data_dir>/floor/<id>/``, every\nfile matching its hash), by name, each with its source credit: what the pilot picks\nfrom on the charter card (``ApprovalDecisionRequest.floor_pack``).",
+        "operationId": "get_floor_packs_api_v1_floor_packs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FloorPackInfo"
+                  },
+                  "title": "Response Get Floor Packs Api V1 Floor Packs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Floor Packs"
+      }
+    },
     "/api/v1/health": {
       "get": {
         "operationId": "get_health_api_v1_health_get",
@@ -6245,6 +6846,88 @@
           }
         },
         "summary": "Get Health"
+      }
+    },
+    "/api/v1/inspections/{command_id}/lower": {
+      "post": {
+        "description": "The pilot's yes to \"Gå lägre?\" (only while the drone asks: 409 ``NO_LOWER_OFFER``\notherwise, 404 when the look is not open, 503 without the link).",
+        "operationId": "post_inspection_lower_api_v1_inspections__command_id__lower_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Inspection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Inspection Lower"
+      }
+    },
+    "/api/v1/inspections/{command_id}/stay": {
+      "post": {
+        "description": "The pilot's no to \"Gå lägre?\" (\"Nej, stanna här\"): the drone stops asking at once\nand the look ends at the height it hovers at, never lower. The same answers as\n``/lower`` (409 ``NO_LOWER_OFFER``, 404, 503 ``LINK_DOWN``).",
+        "operationId": "post_inspection_stay_api_v1_inspections__command_id__stay_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Inspection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Inspection Stay"
       }
     },
     "/api/v1/missions": {
@@ -7683,6 +8366,51 @@
         "summary": "Get Gate Decisions"
       }
     },
+    "/api/v1/missions/{mission_id}/inspections": {
+      "get": {
+        "description": "The mission's closer looks (\"Titta närmare\"), oldest first. The open one (at most\none) has ``phase`` flying, lower_offer (\"Gå lägre?\" until ``lower_offer_until``) or\nawait (the decision until ``await_until``); live changes come as\n``inspection.updated`` and ``candidate.inspect_progress`` on the topic ``candidates``.",
+        "operationId": "get_inspections_api_v1_missions__mission_id__inspections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mission_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "title": "Mission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Inspection"
+                  },
+                  "title": "Response Get Inspections Api V1 Missions  Mission Id  Inspections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Inspections"
+      }
+    },
     "/api/v1/missions/{mission_id}/limits": {
       "put": {
         "description": "Stricter, or raised by click up to the outer cap (``config/local/limits.toml``).",
@@ -8144,6 +8872,62 @@
           }
         },
         "summary": "Get Panel Config"
+      }
+    },
+    "/api/v1/permit": {
+      "get": {
+        "description": "The overflight permit for ``live``: a closer look may fly straight over its\ncandidate only with it (sim and exercise always may).",
+        "operationId": "get_permit_api_v1_permit_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Permit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Permit"
+      },
+      "put": {
+        "description": "The pilot changes the permit until the ground restarts (the config's ``[permit]``\nis the lasting setting). Granting it counts from the next charter approval, revoking\nit at once: no look starts until a new charter is approved.",
+        "operationId": "put_permit_api_v1_permit_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Permit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Permit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Permit"
       }
     },
     "/api/v1/session": {

@@ -26,6 +26,7 @@ from sd_schemas.safety import (
 )
 
 __all__ = [
+    "FLOOR_PACK_NAME_PATTERN",
     "MAX_SECTORS",
     "SECTOR_MAX_AREA_M2",
     "AutonomyMode",
@@ -33,11 +34,20 @@ __all__ = [
     "CharterValidationError",
     "CharterValidationResult",
     "MissionCharter",
+    "OperationMode",
     "Sector",
 ]
 
 SECTOR_MAX_AREA_M2 = 250_000.0  # largest area one survey_sector may cover
 MAX_SECTORS = 52
+# A height-floor map pack: ``${SD_DATA_DIR}/floor/<name>/`` (``sd_safety.floor``).
+FLOOR_PACK_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+
+# What kind of flight a charter is for. "sim": the simulator; "exercise": an exercise
+# with informed people; "live": a real search. A closer look may fly straight over its
+# candidate in sim and exercise, in live only with the overflight permit (the ground's
+# [permit] settings). An onboard computer with the sim profile refuses any other mode.
+OperationMode = Literal["sim", "exercise", "live"]
 
 
 class AutonomyMode(StrEnum):
@@ -80,6 +90,18 @@ class MissionCharter(SdModel):
     approved_by: str | None  # *server*
     approved_at: AwareDatetime | None  # *server*
     notes: str | None = Field(default=None, max_length=2000)
+    # *server*: the pilot's choice on the charter card, never the AI's. None only until
+    # the panel asks for it (charters from before the closer look v2), and then read as
+    # "live", the strictest.
+    operation_mode: OperationMode | None = None
+    # *server*: may a closer look fly straight over its candidate. True in sim and
+    # exercise; in live only with the ground's [permit] (specific category) set.
+    overflight_allowed: bool = False
+    # The height-floor map pack the closer look comes down with (``sd_safety.floor``) and
+    # its hash; the onboard computer refuses the charter when its own pack differs
+    # (ONB_FLOOR_PACK_MISMATCH). None: no pack, and a closer look does not come down.
+    floor_pack_id: str | None = Field(default=None, pattern=FLOOR_PACK_NAME_PATTERN)
+    floor_pack_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def _altitude_band(self) -> MissionCharter:
@@ -87,6 +109,14 @@ class MissionCharter(SdModel):
             raise ValueError("need alt_min_agl_m <= default_alt_agl_m <= alt_max_agl_m")
         if self.alt_min_agl_m >= self.alt_max_agl_m:
             raise ValueError("alt_min_agl_m must be below alt_max_agl_m")
+        return self
+
+    @model_validator(mode="after")
+    def _closer_look(self) -> MissionCharter:
+        if (self.floor_pack_id is None) != (self.floor_pack_sha256 is None):
+            raise ValueError("give both floor_pack_id and floor_pack_sha256, or neither")
+        if self.overflight_allowed and self.operation_mode is None:
+            raise ValueError("overflight_allowed needs an operation_mode")
         return self
 
 

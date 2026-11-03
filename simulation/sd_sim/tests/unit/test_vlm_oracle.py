@@ -108,3 +108,44 @@ def test_assessment_is_marked_oracle() -> None:
     assert set(a.fields) == {"garment:0", "state"}
     no_profile = asyncio.run(oracle.assess(Req("0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a23")))
     assert no_profile.fields == {}
+
+
+def test_a_thing_gets_the_same_field_verdicts_whatever_ran_before_it() -> None:
+    req = Req("0192f4a1-7c2e-7d10-9a3b-5e1f0c2d8a23", _profile())
+    things = [f"thing-{i}" for i in range(20)]
+
+    def run(order: list[str], extra_draws: int, seed: int = 2) -> dict[str, dict[str, str]]:
+        current: list[str] = []
+        oracle = OracleMatcher(
+            lambda _: Truth(person=True, target=False, thing=current[-1]), seed=seed, environ=SIM
+        )
+        for _ in range(extra_draws):  # the shared stream (person, latency) has moved on
+            oracle.rng.random()
+        out: dict[str, dict[str, str]] = {}
+        for thing in order:
+            current.append(thing)
+            out[thing] = dict(asyncio.run(oracle.assess(req)).fields)
+        return out
+
+    first = run(things, 0)
+    assert run(list(reversed(things)), 7) == first
+    assert run(things[1::2] + things[::2], 3) == first
+    assert run(things[:5] + things, 0) == first  # assessed twice: the same answer
+    assert run(things, 0, seed=3) != first  # another seed is another world
+
+
+@pytest.mark.parametrize("truth", [Truth(True, True), Truth(True, False)])
+def test_keyed_field_draws_keep_the_profile_rates(truth: Truth) -> None:
+    prof = load_profile()
+    oracle = OracleMatcher(lambda _: truth, prof, seed=7, environ=SIM)
+    fields = Counter(
+        oracle.draw_field(Truth(truth.person, truth.target, thing=f"t{i}"), "garment:0")
+        for i in range(DRAWS)
+    )
+    f = prof.field
+    if truth.target:
+        assert abs(_share(fields, "match") - f.match_given_true) <= TOL
+        assert abs(_share(fields, "conflict") - f.conflict_given_true) <= TOL
+    else:
+        assert abs(_share(fields, "match") - f.match_given_false) <= TOL
+    assert abs(_share(fields, "not_visible") - f.not_visible) <= TOL

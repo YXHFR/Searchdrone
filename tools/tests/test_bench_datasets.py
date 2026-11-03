@@ -72,10 +72,46 @@ def test_the_training_only_sets_are_open_credited_and_pinned() -> None:
     assert "images/test" not in sds.share_folders  # the authors keep its labels
 
 
+def test_uit_drone4_is_trained_on_only_with_its_riders_ignored() -> None:
+    """The owner's decision of 2026-11-03: more real aerial data with a clean licence.
+    UIT-Drone4 is CC BY 4.0 on Zenodo, trained on only (never measured on)."""
+    from bench.layouts import LAYOUTS
+
+    ds = load_register()["uit_drone4"]
+    assert ds.licence == "CC-BY-4.0" and ds.licence_confirmed and ds.publish_weights
+    assert ds.use == ("train",) and not ds.local_only
+    assert "14862652" in ds.attribution and "Vietnam National University" in ds.attribution
+    for url in (ds.url, ds.labels_url):
+        assert url and url.startswith("https://zenodo.org/api/records/14862652/")
+    assert ds.labels_sha256 and len(ds.labels_sha256) == 64
+    assert LAYOUTS[ds.layout].ignore is not None  # the motorcycles hold riders
+
+
+def test_px_per_m_is_read_and_checked(tmp_path: Path) -> None:
+    row = (
+        '[[dataset]]\nname = "x"\ntitle = "x"\nlicence = "CC0-1.0"\nattribution = "x"\n'
+        'layout = "simfarm"\nlocal_path = "build/x"\nuse = ["measure"]\n'
+        "publish_weights = true\nlocal_only = true\n"
+    )
+    path = tmp_path / "datasets.toml"
+    path.write_text(row + "px_per_m = 71.0\n", encoding="utf-8")
+    assert load_register(path)["x"].px_per_m == 71.0
+    path.write_text(row, encoding="utf-8")
+    assert load_register(path)["x"].px_per_m is None
+    path.write_text(row + "px_per_m = 0.0\n", encoding="utf-8")
+    with pytest.raises(BenchError, match="px_per_m"):
+        load_register(path)
+
+
 def test_sim_farm_is_only_for_pre_training() -> None:
     simfarm = load_register()["simfarm"]
     assert simfarm.use == ("pretrain",)
     assert simfarm.local_only
+    # the photo farm is trained on, never measured on, and never leaves the computer
+    stills = load_register()["simstills"]
+    assert stills.use == ("train",)
+    assert stills.local_only
+    assert stills.local_path == "build/simfarm/stills"
 
 
 @pytest.mark.parametrize(

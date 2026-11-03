@@ -26,6 +26,9 @@ class ExecutorState(StrEnum):
     TAKEOFF = "TAKEOFF"
     TRANSIT = "TRANSIT"  # goto in progress
     SURVEY = "SURVEY"  # survey_sector in progress
+    # A closer look flying (inspect_detection v2): over the candidate, then down in steps.
+    # Its transitions come with the new handler; until then a look flies in TRANSIT.
+    INSPECT = "INSPECT"
     HOLD = "HOLD"  # standing still, waiting
     RTL = "RTL"  # flying home and landing
     LAND = "LAND"  # reserved for land_at (stage 2); no transitions in v1
@@ -44,6 +47,7 @@ HoldReason = Literal[
     "ai_silent",
     "startup",
     "manual_input_lost",  # no stick value for MANUAL_CONTROL_TIMEOUT_MS while steering by hand
+    "inspect_await",  # a closer look is done: hovering for the pilot's decision
 ]
 
 

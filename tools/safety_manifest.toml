@@ -25,6 +25,16 @@ sha256 = "63b9dc4847d3d36941777e73f0923d987f67ad2225ce2ce5f5db7608903a7cc3"
 path = "simulation/sitl/params/searchdrone-safety.field.parm"
 sha256 = "2e65e836d2d543c9180054c57aa5f1d16f660e18e0c83f34047c3929682bb7e3"
 
+# The optional laser's layers (loaded after the safety layer when a laser is fitted): they
+# keep the flight controller from flying by the laser (WP_RFND_USE 0, SURFTRAK_MODE 0).
+[[pinned]]
+path = "simulation/sitl/params/searchdrone-rangefinder-tf02.parm"
+sha256 = "45a680b59e6875fe47a75cf6a87b9d6217c53faf2572543ad7a187e9dfceb486"
+
+[[pinned]]
+path = "simulation/sitl/params/searchdrone-rangefinder-grf250.parm"
+sha256 = "324e8670af09f8c6be00037501f724f5bcf10436a200463e7ef00258e41c3166"
+
 [[pinned]]
 path = "simulation/sitl/scripts/sd_gcs_loiter_cap.lua"
 sha256 = "d3c41c7724dc147f13887b67141dda009f6d8fb4b7ffc505cc647ab912b6945d"
@@ -44,14 +54,14 @@ sha256 = "5f9b7ae7f8b8bab290c75310f70163c0765e10f587844151fdf7bb2da6a3127a"
 
 [[pinned]]
 path = "software/common/safety/src/sd_safety/constants.py"
-sha256 = "fbe1d2d1dffe8eafe00a1041122c48141b3f17adc8d566f68027ef4d58e58f5b"
+sha256 = "79b8a92298ce37ad5c53e9108e7328fb2080f26febddc5f4f087fc718f1e5fc9"
 
 # What enforces the rules: the gate (Vehicle.send, its connection, its run-time
 # allowlist), SITL's layer order, the sim
 # layers' allowlist check and the checks themselves (the list they must keep pinned).
 [[pinned]]
 path = "software/common/mav/src/sd_mav/vehicle.py"
-sha256 = "5710bec5c577cde628dffedb4f22d457f27e289ad4f856f469e7da9c2f98401d"
+sha256 = "08b245c79a484a0fac911ed2eefd50d25ee98f08f25c81c8bf6c5698d4277ba3"
 
 [[pinned]]
 path = "software/common/mav/src/sd_mav/connection.py"
@@ -59,11 +69,11 @@ sha256 = "05e5aa96667595fdea8c98c6da89e6d663e47b97ba77a35f26f1ebd417e12ce3"
 
 [[pinned]]
 path = "software/common/mav/src/sd_mav/allowlist.py"
-sha256 = "1a5c09bc85ebf5c3fbe6cd24ed46698eda9df9aa33d478d3d96a806e1509fdc7"
+sha256 = "0131af8bd2068dc2797ef526356f3f3b8f08dddb1b0d46795f4ce58c4f50a6aa"
 
 [[pinned]]
 path = "simulation/sd_sim/src/sd_sim/sitl.py"
-sha256 = "67a750e0ff7705be0a75f014ccf288310271e32bee8539528cff07d5690dc2d9"
+sha256 = "94741ac12598f03f95f8d54f1b204b7cd0238219e9bebc4486bcfff5230c3504"
 
 [[pinned]]
 path = "tools/params_check.py"

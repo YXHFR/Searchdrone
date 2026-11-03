@@ -6,16 +6,18 @@ from sd_safety import constants, policy
 from sd_safety.priority import REASON_PRIORITY, message_sv, sort_codes
 from sd_schemas import skills
 from sd_schemas.gate import CLEARANCE_VALID_MS
+from sd_schemas.inspect import LOWER_OFFER_S
 from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.skills import SKILL_REGISTRY, SkillRegistry
 
 # The owner's priority list, plus the codes added since (manual control, FC fence, the
-# drawn path's length and battery).
+# drawn path's length and battery, the closer look v2).
 SPEC_PRIORITY = [
     "SKILL_UNKNOWN",
     "SCHEMA_INVALID",
     "SKILL_NOT_IMPLEMENTED",
     "FORBIDDEN_ACTION",
+    "INSPECT_NEEDS_PILOT",
     "AUTONOMY_CHANGE_FORBIDDEN",
     "SKILL_NOT_ALLOWED",
     "AI_DISABLED",
@@ -34,6 +36,8 @@ SPEC_PRIORITY = [
     "STATE_STALE",
     "STATE_CHANGED",
     "INVALID_TRANSITION",
+    "INSPECT_BUSY",
+    "INSPECT_TARGET_CLOSED",
     "CLEARANCE_REQUIRED",
     "CLEARANCE_EXPIRED",
     "RC_LINK_DOWN",
@@ -45,9 +49,13 @@ SPEC_PRIORITY = [
     "ALT_ABOVE_LIMIT",
     "ALT_ABOVE_CHARTER",
     "ALT_BELOW_CHARTER",
+    "FLOOR_ABOVE_CEILING",
+    "FLOOR_VIOLATION",
     "OUTSIDE_CHARTER",
     "AREA_BEYOND_FC_FENCE",
     "KEEPOUT_VIOLATION",
+    "OVERFLIGHT_NOT_ALLOWED",
+    "POWERLINE_ZONE",
     "PILOT_DISTANCE",
     "SPEED_ABOVE_LIMIT",
     "SPEED_ABOVE_CHARTER",
@@ -102,9 +110,14 @@ def test_policy_matches_registry() -> None:
 
 
 def test_owner_policy_sets_are_complete() -> None:
-    assert {"follow_track", "follow_me", "find_me", "land_at", "propose_charter_change"} <= (
-        policy.ALWAYS_REQUIRE_APPROVAL
-    )
+    assert {
+        "follow_track",
+        "follow_me",
+        "find_me",
+        "land_at",
+        "propose_charter_change",
+        "inspect_detection",  # the AI only proposes a closer look: the pilot clicks
+    } <= policy.ALWAYS_REQUIRE_APPROVAL
     assert {
         "arm",
         "disarm",
@@ -136,6 +149,8 @@ def test_constants() -> None:
     assert constants.CLEARANCE_VALID_S <= 120
     assert constants.CLEARANCE_VALID_S * 1000 == CLEARANCE_VALID_MS
     assert constants.APPROVAL_TIMEOUT_S == 60
+    # The pilot answers "Gå lägre?" as fast as an approval card (sd_schemas cannot import it).
+    assert LOWER_OFFER_S == constants.APPROVAL_TIMEOUT_S
     assert constants.BRAIN_BATTERY_MARGIN_PCT == 5
     assert constants.TAKEOFF_BATTERY_MARGIN_PCT == 20
     assert constants.FENCE_POLYGON_MARGIN_M == 10

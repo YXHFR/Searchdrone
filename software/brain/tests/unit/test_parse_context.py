@@ -48,6 +48,9 @@ def test_valid_and_invalid_calls() -> None:
     assert "not offered" in (_parse(_reply(("takeoff", {"alt_m": 40})))[1] or "")
     assert "not JSON" in (_parse(_reply(("goto", "{bad")))[1] or "")
     assert "not an object" in (_parse(_reply(("goto", "[1]")))[1] or "")
+    # An integer too long to read, or arguments nested too deep: the repair round, no raise.
+    assert "not JSON" in (_parse(_reply(("goto", '{"pin": ' + "1" * 5000 + "}")))[1] or "")
+    assert "not JSON" in (_parse(_reply(("goto", "[" * 100_000 + "]" * 100_000)))[1] or "")
     assert "alt_m must be <= 60" in (
         _parse(_reply(("goto", {"pin": "P1", "alt_m": 80})), "airborne_charter60.json")[1] or ""
     )
