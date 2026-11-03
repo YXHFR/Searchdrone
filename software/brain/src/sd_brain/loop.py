@@ -266,6 +266,10 @@ class CommanderLoop:
         self._own_approvals: set[str] = set()
         # the AI's own action cards: only these make it wait (its own charter proposals do not)
         self._own_action_approvals: set[str] = set()
+        # The AI's own orders whose end (done, failed, superseded, ...) has not reached it as
+        # an event yet: command id -> when the situation first showed it no longer active.
+        # Its own skill_event turn decides what follows, not an idle turn (``_end_unseen``).
+        self._unended: dict[str, float | None] = {}
         self._backlog_ids: set[str] = set()
         # Refused charter proposals since the last approved/rejected charter (or mission).
         self._charter_attempts = 0
@@ -324,11 +328,14 @@ class CommanderLoop:
             self._charter_attempts = 0
             self._carry = None
             self._candidates_woken.clear()
+            self._unended.clear()
             self._activity_at = self.clock.monotonic()
 
     async def connected(self, reconnect: bool) -> None:
         """The stream is up. After a reconnect the AI says it is back."""
         self.ready_since = self.clock.utc_now()
+        if reconnect:
+            self._unended.clear()  # an end sent while the stream was down never comes
         if reconnect and self.mission_id is not None:
             await self._say(OutMessage(text=BACK_TEXT, kind="status"))
             self._followups.append(("recovered", {}))
@@ -369,6 +376,8 @@ class CommanderLoop:
                 self._start_stop_check(evt)
         elif kind == "event.skill":
             cid = str(body.get("command_id"))
+            if body.get("status") in SKILL_WAKE:
+                self._unended.pop(cid, None)
             if body.get("status") == "rejected_by_gate" and cid in self._sync_rejects:
                 return  # already handled by the retry turn
             if body.get("status") in SKILL_WAKE:
@@ -777,7 +786,26 @@ class CommanderLoop:
             )
             and motion_block(s) is None
             and s.ai_enabled
+            and not self._end_unseen(s)
         )
+
+    def _end_unseen(self, s: Situation) -> bool:
+        """An order of ours is no longer active on the ground, but its end has not reached
+        the AI as an event yet: the turn for that end is on its way and decides what comes
+        next. An idle turn that ran first saw no active order and acted on its own (#159:
+        a scripted resume right after a goto ended). An end that never comes stops counting
+        after ``idle_airborne_tick_s``, so the idle turns are never held up for good."""
+        now = self.clock.monotonic()
+        active = None if s.active_command is None else str(s.active_command.id)
+        for cid, since in list(self._unended.items()):
+            if cid == active:
+                self._unended[cid] = None  # still running: its end is yet to come
+                continue
+            if since is None:
+                self._unended[cid] = since = now
+            if now - since > self.cfg.behaviour.idle_airborne_tick_s:
+                del self._unended[cid]
+        return any(cid != active for cid in self._unended)
 
     def _operator_message(
         self, events: list[dict[str, Any]], chat: list[ChatMessage]
@@ -1053,6 +1081,8 @@ class CommanderLoop:
         self._activity_at = self.clock.monotonic()
         record.request = req
         record.result = result
+        if result.decision in ("ALLOW", "PENDING_APPROVAL"):
+            self._unended[str(req.command_id)] = None
         if result.decision == "ALLOW":
             self._rate_rejects = 0
             if out.action.skill == "takeoff":

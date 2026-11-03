@@ -464,6 +464,45 @@ async def test_idle_tick() -> None:
     assert not loop2.records
 
 
+async def test_idle_tick_waits_for_the_end_of_its_own_order() -> None:
+    """#159 SC01_takeover: an idle turn that ran after the AI's goto had ended on the
+    ground, but before that end reached the AI as an event, saw no active order and sent
+    one of its own (a scripted resume, 0.1 s after the goto ended). The end's own turn
+    decides what follows: the idle turn waits for it."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [c.skill for c in fg.commands] == ["goto"]
+    goto = str(fg.commands[0].command_id)
+    assert fg.sit["active_command"] is None  # ended on the ground; its event not here yet
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1 and len(fg.commands) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
+async def test_an_end_that_never_comes_holds_the_idle_tick_one_period_only() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."))
+    loop, fg, clock = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1
+    clock.t += BrainConfig().behaviour.idle_airborne_tick_s + 1
+    assert loop.idle_tick()
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "idle_tick"]
+    assert len(fg.commands) == 1
+
+
 @pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
 async def test_idle_tick_waits_only_for_its_own_action_card(kind: str, waits: bool) -> None:
     """After a failed turn in the air the idle tick tries again. The AI's own charter
