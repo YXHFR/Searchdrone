@@ -113,6 +113,24 @@ FS_DR_TIMEOUT_S: Final = 30  # = FS_DR_TIMEOUT: dead reckoning this long, then t
 PERSON_KEEPOUT_M: Final = 30.0
 KEEPOUT_SCORE_MIN: Final = 0.5  # a detection (or candidate) at least this sure gets one
 
+# --- the height floor of a closer look (sd_safety.floor) -----------------------------------
+# The owner's margins (decisions 14-17). The floor under the drone counts the highest tree
+# within FLOOR_TREE_RADIUS_M; a tree the map does not know is FLOOR_UNKNOWN_TREE_M tall.
+FLOOR_TREE_RADIUS_M: Final = 10.0
+FLOOR_UNKNOWN_TREE_M: Final = 30.0  # no laser returns, no map, or a scan too old
+FLOOR_SCAN_MAX_AGE_Y: Final = 10  # an older scan counts as unknown
+FLOOR_UNDERESTIMATE_M: Final = 2.0  # the aircraft's laser misses the very top of a tree
+FLOOR_GROWTH_M_PER_Y: Final = 0.5  # growth since the scan ...
+FLOOR_GROWTH_MAX_M: Final = 5.0  # ... at most this; an unknown scan year counts as this
+FLOOR_CLEARANCE_NO_LASER_M: Final = 15.0  # never below the trees + this without the laser
+FLOOR_ALT_ERROR_M: Final = 5.0  # the drone's own height error: the lowest floor at all
+LASER_FLOOR_MIN_M: Final = 5.0  # above what the laser sees, at least this ...
+LASER_RANGE_MARGIN_M: Final = 2.0  # ... and its tested minimum range + this
+# A laser reading is about the ground under the drone: it counts for points this near.
+LASER_VALID_RADIUS_M: Final = 10.0
+POWERLINE_ZONE_M: Final = 30.0  # no descent this near a known power line, horizontally
+FLOOR_PATH_STEP_M: Final = 2.0  # floor_along samples a path this often
+
 # --- the flight controller's fence --------------------------------------------------------
 
 FENCE_POLYGON_MARGIN_M: Final = 10.0  # FC polygon = area + geofence_buffer_m + this
