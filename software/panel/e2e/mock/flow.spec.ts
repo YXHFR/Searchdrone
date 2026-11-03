@@ -17,6 +17,15 @@ import { holdClick, showView } from "../helpers/safety";
 
 const CHAT = "/api/v1/missions/M1/chat";
 const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PACK_SHA = "ab".repeat(32);
+const PACK = {
+  floor_pack_id: "area-a",
+  floor_pack_sha256: PACK_SHA,
+  attribution: "Lantmäteriet, Laserdata Skog (CC0)",
+  origin: { lat: -35.363261, lon: 149.16523 },
+  size_east_m: 2000,
+  size_north_m: 1500,
+};
 
 test.describe("chat and approval cards", () => {
   test.beforeEach(async ({ page, ground }) => {
@@ -60,10 +69,18 @@ test.describe("chat and approval cards", () => {
     page,
     ground,
   }) => {
+    ground.floorPacks = [PACK];
     ground.pushLive("mission", "charter.updated", charter());
     ground.pushLive("approvals", "approval.requested", approval());
     const card = page.getByTestId("approval-AP1");
     await expect(card).toContainText("Kräver ditt godkännande");
+    // The map pack: the ground's list with each source credit; nothing is picked for the
+    // pilot on a first charter.
+    const packs = card.getByTestId("floor-pack");
+    await expect(packs).toContainText("area-a");
+    await expect(packs).toContainText("2 × 1,5 km · Källa: Lantmäteriet, Laserdata Skog (CC0)");
+    await expect(card.getByTestId("floor-pack-none")).toBeChecked();
+    await card.getByTestId("floor-pack-area-a").check();
     await expect(card).toContainText("Ny ram");
     await expect(card).toContainText("ha, 100 × 100 m");
     await expect(card).toContainText("högst 8 m/s");
@@ -88,9 +105,32 @@ test.describe("chat and approval cards", () => {
       subject_version: 1,
       autonomy_mode: "WITHIN_CHARTER",
       operation_mode: "exercise",
+      floor_pack: { floor_pack_id: "area-a", floor_pack_sha256: PACK_SHA },
     });
     expect(ground.calls(/\/(activate|approve)$/)).toEqual([]);
     await expect(card).toContainText("Godkänd av demo");
+  });
+
+  test("no map pack list: the card says so and the approval keeps the one in force", async ({
+    page,
+    ground,
+  }) => {
+    ground.failNext("GET /api/v1/floor_packs", 500, { code: "INTERNAL", detail_sv: "Fel" });
+    ground.pushLive("mission", "charter.updated", charter());
+    ground.pushLive("approvals", "approval.requested", approval());
+    const card = page.getByTestId("approval-AP1");
+    await expect(card.getByTestId("floor-pack-failed")).toHaveText(
+      "Kunde inte hämta höjdkartorna. Ramen behåller höjdkartan som gäller nu.",
+    );
+    await card.getByTestId("op-mode-sim").check();
+    await holdClick(page, "approve", card);
+    await expect.poll(() => ground.posts("/api/v1/approvals/AP1/decision").length).toBe(1);
+    expect(ground.posts("/api/v1/approvals/AP1/decision")[0]?.body).toEqual({
+      decision: "approve",
+      subject_version: 1,
+      autonomy_mode: "WITHIN_CHARTER",
+      operation_mode: "sim",
+    });
   });
 
   test("'ja' in the chat is never an approval", async ({ page, ground }) => {

@@ -323,6 +323,25 @@
   background: var(--c-panel-3);
   font-weight: 600;
 }
+.floor-choice {
+  grid-template-columns: 1fr;
+}
+.floor-choice label + label {
+  border-left: 0;
+  border-top: 1px solid var(--c-line-strong);
+}
+.floor-choice > p {
+  margin: 0;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-small);
+}
+.floor-source {
+  display: block;
+  font-size: var(--fs-small);
+  font-weight: 400;
+  color: var(--c-faint);
+  overflow-wrap: anywhere;
+}
 .mode-choice input {
   accent-color: var(--c-acc);
   margin: 0;

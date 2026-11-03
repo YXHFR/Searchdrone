@@ -20,6 +20,8 @@ export type {
   CommandResult,
   DetectionRow,
   Find,
+  FloorPackChoice,
+  FloorPackInfo,
   GateDecision,
   Inspection,
   InspectProgress,

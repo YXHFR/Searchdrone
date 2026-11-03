@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { defaultAutonomy, type PanelApproval } from "../../../api/approvals";
 import { api, HttpError } from "../../../api/http";
 import { paths } from "../../../api/paths";
-import type { Approval, AutonomyMode } from "../../../api/types";
+import type { Approval, AutonomyMode, FloorPackInfo } from "../../../api/types";
 import { mmss, useNow } from "../../../lib/useNow";
 import { ClearanceControl } from "../../../safety/ClearanceControl";
 import { useLiveStore } from "../../../state/liveStore";
@@ -12,6 +12,7 @@ import { useIsPilot } from "../../../state/sessionStore";
 import { useUiStore } from "../../../state/uiStore";
 import { HoldButton } from "../../../ui/HoldButton";
 import { CharterBody, ProblemList, useCharterProblems } from "./CharterBody";
+import { defaultFloorPack, floorPackChoice, inForceGone, NO_PACK } from "./floorPack";
 import { LimitsButton } from "./LimitsForm";
 import { MiniMap } from "./MiniMap";
 import { outerRing, type Ring } from "./miniMap";
@@ -51,6 +52,27 @@ function useDecide(a: PanelApproval) {
     }
   }
   return { busy, error, outcome, decide };
+}
+
+/** The ground's map packs for the charter card (null while they load). */
+function useFloorPacks(enabled: boolean): FloorPackInfo[] | "failed" | null {
+  const [packs, setPacks] = useState<FloorPackInfo[] | "failed" | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    api<FloorPackInfo[]>(paths.floorPacks()).then(
+      (list) => {
+        if (live) setPacks(list);
+      },
+      () => {
+        if (live) setPacks("failed");
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [enabled]);
+  return packs;
 }
 
 async function refreshPending(a: PanelApproval): Promise<void> {
@@ -144,10 +166,18 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
   const [reason, setReason] = useState("");
   const now = useNow(1_000);
   const isCharter = a.kind === "charter" || a.kind === "charter_change";
+  const pending = a.status === "pending" && outcome === null;
+  // The map pack: the one in force on a change while the ground still has it, else none.
+  // What the card shows picked is what the approval sends.
+  const floorPacks = useFloorPacks(pending && isCharter);
+  const packsIn = Array.isArray(floorPacks) ? floorPacks : [];
+  const packInForce = inForce && inForce.id !== a.charter?.id ? inForce.body : null;
+  const [packPicked, setPackPicked] = useState<string | null>(null);
+  const pack = packPicked ?? defaultFloorPack(packsIn, packInForce);
+  const packGone = inForceGone(packsIn, packInForce);
   const problems = useCharterProblems(isCharter ? a.charter?.body : undefined);
   const needsClearance =
     a.kind === "skill" && a.required_confirmations.includes("clear_around_drone");
-  const pending = a.status === "pending" && outcome === null;
 
   useEffect(() => {
     if (focus === a.approval_id) {
@@ -173,6 +203,7 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
     a.subject_loading ||
     problems.length > 0 ||
     (isCharter && op === null) ||
+    (isCharter && floorPacks === null) ||
     (needsClearance && !clearanceActive);
   return (
     <fieldset
@@ -245,6 +276,65 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
           {op === null ? <p className="muted">{t("opMode.pick")}</p> : null}
         </fieldset>
       ) : null}
+      {pending && isCharter ? (
+        <fieldset className="mode-choice floor-choice" data-testid="floor-pack">
+          <legend>{t("floorPack.legend")}</legend>
+          {floorPacks === null ? <p className="muted">{t("floorPack.loading")}</p> : null}
+          {floorPacks === "failed" ? (
+            <p className="warn" data-testid="floor-pack-failed">
+              {t("floorPack.failed")}
+            </p>
+          ) : null}
+          {Array.isArray(floorPacks) ? (
+            <>
+              {floorPacks.map((p) => (
+                <label key={p.floor_pack_id} data-on={pack === p.floor_pack_id}>
+                  <input
+                    type="radio"
+                    name={`pack-${a.approval_id}`}
+                    value={p.floor_pack_id}
+                    checked={pack === p.floor_pack_id}
+                    disabled={!isPilot}
+                    data-testid={`floor-pack-${p.floor_pack_id}`}
+                    onChange={() => setPackPicked(p.floor_pack_id)}
+                  />
+                  <span>
+                    {p.floor_pack_id}
+                    <span className="floor-source">
+                      {t("floorPack.size", {
+                        e: (p.size_east_m / 1000).toLocaleString("sv-SE"),
+                        n: (p.size_north_m / 1000).toLocaleString("sv-SE"),
+                      })}
+                      {" · "}
+                      {t("floorPack.source", { source: p.attribution || "–" })}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              <label data-on={pack === NO_PACK}>
+                <input
+                  type="radio"
+                  name={`pack-${a.approval_id}`}
+                  value={NO_PACK}
+                  checked={pack === NO_PACK}
+                  disabled={!isPilot}
+                  data-testid="floor-pack-none"
+                  onChange={() => setPackPicked(NO_PACK)}
+                />
+                <span>
+                  {t("floorPack.none")}
+                  <span className="floor-source">{t("floorPack.noneWhat")}</span>
+                </span>
+              </label>
+              {packGone ? (
+                <p className="warn" data-testid="floor-pack-gone">
+                  {t("floorPack.gone", { name: packGone })}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </fieldset>
+      ) : null}
       {pending && needsClearance ? <ClearanceControl force /> : null}
       {pending ? (
         <div className="approval-actions">
@@ -253,7 +343,14 @@ export function ApprovalCard({ approval: a }: { approval: PanelApproval }) {
               testId="approve"
               disabled={approveDisabled}
               hint={t("cards.holdHint")}
-              onDone={() => void decide("approve", { autonomy_mode: mode, operation_mode: op })}
+              onDone={() => {
+                const choice = Array.isArray(floorPacks) ? floorPackChoice(pack, floorPacks) : null;
+                void decide("approve", {
+                  autonomy_mode: mode,
+                  operation_mode: op,
+                  ...(choice ? { floor_pack: choice } : {}),
+                });
+              }}
             >
               {t(a.kind === "charter" ? "cards.approveArea" : "cards.approveChange")}
             </HoldButton>

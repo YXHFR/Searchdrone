@@ -23,6 +23,7 @@ import type {
   Clearance,
   Command,
   Find,
+  FloorPackInfo,
   Inspection,
   Mission,
   PanelConfig,
@@ -127,6 +128,8 @@ export class FakeGround {
   candidateDetail: Record<string, Pick<CandidateDetail, "observations" | "assessments">> = {};
   /** The closer looks ("Titta närmare") as GET .../inspections answers them. */
   inspections: Inspection[] = [];
+  /** The height-floor map packs the ground holds (GET /floor_packs). */
+  floorPacks: FloorPackInfo[] = [];
   /** The overflight permit (GET/PUT /permit). */
   permit: Permit = { specific_category_ref: "", allow_overflight_live: false };
   /** The gate's no to the next Titta närmare (codes), like the ground's INSPECT_REFUSED. */
@@ -398,7 +401,9 @@ export class FakeGround {
     };
     if (body.decision === "inspect") this.startLook(c);
     else if (this.session?.role === "pilot") this.endLook(c.candidate_id, body.decision);
-    const next = to[body.decision];
+    // During a look only the pilot's decision moves the card; an observer's is a note.
+    const note = c.state === "inspecting" && this.session?.role !== "pilot";
+    const next = note ? undefined : to[body.decision];
     const card = next ? { ...c, state: next, rev: c.rev + 1 } : c;
     this.decisions[id] = [
       ...(this.decisions[id] ?? []),
@@ -726,8 +731,10 @@ export class FakeGround {
       };
     }
     if (k === `GET ${ms}/inspections`) return { status: 200, body: this.inspections };
-    const lower = /^POST \/api\/v1\/inspections\/([^/]+)\/lower$/.exec(k);
+    const lower = /^POST \/api\/v1\/inspections\/([^/]+)\/(lower|stay)$/.exec(k);
     if (lower) {
+      if (this.session?.role !== "pilot")
+        return { status: 403, body: { code: "FORBIDDEN_ROLE", detail_sv: "Bara piloten." } };
       const look = this.inspections.find((l) => l.command_id === lower[1] && !l.ended_at);
       if (!look) return { status: 404, body: { code: "INSPECTION_NOT_FOUND" } };
       if (!look.lower_offer)
@@ -741,6 +748,7 @@ export class FakeGround {
       this.pushLive("candidates", "inspection.updated", next);
       return { status: 200, body: next };
     }
+    if (k === `GET ${API}/floor_packs`) return { status: 200, body: this.floorPacks };
     if (k === `GET ${API}/permit`) return { status: 200, body: this.permit };
     if (k === `PUT ${API}/permit`) {
       this.permit = req.body as Permit;

@@ -63,6 +63,8 @@ const CALLS: [string, string][] = [
   ["GET", paths.searchProfileVersions(ID)],
   ["GET", paths.missionInspections(ID)],
   ["POST", paths.inspectionLower(ID)],
+  ["POST", paths.inspectionStay(ID)],
+  ["GET", paths.floorPacks()],
   ["GET", paths.permit()],
   ["PUT", paths.permit()],
   ["POST", paths.candidateDecision(ID)],

@@ -241,9 +241,15 @@ function announceLook(look: Inspection): void {
   if (before?.phase === look.phase || before?.phase === "ended") return;
   const ui = useUiStore.getState();
   if (look.phase !== "lower_offer" && look.phase !== "await") return;
-  const text = i18next.t(look.phase === "await" ? "inspect.toast.done" : "inspect.toast.lower", {
-    seq: look.seq,
-  });
+  // Only the pilot answers "Gå lägre?": an observer is told that the pilot does.
+  const pilot = useSessionStore.getState().session?.role === "pilot";
+  const key =
+    look.phase === "await"
+      ? "inspect.toast.done"
+      : pilot
+        ? "inspect.toast.lower"
+        : "inspect.toast.lowerObserver";
+  const text = i18next.t(key, { seq: look.seq });
   ui.log("info", text);
   ui.toast(text);
   if (look.phase === "await") chime();

@@ -150,6 +150,25 @@ test.describe("every size", () => {
     await expect(strip).toHaveText(
       /Tittar närmare på K3 · steg 2 · 32 m över mark · golv 21 m \(karta\) · laser: ingen/,
     );
+    // Screen readers hear the step, not every new height (the strip changes at 2 Hz).
+    const said = strip.getByTestId("inspect-strip-said");
+    await expect(said).toHaveText("Tittar närmare på K3 · steg 2");
+    await expect(said).toHaveAttribute("role", "status");
+    await expect(strip).not.toHaveAttribute("role", "status");
+    ground.pushLive("candidates", "candidate.inspect_progress", {
+      command_id: look.command_id,
+      candidate_id: look.candidate_id,
+      seq: 3,
+      step: 2,
+      phase: "step",
+      above_ground_m: 31.1,
+      floor_auto_above_ground_m: 30,
+      floor_lowest_above_ground_m: 21,
+      floor_reason: "map",
+      laser_confirmed: false,
+    });
+    await expect(strip).toContainText("31 m över mark");
+    await expect(said).toHaveText("Tittar närmare på K3 · steg 2");
     await expect(page.getByTestId("cand-inspect")).toHaveCount(0);
     await expectSafetyVisible(page, "look flying");
 
@@ -194,6 +213,8 @@ test.describe("every size", () => {
       /^Titten klar\. Beslut inom 1:4\d, annars fortsätter sökningen och K3 ligger kvar i kön\.$/,
     );
     await expect(page.getByTestId("inspect-end")).toContainText("Tydlig bild tagen · 3 steg");
+    // The countdown ticks every second: not read out every second.
+    await expect(page.getByTestId("inspect-await")).not.toHaveAttribute("aria-live", /.+/);
     await expect(page.getByTestId("cand-confirm")).toBeDisabled(); // no large view yet
     await expect(page.getByTestId("cand-reject")).toBeEnabled();
     await expect(page.getByTestId("cand-unsure")).toBeEnabled();
@@ -282,7 +303,13 @@ test.describe("every size", () => {
     await expect(page.getByTestId("inspect-lower")).toContainText(
       "Piloten avgör om drönaren får gå lägre.",
     );
+    // The toast tells an observer that the pilot answers, not to answer.
+    await expect(
+      page.getByText("K3: drönaren frågar om den får gå lägre. Piloten svarar.").first(),
+    ).toBeVisible();
+    await expect(page.getByText("Svara under Granska")).toHaveCount(0);
     await expect(page.getByTestId("inspect-lower-yes")).toHaveCount(0);
+    await expect(page.getByTestId("inspect-lower-no")).toHaveCount(0);
     await expect(page.getByTestId("cand-resume")).toHaveCount(0);
     await expect(page.getByTestId("cand-review")).toContainText("Under titten avgör piloten.");
   });
@@ -383,8 +410,13 @@ test.describe("390×844", () => {
     await expect(page.getByTestId("inspect-lower")).toBeVisible();
     await noSideScroll(page, "go lower");
     await expectSafetyVisible(page, "phone go lower");
+    // Nej goes to the drone at once (it stops asking and stays at its height).
     await page.getByTestId("inspect-lower-no").click();
-    await expect(page.getByTestId("inspect-lower-declined")).toBeVisible();
+    await expect
+      .poll(() => ground.posts(`/api/v1/inspections/${look.command_id}/stay`).length)
+      .toBe(1);
+    expect(ground.posts(`/api/v1/inspections/${look.command_id}/lower`)).toEqual([]);
+    await expect(page.getByTestId("inspect-lower")).toHaveCount(0);
     pushLook(ground, {
       phase: "await",
       lower_offer: null,

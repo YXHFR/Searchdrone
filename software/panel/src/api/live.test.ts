@@ -320,6 +320,25 @@ describe("startLive", () => {
     stop();
   });
 
+  it("an observer is told that the pilot answers Gå lägre", async () => {
+    useSessionStore.getState().set({ session: { role: "observer" } as never });
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    useInspectStore.getState().reset(null);
+    const stop = startLive("sim-01");
+    await settle();
+    send({
+      seq: null,
+      topic: "candidates",
+      type: "inspection.updated",
+      vehicle_id: "sim-01",
+      data: { command_id: "cmd2", candidate_id: "c4", seq: 4, phase: "lower_offer" },
+    });
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toEqual([
+      "K4: drönaren frågar om den får gå lägre. Piloten svarar.",
+    ]);
+    stop();
+  });
+
   it("tells the pilot when person detection is off on board", async () => {
     useUiStore.setState({ toasts: [], eventLog: [] });
     const stop = startLive("sim-01");

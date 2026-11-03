@@ -1,6 +1,10 @@
 // The open closer look on the candidate in review: the strip with the step, the height and
 // the floor; the drone's "Gå lägre?" (only the pilot answers); and, once the steps are over,
 // the countdown to the decision. STOP and FLY HOME stay in the safety bar the whole time.
+//
+// Screen readers: the height on the strip changes twice a second and the countdowns every
+// second, so none of them is a live region. The strip tells the step and the phase when
+// they change; the question and the end of the steps come as toasts (api/live.ts).
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, HttpError } from "../../api/http";
@@ -14,10 +18,13 @@ import { leftMs, metres, stripFloor } from "./inspect";
 export function InspectStrip({ look }: { look: Inspection }) {
   const { t } = useTranslation();
   const p = useInspectStore((s) => s.progress[look.command_id] ?? null);
-  const parts = [t("inspect.strip.title", { seq: look.seq })];
+  const title = t("inspect.strip.title", { seq: look.seq });
   const phase = look.phase === "flying" ? (p?.phase ?? "approach") : look.phase;
-  if (phase === "step" && p) parts.push(t("inspect.strip.step", { n: p.step }));
-  else parts.push(t(`inspect.strip.phase.${phase}`));
+  const where =
+    phase === "step" && p
+      ? t("inspect.strip.step", { n: p.step })
+      : t(`inspect.strip.phase.${phase}`);
+  const parts = [title, where];
   const agl = metres(p?.above_ground_m);
   if (agl !== null) parts.push(t("inspect.strip.agl", { m: agl }));
   const floor = stripFloor(p);
@@ -30,35 +37,40 @@ export function InspectStrip({ look }: { look: Inspection }) {
     );
   if (p) parts.push(t(p.laser_confirmed ? "inspect.strip.laserOn" : "inspect.strip.laserOff"));
   return (
-    <p className="inspect-strip" role="status" data-testid="inspect-strip" data-phase={look.phase}>
+    <p className="inspect-strip" data-testid="inspect-strip" data-phase={look.phase}>
       {parts.join(" · ")}
       {look.overflight ? (
         <span className="inspect-over">{t(`inspect.strip.over.${look.operation_mode}`)}</span>
       ) : null}
+      {/* Told only when the step or the phase changes, not with every new height. */}
+      <span className="sr-only" role="status" data-testid="inspect-strip-said">
+        {`${title} · ${where}`}
+      </span>
     </p>
   );
 }
 
-/** "Gå lägre, ned till X m över mark?" with the drone's 60 s. Only the pilot answers;
- * no answer (or Nej) leaves the drone where it is when the question runs out. */
+/** "Gå lägre, ned till X m över mark?" with the drone's 60 s. Only the pilot answers: Ja
+ * takes the drone down to the lowest floor, Nej tells it at once to stay at its height
+ * (``/stay``; it never goes lower for it). No answer leaves it there when the time runs out. */
 export function LowerOffer({ look }: { look: Inspection }) {
   const { t } = useTranslation();
   const isPilot = useIsPilot();
   const now = useNow(1_000);
   const [busy, setBusy] = useState(false);
-  const [declined, setDeclined] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const offer = look.lower_offer;
   if (look.phase !== "lower_offer" || !offer) return null;
   const left = leftMs(look.lower_offer_until, now);
   const to = metres(offer.lowest_above_ground_m) ?? 0;
-  const yes = async (): Promise<void> => {
+  const answer = async (yes: boolean): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
-      const updated = await api<Inspection>(paths.inspectionLower(look.command_id), {
-        method: "POST",
-      });
+      const url = yes
+        ? paths.inspectionLower(look.command_id)
+        : paths.inspectionStay(look.command_id);
+      const updated = await api<Inspection>(url, { method: "POST" });
       useInspectStore.getState().upsert(updated);
     } catch (e) {
       setError(e instanceof HttpError ? e.message : t("inspect.failed"));
@@ -66,26 +78,22 @@ export function LowerOffer({ look }: { look: Inspection }) {
       setBusy(false);
     }
   };
-  const mine = declined === look.lower_offer_until;
   return (
-    <section className="inspect-box inspect-lower" data-testid="inspect-lower" aria-live="polite">
+    <section className="inspect-box inspect-lower" data-testid="inspect-lower">
       <h3>{t("inspect.lower.question", { m: to })}</h3>
       <p className="muted">
         {t("inspect.lower.now", { m: metres(offer.now_above_ground_m) ?? 0 })}
         {left !== null ? ` · ${t("inspect.lower.left", { left: mmss(left) })}` : ""}
       </p>
       {!isPilot ? <p className="muted">{t("inspect.lower.pilotOnly")}</p> : null}
-      {isPilot && mine ? (
-        <p data-testid="inspect-lower-declined">{t("inspect.lower.declined")}</p>
-      ) : null}
-      {isPilot && !mine ? (
+      {isPilot ? (
         <div className="cand-buttons">
           <button
             type="button"
             className="btn btn-primary"
             disabled={busy}
             data-testid="inspect-lower-yes"
-            onClick={() => void yes()}
+            onClick={() => void answer(true)}
           >
             {t("inspect.lower.yes")}
           </button>
@@ -94,14 +102,14 @@ export function LowerOffer({ look }: { look: Inspection }) {
             className="btn"
             disabled={busy}
             data-testid="inspect-lower-no"
-            onClick={() => setDeclined(look.lower_offer_until ?? "")}
+            onClick={() => void answer(false)}
           >
             {t("inspect.lower.no")}
           </button>
         </div>
       ) : null}
       {error ? (
-        <p className="warn" role="status">
+        <p className="warn" role="alert">
           {error}
         </p>
       ) : null}
@@ -117,7 +125,7 @@ export function AwaitBox({ look }: { look: Inspection }) {
   const left = leftMs(look.await_until, now);
   const done = look.done;
   return (
-    <section className="inspect-box inspect-await" data-testid="inspect-await" aria-live="polite">
+    <section className="inspect-box inspect-await" data-testid="inspect-await">
       <h3 data-testid="inspect-countdown">
         {t("inspect.await.title", { left: mmss(left ?? 0), seq: look.seq })}
       </h3>

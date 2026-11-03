@@ -925,6 +925,16 @@
     "toastConfirmed": "Fynd bekräftat: K{{seq}}",
     "toastNoted": "K{{seq}} markerad som bekräftad under titten. Piloten bestämmer."
   },
+  "floorPack": {
+    "legend": "Höjdkarta för Titta närmare",
+    "loading": "Hämtar höjdkartorna …",
+    "failed": "Kunde inte hämta höjdkartorna. Ramen behåller höjdkartan som gäller nu.",
+    "size": "{{e}} × {{n}} km",
+    "source": "Källa: {{source}}",
+    "none": "Ingen höjdkarta",
+    "noneWhat": "Titta närmare tittar bara från nuvarande höjd.",
+    "gone": "Höjdkartan {{name}} som gäller nu finns inte längre oförändrad på markstationen. Välj en karta, annars gäller Ingen höjdkarta."
+  },
   "opMode": {
     "legend": "Driftläge",
     "pick": "Välj driftläge innan du godkänner ramen.",
@@ -997,7 +1007,6 @@
       "left": "svar inom {{left}}",
       "yes": "Ja, gå lägre",
       "no": "Nej, stanna här",
-      "declined": "Du sa nej. Drönaren stannar på den här höjden när frågan går ut.",
       "pilotOnly": "Piloten avgör om drönaren får gå lägre."
     },
     "await": {
@@ -1028,6 +1037,7 @@
     },
     "toast": {
       "lower": "K{{seq}}: drönaren frågar om den får gå lägre. Svara under Granska.",
+      "lowerObserver": "K{{seq}}: drönaren frågar om den får gå lägre. Piloten svarar.",
       "done": "Titten på K{{seq}} är klar. Beslut inom 2 minuter under Granska."
     },
     "observerNote": "Under titten avgör piloten. Ditt beslut sparas som en anteckning till piloten.",
