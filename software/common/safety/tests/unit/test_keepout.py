@@ -211,8 +211,7 @@ def test_ring_violation_band() -> None:
 def inspect(east: float, north: float, **extra: Any) -> dict[str, Any]:
     lat, lon = latlon(east, north)
     base = {
-        "detection_id": str(new_id()),
-        "standoff_m": 15,
+        "candidate_id": str(new_id()),
         "lat": lat,
         "lon": lon,
         "target_radius_m": 35.0,
@@ -223,9 +222,12 @@ def inspect(east: float, north: float, **extra: Any) -> dict[str, Any]:
 def test_inspect_goes_to_the_cylinder_edge_and_passes() -> None:
     k = cylinder(0, 200, radius=35.0)
     c = with_keepouts(k)
-    assert codes(req("inspect_detection", inspect(0, 200)), c) == []
+    pilot = {"issuer_kind": "operator", "issuer_ref": "operator:demo"}
+    assert codes(req("inspect_detection", inspect(0, 200), **pilot), c) == []
+    # From the AI the same look is only a proposal: the pilot clicks.
+    assert codes(req("inspect_detection", inspect(0, 200)), c) == ["NEEDS_APPROVAL_SKILL"]
     # Unresolved without the target's position (the ground fills it in).
-    bare = {"detection_id": str(new_id()), "standoff_m": 20}
+    bare = {"candidate_id": str(new_id())}
     assert "SCHEMA_INVALID" in codes(req("inspect_detection", bare), c)
 
 

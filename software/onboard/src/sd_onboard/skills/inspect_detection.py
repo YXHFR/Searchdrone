@@ -1,17 +1,21 @@
-"""``inspect_detection``: a closer look at a detection, camera straight down.
+"""``inspect_detection``: a closer look at a candidate from the side, cameras straight down.
+
+This is the look from outside the candidate's cylinder (stage 2, B2-09). With the closer
+look v2 (``sd_schemas.inspect``) it stays as the ``live`` look without the overflight
+permit; the step-wise approach straight over the candidate comes with its own handler.
 
 The point, height and heading are ``InspectDetectionParams.geometry`` (the same
 function the ground's gate used): on the edge of the target's keep-out cylinder + 10 m,
 on the drone's side, high enough that the target is at most 25 degrees from straight
 down, the target along the picture's long side. ``ONB_INSPECT_GEOMETRY`` when no
-height in the charter's band (or under the order's ``alt_m``) gets within 28 degrees.
+height in the charter's band gets within 28 degrees.
 
 The drone flies there in GUIDED at most ``INSPECT_SPEED_MS`` (``goto``), waits
 ``SETTLE_S``, takes ``INSPECT_STILLS`` stills ``INSPECT_STILL_INTERVAL_S`` apart, and
-hovers (HOLD). An interrupted inspection is not resumed. The stills come from the main
-camera even on a drone with the tele camera: the target is 24-28 degrees from straight
-down here, outside the fixed tele camera's view (about +-10 degrees); revisit with a
-gimbal.
+hovers (HOLD). An interrupted inspection is not resumed. This look takes its stills with
+the main camera only, also on a drone with the tele camera: the target is 24-28 degrees
+from straight down here, outside the fixed tele camera's view (about +-10 degrees).
+Neither camera tilts.
 
 A drone inside cylinders first leaves them along a straight leg that goes deeper into
 none and enters no other (``sd_safety.keepout.reroute``), ``EXIT_CLEAR_M`` past the last
@@ -111,7 +115,7 @@ class InspectHandler:
     def __init__(self) -> None:
         self.goto = GotoHandler()
         self.command_id: Id | None = None
-        self.detection_id: Id | None = None
+        self.candidate_id: Id | None = None
         self.taken = 0
         self._at_point = False
         self._params: InspectDetectionParams | None = None
@@ -143,7 +147,7 @@ class InspectHandler:
                 raise PlanError("ONB_INSPECT_GEOMETRY")
             path += self._path(out, then)[1:]
             duration += self._plan_of(out, then).expected_duration_s
-        self.command_id, self.detection_id = ctx.command_id, params.detection_id
+        self.command_id, self.candidate_id = ctx.command_id, params.candidate_id
         self._fly(ctx, leg, retarget=False)
         extra = SETTLE_S + (INSPECT_STILLS - 1) * INSPECT_STILL_INTERVAL_S
         return self._plan_of(ctx, leg).model_copy(
@@ -182,7 +186,7 @@ class InspectHandler:
             "inspect_done",
             {
                 "command_id": str(self.command_id),
-                "detection_id": str(self.detection_id),
+                "candidate_id": str(self.candidate_id),
                 "still_ids": [str(s) for s in taken],
             },
         )
