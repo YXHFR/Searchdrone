@@ -17,6 +17,7 @@ import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
+from pathlib import Path
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
@@ -46,6 +47,12 @@ from sd_mav.vehicle import (
 from sd_obs.clock import Clock
 from sd_onboard.executor.authority import Authority
 from sd_onboard.executor.guards import GuardInput, Refusal, is_airborne, run_guard
+from sd_onboard.executor.inspect import (
+    INTERNAL_INSPECT_CLIMB,
+    SUSPENDED_PHASES,
+    InspectSession,
+    abort_reason,
+)
 from sd_onboard.executor.keepout_reflex import (
     INTERNAL_KEEPOUT_CLIMB,
     LOCAL_KEEPOUT_HANDOVER_MS,
@@ -89,6 +96,7 @@ from sd_onboard.io.persistence import StateStore
 from sd_onboard.rangefinder import LaserReader
 from sd_onboard.skills import HANDLERS, extra_transitions
 from sd_onboard.skills.base import (
+    InspectShot,
     PlanContext,
     PlanError,
     SkillFailedError,
@@ -98,6 +106,9 @@ from sd_onboard.skills.base import (
     TickContext,
 )
 from sd_onboard.skills.goto import GotoHandler, goto_plan
+from sd_onboard.skills.inspect_detection import InspectHandler
+from sd_onboard.skills.inspect_steps import look_radius_m
+from sd_onboard.skills.resume import ResumeHandler
 from sd_onboard.skills.return_home import ReturnHomeHandler
 from sd_onboard.skills.survey_sector import SurveyHandler, SurveyRun
 from sd_safety import evaluate
@@ -111,6 +122,7 @@ from sd_safety.constants import (
     FENCE_RADIUS_MARGIN_M,
     FIND_MOVE_SPEED_MS,
     GCS_SEEN_FOR_RELEASE_S,
+    GOTO_ALT_STEP_TOL_M,
     HOME_MATCH_M,
     KEEPOUT_SCORE_MIN,
     LINK_LOSS_DETECT_S,
@@ -118,6 +130,7 @@ from sd_safety.constants import (
     PERSON_KEEPOUT_M,
     TAKEOFF_BATTERY_MARGIN_PCT,
 )
+from sd_safety.floor import FloorPack, FloorPackError, floor_at, load_floor_pack
 from sd_safety.gnss import GnssSample, GpsHealth, SpoofDetector, SpoofFinding
 from sd_safety.keepout import Circle, circles, xy_route_violation
 from sd_safety.limits import (
@@ -138,9 +151,21 @@ from sd_schemas.api import KeepoutHoldField
 from sd_schemas.approval import command_hash
 from sd_schemas.base import LatLon, LatLonAlt, new_id
 from sd_schemas.charter import AutonomyMode, MissionCharter
-from sd_schemas.executor import ExecutorState, LinkLossPhase, ResumePoint
+from sd_schemas.executor import ExecutorState, GotoResumePoint, LinkLossPhase, ResumePoint
 from sd_schemas.gate import ClearanceState, GateContext, GateDecision, GateRequest, StateRef
-from sd_schemas.keepout import KEEPOUT_RADIUS_MAX_M
+from sd_schemas.inspect import (
+    AWAIT_DECISION_S,
+    EVENT_ABORTED,
+    EVENT_DONE,
+    EVENT_LASER_LOST,
+    InspectAborted,
+    InspectAbortReason,
+    InspectDone,
+    InspectLaserLost,
+    InspectPhase,
+    InspectProgress,
+)
+from sd_schemas.keepout import INSPECT_SPEED_MS, KEEPOUT_RADIUS_MAX_M
 from sd_schemas.link import (
     SCHEMA_MAJOR,
     AckStage,
@@ -151,6 +176,8 @@ from sd_schemas.link import (
     GeoDetectionMsg,
     Hello,
     HelloAck,
+    InspectLower,
+    InspectOutcome,
     Keepout,
     KeepoutInstall,
     ManualTakeover,
@@ -160,10 +187,13 @@ from sd_schemas.link import (
     SkillCommand,
     StateSnapshot,
 )
+from sd_schemas.rangefinder import LaserState
 from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.skills import (
     SKILL_REGISTRY,
+    InspectDetectionParams,
+    ResumeParams,
     ReturnHomeParams,
     SkillParams,
     SkillRegistry,
@@ -252,6 +282,10 @@ _LINK_LIMITS: Final = frozenset({"L-LINK", "L-FIND", "L-GCS"})
 # ground (Ta över, or a STOP once in LOITER) can no longer be steered from there, so L-GCS
 # flies home as the flight controller did without that bit. An RC-chosen mode stays.
 _GCS_HOME_HOLDS: Final = frozenset({"operator_stop", "operator_manual"})
+_RETURN_SPEED_MS: Final = 10.0  # a look's return to a point (not a search), at most
+_FLOOR_TOL_M: Final = 0.5  # below the map's floor by more than this: climb (laser lost)
+# A look's end after which the AI's silence held back meanwhile applies as usual.
+_INSPECT_AI_AFTER: Final = frozenset({"returned", "return_refused", "confirmed"})
 HOME_PARAMS: Final = ReturnHomeParams(reason="limit")
 _ISSUER_KIND: Final = {
     "operator": "operator",
@@ -289,6 +323,11 @@ class ExecutorOptions:
     takeoff_delay_after_arm_s: float = 0.0  # test hook (sim and SD_TEST=1 only)
     expected_params: Mapping[str, float] = field(default_factory=dict[str, float])  # PF6
     registry: SkillRegistry = SKILL_REGISTRY
+    # The onboard profile ("sim", "dev", "field"): a charter whose operation mode does not
+    # fit it is refused (ONB_OPERATION_MODE_MISMATCH). None: not checked (tests).
+    profile: str | None = None
+    # Where the height floor's map packs lie (``<floor_dir>/<floor_pack_id>/``).
+    floor_dir: Path | None = None
 
 
 @dataclass
@@ -358,6 +397,9 @@ class _IO:
         return self._ex.last_statustext
 
     def emit_event(self, type: str, data: dict[str, Any]) -> None:
+        if type.startswith("inspect."):
+            self._ex.emit_inspect(type, data)  # a closer look's own events, as they are
+            return
         self._ex.emit(type, data)
 
     async def capture_still(self, command_id: UUID) -> UUID | None:
@@ -369,6 +411,26 @@ class _IO:
         except TimeoutError:
             self._ex.emit("capture_timeout", {"command_id": str(command_id)})
             return None
+
+    async def capture_round(self, command_id: UUID, inspect_step: int) -> list[InspectShot]:
+        rounds = self._ex.capture_round
+        if rounds is None:  # no perception with rounds: one still from the main camera
+            still = await self.capture_still(command_id)
+            return [] if still is None else [InspectShot(still, "main")]
+        try:  # whatever the cameras do, the look goes on without the stills
+            shots = await asyncio.wait_for(rounds(command_id, inspect_step), 2 * _CAPTURE_LIMIT_S)
+        except TimeoutError:
+            self._ex.emit("capture_timeout", {"command_id": str(command_id)})
+            return []
+        return [InspectShot(sid, cam, tuple(dets)) for cam, sid, dets in shots]
+
+    def laser_state(self) -> LaserState | None:
+        laser = self._ex.laser
+        return None if laser is None else laser.state(self._ex.now_ms())
+
+    @property
+    def floor_pack(self) -> FloorPack | None:
+        return self._ex.floor_pack
 
     @property
     def keepouts(self) -> tuple[Keepout, ...]:
@@ -432,6 +494,18 @@ class Executor:
         # The downward laser (``LaserReader.state(now)`` for the height floor); None: none
         # is fitted, and the floor comes from the map alone.
         self.laser: LaserReader | None = None
+        # One round of a closer look's stills (``PerceptionLoop.capture_round``).
+        self.capture_round: (
+            Callable[[UUID, int], Awaitable[list[tuple[str, UUID, list[GeoDetectionMsg]]]]] | None
+        ) = None
+        self.floor_pack: FloorPack | None = None  # the charter's height floor map pack
+        self._inspect: InspectSession | None = None  # a closer look (``executor.inspect``)
+        # An order being checked: (candidate, position, look radius), whose cylinder the
+        # plan and the gate do not see (the charter allows flying over it).
+        self._inspect_pending: tuple[UUID, LatLon, float] | None = None
+        self._inspect_ai: LimitAction | None = None  # L-AI held back during a look
+        # A look's return to a point (not a search): (its order, the resume point before).
+        self._restore_resume: tuple[UUID, ResumePoint | None] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way
@@ -513,6 +587,12 @@ class Executor:
         payload = {"state": str(self.state), **(data or {})}
         log.info("executor.%s %s", type, payload)
         self.uplink.event(f"executor.{type}", severity, payload)
+
+    def emit_inspect(self, type: str, data: dict[str, Any]) -> None:
+        """A closer look's event (``inspect.*``), its data as the schema has it."""
+        severity: Severity = "warning" if type in (EVENT_ABORTED, EVENT_LASER_LOST) else "info"
+        log.info("%s %s", type, data)
+        self.uplink.event(type, severity, data)
 
     def on_vehicle_event(self, kind: str, details: dict[str, Any]) -> None:
         """Events from ``sd_mav.Vehicle`` (``executor.*`` pass through to the ground)."""
@@ -805,6 +885,8 @@ class Executor:
         self.active = None
         if self.state == S.RTL:
             return  # return home is done at LANDED
+        if self._inspect_skill_done(active):
+            return
         if self.state == S.HOLD and active.skill == "capture_stills":
             self._ack(active.command_id, "done")  # taken while hovering: no transition
             return
@@ -821,6 +903,10 @@ class Executor:
             reason = "find_hold"  # T27: at the hover point beside the find
         if active.skill in ("goto", "survey_sector", "resume"):
             self.resume_point = None  # finished: nothing left to resume
+        restore = self._restore_resume
+        if restore is not None and restore[0] == active.command_id:
+            # A look's return to where it stood: what was left to resume before the look.
+            self.resume_point, self._restore_resume = restore[1], None
         if active.ack_done:
             self._ack(active.command_id, "done")
         if active.skill == "takeoff":
@@ -832,6 +918,7 @@ class Executor:
 
     def _skill_failed(self, active: _Active, exc: SkillFailedError) -> None:
         self.active = None
+        self._inspect_failed(active, exc)
         rp = active.handler.resume_point(self.vehicle_state())
         if rp is not None:
             self.resume_point = rp
@@ -924,6 +1011,32 @@ class Executor:
             if spec.name == "takeoff"
             else HANDLERS[spec.name]()
         )
+        if isinstance(params, InspectDetectionParams):
+            if self._inspect is not None:
+                self._ack(cmd.command_id, "rejected", ("INSPECT_BUSY",))
+                return
+            if (
+                self.charter.overflight_allowed
+                and params.lat is not None
+                and params.lon is not None
+            ):
+                anchor = LatLon(lat=params.lat, lon=params.lon)
+                radius = look_radius_m(params.sigma95_m)
+                self._inspect_pending = (params.candidate_id, anchor, radius)
+        try:
+            self._plan_and_accept(cmd, spec, params, handler, target)
+        finally:
+            self._inspect_pending = None
+
+    def _plan_and_accept(
+        self,
+        cmd: SkillCommand,
+        spec: SkillSpec,
+        params: SkillParams,
+        handler: SkillHandler,
+        target: ExecutorState,
+    ) -> None:
+        """Plan the order, run the whole gate on the plan and take it, or answer why not."""
         ctx = self._plan_context(cmd.command_id)
         try:
             plan = handler.plan(params, ctx)
@@ -1012,6 +1125,9 @@ class Executor:
         target: ExecutorState,
     ) -> None:
         self._ack(cmd.command_id, "accepted")
+        was = self.state
+        if spec.name != "capture_stills":
+            self._inspect_finish("superseded", "override")  # a new order ends a look
         moves_on = spec.name in ("goto", "survey_sector")
         self._drop_active(stage="superseded", save_resume=not moves_on)
         if moves_on:
@@ -1024,6 +1140,8 @@ class Executor:
         reason = "ai_hold" if spec.name == "hold" else None
         if spec.name == "capture_stills":
             reason = self.hold_reason  # stills while hovering: the hover stays what it was
+        if isinstance(handler, InspectHandler):
+            self._inspect_begin(cmd, was)
         self._enter(target, hold_reason=reason, cause=f"skill:{spec.name}")
         self._start_active(_Active(cmd.command_id, spec.name, handler, plan, origin, cmd=cmd))
         self._ack(cmd.command_id, "running")
@@ -1128,6 +1246,7 @@ class Executor:
             resume_point=self.resume_point,
             clock=self.clock,
             keepouts=self.keepouts_in_force(),
+            floor_pack=self.floor_pack,
         )
 
     def _gate_request(self, cmd: SkillCommand, plan: SkillPlan) -> GateRequest:
@@ -1323,6 +1442,11 @@ class Executor:
             # only done for the first charter after a restart; the reads change nothing.
             await self._read_fence_limits()
         codes = self._charter_problems(charter)
+        pack = self.floor_pack
+        if not codes:
+            pack, code = await self._floor_pack_for(charter)
+            if code is not None:
+                codes = [code]
         if not codes and self.state not in ON_GROUND and self.charter is None:
             # After a restart in the air: the first charter is taken only when it names
             # the fence that is in the flight controller.
@@ -1346,6 +1470,7 @@ class Executor:
         if not accepted:
             return
         self.charter = charter
+        self.floor_pack = pack
         self.clearance = None  # a new charter version always needs a new clearance
         if self.state in ON_GROUND:
             self._enter(S.PREFLIGHT, cause="charter")
@@ -1358,7 +1483,38 @@ class Executor:
             return ["MISSION_STATE_INVALID"]
         if charter_violations(charter, self.hard_limits):
             return ["ONB_CHARTER_EXCEEDS_HARD_LIMITS"]
+        # The sim profile flies sim charters only, and only it does (spec 7.1). No mode
+        # (an older charter) fits any profile: it never flies over anyone.
+        profile, mode = self.options.profile, charter.operation_mode
+        if profile is not None and mode is not None and (profile == "sim") != (mode == "sim"):
+            return ["ONB_OPERATION_MODE_MISMATCH"]
         return []
+
+    async def _floor_pack_for(self, charter: MissionCharter) -> tuple[FloorPack | None, str | None]:
+        """The height floor's map pack the charter names, read from ``floor_dir`` (kept
+        when it is the one already read): (the pack, None), or (None, the refusal) when it
+        is not there or not the same (its sha256). No pack named: (None, None), and a
+        closer look then stays at its height."""
+        name, sha = charter.floor_pack_id, charter.floor_pack_sha256
+        if name is None or sha is None:
+            return None, None
+        have = self.floor_pack
+        if have is not None and have.name == name and have.sha256 == sha:
+            return have, None
+        folder = self.options.floor_dir
+        if folder is None:
+            self.emit("floor_pack_missing", {"floor_pack_id": name})
+            return None, "ONB_FLOOR_PACK_MISMATCH"
+        try:
+            pack = await asyncio.to_thread(load_floor_pack, folder / name)
+        except (OSError, FloorPackError, KeyError, ValueError) as exc:
+            self.emit("floor_pack_missing", {"floor_pack_id": name, "error": str(exc)[:200]})
+            return None, "ONB_FLOOR_PACK_MISMATCH"
+        if pack.sha256 != sha:
+            self.emit("floor_pack_mismatch", {"floor_pack_id": name})
+            return None, "ONB_FLOOR_PACK_MISMATCH"
+        self.emit("floor_pack_loaded", {"floor_pack_id": name})
+        return pack, None
 
     def on_clearance(self, c: ClearanceConfirmation, ref_id: UUID) -> None:
         self.clearance = ClearanceState(
@@ -1396,8 +1552,28 @@ class Executor:
         self._ack(ref_id, "done")
 
     def keepouts_in_force(self) -> tuple[Keepout, ...]:
-        """The ground's cylinders and the drone's own: what the gate and the plans use."""
-        return (*self.keepouts, *(k for k, _ in self.local_keepouts.values()))
+        """The ground's cylinders and the drone's own: what the gate and the plans use.
+        During a closer look over the candidate (and while its order is checked) not the
+        candidate's own (``InspectSession.suspends``)."""
+        local = [k for k, _ in self.local_keepouts.values()]
+        plane, s, pending = self.plane(), self._inspect, self._inspect_pending
+        if plane is None or (s is None and pending is None):
+            return (*self.keepouts, *local)
+
+        def off(k: Keepout, *, mine: bool) -> bool:
+            if s is not None:
+                return s.suspends(k, plane, local=mine)
+            if pending is None:
+                return False
+            cid, anchor, radius = pending
+            if not mine:
+                return k.source_id == cid
+            return math.dist(plane.xy(k.lat, k.lon), plane.point(anchor)) <= radius
+
+        return (
+            *(k for k in self.keepouts if not off(k, mine=False)),
+            *(k for k in local if not off(k, mine=True)),
+        )
 
     def on_detections(self, detections: Sequence[GeoDetectionMsg]) -> None:
         """Target detections from perception: one cylinder for each at least
@@ -1407,9 +1583,12 @@ class Executor:
         if plane is None:
             return
         now = self.now_ms()
+        look = self._inspect
         for d in detections:
             if d.score < KEEPOUT_SCORE_MIN or d.detection_id in self.local_keepouts:
                 continue
+            if look is not None and look.suspends_near(d.lat, d.lon, plane):
+                continue  # the target itself during its look: no cylinder around it
             k = Keepout(
                 keepout_id=new_id(),
                 lat=d.lat,
@@ -1670,6 +1849,8 @@ class Executor:
             self._run_limits(now)
         if self.state in _LINK_RULE_STATES and self.charter is not None and t.fc_connected:
             self._run_link_rule(now)
+        self._inspect_tick(now)
+        self._inspect_watch()
         if self._gcs_continue and self.state == S.HELD and t.fc_connected:
             self._gcs_home_from_hold()
         self._gcs_continue = False
@@ -1701,9 +1882,9 @@ class Executor:
             return
         if (
             active is None
-            or not active.ack_done
+            or active.cmd is None
             or active.skill in KEEPOUT_EXEMPT
-            or self.state not in (S.TRANSIT, S.SURVEY)
+            or self.state not in (S.TRANSIT, S.SURVEY, S.INSPECT)
             or plane is None
             or charter is None
         ):
@@ -1966,9 +2147,9 @@ class Executor:
             return
         if (
             active is None
-            or not active.ack_done
+            or active.cmd is None
             or active.skill in KEEPOUT_EXEMPT
-            or self.state not in (S.TRANSIT, S.SURVEY)
+            or self.state not in (S.TRANSIT, S.SURVEY, S.INSPECT)
         ):
             return
         if inside and not isinstance(active.handler, Replans) and self._climb_out(active):
@@ -2203,7 +2384,8 @@ class Executor:
                 gcs_continue=self._gcs_continue,
                 active_skill=self.active.skill if self.active else None,
                 taken_by=self._taken_by,
-                climbing_out=self._climbing_out(),
+                climbing_out=self._climbing_out() or self._inspect_climbing(),
+                inspect_start_alt_m=self._inspect_link_alt(),
             )
         )
         for action in actions:
@@ -2325,6 +2507,11 @@ class Executor:
         self.emit("gnss_spoof_suspected", {**data, "source_set_ack": result})
 
     def _apply_limit(self, action: LimitAction) -> None:
+        if action.limit == "L-AI" and self._inspect is not None:
+            # The AI going quiet changes nothing in a look, its wait or its return; the
+            # charter's rule applies once the look is over (``_inspect_finish``).
+            self._inspect_ai = action
+            return
         match action.kind:
             case "after_step":
                 self.ai_silent_after_step = True
@@ -2379,6 +2566,12 @@ class Executor:
                 self._internal(INTERNAL_ALT_GOTO, goto, plan, SendOrigin.LIMIT)
             case "find":
                 self._fly_to_find(action)
+            case "inspect_climb":
+                # The SD-link lost during a look: it ends, straight up to its start height.
+                self._inspect_finish("link_loss", "link_loss")
+                alt = action.data.get("alt_m")
+                if isinstance(alt, float | int):
+                    self._inspect_climb(float(alt), cause=action.limit, codes=(action.limit,))
             case "event":
                 pass
 
@@ -2502,6 +2695,384 @@ class Executor:
             circles(others, plane),
         )
 
+    # --- a closer look (``executor.inspect``) ------------------------------------------
+
+    def _inspect_begin(self, cmd: SkillCommand, was: ExecutorState) -> None:
+        """A look accepted: where the search broke off (the breakpoint) and the height."""
+        charter = self.charter
+        if charter is None:
+            raise RuntimeError("no charter installed")
+        params = InspectDetectionParams.model_validate(cmd.params)
+        v = self.vehicle_state()
+        rp = self.resume_point  # the interrupted order's, saved as it was dropped
+        breakpoint_: ResumePoint
+        if was == S.SURVEY and rp is not None and rp.kind == "survey":
+            breakpoint_ = rp
+        else:
+            breakpoint_ = GotoResumePoint(
+                command_id=cmd.command_id,
+                lat=v.lat,
+                lon=v.lon,
+                alt_m=max(v.alt_rel_home_m, 1.0),
+                speed_ms=min(_RETURN_SPEED_MS, charter.max_speed_ms),
+            )
+        lat = params.lat if params.lat is not None else v.lat
+        lon = params.lon if params.lon is not None else v.lon
+        self._inspect = InspectSession(
+            command_id=cmd.command_id,
+            candidate_id=params.candidate_id,
+            cmd=cmd,
+            overflight=charter.overflight_allowed,
+            anchor=LatLon(lat=lat, lon=lon),
+            radius_m=look_radius_m(params.sigma95_m),
+            breakpoint=breakpoint_,
+            saved_resume=rp,
+            start_alt_m=v.alt_rel_home_m,
+        )
+        self.emit(
+            "inspect_started",
+            {
+                "command_id": str(cmd.command_id),
+                "candidate_id": str(params.candidate_id),
+                "overflight": charter.overflight_allowed,
+                "breakpoint": breakpoint_.kind,
+                "start_alt_m": round(v.alt_rel_home_m, 1),
+            },
+        )
+
+    def _inspect_finish(self, cause: str, reason: InspectAbortReason | None = None) -> None:
+        """The look is over (``cause``). Before the return started, with ``reason``, the
+        ground hears ``inspect.aborted`` (the candidate goes back to ``ready``)."""
+        s = self._inspect
+        if s is None:
+            return
+        self._inspect = None
+        self._keepouts_changed = True  # the candidate's cylinder is in force again
+        if reason is not None and s.phase in SUSPENDED_PHASES:
+            self.emit_inspect(
+                EVENT_ABORTED,
+                InspectAborted(
+                    command_id=s.command_id, candidate_id=s.candidate_id, reason=reason
+                ).model_dump(mode="json"),
+            )
+        self.emit(
+            "inspect_ended",
+            {"command_id": str(s.command_id), "candidate_id": str(s.candidate_id), "cause": cause},
+        )
+        held, self._inspect_ai = self._inspect_ai, None
+        if held is not None and cause in _INSPECT_AI_AFTER:
+            self._apply_limit(held)  # the AI went quiet during the look: as usual now
+
+    def _inspect_skill_done(self, active: _Active) -> bool:
+        """A look's own orders ending well; True when handled here."""
+        s = self._inspect
+        if active.skill == INTERNAL_INSPECT_CLIMB:
+            target = self.target_of(Trigger.SKILL_DONE)
+            if isinstance(target, Refusal):
+                return True
+            if s is not None and s.phase == "return_climb":
+                self._enter(target, hold_reason="skill_done", cause="inspect climb done")
+                self._inspect_resume()
+            elif s is not None and s.phase == "climb":
+                s.phase = "await"  # up at the map's floor: the wait goes on
+                self._enter(target, hold_reason="inspect_await", cause="inspect climb done")
+            else:  # the link-loss climb: the link-loss rule goes on from this hover
+                self._enter(target, hold_reason="link_loss", cause="inspect climb done")
+            return True
+        if s is None or active.command_id != s.command_id:
+            return False
+        if not isinstance(active.handler, InspectHandler):
+            return False
+        target = self.target_of(Trigger.SKILL_DONE)
+        if isinstance(target, Refusal):
+            return False
+        h = active.handler
+        steps = h.steps
+        if active.ack_done:
+            self._ack(active.command_id, "done")
+        s.done, s.phase = True, "await"
+        s.await_until_ms = self.now_ms() + round(AWAIT_DECISION_S * 1000)
+        lowest: float | None = None
+        if steps is not None:
+            s.laser_seen, s.steps, s.floors = steps.laser_seen, steps.step, steps.floors
+            fl = steps.floors
+            if fl is not None and fl.ground_m is not None and steps.lowest_m is not None:
+                lowest = _above_m(steps.lowest_m - fl.ground_m)
+        self._enter(target, hold_reason="inspect_await", cause="inspect_detection done")
+        self.emit_inspect(
+            EVENT_DONE,
+            InspectDone(
+                command_id=s.command_id,
+                candidate_id=s.candidate_id,
+                end=h.end or "floor",
+                steps=s.steps,
+                lowest_above_ground_m=lowest,
+                still_ids=list(h.still_ids[:200]),
+                clear=steps.clear if steps is not None else False,
+            ).model_dump(mode="json"),
+        )
+        return True
+
+    def _inspect_failed(self, active: _Active, exc: SkillFailedError) -> None:
+        """A look's own order failed: the look ends (the usual hold follows)."""
+        s = self._inspect
+        if s is None:
+            return
+        if active.skill == INTERNAL_INSPECT_CLIMB and s.phase == "return_climb":
+            self.emit(
+                "inspect_return_refused", {"command_id": str(s.command_id), "codes": [exc.code]}
+            )
+            self._inspect_finish("return_refused")
+        elif active.command_id == s.command_id or (
+            active.skill == INTERNAL_INSPECT_CLIMB and s.phase == "climb"
+        ):
+            self._inspect_finish("failed", "failed")
+
+    def _inspect_climb(self, alt_m: float, *, cause: str, codes: tuple[str, ...] = ()) -> bool:
+        """Straight up from where the drone stops to ``alt_m`` (above home, never above the
+        ceiling), in an internal order (T30). False when it cannot."""
+        charter = self.charter
+        target = self.target_of(Trigger.INSPECT_CLIMB)
+        if charter is None or isinstance(target, Refusal):
+            return False
+        self._drop_active(stage="superseded", codes=codes)
+        v = self.vehicle_state()
+        alt = min(alt_m, charter.alt_max_agl_m)
+        speed = min(INSPECT_SPEED_MS, charter.max_speed_ms)
+        goto = GotoHandler()
+        ctx = self._plan_context(new_id())
+        goto.prepare(ctx, v.lat, v.lon, alt, speed, from_stop=True)
+        plan = goto_plan(ctx, v.lat, v.lon, alt, speed)
+        self.emit("inspect_climb", {"alt_m": round(alt, 1), "cause": cause})
+        self._enter(target, cause=cause)
+        self._internal(INTERNAL_INSPECT_CLIMB, goto, plan, SendOrigin.LIMIT)
+        return True
+
+    def _inspect_climbing(self) -> bool:
+        """A look's straight climb is under way (it is not cut short by the link rule)."""
+        return self.active is not None and self.active.skill == INTERNAL_INSPECT_CLIMB
+
+    def _inspect_link_alt(self) -> float | None:
+        """The height the SD-link rule climbs to when the link is lost now: a look's start
+        height while the look flies, waits or climbs; None otherwise."""
+        s = self._inspect
+        return None if s is None else s.start_alt_m
+
+    def _inspect_tick(self, now: int) -> None:
+        """While waiting: the laser lost below the map's floor without it, and the wait's
+        end (``AWAIT_DECISION_S``), which starts the return."""
+        s = self._inspect
+        if s is None or s.phase != "await" or self.state != S.HOLD:
+            return
+        if self._inspect_laser_lost(s, now):
+            return
+        until = s.await_until_ms
+        if until is not None and now >= until and self.active is None:
+            self.emit("inspect_await_timeout", {"command_id": str(s.command_id)})
+            self._inspect_return("timeout")
+
+    def _inspect_laser_lost(self, s: InspectSession, now: int) -> bool:
+        charter = self.charter
+        laser = self.laser.state(now) if self.laser is not None else None
+        if laser is not None and laser.confirmed:
+            s.laser_seen = True
+            return False
+        if not s.laser_seen or charter is None:
+            return False
+        v = self.vehicle_state()
+        home = charter.home.alt_amsl_m
+        floor_m = (
+            floor_at(
+                self.floor_pack,
+                v.lat,
+                v.lon,
+                flight_date=self.clock.utc_now().date(),
+                laser=None,
+                start_alt_amsl_m=home + s.start_alt_m,
+                laser_lost=True,
+            ).floor_lowest_amsl_m
+            - home
+        )
+        if v.alt_rel_home_m >= floor_m - _FLOOR_TOL_M:
+            return False
+        self.emit_inspect(
+            EVENT_LASER_LOST,
+            InspectLaserLost(command_id=s.command_id).model_dump(mode="json"),
+        )
+        s.phase = "climb"
+        if not self._inspect_climb(floor_m, cause="laser_lost", codes=("ONB_LASER_LOST",)):
+            s.phase = "await"
+        return True
+
+    def _inspect_watch(self) -> None:
+        """A look whose state is gone (STOP, FLY HOME, a takeover, a limit, a cancel, a
+        failsafe ...): it ends there, never resumed."""
+        s = self._inspect
+        if s is None:
+            return
+        a = self.active
+        match s.phase:
+            case "flying":
+                ok = self.state == S.INSPECT and a is not None and a.command_id == s.command_id
+            case "await":
+                ok = self.state == S.HOLD and self.hold_reason == "inspect_await"
+            case _:
+                ok = self.state == S.INSPECT and a is not None and a.skill == INTERNAL_INSPECT_CLIMB
+        if not ok:
+            reason = abort_reason(self.state, self.held_by, self.hold_reason, self._taken_by)
+            self._inspect_finish(f"left:{self.state}", reason)
+
+    def _inspect_return(self, cause: str) -> None:
+        """Back to where the search broke off: straight up to the start height first."""
+        s, charter = self._inspect, self.charter
+        if s is None or charter is None:
+            return
+        s.phase = "return_climb"  # the candidate's cylinder is in force from here
+        self._keepouts_changed = True
+        self.emit("inspect_return", {"command_id": str(s.command_id), "cause": cause})
+        v = self.vehicle_state()
+        up = min(s.start_alt_m, charter.alt_max_agl_m)
+        if v.alt_rel_home_m < up - GOTO_ALT_STEP_TOL_M and self._inspect_climb(
+            up, cause="inspect_return"
+        ):
+            return
+        self._inspect_resume()
+
+    def _inspect_resume(self) -> None:
+        """The return's second part: ``resume`` to the breakpoint, issued by the executor
+        itself (``rule:onboard``) and checked by the whole gate; refused, the drone hovers
+        and the ground hears why (``inspect_return_refused``)."""
+        s, charter = self._inspect, self.charter
+        if s is None or charter is None:
+            return
+        cmd = SkillCommand(
+            command_id=new_id(),
+            skill="resume",
+            params={},
+            issuer="rule:onboard",
+            rationale="Back to the breakpoint after a closer look.",
+            charter_version=charter.version,
+            based_on=StateRef(state_epoch=self.boot_id, state_seq=self.last_transition_state_seq),
+            approval=None,
+        )
+        self.resume_point = s.breakpoint  # also for a resume by hand when this is refused
+        handler = ResumeHandler()
+        ctx = self._plan_context(cmd.command_id)
+        codes: tuple[str, ...] = ()
+        try:
+            plan = handler.plan(ResumeParams(), ctx)
+        except PlanError as exc:
+            codes, plan = (exc.code,), None
+        if plan is not None:
+            route = [ctx.plane.xy(p.lat, p.lon) for p in plan.path]
+            if not route_clear(route, ctx.keepouts, ctx.plane, charter):
+                codes = ("KEEPOUT_VIOLATION",)
+            else:
+                decision = evaluate(self._gate_request(cmd, plan), self._gate_context(ctx.vehicle))
+                if decision.decision != "ALLOW":
+                    codes = tuple(decision.reason_codes) or ("ONB_GATE_DISAGREEMENT",)
+        target = self.target_of(skill_key("resume"))
+        if isinstance(target, Refusal):
+            codes = codes or (target.code or "ONB_INVALID_TRANSITION",)
+        if codes or plan is None or isinstance(target, Refusal):
+            self.emit(
+                "inspect_return_refused", {"command_id": str(s.command_id), "codes": list(codes)}
+            )
+            if self.state == S.HOLD and is_airborne(self.vehicle_state()):
+                self._side(self._loiter(SendOrigin.SKILL))
+            self._inspect_finish("return_refused")
+            return
+        self._enter(target, cause="inspect_return")
+        if s.breakpoint.kind == "goto":
+            self._restore_resume = (cmd.command_id, s.saved_resume)
+        self._start_active(
+            _Active(
+                cmd.command_id, "resume", handler, plan, SendOrigin.SKILL, ack_done=False, cmd=cmd
+            )
+        )
+        self._inspect_finish("returned")
+
+    def on_inspect_outcome(self, o: InspectOutcome, ref_id: UUID) -> None:
+        """The pilot's decision: "confirmed" hovers over the find for the next order;
+        anything else flies back to the breakpoint. Before the steps are over it ends
+        them first."""
+        s = self._inspect
+        if s is None or s.command_id != o.command_id or s.phase == "return_climb":
+            self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
+            return
+        self._ack(ref_id, "done")
+        self.emit("inspect_outcome", {"command_id": str(s.command_id), "outcome": o.outcome})
+        if self.state == S.INSPECT:
+            target = self.target_of(Trigger.ORDER_CANCEL)
+            if isinstance(target, Refusal):
+                return
+            self._drop_active(stage="done", save_resume=False)
+            self._enter(target, hold_reason="inspect_await", cause="inspect outcome")
+            if o.outcome == "confirmed":
+                self._side(self._loiter(SendOrigin.SKILL))
+        if o.outcome == "confirmed":
+            if self.state == S.HOLD:
+                self.hold_reason = "skill_done"  # hovering over the find for the next order
+                self._save()
+            self._inspect_finish("confirmed")
+            return
+        self._inspect_return(o.outcome)
+
+    def on_inspect_lower(self, lower: InspectLower, ref_id: UUID) -> None:
+        """The pilot's yes to going below the automatic floor."""
+        s, a = self._inspect, self.active
+        if (
+            s is None
+            or s.command_id != lower.command_id
+            or s.phase != "flying"
+            or a is None
+            or not isinstance(a.handler, InspectHandler)
+        ):
+            self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
+            return
+        a.handler.lower()
+        self.emit("inspect_lower", {"command_id": str(s.command_id)})
+        self._ack(ref_id, "done")
+
+    def _inspect_progress(self) -> InspectProgress | None:
+        s = self._inspect
+        if s is None:
+            return None
+        a = self.active
+        steps = None
+        if a is not None and a.command_id == s.command_id and isinstance(a.handler, InspectHandler):
+            steps = a.handler.steps
+        fl = steps.floors if steps is not None else s.floors
+        step = steps.step if steps is not None else s.steps
+        phase: InspectPhase
+        if s.phase == "flying":
+            phase = steps.phase if steps is not None else "approach"
+        elif s.phase == "return_climb":
+            phase = "return"
+        else:
+            phase = "await"
+        ground = fl.ground_m if fl is not None else None
+        v = self.vehicle_state()
+
+        def above(m: float | None) -> float | None:
+            return None if ground is None or m is None else _above_m(m - ground)
+
+        left = None
+        if s.phase == "await" and s.await_until_ms is not None:
+            left = max(0.0, (s.await_until_ms - self.now_ms()) / 1000)
+        return InspectProgress(
+            command_id=s.command_id,
+            candidate_id=s.candidate_id,
+            step=step,
+            phase=phase,
+            above_ground_m=above(v.alt_rel_home_m),
+            floor_auto_above_ground_m=above(fl.auto_m if fl else None),
+            floor_lowest_above_ground_m=above(fl.lowest_m if fl else None),
+            floor_reason=fl.reason if fl else None,
+            laser_confirmed=fl.laser_confirmed if fl else False,
+            await_left_s=left,
+        )
+
     # --- snapshot and persistence --------------------------------------------------------
 
     def snapshot(self) -> StateSnapshot:
@@ -2553,6 +3124,7 @@ class Executor:
             tick_ms_p95=round(p95, 2),
             sector_progress={},
             link_loss_phase=self.link_rule.phase,
+            inspect=self._inspect_progress(),
             find_hold_keepout_id=(
                 self.link_rule.plan.keepout_id
                 if self.link_rule.find_active and self.link_rule.plan is not None
@@ -2618,6 +3190,10 @@ class Executor:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _above_m(m: float) -> float:
+    return round(min(1000.0, max(0.0, m)), 1)
 
 
 def _utc(clock: Clock) -> str:

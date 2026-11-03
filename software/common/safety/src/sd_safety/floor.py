@@ -29,8 +29,9 @@ this is exactly the owner's "highest tree within 10 m". Then:
   take it below the map's. Its reading is of the ground under the drone: it counts at the
   point :func:`floor_at` is asked about (the caller passes it only for the drone's own
   position) and, along a path, within ``LASER_VALID_RADIUS_M`` of the path's first point
-  (where the drone is). A laser lost during the look counts as none (``laser_lost``), and
-  so does a reading that is not a finite number;
+  (where the drone is). A laser lost during the look counts as none (``laser_lost``). The
+  laser's state is ``sd_schemas.rangefinder.LaserState`` (re-exported here), which refuses
+  a value that is not a finite number;
 - within ``POWERLINE_ZONE_M`` of a known line, horizontally, the floor is the height the
   look started at (a line of one point is a pole, with the zone around it);
 - the auto floor (no pilot's click) is also at least ``AUTO_FLOOR_ABOVE_GROUND_M`` above
@@ -83,6 +84,7 @@ from sd_safety.floor_pack import (
 from sd_safety.targets import Xy, point_segment_distance
 from sd_schemas.base import LatLon
 from sd_schemas.inspect import AUTO_FLOOR_ABOVE_GROUND_M, FloorReason
+from sd_schemas.rangefinder import LaserState
 
 __all__ = [
     "FloorPack",
@@ -98,26 +100,6 @@ Ints = NDArray[np.int64]
 
 _UNKNOWN_TOP_M: Final = FLOOR_UNKNOWN_TREE_M + FLOOR_UNDERESTIMATE_M + FLOOR_GROWTH_MAX_M
 _REACH: Final = math.ceil(FLOOR_TREE_RADIUS_M) + 1  # cells either side of P's to look at
-
-
-@dataclass(frozen=True, slots=True)
-class LaserState:
-    """The downward laser as the executor sees it; ``None`` instead of one: none fitted.
-
-    Structurally identical to ``sd_schemas.rangefinder.LaserState`` (TN-4, #181), which
-    replaces this one when it lands. ``surface_amsl_m`` (the highest surface it saw over
-    the confirmation window) is set exactly when ``confirmed``; ``min_range_m`` is the
-    tested minimum range from the configuration (GRF-250: 10, TF02-Pro: 0).
-    """
-
-    confirmed: bool
-    surface_amsl_m: float | None
-    min_range_m: float
-    distance_m: float | None = None
-
-    def __post_init__(self) -> None:
-        if self.confirmed != (self.surface_amsl_m is not None):
-            raise ValueError("surface_amsl_m is set exactly when the laser is confirmed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,11 +243,9 @@ def _floor_xy(
 
 def _laser_floor(laser: LaserState | None, laser_xy: Xy, p: Xy) -> float | None:
     """The floor the laser sets at P, or None when it does not count there: none fitted,
-    not confirmed, a reading that is not a finite number (``max`` would drop it and keep
-    the map's lower floor), or it saw the ground too far from P."""
+    not confirmed, or it saw the ground too far from P. (``LaserState`` refuses a value
+    that is not a finite number, which ``max`` would drop, keeping the map's lower floor.)"""
     if laser is None or laser.surface_amsl_m is None or not laser.confirmed:
-        return None
-    if not (math.isfinite(laser.surface_amsl_m) and math.isfinite(laser.min_range_m)):
         return None
     if math.dist(p, laser_xy) > LASER_VALID_RADIUS_M:
         return None
