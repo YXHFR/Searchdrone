@@ -153,3 +153,35 @@ def test_fusion_resumes_from_loaded_tracks() -> None:
     assert again.add(s1) is None and again.add(s2) is None
     step = again.add(sighting(0.5, 0, t=2))
     assert step is not None and not step.created
+
+
+def test_a_closer_looks_picture_joins_its_target_whatever_the_radius() -> None:
+    """test_inspect_stills_join_target (fusion part): forced onto the target, no new
+    candidate and no merge; the close-ups' small sigma pulls the position and shrinks it."""
+    f = Fusion()
+    target = f.add(sighting(0, 0, sigma=6.0, t=0))
+    other = f.add(sighting(30, 0, sigma=6.0, t=1))
+    assert target is not None and other is not None
+    t = f.tracks[target.candidate_id]
+    t.state = CandidateState.INSPECTING
+    far = sighting(14, 0, sigma=1.0, t=2)  # beyond the 10 m fusion radius
+    step = f.add(far, force_candidate_id=target.candidate_id)
+    assert step is not None and step.candidate_id == target.candidate_id
+    assert not step.created and step.merged == ()
+    assert step.distance_m == pytest.approx(14, abs=0.05)
+    assert len(f.tracks) == 2 and f.tracks[other.candidate_id].state is CandidateState.NEW
+    assert t.sigma95_m == SIGMA_MIN_M  # 1/sqrt(1/36 + 1) floored at 2 m
+    assert distance_m(*at(14, 0), t.lat, t.lon) < 1.0  # the close-up weighs 36 times more
+
+
+def test_a_forced_picture_is_fused_as_usual_when_its_target_cannot_take_it() -> None:
+    f = Fusion()
+    a = f.add(sighting(0, 0))
+    assert a is not None
+    f.tracks[a.candidate_id].state = CandidateState.REJECTED
+    closed = f.add(sighting(1, 0), force_candidate_id=a.candidate_id)
+    assert closed is not None and closed.created
+    other_class = f.add(sighting(1, 0, label="red_block"), force_candidate_id=closed.candidate_id)
+    assert other_class is not None and other_class.created
+    unknown = f.add(sighting(1.5, 0), force_candidate_id="no-such-candidate")
+    assert unknown is not None and unknown.candidate_id == closed.candidate_id

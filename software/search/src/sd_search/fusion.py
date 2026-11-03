@@ -12,6 +12,12 @@ up closer than the radius are merged: the older stays, the younger becomes ``mer
 with ``merged_into`` set; its observations stay where they are. Nothing merges once a
 person has decided on either, or while one is being inspected.
 
+A closer look (``inspect_detection``) flies over one candidate and photographs it from
+lower and lower. Its pictures of that target join the target whatever the radius
+(``force_candidate_id``): they start no new candidate and merge nothing. Being sharper
+and taken from lower, they have a smaller sigma, so they weigh more in the refit and the
+position (and the keep-out cylinder around it, 30 m + sigma) tightens.
+
 Pure and deterministic: the same detections in the same order give the same candidates.
 A new candidate's id is its first detection's id, so a restart that replays the same
 detections cannot create a second one.
@@ -71,6 +77,8 @@ class Sighting:
     px_size: float
     captured_utc: datetime
     has_crop: bool = False
+    command_id: str | None = None  # the order its still was taken during
+    px_per_m: float | None = None  # its still's detail (which camera, at what height)
 
 
 @dataclass
@@ -157,11 +165,21 @@ class Fusion:
             self.tracks[t.candidate_id] = t
             self.seen.update(s.detection_id for s in t.sightings)
 
-    def add(self, s: Sighting) -> Step | None:
-        """Fuse one sighting; ``None`` if this detection was fused before."""
+    def add(self, s: Sighting, force_candidate_id: str | None = None) -> Step | None:
+        """Fuse one sighting; ``None`` if this detection was fused before.
+
+        ``force_candidate_id``: a closer look's picture of its target. It joins that
+        candidate, when it is open and of the sighting's class, however far it lies, and
+        merges nothing; otherwise the sighting is fused as usual."""
         if s.detection_id in self.seen:
             return None
         self.seen.add(s.detection_id)
+        target = None if force_candidate_id is None else self.tracks.get(force_candidate_id)
+        if target is not None and target.open and target.label == s.label:
+            d = distance_m(target.lat, target.lon, s.lat, s.lon)
+            target.sightings.append(s)
+            target.refit()
+            return Step(target.candidate_id, created=False, distance_m=d)
         best: tuple[float, datetime, str] | None = None
         for t in self.tracks.values():
             if t.label != s.label or not t.open:

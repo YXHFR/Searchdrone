@@ -39,7 +39,20 @@ _LATEST = (
 _DETECTION = (
     "d.detection_id::text AS detection_id, d.seq, d.still_id::text AS still_id, d.label, "
     "d.score, ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon, d.sigma95_m, d.px_size, d.bbox, "
-    "d.crop_box, d.crop_path IS NOT NULL AS has_crop, s.captured_utc"
+    "d.crop_box, d.crop_path IS NOT NULL AS has_crop, s.captured_utc, "
+    "s.command_id::text AS command_id, s.px_per_m AS still_px_per_m, "
+    # A closer look's still: the candidate the order looks at and its uncertainty then,
+    # as the ground filled them in (only well-formed values; the order passed the gate).
+    "CASE WHEN look.params->>'candidate_id' ~* "
+    "'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "
+    "THEN lower(look.params->>'candidate_id') END AS inspect_candidate_id, "
+    "CASE WHEN jsonb_typeof(look.params->'sigma95_m') = 'number' "
+    "THEN (look.params->>'sigma95_m')::float END AS inspect_sigma95_m"
+)
+# The stills and, for a closer look's, its order (``_DETECTION`` reads both).
+_STILL_AND_LOOK = (
+    "JOIN perception_stills s ON s.still_id = d.still_id "
+    "LEFT JOIN commands look ON look.id = s.command_id AND look.skill = 'inspect_detection' "
 )
 
 
@@ -84,6 +97,7 @@ _ROUND = {
     "sigma95_m": 2,
     "px_size": 2,
     "distance_m": 2,
+    "still_px_per_m": 3,
 }
 
 
@@ -115,8 +129,7 @@ class CandidateRepo:
     async def feed(self, mission_id: str, after_seq: int, limit: int) -> list[dict[str, Any]]:
         """The mission's target detections after ``after_seq``, oldest first."""
         rows = await self._all(
-            f"SELECT {_DETECTION} FROM detections d "  # noqa: S608 - constants only
-            "JOIN perception_stills s ON s.still_id = d.still_id "
+            f"SELECT {_DETECTION} FROM detections d {_STILL_AND_LOOK}"  # noqa: S608 - constants
             "WHERE d.mission_id = :m AND d.kind = 'target' AND d.seq > :after "
             "ORDER BY d.seq LIMIT :n",
             m=mission_id,
@@ -148,8 +161,7 @@ class CandidateRepo:
         rows = await self._all(
             f"SELECT o.candidate_id::text AS candidate_id, {_DETECTION} "  # noqa: S608
             "FROM candidate_observations o JOIN detections d ON d.detection_id = o.detection_id "
-            "JOIN perception_stills s ON s.still_id = d.still_id "
-            "WHERE d.mission_id = :m ORDER BY d.seq",
+            f"{_STILL_AND_LOOK}WHERE d.mission_id = :m ORDER BY d.seq",
             m=mission_id,
         )
         out: dict[str, list[dict[str, Any]]] = {}
@@ -167,6 +179,17 @@ class CandidateRepo:
             ids=candidate_ids,
         )
         return {str(r["c"]) for r in rows}
+
+    async def looks_done(self, mission_id: str, limit: int) -> list[dict[str, Any]]:
+        """The ``inspect.done`` events the onboard computer sent in the mission (their
+        payloads), oldest first."""
+        rows = await self._all(
+            "SELECT payload FROM events WHERE mission_id = :m AND type = 'inspect.done' "
+            "AND payload->>'source' = 'onboard' ORDER BY t, id LIMIT :n",
+            m=mission_id,
+            n=limit,
+        )
+        return [dict(_json(r["payload"])) for r in rows]
 
     # --- the search service's writes -------------------------------------------------
 

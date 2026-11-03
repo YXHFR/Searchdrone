@@ -34,6 +34,7 @@ from sd_search.probmap.grid import Floats, Grid
 
 __all__ = [
     "DETECTORS",
+    "PAIR_DETAIL_RATIO",
     "PERSON_WIDTH_M",
     "PLAN_CAMERA",
     "SAME_MOMENT_S",
