@@ -23,7 +23,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from flow_rig import H, Rig, rig  # pyright: ignore[reportMissingImports]
-from test_candidate_decisions import decide, person  # pyright: ignore[reportMissingImports]
+from test_candidate_decisions import (  # pyright: ignore[reportMissingImports]
+    decide,
+    person,
+    view,
+)
 from test_candidates import person as seen_at  # pyright: ignore[reportMissingImports]
 from test_inspect_order import flying_with  # pyright: ignore[reportMissingImports]
 from test_orders import order, wait_order_status  # pyright: ignore[reportMissingImports]
@@ -250,9 +254,69 @@ async def test_another_order_replaces_the_look(r: Rig) -> None:
         headers=H,
     )
     assert res.status_code == 201, res.text
+
+    async def ended() -> bool:
+        return (await looks(r, mid))[0]["outcome"] is not None
+
+    await r.until(ended, 5, "the look replaced once the drone took the order")
     (look,) = await looks(r, mid)
     assert look["outcome"] == "resumed_by_pilot" and look["detail"] == "hold"
     assert (await card(r.panel, cid))["card"]["state"] == "ready"
+
+
+async def test_an_order_the_drone_refuses_leaves_the_look_open(r: Rig) -> None:
+    """Only an order the drone took ends the look: one it refuses (or the link loses)
+    leaves the drone looking, and the pilot's decision still reaches it."""
+    mid, cid, sent = await started(r)
+    await event(r, "inspect.done", **done(sent))
+    r.onboard.order_outcome = "rejected"
+    hold = await r.panel.post(
+        f"/api/v1/missions/{mid}/commands",
+        json={"client_command_id": str(new_id()), "skill": "hold", "params": {}},
+        headers=H,
+    )
+    assert hold.status_code == 201, hold.text
+    await wait_order_status(r, mid, hold.json()["command"]["id"], "rejected_onboard")
+    (look,) = await looks(r, mid)
+    assert look["outcome"] is None and look["phase"] == "await"
+    assert (await card(r.panel, cid))["card"]["state"] == "inspecting"
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, cid, "reject")
+        assert res.status_code == 200, res.text
+    await r.until(lambda: r.onboard.looks, 5, "InspectOutcome")
+    (told,) = r.onboard.looks
+    assert isinstance(told, InspectOutcome) and told.outcome == "rejected"
+
+
+@pytest.mark.parametrize("decision", ["unsure", "reject", "confirm"])
+async def test_during_a_look_an_observers_decision_only_tells_the_pilot(
+    r: Rig, decision: str
+) -> None:
+    """Owner decision: during a look only the pilot moves the drone. An observer's mark
+    is recorded and shown, the candidate stays ``inspecting`` and nothing goes onboard;
+    the pilot's decision after it ends the look."""
+    mid, cid, sent = await started(r)
+    await event(r, "inspect.done", **done(sent))
+    async with person(r, "observer", "olle") as observer:
+        if decision == "confirm":
+            await view(observer, cid)
+        res = await decide(observer, cid, decision)
+        assert res.status_code == 200, res.text
+        assert res.json()["card"]["state"] == "inspecting"
+        assert res.json()["decisions"][-1]["decision"] == decision
+    (look,) = await looks(r, mid)
+    assert look["outcome"] is None and look["phase"] == "await"
+    assert not r.onboard.looks
+    chat = (await r.panel.get(f"/api/v1/missions/{mid}/chat")).json()["items"]
+    assert any("Piloten bestämmer" in m["text"] for m in chat)
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, cid, "unsure")
+        assert res.status_code == 200, res.text
+        assert res.json()["card"]["state"] == "ready"
+    await r.until(lambda: r.onboard.looks, 5, "InspectOutcome")
+    (told,) = r.onboard.looks
+    assert isinstance(told, InspectOutcome) and told.outcome == "unsure"
+    assert (await looks(r, mid))[0]["outcome"] == "unsure"
 
 
 async def test_the_drone_refusing_the_order_ends_the_look(r: Rig) -> None:
@@ -331,7 +395,8 @@ async def charter_again(r: Rig, mid: str, **approval: Any) -> Any:
 
 async def test_the_operation_mode_and_the_permit(r: Rig) -> None:
     """Sim and exercise may fly over the candidate; live only with the permit, which the
-    pilot sets (it counts from the next charter approval). Without a pick on the card the
+    pilot sets (granting it counts from the next charter approval; revoking it at once, see
+    ``test_revoking_the_permit_stops_overflight_at_once``). Without a pick on the card the
     mode in force stays."""
     res = await r.panel.get("/api/v1/permit")
     assert res.json() == {"specific_category_ref": "", "allow_overflight_live": False}
@@ -350,6 +415,38 @@ async def test_the_operation_mode_and_the_permit(r: Rig) -> None:
     assert res.status_code == 200
     exercise = await charter_again(r, mid, operation_mode="exercise")
     assert exercise.operation_mode == "exercise" and exercise.overflight_allowed is True
+
+
+async def test_revoking_the_permit_stops_overflight_at_once(r: Rig) -> None:
+    """The live charter was approved with the permit; the pilot revokes it. From then on
+    no look starts (the drone's charter still allows overflight) until a new charter:
+    neither the pilot's "Titta närmare" nor the click on a card made before."""
+    good = {"specific_category_ref": "OP-123", "allow_overflight_live": True}
+    assert (await r.panel.put("/api/v1/permit", json=good, headers=H)).status_code == 200
+    r.onboard.order_outcome = "running"
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="live")
+    assert r.onboard.charters[-1].charter.overflight_allowed is True
+    out = await order(r, d, "inspect_detection", {"candidate_id": "K1"}, want="PENDING_APPROVAL")
+    assert (await r.panel.put("/api/v1/permit", json={}, headers=H)).status_code == 200
+    res = await r.approve(str(out["approval_id"]))
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "rejected", res.text
+    cmd = await r.flow.repo.command(out["command_id"])
+    assert cmd is not None and str(cmd.status) == "rejected_by_gate"
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, str(det.detection_id), "inspect")
+        assert res.status_code == 409 and res.json()["code"] == "INSPECT_REFUSED", res.text
+        assert {"code": "OVERFLIGHT_NOT_ALLOWED"} in res.json()["errors"]
+    assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+    assert await looks(r, mid) == []
+    # No cylinder is suspended for a look under the revoked permit either.
+    mission = await r.flow.open_mission_of(mid)
+    ctx = await r.flow.gate_context(mission)
+    facts = await inspections.gate_facts(
+        r.flow, mission, ctx, {"candidate_id": str(det.detection_id)}
+    )
+    assert facts.suspended_keepout_ids == ()
 
 
 async def test_a_candidate_closed_just_before_the_order_goes_stops_it(r: Rig) -> None:

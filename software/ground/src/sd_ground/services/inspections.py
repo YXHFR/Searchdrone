@@ -20,7 +20,9 @@ The gate gets the look's facts here (``gate_facts``): the open look, the candida
 look may start on, the candidate's own cylinder when the look may fly over it, and the
 height floor along the way (from the charter's map pack, when the ground has it).
 The permit for overflight in ``live`` (``permit``) is the ground's; a charter approved
-afterwards carries it as ``overflight_allowed``.
+afterwards carries it as ``overflight_allowed``. Revoking it counts at once: until the
+next charter no look starts (``refuse_revoked``), since the drone's charter still allows
+overflight.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from sd_ground.logging import get_logger
 from sd_safety.floor import floor_along
 from sd_safety.floor_pack import FloorPack, FloorPackError, load_floor_pack
 from sd_schemas.base import LatLon, new_id
-from sd_schemas.gate import GateContext, GateFloor
+from sd_schemas.gate import GateContext, GateDecision, GateFloor
 from sd_schemas.inspect import (
     AWAIT_DECISION_S,
     EVENT_ABORTED,
@@ -59,6 +61,7 @@ from sd_schemas.inspect import (
     PermitChanged,
 )
 from sd_schemas.link import InspectLower, InspectOutcome
+from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.search import priority_class
 from sd_schemas.skills import CANDIDATE_NUMBER_PATTERN
 
@@ -77,7 +80,9 @@ __all__ = [
     "on_order_end",
     "on_progress",
     "overflight_allowed",
+    "overflight_revoked",
     "permit",
+    "refuse_revoked",
     "replaced",
     "set_permit",
     "started",
@@ -185,7 +190,8 @@ def permit(flow: MissionFlow) -> Permit:
 
 def set_permit(flow: MissionFlow, new: Permit, *, by: str) -> Permit:
     """The pilot's change (until the ground restarts; the config is the lasting setting).
-    It counts from the next charter approval, logged as ``permit.changed``."""
+    Granting it counts from the next charter approval, revoking it at once
+    (``overflight_revoked``); logged as ``permit.changed``."""
     flow.permit = new
     changed = PermitChanged(
         changed_by=by,
@@ -209,6 +215,40 @@ def overflight_allowed(flow: MissionFlow, mode: str | None) -> bool:
         return True
     p = permit(flow)
     return p.allow_overflight_live and bool(p.specific_category_ref.strip())
+
+
+def overflight_revoked(flow: MissionFlow, charter: Any) -> bool:
+    """The charter in force allows overflight, but the permit no longer does: the pilot
+    revoked it (``PUT /api/v1/permit``) or the ground restarted without it. A narrowing
+    counts at once, not from the next charter. The drone still holds the charter that
+    allows it, so no look may start until a new charter is approved (``refuse_revoked``)."""
+    return (
+        charter is not None
+        and charter.overflight_allowed
+        and not overflight_allowed(flow, charter.operation_mode)
+    )
+
+
+def refuse_revoked(flow: MissionFlow, ctx: GateContext, gate: GateDecision) -> GateDecision:
+    """The gate's answer for a look, refused (``OVERFLIGHT_NOT_ALLOWED``) when the permit
+    behind the charter's overflight was revoked."""
+    if not overflight_revoked(flow, ctx.charter):
+        return gate
+    codes = [
+        "OVERFLIGHT_NOT_ALLOWED",
+        *(c for c in gate.reason_codes if c != "OVERFLIGHT_NOT_ALLOWED"),
+    ]
+    rules = ["R-OVERFLIGHT", *(r for r in gate.rule_ids if r != "R-OVERFLIGHT")]
+    return gate.model_copy(
+        update={
+            "decision": "REJECT",
+            "reason_codes": codes,
+            "rule_ids": rules,
+            "message_sv": GATE_REASON_CODES["OVERFLIGHT_NOT_ALLOWED"],
+            "details": {**gate.details, "permit_revoked": True},
+            "required_confirmations": [],
+        }
+    )
 
 
 # --- the order: its target and its card -----------------------------------------------------
@@ -306,7 +346,8 @@ async def gate_facts(
     active = next((x for x in await r.open_looks() if x.mission_id == mid), None)
     cid = str(params.get("candidate_id", "")).lower()
     suspended: tuple[Any, ...] = ()
-    if ctx.charter is not None and ctx.charter.overflight_allowed:
+    over = ctx.charter is not None and ctx.charter.overflight_allowed
+    if over and not overflight_revoked(flow, ctx.charter):
         suspended = tuple(k.keepout_id for k in ctx.keepouts if str(k.source_id).lower() == cid)
     return ctx.model_copy(
         update={
@@ -377,7 +418,9 @@ async def started(flow: MissionFlow, mission: Mission, cmd: Command, *, by: str)
         mission_id=str(mission.id),
         started_by=by,
         operation_mode=mode,
-        overflight=charter is not None and charter.overflight_allowed,
+        overflight=charter is not None
+        and charter.overflight_allowed
+        and not overflight_revoked(flow, charter),
         now=flow.now(),
     )
     look_row = await r.look(str(cmd.id)) if ok else None
@@ -474,11 +517,14 @@ async def on_order_end(flow: MissionFlow, cmd: Command, status: str, reason: str
         await _end(flow, look, outcome, detail=reason)
 
 
-async def replaced(flow: MissionFlow, mission: Mission, cmd: Command) -> None:
-    """Another order goes to the drone while a look is open: that order is in force."""
+async def replaced(flow: MissionFlow, cmd: Command) -> None:
+    """Another order is in force on the drone (it took it: ``accepted``, ``running`` or
+    ``done``): that order replaces the look. Not before: an order the link loses or the
+    drone refuses leaves the drone looking, and the look stays open so that the pilot's
+    decision still reaches it (``decided``)."""
     if cmd.skill in _KEEPS_LOOK:
         return
-    mid = str(mission.id)
+    mid = str(cmd.mission_id)
     for row in await _repo(flow).open_looks():
         if row.mission_id == mid:
             look = await _open(flow, row.command_id)

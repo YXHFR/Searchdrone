@@ -167,7 +167,15 @@ async def set_status(
         _publish(flow, cmd)
         if cmd.skill == _INSPECT:
             await inspections_service.on_order_end(flow, cmd, status, reason)
+        elif status in _IN_FORCE and cmd.skill not in _GROUND_SKILLS:
+            # The drone took another order: it ends a look (not when the order is only
+            # sent, or the link or the drone refuses it).
+            await inspections_service.replaced(flow, cmd)
     return cmd
+
+
+# The drone's answers that say an order is in force onboard.
+_IN_FORCE: Final = frozenset({"accepted", "running", "done"})
 
 
 # --- submit ----------------------------------------------------------------------------
@@ -303,6 +311,8 @@ async def submit(
             phase="submit",
         )
         gate = _explained(skill, params, ctx, evaluate(req, ctx))
+        if skill == _INSPECT:
+            gate = inspections_service.refuse_revoked(flow, ctx, gate)
         if issuer_kind == "brain" and skill == "follow_path" and gate.decision != "REJECT":
             gate = await _drawn_path_check(flow, mission_id, params) or gate
         now = flow.now()
@@ -436,10 +446,10 @@ async def _inspect_params(
     """``inspect_detection`` with its target filled in by the ground: where the candidate
     lies, its uncertainty and its keep-out radius. The AI names the candidate by its
     number ("K3"), translated here. A candidate's id is its first detection's, so the
-    lookup goes through that detection (and a detection no card holds yet is looked at
-    where it lies). For now an order that names a ``detection_id`` (version 1) is read
-    as the candidate holding it. An unknown candidate stays without a target, and the
-    gate refuses it."""
+    lookup goes through that detection. For now an order that names a ``detection_id``
+    (version 1) is read as the candidate holding it. An unknown candidate stays without a
+    target, and the gate refuses it; so does one that is not open (R-INSPECT-TARGET), a
+    detection no card holds yet included."""
     # The target is never the caller's.
     given = {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
     if "detection_id" in given and "candidate_id" not in given:
@@ -656,6 +666,8 @@ async def estimate(
         phase="estimate",
     )
     gate = _explained(skill, params, ctx, evaluate(req, ctx))
+    if skill == _INSPECT:
+        gate = inspections_service.refuse_revoked(flow, ctx, gate)
     duration = None
     v = ctx.vehicle
     lat, lon = params.get("lat"), params.get("lon")
@@ -722,13 +734,15 @@ async def _dispatch(
         await set_status(flow, str(cmd.id), "rejected_by_gate", "SCHEMA_INVALID")
         return
     if cmd.skill == _INSPECT:
+        if inspections_service.overflight_revoked(flow, row.body):
+            # The permit was revoked after the gate said yes: the look does not go.
+            await set_status(flow, str(cmd.id), "rejected_by_gate", "OVERFLIGHT_NOT_ALLOWED")
+            return
         # The look starts now: the pilot's click, or the click on the AI's card.
         by = cmd.issuer_ref if approval is None else str(approval.decided_by)
         if not await inspections_service.started(flow, mission, cmd, by=by):
             await set_status(flow, str(cmd.id), "rejected_by_gate", "INSPECT_TARGET_CLOSED")
             return
-    else:
-        await inspections_service.replaced(flow, mission, cmd)
     spec = flow.registry.get(cmd.skill)
     ref = None
     if approval is not None and spec is not None:
@@ -839,6 +853,8 @@ async def decide(
             ),
             ctx,
         )
+        if cmd.skill == _INSPECT:
+            gate = inspections_service.refuse_revoked(flow, ctx, gate)
         cmd_row = {
             "id": str(cmd.id),
             "mission_id": str(mission.id),

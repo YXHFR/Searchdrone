@@ -110,7 +110,9 @@ CANDIDATE_TRANSITIONS: Final[
 SYSTEM_TRANSITIONS: Final[Mapping[CandidateState, CandidateState]] = {_S.INSPECTING: _S.READY}
 # The pilot and the observer may both confirm or reject a find (a second pair of eyes on
 # the pictures); moving the drone closer, sending it back to the search and undoing a
-# decision are the pilot's.
+# decision are the pilot's. During a look only the pilot moves the drone: an observer's
+# confirm, reject or unsure is recorded for the pilot, the candidate stays ``inspecting``
+# and nothing goes to the drone (owner decision 2026-11-03).
 PILOT_ONLY: Final = frozenset({"inspect", "resume", "reopen"})
 PEOPLE: Final = frozenset({"pilot", "observer"})
 
@@ -357,7 +359,7 @@ def _person(who: Principal, test_rig: bool) -> str:
     return who.session_id
 
 
-def _next_state(body: CandidateDecision) -> Callable[[str], str | None]:
+def _next_state(body: CandidateDecision, *, pilot: bool) -> Callable[[str], str | None]:
     allowed = CANDIDATE_TRANSITIONS[body.decision]
 
     def step(state: str) -> str | None:
@@ -368,6 +370,9 @@ def _next_state(body: CandidateDecision) -> Callable[[str], str | None]:
             raise CandidateWriteError(
                 "TRANSITION_NOT_ALLOWED", "Det beslutet går inte för kandidaten just nu."
             )
+        if before is _S.INSPECTING and not pilot:
+            return None  # during a look only the pilot moves the drone: a note for them
+
         if body.decision == "reopen" and before is _S.CONFIRMED and not body.note.strip():
             raise CandidateWriteError("NOTE_REQUIRED", "Skriv varför bekräftelsen ska ångras.")
         after = allowed[before]
@@ -376,10 +381,18 @@ def _next_state(body: CandidateDecision) -> Callable[[str], str | None]:
     return step
 
 
-def _chat_text(d: Decided, decision: DecisionKind, by: str) -> str:
+_DURING_LOOK: Final = {"confirm": "bekräftad", "reject": "avvisad", "unsure": "osäker"}
+
+
+def _chat_text(d: Decided, decision: DecisionKind, by: str, *, pilot: bool = True) -> str:
     """The ground's own words only: a person's note goes in the message refs and the event
     log, never into a system line the commander reads as the ground's."""
     k = f"K{d.seq}"
+    if not pilot and d.before == _S.INSPECTING.value and decision in _DURING_LOOK:
+        return (
+            f"{by} markerade {k} som {_DURING_LOOK[decision]} under titten. "
+            "Piloten bestämmer vad drönaren gör."
+        )
     if decision == "confirm":
         return f"Fynd bekräftat: {k} (av {by})."
     if decision == "reject":
@@ -442,7 +455,8 @@ async def decide(
     when the gate says no to the closer look. Returns the candidate's detail."""
     candidate_id = candidate_id.lower()
     session_id = _person(who, flow.g.test_rig)
-    if body.decision in PILOT_ONLY and who.role != "pilot":
+    pilot = who.role == "pilot"
+    if body.decision in PILOT_ONLY and not pilot:
         raise ApiStatusError(403, "FORBIDDEN_ROLE", "Bara piloten får göra det här.")
     r = repo(flow)
     mission_id = await r.candidate_mission(candidate_id)
@@ -469,11 +483,12 @@ async def decide(
             operator_ref=who.issuer_ref,
             session_id=session_id,
             now=flow.now(),
-            next_state=_next_state(body),
+            next_state=_next_state(body, pilot=pilot),
         )
     except CandidateWriteError as exc:
         raise ApiStatusError(409, exc.code, exc.detail_sv) from exc
-    await inspections_service.decided(flow, mission, candidate_id, body.decision)
+    if pilot:  # only the pilot's decision ends a look and goes to the drone
+        await inspections_service.decided(flow, mission, candidate_id, body.decision)
     out = await detail(flow, candidate_id)
     payload = {
         "candidate_id": candidate_id,
@@ -515,7 +530,7 @@ async def decide(
         role="system",
         author_ref="system:ground",
         kind="status",
-        text=_chat_text(d, body.decision, who.display_name or who.issuer_ref),
+        text=_chat_text(d, body.decision, who.display_name or who.issuer_ref, pilot=pilot),
         in_reply_to=None,
         refs={"candidate_id": candidate_id, "decision": body.decision, "note": body.note},
     )

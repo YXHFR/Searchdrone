@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from sd_ground.services import inspections
-from sd_schemas.gate import GateContext
+from sd_schemas.gate import GateContext, GateDecision
 from sd_schemas.inspect import Permit
 
 SAFETY_TESTS = Path(__file__).resolve().parents[3] / "common" / "safety" / "tests" / "unit"
@@ -114,6 +114,30 @@ def test_overflight_follows_the_mode_and_the_permit() -> None:
     # The pilot's change wins over the config until the ground restarts.
     assert not inspections.overflight_allowed(flow(root, permit=Permit(), cfg=granted), "live")
     assert inspections.permit(flow(root, cfg=granted)) == granted
+
+
+def test_a_revoked_permit_refuses_the_look_at_once() -> None:
+    """A live charter approved with overflight, the permit revoked since: the gate's yes
+    becomes a refusal (``OVERFLIGHT_NOT_ALLOWED``). Sim, exercise and a charter without
+    overflight are not touched."""
+    root = Path("/nonexistent")
+    granted = Permit(specific_category_ref="OP-1", allow_overflight_live=True)
+    live = CHARTER.model_copy(update={"operation_mode": "live", "overflight_allowed": True})
+    with_live = ctx().model_copy(update={"charter": live})
+    yes = GateDecision(
+        decision="ALLOW", reason_codes=[], rule_ids=[], message_sv="", details={}, side="ground"
+    )
+    assert not inspections.overflight_revoked(flow(root, cfg=granted), live)
+    assert inspections.refuse_revoked(flow(root, cfg=granted), with_live, yes) is yes
+    revoked = flow(root, permit=Permit(), cfg=granted)
+    assert inspections.overflight_revoked(revoked, live)
+    no = inspections.refuse_revoked(revoked, with_live, yes)
+    assert no.decision == "REJECT" and no.reason_codes == ["OVERFLIGHT_NOT_ALLOWED"]
+    assert no.rule_ids[0] == "R-OVERFLIGHT" and no.details["permit_revoked"] is True
+    exercise = live.model_copy(update={"operation_mode": "exercise"})
+    assert not inspections.overflight_revoked(revoked, exercise)
+    assert not inspections.overflight_revoked(revoked, CHARTER)
+    assert not inspections.overflight_revoked(revoked, None)
 
 
 def test_the_cards_direction() -> None:

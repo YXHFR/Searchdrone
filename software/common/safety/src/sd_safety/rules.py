@@ -563,8 +563,10 @@ def _altitude(f: Facts) -> list[Finding]:
     charter = f.ctx.charter
     if charter is not None:
         out += _one(top > charter.alt_max_agl_m, "ALT_ABOVE_CHARTER", alt_m=top)
-        # A closer look comes down to the height floor instead (R-FLOOR).
-        low = bottom < charter.alt_min_agl_m and f.req.skill != _INSPECT
+        # A closer look comes down to the height floor instead (R-FLOOR), but only where
+        # the floor is worked out: without one the charter's lower limit stays.
+        floored = f.req.skill == _INSPECT and f.ctx.floor is not None
+        low = bottom < charter.alt_min_agl_m and not floored
         out += _one(low, "ALT_BELOW_CHARTER", alt_m=bottom)
     return out
 

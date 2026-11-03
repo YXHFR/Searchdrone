@@ -63,7 +63,7 @@ from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
 )
 from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
     Camera,
-    a_detection,
+    a_candidate,
     airborne_for_inspection,
     inspecting,
 )
@@ -118,9 +118,9 @@ async def test_no_way_out_over_a_person_climbs_straight_up_and_hovers(
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await airborne_for_inspection(sc)
         p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
-        det = await a_detection(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
+        cid = await a_candidate(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
         Camera(sc)
-        order = await inspecting(sc, det)
+        order = await inspecting(sc, cid)
         ex = sc.r.onboard.ex
         st = sc.sim.harness.state
         await sc.until(

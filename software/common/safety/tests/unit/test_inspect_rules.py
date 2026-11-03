@@ -173,6 +173,10 @@ def test_below_the_charters_band_is_the_floors_business() -> None:
     low = [at(0, 50, 40.0), at(0, 200, 8.0)]
     assert "ALT_BELOW_CHARTER" not in codes(pilot_look(planned_path=low), on)
     assert "ALT_BELOW_CHARTER" in codes(req("goto", planned_path=low, **PILOT), on)
+    # Without a floor worked out nothing replaces the charter's lowest height: it holds.
+    unfloored = onboard_ctx(charter=EXERCISE)
+    assert unfloored.floor is None
+    assert "ALT_BELOW_CHARTER" in codes(pilot_look(planned_path=low), unfloored)
 
 
 # --- R-FLOOR-CEIL -------------------------------------------------------------------------------
