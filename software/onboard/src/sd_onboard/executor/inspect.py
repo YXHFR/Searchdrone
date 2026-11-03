@@ -32,13 +32,14 @@ from sd_onboard.skills.inspect_steps import Floors
 from sd_safety.targets import Plane
 from sd_schemas.base import LatLon
 from sd_schemas.executor import ExecutorState, ResumePoint
-from sd_schemas.inspect import InspectAbortReason
+from sd_schemas.inspect import InspectAbortReason, InspectOutcomeKind
 from sd_schemas.keepout import Keepout
 from sd_schemas.link import SkillCommand
 
 __all__ = [
     "INTERNAL_INSPECT_CLIMB",
     "SUSPENDED_PHASES",
+    "FindWatch",
     "InspectSession",
     "SessionPhase",
     "abort_reason",
@@ -76,6 +77,9 @@ class InspectSession:
     laser_seen: bool = False  # the laser confirmed during this look
     steps: int = 0  # steps down taken (for the progress after the handler ended)
     floors: Floors | None = None  # the floors at the last check
+    # The pilot's decision while the drone climbed (back to the map's floor without the
+    # laser, or over someone else's cylinder): carried out once the climb is done.
+    outcome: InspectOutcomeKind | None = None
 
     def suspends(self, k: Keepout, plane: Plane, *, local: bool) -> bool:
         """Whether ``k`` is the candidate's own cylinder, suspended now: the ground's
@@ -94,6 +98,18 @@ class InspectSession:
     def near(self, lat: float, lon: float, plane: Plane) -> bool:
         """Within the look radius of the candidate's position."""
         return math.dist(plane.xy(lat, lon), plane.point(self.anchor)) <= self.radius_m
+
+
+@dataclass
+class FindWatch:
+    """The laser over a confirmed find, after the look's session ended: the drone may
+    hover there below the map's floor without the laser (it came down with it). The
+    laser lost there, it climbs straight up to that floor (``Executor._find_watch_tick``);
+    the watch ends when the drone leaves the hover."""
+
+    command_id: UUID
+    start_alt_m: float  # above home, where the look started
+    laser_seen: bool  # the laser confirmed during the look
 
 
 def abort_reason(

@@ -557,7 +557,9 @@ async def test_other_orders_are_refused_while_the_look_flies() -> None:
 async def test_link_loss_ends_the_look_and_climbs_straight_up() -> None:
     async with rig() as r:
         await start(r, pack=meadow())
-        await r.until(lambda: alt(r) < 45, 120)
+        # Lost early in the second step down: the rule acts mid-descent (GUIDED), not as
+        # the step ends in LOITER (a mode change cut short races the climb's GUIDED).
+        await r.until(lambda: alt(r) < 48, 120)
         r.link = False
         await r.until(lambda: bool(events(r, "inspect.aborted")), 10)
         assert events(r, "inspect.aborted")[0]["reason"] == "link_loss"
@@ -702,3 +704,282 @@ def _install(c: Any) -> Any:
 
 def test_limit_action_kind_has_inspect_climb() -> None:
     LimitAction("L-LINK", "inspect_climb", "link_loss", "x", {"alt_m": 1.0})
+
+
+# --- the review of TN-6: climbs that are never cut short, the watches that stay -------------
+
+
+def _cylinder(r: Rig, east: float, north: float, radius: float, seq: int) -> Keepout:
+    """Someone else's cylinder (a ground team): not the target's, never suspended."""
+    lat, lon = at(east, north)
+    k = Keepout(
+        keepout_id=new_id(),
+        lat=lat,
+        lon=lon,
+        radius_m=radius,
+        source="candidate",
+        source_id=new_id(),
+    )
+    r.ex.on_keepouts(KeepoutInstall(install_seq=seq, keepouts=[k]), new_id())
+    return k
+
+
+def _climbs(r: Rig) -> list[float]:
+    return [d["climb_to_m"] for d in events(r, "executor.keepout_hold") if "climb_to_m" in d]
+
+
+async def test_a_cylinder_around_the_drone_on_a_leg_climbs_over_it() -> None:
+    # The reflex on the approach leg: no way out (inside), so straight up over the
+    # cylinder through ``InspectHandler.climb`` -> ``StepLook.climb``, and the steps end.
+    async with rig() as r:
+        await start(r, pack=meadow(), alt_max_agl_m=120)
+        await r.run(3)
+        assert r.ex.state == S.INSPECT
+        e, n = east_north(r)
+        _cylinder(r, e, n, 80, seq=7)  # top 80 + 10 m above home: higher than the drone
+        await r.until(lambda: bool(_climbs(r)), 5)
+        assert _climbs(r) == [90.0]
+        here = (e, n)
+        done = await awaiting(r, 120)
+        assert done["end"] == "keepout"
+        assert alt(r) > 88 and math.dist(east_north(r), here) < 15  # up, not on
+        assert r.ex.hold_reason == "inspect_await"  # the look's own wait, not a limit
+
+
+async def test_a_cylinder_around_the_drone_going_down_stops_and_climbs() -> None:
+    async with rig() as r:
+        await start(r, pack=meadow())
+        await r.until(lambda: alt(r) < 45, 120)  # down from 50 to 40
+        e, n = east_north(r)
+        _cylinder(r, e, n + 5, 40, seq=7)  # top 40 + 10 m: above the drone
+        lows: list[float] = []
+
+        def watch() -> bool:
+            lows.append(alt(r))
+            return r.ex.hold_reason == "inspect_await"
+
+        await r.until(watch, 60)
+        done = events(r, "inspect.done")[0]
+        assert done["end"] == "keepout"
+        assert _climbs(r) == [50.0]
+        assert min(lows) > 45 - 2.0  # stopped where it was, no deeper into the cylinder
+        assert alt(r) > 49
+
+
+async def test_a_cylinder_around_the_drone_while_it_hovers_at_a_step_climbs() -> None:
+    async with rig() as r:
+        await start(r, pack=meadow())
+
+        def hovering_low() -> bool:
+            p = r.ex.snapshot().inspect
+            return p is not None and p.step == 2 and p.phase == "step" and alt(r) < 41
+
+        await r.until(hovering_low, 120)  # the settle and the stills at 40 m
+        e, n = east_north(r)
+        _cylinder(r, e + 10, n, 45, seq=7)  # top 45 + 10 m
+        done = await awaiting(r, 60)
+        assert done["end"] == "keepout"
+        assert _climbs(r) == [55.0] and alt(r) > 54
+
+
+async def test_a_decision_during_the_laser_climb_while_waiting_lets_it_finish() -> None:
+    pack = meadow()
+    async with rig() as r:
+        from onboard_helpers import HOME_ALT
+
+        laser = FakeLaser(HOME_ALT)
+        r.ex.laser = laser  # type: ignore[assignment]
+        cmd, _ = await start(r, pack=pack, alt_min_agl_m=6, default_alt_agl_m=40)
+        _, no_laser = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), new_id())
+        await awaiting(r, 120)
+        assert alt(r) < no_laser - 3
+        laser.on = False
+        await r.until(lambda: r.ex.state == S.INSPECT, 5)  # the climb to the map's floor
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="confirmed"), ref := new_id()
+        )
+        assert "done" in r.up.stages(ref)
+        assert events(r, "executor.inspect_outcome_after_climb")
+        await r.run(0.5)
+        assert r.ex.active is not None and r.ex.active.skill == INTERNAL_INSPECT_CLIMB
+        await r.until(lambda: r.ex.state == S.HOLD, 30)
+        assert alt(r) > no_laser - 1.6  # up at the floor, not left below it
+        assert r.ex.hold_reason == "skill_done" and r.ex.snapshot().inspect is None
+        assert [d["cause"] for d in events(r, "executor.inspect_ended")] == ["confirmed"]
+
+
+async def test_a_decision_during_the_steps_laser_climb_lets_it_finish() -> None:
+    pack = meadow()
+    async with rig() as r:
+        from onboard_helpers import HOME_ALT
+
+        laser = FakeLaser(HOME_ALT)
+        r.ex.laser = laser  # type: ignore[assignment]
+        cmd, _ = await start(r, pack=pack, alt_min_agl_m=6, default_alt_agl_m=40)
+        _, no_laser = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), new_id())
+        await r.until(lambda: alt(r) < no_laser - 3, 120)
+        laser.on = False
+        await r.until(lambda: bool(events(r, "inspect.laser_lost")), 5)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="confirmed"), new_id()
+        )
+        assert r.ex.state == S.INSPECT  # the look's climb goes on
+        assert r.ex.active is not None and r.ex.active.command_id == cmd.command_id
+        await r.until(lambda: bool(events(r, "inspect.done")), 60)  # then the decision
+        assert events(r, "inspect.done")[0]["end"] == "laser_lost"
+        assert alt(r) > no_laser - 1.6
+        await r.run(1)
+        assert r.ex.hold_reason == "skill_done" and r.ex.snapshot().inspect is None
+        assert [d["cause"] for d in events(r, "executor.inspect_ended")] == ["confirmed"]
+
+
+async def test_the_laser_lost_over_a_confirmed_find_climbs_to_the_floor() -> None:
+    pack = meadow()
+    async with rig() as r:
+        from onboard_helpers import HOME_ALT
+
+        laser = FakeLaser(HOME_ALT)
+        r.ex.laser = laser  # type: ignore[assignment]
+        cmd, _ = await start(r, pack=pack, alt_min_agl_m=6, default_alt_agl_m=40)
+        _, no_laser = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), new_id())
+        await awaiting(r, 120)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="confirmed"), new_id()
+        )
+        await r.run(5)
+        assert r.ex.hold_reason == "skill_done" and r.ex.snapshot().inspect is None
+        assert alt(r) < no_laser - 3  # hovering low over the find, with the laser
+        here = east_north(r)
+        laser.on = False
+        await r.until(lambda: r.ex.state == S.INSPECT, 5)
+        assert events(r, "executor.find_laser_lost")
+        await r.until(lambda: r.ex.state == S.HOLD, 30)
+        assert r.ex.hold_reason == "skill_done"
+        assert alt(r) > no_laser - 1.6 and math.dist(east_north(r), here) < 3
+
+
+async def test_another_order_over_a_confirmed_find_ends_the_laser_watch() -> None:
+    async with rig() as r:
+        cmd, _ = await start(r, alt=40)
+        await awaiting(r)
+        r.ex.on_inspect_outcome(
+            InspectOutcome(command_id=cmd.command_id, outcome="confirmed"), new_id()
+        )
+        await r.run(1)
+        assert r.ex._find_watch is not None
+        lat, lon = at(0, 50)
+        await r.send(r.order("goto", {"lat": lat, "lon": lon, "alt_m": 40}), 0.5)
+        assert r.ex._find_watch is None
+
+
+class _FailsFrom(Rounds):
+    """The cameras stop working from step ``step``."""
+
+    def __init__(self, step: int) -> None:
+        super().__init__()
+        self.fail_from = step
+
+    async def __call__(
+        self, command_id: UUID, step: int
+    ) -> list[tuple[str, UUID, list[GeoDetectionMsg]]]:
+        self.works = step < self.fail_from
+        return await super().__call__(command_id, step)
+
+
+async def test_a_failed_look_low_over_the_person_climbs_back_first() -> None:
+    async with rig() as r:
+        cmd, _ = await start(r, pack=meadow(), rounds=_FailsFrom(2))
+        await r.until(lambda: "failed" in r.up.stages(cmd.command_id), 120)
+        assert r.up.codes(cmd.command_id) == ("ONB_CAMERA_UNAVAILABLE",)
+        assert [d["reason"] for d in events(r, "inspect.aborted")] == ["failed"]
+        assert alt(r) < 42  # at the third step, 40 m
+        here = east_north(r)
+        await r.run(0.5)
+        assert r.ex.state == S.INSPECT
+        assert r.ex.active is not None and r.ex.active.skill == INTERNAL_INSPECT_CLIMB
+        await r.until(lambda: r.ex.state == S.HOLD, 60)
+        assert r.ex.hold_reason == "skill_done"
+        assert alt(r) > 58 and math.dist(east_north(r), here) < 3  # straight up to 60 m
+        assert r.ex.snapshot().inspect is None
+
+
+async def test_the_laser_lost_mid_descent_stops_at_the_maps_floor() -> None:
+    pack = meadow(chm_dm=40)  # 4 m bushes: the map's floor without the laser at ~24.5 m
+    async with rig() as r:
+        from onboard_helpers import HOME_ALT
+
+        laser = FakeLaser(HOME_ALT)
+        r.ex.laser = laser  # type: ignore[assignment]
+        cmd, _ = await start(r, pack=pack, alt_min_agl_m=6, default_alt_agl_m=40)
+        _, no_laser = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), new_id())
+        # Going down, still above the map's floor, with a goal below it.
+        await r.until(lambda: alt(r) < no_laser + 1.0, 120)
+        laser.on = False
+        lows: list[float] = []
+
+        def watch() -> bool:
+            lows.append(alt(r))
+            return r.ex.hold_reason == "inspect_await"
+
+        await r.until(watch, 60)
+        assert events(r, "inspect.done")[0]["end"] == "laser_lost"
+        assert min(lows) > no_laser - 0.4  # stopped at once, not first 1 m below
+
+
+async def test_the_laser_lost_while_the_cameras_work_climbs_at_once() -> None:
+    pack = meadow()
+    async with rig() as r:
+        from onboard_helpers import HOME_ALT
+
+        laser = FakeLaser(HOME_ALT)
+        r.ex.laser = laser  # type: ignore[assignment]
+        _, no_laser = 0.0, 0.0
+        busy: list[bool] = [False]
+
+        class Slow(Rounds):
+            async def __call__(
+                self, command_id: UUID, step: int
+            ) -> list[tuple[str, UUID, list[GeoDetectionMsg]]]:
+                if alt(r) < no_laser - 3:
+                    busy[0] = True
+                    await r.clock.sleep(15)  # the cameras take their time
+                    busy[0] = False
+                return await super().__call__(command_id, step)
+
+        cmd, _ = await start(r, pack=pack, rounds=Slow(), alt_min_agl_m=6, default_alt_agl_m=40)
+        _, no_laser = ground_floor(r, pack)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), new_id())
+        await r.until(lambda: busy[0], 120)
+        laser.on = False
+        await r.until(lambda: bool(events(r, "inspect.laser_lost")), 2)  # not after 15 s
+        done = await awaiting(r, 60)
+        assert done["end"] == "laser_lost" and alt(r) > no_laser - 1.6
+
+
+async def test_a_yes_before_the_question_is_stale() -> None:
+    async with rig() as r:
+        cmd, _ = await start(r, pack=meadow())
+        await r.until(lambda: alt(r) < 55, 120)
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), early := new_id())
+        assert r.up.codes(early) == ("ONB_STALE_ORDER",)
+        await r.until(lambda: bool(events(r, "inspect.lower_offer")), 200)  # still asked
+        r.ex.on_inspect_lower(InspectLower(command_id=cmd.command_id), yes := new_id())
+        assert "done" in r.up.stages(yes)
+
+
+async def test_a_missing_pack_is_told_without_the_error_text(tmp_path: Any) -> None:
+    async with rig(options={"floor_dir": tmp_path}) as r:
+        named = {"floor_pack_id": "meadow", "floor_pack_sha256": "a" * 64}
+        await r.ex.on_charter(_install(charter(**named)))
+        missing = events(r, "executor.floor_pack_missing")
+        assert missing and missing[-1]["error"] == "FloorPackError"  # the kind only
+        assert str(tmp_path) not in str(missing[-1])

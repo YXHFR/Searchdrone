@@ -40,6 +40,9 @@ from collections.abc import Callable, Sequence
 from itertools import pairwise
 from typing import Final, Protocol, runtime_checkable
 
+# The climb over a person lives with the handlers: the look straight over a target
+# climbs out of a cylinder that comes around it on its own (``skills.inspect_steps``).
+from sd_onboard.skills._common import KEEPOUT_CLIMB_MARGIN_M, climb_alt, over_a_person
 from sd_onboard.skills.base import PlanContext, SkillHandler, SkillPlan
 from sd_onboard.skills.goto import GotoHandler
 from sd_onboard.skills.survey_sector import SurveyRun
@@ -76,9 +79,6 @@ __all__ = [
 REROUTABLE: Final = frozenset({"survey_sector", "follow_path", "resume"})
 LOCAL_KEEPOUT_HANDOVER_MS: Final = 60_000  # a ground install this much later replaces it
 LOCAL_KEEPOUTS_MAX: Final = 100
-# A cylinder has no height of its own; over a person with no safe way out the drone
-# takes its top as its radius above home (as far up as out) and climbs this much above.
-KEEPOUT_CLIMB_MARGIN_M: Final = 10.0
 # The climb of any other order (not ``Replans``): an internal goto straight up, then the
 # keep-out hover.
 INTERNAL_KEEPOUT_CLIMB: Final = "internal_keepout_climb"
@@ -226,26 +226,6 @@ def _leg_entry(a: Xy, b: Xy, c: Xy, r: float) -> float:
     if seg2 == 0.0 or disc <= 0.0 or math.hypot(ax, ay) < r:
         return 0.0
     return max(0.0, (-half - math.sqrt(disc)) / seg2)
-
-
-def climb_alt(here: Xy, cyl: Sequence[Circle], alt_m: float, alt_max_m: float) -> float | None:
-    """How high (above home) a drone at ``here``, ``alt_m`` up, climbs over the cylinders
-    it is inside: their top (the largest radius) plus ``KEEPOUT_CLIMB_MARGIN_M``, at most
-    ``alt_max_m``; where it is when it is that high already; None when it is inside none,
-    or lower than that and cannot climb (``alt_max_m`` is no higher than it is)."""
-    over = [r for c, r in cyl if over_a_person(here, [(c, r)])]
-    if not over:
-        return None
-    want = max(over) + KEEPOUT_CLIMB_MARGIN_M
-    if alt_m >= want:
-        return alt_m
-    top = min(want, alt_max_m)
-    return top if top > alt_m else None
-
-
-def over_a_person(here: Xy, cyl: Sequence[Circle]) -> bool:
-    """Whether ``here`` lies inside any of the cylinders (over a person)."""
-    return any(math.dist(here, c) < r for c, r in cyl)
 
 
 def stop_m(speed_ms: float) -> float:

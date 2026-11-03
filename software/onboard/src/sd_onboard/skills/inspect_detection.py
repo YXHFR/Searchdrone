@@ -236,7 +236,10 @@ class InspectHandler:
     def climb(self, ctx: PlanContext, alt_m: float) -> bool:
         """Straight up to ``alt_m`` from where the drone stops (``from_stop``), flown from
         the next tick; the order then ends in the keep-out hover. False when no leg is
-        flown."""
+        flown. The look straight over the target climbs the same way, then its steps end
+        (``StepLook.climb``)."""
+        if self.steps is not None:
+            return self.steps.climb(ctx, alt_m)
         if self._leg is None or self._at_point:
             return False
         v = ctx.vehicle

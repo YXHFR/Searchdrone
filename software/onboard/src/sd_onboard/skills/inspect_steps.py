@@ -20,9 +20,17 @@ Used by ``InspectHandler`` when the charter allows flying over the candidate
   in the way (``keepout``), or the laser lost below the map's floor without it (the drone
   climbs back to that floor first). The drone stays at the lowest height reached; the
   executor then hovers for the pilot's decision.
+* **Someone else's cylinder** that comes around the drone (a ground team, a person seen
+  outside the look radius) while it hovers or goes down: the drone stops and climbs
+  straight up over it (``climb_alt``: its top and margin, never above the charter's
+  height less ``_CEILING_SPARE_M``), and the steps end (``keepout``). On a leg the
+  executor's reflex does the same through :meth:`StepLook.climb`.
 
 Nothing here ever goes below a floor: every goal is clipped to the floor in force, and a
-floor that rose above the drone (the laser saw a tree) is climbed to at once.
+floor that rose above the drone (the laser saw a tree) is climbed to at once. The laser
+and the cylinders are watched on every tick of a descent, of the settle and of the
+rounds of stills: a laser lost while the step's goal lies below the map's floor without
+it stops the descent at once, no lower than that floor.
 """
 
 from __future__ import annotations
@@ -35,7 +43,7 @@ from typing import Final
 from uuid import UUID
 
 from sd_mav.modes import CopterMode
-from sd_onboard.skills._common import still
+from sd_onboard.skills._common import climb_alt, over_a_person, still
 from sd_onboard.skills.base import (
     ExecutorIO,
     InspectShot,
@@ -50,6 +58,7 @@ from sd_onboard.skills.goto import GotoHandler, goto_plan
 from sd_safety.constants import GOTO_ALT_STEP_TOL_M, GOTO_ARRIVE_RADIUS_M
 from sd_safety.floor import FloorResult, floor_along, floor_at
 from sd_safety.keepout import circles
+from sd_schemas.api import KeepoutHoldField
 from sd_schemas.base import Id, LatLon, LatLonAlt
 from sd_schemas.inspect import (
     CLEAR_PX,
@@ -102,6 +111,9 @@ _SEND_S: Final = 0.5  # the descent's moving target is sent this often
 _DESCENT_SPARE_S: Final = 20.0  # a descent not done by its time + this ends the steps
 _FLOOR_TOL_M: Final = 0.5  # a floor this much above the drone is climbed to
 _DESCENT_TOL_M: Final = 0.7  # a step down is done this near its height (no creeping up)
+# The climb over someone else's cylinder stays this far under the charter's height, as
+# the executor's keep-out climb does (the altitude limit's margin).
+_CEILING_SPARE_M: Final = 5.0
 
 
 def look_radius_m(sigma95_m: float | None) -> float:
@@ -280,6 +292,9 @@ class StepLook:
         except _LaserLost as lost:
             self._moving = None
             await self.laser_climb(io, lost.floor_m)
+        except _InsideCylinder as inside:
+            self._moving = None
+            await self._climb_out(io, inside.alt_m)
         self._moving = None
         self._note_height(io)
 
@@ -322,13 +337,13 @@ class StepLook:
         """Settle, then the rounds of stills; the target's matches and estimate."""
         self._note_height(io)
         self._check_time(io)
-        await io.sleep(STEP_SETTLE_S)
+        await self._wait(io, STEP_SETTLE_S)
         here: list[Match] = []
         shots_seen = 0
         for r in range(STEP_ROUNDS):
             if r > 0:
-                await io.sleep(STEP_ROUND_INTERVAL_S)
-            shots = await io.capture_round(self.command_id, self.step)
+                await self._wait(io, STEP_ROUND_INTERVAL_S)
+            shots = await self._capture(io)
             shots_seen += len(shots)
             for shot in shots:
                 if len(self.still_ids) < 200:
@@ -336,7 +351,7 @@ class StepLook:
                 m = pick(shot, self.anchor, self.radius_m, self._dist_to_anchor)
                 if m is not None:
                     here.append(m)
-            self._check_laser(io)
+            self._watch(io)
         if shots_seen == 0:
             raise SkillFailedError("ONB_CAMERA_UNAVAILABLE", NO_STILLS)
         self.matches += here
@@ -349,9 +364,7 @@ class StepLook:
         if ctx is None:
             raise RuntimeError("planned before running")
         self._check_time(io)
-        self._check_laser(io)
-        if self._inside_a_cylinder(io):
-            raise _End("keepout")  # a cylinder came around the drone: no deeper into it
+        self._watch(io)  # a cylinder around the drone: up over it, no deeper into it
         target = estimate(self.anchor, self.params.sigma95_m, self.matches)
         while True:
             here = _ctx_now(ctx, io)
@@ -395,7 +408,7 @@ class StepLook:
             if io.clock.monotonic() - asked >= LOWER_OFFER_S:
                 self._paused_s += io.clock.monotonic() - asked
                 raise _End("lower_declined")
-            self._check_laser(io)
+            self._watch(io)
             await io.sleep(_TICK_S)
         self._paused_s += io.clock.monotonic() - asked
         self._pilot_yes = True
@@ -427,7 +440,9 @@ class StepLook:
         self, io: ExecutorIO, lat: float, lon: float, goal_m: float, rate: float
     ) -> None:
         """Down on the spot to ``goal_m``: a target moving down at ``rate``, never below
-        ``goal_m``. Stopped by the reflex, the laser or the time limit where it is."""
+        ``goal_m``. Stopped by the reflex, a cylinder around the drone or the time limit
+        where it is; by the laser lost (with ``goal_m`` below the map's floor without it)
+        where it is, or at that floor when it is below it already."""
         if io.vehicle.fc_mode != CopterMode.GUIDED.name and not await io.set_mode(
             CopterMode.GUIDED
         ):
@@ -445,6 +460,16 @@ class StepLook:
                     v = io.vehicle
                     await io.set_position_target(lat, lon, v.alt_rel_home_m)
                     break
+                try:  # before the next target goes out: not one more down
+                    self._check_laser(io, goal_m=goal_m)
+                    self._check_cylinder(io)
+                except _LaserLost as lost:
+                    hold_m = max(io.vehicle.alt_rel_home_m, lost.floor_m)
+                    await io.set_position_target(lat, lon, hold_m)
+                    raise
+                except _InsideCylinder:
+                    await io.set_position_target(lat, lon, io.vehicle.alt_rel_home_m)
+                    raise
                 if now - sent >= _SEND_S:
                     await io.set_position_target(lat, lon, carrot)
                     sent = now
@@ -456,7 +481,6 @@ class StepLook:
                     await io.set_position_target(lat, lon, v.alt_rel_home_m)
                     self._moving = None
                     raise _End("floor")  # not down in time: no further down
-                self._check_laser(io)
                 if self._over_time(io):
                     await io.set_position_target(lat, lon, v.alt_rel_home_m)
                     raise _End("timeout")  # stops where it is
@@ -550,10 +574,11 @@ class StepLook:
         )
         return found.floor_lowest_amsl_m - ctx.charter.home.alt_amsl_m
 
-    def _check_laser(self, io: ExecutorIO) -> None:
-        """The laser confirmed once in this look and not now, with the drone below the
-        map's floor without it: climb there at once and end (``laser_lost``). Raised as
-        ``_LaserLost`` so the climb runs outside any leg."""
+    def _check_laser(self, io: ExecutorIO, *, goal_m: float | None = None) -> None:
+        """The laser confirmed once in this look and not now, with the drone (or the
+        descent's ``goal_m``) below the map's floor without it: stop, climb to that floor
+        when below it, and end (``laser_lost``). Raised as ``_LaserLost`` so the climb
+        runs outside any leg."""
         laser: LaserState | None = io.laser_state()
         if laser is not None and laser.confirmed:
             self.laser_seen = True
@@ -562,9 +587,73 @@ class StepLook:
             return
         v = io.vehicle
         floor_m = self._map_floor_m(io, self._ctx, v.lat, v.lon)
-        if v.alt_rel_home_m >= floor_m - _FLOOR_TOL_M:
+        lowest = v.alt_rel_home_m if goal_m is None else min(v.alt_rel_home_m, goal_m)
+        if lowest >= floor_m - _FLOOR_TOL_M:
             return
         raise _LaserLost(floor_m)
+
+    def _check_cylinder(self, io: ExecutorIO) -> None:
+        """Inside a cylinder in force (someone else's: the target's own is suspended):
+        raised as ``_InsideCylinder`` with how high to climb over it (None: it cannot)."""
+        ctx = self._ctx
+        if ctx is None:
+            return
+        v = io.vehicle
+        here = ctx.plane.xy(v.lat, v.lon)
+        cyl = circles(io.keepouts, ctx.plane)
+        if not over_a_person(here, cyl):
+            return
+        top = ctx.charter.alt_max_agl_m - _CEILING_SPARE_M
+        raise _InsideCylinder(climb_alt(here, cyl, v.alt_rel_home_m, top))
+
+    def _watch(self, io: ExecutorIO) -> None:
+        """While the drone hovers: the laser and the cylinders (see the checks)."""
+        self._check_laser(io)
+        self._check_cylinder(io)
+
+    async def _wait(self, io: ExecutorIO, seconds: float) -> None:
+        """Hover ``seconds``, watching every tick (:meth:`_watch`)."""
+        until = io.clock.monotonic() + seconds
+        while True:
+            self._watch(io)
+            left = until - io.clock.monotonic()
+            if left <= 0.0:
+                return
+            await io.sleep(min(_TICK_S, left))
+
+    async def _capture(self, io: ExecutorIO) -> list[InspectShot]:
+        """One round of stills, watching every tick while the cameras work (up to
+        2 x 10 s); the round is dropped when the watch ends the steps."""
+        task = asyncio.ensure_future(io.capture_round(self.command_id, self.step))
+        try:
+            while not task.done():
+                self._watch(io)
+                await io.sleep(_TICK_S)
+            return task.result()
+        finally:
+            if not task.done():
+                task.cancel()
+
+    async def _climb_out(self, io: ExecutorIO, alt_m: float | None) -> None:
+        """Someone else's cylinder around the drone: straight up over it (when it can),
+        the steps end (``keepout``); the operator is told as at the reflex's climb."""
+        data: dict[str, object] = {
+            "command_id": str(self.command_id),
+            "skill": "inspect_detection",
+            str(KeepoutHoldField.INSIDE): True,
+        }
+        up = alt_m if alt_m is not None and alt_m > io.vehicle.alt_rel_home_m else None
+        if up is not None:
+            self._climbing = True  # from now: a decision waits for the climb
+            data[str(KeepoutHoldField.CLIMB_TO_M)] = round(up, 1)
+        io.emit_event("keepout_hold", data)
+        if up is not None:
+            if io.vehicle.fc_mode != CopterMode.GUIDED.name:
+                await io.set_mode(CopterMode.GUIDED)
+            await self._climb(io, up)
+        if not await io.set_mode(CopterMode.LOITER):
+            raise mode_failed(CopterMode.LOITER)
+        self.end = "keepout"
 
     def _over_time(self, io: ExecutorIO) -> bool:
         return io.clock.monotonic() - self._t0 - self._paused_s >= INSPECT_MAX_S
@@ -572,14 +661,6 @@ class StepLook:
     def _check_time(self, io: ExecutorIO) -> None:
         if self._over_time(io):
             raise _End("timeout")
-
-    def _inside_a_cylinder(self, io: ExecutorIO) -> bool:
-        ctx = self._ctx
-        if ctx is None:
-            return False
-        v = io.vehicle
-        here = ctx.plane.xy(v.lat, v.lon)
-        return any(math.dist(here, c) < r for c, r in circles(io.keepouts, ctx.plane))
 
     def _note_height(self, io: ExecutorIO) -> None:
         alt = io.vehicle.alt_rel_home_m
@@ -595,6 +676,7 @@ class StepLook:
         """The laser lost below the map's floor without it: up there, the steps end."""
         ctx = self._ctx
         v = io.vehicle
+        self._climbing = True  # from now: a decision waits for the climb (``climbing``)
         io.emit_event(
             EVENT_LASER_LOST,
             InspectLaserLost(
@@ -616,6 +698,12 @@ class _LaserLost(Exception):  # noqa: N818 - control flow, not an error
     def __init__(self, floor_m: float) -> None:
         super().__init__(floor_m)
         self.floor_m = floor_m
+
+
+class _InsideCylinder(Exception):  # noqa: N818 - control flow, not an error
+    def __init__(self, alt_m: float | None) -> None:
+        super().__init__(alt_m)
+        self.alt_m = alt_m
 
 
 def _from(found: FloorResult, home_amsl_m: float) -> Floors:

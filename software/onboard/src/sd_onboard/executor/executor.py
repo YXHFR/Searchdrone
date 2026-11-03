@@ -50,6 +50,7 @@ from sd_onboard.executor.guards import GuardInput, Refusal, is_airborne, run_gua
 from sd_onboard.executor.inspect import (
     INTERNAL_INSPECT_CLIMB,
     SUSPENDED_PHASES,
+    FindWatch,
     InspectSession,
     abort_reason,
 )
@@ -162,6 +163,7 @@ from sd_schemas.inspect import (
     InspectAbortReason,
     InspectDone,
     InspectLaserLost,
+    InspectOutcomeKind,
     InspectPhase,
     InspectProgress,
 )
@@ -504,6 +506,10 @@ class Executor:
         # plan and the gate do not see (the charter allows flying over it).
         self._inspect_pending: tuple[UUID, LatLon, float] | None = None
         self._inspect_ai: LimitAction | None = None  # L-AI held back during a look
+        # The hover a look's straight climb with no session ends in: the link-loss rule's
+        # (the link lost), or the usual one (a failed look, the laser lost over a find).
+        self._inspect_climb_hold = "link_loss"
+        self._find_watch: FindWatch | None = None  # the laser over a confirmed find
         # A look's return to a point (not a search): (its order, the resume point before).
         self._restore_resume: tuple[UUID, ResumePoint | None] | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
@@ -918,7 +924,7 @@ class Executor:
 
     def _skill_failed(self, active: _Active, exc: SkillFailedError) -> None:
         self.active = None
-        self._inspect_failed(active, exc)
+        climbing = self._inspect_failed(active, exc)
         rp = active.handler.resume_point(self.vehicle_state())
         if rp is not None:
             self.resume_point = rp
@@ -929,6 +935,8 @@ class Executor:
         )
         if active.ack_done:
             self._ack(active.command_id, "failed", (exc.code,), detail_sv=exc.detail_sv or None)
+        if climbing:
+            return  # a failed look climbs straight up first, then hovers (``_inspect_failed``)
         if self.state == S.RTL:
             # No way out of RTL: the tick asks for SmartRTL/RTL again until it flies home.
             self.emit(
@@ -1508,7 +1516,8 @@ class Executor:
         try:
             pack = await asyncio.to_thread(load_floor_pack, folder / name)
         except (OSError, FloorPackError, KeyError, ValueError) as exc:
-            self.emit("floor_pack_missing", {"floor_pack_id": name, "error": str(exc)[:200]})
+            # Only the kind of error: its text may hold a path on the onboard computer.
+            self.emit("floor_pack_missing", {"floor_pack_id": name, "error": type(exc).__name__})
             return None, "ONB_FLOOR_PACK_MISMATCH"
         if pack.sha256 != sha:
             self.emit("floor_pack_mismatch", {"floor_pack_id": name})
@@ -1851,6 +1860,7 @@ class Executor:
             self._run_link_rule(now)
         self._inspect_tick(now)
         self._inspect_watch()
+        self._find_watch_tick(now)
         if self._gcs_continue and self.state == S.HELD and t.fc_connected:
             self._gcs_home_from_hold()
         self._gcs_continue = False
@@ -2776,8 +2786,13 @@ class Executor:
             elif s is not None and s.phase == "climb":
                 s.phase = "await"  # up at the map's floor: the wait goes on
                 self._enter(target, hold_reason="inspect_await", cause="inspect climb done")
-            else:  # the link-loss climb: the link-loss rule goes on from this hover
-                self._enter(target, hold_reason="link_loss", cause="inspect climb done")
+            else:
+                # No session: the link-loss climb (the link-loss rule goes on from this
+                # hover), or a failed look's or a find's climb (the usual hover).
+                hold = self._inspect_climb_hold
+                self._enter(target, hold_reason=hold, cause="inspect climb done")
+            if s is not None and s.phase == "await" and s.outcome is not None:
+                self._inspect_decide(s.outcome)  # decided during the climb: carried out now
             return True
         if s is None or active.command_id != s.command_id:
             return False
@@ -2811,30 +2826,91 @@ class Executor:
                 clear=steps.clear if steps is not None else False,
             ).model_dump(mode="json"),
         )
+        if s.outcome is not None:
+            self._inspect_decide(s.outcome)  # decided during the look's climb: now
         return True
 
-    def _inspect_failed(self, active: _Active, exc: SkillFailedError) -> None:
-        """A look's own order failed: the look ends (the usual hold follows)."""
+    def _inspect_failed(self, active: _Active, exc: SkillFailedError) -> bool:
+        """A look's own order failed: the look ends. The look straight over the target
+        (it may have come down low over the person, the laser's watch ends with it) first
+        climbs straight up to where it started, at least to the map's floor without the
+        laser, then hovers: True then, and the caller holds nothing. Otherwise the usual
+        hold follows (False)."""
         s = self._inspect
         if s is None:
-            return
+            return False
         if active.skill == INTERNAL_INSPECT_CLIMB and s.phase == "return_climb":
             self.emit(
                 "inspect_return_refused", {"command_id": str(s.command_id), "codes": [exc.code]}
             )
             self._inspect_finish("return_refused")
-        elif active.command_id == s.command_id or (
-            active.skill == INTERNAL_INSPECT_CLIMB and s.phase == "climb"
-        ):
+        elif active.command_id == s.command_id:
             self._inspect_finish("failed", "failed")
+            return s.overflight and self._inspect_safe_climb(s, exc.code)
+        elif active.skill == INTERNAL_INSPECT_CLIMB and s.phase == "climb":
+            self._inspect_finish("failed", "failed")
+        return False
 
-    def _inspect_climb(self, alt_m: float, *, cause: str, codes: tuple[str, ...] = ()) -> bool:
+    def _inspect_safe_climb(self, s: InspectSession, code: str) -> bool:
+        """Straight up to the look's start height, at least the map's floor without the
+        laser, when the drone is lower (``_inspect_climb``, then the usual hover)."""
+        charter = self.charter
+        if charter is None:
+            return False
+        up = min(max(s.start_alt_m, self._no_laser_floor_m(s.start_alt_m)), charter.alt_max_agl_m)
+        if self.vehicle_state().alt_rel_home_m >= up - GOTO_ALT_STEP_TOL_M:
+            return False
+        return self._inspect_climb(
+            up, cause="inspect_failed", codes=(code,), hold_after="skill_done"
+        )
+
+    def _no_laser_floor_m(self, start_alt_m: float) -> float:
+        """The map's floor without the laser where the drone is, above home."""
+        charter = self.charter
+        if charter is None:
+            raise RuntimeError("no charter installed")
+        v = self.vehicle_state()
+        home = charter.home.alt_amsl_m
+        found = floor_at(
+            self.floor_pack,
+            v.lat,
+            v.lon,
+            flight_date=self.clock.utc_now().date(),
+            laser=None,
+            start_alt_amsl_m=home + start_alt_m,
+            laser_lost=True,
+        )
+        return found.floor_lowest_amsl_m - home
+
+    def _laser_lost_below(self, laser_seen: bool, start_alt_m: float, now: int) -> float | None:
+        """The map's floor without the laser (above home) when the laser, confirmed once,
+        is not now and the drone is below that floor; None otherwise."""
+        laser = self.laser.state(now) if self.laser is not None else None
+        if laser is not None and laser.confirmed:
+            return None
+        if not laser_seen or self.charter is None:
+            return None
+        floor_m = self._no_laser_floor_m(start_alt_m)
+        if self.vehicle_state().alt_rel_home_m >= floor_m - _FLOOR_TOL_M:
+            return None
+        return floor_m
+
+    def _inspect_climb(
+        self,
+        alt_m: float,
+        *,
+        cause: str,
+        codes: tuple[str, ...] = (),
+        hold_after: str = "link_loss",
+    ) -> bool:
         """Straight up from where the drone stops to ``alt_m`` (above home, never above the
-        ceiling), in an internal order (T30). False when it cannot."""
+        ceiling), in an internal order (T30). False when it cannot. Without a session it
+        ends in the hover ``hold_after``."""
         charter = self.charter
         target = self.target_of(Trigger.INSPECT_CLIMB)
         if charter is None or isinstance(target, Refusal):
             return False
+        self._inspect_climb_hold = hold_after
         self._drop_active(stage="superseded", codes=codes)
         v = self.vehicle_state()
         alt = min(alt_m, charter.alt_max_agl_m)
@@ -2872,28 +2948,12 @@ class Executor:
             self._inspect_return("timeout")
 
     def _inspect_laser_lost(self, s: InspectSession, now: int) -> bool:
-        charter = self.charter
         laser = self.laser.state(now) if self.laser is not None else None
         if laser is not None and laser.confirmed:
             s.laser_seen = True
             return False
-        if not s.laser_seen or charter is None:
-            return False
-        v = self.vehicle_state()
-        home = charter.home.alt_amsl_m
-        floor_m = (
-            floor_at(
-                self.floor_pack,
-                v.lat,
-                v.lon,
-                flight_date=self.clock.utc_now().date(),
-                laser=None,
-                start_alt_amsl_m=home + s.start_alt_m,
-                laser_lost=True,
-            ).floor_lowest_amsl_m
-            - home
-        )
-        if v.alt_rel_home_m >= floor_m - _FLOOR_TOL_M:
+        floor_m = self._laser_lost_below(s.laser_seen, s.start_alt_m, now)
+        if floor_m is None:
             return False
         self.emit_inspect(
             EVENT_LASER_LOST,
@@ -2903,6 +2963,34 @@ class Executor:
         if not self._inspect_climb(floor_m, cause="laser_lost", codes=("ONB_LASER_LOST",)):
             s.phase = "await"
         return True
+
+    def _find_watch_tick(self, now: int) -> None:
+        """Hovering over a confirmed find (``FindWatch``): the laser lost below the map's
+        floor without it climbs straight up to that floor, then hovers there. The watch
+        ends when the drone leaves the hover (another order, STOP, a limit ...)."""
+        w = self._find_watch
+        if w is None:
+            return
+        a = self.active
+        if (
+            self.state != S.HOLD
+            or self.hold_reason != "skill_done"
+            or (a is not None and a.skill != "capture_stills")
+        ):
+            self._find_watch = None
+            return
+        laser = self.laser.state(now) if self.laser is not None else None
+        if laser is not None and laser.confirmed:
+            w.laser_seen = True
+            return
+        floor_m = self._laser_lost_below(w.laser_seen, w.start_alt_m, now)
+        if floor_m is None:
+            return
+        self.emit("find_laser_lost", {"command_id": str(w.command_id)})
+        if self._inspect_climb(
+            floor_m, cause="laser_lost", codes=("ONB_LASER_LOST",), hold_after="skill_done"
+        ):
+            self._find_watch = None  # up at the floor: nothing left to watch
 
     def _inspect_watch(self) -> None:
         """A look whose state is gone (STOP, FLY HOME, a takeover, a limit, a cancel, a
@@ -2995,31 +3083,65 @@ class Executor:
     def on_inspect_outcome(self, o: InspectOutcome, ref_id: UUID) -> None:
         """The pilot's decision: "confirmed" hovers over the find for the next order;
         anything else flies back to the breakpoint. Before the steps are over it ends
-        them first."""
+        them first. A climb under way (back to the map's floor without the laser, or over
+        someone else's cylinder) is never cut short: the decision waits for its end."""
         s = self._inspect
         if s is None or s.command_id != o.command_id or s.phase == "return_climb":
             self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
             return
         self._ack(ref_id, "done")
         self.emit("inspect_outcome", {"command_id": str(s.command_id), "outcome": o.outcome})
+        if self._inspect_climbing_up(s):
+            s.outcome = o.outcome  # carried out by ``_inspect_skill_done``
+            self.emit("inspect_outcome_after_climb", {"command_id": str(s.command_id)})
+            return
+        self._inspect_decide(o.outcome)
+
+    def _inspect_climbing_up(self, s: InspectSession) -> bool:
+        """The look climbs straight up now: the laser lost while waiting (``climb``), or
+        the steps' own climb (the laser lost, a floor that rose, a cylinder)."""
+        if s.phase == "climb":
+            return True
+        a = self.active
+        return (
+            s.phase == "flying"
+            and a is not None
+            and a.command_id == s.command_id
+            and isinstance(a.handler, InspectHandler)
+            and a.handler.climbing()
+        )
+
+    def _inspect_decide(self, outcome: InspectOutcomeKind) -> None:
+        """Carry out the pilot's decision (``on_inspect_outcome``)."""
+        s = self._inspect
+        if s is None:
+            return
         if self.state == S.INSPECT:
             target = self.target_of(Trigger.ORDER_CANCEL)
             if isinstance(target, Refusal):
                 return
+            a = self.active
+            if a is not None and isinstance(a.handler, InspectHandler):
+                steps = a.handler.steps
+                s.laser_seen = s.laser_seen or (steps is not None and steps.laser_seen)
             self._drop_active(stage="done", save_resume=False)
             self._enter(target, hold_reason="inspect_await", cause="inspect outcome")
-            if o.outcome == "confirmed":
+            if outcome == "confirmed":
                 self._side(self._loiter(SendOrigin.SKILL))
-        if o.outcome == "confirmed":
+        if outcome == "confirmed":
             if self.state == S.HOLD:
                 self.hold_reason = "skill_done"  # hovering over the find for the next order
                 self._save()
+                # It may hover below the map's floor without the laser: still watched.
+                self._find_watch = FindWatch(s.command_id, s.start_alt_m, s.laser_seen)
             self._inspect_finish("confirmed")
             return
-        self._inspect_return(o.outcome)
+        self._inspect_return(outcome)
 
     def on_inspect_lower(self, lower: InspectLower, ref_id: UUID) -> None:
-        """The pilot's yes to going below the automatic floor."""
+        """The pilot's yes to going below the automatic floor, only to the question asked
+        now (``inspect.lower_offer``): a yes before it is stale, so the drone always stops
+        to ask "Gå lägre?"."""
         s, a = self._inspect, self.active
         if (
             s is None
@@ -3027,6 +3149,8 @@ class Executor:
             or s.phase != "flying"
             or a is None
             or not isinstance(a.handler, InspectHandler)
+            or a.handler.steps is None
+            or a.handler.steps.phase != "lower_offer"
         ):
             self._ack(ref_id, "rejected", ("ONB_STALE_ORDER",))
             return
