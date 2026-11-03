@@ -695,3 +695,38 @@ def test_a_checkpoint_of_the_wrong_shape_is_refused_not_half_loaded(tmp_path: Pa
     torch.save(ck, init)
     with pytest.raises(BenchError, match="passar inte"):
         train_detector.load_init(families.build("yolox_m"), "yolox_m", init)
+
+
+# --- scales: training pictures resampled to our cameras' person sizes -----------------
+
+
+def test_scales_are_part_of_the_settings_only_when_they_are_used() -> None:
+    key = train_detector.Settings("yolox_s").key()
+    assert "scales" not in key and "max_up" not in key  # old runs carry on
+    key = train_detector.Settings("yolox_s", scales=("native", "wide"), max_up=3.0).key()
+    assert key["scales"] == ["native", "wide"] and key["max_up"] == 3.0
+
+
+@pytest.mark.parametrize("bad", ["scales=zoom", "scales=0", "max_up=0.5", "max_up=nine"])
+def test_a_bad_scale_stops_before_training(bank: Path, tmp_path: Path, bad: str) -> None:
+    argv = ["model=yolox_s", f"data={bank}", f"out={tmp_path / 'run'}", f"tile={TILE}", bad]
+    assert train_detector.main(argv) == 2
+    assert not (tmp_path / "run").exists()
+
+
+def test_a_scaled_run_resamples_the_train_part_only(bank: Path, tmp_path: Path) -> None:
+    """The bank's 'heridal' is 50 px/m (the register): 120 px/m would enlarge it 2.4
+    times, so it stops at max_up 2; the val part is cut as it is, like the test part."""
+    out = tmp_path / "run"
+    argv = ["model=yolox_s", f"data={bank}", f"out={out}", "epochs=1", "batch=2",
+            f"tile={TILE}", "device=cpu", "workers=0", "scales=native,120"]  # fmt: skip
+    assert train_detector.main(argv) == 0
+    train_tiles = json.loads((out / "tiles" / "train" / "tiles.json").read_text())["tiles"]
+    val_tiles = json.loads((out / "tiles" / "val" / "tiles.json").read_text())["tiles"]
+    assert {t.get("scale", 1.0) for t in train_tiles} == {1.0, 2.0}
+    assert all("scale" not in t for t in val_tiles)
+    best = torch.load(out / "best.pt", weights_only=True)
+    assert best["settings"]["scales"] == ["native", "120"]
+    _, manifest_path = export(out / "best.pt", tmp_path / "models", "person_s", check_images=1)
+    shown = json.loads(manifest_path.read_text(encoding="utf-8"))["settings"]
+    assert shown["scales"] == ["native", "120"] and shown["max_up"] == 2.0

@@ -991,3 +991,49 @@ def test_propfind_reads_names_and_sizes_and_refuses_a_dtd() -> None:
     bomb = FakeServer(b'<!DOCTYPE a [<!ENTITY x "y">]><a/>', ranges=False)
     with pytest.raises(BenchError, match="DTD"):
         common.propfind("https://example.test/s/", bomb)
+
+
+# --- a set with ignore regions (UIT-Drone4's motorcycles) ---------------------------------
+
+
+def test_fetch_keeps_ignore_regions_apart_from_the_persons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stems = ("DJI_0606_0p40_1p00_000140", "DJI_0606_0p40_1p00_000145")
+    pictures = _zip({f"images/train/{s}.jpg": _jpeg(200, 100) for s in stems})
+    labels = _zip(
+        {f"labels/train/{s}.txt": b"0 0.5 0.5 0.1 0.2\n1 0.1 0.1 0.1 0.2\n" for s in stems}
+    )
+    ds = dataclasses.replace(
+        load_register()["uit_drone4"],
+        url="https://example.test/images.zip",
+        size_bytes=len(pictures),
+        sha256=_sha(pictures),
+        labels_url="https://example.test/labels.zip",
+        labels_size_bytes=len(labels),
+        labels_sha256=_sha(labels),
+    )
+    server = TwoFiles(
+        {
+            "https://example.test/images.zip": pictures,
+            "https://example.test/labels.zip": labels,
+        }
+    )
+    monkeypatch.setattr(fetch, "download", functools.partial(download, opener=server))
+    assert fetch.fetch_archive(ds, tmp_path, keep=False) == 0
+    (one,) = read_index(tmp_path, "uit_drone4")  # only every tenth frame
+    assert (one.local_id, one.seq) == (stems[0], "DJI_0606")
+    assert one.boxes == ((90.0, 40.0, 110.0, 60.0),)
+    assert one.ignore == ((10.0, 0.0, 30.0, 20.0),)
+    body = json.loads((tmp_path / "datasets" / "uit_drone4" / "index.json").read_text())
+    assert body["images"][0]["ignore"] == [[10.0, 0.0, 30.0, 20.0]]
+
+
+def test_an_index_without_ignore_reads_as_none(tmp_path: Path) -> None:
+    from bench.datasets import Image, write_index
+
+    ds = load_register()["heridal"]
+    write_index(tmp_path, ds, [Image("heridal:a_B_1", "heridal", "B", "a.jpg", 4, 4, ())], "t")
+    body = json.loads((tmp_path / "datasets" / "heridal" / "index.json").read_text())
+    assert "ignore" not in body["images"][0]
+    assert read_index(tmp_path, "heridal")[0].ignore == ()

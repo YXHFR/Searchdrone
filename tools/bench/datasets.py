@@ -79,6 +79,9 @@ class Dataset:
     # ``sha256`` the SHA-256 of their ``sha256sum`` lines sorted by path (fetch.py)
     share_folders: tuple[str, ...] = ()
     share_files: int | None = None
+    # the ground scale of every picture, pixels per metre, when the source states one for
+    # the whole set (``tools/train/tiles.py`` otherwise reads it off the person boxes)
+    px_per_m: float | None = None
 
     @property
     def is_share(self) -> bool:
@@ -146,6 +149,8 @@ def licence_problems(ds: Dataset) -> list[str]:
     for folder in ds.share_folders:
         if not re.fullmatch(r"[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*", folder):
             problems.append(f"{ds.name}: share folder {folder!r} is not a plain relative path")
+    if ds.px_per_m is not None and not 1.0 <= ds.px_per_m <= 5000.0:
+        problems.append(f"{ds.name}: px_per_m must be between 1 and 5000")
     return problems
 
 
@@ -191,6 +196,7 @@ def _dataset(row: dict[str, Any]) -> Dataset:
             ),
             share_folders=tuple(str(f) for f in row.get("share_folders", [])),
             share_files=row.get("share_files"),
+            px_per_m=float(row["px_per_m"]) if "px_per_m" in row else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise BenchError(f"datasets.toml: felaktig rad ({exc})", 2) from exc
@@ -225,6 +231,9 @@ class Image:
     width: int
     height: int
     boxes: tuple[Box, ...]
+    # regions that hold people who are not boxed (a set's motorcycles with their riders):
+    # never trained on, never measured on
+    ignore: tuple[Box, ...] = ()
 
     @property
     def local_id(self) -> str:
@@ -259,6 +268,7 @@ def write_index(
                 "height": im.height,
                 "boxes": [[round(v, 2) for v in b] for b in im.boxes],
             }
+            | ({"ignore": [[round(v, 2) for v in b] for b in im.ignore]} if im.ignore else {})
             for im in images
         ],
     }
@@ -285,6 +295,9 @@ def read_index(data: Path, name: str, mini: bool = False) -> list[Image]:
             width=int(row["width"]),
             height=int(row["height"]),
             boxes=tuple((float(b[0]), float(b[1]), float(b[2]), float(b[3])) for b in row["boxes"]),
+            ignore=tuple(
+                (float(b[0]), float(b[1]), float(b[2]), float(b[3])) for b in row.get("ignore", [])
+            ),
         )
         for row in body["images"]
     ]

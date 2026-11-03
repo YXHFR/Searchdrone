@@ -15,7 +15,10 @@ target share of pictures (70/10/20). ``v2`` adds KIOS: it keeps every dataset of
 exactly as it was (``extend_split_file``; so HERIDAL's test part, and every number
 measured on it, stays comparable) and draws only the new one. ``v3`` adds the two
 training-only sets (KIOS car/person, SeaDronesSee) the same way, with no test part
-(``RATIOS_TRAIN_ONLY``: they are never measured on). A dataset's own ``seed`` (and
+(``RATIOS_TRAIN_ONLY``: they are never measured on). ``v4`` adds UIT-Drone4 the same
+way. The measured sets' parts are the same in v3 and v4, so the measurement keeps
+reading ``MEASURED`` (v3): a result measured before v4 stays comparable with one
+measured after it. A dataset's own ``seed`` (and
 ``ratios``, where not ``RATIOS``) says how it was drawn.
 
 A set that grows (``GROWING``: the photo farm's renders, made again and again) cannot be
@@ -41,7 +44,10 @@ from typing import Literal
 from bench.common import BENCH, BenchError
 
 SPLITS = BENCH / "splits"
-CURRENT = "v3"
+CURRENT = "v4"
+# the split the measurement reads: the newest version that changed a measured set's
+# parts (v4 only adds a training set), so results stay comparable across versions
+MEASURED = "v3"
 SPLIT_SCHEMA = "bench.split/v1"
 MINI_SCHEMA = "bench.mini/v1"
 Part = Literal["train", "val", "test"]

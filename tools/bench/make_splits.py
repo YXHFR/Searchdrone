@@ -16,6 +16,7 @@ a listing (in ``data=``): SeaDronesSee's sequences are in its labels, not its me
 names. A set that is only trained on gets no test part (``RATIOS_TRAIN_ONLY``):
 
     python -m bench.make_splits extend version=v3 base=v2 kios_carperson=index seadronessee=index
+    python -m bench.make_splits extend version=v4 base=v3 uit_drone4=<a> uit_drone4_labels=<b>
 
 ``mini`` picks ``n`` pictures of the HERIDAL test part, spread evenly over its
 sequences, reads each picture and label out of the archive on the server and writes
