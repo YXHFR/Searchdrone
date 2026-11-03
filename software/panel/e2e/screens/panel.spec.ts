@@ -278,6 +278,7 @@ const STATES: State[] = [
     name: "02-proposal-holding",
     async run(page, ground) {
       await proposal(page, ground);
+      await page.getByTestId("approval-AP1").getByTestId("op-mode-exercise").check();
       const btn = page.getByTestId("approval-AP1").getByTestId("approve");
       await btn.scrollIntoViewIfNeeded();
       const box = await btn.boundingBox();

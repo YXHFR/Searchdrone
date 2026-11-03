@@ -73,6 +73,10 @@ test.describe("chat and approval cards", () => {
     await expect(card).toContainText("Sök av sektor");
     // The owner chose approval directly on the card (no review step).
     await expect(card.getByRole("radio", { name: /B – AI:n flyger fritt/ })).toBeChecked();
+    // The operation mode has no default: nothing is approved until the pilot picks one.
+    await expect(card.getByTestId("op-mode")).toContainText("Välj driftläge");
+    await expect(card.getByTestId("approve")).toBeDisabled();
+    await card.getByTestId("op-mode-exercise").check();
     // A habitual tap approves nothing: the area has to be held for 0.8 s.
     await card.getByTestId("approve").click();
     await page.waitForTimeout(1_000);
@@ -83,6 +87,7 @@ test.describe("chat and approval cards", () => {
       decision: "approve",
       subject_version: 1,
       autonomy_mode: "WITHIN_CHARTER",
+      operation_mode: "exercise",
     });
     expect(ground.calls(/\/(activate|approve)$/)).toEqual([]);
     await expect(card).toContainText("Godkänd av demo");
@@ -145,6 +150,7 @@ test.describe("chat and approval cards", () => {
       detail_sv: "Ersatt",
     });
     const card = page.getByTestId("approval-AP1");
+    await card.getByTestId("op-mode-sim").check();
     await holdClick(page, "approve", card);
     await expect(card).toContainText("Ersatt av en nyare version");
     await expect(card.getByTestId("approve")).toHaveCount(0);

@@ -137,6 +137,8 @@ async function readyMission(page: Page): Promise<void> {
   if ((await live<string>(page, "mission.status")) === "READY") return;
   await say(page, "Sök av rutan norr om hem.");
   const card = page.locator('[data-kind="charter"]').last();
+  // The simulator's onboard profile takes only a charter for the simulator.
+  await card.getByTestId("op-mode-sim").check({ timeout: 30_000 });
   await expect(card.getByTestId("approve")).toBeEnabled({ timeout: 30_000 });
   await expect(card.getByRole("radio", { name: /B – AI:n flyger fritt/ })).toBeChecked();
   await holdClick(page, "approve", card);
