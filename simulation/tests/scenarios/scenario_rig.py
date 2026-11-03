@@ -270,8 +270,11 @@ class Scenario:
 
     # --- the pilot (panel API) -----------------------------------------------------------
 
-    async def ready(self, charter: str = "charter_test", **overrides: Any) -> str:
-        """Open a mission; the pilot proposes and approves a fixture charter: READY."""
+    async def ready(
+        self, charter: str = "charter_test", *, mode: str | None = None, **overrides: Any
+    ) -> str:
+        """Open a mission; the pilot proposes and approves a fixture charter (in the
+        operation ``mode`` when given): READY."""
         r = self.r
         self.mid = await r.open_mission()
         res = await r.panel.post(
@@ -281,7 +284,8 @@ class Scenario:
         )
         assert res.status_code == 201, res.text
         card = res.json()
-        res = await r.approve(str(card["approval_id"]), card["version"])
+        extra = {} if mode is None else {"operation_mode": mode}
+        res = await r.approve(str(card["approval_id"]), card["version"], **extra)
         assert res.status_code == 200, res.text
         await r.wait_status(self.mid, "READY", 90)
         await r.until(r.onboard.ex.preflight_ok, 90, "onboard preflight")
@@ -332,10 +336,13 @@ class Scenario:
         await self.say("Starta.")
         await self.wait_command("takeoff", "done", 90, issuer_kind="brain")
 
-    async def airborne(self, charter: str = "charter_test", **overrides: Any) -> str:
-        """Without the AI process: the pilot's charter and "clear around the drone", and a
-        take-off order on the commander API (the AI's path) to 40 m."""
-        await self.ready(charter, **overrides)
+    async def airborne(
+        self, charter: str = "charter_test", *, mode: str | None = None, **overrides: Any
+    ) -> str:
+        """Without the AI process: the pilot's charter (in the operation ``mode`` when
+        given) and "clear around the drone", and a take-off order on the commander API (the
+        AI's path) to 40 m."""
+        await self.ready(charter, mode=mode, **overrides)
         await self.clearance()
         res = await self.order("takeoff", {"alt_m": 40})
         assert res.get("decision") == "ALLOW", res
