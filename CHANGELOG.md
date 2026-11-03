@@ -319,7 +319,8 @@ All notable changes to this project are listed here. The format follows
   failed turn. A refused token (401) ends the loop also when the AI's turn or a write
   (a chat line, an order, a charter, the memory, the decision log) meets it, not only on
   the next read. The `backend_decide_failed` and `turn_failed` log lines quote the
-  error's text with `repr`, so it cannot start a log line of its own.
+  error's text with `repr`, so it cannot start a log line of its own. A prompt value that is no JSON (a
+  UUID, a datetime) is logged as its text again, as before this change.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning
