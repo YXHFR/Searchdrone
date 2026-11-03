@@ -8,6 +8,13 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- A larger person detector to train (the owner's decision of 2026-11-03):
+  `just train-detector model=yolox_m` trains YOLOX-m, started from Megvii's COCO
+  weights (Apache-2.0, fetched and checked by `just detector-fetch only=yolox_m`), with
+  batch 4 by default so it fits an 8 GB graphics card. It exports and is measured like
+  `yolox_s`, and the drone reads it the same way, but each tile costs about 2.8 times
+  the arithmetic (73.8 against 26.8 GFLOPs at 640 px). `init=` from a `yolox_s` run is
+  refused with a plain reason: the two sizes cannot share weights.
 - A photo farm for the person detector (the owner's decision of 2026-11-02: as
   realistic as possible, with the right proportions): `just sim-farm-stills` takes
   still pictures of people at the site with its real trees, without flying. People

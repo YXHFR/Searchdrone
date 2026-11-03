@@ -622,3 +622,76 @@ def test_weights_from_before_upscale_export_as_1x(bank: Path, tmp_path: Path) ->
     torch.save(ck, best)
     _, manifest_path = export(best, tmp_path / "models", "person_x", check_images=1)
     assert json.loads(manifest_path.read_text(encoding="utf-8"))["upscale"] == 1
+
+
+# --- yolox_m: the larger YOLOX --------------------------------------------------------
+
+
+def test_yolox_m_is_megviis_yolox_m_and_reads_as_yolox_on_board() -> None:
+    fam = families.FAMILIES["yolox_m"]
+    assert (fam.family, fam.pad, fam.outputs) == ("yolox", 114, ("output",))
+    assert families.PRETRAINED["yolox_m"] == "yolox_m.pth"
+    coco = families.build("yolox_m", num_classes=80)
+    # Megvii's README: YOLOX-m has 25.3 M parameters (YOLOX-s 9.0 M)
+    assert sum(p.numel() for p in coco.parameters()) / 1e6 == pytest.approx(25.3, abs=0.1)
+    small, big = families.build("yolox_s"), families.build("yolox_m")
+    stem = "head.stems.0.conv.weight"  # 256 channels times the width: 0.50 and 0.75
+    assert (small.state_dict()[stem].shape[0], big.state_dict()[stem].shape[0]) == (128, 192)
+    assert len(big.state_dict()) > len(small.state_dict())  # deeper: depth 0.67 against 0.33
+
+
+def test_yolox_m_exports_the_same_output_as_yolox_s(tmp_path: Path) -> None:
+    """One tensor ``[1, n, 5 + 1]`` over the same cells: what sd_detect.onnx decodes."""
+    import onnxruntime as ort
+
+    shapes = {}
+    for model in ("yolox_s", "yolox_m"):
+        wrapper = families.ExportWrapper(families.build(model).eval(), model).eval()
+        path = tmp_path / f"{model}.onnx"
+        torch.onnx.export(
+            wrapper, (torch.zeros(1, 3, TILE, TILE),), str(path), input_names=["images"],
+            output_names=["output"], opset_version=17, dynamo=False,
+        )  # fmt: skip
+        session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        (out,) = session.run(None, {"images": np.zeros((1, 3, TILE, TILE), np.float32)})
+        shapes[model] = out.shape
+    cells = sum((TILE // s) ** 2 for s in (8, 16, 32))
+    assert shapes["yolox_m"] == shapes["yolox_s"] == (1, cells, 6)
+
+
+def test_yolox_m_takes_batch_4_by_default(bank: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[train_detector.Settings] = []
+
+    def fake_train(settings: train_detector.Settings, *a: Any) -> int:
+        seen.append(settings)
+        return 0
+
+    monkeypatch.setattr(train_detector, "train", fake_train)
+    base = [f"data={bank}", "device=cpu", f"out={bank / 'run'}"]
+    assert train_detector.main(["model=yolox_m", *base]) == 0
+    assert train_detector.main(["model=yolox_s", *base]) == 0
+    assert train_detector.main(["model=yolox_m", "batch=2", *base]) == 0
+    assert [s.batch for s in seen] == [4, 8, 2]
+    assert train_detector.main(["model=yolox_m", "batch=many", *base]) == 2
+
+
+def test_yolox_m_refuses_init_from_a_yolox_s_run(bank: Path, tmp_path: Path) -> None:
+    init = tmp_path / "small" / "best.pt"
+    init.parent.mkdir()
+    _earlier_best(init, "yolox_s")
+    with pytest.raises(BenchError, match=r"tränad som yolox_s, inte yolox_m.*COCO"):
+        train_detector.load_init(families.build("yolox_m"), "yolox_m", init)
+    argv = ["model=yolox_m", f"data={bank}", f"out={tmp_path / 'm'}", "epochs=1", "batch=2",
+            f"tile={TILE}", "device=cpu", "workers=0", f"init={init}"]  # fmt: skip
+    assert train_detector.main(argv) == 2
+    assert not (tmp_path / "m" / "last.pt").exists()  # nothing was trained
+
+
+def test_a_checkpoint_of_the_wrong_shape_is_refused_not_half_loaded(tmp_path: Path) -> None:
+    init = tmp_path / "best.pt"
+    _earlier_best(init, "yolox_s")
+    ck = torch.load(init, weights_only=True)
+    ck["model"] = "yolox_m"  # mislabelled: yolox_s weights under yolox_m's name
+    torch.save(ck, init)
+    with pytest.raises(BenchError, match="passar inte"):
+        train_detector.load_init(families.build("yolox_m"), "yolox_m", init)
