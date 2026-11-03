@@ -8,11 +8,14 @@ in the queue. E7 (no command path) is checked here on the API and in sd_search's
 
 from __future__ import annotations
 
+import asyncio
 import io
+import json
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -25,7 +28,15 @@ from flow_rig import BRAIN, SEARCH, VID, H, Rig, rig  # pyright: ignore[reportMi
 
 from sd_ground.app import commander_asgi, create_commander_app
 from sd_schemas.base import LatLon, new_id
-from sd_schemas.link import BBox, CropData, DetectorInfo, GeoDetectionMsg, PerceptionReport, Pose
+from sd_schemas.link import (
+    BBox,
+    CropData,
+    DetectorInfo,
+    GeoDetectionMsg,
+    OnboardEvent,
+    PerceptionReport,
+    Pose,
+)
 from sd_schemas.search import SearchProfile
 from sd_search.app import SearchService
 from sd_search.client import GroundClient
@@ -108,7 +119,10 @@ def report(r: Rig, *dets: GeoDetectionMsg) -> PerceptionReport:
 
 
 async def send(r: Rig, *dets: GeoDetectionMsg, color: tuple[int, int, int] = RED) -> None:
-    rep = report(r, *dets)
+    await send_report(r, report(r, *dets), color)
+
+
+async def send_report(r: Rig, rep: PerceptionReport, color: tuple[int, int, int] = RED) -> None:
     await r.onboard.session.send(rep, ttl_ms=30_000)
     for d in rep.detections:
         if d.crop_inline:
@@ -478,3 +492,68 @@ async def test_paging_follows_the_queue_order(r: Rig) -> None:
     assert paged == whole and len(whole) == len(priorities)
     res = await r.panel.get(f"/api/v1/missions/{mid}/candidates", params={"before_seq": 999})
     assert res.status_code == 404 and res.json()["code"] == "CANDIDATE_NOT_FOUND"
+
+
+async def test_a_closer_looks_stills_and_its_end_reach_the_search_service(r: Rig) -> None:
+    """TN-8: a still taken during a closer look names its target in the search feed
+    (from the order the ground filled in), its picture of the target joins that candidate
+    beyond the fusion radius, and the drone's ``inspect.done`` is readable by the search
+    service (an unreadable one is left out)."""
+    mid = await r.open_mission()
+    service, client = search_service(r)
+    try:
+        await send(r, person(r, 0, 100, sigma95_m=2.0))
+        await service.step()
+        (first,) = (await queue(r, mid))["items"]
+        target = first["candidate_id"]
+        look = str(new_id())
+        async with r.flow.repo.engine.begin() as conn:  # the order as the ground stores it
+            await conn.execute(text(
+                "INSERT INTO commands (id, mission_id, vehicle_id, issuer_kind, issuer_ref, "
+                "skill, params, status) VALUES (:id, :m, :v, 'operator', 'operator:demo', "
+                "'inspect_detection', CAST(:p AS jsonb), 'running')"
+            ), {"id": look, "m": mid, "v": VID, "p": json.dumps(
+                {"candidate_id": target.upper(), "lat": first["lat"], "lon": first["lon"],
+                 "sigma95_m": 2.0, "target_radius_m": 32.0}
+            )})  # fmt: skip
+        close_up = person(r, 12, 100, sigma95_m=0.8)  # beyond 4 + 2 m, within 15 m
+        rep = report(r, close_up).model_copy(update={"command_id": UUID(look), "inspect_step": 2})
+        await send_report(r, rep)
+        assert r.search is not None
+        feed = (await r.search.get(f"/search/v1/missions/{mid}/detections")).json()
+        assert [d["inspect_candidate_id"] for d in feed] == [None, target]
+        assert feed[1]["command_id"] == look and feed[1]["inspect_sigma95_m"] == 2.0
+        assert (feed[1]["inspect_lat"], feed[1]["inspect_lon"]) == (first["lat"], first["lon"])
+        assert feed[0]["inspect_lat"] is None
+        assert feed[1]["still_px_per_m"] == 24.0 and feed[0]["command_id"] is None
+
+        await service.step()
+        body = await queue(r, mid)
+        assert len(body["items"]) == 1 and body["items"][0]["n_seen"] == 2
+
+        done = {
+            "command_id": look,
+            "candidate_id": target,
+            "end": "clear",
+            "steps": 2,
+            "clear": True,
+        }
+        for data in ({"command_id": look}, done):
+            ev = OnboardEvent(type="inspect.done", severity="info", data=data)
+            await r.onboard.session.send(ev, ttl_ms=30_000)
+        found: list[Any] = []
+
+        async def read() -> bool:
+            await r.g.flush_events()
+            found[:] = await client.inspections(mid)
+            return bool(found)
+
+        end = asyncio.get_running_loop().time() + 10
+        while not await read():
+            assert asyncio.get_running_loop().time() < end, "inspect.done never stored"
+            await asyncio.sleep(0.05)
+        assert [(str(d.command_id), str(d.candidate_id), d.end) for d in found] == [
+            (look, target, "clear")
+        ]
+    finally:
+        await client.aclose()

@@ -4,7 +4,8 @@
 writes candidates in batches (``write``); on a restart it reads them back (``tracks``) and
 goes on from the last detection it observed. Every write is a new revision; the live
 topic ``candidates`` carries ``candidate.new``, ``candidate.updated`` and
-``candidate.assessed``.
+``candidate.assessed``. After a closer look it reads the looks the drone reported done
+(``looks_done``) and assesses each target again on the look's close-ups.
 
 Only a person decides (``decide``): confirm, reject, unsure, and for the pilot inspect,
 resume and reopen, along ``CANDIDATE_TRANSITIONS``; anything else is 409. A confirmation
@@ -29,6 +30,8 @@ from pathlib import Path
 from typing import Any, Final
 from xml.sax.saxutils import escape
 
+from pydantic import ValidationError
+
 from sd_ground.api.deps import ApiStatusError
 from sd_ground.auth import Principal
 from sd_ground.db.candidates import CandidateRepo, CandidateWriteError, Decided
@@ -41,6 +44,7 @@ from sd_ground.services.missions import MissionFlow
 from sd_schemas.base import new_id
 from sd_schemas.candidate_ai import queue_counts
 from sd_schemas.geo import plane_distance_m
+from sd_schemas.inspect import InspectDone
 from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.search import (
     CandidateBatch,
@@ -60,6 +64,7 @@ __all__ = [
     "CANDIDATE_TRANSITIONS",
     "CARDS_MAX",
     "FEED_MAX",
+    "LOOKS_MAX",
     "PILOT_ONLY",
     "SYSTEM_TRANSITIONS",
     "card_list",
@@ -68,6 +73,7 @@ __all__ = [
     "detail",
     "feed",
     "gpx",
+    "looks_done",
     "open_view",
     "repo",
     "tracks",
@@ -79,6 +85,7 @@ log = get_logger("sd_ground.candidates")
 
 FEED_MAX = 500
 CARDS_MAX = 200
+LOOKS_MAX = 500  # closer looks in one mission: one at a time, minutes each
 _DECIDED = (CandidateState.CONFIRMED.value, CandidateState.REJECTED.value)
 
 _S = CandidateState
@@ -139,6 +146,21 @@ async def tracks(flow: MissionFlow, mission_id: str) -> list[SearchTrack]:
                 }
             )
         )
+    return out
+
+
+async def looks_done(flow: MissionFlow, mission_id: str) -> list[InspectDone]:
+    """The mission's closer looks the drone reported done (``inspect.done``), oldest
+    first, so the search service can assess each target again on its close-ups. An
+    event that does not read as ``InspectDone`` is left out."""
+    await flow.open_mission_of(mission_id)
+    out: list[InspectDone] = []
+    for payload in await repo(flow).looks_done(mission_id, LOOKS_MAX):
+        body = {k: v for k, v in payload.items() if k != "source"}  # the ground's own mark
+        try:
+            out.append(InspectDone.model_validate(body))
+        except ValidationError:
+            log.warning("candidate.look_done_unreadable", mission_id=mission_id)
     return out
 
 

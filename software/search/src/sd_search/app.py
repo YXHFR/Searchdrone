@@ -19,6 +19,19 @@ saw stays when the model calls the field ``not_visible``; its ``person_p`` repla
 detector's. Cloud answers live in memory only: after a restart the candidates are asked
 again (the budget bounds what that costs). If sd-search dies, the rest of the system goes on: it has
 no part in flying, and the panel shows ``parts.search`` as down.
+
+A closer look (``inspect_detection``) at a candidate: in each of the look's stills the
+one detection nearest where the target was when the order went out, within
+``look_radius_m`` of it, joins the target (``Fusion.add`` with ``force_candidate_id``,
+``look_joins``); the others are fused as usual, so a second person gets a candidate
+(and a cylinder) of their own. While the look flies, the code
+assesses the target after every step but the cloud waits: when the drone reports
+``inspect.done`` (read every ``INSPECT_POLL_S``, handled ``INSPECT_SETTLE_S`` later so
+the last step's pictures are in), the target is assessed again, by the code and once by
+the cloud, from the look's best crops: at most one from each camera. The cloud call goes
+through the same image policy and budget as any other. The target keeps the state the
+pilot gave it. Done looks are remembered in memory only: after a restart they are
+assessed once more.
 """
 
 from __future__ import annotations
@@ -34,6 +47,8 @@ from dataclasses import dataclass, field
 
 from PIL import Image
 
+from sd_schemas.geo import plane_distance_m
+from sd_schemas.inspect import InspectDone
 from sd_schemas.link import BBox
 from sd_schemas.search import (
     SEARCH_BATCH_MAX,
@@ -49,21 +64,35 @@ from sd_schemas.search import (
 )
 from sd_search.client import ConflictError, GroundError, SearchApi
 from sd_search.color import CROPS_MAX, CropView, assess_colors, box_in_crop
-from sd_search.fusion import Fusion, Sighting, Track
+from sd_search.fusion import Fusion, Sighting, Track, look_radius_m
 from sd_search.mapper import MAP_EVERY_S, MapService
 from sd_search.match.cascade import Cascade, skip_cloud
 from sd_search.match.engines import CROPS_FAST, Crop, MatchRequest
 from sd_search.priority import priority
+from sd_search.probmap.pod import PAIR_DETAIL_RATIO, SAME_MOMENT_S
 from sd_search.profile import ProfileSource
 from sd_search.score import match_score, person_probability
 
-__all__ = ["FEED_LIMIT", "LOOKBACK", "SearchService", "merge_fields", "sighting", "track_of"]
+__all__ = [
+    "FEED_LIMIT",
+    "INSPECT_POLL_S",
+    "INSPECT_SETTLE_S",
+    "LOOKBACK",
+    "SearchService",
+    "close_ups",
+    "look_joins",
+    "merge_fields",
+    "sighting",
+    "track_of",
+]
 
 log = logging.getLogger("sd_search")
 FEED_LIMIT = 200
 LOOKBACK = 64  # detections re-read behind the cursor (out-of-order commits)
 CROP_CACHE = 256
 HEARTBEAT_S = 5.0
+INSPECT_POLL_S = 2.0  # how often the done closer looks are read
+INSPECT_SETTLE_S = 2.0  # a done look waits this long for its last step's detections
 
 
 def merge_fields(
@@ -92,7 +121,68 @@ def sighting(d: SearchDetection) -> Sighting:
         px_size=d.px_size,
         captured_utc=d.captured_utc,
         has_crop=d.has_crop,
+        command_id=None if d.command_id is None else str(d.command_id),
+        px_per_m=d.still_px_per_m,
+        look_of=None if d.inspect_candidate_id is None else str(d.inspect_candidate_id),
     )
+
+
+def look_joins(fusion: Fusion, batch: list[SearchDetection]) -> dict[str, str]:
+    """The closer looks' pictures of their targets in ``batch``: detection id -> the
+    candidate it is forced onto. At most one per still: the detection nearest the
+    target's position when the order went out (higher score on a tie), within
+    ``look_radius_m`` of the target's uncertainty then, and only while the target is
+    open, of its class and has no picture from that still yet. The anchor never moves,
+    so a chain of pictures cannot walk the target away from where the order sent the
+    drone."""
+    best: dict[str, tuple[float, float, str, str]] = {}  # still id -> (m, -score, ids)
+    for d in batch:
+        if (
+            d.inspect_candidate_id is None
+            or d.inspect_lat is None
+            or d.inspect_lon is None
+            or d.inspect_sigma95_m is None
+        ):
+            continue
+        did, cid, still = str(d.detection_id), str(d.inspect_candidate_id), str(d.still_id)
+        t = fusion.tracks.get(cid)
+        if did in fusion.seen or t is None or not t.open or t.label != d.label:
+            continue
+        if any(s.still_id == still for s in t.sightings):
+            continue
+        dist = plane_distance_m(d.inspect_lat, d.inspect_lon, d.lat, d.lon)
+        if dist > look_radius_m(d.inspect_sigma95_m):
+            continue
+        key = (dist, -d.score, did, cid)
+        if still not in best or key < best[still]:
+            best[still] = key
+    return {did: cid for _, _, did, cid in best.values()}
+
+
+def _other_camera(a: Sighting, b: Sighting) -> bool:
+    """``a`` and ``b`` are of one moment seen by the two cameras: taken at most
+    ``SAME_MOMENT_S`` apart, one with clearly more detail (as ``probmap.pod`` pairs a
+    tele and a main still). Two stills of one camera at one height never are."""
+    if a.px_per_m is None or b.px_per_m is None:
+        return False
+    if abs((a.captured_utc - b.captured_utc).total_seconds()) > SAME_MOMENT_S:
+        return False
+    lo, hi = sorted((a.px_per_m, b.px_per_m))
+    return hi >= PAIR_DETAIL_RATIO * lo
+
+
+def close_ups(t: Track, command_id: str) -> list[Sighting]:
+    """A closer look's best crops of its target, at most one from each camera: the
+    largest, and the largest the other camera took at the same moment."""
+    shots = sorted(
+        (s for s in t.sightings if s.has_crop and s.command_id == command_id),
+        key=lambda s: (-s.px_size, s.detection_id),
+    )
+    if not shots:
+        return []
+    best = shots[0]
+    other = next((s for s in shots[1:] if _other_camera(best, s)), None)
+    return [best] if other is None else [best, other]
 
 
 def track_of(t: SearchTrack) -> Track:
@@ -137,6 +227,14 @@ class _Mission:
     unsent: dict[str, CandidateAssessment] = field(
         default_factory=dict[str, CandidateAssessment]
     )  # cloud answers not yet written
+    looks: dict[str, tuple[InspectDone, float]] = field(
+        default_factory=dict[str, tuple[InspectDone, float]]
+    )  # command id -> a done closer look waiting to settle, and when it was first read
+    looked: set[str] = field(default_factory=set[str])  # command ids of handled looks
+    after_look: dict[str, tuple[str, ...]] = field(
+        default_factory=dict[str, tuple[str, ...]]
+    )  # candidate id -> the close-ups (detection ids) the cloud is to see once
+    looks_read_at: float | None = None
 
 
 class SearchService:
@@ -254,9 +352,10 @@ class SearchService:
         fresh = await self.api.detections(mission_id, max(0, m.cursor - LOOKBACK), FEED_LIMIT)
         dirty: dict[str, list[tuple[str, float]]] = {}
         fused = 0
+        joins = look_joins(m.fusion, fresh)
         for d in fresh:
             m.cursor = max(m.cursor, d.seq)
-            step = m.fusion.add(sighting(d))
+            step = m.fusion.add(sighting(d), force_candidate_id=joins.get(str(d.detection_id)))
             if step is None:
                 continue
             fused += 1
@@ -264,6 +363,9 @@ class SearchService:
             dirty.setdefault(step.candidate_id, []).append((str(d.detection_id), step.distance_m))
             for merged in step.merged:
                 dirty.setdefault(merged, [])
+        chosen = await self._done_looks(mission_id, m)
+        for cid in chosen:
+            dirty.setdefault(cid, [])
         for t in m.fusion.tracks.values():  # a new profile version: score the open ones again
             if t.open and m.assessed.get(t.candidate_id, (version,))[0] != version:
                 dirty.setdefault(t.candidate_id, [])
@@ -279,7 +381,9 @@ class SearchService:
         revisions: list[CandidateRevision] = []
         for cid, observations in dirty.items():
             t = m.fusion.tracks[cid]
-            revisions.append(await self._revision(m, t, profile, version, observations))
+            revisions.append(
+                await self._revision(m, t, profile, version, observations, chosen.get(cid))
+            )
         for i in range(0, len(revisions), SEARCH_BATCH_MAX):
             chunk = revisions[i : i + SEARCH_BATCH_MAX]
             written = await self.api.write(mission_id, CandidateBatch(revisions=chunk))
@@ -291,32 +395,67 @@ class SearchService:
             if a is None:
                 continue
             cid = str(r.candidate_id)
-            if a.engine == "code":
+            if a.engine == "code" and cid not in chosen:  # a look's: ``_assess`` keyed it
                 m.assessed[cid] = (version, tuple(str(c) for c in a.crops_used))
             elif m.unsent.get(cid) is a:
                 del m.unsent[cid]
         await self._offer(mission_id, m, profile, version)
         return fused
 
+    async def _done_looks(self, mission_id: str, m: _Mission) -> dict[str, list[Sighting]]:
+        """The closer looks reported done that have settled: their open targets with the
+        close-ups to assess them on again (none for a look without a crop of its target)."""
+        now = self.monotonic()
+        if m.looks_read_at is None or now - m.looks_read_at >= INSPECT_POLL_S:
+            m.looks_read_at = now
+            for done in await self.api.inspections(mission_id):
+                key = str(done.command_id)
+                if key not in m.looked and key not in m.looks:
+                    m.looks[key] = (done, now)
+        chosen: dict[str, list[Sighting]] = {}
+        for key, (done, seen_at) in list(m.looks.items()):
+            if now - seen_at < INSPECT_SETTLE_S:
+                continue
+            del m.looks[key]
+            m.looked.add(key)
+            t = m.fusion.tracks.get(str(done.candidate_id))
+            picks = close_ups(t, key) if t is not None and t.open else []
+            if t is None or not picks:
+                log.info("titten %s gav inga närbilder att bedöma", key)
+                continue
+            chosen[t.candidate_id] = picks
+            m.after_look[t.candidate_id] = tuple(s.detection_id for s in picks)
+        return chosen
+
     # --- the cloud -----------------------------------------------------------------------
 
     async def _offer(
         self, mission_id: str, m: _Mission, profile: SearchProfile | None, version: int
     ) -> None:
-        """Send the open candidates the cloud has not seen like this to the cascade."""
+        """Send the open candidates the cloud has not seen like this to the cascade. A
+        candidate under a closer look waits for the look's close-ups (``after_look``)."""
         for t in m.fusion.tracks.values():
             if not self.cascade.accepting:
                 return
             cid = t.candidate_id
             if not t.open or cid not in m.assessed or self.cascade.pending(cid):
                 continue
-            if skip_cloud(t.refined_person_score, t.best_detector_score, t.n_seen):
+            looked = m.after_look.get(cid)
+            if looked is not None:
+                by_id = {s.detection_id: s for s in t.sightings}
+                with_crop = [by_id[d] for d in looked if d in by_id]
+            elif t.state is CandidateState.INSPECTING:
+                continue  # the look is still flying: one assessment after it
+            elif skip_cloud(t.refined_person_score, t.best_detector_score, t.n_seen):
                 continue
-            with_crop = sorted(
-                (s for s in t.sightings if s.has_crop), key=lambda s: (-s.px_size, s.detection_id)
-            )[:CROPS_FAST]
+            else:
+                with_crop = sorted(
+                    (s for s in t.sightings if s.has_crop),
+                    key=lambda s: (-s.px_size, s.detection_id),
+                )[:CROPS_FAST]
             key = (version, tuple(s.detection_id for s in with_crop))
             if not with_crop or m.asked.get(cid) == key:
+                m.after_look.pop(cid, None)
                 continue
             crops: list[Crop] = []
             for s in with_crop:
@@ -324,12 +463,13 @@ class SearchService:
                 if data is not None:
                     crops.append(Crop(s.detection_id, s.px_size, data))
             if not crops:
+                m.after_look.pop(cid, None)
                 continue
             req = MatchRequest(
                 mission_id=mission_id, candidate_id=cid, profile=profile, crops=crops
             )
             if self.cascade.submit(req, key):
-                m.asked[cid] = key
+                m.asked[cid] = key  # ``after_look`` stays until answered: a pause asks again
 
     # --- one candidate -----------------------------------------------------------------
 
@@ -344,14 +484,23 @@ class SearchService:
         return data
 
     async def _assess(
-        self, m: _Mission, t: Track, profile: SearchProfile | None, version: int
+        self,
+        m: _Mission,
+        t: Track,
+        profile: SearchProfile | None,
+        version: int,
+        chosen: list[Sighting] | None = None,
     ) -> CandidateAssessment | None:
-        with_crop = sorted(
+        """The code's assessment of the largest crops; ``None`` when it has seen these
+        before. ``chosen`` (a closer look's close-ups) is assessed in their place, always,
+        and counts as having seen them."""
+        largest = sorted(
             (s for s in t.sightings if s.has_crop), key=lambda s: (-s.px_size, s.detection_id)
         )[:CROPS_MAX]
-        key = (version, tuple(s.detection_id for s in with_crop))
-        if m.assessed.get(t.candidate_id) == key:
+        key = (version, tuple(s.detection_id for s in largest))
+        if chosen is None and m.assessed.get(t.candidate_id) == key:
             return None  # nothing new to look at
+        with_crop = chosen or largest
         started = self.monotonic()
         views: list[CropView] = []
         for s in with_crop:
@@ -382,8 +531,9 @@ class SearchService:
         profile: SearchProfile | None,
         version: int,
         observations: list[tuple[str, float]],
+        chosen: list[Sighting] | None = None,
     ) -> CandidateRevision:
-        assessment = None if not t.open else await self._assess(m, t, profile, version)
+        assessment = None if not t.open else await self._assess(m, t, profile, version, chosen)
         if assessment is None and t.open:
             assessment = m.unsent.get(t.candidate_id)
             if assessment is not None:
@@ -423,7 +573,7 @@ class SearchService:
                 "first_seen_utc": t.first_seen_utc,
                 "last_seen_utc": t.last_seen_utc,
                 "observations": [
-                    {"detection_id": did, "distance_m": round(dist, 2)}
+                    {"detection_id": did, "distance_m": round(min(dist, 1000.0), 2)}
                     for did, dist in observations
                 ],
                 "assessment": assessment,
