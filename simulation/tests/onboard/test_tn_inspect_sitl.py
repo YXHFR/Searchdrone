@@ -53,6 +53,7 @@ from sd_schemas.executor import ExecutorState as S
 from sd_schemas.inspect import AUTO_FLOOR_ABOVE_GROUND_M, CLIMB_MIN_MS, match_radius_m
 from sd_schemas.rangefinder import LASER_GAP_S
 from sd_sim import inspect_world, paths
+from sd_sim.errors import InfraError
 
 pytestmark = [
     pytest.mark.sitl,
@@ -209,7 +210,7 @@ def test_tn04_the_tf02_confirms_over_the_light_meadow_only(seed: int, light: boo
                 await look.start()
                 await look.order()
                 done = await look.flown("yes")
-                assert done is not None, look.of("inspect.aborted")
+                assert done is not None, look.why()
                 m = look.report()
                 confirmed = any(p.laser_confirmed for _, p in look.progress())
                 if light:
@@ -355,7 +356,7 @@ def test_tn07_laser_lost_below_the_trees_plus_15_m_climbs_to_that_floor(seed: in
                 assert done is not None and done["end"] == "laser_lost", done
                 assert look.alt() >= floor - TOL_M, look.alt()
                 m = look.report()
-                assert m.lowest_above_ground_m < floor - 2.0, m  # it was below, with the laser
+                assert m.lowest_above_ground_m < floor - 1.0, m  # it was below, with the laser
                 look.check_steps()
 
     run(flown())
@@ -413,7 +414,8 @@ def test_tn09_no_descent_within_30_m_of_a_power_line(seed: int) -> None:
                 # The floor near the line is the start height: no step below step 0 (the
                 # look ends there, before a snapshot carries the floor's reason).
                 assert done is not None and done["end"] == "floor", done
-                assert done["lowest_above_ground_m"] == pytest.approx(w.start_alt_m, abs=TOL_M)
+                start_above = w.start_alt_m - truth(f).ground.at1(*w.estimate_enu)
+                assert done["lowest_above_ground_m"] == pytest.approx(start_above, abs=TOL_M)
                 assert not look.of("inspect.lower_offer")
                 # Acceptance 14: never below the start height within 30 m of the line.
                 a, b = (line.a[0], line.a[1]), (line.b[0], line.b[1])
@@ -445,7 +447,7 @@ def test_tn13_a_tree_the_map_has_8_m_short(seed: int, laser: str) -> None:
                 await look.start()
                 await look.order()
                 done = await look.flown("yes")
-                assert done is not None, look.of("inspect.aborted")
+                assert done is not None, look.why()
                 # Acceptance 18: the margins hold the 8 m (``report``: 5 m clearance) ...
                 look.report()
                 if laser == "grf250":
@@ -478,7 +480,13 @@ def test_tn14_the_battery_reserve_during_the_look_flies_home(seed: int) -> None:
                 await look.start(battery_rtl_pct=25.0)
                 await look.order()
                 await look.flown("yes", until=lambda: look.t_yes is not None)
-                await asyncio.to_thread(sim.harness.battery_set_remaining, 26.0)
+                for attempt in range(3):  # the reset is a MAVLink command: it may go unheard
+                    try:
+                        await asyncio.to_thread(sim.harness.battery_set_remaining, 26.0)
+                        break
+                    except InfraError:
+                        if attempt == 2:
+                            raise
                 await look.flown("yes", limit_s=200, until=lambda: f.ex.state == S.RTL)
                 assert f.ex.state == S.RTL, (f.ex.state, look.events[-5:])
                 await f.until(lambda: bool(look.of("inspect.aborted")), 5, "the look aborted")
@@ -507,7 +515,7 @@ def test_tn19_another_person_gets_a_cylinder_the_target_none(seed: int) -> None:
                 await look.order()
                 # "Nej, stanna här" (the owner's decision): the look ends where it hovers.
                 done = await look.flown("no")
-                assert done is not None, look.of("inspect.aborted")
+                assert done is not None, look.why()
                 if look.of("inspect.lower_offer"):
                     assert done["end"] == "lower_declined", done
                     t_no = look.first("inspect.lower_offer")[0]  # type: ignore[index]

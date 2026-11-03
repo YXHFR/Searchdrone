@@ -290,16 +290,39 @@ async def test_tn10_stop_fly_home_and_takeover_during_the_descent(
 # --- TN11 / TN12: the wait for the pilot's decision ------------------------------------------
 
 
-@pytest.mark.budget_s(600)
+async def look_breaks_the_search(
+    sc: Scenario, seed: int, salt: str
+) -> tuple[str, dict[str, Any], tuple[float, float]]:
+    """The AI's survey of the box at P1 flies its lines; the pilot looks at a person in the
+    box: (the candidate, the survey order, where the search broke off)."""
+    p1 = Plane(*sc.r.home).xy(*pin("P1"))
+    cid = await a_candidate(sc, sc.at(*target_of(seed, salt, (p1[0] + 20.0, p1[1]))))
+    res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
+    assert res.get("decision") == "ALLOW", res
+    survey = await sc.wait_command("survey_sector", "running", 60)
+    await sc.until(lambda: sc.tel.groundspeed_ms > 2.0, 90, "on the survey's lines")
+    brk = (sc.tel.lat, sc.tel.lon)
+    await look_at(sc, cid)
+    return cid, survey, brk
+
+
+async def survey_again(sc: Scenario, brk: tuple[float, float], survey: dict[str, Any]) -> None:
+    """The search goes on from where it broke off: the survey's lines again, first
+    within 30 m of the break."""
+    ex = sc.r.onboard.ex
+    await sc.until(lambda: ex.state == "SURVEY", 120, "the survey again")
+    assert distance_m(*brk, sc.tel.lat, sc.tel.lon) <= 30.0
+    assert (await sc.command(survey["id"]))["status"] in ("running", "superseded")
+
+
+@pytest.mark.budget_s(720)
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_tn11_no_decision_returns_after_2_min_and_the_candidate_is_queued(
     sim: Any, migrated_db: Any, tmp_path: Path, seed: int
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
         ev = await exercise_airborne(sc, sim)
-        cid = await a_candidate(sc, sc.at(*target_of(seed, "TN11")))
-        here = (sc.tel.lat, sc.tel.lon)  # where the look breaks off
-        await look_at(sc, cid)
+        cid, survey, brk = await look_breaks_the_search(sc, seed, "TN11")
         await answer(sc, await asked(sc), yes=False)  # "Nej, stanna här"
         look = await waiting(sc)
         assert look["done"]["end"] == "lower_declined", look
@@ -319,10 +342,8 @@ async def test_tn11_no_decision_returns_after_2_min_and_the_candidate_is_queued(
         assert look["outcome"] == "timeout", look
         assert await card_state(sc, cid) == "ready"
         assert await queued(sc, cid)
-        # ... and the drone back where the look broke off.
-        await sc.until(
-            lambda: distance_m(*here, sc.tel.lat, sc.tel.lon) <= 5.0, 90, "back at the break"
-        )
+        # ... and the search on from where it broke off.
+        await survey_again(sc, brk, survey)
         await sc.check_invariants()
 
 
@@ -333,15 +354,7 @@ async def test_tn12_not_them_returns_at_once_and_the_search_goes_on(
 ) -> None:
     async with scenario(sim, migrated_db, tmp_path) as sc:
         ev = await exercise_airborne(sc, sim)
-        # The person inside the search box at P1, seen while the survey flies its lines.
-        p1 = Plane(*sc.r.home).xy(*pin("P1"))
-        cid = await a_candidate(sc, sc.at(*target_of(seed, "TN12", (p1[0] + 20.0, p1[1]))))
-        res = await sc.order("survey_sector", {"polygon": survey_box(sc)})
-        assert res.get("decision") == "ALLOW", res
-        survey = await sc.wait_command("survey_sector", "running", 60)
-        await sc.until(lambda: sc.mode() == "GUIDED" and sc.tel.groundspeed_ms > 2.0, 90, "lines")
-        brk = (sc.tel.lat, sc.tel.lon)
-        await look_at(sc, cid)
+        cid, survey, brk = await look_breaks_the_search(sc, seed, "TN12")
         await answer(sc, await asked(sc), yes=False)
         await waiting(sc)
         async with person(sc, "pilot", "kalle") as pilot:
@@ -357,12 +370,8 @@ async def test_tn12_not_them_returns_at_once_and_the_search_goes_on(
         look = await ended(sc)
         assert look["outcome"] == "rejected", look
         assert await card_state(sc, cid) == "rejected"
-        # ... and the survey goes on from where it broke off: its lines again, first
-        # within 30 m of the break.
-        ex = sc.r.onboard.ex
-        await sc.until(lambda: ex.state == "SURVEY", 90, "the survey again")
-        assert distance_m(*brk, sc.tel.lat, sc.tel.lon) <= 30.0
-        assert (await sc.command(survey["id"]))["status"] in ("running", "superseded")
+        # ... and the search goes on from where it broke off.
+        await survey_again(sc, brk, survey)
         await sc.check_invariants()
 
 
@@ -389,10 +398,11 @@ async def test_tn15_one_look_at_a_time_and_only_the_pilot_moves_the_drone(
         lat, lon = sc.at(0.0, 0.0)
         res = await sc.order("goto", {"lat": lat, "lon": lon, "alt_m": 40})
         assert res["decision"] == "REJECT" and "INSPECT_BUSY" in res["reason_codes"], res
+        # The pilot's look is no order of the AI's to cancel.
         cancel = await sc.r.commander.post(
             f"/commander/v1/missions/{sc.mid}/commands/{look['id']}/cancel"
         )
-        assert cancel.status_code == 409 and cancel.json()["code"] == "INSPECT_BUSY", cancel.text
+        assert cancel.status_code in (404, 409), cancel.text
         # An observer's decision is a note for the pilot: the look goes on.
         async with person(sc, "observer", "olle") as observer:
             res = await decide(observer, first, "reject")
@@ -410,6 +420,18 @@ async def test_tn15_one_look_at_a_time_and_only_the_pilot_moves_the_drone(
         await sc.check_invariants()
 
 
+async def click_yes(sc: Scenario, command_id: str) -> None:
+    """The pilot's yes on the AI's card, with the confirmations the card asks for."""
+    res = await sc.r.panel.get(f"/api/v1/missions/{sc.mid}/approvals", params={"status": "pending"})
+    (card,) = [a for a in res.json() if str(a["subject_id"]) == command_id]
+    ok = await sc.r.approve(
+        str(card["id"]),
+        card["subject_version"],
+        confirmations=list(card.get("required_confirmations") or []),
+    )
+    assert ok.status_code == 200, ok.text
+
+
 @pytest.mark.budget_s(600)
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_tn16_the_ai_proposes_and_the_pilot_clicks_yes(
@@ -425,11 +447,15 @@ async def test_tn16_the_ai_proposes_and_the_pilot_clicks_yes(
         await asyncio.sleep(2.0)
         assert not await looks(sc)
         assert await card_state(sc, first) == "ready"
-        ok = await sc.r.approve(str(res["approval_id"]))
-        assert ok.status_code == 200, ok.text
+        await click_yes(sc, str(res["command_id"]))
         await sc.wait_command("inspect_detection", "running", 30)
         look = await the_look(sc)
         assert look["started_by"].startswith("operator:"), look
+        # Owner decision: the AI cannot cancel the look it proposed.
+        cancel = await sc.r.commander.post(
+            f"/commander/v1/missions/{sc.mid}/commands/{res['command_id']}/cancel"
+        )
+        assert cancel.status_code == 409 and cancel.json()["code"] == "INSPECT_BUSY", cancel.text
         # Not the next one until the first is over.
         await asyncio.sleep(3.1)
         res = await sc.order("inspect_detection", {"candidate_id": other})

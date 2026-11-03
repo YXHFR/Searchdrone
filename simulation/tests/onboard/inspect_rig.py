@@ -372,6 +372,12 @@ class TnLook:
             await asyncio.sleep(0.1)
         raise AssertionError(f"the look did not end in {limit_s:.0f} s: {self.events[-5:]}")
 
+    def why(self) -> str:
+        """What ended the look: its abort, the order's answers, the last events."""
+        acks = [] if self.cmd is None else self.f.acks.get(self.cmd.command_id, [])
+        answers = [(a.stage, a.reason_codes, a.detail_sv) for a in acks]
+        return f"{self.of('inspect.aborted')} {answers} {[k for _, k, _ in self.events[-8:]]}"
+
     def snapshots(self) -> list[tuple[float, StateSnapshot]]:
         return [(t, b) for t, b in self.f.inbound if isinstance(b, StateSnapshot)]
 
