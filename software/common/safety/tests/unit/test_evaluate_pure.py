@@ -24,7 +24,12 @@ ALLOWED_IMPORTS = {
     "types",
     "typing",
     "pydantic",
+    "datetime",  # the height floor: the flight's date (passed in, never read)
+    "numpy",  # the height floor's map grids
+    "numpy.typing",
 }
+# The one module that reads files: the height floor's map pack, loaded before a flight.
+READS_FILES = {"floor_pack.py": {"hashlib", "io", "json", "pathlib", "tomllib"}}
 
 
 def test_evaluate_pure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,6 +55,7 @@ def test_evaluate_pure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_sources_import_nothing_impure() -> None:
     for path in SRC.glob("*.py"):
+        allowed = ALLOWED_IMPORTS | READS_FILES.get(path.name, set())
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -59,7 +65,7 @@ def test_sources_import_nothing_impure() -> None:
             else:
                 continue
             for name in names:
-                assert name in ALLOWED_IMPORTS or name.split(".")[0] in {
+                assert name in allowed or name.split(".")[0] in {
                     "sd_schemas",
                     "sd_safety",
                 }, f"{path.name} imports {name}"
