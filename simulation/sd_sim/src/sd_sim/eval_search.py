@@ -267,12 +267,14 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
     tops = [v for vs in by_run for v in vs]
     # One verdict per run: the oracle draws a thing's field once per run (keyed by seed,
     # thing and field), so its cards in one run say the same and are not separate draws.
-    # A run with both counts as conflict: the operator is shown the conflict either way.
+    # A run with both did not hold the hiker apart: it counts against the requirement
+    # (as a match, never as a conflict), and how many there were is reported.
     seen = [
-        "conflict" if "conflict" in vs else "match"
+        "match" if "match" in vs else "conflict"
         for vs in by_run
         if any(v in ("conflict", "match") for v in vs)
     ]
+    mixed = sum("conflict" in vs and "match" in vs for vs in by_run)
     conflict = sum(v == "conflict" for v in seen)
     text = (
         f"vandraren: conflict / (conflict + match) på överdel ≥ 0,80, en bedömning per "
@@ -287,7 +289,8 @@ def _sk04(runs: list[dict[str, Any]]) -> list[Requirement]:
         hiker = _req(
             "SK04",
             text,
-            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort)",
+            f"{conflict}/{len(seen)} = {share:.2f} ({len(tops)} kort"
+            + (f", {mixed} blandade körningar räknade som match)" if mixed else ")"),
             share >= 0.80,
             n,
         )

@@ -375,9 +375,10 @@ def test_the_way_out_keeps_room_past_its_end() -> None:
 def test_no_way_out_that_ends_short_of_the_edge_gives_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With a charter that hugs the cylinder 1.5 m past every way out, no way out keeps
-    ``_EXIT_EDGE_M`` (2 m) of room before the edge, so there is none: the 2 m, not just
-    the edge itself, decides. With 3 m of room, or a smaller ``_EXIT_EDGE_M``, there is."""
+    """With a charter that hugs the cylinder 1.9 m past every way out, no way out keeps
+    ``_EXIT_EDGE_M`` (2 m) of room along its leg before the edge, so there is none: the
+    2 m, not just the edge itself, decides. With 3 m of room, or ``_EXIT_EDGE_M`` lowered
+    to 1.6 m, there is."""
     cyl = [((0.0, 0.0), 40.0)]
     exit_r = 40.0 + KEEPOUT_ARC_MARGIN_M + keepout._EXIT_EPS_M  # pyright: ignore[reportPrivateUsage]
 
@@ -389,11 +390,11 @@ def test_no_way_out_that_ends_short_of_the_edge_gives_none(
         )  # fmt: skip
 
     here = (10.0, 0.0)
-    assert reroute([here], cyl, area=ring(exit_r + 1.5)) is None
+    assert reroute([here], cyl, area=ring(exit_r + 1.9)) is None
     way = reroute([here], cyl, area=ring(exit_r + 3.0))
     assert way is not None and len(way) == 2
-    monkeypatch.setattr(keepout, "_EXIT_EDGE_M", 1.0)
-    way = reroute([here], cyl, area=ring(exit_r + 1.5))
+    monkeypatch.setattr(keepout, "_EXIT_EDGE_M", 1.6)
+    way = reroute([here], cyl, area=ring(exit_r + 1.9))
     assert way is not None and len(way) == 2
 
 
