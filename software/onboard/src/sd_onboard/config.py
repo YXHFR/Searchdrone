@@ -26,6 +26,11 @@ from sd_mav.connection import BROADCAST_SYSID, GCS_COMPID
 from sd_onboard.io.params import effective_params
 from sd_safety.constants import FIELD_RC_FAILSAFE
 from sd_schemas.base import VEHICLE_ID_PATTERN
+from sd_schemas.rangefinder import (
+    RANGEFINDER_ORIENT_DOWN,
+    RANGEFINDER_TYPES,
+    RangefinderModel,
+)
 
 __all__ = [
     "ARMING_SKIP_RC_BIT",
@@ -34,10 +39,12 @@ __all__ = [
     "Loaded",
     "OnboardConfig",
     "PerceptionConfig",
+    "RangefinderConfig",
     "TeleConfig",
     "TestHooks",
     "check",
     "load",
+    "rangefinder_param_problems",
     "read_token",
 ]
 
@@ -87,6 +94,23 @@ class PerceptionConfig(BaseModel):
     tele: TeleConfig = Field(default_factory=TeleConfig)
 
 
+class RangefinderConfig(BaseModel):
+    """The optional laser pointing down (``[rangefinder]``). Without the section, or with
+    ``model = "none"``, there is no laser: the height floor then comes from the map and
+    its margins alone. The tested range is what was measured with this laser over dark
+    ground; a reading outside it is never trusted, whatever the laser's data sheet says."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model: RangefinderModel = "none"
+    min_tested_m: float = Field(default=0.0, ge=0, le=500)  # GRF-250: 10
+    max_tested_m: float = Field(default=0.0, ge=0, le=500)  # TF02-Pro: 13
+
+    @property
+    def fitted(self) -> bool:
+        return self.model != "none"
+
+
 class OnboardConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -108,6 +132,7 @@ class OnboardConfig(BaseModel):
     )
     test_hooks: TestHooks = Field(default_factory=TestHooks)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
+    rangefinder: RangefinderConfig = Field(default_factory=RangefinderConfig)
 
 
 @dataclass(frozen=True)
@@ -157,7 +182,13 @@ def _env_layer(env: dict[str, str]) -> dict[str, Any]:
             value = int(raw)
         elif parts[-1] in ("allow_companion_arm", "require_rc", "enabled", "keep_stills"):
             value = raw.strip().lower() in ("1", "true", "yes")
-        elif parts[-1] in ("takeoff_delay_after_arm_s", "hfov_deg", "period_s"):
+        elif parts[-1] in (
+            "takeoff_delay_after_arm_s",
+            "hfov_deg",
+            "period_s",
+            "min_tested_m",
+            "max_tested_m",
+        ):
             value = float(raw)
         elif parts[-1] in ("width_px", "height_px"):
             value = int(raw)
@@ -237,6 +268,11 @@ def check(loaded: Loaded) -> list[str]:
         errors.append(
             "[perception.tele] behöver en egen still_dir / the tele camera needs its own folder."
         )
+    rf = cfg.rangefinder
+    if rf.fitted and not rf.min_tested_m < rf.max_tested_m:
+        errors.append(
+            "[rangefinder] behöver min_tested_m < max_tested_m / the laser's tested range is empty."
+        )
     files = loaded.param_files()
     if not files:
         errors.append("expected_param_files får inte vara tom / no parameter file given.")
@@ -251,7 +287,37 @@ def check(loaded: Loaded) -> list[str]:
             errors.append("Säkerhetsparametrarna saknas / the safety parameters are missing.")
         if cfg.profile != "sim":
             errors += _rc_param_problems(params)
+        errors += rangefinder_param_problems(rf, params)
     return errors
+
+
+def rangefinder_param_problems(rf: RangefinderConfig, params: dict[str, float]) -> list[str]:
+    """With a laser, the parameter files (read back before every takeoff, PF6) must make
+    the flight controller read it pointing down and never fly by it: no terrain following
+    in AUTO or GUIDED (``WP_RFND_USE``), no surface tracking when a person flies in LOITER
+    (``SURFTRAK_MODE``). Only the onboard computer uses the laser, for the height floor."""
+    if not rf.fitted:
+        return []
+    out = []
+    want = RANGEFINDER_TYPES.get(rf.model)
+    got = params.get("RNGFND1_TYPE", 0.0)
+    if got == 0 or (want is not None and got != want):
+        out.append(
+            f"RNGFND1_TYPE passar inte lasern {rf.model} / RNGFND1_TYPE {got:g} does not fit."
+        )
+    if params.get("RNGFND1_ORIENT") != RANGEFINDER_ORIENT_DOWN:
+        out.append("RNGFND1_ORIENT ska vara 25 (nedåt) / the laser must point down (25).")
+    if params.get("WP_RFND_USE") != 0:
+        out.append(
+            "WP_RFND_USE ska vara 0: autopiloten får inte följa terrängen med lasern "
+            "/ the flight controller must not follow the terrain with the laser."
+        )
+    if params.get("SURFTRAK_MODE") != 0:
+        out.append(
+            "SURFTRAK_MODE ska vara 0: ingen ytföljning i LOITER "
+            "/ no surface tracking with the laser."
+        )
+    return out
 
 
 # ArduCopter 4.7's ARMING_SKIPCHK bit for the RC check (ARMING_CHECK_RC, 1 << 6).

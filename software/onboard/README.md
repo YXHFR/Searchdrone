@@ -34,9 +34,22 @@ thread; a still larger than the configured camera is not read. A failing still i
 and logged, and a dying perception task is logged, never a reason to stop. Kept stills
 (`keep_stills`) are capped at the newest 200.
 
+**Laser pointing down (optional).** Without a `[rangefinder]` section, or with
+`model = "none"`, there is no laser and the closer look's height floor comes from the map
+alone. With one (`tf02_pro`, `grf250` or `other`), the flight controller reads the laser
+and reports `DISTANCE_SENSOR` at 10 Hz; `LaserReader` (`rangefinder.py`) judges every
+reading (inside the flight controller's and the tested range, tilt under 20 degrees and
+corrected for it, fresh height and attitude, not stuck) and confirms the laser after 2 s
+of good readings in a row. Its `state(now)` gives the highest surface of the last 2 s
+for the floor. The laser's parameter file
+(`simulation/sitl/params/searchdrone-rangefinder-*.parm`) belongs in
+`expected_param_files`; the start check refuses a laser whose files would let the flight
+controller fly by it (`WP_RFND_USE`, `SURFTRAK_MODE` must be 0).
+
 | Module | Contents |
 |---|---|
 | `perception/` | Still source, pipeline (detectors, georeferencing, thumbnails) and loop |
+| `rangefinder.py` | `LaserReader`: which laser readings count and the confirmed surface |
 | `executor/state.py` | States, triggers and the transition table |
 | `executor/guards.py` | The guards that pick a transition's target or refuse |
 | `executor/executor.py` | `Executor`: orders, checks, transitions, the tick, snapshots |

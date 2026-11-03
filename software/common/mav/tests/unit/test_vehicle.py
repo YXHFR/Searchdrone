@@ -1046,3 +1046,32 @@ def test_link_epoch_tolerates_reordered_attitude_but_not_a_reboot() -> None:
         await vehicle.close()
 
     asyncio.run(run())
+
+
+def test_the_downward_laser_is_read_and_notified() -> None:
+    """DISTANCE_SENSOR pointing down lands in the telemetry, with every reading notified
+    (the onboard reader judges each one); a sensor pointing another way is ignored."""
+
+    async def run() -> None:
+        clock, vehicle, _ = await _started()
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.rangefinder_mono_ms is None  # no laser fitted
+        assert vehicle.fc.intervals_us[mavlink.MAVLINK_MSG_ID_DISTANCE_SENSOR] == 100_000
+        seen: list[float] = []
+        vehicle.subscribe(lambda t: seen.append(t.rangefinder_m))
+        vehicle.fc.laser_m, vehicle.fc.laser_range_m = 12.34, (0.1, 13.0)
+        vehicle.fc.laser_quality = 80
+        await clock.run_for(1.0)
+        t = vehicle.telemetry
+        assert t.rangefinder_mono_ms is not None
+        assert (t.rangefinder_m, t.rangefinder_min_m, t.rangefinder_max_m) == (12.34, 0.1, 13.0)
+        assert t.rangefinder_quality == 80 and seen.count(12.34) >= 9  # 10 Hz
+        before = t.rangefinder_mono_ms
+        vehicle.fc.laser_orientation = mavlink.MAV_SENSOR_ROTATION_NONE  # pointing forward
+        vehicle.fc.laser_m = 3.0
+        await clock.run_for(1.0)
+        assert vehicle.telemetry.rangefinder_mono_ms == before
+        assert vehicle.telemetry.rangefinder_m == 12.34
+        await vehicle.close()
+
+    asyncio.run(run())

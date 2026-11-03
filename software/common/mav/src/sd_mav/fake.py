@@ -157,6 +157,12 @@ class FakeFlightController:
         self.ekf_source_set = 1  # MAV_CMD_SET_EKF_SOURCE_SET
         self.wind: tuple[float, float] | None = None  # WIND (from deg, m/s); None: not sent
         self.rc_link = False  # an RC transmitter is on and its receiver is healthy
+        # A laser rangefinder: DISTANCE_SENSOR every tick with this distance (m), or None
+        # for no laser. Its range (min, max) in m, signal quality and orientation.
+        self.laser_m: float | None = None
+        self.laser_range_m: tuple[float, float] = (0.1, 13.0)
+        self.laser_quality = 0
+        self.laser_orientation = mavlink.MAV_SENSOR_ROTATION_PITCH_270  # down
         self._upload: _Upload | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -206,6 +212,8 @@ class FakeFlightController:
             self.step(_TICK_S)
             self._send(self._position())
             self._send(self._attitude())
+            if self.laser_m is not None:
+                self._send(self._distance_sensor(self.laser_m))
             if tick % 2 == 0:
                 self._send(self.heartbeat())
                 if self.rc_mode_pwm is not None or self.rc_link:
@@ -369,6 +377,21 @@ class FakeFlightController:
         rc = mavlink.MAV_SYS_STATUS_SENSOR_RC_RECEIVER if self.rc_link else 0
         return mavlink.MAVLink_sys_status_message(
             rc, rc, rc, 0, 16000, -1, round(self.battery_pct), 0, 0, 0, 0, 0, 0
+        )
+
+    def _distance_sensor(self, distance_m: float) -> Any:
+        low, high = self.laser_range_m
+        boot_ms = int(self.clock.monotonic_ms()) - self.boot_mono_ms
+        return mavlink.MAVLink_distance_sensor_message(
+            boot_ms & 0xFFFFFFFF,
+            round(low * 100),
+            round(high * 100),
+            round(distance_m * 100),
+            mavlink.MAV_DISTANCE_SENSOR_LASER,
+            0,
+            self.laser_orientation,
+            0,
+            signal_quality=self.laser_quality,
         )
 
     def _home_position(self) -> Any:
