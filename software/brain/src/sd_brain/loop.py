@@ -1235,7 +1235,10 @@ class CommanderLoop:
         """The turn's audit entry, made safe to send once: the model wrote much of it."""
         prompt = _wire_safe(d.prompt_json or {"trigger": record.trigger, "texts": record.texts})
         # default=str: a value that is no JSON (a UUID, a datetime) is logged as its text.
-        prompt_bytes = json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        # That text is cleaned too: str() of an odd value may hold a lone surrogate.
+        prompt_bytes: str = _wire_safe(
+            json.dumps(prompt, sort_keys=True, ensure_ascii=False, default=str)
+        )
         result = record.result
         fields: dict[str, Any] = _wire_safe(
             {
