@@ -73,7 +73,7 @@ sha256 = "244e2b1ab2ca210d09a75a0221df1b67046875e0f06fda2a3512b6617a6ec0e1"
 
 [[pinned]]
 path = "simulation/sd_sim/src/sd_sim/sitl.py"
-sha256 = "67a750e0ff7705be0a75f014ccf288310271e32bee8539528cff07d5690dc2d9"
+sha256 = "94741ac12598f03f95f8d54f1b204b7cd0238219e9bebc4486bcfff5230c3504"
 
 [[pinned]]
 path = "tools/params_check.py"
