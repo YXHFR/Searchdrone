@@ -7,6 +7,7 @@ way down. The height floor comes from a map pack of flat open meadow at home's h
 
 * without the laser: steps down to 30 m above ground, asks "Gå lägre?", gets no answer,
   waits over the find, and flies back to where it broke off on the pilot's "resume";
+* with a (fake) laser: the pilot's no ("Nej, stanna här") ends the look at once at 30 m;
 * with a (fake) laser: the pilot's yes takes it below 30 m, and "confirmed" leaves it
   hovering over the find.
 """
@@ -38,7 +39,7 @@ from sd_safety.floor import FloorPack
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.executor import ExecutorState as S
 from sd_schemas.inspect import LOWER_OFFER_S
-from sd_schemas.link import BBox, GeoDetectionMsg, InspectLower, InspectOutcome
+from sd_schemas.link import BBox, GeoDetectionMsg, InspectLower, InspectOutcome, InspectStay
 from sd_schemas.rangefinder import LaserState
 
 __all__ = ["sim"]  # the fixture, imported from the onboard SITL rig
@@ -193,6 +194,33 @@ def test_steps_down_to_30_m_waits_and_flies_back(sim: Sim) -> None:
                 "back at the breakpoint",
             )
             assert abs(f.onboard.telemetry.alt_rel_home_m - START_ALT) <= 3
+            assert not ev.of("inspect.aborted")
+
+    asyncio.run(run())
+
+
+@pytest.mark.budget_s(300)
+def test_the_pilots_no_stops_the_question_at_once_at_30_m(sim: Sim) -> None:
+    async def run() -> None:
+        async with flight(sim) as f:
+            cmd, ev, _, heights = await _look(f, laser=True)
+            await f.until(lambda: bool(ev.of("inspect.lower_offer")), 180, "Gå lägre?")
+            hover = f.onboard.telemetry.alt_rel_home_m
+            assert abs(hover - 30) <= 2
+            assert f.session is not None
+            loop = asyncio.get_running_loop()
+            said_no = loop.time()
+            await f.session.send(InspectStay(command_id=cmd.command_id), ttl_ms=15_000)
+            # The drone stops asking at once, well before the 60 s of no answer.
+            await f.until(lambda: f.ex.hold_reason == "inspect_await", 20, "the wait")
+            assert loop.time() - said_no < 20 < LOWER_OFFER_S
+            done = ev.of("inspect.done")
+            assert len(done) == 1 and done[0]["end"] == "lower_declined", done
+            await asyncio.sleep(5)
+            assert min(heights) >= 30 - 2  # the laser could have taken it lower: a no keeps it
+            assert abs(f.onboard.telemetry.alt_rel_home_m - hover) <= 2
+            assert math.dist(_xy(f), TARGET) <= 5
+            assert len(ev.of("inspect.lower_offer")) == 1
             assert not ev.of("inspect.aborted")
 
     asyncio.run(run())

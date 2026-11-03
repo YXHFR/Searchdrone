@@ -56,6 +56,7 @@ from sd_schemas.link import (
     HelloAck,
     InspectLower,
     InspectOutcome,
+    InspectStay,
     KeepoutInstall,
     OperatorOverrideNotice,
     OperatorRelease,
@@ -114,7 +115,7 @@ class FakeOnboard:
     active_command_id: Any = None
     progress_pct: float | None = None
     inspect: Any = None  # a closer look's progress (InspectProgress) in the snapshots
-    looks: list[Any] = field(default_factory=list[Any])  # InspectOutcome and InspectLower
+    looks: list[Any] = field(default_factory=list[Any])  # the answers to a closer look
     session: LinkSession | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _tasks: list[asyncio.Future[Any]] = field(default_factory=list[asyncio.Future[Any]])
@@ -279,7 +280,7 @@ class FakeOnboard:
             self.notices.append(body)
             self.stop_latch = False
             self.set_state(ExecutorState.HOLD, hold_reason="operator_released", held_by=None)
-        elif isinstance(body, InspectOutcome | InspectLower):
+        elif isinstance(body, InspectOutcome | InspectLower | InspectStay):
             self.looks.append(body)
             await session.ack(inbound.envelope.msg_id, "done")
 

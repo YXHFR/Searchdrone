@@ -378,9 +378,22 @@ export interface ApprovalDecisionRequest {
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone"]
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone", "clear_around_drone"];
   decision: "approve" | "reject";
+  floor_pack?: FloorPackChoice | null;
   operation_mode?: ("sim" | "exercise" | "live") | null;
   reason?: string | null;
   subject_version: number;
+}
+/**
+ * The pilot's map pack on the charter card: one from ``GET /floor_packs`` with the
+ * hash the list showed, or neither ("Ingen höjdkarta": a closer look does not come
+ * down). The ground refuses a pack it does not have whole or whose hash has changed.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FloorPackChoice".
+ */
+export interface FloorPackChoice {
+  floor_pack_id?: string | null;
+  floor_pack_sha256?: string | null;
 }
 /**
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1579,6 +1592,23 @@ export interface FindMeParams {
   hover_offset_m: number;
 }
 /**
+ * ``GET /floor_packs``: a height-floor map pack the ground station holds under
+ * ``<data_dir>/floor/<floor_pack_id>/`` whose files all match their hashes, for the
+ * pilot's choice on the charter card. ``attribution`` is the data's source credit (it
+ * is shown wherever the pack is picked).
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "FloorPackInfo".
+ */
+export interface FloorPackInfo {
+  attribution: string;
+  floor_pack_id: string;
+  floor_pack_sha256: string;
+  origin: LatLon;
+  size_east_m: number;
+  size_north_m: number;
+}
+/**
  * Stage 2. Unresolved here: the operator's position is checked onboard.
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
@@ -1958,6 +1988,19 @@ export interface InspectProgress {
   laser_confirmed?: boolean;
   phase: "approach" | "step" | "lower_offer" | "await" | "return";
   step: number;
+}
+/**
+ * Ground -> onboard, reliable: the pilot's no to "Gå lägre?" ("Nej, stanna här"). The
+ * drone stops waiting for an answer at once and the look ends where it is
+ * (``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.
+ * A kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a
+ * yes. Only from the pilot's own click.
+ *
+ * This interface was referenced by `SdSchemas`'s JSON-Schema
+ * via the `definition` "InspectStay".
+ */
+export interface InspectStay {
+  command_id: string;
 }
 /**
  * A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``

@@ -71,6 +71,7 @@ __all__ = [
     "HelloAck",
     "InspectLower",
     "InspectOutcome",
+    "InspectStay",
     "Keepout",
     "KeepoutInstall",
     "LatchRef",
@@ -318,6 +319,16 @@ class InspectLower(SdModel):
     command_id: Id  # the inspect_detection order
 
 
+class InspectStay(SdModel):
+    """Ground -> onboard, reliable: the pilot's no to "Gå lägre?" ("Nej, stanna här"). The
+    drone stops waiting for an answer at once and the look ends where it is
+    (``lower_declined``), as on no answer in ``LOWER_OFFER_S``: it never goes lower for it.
+    A kind of its own, not a flag on ``InspectLower``, so that a no can never be read as a
+    yes. Only from the pilot's own click."""
+
+    command_id: Id  # the inspect_detection order
+
+
 class ManualTakeover(SdModel):
     """Ground -> onboard, reliable. The pilot takes over (Ta över) or hands back (Lämna tillbaka).
 
@@ -543,6 +554,7 @@ KIND_MODELS: dict[str, type[SdModel]] = {
         KeepoutInstall,
         InspectOutcome,
         InspectLower,
+        InspectStay,
     )
 }
 
@@ -563,6 +575,7 @@ RELIABLE_KINDS = frozenset(
         "KeepoutInstall",
         "InspectOutcome",
         "InspectLower",
+        "InspectStay",
     }
 )
 

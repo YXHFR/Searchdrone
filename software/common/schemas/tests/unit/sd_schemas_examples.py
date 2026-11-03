@@ -399,6 +399,7 @@ def _search_examples() -> list[BaseModel]:
         s.KeepoutInstall(install_seq=3, keepouts=[keepout]),
         s.InspectOutcome(command_id=COMMAND, outcome="rejected"),
         s.InspectLower(command_id=COMMAND),
+        s.InspectStay(command_id=COMMAND),
         s.InspectProgress(
             command_id=COMMAND,
             candidate_id=OTHER,
@@ -874,6 +875,15 @@ def examples() -> dict[type[BaseModel], BaseModel]:
         _approval(),
         s.ApprovalDecisionRequest(
             decision="approve", subject_version=1, confirmations=["clear_around_drone"]
+        ),
+        s.FloorPackChoice(floor_pack_id="example-area", floor_pack_sha256="ab" * 32),
+        s.FloorPackInfo(
+            floor_pack_id="example-area",
+            floor_pack_sha256="ab" * 32,
+            attribution="Lantmäteriet, Laserdata Skog (CC0)",
+            origin=s.LatLon(lat=HOME_LAT, lon=HOME_LON),
+            size_east_m=2000,
+            size_north_m=1500,
         ),
         _command(),
         s.OperatorCommandRequest(

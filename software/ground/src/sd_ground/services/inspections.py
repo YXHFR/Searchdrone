@@ -35,8 +35,6 @@ import datetime as dt
 import math
 import re
 from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from pydantic import ValidationError
@@ -44,8 +42,9 @@ from pydantic import ValidationError
 from sd_ground.api.deps import ApiStatusError
 from sd_ground.db.inspections import InspectionRepo, LookRow
 from sd_ground.logging import get_logger
+from sd_ground.services import floor_packs
 from sd_safety.floor import floor_along
-from sd_safety.floor_pack import FloorPack, FloorPackError, load_floor_pack
+from sd_safety.floor_pack import FloorPack, FloorPackError
 from sd_schemas.base import LatLon, new_id
 from sd_schemas.gate import GateContext, GateDecision, GateFloor
 from sd_schemas.inspect import (
@@ -64,7 +63,7 @@ from sd_schemas.inspect import (
     Permit,
     PermitChanged,
 )
-from sd_schemas.link import InspectLower, InspectOutcome
+from sd_schemas.link import InspectLower, InspectOutcome, InspectStay
 from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.search import priority_class
 from sd_schemas.skills import CANDIDATE_NUMBER_PATTERN
@@ -338,11 +337,6 @@ async def summary(flow: MissionFlow, mission: Mission, params: dict[str, Any]) -
 # --- the gate's facts -----------------------------------------------------------------------
 
 
-@lru_cache(maxsize=4)
-def _load_pack(folder: Path) -> FloorPack:
-    return load_floor_pack(folder)
-
-
 def _pack(flow: MissionFlow, ctx: GateContext) -> FloorPack | None:
     """The charter's map pack from ``<data_dir>/floor/<id>/``, when the ground has it and
     it is the one the charter names; else none (the drone checks the floor itself)."""
@@ -350,8 +344,8 @@ def _pack(flow: MissionFlow, ctx: GateContext) -> FloorPack | None:
     if c is None or c.floor_pack_id is None:
         return None
     try:
-        pack = _load_pack(flow.data_root() / "floor" / c.floor_pack_id)
-    except (FloorPackError, OSError) as exc:
+        pack = floor_packs.load(floor_packs.root(flow) / c.floor_pack_id)
+    except FloorPackError as exc:
         log.warning("inspect.floor_pack_unavailable", pack=c.floor_pack_id, error=str(exc))
         return None
     if pack.sha256 != c.floor_pack_sha256:
@@ -637,6 +631,19 @@ async def on_progress(flow: MissionFlow, mission: Mission, progress: InspectProg
 
 async def lower(flow: MissionFlow, command_id: str) -> Inspection:
     """The pilot's yes to "Gå lägre?": ``InspectLower`` goes onboard."""
+    return await _answer_lower(flow, command_id, InspectLower)
+
+
+async def stay(flow: MissionFlow, command_id: str) -> Inspection:
+    """The pilot's no to "Gå lägre?" ("Nej, stanna här"): ``InspectStay`` goes onboard, and
+    the drone ends the look where it hovers at once instead of waiting out the question."""
+    return await _answer_lower(flow, command_id, InspectStay)
+
+
+async def _answer_lower(
+    flow: MissionFlow, command_id: str, kind: type[InspectLower | InspectStay]
+) -> Inspection:
+    """The pilot's answer to the question the drone asks now, through the link."""
     look = await _open(flow, command_id.lower())
     if look is None:
         raise ApiStatusError(404, "INSPECTION_NOT_FOUND", "Titten pågår inte.")
@@ -646,7 +653,7 @@ async def lower(flow: MissionFlow, command_id: str) -> Inspection:
     if flow.link is not None:
         sent = await flow.link.send_message(
             flow.g.config.default_vehicle_id,
-            InspectLower.model_validate({"command_id": look.row.command_id}),
+            kind.model_validate({"command_id": look.row.command_id}),
             mission_id=look.row.mission_id,
         )
     if sent is None:

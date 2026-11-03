@@ -42,7 +42,7 @@ from sd_ground.api.commander import to_commander
 from sd_ground.services import commands, inspections
 from sd_schemas.base import new_id
 from sd_schemas.inspect import AWAIT_DECISION_S, InspectProgress
-from sd_schemas.link import InspectLower, InspectOutcome, OnboardEvent
+from sd_schemas.link import InspectLower, InspectOutcome, InspectStay, OnboardEvent
 
 if TYPE_CHECKING:
     from conftest import Db
@@ -164,6 +164,37 @@ async def test_going_lower_needs_the_pilots_yes(r: Rig) -> None:
     await inspections.tick(r.flow, await r.flow.open_mission_of(mid))
     assert (await looks(r, mid))[0]["phase"] == "flying"
     res = await r.panel.post(f"/api/v1/inspections/{mid}/lower", headers=H)
+    assert res.status_code == 404
+
+
+async def test_the_pilots_no_to_going_lower_reaches_the_drone(r: Rig) -> None:
+    mid, _, sent = await started(r)
+    cmd = str(sent.command_id)
+    res = await r.panel.post(f"/api/v1/inspections/{cmd}/stay", headers=H)
+    assert res.status_code == 409 and res.json()["code"] == "NO_LOWER_OFFER"
+    offer = {"command_id": cmd, "now_above_ground_m": 31.0, "lowest_above_ground_m": 12.0}
+    await event(r, "inspect.lower_offer", **offer, reason="laser")
+    async with person(r, "observer", "olle") as observer:  # only the pilot answers
+        res = await observer.post(f"/api/v1/inspections/{cmd}/stay")
+        assert res.status_code == 403 and res.json()["code"] == "FORBIDDEN_ROLE"
+        res = await observer.post(f"/api/v1/inspections/{cmd}/lower")
+        assert res.status_code == 403
+    assert (await looks(r, mid))[0]["phase"] == "lower_offer"
+    assert r.onboard.looks == []
+    res = await r.panel.post(f"/api/v1/inspections/{cmd}/stay", headers=H)
+    assert res.status_code == 200 and res.json()["phase"] == "flying", res.text
+    await r.until(lambda: r.onboard.looks, 5, "InspectStay")
+    (no,) = r.onboard.looks
+    assert isinstance(no, InspectStay) and not isinstance(no, InspectLower)
+    assert str(no.command_id) == cmd
+    # Answered: a second answer has no question to go to.
+    res = await r.panel.post(f"/api/v1/inspections/{cmd}/lower", headers=H)
+    assert res.status_code == 409 and res.json()["code"] == "NO_LOWER_OFFER"
+    # The drone ends the look where it is, and the wait for the decision begins.
+    await event(r, "inspect.done", **done(sent, end="lower_declined", clear=False))
+    (look,) = await looks(r, mid)
+    assert look["phase"] == "await" and look["done"]["end"] == "lower_declined"
+    res = await r.panel.post(f"/api/v1/inspections/{mid}/stay", headers=H)
     assert res.status_code == 404
 
 
