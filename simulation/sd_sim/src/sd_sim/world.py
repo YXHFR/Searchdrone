@@ -63,9 +63,13 @@ BLADE_CP_M = 0.084
 CLA = 4.25
 BLADE_A0_RAD = 0.3
 CAMERA = {"width": 640, "height": 480, "fps": 15, "hfov_deg": 80.0}
-# The stills camera a search scenario adds: the real one, a Raspberry Pi Camera Module 3 at
-# its full 4608 x 2592 behind its 66-degree lens.
-STILLS = {"width": 4608, "height": 2592, "hfov_deg": 66.0, "rate_hz": 1}
+# The stills camera a search scenario adds: the real one, a Raspberry Pi Camera Module 3
+# (4608 x 2592 behind its 66-degree lens), rendered at half its width and height: a quarter
+# of the pixels, so Gazebo and the sim farm render a still a second in CI and on a busy
+# machine. The shape and the field of view are the real ones; sd-onboard (4608 x 2592 by
+# default) places a smaller still of its camera's shape with the same field of view.
+STILLS_SENSOR_PX = (4608, 2592)
+STILLS = {"width": 2304, "height": 1296, "hfov_deg": 66.0, "rate_hz": 1}
 MAIN_STILLS = StillsCamera(
     "stills",
     "boxes",

@@ -347,7 +347,19 @@ class _Active:
 _PARAM_TOLERANCE: Final = 1e-3
 # The most an order waits for one still. A watchdog against a camera that hangs, so it
 # runs on the event loop's own (wall) clock, not the injected one a hung call never advances.
+# Perception says how long its stills take on this computer's detector
+# (``PerceptionLoop.capture_limit_s`` / ``round_limit_s``): the limit is that, never less
+# than this (a round: twice this), never more than ``_CAPTURE_LIMIT_MAX_S``.
 _CAPTURE_LIMIT_S: Final = 10.0
+_CAPTURE_LIMIT_MAX_S: Final = 300.0
+
+
+def _capture_limit(derived: Callable[[], float] | None, least_s: float) -> float:
+    if derived is None:
+        return least_s
+    return min(_CAPTURE_LIMIT_MAX_S, max(least_s, derived()))
+
+
 # The fence and LOITER speed may be raised with the mission limits (by the ground, by
 # the pilot's click); PF6 then checks them against the hard floor instead of the file.
 _RAISABLE: Final = ("FENCE_ALT_MAX", "FENCE_RADIUS", "LOIT_SPEED_MS")
@@ -416,8 +428,9 @@ class _IO:
         camera = self._ex.camera
         if camera is None:
             return None
+        limit = _capture_limit(self._ex.capture_limit_s, _CAPTURE_LIMIT_S)
         try:  # whatever the camera does, the order goes on without the still
-            return await asyncio.wait_for(camera(command_id), _CAPTURE_LIMIT_S)
+            return await asyncio.wait_for(camera(command_id), limit)
         except TimeoutError:
             self._ex.emit("capture_timeout", {"command_id": str(command_id)})
             return None
@@ -427,8 +440,9 @@ class _IO:
         if rounds is None:  # no perception with rounds: one still from the main camera
             still = await self.capture_still(command_id)
             return [] if still is None else [InspectShot(still, "main")]
+        limit = _capture_limit(self._ex.round_limit_s, 2 * _CAPTURE_LIMIT_S)
         try:  # whatever the cameras do, the look goes on without the stills
-            shots = await asyncio.wait_for(rounds(command_id, inspect_step), 2 * _CAPTURE_LIMIT_S)
+            shots = await asyncio.wait_for(rounds(command_id, inspect_step), limit)
         except TimeoutError:
             self._ex.emit("capture_timeout", {"command_id": str(command_id)})
             return []
@@ -508,6 +522,10 @@ class Executor:
         self.capture_round: (
             Callable[[UUID, int], Awaitable[list[tuple[str, UUID, list[GeoDetectionMsg]]]]] | None
         ) = None
+        # How long a still and a round may take with perception's detector (``PerceptionLoop
+        # .capture_limit_s`` / ``.round_limit_s``); None: the fixed ``_CAPTURE_LIMIT_S``.
+        self.capture_limit_s: Callable[[], float] | None = None
+        self.round_limit_s: Callable[[], float] | None = None
         self.floor_pack: FloorPack | None = None  # the charter's height floor map pack
         self._inspect: InspectSession | None = None  # a closer look (``executor.inspect``)
         # An order being checked: (candidate, position, look radius), whose cylinder the

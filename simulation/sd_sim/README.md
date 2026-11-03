@@ -17,7 +17,7 @@ Part of the [Searchdrone](../../README.md) monorepo. Licensed under Apache-2.0.
 | `just sim-farm [commander=script\|sd-brain] [rounds=N] [max_minutes=N] [seed=N] [idle_only=true] [update=off]` | The sim farm: randomized search rounds from the newest `main`, one after another, until Ctrl+C. Each passed round keeps camera pictures with YOLO and COCO person boxes and a metadata file per picture. Pauses while the GPU or CPU is busy; stops after `max_failures` (3) failed rounds in a row, and at `max_minutes` (the running round is stopped and dropped, exit 0). Settings in `config/simfarm.toml` (copy `config/simfarm.example.toml`). |
 | `just sim-farm-status` | What the farm is doing: running or paused and why, pictures and labels kept, rounds per hour, AI-commander exams and their cost, the upload backlog, the latest errors. |
 | `just sim-farm-setup` | Fetches the person models (pinned by SHA-256) from Gazebo Fuel into `build/simfarm/assets/`. |
-| `just sim-farm-stills [scenes=N] [seed=N] [profile=heridal|kios|cm3]\|kios] [shots=N] [site=hellasgarden]` | The photo farm: still pictures for training the person detector, without a flight. Each scene puts 12-18 people (body heights 1.50-1.95 m, sometimes a child; standing, walking, sitting or lying; their own or recoloured clothes) in the open, at a forest edge, under a tree or on a path at the site with its real trees, and photographs each from HERIDAL's or KIOS's heights, so the people come out the size they have in those sets. The camera's light is developed like a photo (exposure, soft highlights, lens softness, noise). Pictures (JPEG), YOLO and COCO boxes of the visible part of each person and a metadata file per picture go to `build/simfarm/stills/<scene>/`, with Gazebo's full logs in `logs/`. About 2 s a picture plus 2-3 min to build each scene. Trained on as the set `simstills` (`just bench-fetch yes=1 sets=simstills`). Needs `just sim-farm-setup`, `just trees-fetch` and `just tree-pictures-fetch`; `just ground-pictures-fetch` adds the detailed ground. |
+| `just sim-farm-stills [scenes=N] [seed=N] [profile=heridal\|kios\|cm3] [shots=N] [site=hellasgarden]` | The photo farm: still pictures for training the person detector, without a flight. Each scene puts 12-18 people (body heights 1.50-1.95 m, sometimes a child; standing, walking, sitting or lying; their own or recoloured clothes) in the open, at a forest edge, under a tree or on a path at the site with its real trees, and photographs each from HERIDAL's or KIOS's heights, so the people come out the size they have in those sets (`profile=cm3`: our own wide camera at its full 4608 × 2592 from 30-60 m, only when asked for). The camera's light is developed like a photo (exposure, soft highlights, lens softness, noise). Pictures (JPEG), YOLO and COCO boxes of the visible part of each person and a metadata file per picture go to `build/simfarm/stills/<scene>/`, with Gazebo's full logs in `logs/`. About 2 s a picture plus 2-3 min to build each scene. Trained on as the set `simstills` (`just bench-fetch yes=1 sets=simstills`). Needs `just sim-farm-setup`, `just trees-fetch` and `just tree-pictures-fetch`; `just ground-pictures-fetch` adds the detailed ground. |
 | `just ground-pictures-fetch` | Fetches Poly Haven's CC0 ground pictures (grass, forest floor, gravel, rock) into `build/ground_textures/` for the photo farm. |
 | `just world-fetch site=<site>` | Fetches a site's heights and map layers (see Worlds). |
 | `just dev [physics=mock\|builtin\|gz] [brain=scripted\|cloud\|grammar\|none] [instance=N]` | The development stack with one command: `sim`'s services plus the panel's Vite dev server on the instance's `panel_dev` port (5173 + 10N), whose login link it prints. `physics=mock` (the default) runs `sd_sim.mockfc`, sd_mav's fake flight controller on SITL's ports with the safety layer's parameters: it starts in a second, but has no flight model, failsafes or fence, so flight safety is tested in SITL (and no other recipe accepts `physics=mock`). Brain `scripted` (SC01) by default, so no cloud key is needed; a missing `.env` is created with random local secrets. |
@@ -150,14 +150,16 @@ in the rounds' disk budget) until you remove it.
 `tele=true` (or `SD_SIM__TELE=1`) puts a second stills camera on `sd_quad14`, beside the
 main one and looking straight down like it: a Raspberry Pi HQ Camera (Sony IMX477,
 4056 × 3040 px, 1.55 µm pixels) behind an M12 tele lens of about 20° horizontally. It is
-off by default. The simulator renders it at the full 4056 × 3040, as it renders the main
-camera at the Camera Module 3's full 4608 × 2592, so the two keep their real ratio of
-pixels per degree: from the same height a person is about three times as many pixels
-across in the tele still (at 40 m, about 145 px against 45 px for a person 0.5 m across
-seen from above). `tele_hfov_deg=` sets the lens's field of view (once it is measured),
-and `tele_width=` and `tele_height=` the picture (for example `1128`, `846`: faster to
-render; `sd-onboard` places a smaller still of the same shape with the same field of
-view).
+off by default. The simulator renders it at 2028 × 1520, half the sensor's width and
+height, as it renders the main camera at 2304 × 1296, half the Camera Module 3's
+4608 × 2592 (a quarter of the pixels keeps Gazebo's render time down in CI and in the sim
+farm). The two keep their real ratio of pixels per degree: from the same height a person
+is about three times as many pixels across in the tele still (at 40 m, about 72 px
+against 22 px for a person 0.5 m across seen from above; on the real cameras twice
+that). `sd-onboard` places a smaller still of its camera's shape with the same field of
+view, so the ground a still covers is the real one. `tele_hfov_deg=` sets the lens's
+field of view (once it is measured), and `tele_width=` and `tele_height=` the picture
+(`4056`, `3040` for the full sensor, slow to render).
 
 The tele camera takes pictures only in a run that has the stills camera: a search
 scenario, or `just sim detector=model` in the flat world. It needs `physics=gz` and

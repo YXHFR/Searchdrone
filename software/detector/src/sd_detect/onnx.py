@@ -249,6 +249,11 @@ class ModelSource:
         """Tiles the last still was cut into (for the perception report)."""
         return self.tiled.last_tiles
 
+    def tiles_for(self, width: int, height: int) -> int:
+        """Tiles a ``width`` x ``height`` still will be cut into (how the perception loop
+        estimates the detector's time before it has measured any)."""
+        return len(self.tiled.tiles(width, height))
+
 
 def _read_manifest(manifest_path: Path) -> dict[str, Any]:
     try:
