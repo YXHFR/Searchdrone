@@ -52,6 +52,7 @@ from sd_safety.constants import (
 )
 from sd_schemas.base import LatLon, LatLonAlt
 from sd_schemas.link import StickAxes
+from sd_schemas.rangefinder import LASER_STREAM_HZ, RANGEFINDER_ORIENT_DOWN
 from sd_schemas.vehicle import LandedState, VehicleState
 
 __all__ = [
@@ -124,6 +125,8 @@ ONBOARD_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_MISSION_CURRENT: 500_000,
     mavlink.MAVLINK_MSG_ID_HOME_POSITION: 1_000_000,  # 1 Hz is the slowest allowed
     mavlink.MAVLINK_MSG_ID_RC_CHANNELS: 250_000,
+    # The downward laser, if one is fitted; without one the flight controller sends none.
+    mavlink.MAVLINK_MSG_ID_DISTANCE_SENSOR: 1_000_000 // LASER_STREAM_HZ,
 }
 GROUND_STREAM_US: Final = {
     mavlink.MAVLINK_MSG_ID_HEARTBEAT: HEARTBEAT_INTERVAL_US,
@@ -271,6 +274,15 @@ class FcTelemetry:
     rc_mode_pwm: int | None = None  # the RC mode-switch channel; None without an RC receiver
     rc_mono_ms: int | None = None  # last RC_CHANNELS with live sticks from an RC receiver
     rc_receiver_healthy: bool | None = None  # SYS_STATUS: RC receiver present and healthy
+    # DISTANCE_SENSOR from a laser pointing straight down (the others are ignored), as the
+    # flight controller reports it: the distance and its own range in metres, and the
+    # signal quality (0 unknown, 1 invalid, 2-100 how good). None until the first one.
+    # Whether to trust it is the onboard computer's call (sd_onboard.rangefinder).
+    rangefinder_mono_ms: int | None = None
+    rangefinder_m: float = 0.0
+    rangefinder_min_m: float = 0.0
+    rangefinder_max_m: float = 0.0
+    rangefinder_quality: int = 0
 
     @property
     def fc_mode(self) -> str:
@@ -1102,6 +1114,18 @@ class Vehicle:
                     t = replace(
                         t, home=LatLonAlt(lat=lat, lon=lon, alt_amsl_m=int(msg.altitude) / 1000.0)
                     )
+            case "DISTANCE_SENSOR":
+                # Notify: the laser's reader judges every reading, not only the latest.
+                if int(msg.orientation) == RANGEFINDER_ORIENT_DOWN:
+                    t = replace(
+                        t,
+                        rangefinder_mono_ms=now,
+                        rangefinder_m=int(msg.current_distance) / 100.0,
+                        rangefinder_min_m=int(msg.min_distance) / 100.0,
+                        rangefinder_max_m=int(msg.max_distance) / 100.0,
+                        rangefinder_quality=int(msg.signal_quality),
+                    )
+                    notify = True
             case "AUTOPILOT_VERSION":
                 v = int(msg.flight_sw_version)
                 t = replace(t, fc_firmware=f"{v >> 24 & 0xFF}.{v >> 16 & 0xFF}.{v >> 8 & 0xFF}")

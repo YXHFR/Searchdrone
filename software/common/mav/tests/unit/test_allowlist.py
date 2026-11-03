@@ -544,3 +544,9 @@ def test_allowlist_ekf_source_set() -> None:
     # The guard's origin sends nothing else.
     assert not sends(set_mode(CopterMode.SMART_RTL), ctx(origin="gnss"))
     assert not sends(command(mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 33, 100_000), ctx(origin="gnss"))
+
+
+def test_only_the_onboard_computer_asks_for_the_laser() -> None:
+    laser = command(511, mavlink.MAVLINK_MSG_ID_DISTANCE_SENSOR, 100_000)
+    assert sends(laser, ctx(origin="startup"))
+    assert not sends(laser, ctx(Profile.GROUND, "ground"))

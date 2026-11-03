@@ -77,3 +77,9 @@ reservation_ttl_s = 120                 # a reservation not booked in time count
 
 [remote]
 enabled = false                         # reserved; true is refused in v0.1.0
+
+[permit]
+# A closer look may fly straight over a possible person in sim and exercise. In a live
+# search only with a permit in the specific category: fill in its reference first.
+specific_category_ref = ""              # the permit reference from Transportstyrelsen
+allow_overflight_live = false           # true only together with specific_category_ref

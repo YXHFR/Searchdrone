@@ -86,6 +86,7 @@ from sd_onboard.executor.state import (
     skill_key,
 )
 from sd_onboard.io.persistence import StateStore
+from sd_onboard.rangefinder import LaserReader
 from sd_onboard.skills import HANDLERS, extra_transitions
 from sd_onboard.skills.base import (
     PlanContext,
@@ -428,6 +429,9 @@ class Executor:
         self._lift_pending: UUID | None = None
         # Takes one still for an order (perception, ``PerceptionLoop.capture``).
         self.camera: Callable[[UUID], Awaitable[UUID | None]] | None = None
+        # The downward laser (``LaserReader.state(now)`` for the height floor); None: none
+        # is fitted, and the floor comes from the map alone.
+        self.laser: LaserReader | None = None
         self._gcs_continue = False  # "Continuing Pilot Control" seen since the last tick
         self._gcs_home_busy = False  # L-GCS flies home from an operator hold right now
         self._gcs_home_sending = False  # ... and that one mode change is under way

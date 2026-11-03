@@ -58,7 +58,7 @@ ANYWHERE_GLOBS = (
     "**/cloudflared/**",
     "**/.cloudflared/**",
 )
-CONFIG_ALLOWED = ("config/*.example.toml", "config/mediamtx.yml")
+CONFIG_ALLOWED = ("config/*.example.toml", "config/*.example.geojson", "config/mediamtx.yml")
 FORBIDDEN_EXTENSIONS = {
     ".tlog",
     ".bin",
@@ -208,7 +208,12 @@ def check_path(path: str) -> list[Finding]:
         and not (len(parts) == 2 and any(fnmatch.fnmatchcase(path, g) for g in CONFIG_ALLOWED))
     ):
         out.append(
-            Finding(path, 0, "forbidden-path", "only config/*.example.toml and config/mediamtx.yml")
+            Finding(
+                path,
+                0,
+                "forbidden-path",
+                "only config/*.example.toml, config/*.example.geojson and config/mediamtx.yml",
+            )
         )
     ext = PurePosixPath(path).suffix.lower()
     panel_icon = path.startswith(PANEL_PUBLIC) and ext in PANEL_PUBLIC_OK

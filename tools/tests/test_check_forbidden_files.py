@@ -81,6 +81,7 @@ def findings(root: Path, rel: str) -> list[cff.Finding]:
         "notes.local.txt",
         "cloudflared/config.yml",
         "config/local/x.example.toml",
+        "config/my_area.geojson",
         "docs/report.pdf",
         ".cloudflared/cert.json",
     ],
@@ -94,6 +95,7 @@ def test_forbidden_paths(path: str) -> None:
     [
         "config/mediamtx.yml",
         "config/ground.example.toml",
+        "config/floor_area.example.geojson",
         ".env.example",
         "software/brain/src/sd_brain/planning/x.py",
         "software/ground/src/sd_ground/missions/x.py",

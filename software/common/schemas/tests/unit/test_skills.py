@@ -65,7 +65,7 @@ TABLE: dict[str, tuple[Any, ...]] = {
     "set_camera_tilt": (1, "onboard", False, "-", False, "any", False, True, "action"),
     "capture_stills": (1, "onboard", False, "-", False, "any", False, True, "action"),
     "land_at": (1, "onboard", True, "ends", True, "airborne", False, True, "action"),
-    "inspect_detection": (2, "onboard", False, "-", True, "airborne", False, False, "action"),
+    "inspect_detection": (2, "onboard", True, "-", True, "airborne", False, False, "action"),
     "follow_track": (2, "onboard", True, "-", True, "airborne", False, False, "action"),
     "stop_follow": (2, "onboard", False, "-", False, "airborne", False, True, "action"),
     "follow_me": (2, "onboard", True, "-", True, "airborne", False, False, "action"),
@@ -128,6 +128,7 @@ def test_requires_approval_set() -> None:
         "follow_me",
         "find_me",
         "follow_path",
+        "inspect_detection",
     }
 
 

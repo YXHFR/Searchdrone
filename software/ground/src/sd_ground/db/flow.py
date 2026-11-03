@@ -1394,13 +1394,14 @@ class FlowRepo:
     async def inspect_target(self, mission_id: str, detection_id: str) -> dict[str, Any] | None:
         """Where a closer look at a detection aims: the newest position of a candidate
         that observed it and is neither rejected nor merged, else the detection's own
-        (``lat``, ``lon``, ``sigma95_m``)."""
+        (``lat``, ``lon``, ``sigma95_m``; ``candidate_id`` None without a candidate)."""
         row = await self._one(
             "SELECT COALESCE(c.lat, ST_Y(d.geom)) AS lat, COALESCE(c.lon, ST_X(d.geom)) AS lon, "
-            "COALESCE(c.sigma95_m, d.sigma95_m) AS sigma95_m FROM detections d "
-            "LEFT JOIN LATERAL (SELECT lat, lon, sigma95_m FROM ("
-            "SELECT DISTINCT ON (k.candidate_id) k.rev, k.state, ST_Y(k.geom) AS lat, "
-            "ST_X(k.geom) AS lon, k.sigma95_m FROM candidate_observations o "
+            "COALESCE(c.sigma95_m, d.sigma95_m) AS sigma95_m, c.candidate_id FROM detections d "
+            "LEFT JOIN LATERAL (SELECT candidate_id, lat, lon, sigma95_m FROM ("
+            "SELECT DISTINCT ON (k.candidate_id) k.candidate_id, k.rev, k.state, "
+            "ST_Y(k.geom) AS lat, ST_X(k.geom) AS lon, k.sigma95_m "
+            "FROM candidate_observations o "
             "JOIN candidates k ON k.candidate_id = o.candidate_id "
             "WHERE o.detection_id = d.detection_id ORDER BY k.candidate_id, k.rev DESC) newest "
             "WHERE state NOT IN ('rejected', 'merged') ORDER BY rev DESC LIMIT 1) c ON TRUE "

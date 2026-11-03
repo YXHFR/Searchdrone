@@ -1,6 +1,7 @@
-"""``inspect_detection`` through the ground: the ground fills in where the detection lies
-and its keep-out radius before the gate, and says ``ONB_INSPECT_GEOMETRY`` when no
-height in the charter sees the target steeply enough."""
+"""``inspect_detection`` through the ground: the ground fills in where the candidate lies,
+its uncertainty and its keep-out radius before the gate, and says
+``ONB_INSPECT_GEOMETRY`` when no height in the charter sees the target steeply enough.
+The pilot clicks; the AI's order is only a proposal (an approval card)."""
 
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "helpers"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from flow_rig import Rig, rig  # pyright: ignore[reportMissingImports]
+from flow_rig import H, Rig, rig  # pyright: ignore[reportMissingImports]
 from test_candidates import person, send  # pyright: ignore[reportMissingImports]
 from test_orders import (  # pyright: ignore[reportMissingImports]
     driver,
@@ -41,7 +42,8 @@ async def r(migrated_db: Db, tmp_path: Path) -> AsyncIterator[Rig]:
 
 
 def look(det: Any) -> dict[str, Any]:
-    return {"detection_id": str(det.detection_id), "standoff_m": 20}
+    # A candidate's id is its first detection's.
+    return {"candidate_id": str(det.detection_id)}
 
 
 async def flying_with(r: Rig, *dets: Any) -> tuple[str, Any]:
@@ -53,25 +55,64 @@ async def flying_with(r: Rig, *dets: Any) -> tuple[str, Any]:
     return mid, d
 
 
+async def pilot(r: Rig, mid: str, params: dict[str, Any], want: str = "ALLOW") -> dict[str, Any]:
+    """The pilot's "Titta närmare"; the gate's answer must be ``want``."""
+    res = await r.panel.post(
+        f"/api/v1/missions/{mid}/commands",
+        json={"client_command_id": str(new_id()), "skill": "inspect_detection", "params": params},
+        headers=H,
+    )
+    assert res.status_code == 201, res.text
+    gate = res.json()["gate"]
+    assert gate["decision"] == want, gate
+    return gate
+
+
+async def sent_onboard(r: Rig) -> Any:
+    def looks() -> list[Any]:
+        return [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+
+    await r.until(looks, 5, "inspect")
+    return looks()[0]
+
+
 async def test_the_ground_fills_in_the_target(r: Rig) -> None:
     seen = person(r, 0, 100)
-    _, d = await flying_with(r, seen)
+    mid, _ = await flying_with(r, seen)
     r.onboard.order_outcome = "running"
-    await order(r, d, "inspect_detection", look(seen))
-    await r.until(
-        lambda: [o for o in r.onboard.orders if o.skill == "inspect_detection"], 5, "inspect"
-    )
-    sent = next(o for o in r.onboard.orders if o.skill == "inspect_detection")
+    await pilot(r, mid, look(seen))
+    sent = await sent_onboard(r)
     assert sent.params["lat"] == pytest.approx(seen.lat)
     assert sent.params["lon"] == pytest.approx(seen.lon)
+    assert sent.params["sigma95_m"] == pytest.approx(seen.sigma95_m)
     assert sent.params["target_radius_m"] == pytest.approx(PERSON_KEEPOUT_M + seen.sigma95_m)
+    assert sent.params["candidate_id"] == str(seen.detection_id)
+
+
+async def test_the_ais_look_is_only_a_proposal(r: Rig) -> None:
+    seen = person(r, 0, 100)
+    _, d = await flying_with(r, seen)
+    out = await order(r, d, "inspect_detection", look(seen), want="PENDING_APPROVAL")
+    assert out["reason_codes"] == ["NEEDS_APPROVAL_SKILL"], out
+    assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+
+
+async def test_an_order_naming_a_detection_is_read_as_its_candidate(r: Rig) -> None:
+    # Version 1 named a detection; for now the ground reads it as the candidate holding it.
+    seen = person(r, 0, 100)
+    mid, _ = await flying_with(r, seen)
+    r.onboard.order_outcome = "running"
+    await pilot(r, mid, {"detection_id": str(seen.detection_id)})
+    sent = await sent_onboard(r)
+    assert "detection_id" not in sent.params
+    assert sent.params["candidate_id"] == str(seen.detection_id)
 
 
 async def test_a_target_no_height_sees_steeply_is_refused(r: Rig) -> None:
     vague = person(r, 0, 100, sigma95_m=40.0)  # 70 m around it: too wide for 120 m up
-    _, d = await flying_with(r, vague)
-    out = await order(r, d, "inspect_detection", look(vague), want="REJECT")
-    assert out["reason_codes"] == ["ONB_INSPECT_GEOMETRY"], out
+    mid, d = await flying_with(r, vague)
+    gate = await pilot(r, mid, look(vague), want="REJECT")
+    assert gate["reason_codes"] == ["ONB_INSPECT_GEOMETRY"], gate
     assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
     # The estimate resolves the target the same way as the order.
     no_rate_limit(r)
@@ -95,14 +136,14 @@ async def test_a_target_no_height_sees_steeply_is_refused(r: Rig) -> None:
     assert res.json()["gate"]["reason_codes"] == ["ONB_INSPECT_GEOMETRY"], res.text
 
 
-async def test_an_unknown_detection_or_a_bad_order_is_refused_as_such(r: Rig) -> None:
-    _, d = await flying_with(r, person(r, 0, 100))
+async def test_an_unknown_candidate_or_a_bad_order_is_refused_as_such(r: Rig) -> None:
+    mid, _ = await flying_with(r, person(r, 0, 100))
     # The panel's own lat/lon are dropped: the ground alone says where the target is.
-    unknown = {"detection_id": str(new_id()), "standoff_m": 20, "lat": 1.0, "lon": 1.0}
-    out = await order(r, d, "inspect_detection", unknown, want="REJECT")
-    assert out["reason_codes"] == ["SCHEMA_INVALID"], out
-    out = await order(r, d, "inspect_detection", {"standoff_m": -1}, want="REJECT")
-    assert out["reason_codes"] == ["SCHEMA_INVALID"], out
+    unknown = {"candidate_id": str(new_id()), "lat": 1.0, "lon": 1.0, "sigma95_m": 1.0}
+    gate = await pilot(r, mid, unknown, want="REJECT")
+    assert gate["reason_codes"] == ["SCHEMA_INVALID"], gate
+    gate = await pilot(r, mid, {"standoff_m": 20}, want="REJECT")
+    assert gate["reason_codes"] == ["SCHEMA_INVALID"], gate
 
 
 async def test_the_geometry_check_needs_a_target_and_a_vehicle(r: Rig) -> None:
@@ -117,7 +158,7 @@ async def test_the_geometry_check_needs_a_target_and_a_vehicle(r: Rig) -> None:
     assert check(found, ctx) is None  # a target the drone can look at
     assert check(found, ctx.model_copy(update={"vehicle": None})) is None
     assert check(look(seen), ctx) is None
-    assert check({"standoff_m": -1}, ctx) is None
+    assert check({"standoff_m": 20}, ctx) is None
     far = found | {"target_radius_m": 200.0}
     refused = check(far, ctx)
     assert refused is not None and refused.reason_codes == ["ONB_INSPECT_GEOMETRY"]

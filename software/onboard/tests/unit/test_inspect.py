@@ -170,8 +170,7 @@ async def test_capture_stills_only_while_hovering() -> None:
 def inspect(east: float, north: float, radius: float, **kw: Any) -> dict[str, Any]:
     lat, lon = at(east, north)
     params: dict[str, Any] = {
-        "detection_id": str(new_id()),
-        "standoff_m": 30,
+        "candidate_id": str(new_id()),
         "lat": lat,
         "lon": lon,
         "target_radius_m": radius,

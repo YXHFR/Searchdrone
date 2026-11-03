@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+from sd_schemas.inspect import InspectDone
 from sd_schemas.link import BBox
 from sd_schemas.probmap import (
     ProbabilityMapInputs,
@@ -46,6 +47,7 @@ class FakeGround:
     inputs: ProbabilityMapInputs = field(default_factory=lambda: ProbabilityMapInputs(area=None))
     still_rows: list[SearchStill] = field(default_factory=list[SearchStill])
     maps: list[ProbabilityMapWrite] = field(default_factory=list[ProbabilityMapWrite])
+    looks: list[InspectDone] = field(default_factory=list[InspectDone])  # inspect.done
 
     def add_detection(self, **kw: Any) -> SearchDetection:
         d = SearchDetection.model_validate(
@@ -103,6 +105,9 @@ class FakeGround:
                 )
             )
         return out
+
+    async def inspections(self, mission_id: str) -> list[InspectDone]:
+        return list(self.looks)
 
     async def write(self, mission_id: str, batch: CandidateBatch) -> list[CandidateWritten]:
         staged = {k: list(v) for k, v in self.revs.items()}

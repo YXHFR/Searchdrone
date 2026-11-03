@@ -4208,6 +4208,7 @@
         "TAKEOFF",
         "TRANSIT",
         "SURVEY",
+        "INSPECT",
         "HOLD",
         "RTL",
         "LAND",
@@ -5235,23 +5236,47 @@
       "title": "HoldParams",
       "type": "object"
     },
+    "InspectAborted": {
+      "additionalProperties": false,
+      "description": "``inspect.aborted``: the look ended without the wait (STOP, FLY HOME, a takeover,\nthe battery, the link ...); the candidate goes back to ``ready``. Never resumed.",
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "stop",
+            "home",
+            "override",
+            "battery",
+            "gnss",
+            "link_loss",
+            "refused_onboard",
+            "failed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "reason"
+      ],
+      "title": "InspectAborted",
+      "type": "object"
+    },
     "InspectDetectionParams": {
       "additionalProperties": false,
-      "description": "A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).\n\nThe ground fills in where the target is (``lat``, ``lon``: the candidate's position\nwhen the detection belongs to one) and its cylinder's radius from its own records;\nwithout them the order is unresolved. ``alt_m`` is the highest the drone may go for it\n(the charter's ceiling when left out).",
+      "description": "A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).\n\nThe order names the card only. The ground fills in where the candidate is (``lat``,\n``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +\n``sigma95_m``) from its own records, never the AI or the panel; without them the\norder is unresolved. The order gives no height: the drone works its heights out\nonboard from the height floor.\n\n``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a\npoint outside the cylinder from which the main camera sees the target nearly straight\ndown, at most at the charter's ceiling. It is the whole look in ``live`` without the\noverflight permit.",
       "properties": {
-        "alt_m": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "detection_id": {
+        "candidate_id": {
           "format": "uuid",
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
           "type": "string"
@@ -5282,10 +5307,18 @@
           ],
           "default": null
         },
-        "standoff_m": {
-          "maximum": 200,
-          "minimum": 15,
-          "type": "number"
+        "sigma95_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "target_radius_m": {
           "anyOf": [
@@ -5302,10 +5335,299 @@
         }
       },
       "required": [
-        "detection_id",
-        "standoff_m"
+        "candidate_id"
       ],
       "title": "InspectDetectionParams",
+      "type": "object"
+    },
+    "InspectDone": {
+      "additionalProperties": false,
+      "description": "``inspect.done``: the steps are over and the drone hovers for the pilot's decision.\nThe candidate stays ``inspecting`` until it comes, or ``AWAIT_DECISION_S`` passes.",
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "clear": {
+          "type": "boolean"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "end": {
+          "enum": [
+            "clear",
+            "floor",
+            "lower_declined",
+            "steps_max",
+            "timeout",
+            "keepout",
+            "laser_lost",
+            "side_look"
+          ],
+          "type": "string"
+        },
+        "lowest_above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "steps": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "still_ids": {
+          "items": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "type": "array"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "end",
+        "steps",
+        "clear"
+      ],
+      "title": "InspectDone",
+      "type": "object"
+    },
+    "InspectLaserLost": {
+      "additionalProperties": false,
+      "description": "``inspect.laser_lost``: the laser stopped confirming below the map's floor without\nit; the drone climbs to that floor and goes to wait.",
+      "properties": {
+        "above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "InspectLaserLost",
+      "type": "object"
+    },
+    "InspectLower": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable: the pilot's yes to going below 30 m above ground\n(``inspect.lower_offer``). Only from the pilot's own click, never from the AI.",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id"
+      ],
+      "title": "InspectLower",
+      "type": "object"
+    },
+    "InspectLowerOffer": {
+      "additionalProperties": false,
+      "description": "``inspect.lower_offer``: the next step would go below the automatic floor (30 m\nabove ground); the drone hovers and asks the pilot (``link.InspectLower``).",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "lowest_above_ground_m": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "now_above_ground_m": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "reason": {
+          "enum": [
+            "map",
+            "unknown",
+            "powerline",
+            "laser",
+            "no_map",
+            "laser_lost"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "now_above_ground_m",
+        "lowest_above_ground_m",
+        "reason"
+      ],
+      "title": "InspectLowerOffer",
+      "type": "object"
+    },
+    "InspectOutcome": {
+      "additionalProperties": false,
+      "description": "Ground -> onboard, reliable: the pilot's decision on a closer look while the drone\nhovers for it (``hold_reason`` \"inspect_await\"). The drone flies back to where the\nsearch broke off, except after \"confirmed\": then it hovers over the find.",
+      "properties": {
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "rejected",
+            "unsure",
+            "resume",
+            "confirmed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "outcome"
+      ],
+      "title": "InspectOutcome",
+      "type": "object"
+    },
+    "InspectProgress": {
+      "additionalProperties": false,
+      "description": "How a look is going, in the onboard computer's state snapshot (at most 2 Hz).",
+      "properties": {
+        "above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "await_left_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidate_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        },
+        "floor_auto_above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_lowest_above_ground_m": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "map",
+                "unknown",
+                "powerline",
+                "laser",
+                "no_map",
+                "laser_lost"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "laser_confirmed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "approach",
+            "step",
+            "lower_offer",
+            "await",
+            "return"
+          ],
+          "type": "string"
+        },
+        "step": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_id",
+        "candidate_id",
+        "step",
+        "phase"
+      ],
+      "title": "InspectProgress",
       "type": "object"
     },
     "Item": {
@@ -6507,6 +6829,30 @@
             }
           ]
         },
+        "floor_pack_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "floor_pack_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "geofence_buffer_m": {
           "default": 20,
           "maximum": 50,
@@ -6551,6 +6897,26 @@
             "return_home"
           ],
           "type": "string"
+        },
+        "operation_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "sim",
+                "exercise",
+                "live"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "overflight_allowed": {
+          "default": false,
+          "type": "boolean"
         },
         "pilot_position": {
           "$ref": "#/$defs/LatLon"
@@ -6979,7 +7345,7 @@
           "type": "string"
         },
         "type": {
-          "pattern": "^executor\\.[a-z_]+$",
+          "pattern": "^(executor|inspect)\\.[a-z_]+$",
           "type": "string"
         }
       },
@@ -7397,6 +7763,18 @@
           "minItems": 4,
           "type": "array"
         },
+        "inspect_step": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "pose": {
           "$ref": "#/$defs/Pose"
         },
@@ -7429,6 +7807,30 @@
         "detector"
       ],
       "title": "PerceptionReport",
+      "type": "object"
+    },
+    "PermitChanged": {
+      "additionalProperties": false,
+      "description": "``permit.changed`` on the ground: the overflight permit setting for ``live``.",
+      "properties": {
+        "allow_overflight_live": {
+          "type": "boolean"
+        },
+        "changed_by": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "has_specific_category_ref": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "changed_by",
+        "has_specific_category_ref",
+        "allow_overflight_live"
+      ],
+      "title": "PermitChanged",
       "type": "object"
     },
     "PilotPosition": {
@@ -9310,7 +9712,8 @@
                 "find_hold",
                 "ai_silent",
                 "startup",
-                "manual_input_lost"
+                "manual_input_lost",
+                "inspect_await"
               ],
               "type": "string"
             },
@@ -9318,6 +9721,17 @@
               "type": "null"
             }
           ]
+        },
+        "inspect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InspectProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "last_transition_state_seq": {
           "type": "integer"

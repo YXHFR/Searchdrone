@@ -721,7 +721,7 @@ class _CloudLike:
             det = re.search(r"multi_frame=False, detection_id=([0-9a-f-]+)", event)
             if self.habit == "look" and det is not None:
                 text = f"{k[0]} HÖG, sedd i en bild. Jag tittar närmare."
-                args = {"detection_id": det[1], "standoff_m": 15, "rationale_sv": "En bild."}
+                args = {"candidate_id": det[1], "rationale_sv": "En bild."}
                 return _reply(text, ("inspect_detection", args))
             return _reply("")
         if "status=done" in event and "return_home" in event:
@@ -810,7 +810,7 @@ def _order_turns(flew: Any, look: int) -> tuple[int, int]:
     return turns[look - 1], turns[look + 1]
 
 
-async def test_a_closer_look_at_an_unknown_detection_is_refused() -> None:
+async def test_a_closer_look_at_an_unknown_candidate_is_refused() -> None:
     from sd_schemas.base import new_id
 
     world = SimWorld(make_scenario(4))
@@ -818,7 +818,7 @@ async def test_a_closer_look_at_an_unknown_detection_is_refused() -> None:
     ground = SimGround(world, now=lambda: dt.datetime(2026, 10, 25, tzinfo=dt.UTC))
     ground.sit["charter"]["allowed_skills"].append("inspect_detection")
     res = await ground.submit(
-        ground.mission_id, _order("inspect_detection", detection_id=str(new_id()), standoff_m=15)
+        ground.mission_id, _order("inspect_detection", candidate_id=str(new_id()))
     )
     assert res.decision == "REJECT" and res.reason_codes == ["SCHEMA_INVALID"]
     assert world.plan is None
@@ -828,7 +828,7 @@ def test_the_closer_look_hovers_near_the_candidate_on_the_drones_side() -> None:
     world = SimWorld(make_scenario(4))
     c = SimCandidate(1, 100.0, 0.0, True, 0.8, 0.0)
     world.candidates.append(c)
-    assert world.start(_order("inspect_detection", detection_id=c.detection_id, standoff_m=15))
+    assert world.start(_order("inspect_detection", candidate_id=c.candidate_id))
     assert world.plan is not None and world.plan.points == [(100.0 - LOOK_RADIUS_M, 0.0)]
     assert world.plan.alt == LOOK_ALT_M
     events: list[dict[str, Any]] = []
@@ -1000,7 +1000,7 @@ def test_the_closer_look_flies_inside_the_charters_height_band(
     world = SimWorld(sc)
     c = SimCandidate(1, 100.0, 0.0, True, 0.8, 0.0)
     world.candidates.append(c)
-    assert world.start(_order("inspect_detection", detection_id=c.detection_id, standoff_m=15))
+    assert world.start(_order("inspect_detection", candidate_id=c.candidate_id))
     assert world.plan is not None and world.plan.alt == alt
 
 

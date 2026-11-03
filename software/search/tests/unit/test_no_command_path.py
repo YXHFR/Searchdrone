@@ -65,12 +65,13 @@ async def test_search_has_no_command_path() -> None:
     await client.detections(MISSION, 0, 10)
     await client.crop(CID)
     await client.tracks(MISSION)
+    await client.inspections(MISSION)
     await client.write(
         MISSION, CandidateBatch(revisions=[CandidateRevision.model_validate(_revision())])
     )
     await client.profile(MISSION)
     await client.aclose()
-    assert len(seen) == 7
+    assert len(seen) == 8
     assert all(path.startswith("/search/v1/") for _, path in seen), seen
     for word in ("command", "approval", "decision", "actions", "commander", "stop", "return_home"):
         assert not any(word in path for _, path in seen), word

@@ -1,0 +1,18 @@
+# Benewake TF02-Pro laser pointing down, for ArduCopter Copter-4.7 (research 31).
+# Load after the safety layer and list this file in sd-onboard's expected_param_files,
+# so the flight controller is read back against it before every takeoff. In
+# config/onboard.toml: [rangefinder] model = "tf02_pro", min_tested_m and max_tested_m.
+#
+# The serial port depends on the board: set SERIALn_PROTOCOL 9 (rangefinder) and
+# SERIALn_BAUD 115 for the port the laser is wired to, in the vehicle's own file.
+#
+# Only the onboard computer uses the laser, for the closer look's height floor. The flight
+# controller reads it and reports DISTANCE_SENSOR, and never flies by it.
+
+RNGFND1_TYPE 27          # Benewake, serial (TYPE 25 is another model's I2C driver: ~12 m cap)
+RNGFND1_ORIENT 25        # pointing down
+RNGFND1_MIN 0.1          # m (metres since 4.7): the data sheet's shortest distance
+RNGFND1_MAX 13           # m: what it reaches over dark ground in sunlight, not the 40 m on white
+WP_RFND_USE 0            # no terrain following in AUTO or GUIDED (out of range there = RTL)
+SURFTRAK_MODE 0          # no surface tracking in LOITER: a person flying keeps a plain height
+EK3_RNG_USE_HGT -1       # the EKF never takes its height from the laser (ArduPilot default)
