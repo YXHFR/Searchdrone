@@ -84,7 +84,7 @@ from test_sc_linkloss import (  # pyright: ignore[reportMissingImports]
 )
 from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
     Camera,
-    a_detection,
+    a_candidate,
     airborne_for_inspection,
     inspecting,
     person,
@@ -546,7 +546,7 @@ async def test_an_inspection_started_inside_new_cylinders(
         step = math.dist((e, n), (e0, n0))
         de, dn = (e - e0) / step, (n - n0) / step
         target = plane.latlon(e + 6.0 * de, n + 6.0 * dn)
-        det = await a_detection(sc, target)
+        cid = await a_candidate(sc, target)
         ex.on_detections([person(target), person(plane.latlon(e - 13.0 * de, n - 13.0 * dn))])
         cand = Keepout(
             keepout_id=new_id(),
@@ -559,7 +559,7 @@ async def test_an_inspection_started_inside_new_cylinders(
         ex.on_keepouts(KeepoutInstall(install_seq=INSTALL_SEQ, keepouts=[cand]), new_id())
         Camera(sc)
         since = time.monotonic()
-        order = await inspecting(sc, det)
+        order = await inspecting(sc, cid)
 
         # Once the drone is out of the cylinders, the ground moves (or shrinks) the
         # candidate's cylinder under the same id.
@@ -609,9 +609,9 @@ async def test_a_person_below_during_an_inspection_is_left_on_a_replan(
     async with scenario(sim, migrated_db, tmp_path) as sc:
         await airborne_for_inspection(sc)
         p1 = next(p for p in FIXTURE["pins"] if p["id"] == "P1")
-        det = await a_detection(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
+        cid = await a_candidate(sc, sc.at(float(p1["east_m"]), float(p1["north_m"])))
         Camera(sc)
-        order = await inspecting(sc, det)
+        order = await inspecting(sc, cid)
         ex = sc.r.onboard.ex
         st = sc.sim.harness.state
         await sc.until(

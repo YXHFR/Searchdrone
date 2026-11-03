@@ -20,6 +20,7 @@ from sd_schemas.base import (
 )
 from sd_schemas.charter import AutonomyMode, MissionCharter
 from sd_schemas.executor import ExecutorState
+from sd_schemas.inspect import FloorReason
 from sd_schemas.keepout import Keepout
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
 from sd_schemas.safety import SafetyLimits
@@ -31,6 +32,7 @@ __all__ = [
     "ClearanceState",
     "GateContext",
     "GateDecision",
+    "GateFloor",
     "GateRequest",
     "StateRef",
 ]
@@ -76,6 +78,16 @@ class ClearanceState(SdModel):
     consumed: bool
 
 
+class GateFloor(SdModel):
+    """The height floor along an order's path (``sd_safety.floor``), worked out by the
+    caller from the map pack (the gate reads no files): the highest floor in force on the
+    path, above sea level. The ground counts without the laser (the auto floor); onboard
+    the executor passes the floor its step is checked against."""
+
+    floor_amsl_m: float = Field(ge=-500, le=9000)
+    reason: FloorReason
+
+
 class GateContext(SdModel):
     """Everything the gate may look at. Built by the caller; the gate does no I/O."""
 
@@ -113,6 +125,17 @@ class GateContext(SdModel):
     # The keep-out cylinders in force (onboard: the ground's and its own; ground: the list
     # it installs). No route may enter one (R-KEEPOUT).
     keepouts: tuple[Keepout, ...] = ()
+    # The closer look (inspect_detection). Cylinders a look may fly over: its own
+    # candidate's, in sim and exercise or live with the permit (R-KEEPOUT skips them).
+    suspended_keepout_ids: tuple[Id, ...] = ()
+    # The order of a look in progress or waiting for the pilot's decision: another look is
+    # refused (R-INSPECT-ONE).
+    inspect_active: Id | None = None
+    # Ground: the candidates a look may start on (ready or assessing). None where the
+    # candidates are not known (onboard): R-INSPECT-TARGET is the ground's.
+    inspectable_candidates: tuple[Id, ...] | None = None
+    # The height floor along the order's path; None: not worked out (R-FLOOR, R-FLOOR-CEIL).
+    floor: GateFloor | None = None
 
 
 class GateDecision(SdModel):

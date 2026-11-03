@@ -21,7 +21,7 @@ from sd_schemas.base import (
     VehicleId,
     json_bytes_at_most,
 )
-from sd_schemas.charter import AutonomyMode, MissionCharter
+from sd_schemas.charter import AutonomyMode, MissionCharter, OperationMode
 from sd_schemas.gate import GateDecision, StateRef
 from sd_schemas.link import StateSnapshot, StickAxes
 from sd_schemas.mission import MissionState, OperatorLatch, PausedBy, ReturningCause
@@ -547,6 +547,9 @@ class ApprovalDecisionRequest(SdModel):
         default_factory=list[Literal["clear_around_drone"]], max_length=4
     )
     autonomy_mode: AutonomyMode | None = None
+    # A charter: the kind of flight it is for, the pilot's choice. None keeps the mode of
+    # the charter in force; a first charter without one is live, the strictest.
+    operation_mode: OperationMode | None = None
     reason: str | None = Field(default=None, max_length=500)
 
 

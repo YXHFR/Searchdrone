@@ -23,6 +23,7 @@ from sd_ground.logging import get_logger
 from sd_ground.mav import fence as mav_fence
 from sd_ground.services import charters as charter_rules
 from sd_ground.services import fence as fence_rules
+from sd_ground.services import inspections as inspections_service
 from sd_ground.services.missions import FlowError
 from sd_mav.mission import MissionError
 from sd_mav.vehicle import ControlNotAllowedError, ForbiddenMavlinkError, Vehicle
@@ -234,7 +235,18 @@ async def _decide_charter(
     active_row = await flow.active_charter_row(mission)
     active = None if active_row is None else active_row.body
     mode = charter_rules.resolve_autonomy(active, req.autonomy_mode)
-    charter = row.body.model_copy(update={"autonomy_mode": mode})
+    # The operation mode: the pilot's pick on the card, else the one in force (unset:
+    # live). Overflight is the ground's stamp from it and the permit.
+    op = req.operation_mode or (None if active is None else active.operation_mode)
+    op = op or row.body.operation_mode
+    charter = row.body.model_copy(
+        update={
+            "autonomy_mode": mode,
+            "operation_mode": op,
+            "overflight_allowed": op is not None
+            and inspections_service.overflight_allowed(flow, op),
+        }
+    )
     # A waiting proposal is always against the active version: a newer approval (also
     # an autonomy change) supersedes every waiting proposal.
     errors = _check(flow, charter, mission, active, None if active is None else active.version)

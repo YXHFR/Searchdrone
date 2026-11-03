@@ -48,8 +48,15 @@ from sd_schemas.base import LatLon
 from sd_schemas.charter import AutonomyMode
 from sd_schemas.executor import ExecutorState
 from sd_schemas.gate import GateContext, GateRequest
+from sd_schemas.keepout import Keepout
 from sd_schemas.mission import MissionState
-from sd_schemas.skills import PATH_MAX_LENGTH_M, GateTargets, SkillParams, SkillSpec
+from sd_schemas.skills import (
+    PATH_MAX_LENGTH_M,
+    GateTargets,
+    InspectDetectionParams,
+    SkillParams,
+    SkillSpec,
+)
 
 __all__ = [
     "CLEAR_AROUND_DRONE",
@@ -62,6 +69,8 @@ __all__ = [
 ]
 
 CLEAR_AROUND_DRONE: Final = "clear_around_drone"
+_INSPECT: Final = "inspect_detection"
+_GROUND_AI: Final = "brain:ground"  # the AI on the ground: its look is a card for the pilot
 
 Issuer = Literal["operator", "brain", "system"]
 _ALL: Final[frozenset[Issuer]] = frozenset({"operator", "brain", "system"})
@@ -554,7 +563,11 @@ def _altitude(f: Facts) -> list[Finding]:
     charter = f.ctx.charter
     if charter is not None:
         out += _one(top > charter.alt_max_agl_m, "ALT_ABOVE_CHARTER", alt_m=top)
-        out += _one(bottom < charter.alt_min_agl_m, "ALT_BELOW_CHARTER", alt_m=bottom)
+        # A closer look comes down to the height floor instead (R-FLOOR), but only where
+        # the floor is worked out: without one the charter's lower limit stays.
+        floored = f.req.skill == _INSPECT and f.ctx.floor is not None
+        low = bottom < charter.alt_min_agl_m and not floored
+        out += _one(low, "ALT_BELOW_CHARTER", alt_m=bottom)
     return out
 
 
@@ -598,8 +611,11 @@ def _keepout(f: Facts) -> list[Finding]:
     """No route enters a keep-out cylinder; an orbit's ring keeps 10 m from every one.
 
     The targets of ``KEEPOUT_TARGET_SKILLS`` are checked on both sides; onboard, the
-    handler's path is checked for every other move as well (``KEEPOUT_EXEMPT`` aside)."""
-    keepouts, plane = f.ctx.keepouts, f.plane
+    handler's path is checked for every other move as well (``KEEPOUT_EXEMPT`` aside).
+    The cylinders a closer look flies over (``suspended_keepout_ids``) are left out."""
+    suspended = set(f.ctx.suspended_keepout_ids)
+    keepouts = tuple(k for k in f.ctx.keepouts if k.keepout_id not in suspended)
+    plane = f.plane
     if not keepouts or plane is None or not f.moves or f.req.skill in KEEPOUT_EXEMPT:
         return []
     t = f.targets
@@ -678,6 +694,121 @@ def _speed(f: Facts) -> list[Finding]:
     return out
 
 
+# --- the closer look and the height floor ---------------------------------------------------
+
+
+def _inspect_sender(f: Facts) -> list[Finding]:
+    """A closer look is the pilot's: an operator's order (the route checks the role), or
+    the ground AI's, which only ever becomes a card the pilot clicks. Never a rule's or
+    the deputy's: there is no look without the link and the pilot."""
+    if f.req.skill != _INSPECT:
+        return []
+    req = f.req
+    pilot = req.issuer_kind == "operator" and req.issuer_ref.startswith("operator:")
+    card = req.issuer_kind == "brain" and req.issuer_ref == _GROUND_AI
+    return _one(not (pilot or card), "INSPECT_NEEDS_PILOT", issuer=req.issuer_ref)
+
+
+def _inspect_one(f: Facts) -> list[Finding]:
+    """One look at a time; onboard the look's own order is the active one."""
+    busy = f.ctx.inspect_active
+    return _one(
+        f.req.skill == _INSPECT and busy is not None and busy != f.req.command_id,
+        "INSPECT_BUSY",
+        inspect_command_id=str(busy),
+    )
+
+
+def _inspect_target(f: Facts) -> list[Finding]:
+    """The candidate must be open for a look (ready or assessing). Read from the raw
+    parameters, so a number the ground could not translate (K99) says so too."""
+    open_ids = f.ctx.inspectable_candidates
+    if f.req.skill != _INSPECT or open_ids is None:
+        return []
+    asked = str(f.req.params.get("candidate_id", "")).lower()
+    return _one(
+        asked not in {str(c) for c in open_ids},
+        "INSPECT_TARGET_CLOSED",
+        candidate_id=asked[:40],
+    )
+
+
+def _floor_alts_amsl(f: Facts) -> list[float]:
+    """The heights (above sea level) the order flies at: its targets' and the onboard
+    handler's path, without the path's first point (where the drone is now: climbing
+    out from under the floor is never refused)."""
+    out: list[float] = []
+    charter = f.ctx.charter
+    if f.targets is not None and charter is not None:
+        out += [a + charter.home.alt_amsl_m for a in f.targets.alts_m]
+    path = f.req.planned_path or []
+    out += [p.alt_amsl_m for p in (path[1:] if len(path) > 1 else path)]
+    return out
+
+
+def _floor(f: Facts) -> list[Finding]:
+    """No height of the order below the floor along its path. Near a known power line the
+    floor is the height the look started at, and the code says so (``POWERLINE_ZONE``)."""
+    floor = f.ctx.floor
+    alts = _floor_alts_amsl(f) if floor is not None and f.moves else []
+    if floor is None or not alts or min(alts) >= floor.floor_amsl_m:
+        return []
+    code = "POWERLINE_ZONE" if floor.reason == "powerline" else "FLOOR_VIOLATION"
+    return [
+        Finding(
+            code,
+            {
+                "floor_amsl_m": round(floor.floor_amsl_m, 1),
+                "alt_amsl_m": round(min(alts), 1),
+                "floor_reason": floor.reason,
+            },
+        )
+    ]
+
+
+def _floor_ceiling(f: Facts) -> list[Finding]:
+    """The floor must lie under the ceiling (the charter's, and the mission's limit):
+    a look cannot be flown where the lowest allowed height is above the highest."""
+    floor, charter = f.ctx.floor, f.ctx.charter
+    if floor is None or charter is None or not f.moves:
+        return []
+    top = min(charter.alt_max_agl_m, f.ctx.limits.max_alt_agl_m)
+    ceiling = charter.home.alt_amsl_m + top
+    return _one(
+        floor.floor_amsl_m > ceiling,
+        "FLOOR_ABOVE_CEILING",
+        floor_amsl_m=round(floor.floor_amsl_m, 1),
+        ceiling_amsl_m=round(ceiling, 1),
+    )
+
+
+def _overflight(f: Facts) -> list[Finding]:
+    """Without ``overflight_allowed`` (live without the permit) no point of a look's way
+    comes nearer its candidate than the cylinder's radius."""
+    charter, plane, p = f.ctx.charter, f.plane, f.params
+    if (
+        f.req.skill != _INSPECT
+        or not isinstance(p, InspectDetectionParams)
+        or p.lat is None
+        or p.lon is None
+        or p.target_radius_m is None
+        or plane is None
+        or (charter is not None and charter.overflight_allowed)
+    ):
+        return []
+    own = Keepout(
+        keepout_id=p.candidate_id,
+        lat=p.lat,
+        lon=p.lon,
+        radius_m=p.target_radius_m,
+        source="candidate",
+        source_id=p.candidate_id,
+    )
+    _, routes, _ = _route_points(f)
+    hit = any(route_violation(route, [own], plane) is not None for route in routes)
+    return _one(hit, "OVERFLIGHT_NOT_ALLOWED", candidate_id=str(p.candidate_id))
+
+
 # --- the AI's manners -----------------------------------------------------------------------
 
 
@@ -745,6 +876,9 @@ RULES: Final[tuple[Rule, ...]] = (
     Rule("R-AI-OFF", _BRAIN, True, _ai_off),
     Rule("R-MISSION", _ALL, False, _mission_match),
     Rule("R-MISSION", _ALL, True, _mission_state),
+    Rule("R-INSPECT-SENDER", _ALL, False, _inspect_sender),
+    Rule("R-INSPECT-ONE", _ALL, False, _inspect_one),
+    Rule("R-INSPECT-TARGET", _ALL, True, _inspect_target),
     Rule("R-LATCH", _OPERATOR, True, _operator_latch),
     Rule("R-LATCH-SPARR", _BRAIN, False, _brain_latch),
     Rule("R-LATCH", _BRAIN, True, _paused_by_person),
@@ -768,6 +902,9 @@ RULES: Final[tuple[Rule, ...]] = (
     Rule("R-BATT", _BRAIN, False, _brain_battery),
     Rule("R-BATT-ROUTE", _ALL, False, _route_battery),
     Rule("R-ALT", _ALL, False, _altitude),
+    Rule("R-FLOOR", _ALL, False, _floor),
+    Rule("R-FLOOR-CEIL", _ALL, False, _floor_ceiling),
+    Rule("R-OVERFLIGHT", _ALL, False, _overflight),
     Rule("R-AREA", _ALL, False, _outside_charter),
     Rule("R-KEEPOUT", _ALL, False, _keepout),
     Rule("R-PILOT", _ALL, False, _pilot_distance),

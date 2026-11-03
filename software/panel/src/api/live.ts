@@ -370,11 +370,18 @@ function apply(e: LiveEnvelope, vehicleId: string): void {
       if (forMission) useCandidateStore.getState().upsert(e.data as CandidateCard, true);
       break;
     case "candidate.decided": {
-      const card = e.data as CandidateCard & { decision?: { decision?: string } };
+      const card = e.data as CandidateCard & {
+        decision?: { decision?: string; noted?: boolean };
+      };
       if (!forMission) break;
       useCandidateStore.getState().upsert(card);
-      if (card.decision?.decision === "confirm")
-        useUiStore.getState().toast(i18next.t("candidates.toastConfirmed", { seq: card.seq }));
+      if (card.decision?.decision !== "confirm") break;
+      // An observer's confirm during a look is a note for the pilot, not a confirmed find.
+      useUiStore.getState().toast(
+        i18next.t(card.decision.noted ? "candidates.toastNoted" : "candidates.toastConfirmed", {
+          seq: card.seq,
+        }),
+      );
       break;
     }
     case "search_profile.proposed":

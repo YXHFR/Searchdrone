@@ -50,6 +50,7 @@ from sd_ground.services import clearance as clearance_service
 from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
 from sd_ground.services import health
+from sd_ground.services import inspections as inspections_service
 from sd_ground.services import perception as perception_service
 from sd_ground.services import probability_map as map_service
 from sd_ground.services import search_profile as profile_service
@@ -96,6 +97,7 @@ from sd_schemas.api import (
 )
 from sd_schemas.charter import CharterProposal
 from sd_schemas.gate import GateDecision
+from sd_schemas.inspect import Inspection, Permit
 from sd_schemas.probmap import ProbabilityMapView, SectorScore, suggest_sector_order
 from sd_schemas.safety import SafetyLimits
 from sd_schemas.search import (
@@ -761,6 +763,38 @@ async def get_candidates(
     )
 
 
+@router.get("/missions/{mission_id}/inspections", response_model=list[Inspection])
+async def get_inspections(mission_id: IdPath, g: G, _: Observer) -> list[Inspection]:
+    """The mission's closer looks ("Titta närmare"), oldest first. The open one (at most
+    one) has ``phase`` flying, lower_offer ("Gå lägre?" until ``lower_offer_until``) or
+    await (the decision until ``await_until``); live changes come as
+    ``inspection.updated`` and ``candidate.inspect_progress`` on the topic ``candidates``."""
+    await _flow(g).mission(mission_id)
+    return await inspections_service.views(_flow(g), mission_id)
+
+
+@router.post("/inspections/{command_id}/lower", response_model=Inspection)
+async def post_inspection_lower(command_id: IdPath, g: G, _: Interactive) -> Inspection:
+    """The pilot's yes to "Gå lägre?" (only while the drone asks: 409 ``NO_LOWER_OFFER``
+    otherwise, 404 when the look is not open, 503 without the link)."""
+    return await inspections_service.lower(_flow(g), command_id)
+
+
+@router.get("/permit", response_model=Permit)
+async def get_permit(g: G, _: Observer) -> Permit:
+    """The overflight permit for ``live``: a closer look may fly straight over its
+    candidate only with it (sim and exercise always may)."""
+    return inspections_service.permit(_flow(g))
+
+
+@router.put("/permit", response_model=Permit)
+async def put_permit(body: Permit, g: G, who: Interactive) -> Permit:
+    """The pilot changes the permit until the ground restarts (the config's ``[permit]``
+    is the lasting setting). Granting it counts from the next charter approval, revoking
+    it at once: no look starts until a new charter is approved."""
+    return inspections_service.set_permit(_flow(g), body, by=who.issuer_ref)
+
+
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetail)
 async def get_candidate(candidate_id: IdPath, g: G, _: Observer) -> dict[str, Any]:
     """One candidate: its card, the detections it observed, every assessment and every
@@ -773,9 +807,12 @@ async def post_candidate_decision(
     candidate_id: IdPath, body: CandidateDecision, g: G, who: Observer
 ) -> dict[str, Any]:
     """Only a person in the panel decides (never the AI, the search service or a script
-    outside the test rig). Observers confirm, reject and mark unsure; inspect and reopen
-    are the pilot's. Confirming needs a large view from the same session first (409
-    ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``."""
+    outside the test rig). Observers confirm, reject and mark unsure; inspect, resume and
+    reopen are the pilot's. Confirming needs a large view from the same session first
+    (409 ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.
+    ``inspect`` sends the drone for a closer look (409 ``INSPECT_REFUSED`` with the
+    gate's codes in ``errors`` when it may not). During the look only the pilot's
+    decision ends it and reaches the drone; an observer's is a note for the pilot."""
     return jsonable_encoder(await candidates_service.decide(_flow(g), candidate_id, body, who))
 
 
