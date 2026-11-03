@@ -383,6 +383,45 @@ async def test_during_a_look_the_ai_does_not_move_the_drone(r: Rig) -> None:
     await order(r, d, "goto", goto)
 
 
+async def test_during_a_look_the_ai_does_not_cancel_it(r: Rig) -> None:
+    """Owner decision: during a look only the pilot moves the drone. A look started from
+    the AI's card stays the AI's order, yet the AI's cancel would end it onboard (INSPECT
+    to HOLD) and free its later orders: the ground refuses it (``INSPECT_BUSY``), as it
+    does the cancel of any of its orders but the stills it may take during the look. The
+    pilot's cancel still ends the look."""
+    r.onboard.order_outcome = "running"
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="exercise")
+    out = await order(r, d, "inspect_detection", {"candidate_id": "K1"}, want="PENDING_APPROVAL")
+    res = await r.approve(str(out["approval_id"]))
+    assert res.status_code == 200, res.text
+    look_id = str(out["command_id"])
+    await wait_order_status(r, mid, look_id, "running")
+    sent_before = len(r.onboard.orders)
+    res = await r.commander.post(f"/commander/v1/missions/{mid}/commands/{look_id}/cancel")
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "INSPECT_BUSY", res.text
+    (look,) = await looks(r, mid)
+    assert look["outcome"] is None
+    cmd = await r.flow.repo.command(look_id)
+    assert cmd is not None and str(cmd.status) == "running"
+    # The stills do not move the drone: the AI may take them and cancel them.
+    stills = await order(r, d, "capture_stills", {"count": 1})
+    stills_id = str(stills["command_id"])
+    await wait_order_status(r, mid, stills_id, "running")
+    res = await r.commander.post(f"/commander/v1/missions/{mid}/commands/{stills_id}/cancel")
+    assert res.status_code == 202, res.text
+    assert res.json()["status"] == "cancelled", res.text
+    assert (await looks(r, mid))[0]["outcome"] is None
+    assert len(r.onboard.orders) == sent_before + 1
+    # The pilot's cancel ends the look.
+    res = await r.panel.post(f"/api/v1/commands/{look_id}/cancel", headers=H)
+    assert res.status_code == 202, res.text
+    (look,) = await looks(r, mid)
+    assert look["outcome"] == "aborted" and look["detail"] == "CANCELLED"
+    assert (await card(r.panel, str(det.detection_id)))["card"]["state"] == "ready"
+
+
 async def test_during_a_look_the_ai_may_still_fly_home(r: Rig) -> None:
     mid, _, sent = await started(r)
     await event(r, "inspect.done", **done(sent))

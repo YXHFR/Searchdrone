@@ -939,6 +939,14 @@ async def cancel(
             )
         updated = await set_status(flow, command_id, "cancelled", "CANCELLED")
         return updated or cmd
+    if (
+        brain_only
+        and cmd.skill != "capture_stills"
+        and await inspections_service.open_look(flow, str(cmd.mission_id)) is not None
+    ):
+        # Owner decision: during a look only the pilot moves the drone (R-INSPECT-PILOT).
+        # The AI's cancel onboard would end the look (INSPECT -> HOLD) or move the drone.
+        raise FlowError(409, "INSPECT_BUSY", inspections_service.PILOT_ONLY_SV)
     if flow.link is not None:
         await flow.link.send_message(
             cmd.vehicle_id, CommandCancel(command_id=cmd.id), mission_id=str(cmd.mission_id)

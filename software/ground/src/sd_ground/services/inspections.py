@@ -261,6 +261,14 @@ def refuse_revoked(flow: MissionFlow, ctx: GateContext, gate: GateDecision) -> G
 _AI_DURING_LOOK: Final = frozenset({*_KEEPS_LOOK, "return_home", "report", "mark_location"})
 
 
+PILOT_ONLY_SV: Final = "En titt pågår. Under titten styr bara piloten drönaren."
+
+
+async def open_look(flow: MissionFlow, mission_id: str) -> LookRow | None:
+    """The mission's open look, if one is open."""
+    return next((x for x in await _repo(flow).open_looks() if x.mission_id == mission_id), None)
+
+
 async def refuse_during_look(
     flow: MissionFlow, mission_id: str, skill: str, issuer_kind: str, gate: GateDecision
 ) -> GateDecision:
@@ -271,14 +279,14 @@ async def refuse_during_look(
     the look is the pilot's own order (``commands.decide`` does not ask here)."""
     if issuer_kind != "brain" or skill in _AI_DURING_LOOK or gate.decision == "REJECT":
         return gate
-    busy = next((x for x in await _repo(flow).open_looks() if x.mission_id == mission_id), None)
+    busy = await open_look(flow, mission_id)
     if busy is None:
         return gate
     return GateDecision(
         decision="REJECT",
         reason_codes=["INSPECT_BUSY"],
         rule_ids=["R-INSPECT-PILOT"],
-        message_sv="En titt pågår. Under titten styr bara piloten drönaren.",
+        message_sv=PILOT_ONLY_SV,
         details={"inspect_command_id": busy.command_id},
         side="ground",
     )
