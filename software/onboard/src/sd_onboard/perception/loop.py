@@ -249,6 +249,7 @@ class PerceptionLoop:
         command_id: UUID | None = None,
         camera: str = MAIN,
         captured_utc: datetime | None = None,
+        inspect_step: int | None = None,
     ) -> Perception | None:
         """One still and the telemetry read when it arrived (with the attitude rate then):
         a report and its crops, or ``None`` when it cannot be placed on the ground well
@@ -286,6 +287,7 @@ class PerceptionLoop:
             latency_ms=max(0, self.clock.monotonic_ms() - start),
             rate_hz=rate_hz,
             command_id=command_id,
+            inspect_step=inspect_step,
         )
         if out is None:
             self.stats.skipped_no_footprint += 1
@@ -321,13 +323,7 @@ class PerceptionLoop:
         self.send(out)
         if self.on_targets is None:
             return
-        targets = [
-            d
-            for d in out.report.detections
-            if d.label is not None
-            and d.label in self.registry
-            and self.registry.get(d.label).kind == "target"
-        ]
+        targets = self._targets(out)
         if targets:
             self.on_targets(targets)
 
@@ -343,11 +339,21 @@ class PerceptionLoop:
         rate = max(rate, self.rate.update(t))
         return _Polled(camera, captured, t, now_ms, rate, stamp)
 
-    async def _detect(self, p: _Polled, command_id: UUID | None = None) -> Perception | None:
+    async def _detect(
+        self, p: _Polled, command_id: UUID | None = None, inspect_step: int | None = None
+    ) -> Perception | None:
         """The detector on a polled still; its report, if it could be placed."""
         ran = self._detected()
         out = await asyncio.to_thread(
-            self.handle, p.captured, p.t, p.now_ms, p.rate, command_id, p.camera, p.utc
+            self.handle,
+            p.captured,
+            p.t,
+            p.now_ms,
+            p.rate,
+            command_id,
+            p.camera,
+            p.utc,
+            inspect_step,
         )
         if out is not None:
             self._deliver(out)
@@ -355,11 +361,13 @@ class PerceptionLoop:
             self._back(p.camera)
         return out
 
-    async def _one(self, command_id: UUID | None = None, camera: str = MAIN) -> Perception | None:
+    async def _one(
+        self, command_id: UUID | None = None, camera: str = MAIN, inspect_step: int | None = None
+    ) -> Perception | None:
         """Poll a camera's source once; the still's report, if there was one and it could
         be placed."""
         polled = await self._poll(camera)
-        return None if polled is None else await self._detect(polled, command_id)
+        return None if polled is None else await self._detect(polled, command_id, inspect_step)
 
     async def capture(self, command_id: UUID) -> UUID | None:
         """One still for an order: its ``still_id``, or ``None`` when none came in
@@ -389,6 +397,51 @@ class PerceptionLoop:
                 await self.clock.sleep(_CAPTURE_POLL_S)
         finally:
             self._lock.release()
+
+    async def capture_round(
+        self, command_id: UUID, inspect_step: int
+    ) -> list[tuple[str, UUID, list[GeoDetectionMsg]]]:
+        """One round of a closer look: a still from every camera, the main one first, each
+        reported with ``command_id`` and ``inspect_step``. For each still placed on the
+        ground: (camera, still_id, its target detections). A camera that gives none in
+        ``CAPTURE_WAIT_S`` is left out of the round."""
+        if self._build_failed:
+            return []
+        try:
+            await asyncio.wait_for(self._lock.acquire(), CAPTURE_WAIT_S)
+        except TimeoutError:
+            log.warning("perception busy: no stills for the closer look")
+            return []
+        shots: list[tuple[str, UUID, list[GeoDetectionMsg]]] = []
+        try:
+            for camera in self.cameras:
+                deadline = self.clock.monotonic() + CAPTURE_WAIT_S
+                while True:
+                    try:
+                        out = await self._one(command_id, camera, inspect_step)
+                    except Exception:
+                        self.stats.failed += 1
+                        log.exception("perception failed on a closer look's still")
+                        break
+                    if out is not None:
+                        shots.append((camera, out.report.still_id, self._targets(out)))
+                        break
+                    if self.clock.monotonic() >= deadline:
+                        break
+                    await self.clock.sleep(_CAPTURE_POLL_S)
+        finally:
+            self._lock.release()
+        return shots
+
+    def _targets(self, out: Perception) -> list[GeoDetectionMsg]:
+        """The target detections (people) of a report."""
+        return [
+            d
+            for d in out.report.detections
+            if d.label is not None
+            and d.label in self.registry
+            and self.registry.get(d.label).kind == "target"
+        ]
 
     def _detected(self) -> int:
         """Stills the detector ran on (a report, or a view that misses the ground)."""

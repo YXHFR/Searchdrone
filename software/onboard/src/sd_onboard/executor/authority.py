@@ -10,18 +10,22 @@ message that steers is only sent when every one of these holds:
    is the expected one (or the one we are changing to);
 4. no other mode change of ours waits for its confirmation (``set_mode`` waits).
 
-A switch to AUTO of ours that the flight controller accepted and that was cancelled
-before a HEARTBEAT showed it (a reroute that replaces the one switching to AUTO) is still
-ours until that switch's own confirm deadline (``LateMode``): the flight controller may
-have taken it, and a HEARTBEAT showing AUTO then is our own doing, not a takeover. It
-becomes the expected mode. Only AUTO: the executor never steers by holding a mode, so a
-LOITER, BRAKE, RTL or LAND the drone was not asked for is always a person's or a
-failsafe's. It ends at once with a notice from the ground, a change from outside, a hold
-the executor enters itself, the RC mode switch moving, any HEARTBEAT received after its
-own answer that shows another mode (the flight controller was in AUTO when it answered, so
-it left it), or any HEARTBEAT received after the answer that settled a newer mode command
-of ours: the flight controller handles commands in order, so a HEARTBEAT received after
-that answer left after the command was handled, and AUTO in it is from outside. A lost
+A switch to AUTO or LOITER of ours that the flight controller accepted and that was
+cancelled before a HEARTBEAT showed it (a reroute that replaces the one switching to AUTO;
+a closer look's step that ends in LOITER, cut short by the link-loss climb or FLY HOME) is
+still ours until that switch's own confirm deadline (``LateMode``): the flight controller
+may have taken it, and a HEARTBEAT showing that mode then is our own doing, not a
+takeover. It becomes the expected mode. A person's switch to the same mode in that window
+changes nothing the flight controller does (it is in that mode already: a HEARTBEAT after
+the answer that shows another mode ends the window), and one after a newer answer of ours
+is a takeover again. Only these two (``LATE_MODES``): a BRAKE, RTL, SMART_RTL, LAND or
+GUIDED the drone was not asked for is always a person's or a failsafe's. It ends at once
+with a notice from the ground, a change from outside, a hold the executor enters itself,
+the RC mode switch moving, any HEARTBEAT received after its own answer that shows another
+mode (the flight controller was in the late mode when it answered, so it left it), or any
+HEARTBEAT received after the answer that settled a newer mode command of ours: the flight
+controller handles commands in order, so a HEARTBEAT received after that answer left
+after the command was handled, and the late mode in it is from outside. A lost
 answer whose mode a HEARTBEAT already shows counts as received with that HEARTBEAT.
 "After" is the order the messages were received in, never a time: two messages can share
 a millisecond. The vehicle records each answer as it is received and every HEARTBEAT
@@ -63,7 +67,9 @@ _WINDOW_MS: Final = int(OVERRIDE_NOTICE_WINDOW_S * 1000)
 _FRESH_MS: Final = int(MODE_FRESH_S * 1000)
 # RC_CHANNELS comes at 4 Hz: after a late AUTO is taken, this long covers several samples.
 RC_RECHECK_MS: Final = 1000
-LATE_MODES: Final = frozenset({CopterMode.AUTO})  # the only modes a late HEARTBEAT may show
+# The only modes a late HEARTBEAT may show: AUTO (a reroute) and LOITER (a closer look
+# holds between its steps in LOITER, and the link-loss climb or FLY HOME may cut that short).
+LATE_MODES: Final = frozenset({CopterMode.AUTO, CopterMode.LOITER})
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,8 +120,8 @@ class Authority:
         self, mode: CopterMode, until_ms: int, rc_mode_pwm: int | None, answer_seq: int
     ) -> None:
         """A switch the flight controller accepted, cancelled before a HEARTBEAT showed it:
-        it may show until ``until_ms``, that switch's own confirm deadline. Only AUTO
-        (``LATE_MODES``); any other mode that shows later is not taken as ours.
+        it may show until ``until_ms``, that switch's own confirm deadline. Only AUTO and
+        LOITER (``LATE_MODES``); any other mode that shows later is not taken as ours.
         ``answer_seq`` is the receive order of the answer that accepted it."""
         late = LateMode(mode, until_ms, rc_mode_pwm, answer_seq)
         self.late = late if mode in LATE_MODES else None

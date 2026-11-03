@@ -2,7 +2,7 @@
 # test_transitions_table_matches_spec expands each row into (from, trigger) keys and
 # requires exactly these keys, targets and guard names in the code.
 - {id: T1, from: [IDLE, PREFLIGHT, LANDED], trigger: [charter_install], to: [PREFLIGHT], guard: always}
-- {id: T2, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL, HELD, FAILSAFE], trigger: [charter_install], to: same, guard: charter_inflight_compatible}
+- {id: T2, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL, HELD, FAILSAFE], trigger: [charter_install], to: same, guard: charter_inflight_compatible}
 - {id: T3, from: [PREFLIGHT], trigger: ["skill:takeoff"], to: [TAKEOFF], guard: always}
 - {id: T4, from: [TAKEOFF], trigger: [skill_done], to: [HOLD], guard: always}
 - {id: T5, from: [TAKEOFF], trigger: [takeoff_timeout, skill_failed, order_cancel], to: [HOLD, PREFLIGHT], guard: airborne_or_ground}
@@ -11,25 +11,27 @@
 - {id: T7b, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:follow_path"], to: [TRANSIT], guard: always}
 - {id: T8, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:hold"], to: [HOLD], guard: always}
 - {id: T8b, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:orbit"], to: [TRANSIT], guard: always}
-- {id: T8c, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:inspect_detection"], to: [TRANSIT], guard: always}
+- {id: T8c, from: [HOLD, TRANSIT, SURVEY], trigger: ["skill:inspect_detection"], to: [INSPECT], guard: always}
 - {id: T8d, from: [HOLD], trigger: ["skill:capture_stills"], to: [HOLD], guard: always}
 - {id: T9, from: [HOLD], trigger: ["skill:resume"], to: [TRANSIT, SURVEY], guard: resume_target}
-- {id: T10, from: [TAKEOFF, TRANSIT, SURVEY, HOLD], trigger: ["skill:return_home"], to: [RTL], guard: always}
+- {id: T10, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD], trigger: ["skill:return_home"], to: [RTL], guard: always}
 - {id: T11, from: [RTL], trigger: ["skill:return_home"], to: [RTL], guard: always}
 - {id: T12, from: [TRANSIT, SURVEY], trigger: [skill_done], to: [HOLD], guard: always}
 - {id: T13, from: [TRANSIT, SURVEY], trigger: [skill_failed, order_cancel], to: [HOLD], guard: always}
-- {id: T14, from: [TAKEOFF, TRANSIT, SURVEY, HOLD], trigger: [limit_hold], to: [HOLD], guard: always}
-- {id: T15, from: [TAKEOFF, TRANSIT, SURVEY, HOLD], trigger: [limit_rtl], to: [RTL], guard: always}
-- {id: T16, from: [TAKEOFF, TRANSIT, SURVEY, HOLD], trigger: [limit_alt], to: [TRANSIT], guard: always}
-- {id: T17, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL], trigger: [unexpected_mode], to: [HELD], guard: always}
-- {id: T18, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL], trigger: [failsafe_detected], to: [FAILSAFE], guard: always}
+- {id: T29, from: [INSPECT], trigger: [skill_done, skill_failed, order_cancel], to: [HOLD], guard: always}
+- {id: T30, from: [INSPECT, HOLD], trigger: [inspect_climb], to: [INSPECT], guard: always}
+- {id: T14, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD], trigger: [limit_hold], to: [HOLD], guard: always}
+- {id: T15, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD], trigger: [limit_rtl], to: [RTL], guard: always}
+- {id: T16, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD], trigger: [limit_alt], to: [TRANSIT], guard: always}
+- {id: T17, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL], trigger: [unexpected_mode], to: [HELD], guard: always}
+- {id: T18, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL], trigger: [failsafe_detected], to: [FAILSAFE], guard: always}
 - {id: T19, from: [HELD], trigger: [failsafe_detected], to: [FAILSAFE], guard: within_classification_window}
-- {id: T20, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL, HELD, FAILSAFE], trigger: [operator_override], to: [HELD], guard: always}
+- {id: T20, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL, HELD, FAILSAFE], trigger: [operator_override], to: [HELD], guard: always}
 - {id: T21, from: [HELD], trigger: [operator_release], to: [HOLD, RTL, LANDED, PREFLIGHT], guard: release_target}
 - {id: T22, from: [FAILSAFE], trigger: [operator_release], to: [HOLD, RTL, LANDED, PREFLIGHT], guard: failsafe_release}
-- {id: T23, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL], trigger: [fc_silent], to: [HELD], guard: always}
-- {id: T24, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL, HELD, FAILSAFE], trigger: [landed_disarmed], to: [LANDED], guard: landed_on_ground}
+- {id: T23, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL], trigger: [fc_silent], to: [HELD], guard: always}
+- {id: T24, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL, HELD, FAILSAFE], trigger: [landed_disarmed], to: [LANDED], guard: landed_on_ground}
 - {id: T25, from: [LANDED], trigger: [landed_timeout_5s], to: [PREFLIGHT], guard: always}
 - {id: T26, from: [TRANSIT, SURVEY, HOLD], trigger: [limit_find], to: [TRANSIT, HOLD], guard: find_target}
 # T27 is T12 (TRANSIT, skill_done -> HOLD) for internal_find_goto, with hold_reason find_hold.
-- {id: T28, from: [TAKEOFF, TRANSIT, SURVEY, HOLD, RTL, FAILSAFE], trigger: [spoof_detected], to: [FAILSAFE], guard: always}
+- {id: T28, from: [TAKEOFF, TRANSIT, SURVEY, INSPECT, HOLD, RTL, FAILSAFE], trigger: [spoof_detected], to: [FAILSAFE], guard: always}

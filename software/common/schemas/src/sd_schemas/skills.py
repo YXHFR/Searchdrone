@@ -775,7 +775,9 @@ _SPECS: tuple[SkillSpec, ...] = (
         name="return_home",
         stage=1,
         status="implemented",
-        allowed_from=frozenset({ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.RTL}),
+        allowed_from=frozenset(
+            {ExecutorState.TAKEOFF, *_MOVING_FROM, ExecutorState.INSPECT, ExecutorState.RTL}
+        ),
         runs_on="onboard",
         params_model=ReturnHomeParams,
         ends_flight=True,

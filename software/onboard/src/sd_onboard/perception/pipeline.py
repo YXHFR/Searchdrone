@@ -92,6 +92,7 @@ def process(
     latency_ms: float,
     rate_hz: float,
     command_id: UUID | None = None,
+    inspect_step: int | None = None,
 ) -> Perception | None:
     """``None`` when the camera's view does not reach the ground (no footprint)."""
     att = Attitude(pose.roll_deg, pose.pitch_deg, pose.yaw_deg)
@@ -142,6 +143,7 @@ def process(
     report = PerceptionReport(
         still_id=still_id,
         command_id=command_id,
+        inspect_step=inspect_step,
         captured_utc=captured_utc,
         sensor="rgb",
         pose=StillPose(

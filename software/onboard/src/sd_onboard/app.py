@@ -77,6 +77,8 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
             require_rc=cfg.require_rc,
             takeoff_delay_after_arm_s=cfg.test_hooks.takeoff_delay_after_arm_s,
             expected_params=effective_params(loaded.param_files()),
+            profile=cfg.profile,
+            floor_dir=loaded.state_dir / "floor",
         ),
         StateStore(loaded.state_dir, clock),
     )
@@ -85,6 +87,7 @@ async def serve(loaded: Loaded, stop: asyncio.Event | None = None) -> int:
     if perception is not None:
         perception.on_targets = executor.on_detections  # E8: cylinders from our own finds
         executor.camera = perception.capture  # capture_stills and inspect_detection
+        executor.capture_round = perception.capture_round  # a closer look: every camera
     executor.laser = _laser(loaded, vehicle)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

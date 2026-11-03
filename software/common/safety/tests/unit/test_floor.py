@@ -30,6 +30,7 @@ from sd_safety.floor import (
     load_floor_pack,
 )
 from sd_schemas.base import LatLon
+from sd_schemas.rangefinder import LaserState as RangefinderLaserState
 
 TF02 = 0.0  # tested minimum range, m
 GRF250 = 10.0
@@ -321,17 +322,15 @@ def test_a_power_line_beats_the_laser_and_its_loss() -> None:
         (GROUND_M, float("inf")),
     ],
 )
-def test_a_reading_that_is_not_a_number_counts_as_no_laser(
+def test_a_reading_that_is_not_a_number_is_never_a_laser_state(
     surface: float, min_range: float
 ) -> None:
-    """``max`` drops a NaN that is not its first argument: it must not leave the map's
-    lowest floor (trees + 5) in place of trees + 15."""
-    pack = make_pack(tree_m=24.0, scan_year=2021)
-    laser = LaserState(confirmed=True, surface_amsl_m=surface, min_range_m=min_range)
-    r = floor(pack, laser=laser)
-    assert r == floor(pack)
-    assert agl(r.floor_lowest_amsl_m) == pytest.approx(43.5)
-    assert not r.laser_confirmed
+    """``max`` drops a NaN that is not its first argument: it would leave the map's lowest
+    floor (trees + 5) in place of trees + 15. The laser's state refuses one outright, so
+    the floor never sees it (the laser reader then has no confirmed state to give)."""
+    with pytest.raises(ValueError, match="finite"):
+        LaserState(confirmed=True, surface_amsl_m=surface, min_range_m=min_range)
+    assert LaserState is RangefinderLaserState  # one type, the schemas'
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])

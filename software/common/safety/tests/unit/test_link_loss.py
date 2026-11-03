@@ -14,6 +14,7 @@ from sd_safety.link_loss import (
     HOLD_MS,
     HOME_MS,
     FindPlan,
+    InspectClimbPlan,
     NormalPlan,
     choose_mode,
     plan_times,
@@ -179,3 +180,30 @@ def test_plan_times() -> None:
     assert isinstance(find, FindPlan)
     t = plan_times(find, 1000)
     assert t.hold_ms is None and t.home_ms == t.hover_until_ms == 124_000
+
+
+def test_choose_mode_inspect_climb_comes_first() -> None:
+    """A closer look under way: straight up to its start height, before the find hover and
+    whatever the state or the navigation (spec Titta närmare §9.1)."""
+    find_near = [keepout(0, 60)]
+    for state in (S.INSPECT, S.HOLD, S.SURVEY):
+        plan = choose(
+            0,
+            0,
+            find_near,
+            state=state,
+            nav_ok=False,
+            alt_rel_home_m=12.0,
+            inspect_start_alt_m=45.0,
+        )
+        assert plan == InspectClimbPlan(alt_m=45.0)
+    t = plan_times(InspectClimbPlan(alt_m=45.0), 1000)
+    assert (t.hold_ms, t.home_ms, t.hover_until_ms) == (1000 + HOLD_MS, 1000 + HOME_MS, None)
+
+
+def test_choose_mode_inspect_climb_never_down_nor_above_the_ceiling() -> None:
+    higher = choose(0, 0, [], alt_rel_home_m=50.0, inspect_start_alt_m=40.0)
+    assert higher == InspectClimbPlan(alt_m=50.0)
+    capped = choose(0, 0, [], alt_rel_home_m=20.0, inspect_start_alt_m=500.0)
+    assert capped == InspectClimbPlan(alt_m=CHARTER.alt_max_agl_m)
+    assert isinstance(choose(0, 0, [], inspect_start_alt_m=None), NormalPlan)
