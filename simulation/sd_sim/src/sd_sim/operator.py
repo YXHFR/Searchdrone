@@ -7,7 +7,9 @@ would send it, then works the candidate queue the way the panel shows it, highes
 priority first. For each open card it waits 5-20 s (looking at the pictures), opens the
 card's picture in large size, and confirms the card if the simulator's truth says it is
 the missing person, otherwise rejects it. It never decides on a card that is not open
-(new, merged, confirmed, rejected).
+(new, merged, confirmed, rejected). The AI only proposes a closer look
+(``inspect_detection`` is an approval card); the operator approves each such card it
+finds waiting, before it turns to the queue.
 
 It refuses to start outside the simulator (``SD_SIM=1``) and is never part of the
 product: the AI has no way to call it, and it uses the same routes a person's panel
@@ -27,9 +29,11 @@ from typing import Any, Literal
 
 import httpx
 
-__all__ = ["OPEN_STATES", "Decision", "ScriptedOperator"]
+__all__ = ["APPROVED_LOOKS", "OPEN_STATES", "Decision", "ScriptedOperator"]
 
 OPEN_STATES = frozenset({"ready", "assessing", "inspecting"})
+# The AI's order cards the operator approves: a closer look at a candidate.
+APPROVED_LOOKS = frozenset({"inspect_detection"})
 DELAY_S = (5.0, 20.0)
 POLL_S = 1.0
 
@@ -64,6 +68,7 @@ class ScriptedOperator:
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep
     monotonic: Callable[[], float] = time.monotonic
     decisions: list[Decision] = field(default_factory=list[Decision])
+    looks_approved: list[str] = field(default_factory=list[str])  # order ids
     target_first_rank: int | None = None  # the target's place when its card was first ready
     target_ever_low: bool = False  # the target's card, assessed, was in the low class
     _rng: random.Random = field(init=False)
@@ -95,6 +100,37 @@ class ScriptedOperator:
         return dict(
             await self._json("POST", f"/missions/{self.mission_id}/search-profile", json=body)
         )
+
+    async def approve_looks(self) -> list[str]:
+        """Approve the AI's closer-look cards that wait for the pilot; the order ids. A card
+        that went away meanwhile (answered, expired, withdrawn) is left."""
+        mid = self.mission_id
+        cards = await self._json("GET", f"/missions/{mid}/approvals", params={"status": "pending"})
+        waiting = {str(a["subject_id"]): a for a in cards if a["kind"] == "command"}
+        if not waiting:
+            return []
+        orders = await self._json(
+            "GET", f"/missions/{mid}/commands", params={"status": "pending_approval"}
+        )
+        approved = []
+        for c in orders:
+            card = waiting.get(str(c["id"]))
+            if card is None or c["skill"] not in APPROVED_LOOKS or c["issuer_kind"] != "brain":
+                continue
+            body = {
+                "decision": "approve",
+                "subject_version": card["subject_version"],
+                "confirmations": list(card.get("required_confirmations") or []),
+            }
+            try:
+                await self._json("POST", f"/approvals/{card['id']}/decision", json=body)
+            except OperatorError as exc:
+                if exc.status == 409 and ("SUPERSEDED" in exc.text or "TIMEOUT" in exc.text):
+                    continue
+                raise
+            approved.append(str(c["id"]))
+        self.looks_approved += approved
+        return approved
 
     async def queue(self) -> list[dict[str, Any]]:
         data = await self._json("GET", f"/missions/{self.mission_id}/candidates")
@@ -160,6 +196,7 @@ class ScriptedOperator:
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
+            await self.approve_looks()
             d = await self.review_once()
             if d is not None and d.decision == "confirm" and self.stop_after_confirm:
                 return

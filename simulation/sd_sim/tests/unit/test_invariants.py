@@ -89,6 +89,24 @@ def test_orders_need_a_ground_allow() -> None:
     assert check_orders([cmd("goto", "done")], onboard_only)
 
 
+def test_a_withdrawn_order_card_never_left_the_ground() -> None:
+    held = {"look": [{"decision": "PENDING_APPROVAL", "side": "ground"}]}
+    look = cmd("inspect_detection", "superseded", id="look")
+
+    def card(status: str, kind: str = "command") -> dict[str, Any]:
+        return {"kind": kind, "subject_id": "look", "status": status}
+
+    # STOP / FLY HOME withdrew the card before the pilot answered: nothing was sent.
+    assert check_orders([look], held, [card("superseded")]) == []
+    # Superseded on board without an ALLOW: the card was approved, or there is no card.
+    for cards in ([card("approved")], [card("superseded", kind="charter")], []):
+        assert check_orders([look], held, cards) == [
+            "INV7: inspect_detection (superseded) utan markens ALLOW"
+        ]
+    # A withdrawn card excuses only a superseded order, never one that ran.
+    assert check_orders([cmd("inspect_detection", "done", id="look")], held, [card("superseded")])
+
+
 def event(kind: str, t: str, by: str = "operator:ci-harness") -> dict[str, Any]:
     return {"type": kind, "t": t, "payload": {"by": by}}
 
@@ -120,6 +138,8 @@ def test_check_all_uses_the_loosest_approved_charter() -> None:
     assert check_all(track, charters, [], {}, []) == []
     assert check_all([sample(alt_m=70.0)], charters, [], {}, [])
     assert check_all(track, [], [cmd("goto", "done")], {}, [], exempt=["INV7"]) == []
+    withdrawn = [{"kind": "command", "subject_id": "goto", "status": "superseded"}]
+    assert check_all(track, [], [cmd("goto", "superseded")], {}, [], approvals=withdrawn) == []
 
 
 def test_each_limit_against_the_version_that_allows_it_most() -> None:
