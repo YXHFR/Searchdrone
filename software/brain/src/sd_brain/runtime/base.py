@@ -107,6 +107,12 @@ class ModelRuntime(Protocol):
     ) -> ModelReply: ...
 
 
+def _clean(text: str) -> str:
+    """Valid UTF-8: a lone surrogate from the provider ("\\ud800") becomes "?", so the
+    answer is read as usual and nothing later fails to encode it."""
+    return text.encode(errors="replace").decode()
+
+
 def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
     """An OpenAI ``chat/completions`` response body as a :class:`ModelReply`."""
     try:
@@ -120,16 +126,17 @@ def parse_reply(data: Any, *, latency_ms: int) -> ModelReply:
             args = fn.get("arguments")
             calls.append(
                 RawToolCall(
-                    id=str(c.get("id") or f"call_{i}"),
-                    name=str(fn["name"]),
-                    arguments_json=args if isinstance(args, str) else _dumps(args or {}),
+                    id=_clean(str(c.get("id") or f"call_{i}")),
+                    name=_clean(str(fn["name"])),
+                    arguments_json=_clean(args if isinstance(args, str) else _dumps(args or {})),
                 )
             )
         prompt_tokens, completion_tokens, reasoning_tokens, cost_usd, problem = _usage(
             data.get("usage")
         )
+        content = msg.get("content")
         reply = ModelReply(
-            content=msg.get("content"),
+            content=_clean(content) if isinstance(content, str) else content,
             tool_calls=calls,
             finish_reason=str(choice.get("finish_reason") or "stop"),
             prompt_tokens=prompt_tokens,

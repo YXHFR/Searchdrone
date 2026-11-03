@@ -307,8 +307,19 @@ All notable changes to this project are listed here. The format follows
   reads 0 tokens, and its warning (`cloud_usage_invalid`) gives the reason: `absent`,
   `malformed` or `implausible`. A failed cloud call that may have been billed (a timeout, a broken
   answer, a cancel) is booked at its whole reservation, no longer at the prompt alone,
-  and the eval ledger now charges such calls too and prices images in its estimate as
-  the ground does (400 tokens per crop).
+  and the eval ledger now charges a timeout or a broken answer too (not a cancel) and
+  prices images in its estimate as the ground does (400 tokens per crop).
+- The decision log reaches the ground whatever the model wrote: the entry is made safe
+  to send once (every string valid UTF-8, a lone surrogate as "?", no NaN, nested at
+  most 64 deep, deeper parts as "…"), and an entry that still cannot be encoded is sent
+  reduced (no prompt, draft or arguments) instead of being lost. A lone surrogate in the
+  provider's answer text, a tool-call id, name or arguments reads "?", so the answer is
+  used as usual. Only a replay harness out of answers (`ReplayExhaustedError`,
+  `ReplayNotConsumedError`) ends the turn loop; any other `AssertionError` counts as a
+  failed turn. A refused token (401) ends the loop also when the AI's turn or a write
+  (a chat line, an order, a charter, the memory, the decision log) meets it, not only on
+  the next read. The `backend_decide_failed` and `turn_failed` log lines quote the
+  error's text with `repr`, so it cannot start a log line of its own.
 - Each cloud call now logs its tokens (`cloud_call`: finish reason, latency, prompt,
   completion and reasoning tokens, the limit), the drill keeps the same numbers with
   each recorded answer, and `perf-cloud` reports the most completion and reasoning

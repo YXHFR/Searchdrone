@@ -508,3 +508,16 @@ def test_the_defaults_are_a_flights() -> None:
     )
     cmd = LlmCommander(ReplayRuntime([]), ctx, SKILL_REGISTRY, BehaviourConfig(), Sampling())
     assert cmd.context_tokens == llm.context_tokens
+
+
+def test_a_lone_surrogate_in_the_answer_is_cleaned() -> None:
+    """The provider's JSON may carry "\\ud800": the answer is read, with "?" in its place,
+    so posting it later encodes (httpx sends UTF-8) and no backstop is needed."""
+    fn = r'{"name": "go\ud800to", "arguments": "{\"pin\": \"P\ud8001\"}"}'
+    body = r'{"choices": [{"message": {"content": "Ja\ud800", "tool_calls": '
+    body += rf'[{{"id": "c\udc00", "function": {fn}}}]}}}}]}}'
+    reply = parse_reply(json.loads(body), latency_ms=1)
+    assert reply.content == "Ja?"
+    call = reply.tool_calls[0]
+    assert (call.id, call.name, call.arguments_json) == ("c?", "go?to", '{"pin": "P?1"}')
+    (reply.content + call.id + call.name + call.arguments_json).encode()
