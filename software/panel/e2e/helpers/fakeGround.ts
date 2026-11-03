@@ -3,7 +3,8 @@
 // /ws/v1/live. Every test also checks, when it ends, that the panel
 // made no request to another host, read no geolocation, sent the CSRF header on every
 // changing request, never sent Idempotency-Key, and called no path the fake does not know.
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   test as base,
@@ -38,6 +39,7 @@ import {
   vehicleLive,
 } from "../fixtures";
 import { syntheticImagery } from "../fixtures/syntheticImagery";
+import { endMarker, UNROUTED_LOG } from "./unrouted";
 
 export interface SeenRequest {
   method: string;
@@ -95,6 +97,8 @@ export class FakeGround {
   readonly requests: SeenRequest[] = [];
   readonly external: string[] = [];
   readonly unknown: string[] = [];
+  /** Requests that got past the routes to the preview server (answered 502 there). */
+  readonly escaped: string[] = [];
   readonly cspErrors: string[] = [];
   /** Every /tiles/ request and its status (glyph and tile failures make a test fail). */
   readonly tiles: { path: string; status: number }[] = [];
@@ -180,6 +184,10 @@ export class FakeGround {
         },
       });
     });
+    page.on("response", (res) => {
+      if (res.headers()["x-sd-unrouted"])
+        this.escaped.push(`${res.request().method()} ${res.url()}`);
+    });
     page.on("console", (msg) => {
       if (/Content[- ]Security[- ]Policy/i.test(msg.text())) this.cspErrors.push(msg.text());
     });
@@ -202,6 +210,13 @@ export class FakeGround {
         return route.abort();
       },
     );
+    // Any other /api path is not the ground's API: recorded and answered 404, never sent on.
+    // (Registered first, so the routes below take precedence.)
+    await page.route(`${this.origin}/api/**`, (route) => {
+      const req = route.request();
+      this.unknown.push(`${req.method()} ${new URL(req.url()).pathname}`);
+      return route.fulfill({ status: 404, json: { code: "NOT_FOUND" } });
+    });
     await page.route(`${this.origin}/api/v1/**`, (route) => this.handle(route));
     await page.route(`${this.origin}/tiles/**`, (route) => this.handleTiles(route));
     const host = new URL(this.origin).host;
@@ -209,6 +224,15 @@ export class FakeGround {
       (url) => url.host !== host,
       (ws) => {
         this.external.push(ws.url());
+        return ws.close();
+      },
+    );
+    // Any other socket on the test host is not the ground's live feed: recorded and closed,
+    // never sent on. (Registered first, so the live route below takes precedence.)
+    await page.routeWebSocket(
+      (url) => url.host === host,
+      (ws) => {
+        this.unknown.push(`WS ${new URL(ws.url()).pathname}`);
         return ws.close();
       },
     );
@@ -373,6 +397,7 @@ export class FakeGround {
   async verify(): Promise<void> {
     expect(this.external, "requests to other hosts").toEqual([]);
     expect(this.unknown, "paths the fake ground does not know").toEqual([]);
+    expect(this.escaped, "requests that escaped the fake ground's routes").toEqual([]);
     const cspDetails = this.cspErrors.length
       ? await this.page
           .evaluate(() => (window as unknown as { __cspDetails?: string[] }).__cspDetails ?? [])
@@ -805,12 +830,27 @@ export class FakeGround {
 }
 
 export const test = base.extend<{ ground: FakeGround }>({
-  ground: async ({ page, baseURL }, use) => {
-    const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
-    await g.install();
-    await use(g);
-    await g.verify();
-  },
+  // Automatic: no test in a suite that uses this fixture talks to anything but the fake.
+  ground: [
+    async ({ page, baseURL }, use, testInfo) => {
+      // Names the test in the preview server's log if one of its requests escapes the
+      // routes; the id is unique per run of a test (retries, --repeat-each).
+      const id = `${testInfo.testId}.${testInfo.retry}.${testInfo.repeatEachIndex}`;
+      const where = `${id} ${testInfo.project.name} ${basename(testInfo.file)}:${testInfo.line}`;
+      await page.setExtraHTTPHeaders({ "x-sd-test": where });
+      const g = new FakeGround(page, new URL(baseURL ?? "http://127.0.0.1:4173").origin);
+      await g.install();
+      try {
+        await use(g);
+        await g.verify();
+      } finally {
+        // The page closes after this: what the server logs for this test from now on was
+        // sent while it closed (e2e/helpers/unrouted.ts).
+        appendFileSync(UNROUTED_LOG, endMarker(id));
+      }
+    },
+    { auto: true },
+  ],
 });
 
 export { expect };

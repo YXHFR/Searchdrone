@@ -197,6 +197,9 @@ test.describe("every size", () => {
       () => document.createElement("canvas").getContext("webgl2") !== null,
     );
     if (webgl2) await expect.poll(labels).toEqual(["K2", "F1"]);
+
+    // Still one decision at the end: nothing after the confirm sent it again.
+    expect(decisions()).toHaveLength(1);
   });
 
   test("the copy button puts all three forms on the clipboard", async ({
