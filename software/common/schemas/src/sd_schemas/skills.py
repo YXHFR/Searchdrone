@@ -406,18 +406,24 @@ def orbit_ring(centre: LatLon, radius_m: float, start: LatLon) -> list[LatLon]:
 
 
 class InspectDetectionParams(SkillParams):
-    """A closer look at a detection, straight down (``sd_schemas.keepout.inspect_geometry``).
+    """A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).
 
-    The ground fills in where the target is (``lat``, ``lon``: the candidate's position
-    when the detection belongs to one) and its cylinder's radius from its own records;
-    without them the order is unresolved. ``alt_m`` is the highest the drone may go for it
-    (the charter's ceiling when left out)."""
+    The order names the card only. The ground fills in where the candidate is (``lat``,
+    ``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +
+    ``sigma95_m``) from its own records, never the AI or the panel; without them the
+    order is unresolved. The order gives no height: the drone works its heights out
+    onboard from the height floor.
 
-    detection_id: Id
-    alt_m: float | None = Field(default=None, gt=0)
-    standoff_m: float = Field(ge=15, le=200)
+    ``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a
+    point outside the cylinder from which the main camera sees the target nearly straight
+    down, at most at the charter's ceiling. It is the whole look in ``live`` without the
+    overflight permit."""
+
+    candidate_id: Id
+    # Filled in by the ground from its own records:
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
+    sigma95_m: float | None = Field(default=None, ge=0, le=1000)
     target_radius_m: float | None = Field(default=None, gt=0, le=500)
 
     def geometry(self, ctx: TargetContext) -> tuple[LatLon, float, float, float] | None:
@@ -431,18 +437,16 @@ class InspectDetectionParams(SkillParams):
             or self.target_radius_m is None
         ):
             return None
-        top = (
-            charter.alt_max_agl_m if self.alt_m is None else min(self.alt_m, charter.alt_max_agl_m)
-        )
         g = inspect_geometry(
             target_lat=self.lat,
             target_lon=self.lon,
             target_radius_m=self.target_radius_m,
-            standoff_m=self.standoff_m,
+            # No standoff of its own: the edge of the cylinders + INSPECT_STANDOFF_MARGIN_M.
+            standoff_m=0.0,
             here_lat=here.lat,
             here_lon=here.lon,
             alt_min_m=charter.alt_min_agl_m,
-            alt_max_m=top,
+            alt_max_m=charter.alt_max_agl_m,
             keepouts=ctx.keepouts,
         )
         if g is None:
@@ -901,13 +905,14 @@ _SPECS: tuple[SkillSpec, ...] = (
         allowed_from=_MOVING_FROM,
         runs_on="onboard",
         params_model=InspectDetectionParams,
+        requires_approval_in_b=True,  # the AI only proposes: the pilot always clicks
         moves_vehicle=True,
         allowed_when="airborne",
         rate_class="action",
         description_en=(
-            "Look closer at a detection: fly to the edge of its keep-out cylinder on the "
-            "drone's side, at a height that sees it nearly straight down, take 5 stills, "
-            "then hover. Never enters a keep-out cylinder."
+            "Look closer at a candidate (K3): fly over it and down in steps as low as the "
+            "height floor allows, then hover for the pilot's decision and fly back to the "
+            "search."
         ),
         synonyms_sv=["titta närmare", "inspektera"],
         title_sv="Titta närmare",

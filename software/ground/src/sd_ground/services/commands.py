@@ -45,7 +45,7 @@ from sd_schemas.commander import EstimateResult, SkillSubmitResult
 from sd_schemas.gate import GateContext, GateDecision, GateRequest, StateRef
 from sd_schemas.link import Ack, ApprovalRef, CommandCancel, SkillCommand, StateSnapshot
 from sd_schemas.mission import Trigger
-from sd_schemas.reason_codes import GATE_REASON_CODES, ONBOARD_REASON_CODES
+from sd_schemas.reason_codes import GATE_REASON_CODES, ONBOARD_REASON_CODES, approval_codes
 from sd_schemas.skills import InspectDetectionParams, TargetContext
 
 if TYPE_CHECKING:
@@ -427,35 +427,45 @@ async def _drawn_path_check(
 async def _inspect_params(
     flow: MissionFlow, mission_id: str, params: dict[str, Any]
 ) -> dict[str, Any]:
-    """``inspect_detection`` with its target filled in by the ground: where the detection's
-    candidate (or the detection) lies and its keep-out radius. An unknown detection stays
-    without a target, and the gate refuses it."""
+    """``inspect_detection`` with its target filled in by the ground: where the candidate
+    lies, its uncertainty and its keep-out radius. A candidate's id is its first
+    detection's, so the lookup goes through that detection (and a detection no card
+    holds yet is looked at where it lies). For now an order that names a
+    ``detection_id`` (version 1) is read as the candidate holding it. An unknown
+    candidate stays without a target, and the gate refuses it."""
+    # The target is never the caller's.
+    given = {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
+    if "detection_id" in given and "candidate_id" not in given:
+        given["candidate_id"] = given.pop("detection_id")
     try:
-        asked = InspectDetectionParams.model_validate(params)
+        asked = InspectDetectionParams.model_validate(given)
     except ValidationError:
-        # The gate refuses malformed parameters; a target is never the caller's.
-        return {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
-    found = await flow.repo.inspect_target(mission_id, str(asked.detection_id))
+        return given  # the gate refuses malformed parameters
+    found = await flow.repo.inspect_target(mission_id, str(asked.candidate_id))
     if found is None:
-        return {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
-    radius = min(500.0, PERSON_KEEPOUT_M + float(found["sigma95_m"]))
+        return given
+    sigma = float(found["sigma95_m"])
     return {
-        **params,
+        **given,
+        "candidate_id": str(found["candidate_id"] or asked.candidate_id),
         "lat": float(found["lat"]),
         "lon": float(found["lon"]),
-        "target_radius_m": radius,
+        "sigma95_m": sigma,
+        "target_radius_m": min(500.0, PERSON_KEEPOUT_M + sigma),
     }
 
 
-_INSPECT_TARGET: Final = ("lat", "lon", "target_radius_m")
+_INSPECT_TARGET: Final = ("lat", "lon", "sigma95_m", "target_radius_m")
 
 
 def _explained(
     skill: str, params: dict[str, Any], ctx: GateContext, gate: GateDecision
 ) -> GateDecision:
     """An ``inspect_detection`` refused only for its missing target says why there is
-    none, when the target is known (``_inspect_geometry_check``)."""
-    if skill == "inspect_detection" and gate.reason_codes == ["SCHEMA_INVALID"]:
+    none, when the target is known (``_inspect_geometry_check``). The AI's order also
+    carries the approval it would need; that does not count."""
+    refused = [c for c in gate.reason_codes if c not in approval_codes()]
+    if skill == "inspect_detection" and refused == ["SCHEMA_INVALID"]:
         return _inspect_geometry_check(params, ctx) or gate
     return gate
 
@@ -481,7 +491,7 @@ def _inspect_geometry_check(params: dict[str, Any], ctx: GateContext) -> GateDec
         reason_codes=["ONB_INSPECT_GEOMETRY"],
         rule_ids=["R-INSPECT-GEOMETRY"],
         message_sv=ONBOARD_REASON_CODES["ONB_INSPECT_GEOMETRY"],
-        details={"detection_id": str(asked.detection_id)},
+        details={"candidate_id": str(asked.candidate_id)},
         side="ground",
     )
 

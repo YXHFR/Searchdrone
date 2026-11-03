@@ -294,7 +294,7 @@ class SimWorld:
             pts = self._lawnmower(self.sectors[sector], spacing)
             self.plan = _Plan(cid, "survey_sector", pts, alt, speed, self._length(pts), 0, sector)
         elif req.skill == "inspect_detection":
-            c = self.by_detection(str(p.get("detection_id")))
+            c = self.look_target(str(p.get("candidate_id")))
             if c is None:
                 return False
             pts = [self._look_point(c)]
@@ -316,6 +316,12 @@ class SimWorld:
 
     def by_detection(self, detection_id: str) -> SimCandidate | None:
         return next((c for c in self.candidates if c.detection_id == detection_id), None)
+
+    def look_target(self, candidate_id: str) -> SimCandidate | None:
+        """The candidate a closer look names. The ground finds it through a detection (a
+        candidate's id is its first detection's), so a detection's id names it too."""
+        found = next((c for c in self.candidates if c.candidate_id == candidate_id), None)
+        return found or self.by_detection(candidate_id)
 
     def _look_point(self, c: SimCandidate) -> tuple[float, float]:
         """Where the closer look hovers: ``LOOK_RADIUS_M`` from the candidate, on the drone's
@@ -591,7 +597,7 @@ class SimGround(FakeGround):
         if req.skill == "survey_sector" and p.get("sector_id") not in self.world.sectors:
             return "ONB_UNKNOWN_SECTOR", {}
         if req.skill == "inspect_detection" and (
-            self.world.by_detection(str(p.get("detection_id"))) is None
+            self.world.look_target(str(p.get("candidate_id"))) is None
         ):
             return "SCHEMA_INVALID", {"targets": "unresolved"}  # no candidate holds it
         return None

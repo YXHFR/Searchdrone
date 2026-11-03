@@ -169,10 +169,12 @@ stills of a round are close in time, not simultaneous. Tele stills count as sear
 ground on the probability map, over their narrower footprint and with their higher
 detail; a main and a tele still stamped within 0.3 s of each other, with the tele view
 inside the main one, count as one look, each camera with its own chance of seeing a
-person. Further apart they count as two looks. `inspect_detection` and `capture_stills` take their
-stills with the main camera, also with the tele camera on: an inspection hovers so that
+person. Further apart they count as two looks. `capture_stills` and the side look of
+`inspect_detection` (its look in a live search without the overflight permit) take their
+stills with the main camera, also with the tele camera on: the side look hovers so that
 the target is 24–28° from straight down, and the fixed tele camera sees only about ±10°
-across and ±7.5° along, so its stills would not show the target. Revisit with a gimbal.
+across and ±7.5° along, so its stills would not show the target. Neither camera tilts.
+The step-wise closer look straight over the target takes stills with both cameras.
 The sim farm's archive keeps the main camera's pictures only. The flight itself does not change:
 the same height, speed and search pattern.
 

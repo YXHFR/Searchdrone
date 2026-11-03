@@ -161,7 +161,7 @@ async def test_scripted_candidate_turns(tmp_path: Path) -> None:
         "    when: {priority_class: high, state: ready, engine: fast, multi_frame: false}\n"
         '    say: ["K{seq} hittad, granska bilden."]\n'
         "    action: {skill: inspect_detection, params: "
-        '{detection_id: "event:detection_id", standoff_m: 20}}\n'
+        '{candidate_id: "event:candidate_id"}}\n'
         "  - on: candidate\n"
         "    when: {multi_frame: true}\n"
         '    action: {skill: goto, params: {at: "event:candidate", alt_m: 30}}\n'
@@ -174,7 +174,7 @@ async def test_scripted_candidate_turns(tmp_path: Path) -> None:
     out = await b.decide(_turn("candidate", candidate()), _NoTools())
     assert [m.text for m in out.messages] == ["K3 hittad, granska bilden."]
     assert out.action is not None and out.action.skill == "inspect_detection"
-    assert out.action.params == {"detection_id": DET, "standoff_m": 20}
+    assert out.action.params == {"candidate_id": CID}
     out = await b.decide(_turn("candidate", candidate(multi_frame=True)), _NoTools())
     assert out.action is not None
     assert out.action.params == {"lat": -35.3615, "lon": 149.1652, "alt_m": 30}

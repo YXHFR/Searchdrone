@@ -62,7 +62,11 @@
     "fence_hash": "ab12",
     "approved_by": "operator:demo",
     "approved_at": "2026-10-15T12:30:00Z",
-    "notes": null
+    "notes": null,
+    "operation_mode": "sim",
+    "overflight_allowed": true,
+    "floor_pack_id": null,
+    "floor_pack_sha256": null
   },
   "proposed_by": "brain:ground",
   "approved_by": "operator:demo",

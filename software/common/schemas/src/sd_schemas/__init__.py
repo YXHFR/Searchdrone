@@ -109,6 +109,14 @@ from sd_schemas.decide import (
 )
 from sd_schemas.executor import ExecutorState, GotoResumePoint, SurveyResumePoint
 from sd_schemas.gate import ClearanceState, GateDecision, GateRequest, StateRef
+from sd_schemas.inspect import (
+    InspectAborted,
+    InspectDone,
+    InspectLaserLost,
+    InspectLowerOffer,
+    InspectProgress,
+    PermitChanged,
+)
 from sd_schemas.link import (
     Ack,
     ApprovalRef,
@@ -126,6 +134,8 @@ from sd_schemas.link import (
     Heartbeat,
     Hello,
     HelloAck,
+    InspectLower,
+    InspectOutcome,
     Keepout,
     KeepoutInstall,
     LatchRef,
@@ -299,7 +309,14 @@ __all__ = [
     "HelloAck",
     "HoldParams",
     "Id",
+    "InspectAborted",
     "InspectDetectionParams",
+    "InspectDone",
+    "InspectLaserLost",
+    "InspectLower",
+    "InspectLowerOffer",
+    "InspectOutcome",
+    "InspectProgress",
     "Item",
     "Keepout",
     "KeepoutHoldField",
@@ -345,6 +362,7 @@ __all__ = [
     "PanelConfig",
     "PartStatus",
     "PerceptionReport",
+    "PermitChanged",
     "PilotPosition",
     "Pose",
     "ProbabilityGrid",

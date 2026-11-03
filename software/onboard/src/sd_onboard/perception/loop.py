@@ -31,10 +31,11 @@ each source gives its newest still, and the cameras are not triggered together. 
 still goes through the same steps as a main one, georeferenced with its own camera,
 and its report says so only through its smaller footprint and higher ``px_per_m``.
 A failing streak (``stills_failing``) is counted per camera, so a dead main camera is
-reported even while the tele camera works. An order's still (``capture``) always comes
-from the main camera, ``inspect_detection``'s too: it looks at its target 24-28 degrees
-from straight down, outside the fixed tele camera's view (about +-10 by +-7.5 degrees).
-Revisit with a gimbal.
+reported even while the tele camera works. An order's still (``capture``) comes from
+the main camera, so does the side look of ``inspect_detection`` (its ``live`` look): it
+sees its target 24-28 degrees from straight down, outside the fixed tele camera's view
+(about +-10 by +-7.5 degrees). Neither camera tilts. The step-wise closer look straight
+over the target (``sd_schemas.inspect``) takes one still from each camera per round.
 
 The pose is the telemetry read when a still arrives, a moment after the picture was
 taken. In steady flight that moment does not matter; while the attitude changes quickly

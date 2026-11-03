@@ -2224,6 +2224,7 @@
           "TAKEOFF",
           "TRANSIT",
           "SURVEY",
+          "INSPECT",
           "HOLD",
           "RTL",
           "LAND",
@@ -2610,6 +2611,123 @@
           "test_rig"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "InspectProgress": {
+        "additionalProperties": false,
+        "description": "How a look is going, in the onboard computer's state snapshot (at most 2 Hz).",
+        "properties": {
+          "above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Above Ground M"
+          },
+          "await_left_s": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Await Left S"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "command_id": {
+            "format": "uuid",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "floor_auto_above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Auto Above Ground M"
+          },
+          "floor_lowest_above_ground_m": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Lowest Above Ground M"
+          },
+          "floor_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "map",
+                  "unknown",
+                  "powerline",
+                  "laser",
+                  "no_map",
+                  "laser_lost"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Reason"
+          },
+          "laser_confirmed": {
+            "default": false,
+            "title": "Laser Confirmed",
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "approach",
+              "step",
+              "lower_offer",
+              "await",
+              "return"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "step": {
+            "minimum": 0.0,
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command_id",
+          "candidate_id",
+          "step",
+          "phase"
+        ],
+        "title": "InspectProgress",
         "type": "object"
       },
       "Item": {
@@ -3438,6 +3556,30 @@
             ],
             "title": "Fence Hash"
           },
+          "floor_pack_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Id"
+          },
+          "floor_pack_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Floor Pack Sha256"
+          },
           "geofence_buffer_m": {
             "default": 20,
             "maximum": 50.0,
@@ -3487,6 +3629,27 @@
             ],
             "title": "On Ai Silent",
             "type": "string"
+          },
+          "operation_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sim",
+                  "exercise",
+                  "live"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Mode"
+          },
+          "overflight_allowed": {
+            "default": false,
+            "title": "Overflight Allowed",
+            "type": "boolean"
           },
           "pilot_position": {
             "$ref": "#/components/schemas/LatLon"
@@ -4933,7 +5096,8 @@
                   "find_hold",
                   "ai_silent",
                   "startup",
-                  "manual_input_lost"
+                  "manual_input_lost",
+                  "inspect_await"
                 ],
                 "type": "string"
               },
@@ -4942,6 +5106,16 @@
               }
             ],
             "title": "Hold Reason"
+          },
+          "inspect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InspectProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_transition_state_seq": {
             "title": "Last Transition State Seq",
