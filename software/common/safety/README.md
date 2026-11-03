@@ -19,7 +19,7 @@ decision = evaluate(request, context)  # GateDecision: ALLOW, REJECT or PENDING_
 | `limits` | Standard limits, the outer cap, the flight controller's fence for given limits, `check_limits` |
 | `targets` | Geodesic distance (WGS84) and exact polygon checks for routes and areas, concave areas included |
 | `floor` | The height floor of a closer look: `floor_at`, `floor_along` from the map pack, the margins and an optional laser |
-| `floor_pack` | The map pack format and `load_floor_pack` (the only module that reads files, once before a flight) |
+| `floor_pack` | The map pack format, `load_floor_pack` (the only module that reads files, once before a flight) and `write_floor_pack` for the tools that make packs |
 | `constants` | Every time and margin the safety logic uses |
 
 Routes are checked leg by leg against the charter's area, not sampled, and a polygon

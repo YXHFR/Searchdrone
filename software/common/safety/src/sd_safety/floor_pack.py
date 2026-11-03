@@ -1,11 +1,15 @@
-"""The map pack the height floor (:mod:`sd_safety.floor`) counts from, and its loader.
+"""The map pack the height floor (:mod:`sd_safety.floor`) counts from: loader and writer.
 
-The only module in ``sd_safety`` that reads files: a pack is loaded once, before the
-flight, and the floor is worked out from it in memory. A pack lives in
-``${SD_DATA_DIR}/floor/<name>/``, outside the repository (map data is never committed)::
+The only module in ``sd_safety`` that touches files: a pack is loaded once, before the
+flight, and the floor is worked out from it in memory. :func:`write_floor_pack` is for
+the tools that make packs (``tools/terrain/fetch_floor_map.py`` from Lantmäteriet's data,
+the simulator from its world), so every pack is written the one way the loader reads it.
+A pack lives in ``${SD_DATA_DIR}/floor/<name>/``, outside the repository (map data is
+never committed)::
 
     floor_pack.toml   format, name, attribution, [origin] lat/lon, [grid] size_m
-                      (east, north) and scan_cell_m, [sha256] of every file below
+                      (east, north) and scan_cell_m, [about] where the data came from
+                      (free text, not read by the floor), [sha256] of every file below
     dtm_cm.npy        ground height above sea level (RH 2000), cm, int32, within
                       DTM_MIN_CM..DTM_MAX_CM; DTM_NODATA_CM = no ground height
     chm_dm.npy        tree height above the ground, dm, int16; -1 = unknown (the
@@ -30,8 +34,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
+import re
+import shutil
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -41,6 +48,7 @@ from numpy.typing import NDArray
 
 from sd_safety.targets import Plane, Xy
 from sd_schemas.base import LatLon
+from sd_schemas.charter import FLOOR_PACK_NAME_PATTERN
 
 __all__ = [
     "CHM_UNKNOWN_DM",
@@ -53,7 +61,9 @@ __all__ = [
     "FloorPack",
     "FloorPackError",
     "Line",
+    "PackLine",
     "load_floor_pack",
+    "write_floor_pack",
 ]
 
 FLOOR_PACK_FORMAT: Final = 1
@@ -189,3 +199,140 @@ def _read_lines(raw: bytes, plane: Plane) -> tuple[Line, ...]:
             pts = [LatLon(lat=float(pt[1]), lon=float(pt[0])) for pt in part]
             lines.append(tuple(plane.point(q) for q in pts))
     return tuple(lines)
+
+
+# --- the writer ------------------------------------------------------------------------
+
+AboutValue = str | int | float | bool | Sequence[str]
+_ABOUT_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+@dataclass(frozen=True, eq=False)
+class PackLine:
+    """A known power line to write: its corners in latitude/longitude (one point is a
+    pole) and the GeoJSON properties kept with it (where it came from)."""
+
+    points: tuple[LatLon, ...]
+    properties: Mapping[str, str] = field(default_factory=dict[str, str])
+
+
+def write_floor_pack(
+    folder: Path,
+    *,
+    name: str,
+    origin: LatLon,
+    dtm_cm: NDArray[np.int32],
+    chm_dm: NDArray[np.int16],
+    scan_year: NDArray[np.uint16],
+    scan_cell_m: int,
+    attribution: str,
+    lines: Sequence[PackLine] = (),
+    about: Mapping[str, AboutValue] | None = None,
+) -> FloorPack:
+    """Write a pack to ``folder`` and return it as :func:`load_floor_pack` reads it back.
+
+    The grids are checked like the loader checks them, the pack is written beside
+    ``folder`` and loaded from there, and only then does it take the place of whatever
+    ``folder`` held: an interrupted or refused write never leaves half a pack where the
+    loader looks (a hidden ``.<name>.writing`` folder may stay, and the next write
+    clears it). ``about`` says where the data came from: strings, numbers and lists of
+    strings, kept in ``[about]`` and never read by the floor."""
+    if not re.match(FLOOR_PACK_NAME_PATTERN, name):
+        raise FloorPackError(f"a pack's name matches {FLOOR_PACK_NAME_PATTERN}")
+    FloorPack(  # the grids' types and shapes, the same checks as an in-memory pack
+        name=name,
+        sha256="0" * 64,
+        origin=origin,
+        dtm_cm=dtm_cm,
+        chm_dm=chm_dm,
+        scan_year=scan_year,
+        scan_cell_m=scan_cell_m,
+    )
+    _check_heights(dtm_cm, chm_dm)
+    if any(not line.points for line in lines):
+        raise FloorPackError("a power line has at least one point")
+    about_toml = "".join(f"{key} = {_about_value(key, v)}\n" for key, v in (about or {}).items())
+    files = {
+        "dtm_cm.npy": _npy(dtm_cm),
+        "chm_dm.npy": _npy(chm_dm),
+        "scan_year.npy": _npy(scan_year),
+        "lines.geojson": _lines_geojson(lines),
+    }
+    rows, cols = dtm_cm.shape
+    hashes = "".join(
+        f"{_toml_str(n)} = {_toml_str(hashlib.sha256(files[n]).hexdigest())}\n"
+        for n in FLOOR_PACK_FILES
+    )
+    toml = (
+        f"format = {FLOOR_PACK_FORMAT}\n"
+        f"name = {_toml_str(name)}\n"
+        f"attribution = {_toml_str(attribution)}\n"
+        f"\n[origin]\nlat = {origin.lat!r}\nlon = {origin.lon!r}\n"
+        f"\n[grid]\nsize_m = [{cols}, {rows}]\nscan_cell_m = {scan_cell_m}\n"
+        f"\n[about]\n{about_toml}"
+        f"\n[sha256]\n{hashes}"
+    )
+    work = folder.parent / f".{folder.name}.writing"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    for file_name, data in files.items():
+        (work / file_name).write_bytes(data)
+    (work / "floor_pack.toml").write_text(toml, encoding="utf-8")
+    pack = load_floor_pack(work)
+    old = folder.parent / f".{folder.name}.old"
+    shutil.rmtree(old, ignore_errors=True)
+    if folder.exists():
+        folder.rename(old)
+    work.rename(folder)
+    shutil.rmtree(old, ignore_errors=True)
+    return pack
+
+
+def _npy(grid: NDArray[Any]) -> bytes:
+    buf = io.BytesIO()
+    np.save(buf, np.ascontiguousarray(grid), allow_pickle=False)
+    return buf.getvalue()
+
+
+def _lines_geojson(lines: Sequence[PackLine]) -> bytes:
+    """The lines as a FeatureCollection; a pole is written as a line of two equal points,
+    so the file stays valid GeoJSON and the loader reads it as a pole."""
+    features = [
+        {
+            "type": "Feature",
+            "properties": dict(line.properties),
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [p.lon, p.lat] for p in line.points * (2 if len(line.points) == 1 else 1)
+                ],
+            },
+        }
+        for line in lines
+    ]
+    data = {"type": "FeatureCollection", "features": features}
+    return (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _toml_str(text: str) -> str:
+    """A TOML basic string: JSON's escapes are TOML's, and DEL must be escaped too."""
+    return json.dumps(text, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def _about_value(key: str, value: AboutValue) -> str:
+    if not _ABOUT_KEY.match(key):
+        raise FloorPackError(f"[about] {key!r}: a key is a-z, 0-9 and _")
+    if isinstance(value, str):
+        return _toml_str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise FloorPackError(f"[about] {key}: a number that is not finite")
+        return repr(value)
+    items: list[object] = list(value)  # callers without types may hand anything
+    if all(isinstance(item, str) for item in items):
+        return "[" + ", ".join(_toml_str(str(item)) for item in items) + "]"
+    raise FloorPackError(f"[about] {key}: a list holds only strings")
