@@ -19,6 +19,7 @@ from sd_brain.loop import BACK_TEXT, DEADLINE_TEXT, RATE_TEXT, STOP_FALLBACK
 from sd_brain.memory import mission_request, pending_request
 from sd_brain.turn import AiAction, OutMessage, TurnDiagnostics, TurnInput, TurnOutput
 from sd_schemas.base import new_id
+from sd_schemas.commander import SkillRequest, SkillSubmitResult
 from sd_schemas.decide import ChatIntentReport, ChoiceAnswer, DecideRequest, DecisionEngine
 
 REJECT = {
@@ -462,6 +463,103 @@ async def test_idle_tick() -> None:
     loop2.idle_tick(force=True)
     await loop2.settle()
     assert not loop2.records
+
+
+async def test_idle_tick_waits_for_the_end_of_its_own_order() -> None:
+    """#159 SC01_takeover: an idle turn that ran after the AI's goto had ended on the
+    ground, but before that end reached the AI as an event, saw no active order and sent
+    one of its own (a scripted resume, 0.1 s after the goto ended). The end's own turn
+    decides what follows: the idle turn waits for it."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [c.skill for c in fg.commands] == ["goto"]
+    goto = str(fg.commands[0].command_id)
+    assert fg.sit["active_command"] is None  # ended on the ground; its event not here yet
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1 and len(fg.commands) == 1
+    evt = {"type": "event.skill", "body": {"command_id": goto, "skill": "goto", "status": "done"}}
+    fg.apply_event(evt)
+    loop.handle_event(evt)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
+async def test_an_end_that_never_comes_holds_the_idle_tick_one_period_only() -> None:
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."))
+    loop, fg, clock = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == 1
+    clock.t += BrainConfig().behaviour.idle_airborne_tick_s + 1
+    assert loop.idle_tick()
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "idle_tick"]
+    assert len(fg.commands) == 1
+
+
+async def test_an_end_that_comes_during_the_submit_is_not_waited_for() -> None:
+    """The ground can publish an order's end before its HTTP answer (a ground skill such
+    as report is done on insert, a dispatch can fail fast). The skill_event turn has then
+    run already; the next idle turn does not wait for an end that came."""
+    backend = Steps(act("goto", pin="P1"), say("Framme vid P1."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    orig = fg.submit
+
+    async def submit(mission_id: str, req: SkillRequest) -> SkillSubmitResult:
+        result = await orig(mission_id, req)
+        body = {"command_id": str(req.command_id), "skill": req.skill, "status": "done"}
+        evt = {"type": "event.skill", "body": body}
+        fg.apply_event(evt)
+        loop.handle_event(evt)
+        return result
+
+    fg.submit = submit
+    loop.idle_tick(force=True)
+    await loop.settle()
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert [t.trigger for t in backend.turns] == ["idle_tick", "skill_event", "idle_tick"]
+
+
+@pytest.mark.parametrize("decision", ["REJECT", "error"])
+async def test_an_order_that_did_not_go_through_is_not_waited_for(decision: str) -> None:
+    backend = Steps(act("goto", pin="P1"), say("Inget nytt."), say("Inget nytt."))
+    loop, fg, _ = make_loop(backend)
+    if decision == "error":
+        orig = fg.submit
+
+        async def submit(mission_id: str, req: SkillRequest) -> SkillSubmitResult:
+            fg.submit = orig
+            raise GroundError("sd-ground svarar inte", 503)
+
+        fg.submit = submit
+    else:
+        fg.responses = [{"match": {"skill": "goto"}, "result": {"decision": "REJECT"}}]
+    loop.idle_tick(force=True)
+    await loop.settle()  # a REJECT also runs its retry turn (a plain say here)
+    assert not loop._unended
+    turns = len(backend.turns)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert len(backend.turns) == turns + 1 and backend.turns[-1].trigger == "idle_tick"
+
+
+async def test_a_new_mission_from_an_event_forgets_the_old_orders() -> None:
+    backend = Steps(act("goto", pin="P1"))
+    loop, _, _ = make_loop(backend)
+    loop.idle_tick(force=True)
+    await loop.settle()
+    assert loop._unended
+    new = "01a150c5-0000-7000-8000-0000000000ff"
+    loop.handle_event({"type": "event.mission", "mission_id": new, "body": {"created": True}})
+    assert not loop._unended
 
 
 @pytest.mark.parametrize(("kind", "waits"), [("charter", False), ("command", True)])
