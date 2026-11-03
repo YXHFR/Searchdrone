@@ -6,11 +6,17 @@ goes on from the last detection it observed. Every write is a new revision; the 
 topic ``candidates`` carries ``candidate.new``, ``candidate.updated`` and
 ``candidate.assessed``.
 
-Only a person decides (``decide``): confirm, reject, unsure, and for the pilot inspect
-and reopen, along ``CANDIDATE_TRANSITIONS``; anything else is 409. A confirmation needs a
-large view of one of the candidate's pictures opened by the same session first
+Only a person decides (``decide``): confirm, reject, unsure, and for the pilot inspect,
+resume and reopen, along ``CANDIDATE_TRANSITIONS``; anything else is 409. A confirmation
+needs a large view of one of the candidate's pictures opened by the same session first
 (``open_view``, checked in the server's own log). Each decision is a new row, a system
 line in the chat and ``candidate.decided`` on the live topic.
+
+"Titta närmare" (``inspect``) is the drone's closer look: the decision sends an
+``inspect_detection`` order through the gate (409 ``INSPECT_REFUSED`` with the gate's
+codes when it says no), and the candidate is ``inspecting`` while the look is open
+(``services.inspections``). A decision on it then ends the look and tells the drone;
+the system's own endings put it back to ``ready`` (``SYSTEM_TRANSITIONS``).
 
 The queue is an order, never a filter: every candidate is listed, the merged ones only on
 request, and a low priority only puts a candidate further down.
@@ -23,16 +29,19 @@ from pathlib import Path
 from typing import Any, Final
 from xml.sax.saxutils import escape
 
-from sd_ground.api.deps import ApiStatusError, not_built
+from sd_ground.api.deps import ApiStatusError
 from sd_ground.auth import Principal
 from sd_ground.db.candidates import CandidateRepo, CandidateWriteError, Decided
 from sd_ground.logging import get_logger
 from sd_ground.services import chat as chat_service
+from sd_ground.services import commands as commands_service
 from sd_ground.services import files as files_service
+from sd_ground.services import inspections as inspections_service
 from sd_ground.services.missions import MissionFlow
 from sd_schemas.base import new_id
 from sd_schemas.candidate_ai import queue_counts
 from sd_schemas.geo import plane_distance_m
+from sd_schemas.reason_codes import GATE_REASON_CODES
 from sd_schemas.search import (
     CandidateBatch,
     CandidateCard,
@@ -52,6 +61,7 @@ __all__ = [
     "CARDS_MAX",
     "FEED_MAX",
     "PILOT_ONLY",
+    "SYSTEM_TRANSITIONS",
     "card_list",
     "cards",
     "decide",
@@ -81,14 +91,20 @@ CANDIDATE_TRANSITIONS: Final[
 ] = {
     "confirm": dict.fromkeys(_OPEN, _S.CONFIRMED),
     "reject": dict.fromkeys(_OPEN, _S.REJECTED),
-    # Not reachable yet: ``decide`` answers 501 until the closer-look skill exists.
+    # The move happens when the order is sent (``services.inspections.started``).
     "inspect": {_S.READY: _S.INSPECTING, _S.ASSESSING: _S.INSPECTING},
-    "unsure": dict.fromkeys((_S.NEW, *_OPEN), None),
+    # A note, except during a look: then it ends the wait and the candidate stays queued.
+    "unsure": {**dict.fromkeys((_S.NEW, _S.READY, _S.ASSESSING), None), _S.INSPECTING: _S.READY},
+    "resume": {_S.INSPECTING: _S.READY},  # "Fortsätt söka nu"
     "reopen": {_S.REJECTED: _S.READY, _S.CONFIRMED: _S.READY},
 }
+# The system's moves, no person's: a look that ended without a decision (timeout, another
+# order, STOP / FLY HOME / takeover / battery / link, refused onboard, failed).
+SYSTEM_TRANSITIONS: Final[Mapping[CandidateState, CandidateState]] = {_S.INSPECTING: _S.READY}
 # The pilot and the observer may both confirm or reject a find (a second pair of eyes on
-# the pictures); moving the drone closer and undoing a decision are the pilot's.
-PILOT_ONLY: Final = frozenset({"inspect", "reopen"})
+# the pictures); moving the drone closer, sending it back to the search and undoing a
+# decision are the pilot's.
+PILOT_ONLY: Final = frozenset({"inspect", "resume", "reopen"})
 PEOPLE: Final = frozenset({"pilot", "observer"})
 
 
@@ -324,6 +340,8 @@ def _next_state(body: CandidateDecision) -> Callable[[str], str | None]:
 
     def step(state: str) -> str | None:
         before = CandidateState(state)
+        if body.decision == "inspect":
+            return None  # the look already moved it (``_inspect``)
         if before not in allowed:
             raise CandidateWriteError(
                 "TRANSITION_NOT_ALLOWED", "Det beslutet går inte för kandidaten just nu."
@@ -346,24 +364,64 @@ def _chat_text(d: Decided, decision: DecisionKind, by: str) -> str:
         return f"{k} avvisad av {by}. Sökningen fortsätter."
     if decision == "unsure":
         return f"{k} markerad som osäker av {by}."
+    if decision == "inspect":
+        return f"{by} bad drönaren titta närmare på {k}."
+    if decision == "resume":
+        return f"{by} lät sökningen fortsätta. {k} ligger kvar i kön."
     if d.before == _S.CONFIRMED.value:
         return f"Bekräftelsen av {k} ångrad av {by}. Anteckningen finns i händelseloggen."
     return f"{k} öppnad igen av {by}."
 
 
+async def _inspect(
+    flow: MissionFlow, mission_id: str, candidate_id: str, body: CandidateDecision, who: Principal
+) -> None:
+    """The pilot's "Titta närmare": the order through the gate, sent at once when it says
+    yes (the candidate goes ``inspecting`` then). 409 when the card is old, the move is
+    not in the table, or the gate or the look's start says no (``INSPECT_REFUSED``)."""
+    latest = await repo(flow).latest(mission_id)
+    now = next(c for c in latest if c["candidate_id"] == candidate_id)
+    if int(now["rev"]) != body.subject_rev:
+        raise ApiStatusError(
+            409, "SUPERSEDED", "Kandidaten har ändrats sedan du såg den. Titta igen."
+        )
+    if CandidateState(now["state"]) not in CANDIDATE_TRANSITIONS["inspect"]:
+        raise ApiStatusError(
+            409, "TRANSITION_NOT_ALLOWED", "Det beslutet går inte för kandidaten just nu."
+        )
+    done = await commands_service.submit(
+        flow,
+        mission_id,
+        command_id=str(new_id()),
+        skill="inspect_detection",
+        params={"candidate_id": candidate_id},
+        issuer_kind="operator",
+        issuer_ref=who.issuer_ref,
+        rationale_sv=body.note or None,
+    )
+    if str(done.command.status) == "rejected_by_gate":
+        # The gate's codes, or the look's own start (``INSPECT_TARGET_CLOSED``).
+        codes = (
+            list(done.gate.reason_codes)
+            if done.gate.decision == "REJECT"
+            else [str(done.command.status_reason)]
+        )
+        text = GATE_REASON_CODES.get(codes[0], "Drönaren kan inte titta närmare just nu.")
+        raise ApiStatusError(409, "INSPECT_REFUSED", text, [{"code": c} for c in codes])
+
+
 async def decide(
     flow: MissionFlow, candidate_id: str, body: CandidateDecision, who: Principal
 ) -> dict[str, Any]:
-    """A person's decision. 403 for anyone but a person (and inspect/reopen for anyone
-    but the pilot); 409 ``NOT_VIEWED`` for a confirmation before a large view,
-    ``SUPERSEDED`` when the card is older than the candidate, ``TRANSITION_NOT_ALLOWED``
-    for a move the table does not have. Returns the candidate's detail."""
+    """A person's decision. 403 for anyone but a person (and inspect, resume and reopen
+    for anyone but the pilot); 409 ``NOT_VIEWED`` for a confirmation before a large
+    view, ``SUPERSEDED`` when the card is older than the candidate,
+    ``TRANSITION_NOT_ALLOWED`` for a move the table does not have, ``INSPECT_REFUSED``
+    when the gate says no to the closer look. Returns the candidate's detail."""
     candidate_id = candidate_id.lower()
     session_id = _person(who, flow.g.test_rig)
     if body.decision in PILOT_ONLY and who.role != "pilot":
         raise ApiStatusError(403, "FORBIDDEN_ROLE", "Bara piloten får göra det här.")
-    if body.decision == "inspect":
-        raise not_built("B2-09")  # the drone's closer look; the state would wait forever
     r = repo(flow)
     mission_id = await r.candidate_mission(candidate_id)
     if mission_id is None:
@@ -373,12 +431,19 @@ async def decide(
         raise ApiStatusError(
             409, "NOT_VIEWED", "Öppna minst en bild i stor storlek innan du bekräftar."
         )
+    subject_rev = body.subject_rev
+    if body.decision == "inspect":
+        await _inspect(flow, mission_id, candidate_id, body, who)
+        # The decision row is on the revision the look moved to (or the same one, when
+        # the order waits for a card).
+        latest = await r.latest(mission_id)
+        subject_rev = next(int(c["rev"]) for c in latest if c["candidate_id"] == candidate_id)
     try:
         d = await r.decide(
             candidate_id,
             decision=body.decision,
             note=body.note,
-            subject_rev=body.subject_rev,
+            subject_rev=subject_rev,
             operator_ref=who.issuer_ref,
             session_id=session_id,
             now=flow.now(),
@@ -386,6 +451,7 @@ async def decide(
         )
     except CandidateWriteError as exc:
         raise ApiStatusError(409, exc.code, exc.detail_sv) from exc
+    await inspections_service.decided(flow, mission, candidate_id, body.decision)
     out = await detail(flow, candidate_id)
     payload = {
         "candidate_id": candidate_id,

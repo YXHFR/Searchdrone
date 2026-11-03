@@ -378,6 +378,7 @@ export interface ApprovalDecisionRequest {
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone"]
     | ["clear_around_drone", "clear_around_drone", "clear_around_drone", "clear_around_drone"];
   decision: "approve" | "reject";
+  operation_mode?: ("sim" | "exercise" | "live") | null;
   reason?: string | null;
   subject_version: number;
 }
@@ -643,7 +644,7 @@ export interface CandidateCounts {
  * via the `definition` "CandidateDecision".
  */
 export interface CandidateDecision {
-  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen" | "resume";
   note?: string;
   subject_rev: number;
 }
@@ -704,7 +705,7 @@ export interface StoredAssessment {
  */
 export interface StoredDecision {
   created_at: string;
-  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen";
+  decision: "confirm" | "reject" | "inspect" | "unsure" | "reopen" | "resume";
   id: string;
   note: string;
   operator_ref: string;
@@ -1860,7 +1861,10 @@ export interface InspectAborted {
  * ``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a
  * point outside the cylinder from which the main camera sees the target nearly straight
  * down, at most at the charter's ceiling. It is the whole look in ``live`` without the
- * overflight permit.
+ * overflight permit. With the charter's ``overflight_allowed`` (sim, exercise, live with
+ * the permit) the order goes straight over the candidate, without a height: the drone
+ * keeps its own above the height floor (``sd_safety.floor``) and the gate checks that
+ * floor instead (R-FLOOR, R-FLOOR-CEIL).
  *
  * This interface was referenced by `SdSchemas`'s JSON-Schema
  * via the `definition` "InspectDetectionParams".

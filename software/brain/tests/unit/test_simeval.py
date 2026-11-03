@@ -721,7 +721,7 @@ class _CloudLike:
             det = re.search(r"multi_frame=False, detection_id=([0-9a-f-]+)", event)
             if self.habit == "look" and det is not None:
                 text = f"{k[0]} HÖG, sedd i en bild. Jag tittar närmare."
-                args = {"candidate_id": det[1], "rationale_sv": "En bild."}
+                args = {"candidate_id": k[0], "rationale_sv": "En bild."}
                 return _reply(text, ("inspect_detection", args))
             return _reply("")
         if "status=done" in event and "return_home" in event:
@@ -845,9 +845,14 @@ def test_the_prompt_has_one_candidate_path_that_keeps_searching() -> None:
     assert "never pauses the search" in rule
     # The operator always gets the urgent report, and no search order starts for a candidate.
     assert '`report` priority "urgent"' in rule and "give the next search order" not in rule
-    # The closer look is the one interruption, and the interrupted search goes on after it.
-    assert "The one exception is the closer look above (`inspect_detection`" in rule
+    # The closer look is the one interruption: the drone waits for a person and flies back
+    # by itself (TN-7); after one pass the AI orders the interrupted search again.
+    assert "The one exception is the closer look above: `inspect_detection`" in rule
+    assert "flies back to where the search broke off by itself" in rule
     assert "order the interrupted search again without waiting" in rule
+    # The AI names the candidate by its number, one look at a time, most important first.
+    assert 'candidate_id "K3"' in rule and "detection_id" not in rule
+    assert "propose only one at a time" in rule and "the nearest" in rule
     # The operator's request and a confirmed find win over "never hold, never hover".
     assert "they give way to the operator and to a confirmed find" in rule
     assert "If the operator asks you to hold, hover over or circle a candidate, do it" in rule

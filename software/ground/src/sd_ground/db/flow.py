@@ -31,7 +31,7 @@ _MISSION_COLS = """m.id, m.vehicle_id, m.title, m.status, m.paused_by, m.returni
   m.created_at, m.activated_at, m.landed_at, m.closed_at, m.closed_reason, m.notes"""
 _CHARTER_COLS = """c.id, c.mission_id, c.vehicle_id, c.version, c.status, c.body, c.proposed_by,
   c.autonomy_mode, c.approved_by, c.approved_at, c.install_status, c.fence_hash,
-  c.fence_verified_at, c.created_at,
+  c.fence_verified_at, c.created_at, c.operation_mode, c.overflight_allowed,
   (SELECT a.id FROM approvals a WHERE a.kind = 'charter' AND a.subject_id = c.id
    ORDER BY a.requested_at DESC LIMIT 1) AS approval_id"""
 _APPROVAL_COLS = """id, mission_id, vehicle_id, kind, subject_id, subject_version, status,
@@ -67,6 +67,9 @@ def charter_body(row: RowMapping) -> MissionCharter:
     body = dict(_json(row["body"]))
     if row["autonomy_mode"] is not None:
         body["autonomy_mode"] = row["autonomy_mode"]
+    if row["operation_mode"] is not None:
+        body["operation_mode"] = row["operation_mode"]
+        body["overflight_allowed"] = row["overflight_allowed"]
     body["approved_by"] = row["approved_by"]
     body["approved_at"] = row["approved_at"]
     body["fence_hash"] = row["fence_hash"]
@@ -425,11 +428,14 @@ class FlowRepo:
             await self._x(
                 conn,
                 "UPDATE charters c SET status = 'approved', autonomy_mode = :mode, "
+                "operation_mode = :op, overflight_allowed = :over, "
                 "approved_by = :by, approved_at = :t, install_status = 'none', "
                 "fence_hash = o.fence_hash, fence_verified_at = o.fence_verified_at "
                 "FROM (SELECT CAST(:keep AS uuid) AS id) k "
                 "LEFT JOIN charters o ON o.id = k.id WHERE c.id = :id",
                 mode=str(charter.autonomy_mode),
+                op=charter.operation_mode,
+                over=charter.overflight_allowed,
                 by=by,
                 t=now,
                 keep=keep_fence_from,
@@ -458,6 +464,8 @@ class FlowRepo:
                     "charter_id": cid,
                     "version": charter.version,
                     "autonomy_mode": str(charter.autonomy_mode),
+                    "operation_mode": charter.operation_mode,
+                    "overflight_allowed": charter.overflight_allowed,
                     "by": by,
                 },
             )

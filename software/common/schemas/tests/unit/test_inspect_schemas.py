@@ -83,3 +83,39 @@ def test_the_ground_answers_and_the_drone_reports() -> None:
 def test_the_match_radius_grows_with_the_uncertainty() -> None:
     assert inspect.match_radius_m(2.0) == inspect.MATCH_RADIUS_MIN_M
     assert inspect.match_radius_m(12.0) == 24.0
+
+
+def test_with_overflight_the_order_goes_straight_over_without_a_height() -> None:
+    charter = _charter().model_copy(
+        update={"operation_mode": "exercise", "overflight_allowed": True}
+    )
+    home = charter.home
+    lat, lon = plane_offset(home.lat, home.lon, 0.0, 150.0)
+    order = InspectDetectionParams(
+        candidate_id=OTHER, lat=lat, lon=lon, sigma95_m=2.0, target_radius_m=32.0
+    )
+    ctx = TargetContext(charter=charter, position=home, home=home)
+    targets = order.gate_targets(ctx)
+    assert targets.resolved and targets.alts_m == []
+    assert targets.path[-1].lat == lat and targets.path[-1].lon == lon
+    assert targets.speed_ms == min(inspect.INSPECT_SPEED_MS, charter.max_speed_ms)
+    assert not order.model_copy(update={"lat": None}).gate_targets(ctx).resolved
+    nowhere = TargetContext(charter=charter, position=None, home=home)
+    assert not order.gate_targets(nowhere).resolved
+
+
+def test_the_ai_names_the_card_by_its_number() -> None:
+    spec = SKILL_REGISTRY.get("inspect_detection")
+    model = spec.ai_params_model
+    assert model is not None
+    assert model.model_validate({"candidate_id": "K3"}).model_dump() == {"candidate_id": "K3"}
+    for bad in ("K0", "3", "k3", str(OTHER), "K123456"):
+        with pytest.raises(ValidationError):
+            model.model_validate({"candidate_id": bad})
+
+
+def test_the_permit_needs_its_reference() -> None:
+    assert not inspect.Permit().allow_overflight_live
+    inspect.Permit(specific_category_ref="SE-123", allow_overflight_live=True)
+    with pytest.raises(ValidationError):
+        inspect.Permit(specific_category_ref=" ", allow_overflight_live=True)

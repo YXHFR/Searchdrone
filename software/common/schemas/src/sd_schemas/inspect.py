@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from sd_schemas.base import Id, SdModel
+from sd_schemas.charter import OperationMode
 from sd_schemas.keepout import INSPECT_SPEED_MS
 
 __all__ = [
@@ -54,6 +55,10 @@ __all__ = [
     "InspectOutcomeKind",
     "InspectPhase",
     "InspectProgress",
+    "Inspection",
+    "InspectionOutcome",
+    "InspectionPhase",
+    "Permit",
     "PermitChanged",
     "match_radius_m",
 ]
@@ -181,3 +186,64 @@ class PermitChanged(SdModel):
     changed_by: str = Field(min_length=1, max_length=64)  # "operator:<alias>" or "config"
     has_specific_category_ref: bool
     allow_overflight_live: bool
+
+
+class Permit(SdModel):
+    """The ground's overflight permit for ``live`` (``GET``/``PUT /api/v1/permit``): the
+    reference of the operator's permit in the specific category (Transportstyrelsen) and
+    whether a closer look may then fly straight over its candidate. A charter approved
+    in ``live`` carries ``overflight_allowed`` from it; sim and exercise always may."""
+
+    specific_category_ref: str = Field(default="", max_length=64)
+    allow_overflight_live: bool = False
+
+    @model_validator(mode="after")
+    def _needs_the_permit(self) -> Permit:
+        if self.allow_overflight_live and not self.specific_category_ref.strip():
+            raise ValueError("allow_overflight_live needs specific_category_ref")
+        return self
+
+
+# How a look ended on the ground (``Inspection.outcome``).
+InspectionOutcome = Literal[
+    # A person's decision while the look was open, sent onboard as ``link.InspectOutcome``:
+    "confirmed",
+    "rejected",
+    "unsure",
+    "resume",
+    # The system's; the candidate goes back to ``ready`` (it stays in the queue):
+    "timeout",  # no decision within AWAIT_DECISION_S after ``inspect.done``
+    "resumed_by_pilot",  # another order replaced the look
+    "aborted",  # STOP, FLY HOME, a takeover, the battery, the link ... (``detail``)
+    "refused_onboard",
+    "failed",
+]
+
+# Where a look is, as the ground sees it: the drone flies it; it asks to go lower; it
+# hovers for the pilot's decision; it is over.
+InspectionPhase = Literal["flying", "lower_offer", "await", "ended"]
+
+
+class Inspection(SdModel):
+    """A closer look as the ground keeps it (``GET /api/v1/missions/{id}/inspections``
+    and ``inspection.updated`` on the live topic ``candidates``). At most one is open per
+    mission (``ended_at`` None)."""
+
+    command_id: Id  # the inspect_detection order
+    candidate_id: Id
+    mission_id: Id
+    seq: int = Field(ge=1)  # the candidate's display number (K3)
+    started_at: AwareDatetime
+    started_by: str  # "operator:<alias>": the pilot's click, directly or on the AI's card
+    operation_mode: OperationMode  # the charter's when the look started (unset: live)
+    overflight: bool  # it flies straight over the candidate (else the side look)
+    phase: InspectionPhase
+    # The drone's question "Gå lägre?" while it waits for the pilot's yes, and until when.
+    lower_offer: InspectLowerOffer | None = None
+    lower_offer_until: AwareDatetime | None = None
+    # The steps are over; the drone hovers for the decision until ``await_until``.
+    done: InspectDone | None = None
+    await_until: AwareDatetime | None = None
+    ended_at: AwareDatetime | None = None
+    outcome: InspectionOutcome | None = None
+    detail: str | None = Field(default=None, max_length=64)  # e.g. the abort's reason

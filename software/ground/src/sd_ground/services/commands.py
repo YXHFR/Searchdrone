@@ -33,6 +33,7 @@ from pydantic import ValidationError
 from sd_ground.logging import get_logger
 from sd_ground.services import annotations as annotations_service
 from sd_ground.services import charters as charter_rules
+from sd_ground.services import inspections as inspections_service
 from sd_ground.services.missions import FlowError
 from sd_safety import evaluate
 from sd_safety.constants import APPROVAL_TIMEOUT_S, PERSON_KEEPOUT_M
@@ -164,6 +165,8 @@ async def set_status(
     cmd = await flow.repo.command(command_id)
     if cmd is not None:
         _publish(flow, cmd)
+        if cmd.skill == _INSPECT:
+            await inspections_service.on_order_end(flow, cmd, status, reason)
     return cmd
 
 
@@ -285,8 +288,9 @@ async def submit(
                 else StateRef(state_epoch=snapshot.state_epoch, state_seq=snapshot.state_seq)
             )
         ctx = await flow.gate_context(mission)
-        if skill == "inspect_detection":
+        if skill == _INSPECT:
             params = await _inspect_params(flow, mission_id, params)
+            ctx = await inspections_service.gate_facts(flow, mission, ctx, params)
         req = _gate_request(
             mission,
             command_id=command_id,
@@ -337,7 +341,9 @@ async def submit(
                 "kind": "command",
                 "subject_id": command_id,
                 "subject_version": 1,
-                "summary_sv": _summary(skill, params),
+                "summary_sv": await inspections_service.summary(flow, mission, params)
+                if skill == _INSPECT
+                else _summary(skill, params),
                 "required_confirmations": list(gate.required_confirmations),
                 "gate": gate.model_dump(mode="json"),
                 "requested_by": issuer_ref,
@@ -428,15 +434,19 @@ async def _inspect_params(
     flow: MissionFlow, mission_id: str, params: dict[str, Any]
 ) -> dict[str, Any]:
     """``inspect_detection`` with its target filled in by the ground: where the candidate
-    lies, its uncertainty and its keep-out radius. A candidate's id is its first
-    detection's, so the lookup goes through that detection (and a detection no card
-    holds yet is looked at where it lies). For now an order that names a
-    ``detection_id`` (version 1) is read as the candidate holding it. An unknown
-    candidate stays without a target, and the gate refuses it."""
+    lies, its uncertainty and its keep-out radius. The AI names the candidate by its
+    number ("K3"), translated here. A candidate's id is its first detection's, so the
+    lookup goes through that detection (and a detection no card holds yet is looked at
+    where it lies). For now an order that names a ``detection_id`` (version 1) is read
+    as the candidate holding it. An unknown candidate stays without a target, and the
+    gate refuses it."""
     # The target is never the caller's.
     given = {k: v for k, v in params.items() if k not in _INSPECT_TARGET}
     if "detection_id" in given and "candidate_id" not in given:
         given["candidate_id"] = given.pop("detection_id")
+    given["candidate_id"] = await inspections_service.candidate_ref(
+        flow, mission_id, given.get("candidate_id")
+    )
     try:
         asked = InspectDetectionParams.model_validate(given)
     except ValidationError:
@@ -456,6 +466,7 @@ async def _inspect_params(
 
 
 _INSPECT_TARGET: Final = ("lat", "lon", "sigma95_m", "target_radius_m")
+_INSPECT: Final = "inspect_detection"
 
 
 def _explained(
@@ -630,8 +641,9 @@ async def estimate(
     """The gate in phase ``estimate`` (no order is created) plus a rough time and battery."""
     mission = await flow.open_mission_of(mission_id)
     ctx = await flow.gate_context(mission)
-    if skill == "inspect_detection":
+    if skill == _INSPECT:
         params = await _inspect_params(flow, mission_id, params)
+        ctx = await inspections_service.gate_facts(flow, mission, ctx, params)
     req = _gate_request(
         mission,
         command_id=str(new_id()),
@@ -709,6 +721,14 @@ async def _dispatch(
     if params is None:
         await set_status(flow, str(cmd.id), "rejected_by_gate", "SCHEMA_INVALID")
         return
+    if cmd.skill == _INSPECT:
+        # The look starts now: the pilot's click, or the click on the AI's card.
+        by = cmd.issuer_ref if approval is None else str(approval.decided_by)
+        if not await inspections_service.started(flow, mission, cmd, by=by):
+            await set_status(flow, str(cmd.id), "rejected_by_gate", "INSPECT_TARGET_CLOSED")
+            return
+    else:
+        await inspections_service.replaced(flow, mission, cmd)
     spec = flow.registry.get(cmd.skill)
     ref = None
     if approval is not None and spec is not None:
@@ -800,6 +820,8 @@ async def decide(
         mission = await flow.open_mission_of(str(mission.id))
         row = await flow.active_charter_row(mission)
         ctx = await flow.gate_context(mission)
+        if cmd.skill == _INSPECT:
+            ctx = await inspections_service.gate_facts(flow, mission, ctx, cmd.params)
         gate = evaluate(
             _gate_request(
                 mission,

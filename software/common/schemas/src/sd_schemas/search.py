@@ -289,7 +289,9 @@ class CandidateAssessment(SdModel):
         return value
 
 
-DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen"]
+# "inspect" starts a closer look; "resume" ("Fortsätt söka nu") ends the wait after one
+# and sends the drone back to the search.
+DecisionKind = Literal["confirm", "reject", "inspect", "unsure", "reopen", "resume"]
 
 
 class CandidateDecision(SdModel):

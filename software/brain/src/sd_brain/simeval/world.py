@@ -318,9 +318,13 @@ class SimWorld:
         return next((c for c in self.candidates if c.detection_id == detection_id), None)
 
     def look_target(self, candidate_id: str) -> SimCandidate | None:
-        """The candidate a closer look names. The ground finds it through a detection (a
+        """The candidate a closer look names: by its number as the AI does ("K3", the
+        ground translates it), or by id. The ground finds an id through a detection (a
         candidate's id is its first detection's), so a detection's id names it too."""
-        found = next((c for c in self.candidates if c.candidate_id == candidate_id), None)
+        found = next(
+            (c for c in self.candidates if candidate_id in (c.candidate_id, f"K{c.seq}")),
+            None,
+        )
         return found or self.by_detection(candidate_id)
 
     def _look_point(self, c: SimCandidate) -> tuple[float, float]:

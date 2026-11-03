@@ -54,6 +54,8 @@ from sd_schemas.link import (
     ClearanceConfirmation,
     Hello,
     HelloAck,
+    InspectLower,
+    InspectOutcome,
     KeepoutInstall,
     OperatorOverrideNotice,
     OperatorRelease,
@@ -111,6 +113,8 @@ class FakeOnboard:
     alt_rel_home_m: float = 0.0
     active_command_id: Any = None
     progress_pct: float | None = None
+    inspect: Any = None  # a closer look's progress (InspectProgress) in the snapshots
+    looks: list[Any] = field(default_factory=list[Any])  # InspectOutcome and InspectLower
     session: LinkSession | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _tasks: list[asyncio.Future[Any]] = field(default_factory=list[asyncio.Future[Any]])
@@ -174,6 +178,7 @@ class FakeOnboard:
                 "battery_rtl_active": self.battery_rtl_active,
                 "sector_progress": {},
                 "tick_ms_p95": 5.0,
+                "inspect": self.inspect,
             }
         )
 
@@ -272,6 +277,9 @@ class FakeOnboard:
             self.notices.append(body)
             self.stop_latch = False
             self.set_state(ExecutorState.HOLD, hold_reason="operator_released", held_by=None)
+        elif isinstance(body, InspectOutcome | InspectLower):
+            self.looks.append(body)
+            await session.ack(inbound.envelope.msg_id, "done")
 
 
 @dataclass
@@ -367,9 +375,11 @@ class Rig:
             headers=H,
         )
 
-    async def ready_mission(self, half: float = 150.0, **proposal: Any) -> str:
-        """Open, propose (as the pilot, with ``proposal``'s fields), approve: READY with
-        fence and install."""
+    async def ready_mission(
+        self, half: float = 150.0, *, mode: str | None = None, **proposal: Any
+    ) -> str:
+        """Open, propose (as the pilot, with ``proposal``'s fields), approve (in the
+        operation ``mode`` when given): READY with fence and install."""
         mid = await self.open_mission()
         res = await self.panel.post(
             f"/api/v1/missions/{mid}/charters",
@@ -378,7 +388,8 @@ class Rig:
         )
         assert res.status_code == 201, res.text
         charter = res.json()
-        res = await self.approve(str(charter["approval_id"]), charter["version"])
+        extra = {} if mode is None else {"operation_mode": mode}
+        res = await self.approve(str(charter["approval_id"]), charter["version"], **extra)
         assert res.status_code == 200, res.text
         await self.wait_status(mid, "READY", 30)
         await self.wait_snapshot(ExecutorState.PREFLIGHT)

@@ -764,6 +764,22 @@
           ],
           "type": "string"
         },
+        "operation_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "sim",
+                "exercise",
+                "live"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "reason": {
           "anyOf": [
             {
@@ -1704,7 +1720,8 @@
             "reject",
             "inspect",
             "unsure",
-            "reopen"
+            "reopen",
+            "resume"
           ],
           "type": "string"
         },
@@ -5274,7 +5291,7 @@
     },
     "InspectDetectionParams": {
       "additionalProperties": false,
-      "description": "A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).\n\nThe order names the card only. The ground fills in where the candidate is (``lat``,\n``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +\n``sigma95_m``) from its own records, never the AI or the panel; without them the\norder is unresolved. The order gives no height: the drone works its heights out\nonboard from the height floor.\n\n``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a\npoint outside the cylinder from which the main camera sees the target nearly straight\ndown, at most at the charter's ceiling. It is the whole look in ``live`` without the\noverflight permit.",
+      "description": "A closer look at a candidate (version 2: ``candidate_id``; ``sd_schemas.inspect``).\n\nThe order names the card only. The ground fills in where the candidate is (``lat``,\n``lon``), its uncertainty and its cylinder's radius (``PERSON_KEEPOUT_M`` +\n``sigma95_m``) from its own records, never the AI or the panel; without them the\norder is unresolved. The order gives no height: the drone works its heights out\nonboard from the height floor.\n\n``geometry`` is the look from the side (``sd_schemas.keepout.inspect_geometry``): a\npoint outside the cylinder from which the main camera sees the target nearly straight\ndown, at most at the charter's ceiling. It is the whole look in ``live`` without the\noverflight permit. With the charter's ``overflight_allowed`` (sim, exercise, live with\nthe permit) the order goes straight over the candidate, without a height: the drone\nkeeps its own above the height floor (``sd_safety.floor``) and the gate checks that\nfloor instead (R-FLOOR, R-FLOOR-CEIL).",
       "properties": {
         "candidate_id": {
           "format": "uuid",
@@ -10021,7 +10038,8 @@
             "reject",
             "inspect",
             "unsure",
-            "reopen"
+            "reopen",
+            "resume"
           ],
           "type": "string"
         },
