@@ -135,6 +135,7 @@ class TnLook:
     t_order: float = 0.0
     t_yes: float | None = None
     laser: LaserReader | None = None
+    ack: Any = None
     _rounds: dict[int, int] = field(default_factory=dict)
 
     # --- setting up -----------------------------------------------------------------------
@@ -287,8 +288,9 @@ class TnLook:
 
     # --- the pilot ------------------------------------------------------------------------
 
-    async def order(self) -> SkillCommand:
-        """The pilot's "Titta närmare" on the candidate the ground knows (its estimate)."""
+    async def order(self, *, refused_ok: bool = False) -> SkillCommand:
+        """The pilot's "Titta närmare" on the candidate the ground knows (its estimate).
+        Running, or (``refused_ok``) refused or failed onboard (``self.ack``)."""
         f, w = self.f, self.world
         lat, lon = f.plane.latlon(*w.estimate_enu)
         self.t_order = time.monotonic()
@@ -303,7 +305,8 @@ class TnLook:
             },
         )
         ack = await f.stage(cmd, {"running"}, 10)
-        assert ack.stage == "running", ack
+        self.ack = ack
+        assert ack.stage == "running" or refused_ok, ack
         self.cmd = cmd
         return cmd
 
@@ -343,6 +346,31 @@ class TnLook:
         done = self.of("inspect.done")
         assert len(done) == 1, done
         return done[0]
+
+    async def flown(
+        self, answer: str | None = "yes", limit_s: float = 240.0, *, until: Any = None
+    ) -> dict[str, Any] | None:
+        """The look to its end: every "Gå lägre?" answered ``answer`` ("yes", "no", or
+        None: no answer), until the drone waits (its ``inspect.done``), the look is
+        aborted (None), or ``until()`` holds (None)."""
+        f = self.f
+        answered = 0
+        deadline = time.monotonic() + limit_s
+        while time.monotonic() < deadline:
+            offers = self.of("inspect.lower_offer")
+            if answer is not None and len(offers) > answered:
+                answered = len(offers)
+                await (self.yes() if answer == "yes" else self.no())
+            if until is not None and until():
+                return None
+            if self.of("inspect.aborted"):
+                return None
+            if f.ex.hold_reason == "inspect_await":
+                done = self.of("inspect.done")
+                assert len(done) == 1, done
+                return done[0]
+            await asyncio.sleep(0.1)
+        raise AssertionError(f"the look did not end in {limit_s:.0f} s: {self.events[-5:]}")
 
     def snapshots(self) -> list[tuple[float, StateSnapshot]]:
         return [(t, b) for t, b in self.f.inbound if isinstance(b, StateSnapshot)]

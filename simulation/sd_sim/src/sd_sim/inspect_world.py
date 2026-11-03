@@ -333,9 +333,9 @@ class Oracle:
             px = self.px(camera, drone, person)
             if px is None or px < DETECT_MIN_PX:
                 continue
-            rng = random.Random(
+            rng = random.Random(  # noqa: S311 - a simulation
                 f"{self.world.scenario}:{self.world.seed}:{key}:{camera.name}:{person.id}"
-            )  # noqa: S311 - a simulation
+            )
             rng_m = math.hypot(person.east - drone[0], person.north - drone[1], drone[2])
             sigma = NOISE_PER_M * rng_m
             out.append(

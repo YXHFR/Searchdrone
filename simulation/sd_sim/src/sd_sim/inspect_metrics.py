@@ -98,11 +98,11 @@ class InspectMeter:
 
 
 def _px(values: dict[str, float]) -> str:
-    return ", ".join(f"{cam} {px:.0f}" for cam, px in sorted(values.items())) or "–"
+    return ", ".join(f"{cam} {px:.0f}" for cam, px in sorted(values.items())) or "-"
 
 
 def _num(value: float) -> str:
-    return "–" if math.isinf(value) else f"{value:.1f}".replace(".", ",")
+    return "-" if math.isinf(value) else f"{value:.1f}".replace(".", ",")
 
 
 def write_report(run_dir: Path, scenario: str, seed: int, m: InspectMetrics) -> Path:
@@ -118,7 +118,7 @@ def write_report(run_dir: Path, scenario: str, seed: int, m: InspectMetrics) -> 
     if _HEADING not in text:
         text += ("\n" if text else "") + f"{_HEADING}\n\n{_COLUMNS}"
     row = (
-        f"| {scenario} | {seed} | {m.outcome or '–'} | {_num(m.min_clearance_m)} "
+        f"| {scenario} | {seed} | {m.outcome or '-'} | {_num(m.min_clearance_m)} "
         f"| {_num(m.floor_breach_m)} | {_num(m.min_target_horizontal_m)} "
         f"| {_num(m.lowest_above_ground_m)} | {_num(m.inspect_duration_s)} "
         f"| {_px(m.target_px_first_step)} | {_px(m.target_px_last_step)} |\n"
