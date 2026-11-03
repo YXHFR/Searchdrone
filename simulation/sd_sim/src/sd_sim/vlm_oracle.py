@@ -11,6 +11,12 @@ the oracle draws an answer the way a measured (or, for now, modelled) model woul
   the true person, else ``conflict``.
 * the latency: log-normal through the profile's p50 and p95 (milliseconds).
 
+A field's verdict on a known thing is drawn from its own stream, keyed by the seed, the
+thing and the field: the same thing gets the same verdict on that field however many
+assessments ran before it and in what order (that follows the SITL clock). The rates
+hold over seeds and things. The person verdict, the latency and fields of a request
+with no known thing still come from the oracle's shared stream.
+
 It never makes a network call and refuses to start outside the simulator (``SD_SIM=1``):
 an oracle's answers must never pass for a model's on a real search. Its assessments say
 ``engine = "oracle"`` and the profile's id. It has the matching engine's shape
@@ -107,6 +113,7 @@ def load_profile(name_or_path: str | Path = DEFAULT_PROFILE) -> VlmProfile:
 class Truth:
     person: bool  # a real person (anyone)
     target: bool  # the missing person
+    thing: str | None = None  # the simulator's id of what is under the crops, if any
 
 
 class _Request(Protocol):
@@ -138,6 +145,7 @@ class OracleMatcher:
         self.profile = profile or load_profile()
         self.model_id = f"oracle/{self.profile.profile_id}"
         self.truth = truth
+        self.seed = seed
         self.rng = random.Random(seed)  # noqa: S311 - a simulation, not a secret
         self.sleep = sleep  # wait the drawn latency (scenarios); tests do not
 
@@ -149,9 +157,16 @@ class OracleMatcher:
         u = self.rng.random()
         return "yes" if u < yes else "unsure" if u < yes + unsure else "no"
 
-    def draw_field(self, truth: Truth) -> FieldVerdict:
+    def _field_u(self, truth: Truth, key: str | None) -> float:
+        if key is None or truth.thing is None or self.seed is None:
+            return self.rng.random()
+        # str seeds hash with SHA-512: the same on every run (PYTHONHASHSEED plays no part)
+        keyed = random.Random(f"{self.seed}:{truth.thing}:{key}")  # noqa: S311
+        return keyed.random()
+
+    def draw_field(self, truth: Truth, key: str | None = None) -> FieldVerdict:
         rates = self.profile.field
-        u = self.rng.random()
+        u = self._field_u(truth, key)
         if truth.target:
             if u < rates.match_given_true:
                 return "match"
@@ -173,7 +188,7 @@ class OracleMatcher:
         truth = self.truth(req)
         person = self.draw_person(truth)
         keys = [] if req.profile is None else req.profile.field_keys
-        fields = {k: self.draw_field(truth) for k in keys}
+        fields = {k: self.draw_field(truth, k) for k in keys}
         latency = self.draw_latency_ms()
         if self.sleep:
             await asyncio.sleep(latency / 1000)

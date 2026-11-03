@@ -202,7 +202,7 @@ class SearchRun:
             east, north = self.plane.xy(*where)
             t = self.world.nearest(east, north, TRUTH_M)
             if t is not None:
-                return Truth(person=t.person, target=t.target)
+                return Truth(person=t.person, target=t.target, thing=t.thing_id)
         return Truth(person=False, target=False)
 
 
