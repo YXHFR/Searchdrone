@@ -1,16 +1,17 @@
 # Training the person detector (`tools/train`)
 
-This turns two published detectors into person detectors for pictures taken from the
-air. Training runs on your computer's graphics card. You choose the better of the two
+This turns published detectors into person detectors for pictures taken from the
+air. Training runs on your computer's graphics card. You choose the best of them
 with numbers measured on the image bank (`tools/bench`). The pictures, the weights and
 the trained models never go into git or CI: they stay in your data folder
 (`<data_dir>`, set by `just setup-config`).
 
-The two candidates, both Apache-2.0 and both started from their authors' COCO weights:
+The candidates, all Apache-2.0 and all started from their authors' COCO weights:
 
 | Name | What | Size |
 |---|---|---|
 | `yolox_s` | YOLOX-s, Megvii (2021) | 9 M parameters |
+| `yolox_m` | YOLOX-m, Megvii (2021) | 25 M parameters, about 2.8 times slower than `yolox_s` |
 | `damoyolo_s` | DAMO-YOLO-S, Alibaba (2022) | 16 M parameters |
 
 Each is trained on 640 px tiles of the same size and overlap as the drone looks at, made from the image bank's
@@ -42,7 +43,8 @@ home internet line.
    just bench-fetch yes=1
    ```
 
-2. **Download the starting weights** (2–5 minutes, about 250 MB). Without `yes=1` it
+2. **Download the starting weights** (2–5 minutes, about 450 MB; `only=yolox_m` fetches
+   just YOLOX-m's 200 MB). Without `yes=1` it
    only shows what it would download.
 
    ```bash
@@ -128,6 +130,32 @@ home internet line.
    detection is off. Flying goes on. When the variable is not set, no model is
    loaded. The simulator keeps its stand-in detector unless you ask for yours (next
    section).
+
+## The larger YOLOX-m
+
+`yolox_m` is the same network as `yolox_s`, deeper and wider. It is trained, exported
+and measured the same way:
+
+```bash
+just detector-fetch yes=1 only=yolox_m
+just train-detector model=yolox_m epochs=20
+just export-detector model=yolox_m
+just bench-detector model=person_yolox_m part=val
+```
+
+- **Batch 4 by default**, not 8. In a short test on an RTX 3070, batch 4 took about
+  2.1 GB of the card and batch 8 about 3.6 GB, on top of what Windows already used
+  (2.9 GB). Batch 8 fits there, but leaves little room for tiles crowded with people,
+  and running out of memory hours into a run means starting over with `fresh=1`.
+  `batch=8` is yours to try.
+- **It starts from Megvii's COCO YOLOX-m weights.** `init=` with a `yolox_s` run is
+  refused: the layers have other widths, so the weights cannot be moved over.
+- **Slower on the drone.** Megvii's README gives 73.8 GFLOPs per 640 px tile against
+  26.8 for `yolox_s`, so each tile takes roughly 2.8 times as long on the Raspberry Pi 5.
+  Measure it with `just bench-detector` before choosing it; `pick-detector` prefers the
+  faster model when two find people equally well.
+- The ONNX file is about 100 MB (`yolox_s`: 36 MB), under the 128 MB the on-board
+  computer accepts.
 
 ## Go on from a model you already trained
 

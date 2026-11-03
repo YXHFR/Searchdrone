@@ -1,17 +1,19 @@
 """Fine-tune a person detector on the image bank: ``just train-detector model=yolox_s``.
 
-    just train-detector model=yolox_s          # or model=damoyolo_s
+    just train-detector model=yolox_s          # or model=yolox_m, model=damoyolo_s
     just train-detector model=yolox_s simfarm=1   # first a few epochs on the sim farm
     just train-detector model=yolox_s init=<old>/best.pt out=<new folder>   # go on from
                                                   # earlier weights, in a new folder
 
-Keys: ``model`` (yolox_s, damoyolo_s), ``epochs`` (default 20), ``batch`` (default 8,
-fits an 8 GB graphics card), ``sets`` (default heridal,kios,wisard: the fetched ones
-that may be trained on, mixed), ``init`` (a ``best.pt`` of the same model to start from
-instead of the COCO weights; it must lie outside ``out``), ``simfarm`` (1: pre-train on
-the synthetic pictures first, ``simfarm_epochs`` of them, default 3), ``device`` (auto,
-cuda, cpu), ``data``, ``out`` (default ``<data>/train/<model>``), ``limit`` (only the
-first pictures: for trying it out), ``workers`` (picture loaders, default 4), ``seed``,
+Keys: ``model`` (yolox_s, yolox_m, damoyolo_s), ``epochs`` (default 20), ``batch``
+(default 8, 4 for yolox_m: what fits an 8 GB graphics card with room to spare), ``sets`` (default
+heridal,kios,wisard: the fetched ones that may be trained on, mixed), ``init`` (a
+``best.pt`` of the same model to start from instead of the COCO weights; it must lie
+outside ``out``; one of another size, say a yolox_s run for yolox_m, is refused: the
+layers differ in width), ``simfarm`` (1: pre-train on the synthetic pictures first,
+``simfarm_epochs`` of them, default 3), ``device`` (auto, cuda, cpu), ``data``, ``out``
+(default ``<data>/train/<model>``), ``limit`` (only the first pictures: for trying it
+out), ``workers`` (picture loaders, default 4), ``seed``,
 ``balance`` (``sets``, the default: each epoch draws as many tiles from every set, so a
 big set does not drown the others; ``tiles``: every tile once, so a set counts by its
 size; or weights, ``balance=heridal:2,kios:2,kios_carperson:1,seadronessee:1``, naming
@@ -478,7 +480,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = Settings(
             model=model,
             epochs=int(args.get("epochs", "20")),
-            batch=int(args.get("batch", "8")),
+            batch=_int_key(args, "batch", families.FAMILIES[model].batch),
             sets=tuple(s for s in args.get("sets", "heridal,kios,wisard").split(",") if s),
             simfarm_epochs=int(args.get("simfarm_epochs", "3")) if simfarm else 0,
             lr=float(args.get("lr", "0.01")),
@@ -584,9 +586,19 @@ def load_init(net: torch.nn.Module, model: str, path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise BenchError(f"init={path} finns inte.", 2)
     ck: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
-    if ck.get("model") != model or "ema" not in ck:
+    if "ema" not in ck:
         raise BenchError(f"init={path} är inte en best.pt för {model}.", 2)
-    net.load_state_dict(ck["ema"])
+    if ck.get("model") != model:
+        raise BenchError(
+            f"init={path} är tränad som {ck.get('model')}, inte {model}. De är olika "
+            "nätverk (yolox_s och yolox_m har olika bredd) och kan inte ta varandras vikter. "
+            f"Ta bort init= så startar {model} från COCO-vikterna.",
+            2,
+        )
+    try:
+        net.load_state_dict(ck["ema"])
+    except RuntimeError:  # same name, other shapes: never half-loaded
+        raise BenchError(f"init={path} passar inte nätverket {model}.", 2) from None
     trained_on, pretrained_on = seen_by(ck)
     seen: dict[str, Any] = {
         "trained_on": trained_on,

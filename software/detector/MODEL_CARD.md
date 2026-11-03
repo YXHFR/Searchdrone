@@ -21,6 +21,7 @@ one class: person.
 | Name | Network | From | Licence |
 |---|---|---|---|
 | `person_yolox_s` | YOLOX-s | Megvii's COCO weights (YOLOX 0.1.1rc0) | Apache-2.0 |
+| `person_yolox_m` | YOLOX-m (about 2.8 times the arithmetic of YOLOX-s) | Megvii's COCO weights (YOLOX 0.1.1rc0) | Apache-2.0 |
 | `person_damoyolo_s` | DAMO-YOLO-S (TinyNAS L25) | Alibaba's COCO weights | Apache-2.0 |
 | `coco_yolox_s` | YOLOX-s, not retrained | Megvii's published ONNX file, COCO class "person" | Apache-2.0 |
 
@@ -49,7 +50,7 @@ one class: person.
   - Mixed precision on the graphics card, and an EMA of the weights.
   - Flips, 90° turns and brightness changes (seen from above, every way up is a way a
     person lies).
-  - Defaults: 20 epochs, batch 8, which fits in 8 GB.
+  - Defaults: 20 epochs, batch 8 (YOLOX-m: 4), which fits in 8 GB.
 - **Kept epoch.** The one whose lowest dataset AP50 on the `val` tiles is highest, so a
   gain on KIOS never makes up for a loss on HERIDAL (each set's AP50 is printed and kept
   in the manifest).

@@ -231,7 +231,7 @@ def test_a_broken_trained_model_is_a_bench_error(tmp_path: Path) -> None:
 
 def test_the_real_register_is_valid() -> None:
     rows = fw.load_models()
-    assert {r["name"] for r in rows} >= {"yolox_s", "damoyolo_s", "coco_yolox_s"}
+    assert {r["name"] for r in rows} >= {"yolox_s", "yolox_m", "damoyolo_s", "coco_yolox_s"}
 
 
 @pytest.mark.parametrize(
