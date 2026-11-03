@@ -47,9 +47,10 @@ from scenario_rig import (  # pyright: ignore[reportMissingImports]
     sim,
 )
 from test_sc_emergency import (  # pyright: ignore[reportMissingImports]
+    HOLD_S,
     HOME_MODES,
+    STILL_S,
     STOP_ACK_S,
-    stopped_and_holding,
 )
 from test_sc_linkloss import survey_box  # pyright: ignore[reportMissingImports]
 from test_sk_inspect import (  # pyright: ignore[reportMissingImports]
@@ -70,8 +71,35 @@ __all__ = ["fresh_db", "migrated_db", "passwords", "sim"]
 SEEDS = [1, 2, 3]
 TARGET_ENU = (40.0, 60.0)  # a person on the way to P1, inside the charter's area
 JITTER_M = 10.0
-DESCENDING_M = 37.0  # below the start height (40 m): the drone is going down
 RETURN_SLACK_S = 2.0
+SINK_MAX_M = 3.0  # how far the drone may sink after STOP while it brakes a descent
+
+
+async def stopped_and_holding_in_the_descent(sc: Scenario, t0: float) -> float:
+    """SK08's STOP steps for a drone going straight down: BRAKE within its time, still
+    (no speed sideways, the height steady) within 5 s, then within 3 m / 1 m for 20 s.
+    Returns how far it sank after the button."""
+    pressed_alt = sc.tel.alt_rel_home_m
+    await sc.until(lambda: sc.mode() == "BRAKE", 2.0 * STOP_ACK_S, "BRAKE")
+    last = [sc.tel.alt_rel_home_m, time.monotonic()]
+
+    def still() -> bool:
+        now, alt = time.monotonic(), sc.tel.alt_rel_home_m
+        if abs(alt - last[0]) > 0.15:
+            last[:] = [alt, now]
+        return sc.tel.groundspeed_ms < 0.5 and now - last[1] >= 1.0
+
+    await sc.until(still, STILL_S - (time.monotonic() - t0), "still")
+    here = (sc.tel.lat, sc.tel.lon, sc.tel.alt_rel_home_m)
+    await sc.hold_for(
+        HOLD_S,
+        lambda: (
+            distance_m(here[0], here[1], sc.tel.lat, sc.tel.lon) <= 3.0
+            and abs(sc.tel.alt_rel_home_m - here[2]) <= 1.0
+        ),
+        "holds where it stopped",
+    )
+    return pressed_alt - here[2]
 
 
 def target_of(seed: int, salt: str, base: tuple[float, float] = TARGET_ENU) -> tuple[float, float]:
@@ -224,7 +252,8 @@ async def test_tn10_stop_fly_home_and_takeover_during_the_descent(
         await going_down()
         t0 = time.monotonic()
         assert (await sc.press("stop")).status_code == 202
-        await stopped_and_holding(sc, t0)
+        sunk = await stopped_and_holding_in_the_descent(sc, t0)
+        assert sunk <= SINK_MAX_M, sunk
         look = await ended(sc)
         assert (look["outcome"], look["detail"]) == ("aborted", "stop"), look
         assert await card_state(sc, cid) == "ready"

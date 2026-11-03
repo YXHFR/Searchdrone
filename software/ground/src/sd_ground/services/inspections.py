@@ -545,7 +545,15 @@ async def decided(flow: MissionFlow, mission: Mission, candidate_id: str, decisi
 
 
 async def on_order_end(flow: MissionFlow, cmd: Command, status: str, reason: str | None) -> None:
-    """The look's order ended before a decision (``commands.set_status``)."""
+    """The look's order ended before a decision (``commands.set_status``).
+
+    Superseded with a code, the drone dropped the look itself (STOP, a takeover, a limit,
+    a cylinder: ``ONB_CONTROL_HELD``, ``L-BATT`` ...), not for another order: its
+    ``inspect.aborted`` that follows says why (``aborted`` with the reason), and the tick
+    ends a look whose report never comes. Another order's replacement comes uncoded and
+    is closed by ``replaced`` as the drone takes the new order."""
+    if status == "superseded" and reason is not None:
+        return
     outcome = _ORDER_END.get(status)
     look = None if outcome is None else await _open(flow, str(cmd.id))
     if look is not None and outcome is not None:

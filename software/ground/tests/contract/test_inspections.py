@@ -285,6 +285,23 @@ async def test_an_aborted_look(r: Rig, reason: str, outcome: str) -> None:
     assert (await looks(r, mid))[0]["outcome"] == outcome
 
 
+async def test_a_look_the_drone_drops_itself_ends_with_its_reason(r: Rig) -> None:
+    """STOP during a look (TN10): the drone answers the look's order "superseded"
+    (``ONB_CONTROL_HELD``) before its ``inspect.aborted``. That is no other order
+    replacing the look: the look ends aborted, with the drone's reason."""
+    mid, cid, sent = await started(r)
+    assert r.onboard.session is not None
+    await r.onboard.session.ack(sent.command_id, "superseded", reason_codes=["ONB_CONTROL_HELD"])
+    await wait_order_status(r, mid, str(sent.command_id), "superseded")
+    assert (await looks(r, mid))[0]["outcome"] is None
+    await event(
+        r, "inspect.aborted", command_id=str(sent.command_id), candidate_id=cid, reason="stop"
+    )
+    (look,) = await looks(r, mid)
+    assert (look["outcome"], look["detail"]) == ("aborted", "stop"), look
+    assert (await card(r.panel, cid))["card"]["state"] == "ready"
+
+
 async def test_another_order_replaces_the_look(r: Rig) -> None:
     mid, cid, sent = await started(r)
     await event(r, "inspect.done", **done(sent))
