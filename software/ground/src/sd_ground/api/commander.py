@@ -600,8 +600,12 @@ def to_commander(event: BusEvent) -> dict[str, Any] | None:
             return None
         kind, body = "event.candidate", wake
     elif event.type == "candidate.decided":
-        # A person's decision, without who made it or their note.
+        # A person's decision, without who made it or their note. An observer's mark
+        # during a look is only a note for the pilot (owner decision: during a look only
+        # the pilot moves the drone), so it never wakes the AI as a decision.
         decision = d.get("decision") or {}
+        if decision.get("noted"):
+            return None
         kind = "event.candidate_decided"
         body = {
             "candidate_id": d.get("candidate_id"),

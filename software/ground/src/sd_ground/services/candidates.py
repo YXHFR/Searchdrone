@@ -499,6 +499,9 @@ async def decide(
         "rev": d.rev,
         "decision_id": d.decision_id,
         "by": who.issuer_ref,
+        # An observer's mark during a look: a note for the pilot, not a decision (the
+        # candidate did not move, nothing went onboard, the AI is not told).
+        "noted": not pilot and d.before == _S.INSPECTING.value,
     }
     log.info("candidate.decided", mission_id=mission_id, **payload)
     flow.g.add_event(

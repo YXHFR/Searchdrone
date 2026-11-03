@@ -790,7 +790,8 @@ async def get_permit(g: G, _: Observer) -> Permit:
 @router.put("/permit", response_model=Permit)
 async def put_permit(body: Permit, g: G, who: Interactive) -> Permit:
     """The pilot changes the permit until the ground restarts (the config's ``[permit]``
-    is the lasting setting). It counts from the next charter approval."""
+    is the lasting setting). Granting it counts from the next charter approval, revoking
+    it at once: no look starts until a new charter is approved."""
     return inspections_service.set_permit(_flow(g), body, by=who.issuer_ref)
 
 
@@ -810,7 +811,8 @@ async def post_candidate_decision(
     reopen are the pilot's. Confirming needs a large view from the same session first
     (409 ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.
     ``inspect`` sends the drone for a closer look (409 ``INSPECT_REFUSED`` with the
-    gate's codes in ``errors`` when it may not); a decision during the look ends it."""
+    gate's codes in ``errors`` when it may not). During the look only the pilot's
+    decision ends it and reaches the drone; an observer's is a note for the pilot."""
     return jsonable_encoder(await candidates_service.decide(_flow(g), candidate_id, body, who))
 
 

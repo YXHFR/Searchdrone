@@ -313,6 +313,9 @@ async def submit(
         gate = _explained(skill, params, ctx, evaluate(req, ctx))
         if skill == _INSPECT:
             gate = inspections_service.refuse_revoked(flow, ctx, gate)
+        gate = await inspections_service.refuse_during_look(
+            flow, str(mission.id), skill, issuer_kind, gate
+        )
         if issuer_kind == "brain" and skill == "follow_path" and gate.decision != "REJECT":
             gate = await _drawn_path_check(flow, mission_id, params) or gate
         now = flow.now()
@@ -668,6 +671,7 @@ async def estimate(
     gate = _explained(skill, params, ctx, evaluate(req, ctx))
     if skill == _INSPECT:
         gate = inspections_service.refuse_revoked(flow, ctx, gate)
+    gate = await inspections_service.refuse_during_look(flow, str(mission.id), skill, "brain", gate)
     duration = None
     v = ctx.vehicle
     lat, lon = params.get("lat"), params.get("lon")

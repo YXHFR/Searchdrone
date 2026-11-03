@@ -23,6 +23,10 @@ The permit for overflight in ``live`` (``permit``) is the ground's; a charter ap
 afterwards carries it as ``overflight_allowed``. Revoking it counts at once: until the
 next charter no look starts (``refuse_revoked``), since the drone's charter still allows
 overflight.
+
+During a look only the pilot moves the drone (owner decision): the AI's orders that would
+take the drone from it are refused (``refuse_during_look``), and an observer's mark on the
+candidate is a note for the pilot that neither ends the look nor reaches the AI.
 """
 
 from __future__ import annotations
@@ -82,6 +86,7 @@ __all__ = [
     "overflight_allowed",
     "overflight_revoked",
     "permit",
+    "refuse_during_look",
     "refuse_revoked",
     "replaced",
     "set_permit",
@@ -248,6 +253,34 @@ def refuse_revoked(flow: MissionFlow, ctx: GateContext, gate: GateDecision) -> G
             "details": {**gate.details, "permit_revoked": True},
             "required_confirmations": [],
         }
+    )
+
+
+# The AI's orders that leave a look alone: more pictures of the target, a look (one at a
+# time, R-INSPECT-ONE), flying home, and the skills carried out on the ground.
+_AI_DURING_LOOK: Final = frozenset({*_KEEPS_LOOK, "return_home", "report", "mark_location"})
+
+
+async def refuse_during_look(
+    flow: MissionFlow, mission_id: str, skill: str, issuer_kind: str, gate: GateDecision
+) -> GateDecision:
+    """Owner decision: during a look only the pilot moves the drone. The AI's order that
+    would take the drone from it onboard (every order the drone takes replaces the look) is
+    refused (``INSPECT_BUSY``) while a look of the mission is open. Its flying home is not,
+    and STOP / FLY HOME never pass the gate. The pilot's click on an AI card made before
+    the look is the pilot's own order (``commands.decide`` does not ask here)."""
+    if issuer_kind != "brain" or skill in _AI_DURING_LOOK or gate.decision == "REJECT":
+        return gate
+    busy = next((x for x in await _repo(flow).open_looks() if x.mission_id == mission_id), None)
+    if busy is None:
+        return gate
+    return GateDecision(
+        decision="REJECT",
+        reason_codes=["INSPECT_BUSY"],
+        rule_ids=["R-INSPECT-PILOT"],
+        message_sv="En titt pågår. Under titten styr bara piloten drönaren.",
+        details={"inspect_command_id": busy.command_id},
+        side="ground",
     )
 
 
@@ -517,16 +550,29 @@ async def on_order_end(flow: MissionFlow, cmd: Command, status: str, reason: str
         await _end(flow, look, outcome, detail=reason)
 
 
+async def _sent_at(flow: MissionFlow, cmd: Command) -> dt.datetime:
+    """When the order went to the drone: at once when the gate said yes, or on the click
+    on its card."""
+    if cmd.approval_id is not None:
+        card = await flow.repo.approval(str(cmd.approval_id))
+        if card is not None and card.decided_at is not None:
+            return card.decided_at
+    return cmd.created_at
+
+
 async def replaced(flow: MissionFlow, cmd: Command) -> None:
     """Another order is in force on the drone (it took it: ``accepted``, ``running`` or
     ``done``): that order replaces the look. Not before: an order the link loses or the
     drone refuses leaves the drone looking, and the look stays open so that the pilot's
-    decision still reaches it (``decided``)."""
+    decision still reaches it (``decided``). Only an order sent after the look started:
+    a late answer to one sent before it (the link's round trip) is about an order the
+    look itself replaced onboard."""
     if cmd.skill in _KEEPS_LOOK:
         return
     mid = str(cmd.mission_id)
+    sent = await _sent_at(flow, cmd)
     for row in await _repo(flow).open_looks():
-        if row.mission_id == mid:
+        if row.mission_id == mid and sent >= row.started_at:
             look = await _open(flow, row.command_id)
             if look is not None:
                 await _end(flow, look, "resumed_by_pilot", detail=cmd.skill)

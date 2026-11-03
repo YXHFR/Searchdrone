@@ -160,3 +160,25 @@ def test_a_decision_reaches_the_ai_without_who_or_the_note() -> None:
         "sigma95_m": 4.1,
     }
     assert "operator:pilot" not in str(out)
+
+
+def test_an_observers_mark_during_a_look_does_not_reach_the_ai() -> None:
+    """Owner decision: during a look only the pilot moves the drone. An observer's mark is
+    a note for the pilot (``noted``): the AI must not read it as a decision and act."""
+    for decision in ("confirm", "reject", "unsure"):
+        noted = {
+            "candidate_id": "0192f49e-2000-7000-8000-000000000003",
+            "seq": 3,
+            "decision": decision,
+            "before": "inspecting",
+            "after": "inspecting",
+            "rev": 3,
+            "decision_id": "0192f49e-4000-7000-8000-000000000001",
+            "by": "observer:olle",
+            "noted": True,
+        }
+        data = card(state="inspecting") | {"decision": noted}
+        assert to_commander(event("candidate.decided", data)) is None
+        pilots = noted | {"after": "ready", "by": "operator:pilot", "noted": False}
+        out = to_commander(event("candidate.decided", card(state="ready") | {"decision": pilots}))
+        assert out is not None and out["type"] == "event.candidate_decided"

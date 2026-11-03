@@ -256,6 +256,33 @@ describe("startLive", () => {
     stop();
   });
 
+  it("an observer's confirm during a look is a note for the pilot, not a confirmed find", async () => {
+    useUiStore.setState({ toasts: [], eventLog: [] });
+    const stop = startLive("sim-01");
+    await settle();
+    const decided = (state: string, noted: boolean) =>
+      send({
+        seq: null,
+        topic: "candidates",
+        type: "candidate.decided",
+        vehicle_id: "sim-01",
+        data: {
+          candidate_id: "c3",
+          seq: 3,
+          rev: 2,
+          state,
+          decision: { decision: "confirm", noted },
+        },
+      });
+    decided("inspecting", true);
+    decided("confirmed", false);
+    expect(useUiStore.getState().toasts.map((x) => x.text)).toEqual([
+      "K3 markerad som bekräftad under titten. Piloten bestämmer.",
+      "Fynd bekräftat: K3",
+    ]);
+    stop();
+  });
+
   it("tells the pilot when person detection is off on board", async () => {
     useUiStore.setState({ toasts: [], eventLog: [] });
     const stop = startLive("sim-01");

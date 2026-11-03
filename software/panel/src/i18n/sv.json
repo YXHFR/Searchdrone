@@ -900,6 +900,7 @@
       "cancel": "Avbryt",
       "reopen": "Öppna igen"
     },
-    "toastConfirmed": "Fynd bekräftat: K{{seq}}"
+    "toastConfirmed": "Fynd bekräftat: K{{seq}}",
+    "toastNoted": "K{{seq}} markerad som bekräftad under titten. Piloten bestämmer."
   }
 }

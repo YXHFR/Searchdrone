@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,8 +31,14 @@ from test_candidate_decisions import (  # pyright: ignore[reportMissingImports]
 )
 from test_candidates import person as seen_at  # pyright: ignore[reportMissingImports]
 from test_inspect_order import flying_with  # pyright: ignore[reportMissingImports]
-from test_orders import order, wait_order_status  # pyright: ignore[reportMissingImports]
+from test_orders import (  # pyright: ignore[reportMissingImports]
+    driver,
+    no_rate_limit,
+    order,
+    wait_order_status,
+)
 
+from sd_ground.api.commander import to_commander
 from sd_ground.services import commands, inspections
 from sd_schemas.base import new_id
 from sd_schemas.inspect import AWAIT_DECISION_S, InspectProgress
@@ -288,6 +295,103 @@ async def test_an_order_the_drone_refuses_leaves_the_look_open(r: Rig) -> None:
     assert isinstance(told, InspectOutcome) and told.outcome == "rejected"
 
 
+async def test_a_late_answer_to_an_order_sent_before_the_look_leaves_it_open(r: Rig) -> None:
+    """The drone's answer to an order sent before the look arrives after the look started
+    (the link's round trip): that order is one the look replaced onboard, so the look
+    stays open and the pilot's decision still reaches the drone. An order sent after the
+    look started still replaces it."""
+    r.onboard.order_outcome = "running"
+    det = seen_at(r, 0, 100)
+    mid, _ = await flying_with(r, det, mode="exercise")
+    cid = str(det.detection_id)
+    r.onboard.order_outcome = "silent"
+    hold = await r.panel.post(
+        f"/api/v1/missions/{mid}/commands",
+        json={"client_command_id": str(new_id()), "skill": "hold", "params": {}},
+        headers=H,
+    )
+    assert hold.status_code == 201, hold.text
+    hold_id = hold.json()["command"]["id"]
+    await r.until(lambda: any(str(o.command_id) == hold_id for o in r.onboard.orders), 5, "hold")
+    r.onboard.order_outcome = "running"
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, cid, "inspect")
+        assert res.status_code == 200, res.text
+    await r.until(lambda: any(o.skill == "inspect_detection" for o in r.onboard.orders), 5, "sent")
+    assert r.onboard.session is not None
+    for stage in ("accepted", "running", "done"):
+        await r.onboard.session.ack(uuid.UUID(hold_id), stage)
+        await wait_order_status(r, mid, hold_id, stage)
+    (look,) = await looks(r, mid)
+    assert look["outcome"] is None
+    assert (await card(r.panel, cid))["card"]["state"] == "inspecting"
+    # An order sent now replaces the look once the drone takes it.
+    again = await r.panel.post(
+        f"/api/v1/missions/{mid}/commands",
+        json={"client_command_id": str(new_id()), "skill": "hold", "params": {}},
+        headers=H,
+    )
+    assert again.status_code == 201, again.text
+
+    async def ended() -> bool:
+        return (await looks(r, mid))[0]["outcome"] is not None
+
+    await r.until(ended, 5, "the look replaced by the order sent after it")
+    assert (await looks(r, mid))[0]["outcome"] == "resumed_by_pilot"
+
+
+async def test_during_a_look_the_ai_does_not_move_the_drone(r: Rig) -> None:
+    """Owner decision: during a look only the pilot moves the drone. The ground refuses
+    the AI's orders that would take the drone from the look (``INSPECT_BUSY``), in the
+    estimate too; flying home and the skills on the ground still pass. Once the pilot has
+    decided, the AI's orders go again."""
+    mid, cid, sent = await started(r)
+    await event(r, "inspect.done", **done(sent))
+    d = driver(r, mid)
+    lat, lon = r.at(0.0, 60.0)
+    goto = {"lat": lat, "lon": lon, "alt_m": 40, "speed_ms": 6}
+    sent_before = len(r.onboard.orders)
+    for skill, params in (("goto", goto), ("hold", {})):
+        out = await order(r, d, skill, params, want="REJECT")
+        assert out["reason_codes"] == ["INSPECT_BUSY"], out
+    situation = await d.situation()
+    body = {
+        "command_id": str(new_id()),
+        "skill": "goto",
+        "params": goto,
+        "rationale_sv": "Hur långt?",
+        "in_reply_to": None,
+        "backend": "scripted",
+        "ai_config_hash": "script-driver",
+        "based_on": {
+            "state_epoch": situation["snapshot_state_epoch"],
+            "state_seq": situation["snapshot_state_seq"],
+        },
+        "charter_version": situation["charter"]["version"],
+    }
+    res = await r.commander.post(f"/commander/v1/missions/{mid}/estimate", json=body)
+    assert res.status_code == 200, res.text
+    assert res.json()["gate"]["reason_codes"] == ["INSPECT_BUSY"], res.text
+    await order(r, d, "report", {"text_sv": "Väntar på piloten."})
+    (look,) = await looks(r, mid)
+    assert look["outcome"] is None
+    assert len(r.onboard.orders) == sent_before
+    async with person(r, "pilot", "kalle") as pilot:
+        res = await decide(pilot, cid, "reject")
+        assert res.status_code == 200, res.text
+    assert (await looks(r, mid))[0]["outcome"] == "rejected"
+    await order(r, d, "goto", goto)
+
+
+async def test_during_a_look_the_ai_may_still_fly_home(r: Rig) -> None:
+    mid, _, sent = await started(r)
+    await event(r, "inspect.done", **done(sent))
+    no_rate_limit(r)
+    res = await driver(r, mid).order("return_home", {})
+    assert res.status_code == 201, res.text
+    assert res.json()["decision"] != "REJECT", res.text
+
+
 @pytest.mark.parametrize("decision", ["unsure", "reject", "confirm"])
 async def test_during_a_look_an_observers_decision_only_tells_the_pilot(
     r: Rig, decision: str
@@ -309,6 +413,15 @@ async def test_during_a_look_an_observers_decision_only_tells_the_pilot(
     assert not r.onboard.looks
     chat = (await r.panel.get(f"/api/v1/missions/{mid}/chat")).json()["items"]
     assert any("Piloten bestämmer" in m["text"] for m in chat)
+    # A note for the pilot, never a decision for the AI.
+    bus = r.g.bus.replay(r.g.bus.server_epoch, 0) or []
+    (mark,) = [
+        e
+        for e in bus
+        if e.type == "candidate.decided" and e.data["decision"]["decision"] == decision
+    ]
+    assert mark.data["decision"]["noted"] is True
+    assert to_commander(mark) is None
     async with person(r, "pilot", "kalle") as pilot:
         res = await decide(pilot, cid, "unsure")
         assert res.status_code == 200, res.text
@@ -447,6 +560,26 @@ async def test_revoking_the_permit_stops_overflight_at_once(r: Rig) -> None:
         r.flow, mission, ctx, {"candidate_id": str(det.detection_id)}
     )
     assert facts.suspended_keepout_ids == ()
+
+
+async def test_a_permit_revoked_just_before_the_order_goes_stops_it(r: Rig) -> None:
+    """The gate said yes under the permit, which the pilot revoked before the order went:
+    the look does not start and the order is not sent."""
+    good = {"specific_category_ref": "OP-123", "allow_overflight_live": True}
+    assert (await r.panel.put("/api/v1/permit", json=good, headers=H)).status_code == 200
+    det = seen_at(r, 0, 100)
+    mid, d = await flying_with(r, det, mode="live")
+    out = await order(r, d, "inspect_detection", {"candidate_id": "K1"}, want="PENDING_APPROVAL")
+    assert (await r.panel.put("/api/v1/permit", json={}, headers=H)).status_code == 200
+    mission = await r.flow.open_mission_of(mid)
+    cmd = await r.flow.repo.command(out["command_id"])
+    assert cmd is not None
+    await commands._dispatch(r.flow, mission, cmd, approval=None)  # pyright: ignore[reportPrivateUsage]
+    cmd = await r.flow.repo.command(out["command_id"])
+    assert cmd is not None and str(cmd.status) == "rejected_by_gate"
+    assert cmd.status_reason == "OVERFLIGHT_NOT_ALLOWED"
+    assert not [o for o in r.onboard.orders if o.skill == "inspect_detection"]
+    assert await looks(r, mid) == []
 
 
 async def test_a_candidate_closed_just_before_the_order_goes_stops_it(r: Rig) -> None:

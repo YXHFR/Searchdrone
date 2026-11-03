@@ -96,7 +96,7 @@ class FakeOnboard:
     held_by: str | None = None
     stop_latch: bool = False
     accept_charters: bool = True
-    order_outcome: str = "done"  # or "running" (stays), "rejected"
+    order_outcome: str = "done"  # or "running" (stays), "rejected", "silent" (no ack)
     reject_gate: Any = None  # with "rejected": the onboard gate's own decision
     battery_rtl_active: bool = False  # the onboard battery rule flies home
     rc_link: bool | None = None  # PF12 (None: not required, as in SITL and CI)
@@ -252,6 +252,8 @@ class FakeOnboard:
             await session.ack(inbound.envelope.msg_id, "done")
         elif isinstance(body, SkillCommand):
             self.orders.append(body)
+            if self.order_outcome == "silent":
+                return  # the answer is late: the test acks it itself
             if self.order_outcome == "rejected":
                 codes = (
                     ["ONB_STALE_ORDER"]

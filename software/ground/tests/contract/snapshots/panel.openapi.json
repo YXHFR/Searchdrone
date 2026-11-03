@@ -6486,7 +6486,7 @@
     },
     "/api/v1/candidates/{candidate_id}/decision": {
       "post": {
-        "description": "Only a person in the panel decides (never the AI, the search service or a script\noutside the test rig). Observers confirm, reject and mark unsure; inspect, resume and\nreopen are the pilot's. Confirming needs a large view from the same session first\n(409 ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.\n``inspect`` sends the drone for a closer look (409 ``INSPECT_REFUSED`` with the\ngate's codes in ``errors`` when it may not); a decision during the look ends it.",
+        "description": "Only a person in the panel decides (never the AI, the search service or a script\noutside the test rig). Observers confirm, reject and mark unsure; inspect, resume and\nreopen are the pilot's. Confirming needs a large view from the same session first\n(409 ``NOT_VIEWED``); a card older than the candidate is 409 ``SUPERSEDED``.\n``inspect`` sends the drone for a closer look (409 ``INSPECT_REFUSED`` with the\ngate's codes in ``errors`` when it may not). During the look only the pilot's\ndecision ends it and reaches the drone; an observer's is a note for the pilot.",
         "operationId": "post_candidate_decision_api_v1_candidates__candidate_id__decision_post",
         "parameters": [
           {
@@ -8743,7 +8743,7 @@
         "summary": "Get Permit"
       },
       "put": {
-        "description": "The pilot changes the permit until the ground restarts (the config's ``[permit]``\nis the lasting setting). It counts from the next charter approval.",
+        "description": "The pilot changes the permit until the ground restarts (the config's ``[permit]``\nis the lasting setting). Granting it counts from the next charter approval, revoking\nit at once: no look starts until a new charter is approved.",
         "operationId": "put_permit_api_v1_permit_put",
         "requestBody": {
           "content": {
