@@ -194,6 +194,7 @@ def follow_ground_profile(b: Brain, profile: str | None) -> None:
 
 async def _stream(b: Brain) -> None:
     async def resync() -> None:
+        b.loop.stream_resynced()
         mission = await b.ground.active_mission(b.cfg.ground.vehicle_id)
         await b.loop.set_mission(mission)
 
