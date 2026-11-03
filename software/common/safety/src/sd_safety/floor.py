@@ -12,9 +12,11 @@ For a point P, every 1 m cell within ``FLOOR_TREE_RADIUS_M`` counts with its tre
 - the map's height + ``FLOOR_UNDERESTIMATE_M`` + growth since the scan
   (``FLOOR_GROWTH_M_PER_Y`` a year, at most ``FLOOR_GROWTH_MAX_M``, which an unknown scan
   year also gets);
-- ``FLOOR_UNKNOWN_TREE_M`` + the same margins (the most growth) where the map has no
-  height (-1), the scan is older than ``FLOOR_SCAN_MAX_AGE_Y`` or the cell is outside
-  the pack.
+- at least ``FLOOR_UNKNOWN_TREE_M`` + the same margins (the most growth) where the map
+  has no height (any value below 0), the cell has no ground height, the scan is older
+  than ``FLOOR_SCAN_MAX_AGE_Y`` or dated after the flight (a data or clock error), or
+  the cell is outside the pack. Unknown is a minimum, not a replacement: where such a
+  cell still has a height, that height + the margins counts when it is higher.
 
 The top of the highest such tree, above the ground at P, is ``tree_m``. A tree on ground
 higher than P's counts from its own ground, so a slope never hides one; on flat ground
@@ -27,16 +29,18 @@ this is exactly the owner's "highest tree within 10 m". Then:
   take it below the map's. Its reading is of the ground under the drone: it counts at the
   point :func:`floor_at` is asked about (the caller passes it only for the drone's own
   position) and, along a path, within ``LASER_VALID_RADIUS_M`` of the path's first point
-  (where the drone is). A laser lost during the look counts as none (``laser_lost``);
+  (where the drone is). A laser lost during the look counts as none (``laser_lost``), and
+  so does a reading that is not a finite number;
 - within ``POWERLINE_ZONE_M`` of a known line, horizontally, the floor is the height the
-  look started at;
+  look started at (a line of one point is a pole, with the zone around it);
 - the auto floor (no pilot's click) is also at least ``AUTO_FLOOR_ABOVE_GROUND_M`` above
   the ground at P, and never below the lowest floor.
 
 The most cautious value always wins. Without a pack, or at a point outside it, the floor
 is the height the look started at (``no_map``): the drone looks but does not come down.
 The floors are never lowered to fit the charter's ceiling: a floor above it is the
-caller's ``FLOOR_ABOVE_CEILING``.
+caller's ``FLOOR_ABOVE_CEILING``. A point or start height that is not a finite number is
+refused (``ValueError``), since ``max`` would quietly drop it.
 
 The pack and its loader are in :mod:`sd_safety.floor_pack` (re-exported here).
 """
@@ -69,7 +73,6 @@ from sd_safety.constants import (
     POWERLINE_ZONE_M,
 )
 from sd_safety.floor_pack import (
-    CHM_UNKNOWN_DM,
     DTM_NODATA_CM,
     SCAN_YEAR_UNKNOWN,
     FloorPack,
@@ -148,6 +151,7 @@ def floor_at(
     the drone, else None; ``laser_lost``: it was confirmed during this look and has
     stopped answering. ``start_alt_amsl_m``: the height the look started at;
     ``extra_lines``: power lines the pilot drew, on top of the pack's."""
+    _finite(lat=lat, lon=lon, start_alt_amsl_m=start_alt_amsl_m)
     if pack is None:
         return _no_map(start_alt_amsl_m)
     lines = _all_lines(pack, extra_lines)
@@ -171,6 +175,7 @@ def floor_along(
     counts within ``LASER_VALID_RADIUS_M`` of ``path[0]``."""
     if not path:
         raise ValueError("a path has at least one point")
+    _finite(start_alt_amsl_m=start_alt_amsl_m)
     if pack is None:
         return _no_map(start_alt_amsl_m)
     lines = _all_lines(pack, extra_lines)
@@ -198,6 +203,12 @@ def floor_along(
 
 
 # --- the computation ------------------------------------------------------------------------
+
+
+def _finite(**values: float) -> None:
+    for name, value in values.items():
+        if not math.isfinite(value):
+            raise ValueError(f"{name} is not a finite number: {value}")
 
 
 def _no_map(start_alt_amsl_m: float) -> FloorResult:
@@ -250,8 +261,11 @@ def _floor_xy(
 
 def _laser_floor(laser: LaserState | None, laser_xy: Xy, p: Xy) -> float | None:
     """The floor the laser sets at P, or None when it does not count there: none fitted,
-    not confirmed, or it saw the ground too far from P."""
+    not confirmed, a reading that is not a finite number (``max`` would drop it and keep
+    the map's lower floor), or it saw the ground too far from P."""
     if laser is None or laser.surface_amsl_m is None or not laser.confirmed:
+        return None
+    if not (math.isfinite(laser.surface_amsl_m) and math.isfinite(laser.min_range_m)):
         return None
     if math.dist(p, laser_xy) > LASER_VALID_RADIUS_M:
         return None
@@ -284,18 +298,22 @@ def _trees(pack: FloorPack, p: Xy, flight_year: int) -> tuple[float, float, bool
     chm = pack.chm_dm[ri, ci].astype(np.float64)
     year = pack.scan_year[ri // pack.scan_cell_m, ci // pack.scan_cell_m].astype(np.int64)
     has_ground = dtm != DTM_NODATA_CM
+    # CHM_UNKNOWN_DM (-1) is the format's "unknown"; any other value below 0 is no height
+    # either, so a writer's other nodata value can never count as a negative tree.
+    measured = chm >= 0
+    dated = year != SCAN_YEAR_UNKNOWN
     age = flight_year - year
-    known = (
-        has_ground
-        & (chm != CHM_UNKNOWN_DM)
-        & ((year == SCAN_YEAR_UNKNOWN) | (age <= FLOOR_SCAN_MAX_AGE_Y))
-    )
+    # A scan dated after the flight is a data or clock error: no scan, not a fresh one.
+    in_date = ~dated | ((age >= 0) & (age <= FLOOR_SCAN_MAX_AGE_Y))
+    known = has_ground & measured & in_date
     growth = np.where(
-        year == SCAN_YEAR_UNKNOWN,
+        known & dated,
+        np.minimum(age * FLOOR_GROWTH_M_PER_Y, FLOOR_GROWTH_MAX_M),
         FLOOR_GROWTH_MAX_M,
-        np.clip(age * FLOOR_GROWTH_M_PER_Y, 0.0, FLOOR_GROWTH_MAX_M),
     )
-    height = np.where(known, chm / 10.0 + FLOOR_UNDERESTIMATE_M + growth, _UNKNOWN_TOP_M)
+    own = np.where(measured, chm / 10.0 + FLOOR_UNDERESTIMATE_M + growth, -math.inf)
+    # Unknown is 30 m forest at the least: a height the map still has counts when higher.
+    height = np.where(known, own, np.maximum(own, _UNKNOWN_TOP_M))
     # A tree stands on its own ground when that is higher than P's; a cell without a
     # ground height (or outside the pack) on the highest ground in reach.
     highest = max(ground, float(dtm[has_ground].max()) / 100.0)

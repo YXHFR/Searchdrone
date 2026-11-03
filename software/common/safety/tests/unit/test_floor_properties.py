@@ -1,9 +1,9 @@
 """Property tests for the height floor (spec "Titta närmare" §17, acceptance tests 2 and 3).
 
-Random small packs (trees, holes, slopes, old and unknown scans), random points and
-random laser states. The check is independent of the module: the trees within 10 m are
-found here by cell centre (a subset of the cells the module counts) with the owner's
-margins written out again.
+Random small packs (trees, other nodata values, slopes, old, unknown and future scans),
+random points and random laser states. The check is independent of the module: the
+trees within 10 m are found here by cell centre (a subset of the cells the module
+counts) with the owner's margins written out again.
 """
 
 from __future__ import annotations
@@ -25,11 +25,13 @@ FLIGHT = date(2026, 6, 1)
 
 @st.composite
 def packs(draw: st.DrawFn) -> FloorPack:
-    chm = draw(arrays(np.int16, (SIZE, SIZE), elements=st.integers(-1, 400)))
+    heights = st.one_of(st.integers(-1, 400), st.sampled_from([-2, -50, -32768]))
+    chm = draw(arrays(np.int16, (SIZE, SIZE), elements=heights))
     slope = draw(st.floats(-0.5, 0.5))
     ground = 100 * (200 + slope * np.arange(SIZE, dtype=np.float64))[None, :].repeat(SIZE, 0)
     dtm = np.round(ground).astype(np.int32)
-    years = draw(arrays(np.uint16, (2, 2), elements=st.sampled_from([0, 2010, 2016, 2019, 2026])))
+    scans = st.sampled_from([0, 2010, 2016, 2019, 2026, 2030])
+    years = draw(arrays(np.uint16, (2, 2), elements=scans))
     return FloorPack(
         name="random",
         sha256="0" * 64,
@@ -61,7 +63,8 @@ points = st.tuples(st.floats(-19.9, 19.9), st.floats(-19.9, 19.9))
 
 def spec_trees(pack: FloorPack, east: float, north: float) -> tuple[float, bool]:
     """The adjusted highest tree within 10 m (by cell centre), and whether an unknown
-    cell is among them: the owner's margins written out again."""
+    cell is among them: the owner's margins written out again. Unknown (no height, a scan
+    too old or after the flight, outside the pack) is 30 m forest at the least."""
     rows, cols = pack.dtm_cm.shape
     best, unknown = 0.0, False
     for r in range(-12, rows + 12):
@@ -72,8 +75,9 @@ def spec_trees(pack: FloorPack, east: float, north: float) -> tuple[float, bool]
             inside = 0 <= r < rows and 0 <= c < cols
             year = int(pack.scan_year[r // 20, c // 20]) if inside else 0
             height = int(pack.chm_dm[r, c]) if inside else -1
-            if height < 0 or (year != 0 and FLIGHT.year - year > 10):
-                best, unknown = max(best, 30 + 2 + 5), True
+            if height < 0 or (year != 0 and not 0 <= FLIGHT.year - year <= 10):
+                own = height / 10 + 2 + 5 if height >= 0 else 0.0
+                best, unknown = max(best, 30 + 2 + 5, own), True
             else:
                 growth = 5.0 if year == 0 else min(5.0, max(0.0, 0.5 * (FLIGHT.year - year)))
                 best = max(best, height / 10 + 2 + growth)

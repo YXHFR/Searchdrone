@@ -29,7 +29,7 @@ ALLOWED_IMPORTS = {
     "numpy.typing",
 }
 # The one module that reads files: the height floor's map pack, loaded before a flight.
-READS_FILES = {"floor_pack.py": {"hashlib", "json", "pathlib", "tomllib"}}
+READS_FILES = {"floor_pack.py": {"hashlib", "io", "json", "pathlib", "tomllib"}}
 
 
 def test_evaluate_pure(monkeypatch: pytest.MonkeyPatch) -> None:

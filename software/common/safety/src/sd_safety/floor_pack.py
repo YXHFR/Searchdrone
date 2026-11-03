@@ -6,11 +6,13 @@ flight, and the floor is worked out from it in memory. A pack lives in
 
     floor_pack.toml   format, name, attribution, [origin] lat/lon, [grid] size_m
                       (east, north) and scan_cell_m, [sha256] of every file below
-    dtm_cm.npy        ground height above sea level (RH 2000), cm, int32;
-                      DTM_NODATA_CM = no ground height
-    chm_dm.npy        tree height above the ground, dm, int16; -1 = unknown
+    dtm_cm.npy        ground height above sea level (RH 2000), cm, int32, within
+                      DTM_MIN_CM..DTM_MAX_CM; DTM_NODATA_CM = no ground height
+    chm_dm.npy        tree height above the ground, dm, int16; -1 = unknown (the
+                      loader refuses anything lower)
     scan_year.npy     the scan's year per scan_cell_m square, uint16; 0 = unknown
-    lines.geojson     known power lines (LineString/MultiLineString, WGS84), may be empty
+    lines.geojson     known power lines (LineString/MultiLineString, WGS84), may be empty;
+                      a line of one point is a pole
 
 The grids are 1 m cells in the east/north plane tangent at the origin
 (``sd_schemas.geo.local_xy``), centred on it, row 0 north (like a site's ``chm_dm.npy``
@@ -18,11 +20,15 @@ from ``tools/terrain/fetch_trees.py``). ``scan_year`` covers the same area in sq
 ``scan_cell_m`` from the north-west corner; where a square holds several scans, the
 oldest year belongs there. ``FloorPack.sha256`` is the hash of ``floor_pack.toml``, which
 holds every file's hash: it names the whole pack (``MissionCharter.floor_pack_sha256``).
+Each file is read once; its hash is checked on exactly the bytes the grids are built
+from, and the grids are kept in memory, read-only, so a later write to the files on disk
+cannot change the floor unseen.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import tomllib
 from collections.abc import Sequence
@@ -38,6 +44,8 @@ from sd_schemas.base import LatLon
 
 __all__ = [
     "CHM_UNKNOWN_DM",
+    "DTM_MAX_CM",
+    "DTM_MIN_CM",
     "DTM_NODATA_CM",
     "FLOOR_PACK_FILES",
     "FLOOR_PACK_FORMAT",
@@ -51,6 +59,8 @@ __all__ = [
 FLOOR_PACK_FORMAT: Final = 1
 FLOOR_PACK_FILES: Final = ("dtm_cm.npy", "chm_dm.npy", "scan_year.npy", "lines.geojson")
 DTM_NODATA_CM: Final = int(np.iinfo(np.int32).min)
+DTM_MIN_CM: Final = -500_00  # the bounds of an altitude in sd_schemas.base.LatLonAlt
+DTM_MAX_CM: Final = 9000_00
 CHM_UNKNOWN_DM: Final = -1
 SCAN_YEAR_UNKNOWN: Final = 0
 
@@ -87,40 +97,51 @@ class FloorPack:
         tiles = (-(-rows // self.scan_cell_m), -(-cols // self.scan_cell_m))
         if self.scan_year.dtype != np.uint16 or self.scan_year.shape != tiles:
             raise FloorPackError(f"scan_year is a uint16 grid of shape {tiles}")
-        if any(len(line) < 2 for line in self.lines):
-            raise FloorPackError("a power line has at least two points")
+        object.__setattr__(self, "lines", tuple(_line(line) for line in self.lines))
         object.__setattr__(self, "plane", Plane(self.origin.lat, self.origin.lon))
 
     def line_xy(self, points: Sequence[LatLon]) -> Line:
         """A line given in latitude/longitude (one the pilot drew), in the pack's plane."""
-        return tuple(self.plane.point(p) for p in points)
+        return _line(tuple(self.plane.point(p) for p in points))
+
+
+def _line(points: Sequence[Xy]) -> Line:
+    """A power line with at least one segment: one point (a pole) becomes a segment of no
+    length, so the zone around it still counts. The same rule for the pack's lines and
+    the pilot's."""
+    if not points:
+        raise FloorPackError("a power line has at least one point")
+    return tuple(points) if len(points) > 1 else (points[0], points[0])
 
 
 def load_floor_pack(folder: Path) -> FloorPack:
-    """Read and check a pack: every file's hash must match ``floor_pack.toml``. The grids
-    are memory-mapped, not read whole."""
+    """Read and check a pack: every file's hash must match ``floor_pack.toml`` and the
+    heights must be in the format's range."""
     try:
         raw = (folder / "floor_pack.toml").read_bytes()
         meta = tomllib.loads(raw.decode("utf-8"))
         if meta.get("format") != FLOOR_PACK_FORMAT:
             raise FloorPackError(f"floor_pack.toml: format is not {FLOOR_PACK_FORMAT}")
         hashes = meta["sha256"]
-        for name in FLOOR_PACK_FILES:
-            if _file_sha256(folder / name) != hashes[name]:
+        files = {name: (folder / name).read_bytes() for name in FLOOR_PACK_FILES}
+        for name, data in files.items():
+            if hashlib.sha256(data).hexdigest() != hashes[name]:
                 raise FloorPackError(f"{name} does not match its sha256")
-        dtm = np.load(folder / "dtm_cm.npy", mmap_mode="r", allow_pickle=False)
+        dtm = _grid(files["dtm_cm.npy"])
         cols, rows = meta["grid"]["size_m"]
         if dtm.shape != (rows, cols):
             raise FloorPackError("dtm_cm.npy does not have the size in floor_pack.toml")
+        chm = _grid(files["chm_dm.npy"])
+        _check_heights(dtm, chm)
         origin = LatLon(lat=meta["origin"]["lat"], lon=meta["origin"]["lon"])
-        lines = _read_lines(folder / "lines.geojson", Plane(origin.lat, origin.lon))
+        lines = _read_lines(files["lines.geojson"], Plane(origin.lat, origin.lon))
         return FloorPack(
             name=str(meta["name"]),
             sha256=hashlib.sha256(raw).hexdigest(),
             origin=origin,
             dtm_cm=dtm,
-            chm_dm=np.load(folder / "chm_dm.npy", mmap_mode="r", allow_pickle=False),
-            scan_year=np.load(folder / "scan_year.npy", mmap_mode="r", allow_pickle=False),
+            chm_dm=chm,
+            scan_year=_grid(files["scan_year.npy"]),
             scan_cell_m=int(meta["grid"]["scan_cell_m"]),
             lines=lines,
             attribution=str(meta["attribution"]),
@@ -131,17 +152,28 @@ def load_floor_pack(folder: Path) -> FloorPack:
         raise FloorPackError(f"{folder}: not a readable floor pack ({exc})") from exc
 
 
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        while chunk := f.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _grid(data: bytes) -> NDArray[Any]:
+    """A grid from the bytes whose hash was checked, in memory and read-only."""
+    grid: NDArray[Any] = np.load(io.BytesIO(data), allow_pickle=False)
+    grid.setflags(write=False)
+    return grid
 
 
-def _read_lines(path: Path, plane: Plane) -> tuple[Line, ...]:
+def _check_heights(dtm: NDArray[Any], chm: NDArray[Any]) -> None:
+    """Refuse heights outside the format: another nodata value is a writer's mistake the
+    floor must not read as ground far below or as a tree of negative height."""
+    ground = dtm[dtm != DTM_NODATA_CM]
+    if not ground.size:
+        raise FloorPackError("dtm_cm.npy: no ground height anywhere")
+    if int(ground.min()) < DTM_MIN_CM or int(ground.max()) > DTM_MAX_CM:
+        raise FloorPackError("dtm_cm.npy: a ground height outside -500..9000 m")
+    if int(chm.min()) < CHM_UNKNOWN_DM:
+        raise FloorPackError("chm_dm.npy: a tree height below -1 (unknown)")
+
+
+def _read_lines(raw: bytes, plane: Plane) -> tuple[Line, ...]:
     """The power lines in a GeoJSON FeatureCollection, in the pack's plane."""
-    data: Any = json.loads(path.read_text(encoding="utf-8"))
+    data: Any = json.loads(raw.decode("utf-8"))
     if data.get("type") != "FeatureCollection":
         raise FloorPackError("lines.geojson is a FeatureCollection")
     lines: list[Line] = []

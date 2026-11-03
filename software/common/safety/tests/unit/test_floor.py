@@ -9,6 +9,7 @@ import json
 import socket
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -139,6 +140,19 @@ def test_lines_the_pilot_drew_count() -> None:
     assert (r.reason, r.floor_lowest_amsl_m) == ("powerline", START_AMSL)
 
 
+def test_a_line_of_one_point_is_a_pole_with_its_zone() -> None:
+    """One point (a pylon) the pilot drew, or in the pack, keeps the 30 m zone around it."""
+    pole = [at(0.0, 25.0)]
+    assert floor(make_pack(), extra_lines=[pole]).reason == "powerline"
+    assert floor(make_pack(), north=-10.0, extra_lines=[pole]).reason == "map"  # 35 m
+    assert floor(make_pack(lines=(((0.0, 25.0),),))).reason == "powerline"
+
+
+def test_a_line_of_no_points_is_refused() -> None:
+    with pytest.raises(FloorPackError, match="at least one point"):
+        floor(make_pack(), extra_lines=[[]])
+
+
 # --- the margins -----------------------------------------------------------------------------
 
 
@@ -146,7 +160,7 @@ def test_lines_the_pilot_drew_count() -> None:
     ("scan_year", "tree_m"),
     [
         (2026, 10.0 + 2.0),  # scanned this year: no growth yet
-        (2027, 10.0 + 2.0),  # a scan year after the flight: no negative growth
+        (2027, 37.0),  # a scan year after the flight: an error, so unknown
         (2022, 10.0 + 2.0 + 2.0),
         (2016, 10.0 + 2.0 + 5.0),  # ten years: the growth is at its cap
         (2015, 37.0),  # eleven years: too old, unknown
@@ -227,6 +241,31 @@ def test_outside_the_pack_no_descent(east: float, north: float) -> None:
     assert (r.reason, r.floor_lowest_amsl_m, r.ground_amsl_m) == ("no_map", START_AMSL, None)
 
 
+def test_an_old_scan_keeps_a_taller_tree() -> None:
+    """Unknown is 30 m forest at the least, not instead: a 38 m spruce scanned 12 years
+    ago still counts with its own height and the most growth."""
+    r = floor(make_pack(tree_m=38.0, scan_year=2014))
+    assert r.tree_m == pytest.approx(38.0 + 2.0 + 5.0)
+    assert r.reason == "unknown"
+    assert floor(make_pack(tree_m=20.0, scan_year=2014)).tree_m == pytest.approx(37.0)
+
+
+def test_a_cell_without_ground_keeps_a_taller_tree() -> None:
+    pack = make_pack(trees={(3.0, 0.0): 38.0}, ground={(3.0, 0.0): float("nan")})
+    assert floor(pack).tree_m == pytest.approx(38.0 + 2.0 + 5.0)
+
+
+@pytest.mark.parametrize("chm_dm", [-2, -50, -32768])
+def test_any_negative_tree_height_is_unknown(chm_dm: int) -> None:
+    """Another nodata value than -1 (int16's lowest, say) is no height, not a negative tree."""
+    pack = make_pack()
+    pack = replace(pack, chm_dm=np.full(pack.chm_dm.shape, chm_dm, np.int16))
+    r = floor(pack)
+    assert r.tree_m == pytest.approx(37.0)
+    assert agl(r.floor_lowest_amsl_m) == pytest.approx(52.0)
+    assert r.reason == "unknown"
+
+
 def test_no_ground_height_at_p_no_descent() -> None:
     r = floor(make_pack(ground={(0.0, 0.0): float("nan")}))
     assert r.reason == "no_map"
@@ -270,6 +309,44 @@ def test_a_power_line_beats_the_laser_and_its_loss() -> None:
     pack = make_pack(lines=(((-50.0, 5.0), (50.0, 5.0)),))
     assert floor(pack, laser=seen(0.0, TF02)).reason == "powerline"
     assert floor(pack, laser_lost=True).reason == "powerline"
+
+
+@pytest.mark.parametrize(
+    ("surface", "min_range"),
+    [
+        (float("nan"), TF02),
+        (float("inf"), TF02),
+        (float("-inf"), TF02),
+        (GROUND_M, float("nan")),
+        (GROUND_M, float("inf")),
+    ],
+)
+def test_a_reading_that_is_not_a_number_counts_as_no_laser(
+    surface: float, min_range: float
+) -> None:
+    """``max`` drops a NaN that is not its first argument: it must not leave the map's
+    lowest floor (trees + 5) in place of trees + 15."""
+    pack = make_pack(tree_m=24.0, scan_year=2021)
+    laser = LaserState(confirmed=True, surface_amsl_m=surface, min_range_m=min_range)
+    r = floor(pack, laser=laser)
+    assert r == floor(pack)
+    assert agl(r.floor_lowest_amsl_m) == pytest.approx(43.5)
+    assert not r.laser_confirmed
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_start_height_or_point_that_is_not_a_number_is_refused(bad: float) -> None:
+    """A NaN start height would turn the power-line rule off unseen: refused instead."""
+    pack = make_pack(lines=(((-50.0, 0.0), (50.0, 0.0)),))
+    for p in (pack, None):
+        with pytest.raises(ValueError, match="start_alt_amsl_m"):
+            floor(p, start_alt_amsl_m=bad)
+        with pytest.raises(ValueError, match="start_alt_amsl_m"):
+            floor_along(p, [at(0, 0)], flight_date=FLIGHT, laser=None, start_alt_amsl_m=bad)
+    with pytest.raises(ValueError, match="lat"):
+        floor_at(pack, bad, 18.2, flight_date=FLIGHT, laser=None, start_alt_amsl_m=99.0)
+    with pytest.raises(ValueError, match="lon"):
+        floor_at(pack, 59.3, bad, flight_date=FLIGHT, laser=None, start_alt_amsl_m=99.0)
 
 
 def test_surface_set_exactly_when_confirmed() -> None:
@@ -396,6 +473,20 @@ def test_pack_round_trip(tmp_path: Path) -> None:
     assert floor(loaded, north=-20.0) == floor(pack, north=-20.0)
 
 
+def test_pack_in_memory_read_only_and_as_hashed(tmp_path: Path) -> None:
+    """The grids are the bytes whose hash was checked: a later write to the files on disk
+    changes nothing, and the grids cannot be written through."""
+    folder = write_pack(tmp_path / "p", make_pack(tree_m=24.0, scan_year=2021))
+    loaded = load_floor_pack(folder)
+    before = floor(loaded)
+    np.save(folder / "chm_dm.npy", np.zeros((60, 60), np.int16))
+    np.save(folder / "dtm_cm.npy", np.zeros((60, 60), np.int32))
+    assert floor(loaded) == before
+    for grid in (loaded.dtm_cm, loaded.chm_dm, loaded.scan_year):
+        with pytest.raises(ValueError, match="read-only"):
+            grid[0, 0] = 1
+
+
 def test_pack_multilinestring(tmp_path: Path) -> None:
     folder = write_pack(tmp_path / "p", make_pack())
     multi = {
@@ -458,11 +549,19 @@ def _rewrite(folder: Path, name: str, data: bytes) -> None:
                 f,
                 "lines.geojson",
                 b'{"type": "FeatureCollection", "features": [{"type": "Feature", '
-                b'"geometry": {"type": "LineString", "coordinates": [[18.2, 59.3]]}}]}',
+                b'"geometry": {"type": "LineString", "coordinates": []}}]}',
             ),
-            "two points",
+            "at least one point",
         ),
         (lambda f: _rewrite(f, "dtm_cm.npy", _npy(np.zeros((60, 60), np.float32))), "int32"),
+        (lambda f: _rewrite(f, "chm_dm.npy", _npy(_grid(np.int16, -2))), "below -1"),
+        (lambda f: _rewrite(f, "chm_dm.npy", _npy(_grid(np.int16, -32768))), "below -1"),
+        (lambda f: _rewrite(f, "dtm_cm.npy", _npy(_grid(np.int32, -999_900))), "outside"),
+        (lambda f: _rewrite(f, "dtm_cm.npy", _npy(_grid(np.int32, 900_001))), "outside"),
+        (
+            lambda f: _rewrite(f, "dtm_cm.npy", _npy(_grid(np.int32, np.iinfo(np.int32).min))),
+            "no ground height",
+        ),
     ],
 )
 def test_pack_refused(tmp_path: Path, change: Callable[[Path], object], message: str) -> None:
@@ -477,6 +576,10 @@ def _toml(folder: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     assert old in text
     path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def _grid(dtype: type[np.integer[Any]], value: int) -> NDArray[Any]:
+    return np.full((60, 60), value, dtype)
 
 
 def _npy(array: NDArray[Any]) -> bytes:
@@ -495,7 +598,7 @@ def _npy(array: NDArray[Any]) -> bytes:
         ({"scan_cell_m": 0}, "scan_cell_m"),
         ({"scan_year": np.zeros((2, 2), np.uint16)}, "scan_year"),
         ({"scan_year": np.zeros((1, 1), np.int16)}, "scan_year"),
-        ({"lines": (((0.0, 0.0),),)}, "two points"),
+        ({"lines": ((),)}, "at least one point"),
     ],
 )
 def test_pack_in_memory_refused(kw: dict[str, object], message: str) -> None:
