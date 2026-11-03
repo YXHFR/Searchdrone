@@ -116,13 +116,14 @@ def reroute(
     Corners inside a cylinder are dropped (the rest of the route never goes back in).
     When the position is inside cylinders and the first leg would go deeper, the route
     first leaves them (``_exit``): along ``exit_dir`` when given (the leg being flown)
-    if that works, else away from their centres. Every leg after that is clear of the
-    cylinders, and the whole route must lie inside ``area``."""
+    if that works, else away from their centres, never by a way that leaves ``area``
+    (near the charter's edge the way out turns back in). Every leg after that is clear
+    of the cylinders, and the whole route must lie inside ``area``."""
     if not route:
         return []
     here = route[0]
     out = [here]
-    way_out = _exit(here, route[1] if len(route) > 1 else None, cyl, exit_dir)
+    way_out = _exit(here, route[1] if len(route) > 1 else None, cyl, exit_dir, area)
     if way_out is None:
         return None
     out += way_out
@@ -160,10 +161,17 @@ def reroute(
     return out
 
 
-def _exit(here: Xy, nxt: Xy | None, cyl: Sequence[Circle], exit_dir: Xy | None) -> list[Xy] | None:
+def _exit(
+    here: Xy,
+    nxt: Xy | None,
+    cyl: Sequence[Circle],
+    exit_dir: Xy | None,
+    area: Polygon | None = None,
+) -> list[Xy] | None:
     """The way out of the cylinders ``here`` is in: no corner when it is in none or the
     first leg leaves without going deeper, else one corner past all of them; None when
-    no straight way out goes deeper into none of them and enters no other.
+    no straight way out goes deeper into none of them, enters no other and stays inside
+    ``area``.
 
     The direction is the first that works of: ``exit_dir``, away from the centres
     together, straight out from each centre, square to each (nearest the next corner
@@ -193,8 +201,11 @@ def _exit(here: Xy, nxt: Xy | None, cyl: Sequence[Circle], exit_dir: Xy | None) 
         candidates.append((math.cos(a), math.sin(a)))
     for u in candidates:
         p = _leave(here, u, inside)
-        if not any(leg_enters(here, p, c, r) for c, r in cyl):
-            return [p]
+        if any(leg_enters(here, p, c, r) for c, r in cyl):
+            continue
+        if area is not None and area.leg_outside_by(here, p) > 0.0:
+            continue
+        return [p]
     return None
 
 
