@@ -346,14 +346,19 @@ def test_reroute_from_inside() -> None:
 
 
 def test_reroute_checks_the_way_out_against_the_area() -> None:
-    """The leg out of a cylinder counts too: out across the area's edge is no route."""
+    """The leg out of a cylinder counts too: it never crosses the area's edge. When the
+    leg flown would, the way out turns; when every way out would, there is no route."""
     cyl = [((0.0, 0.0), 40.0)]
     area = Polygon(((-400.0, -400.0), (400.0, -400.0), (400.0, 30.0), (-400.0, 30.0)))
     # The only corner left lies inside the cylinder: the way out is the whole route.
     route: list[Xy] = [(0.0, 10.0), (0.0, -5.0)]
-    assert reroute(route, cyl, area=area, exit_dir=(0.0, 1.0)) is None
     out = reroute(route, cyl, area=BOX, exit_dir=(0.0, 1.0))
-    assert out is not None and len(out) == 2 and out[1][1] > 40.0
+    assert out is not None and len(out) == 2 and out[1][1] > 40.0  # along the leg flown
+    out = reroute(route, cyl, area=area, exit_dir=(0.0, 1.0))
+    assert out is not None and len(out) == 2 and out[1][1] < 30.0  # not across the edge
+    assert area.leg_outside_by(*out) == 0.0 and math.dist(out[1], (0.0, 0.0)) > 40.0
+    inner = Polygon(((-30.0, -30.0), (30.0, -30.0), (30.0, 30.0), (-30.0, 30.0)))
+    assert reroute(route, cyl, area=inner, exit_dir=(0.0, 1.0)) is None
 
 
 def test_inspect_way_there_keeps_out_of_the_target_without_its_cylinder() -> None:
@@ -385,6 +390,27 @@ def test_reroute_gives_up_on_cylinders_it_cannot_pass() -> None:
     """Overlapping cylinders that wall off the way, in a narrow area: no reroute."""
     wall = [((float(x), 0.0), 40.0) for x in range(-360, 361, 60)]
     assert reroute([(0.0, -200.0), (0.0, 200.0)], wall, area=BOX) is None
+
+
+def test_reroute_from_inside_near_the_charters_edge_turns_back_in() -> None:
+    # SK09: a cylinder appears around the drone 10 m from the charter's east edge; straight
+    # out from the centre leaves the charter, so the way out must turn.
+    area = Polygon(((-60.0, -60.0), (300.0, -60.0), (300.0, 300.0), (-60.0, 300.0)))
+    cyl = [((267.0, 158.0), 35.9)]
+    here = (290.0, 160.0)
+    lanes = [(270.0, 195.0), (150.0, 195.0), (150.0, 240.0)]
+    assert reroute([here, *lanes], cyl) is not None  # without the charter: east, around
+    out = reroute([here, *lanes], cyl, area=area)
+    assert out is not None and out[0] == here and out[-3:] == lanes
+    assert all(area.leg_outside_by(a, b) == 0.0 for a, b in pairwise(out))
+    assert xy_route_violation(out[1:], cyl) is None
+    # Only the position (the reflex's and the link loss's way out): out, inside the charter.
+    way = reroute([here], cyl, area=area)
+    assert way is not None and len(way) == 2
+    assert area.leg_outside_by(*way) == 0.0 and math.dist(way[1], cyl[0][0]) > cyl[0][1]
+    # A drone boxed in by the charter on every side but through the cylinder: no way out.
+    tight = Polygon(((280.0, 150.0), (300.0, 150.0), (300.0, 170.0), (280.0, 170.0)))
+    assert reroute([here], cyl, area=tight) is None
 
 
 @pytest.mark.parametrize("sign", [1, -1])
