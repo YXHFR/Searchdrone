@@ -10,7 +10,8 @@ only those (for example the fence test, which flies out of the charter on purpos
 * INV2 distance from the charter's pilot position <= its range + 5 m;
 * INV3 ground speed <= the charter's top speed + 1 m/s;
 * INV4 distance outside the charter's area <= its fence buffer;
-* INV7 every order the vehicle carried out had a ground gate decision ALLOW first;
+* INV7 every order the vehicle carried out had a ground gate decision ALLOW first (an
+  order whose approval card was withdrawn unanswered never left the ground);
 * INV8 STOP and FLY HOME (the buttons and the chat's stop words) come from an operator;
 * INV10 nothing the AI sends gets through while the operator's STOP or FLY HOME stands.
 """
@@ -143,12 +144,26 @@ def _ts(value: Any) -> dt.datetime:
 def check_orders(
     commands: Sequence[Mapping[str, Any]],
     gate_decisions: Mapping[str, Sequence[Mapping[str, Any]]],
+    approvals: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
     """INV7: an order the vehicle carried out has a ground ALLOW, and no order the ground
-    gate refused ever reached the vehicle. ``gate_decisions`` is keyed by order id."""
+    gate refused ever reached the vehicle. ``gate_decisions`` is keyed by order id.
+
+    ``superseded`` means two things: the vehicle replaced an order it had (carried out),
+    or STOP / FLY HOME withdrew an order card the pilot had not answered yet (the ground
+    sends such an order only after the click). The second never left the ground: its card
+    in ``approvals`` is ``superseded`` too, never ``approved``. An order without such a
+    card still needs its ALLOW."""
+    withdrawn = {
+        str(a["subject_id"])
+        for a in approvals
+        if a.get("kind") == "command" and a.get("status") == "superseded"
+    }
     out = []
     for c in commands:
         if c["skill"] in _GROUND_SKILLS:
+            continue
+        if c["status"] == "superseded" and str(c["id"]) in withdrawn:
             continue
         status = str(c["status"])
         decisions = [
@@ -201,6 +216,7 @@ def check_all(
     events: Sequence[Mapping[str, Any]],
     *,
     exempt: Iterable[str] = (),
+    approvals: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
     """Every invariant. The track is checked against every approved charter version, each
     limit against the version that allows it most (see ``check_track``)."""
@@ -210,6 +226,6 @@ def check_all(
     if approved and samples:
         out += check_track(samples, [c["body"] for c in approved], exempt=skip)
     if "INV7" not in skip:
-        out += check_orders(commands, gate_decisions)
+        out += check_orders(commands, gate_decisions, approvals)
     out += [p for p in check_overrides(events, commands) if p.split(":", 1)[0] not in skip]
     return out
