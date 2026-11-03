@@ -627,12 +627,15 @@ class Vehicle:
                             and t.fc_custom_mode == wanted_mode
                         ):
                             # The answer was lost, but a HEARTBEAT received after the first
-                            # send shows the mode. One received before it proves nothing:
-                            # the mode may have left since, and the command may still be
-                            # on its way; then the command is sent again.
-                            # Not recorded yet when the mode at send was the one asked
-                            # for (no HEARTBEAT could tell): that HEARTBEAT is the answer,
-                            # so a later one carries it (``mode_answer_seq``).
+                            # send shows the mode, and that HEARTBEAT is the answer. One
+                            # received before the send proves nothing (the mode may have left
+                            # since, the command may still be on its way), so the command is
+                            # sent again; if every answer is lost and no newer HEARTBEAT
+                            # comes, the result is TIMEOUT, not ACCEPTED (fails safe: the
+                            # caller treats the mode as unconfirmed). When the mode at send
+                            # was already the one asked for, no HEARTBEAT could tell, so the
+                            # answer is recorded here and a later one carries it
+                            # (``mode_answer_seq``).
                             if self._mode_command is not None:
                                 self._mode_answer_seq = max(seq, self._mode_answer_seq or seq)
                                 self._mode_command = None
