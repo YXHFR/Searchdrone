@@ -66,6 +66,7 @@ from sd_onboard.perception.loop import PerceptionLoop
 from sd_onboard.perception.pipeline import Perception
 from sd_onboard.perception.sources import DirStillSource
 from sd_safety.constants import RATE_ACTION_MIN_GAP_MS
+from sd_safety.keepout import UNCONFIRMED_SOURCES
 from sd_safety.targets import Plane, distance_m
 from sd_schemas.probmap import ProbabilityGrid
 from sd_search.app import SearchService
@@ -243,19 +244,25 @@ async def _watch(run: SearchRun, stop: asyncio.Event) -> None:
     while not stop.is_set():
         now = time.monotonic()
         held = {str(k.keepout_id): k for k in ex.keepouts_in_force()}
+        # An unconfirmed person under a charter that allows overflight: E8 lets a search
+        # route cross it straight through (``SeenKeepout.passable``).
+        over = ex.charter is not None and ex.charter.overflight_allowed
         for kid, k in held.items():
             seen = run.keepouts.get(kid)
-            shape = (k.lat, k.lon, k.radius_m)
-            if seen is not None and (seen.lat, seen.lon, seen.radius_m) != shape:
+            passable = over and k.source in UNCONFIRMED_SOURCES
+            shape = (k.lat, k.lon, k.radius_m, passable)
+            if seen is not None and (seen.lat, seen.lon, seen.radius_m, seen.passable) != shape:
                 # The ground moves a candidate's cylinder as its position firms up, under
                 # the same id: the old shape ends here and the new one starts, with the
                 # same rules but no new grace (E8 counts its braking from the id's arrival).
                 run.keepouts[f"{kid}@{seen.since}"] = replace(seen, until=now)
                 run.keepouts[kid] = SeenKeepout(
-                    kid, k.lat, k.lon, k.radius_m, now, came=seen.arrival
+                    kid, k.lat, k.lon, k.radius_m, now, came=seen.arrival, passable=passable
                 )
             elif seen is None:
-                run.keepouts[kid] = SeenKeepout(kid, k.lat, k.lon, k.radius_m, now)
+                run.keepouts[kid] = SeenKeepout(
+                    kid, k.lat, k.lon, k.radius_m, now, passable=passable
+                )
         for kid, seen in list(run.keepouts.items()):
             if kid not in held and seen.until == math.inf:
                 run.keepouts[kid] = replace(seen, until=now)
