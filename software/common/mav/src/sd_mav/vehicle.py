@@ -606,6 +606,7 @@ class Vehicle:
         async with lock:
             start_mode = self._t.fc_custom_mode
             start_onset = self._t.failsafe_onset_mono_ms
+            sent_seq = self._rx_seq  # all received before the first send
             if wanted_mode is not None:
                 self._mode_command = (wanted_mode, start_mode)
             try:
@@ -617,13 +618,22 @@ class Vehicle:
                             and self._clock.monotonic_ms() - t.fc_heartbeat_mono_ms
                             <= MODE_FRESH_S * 1000
                         )
-                        if fresh and wanted_mode is not None and t.fc_custom_mode == wanted_mode:
-                            # The answer was lost, but the HEARTBEAT already shows the mode.
+                        seq = t.fc_heartbeat_seq
+                        if (
+                            fresh
+                            and seq is not None
+                            and seq > sent_seq
+                            and wanted_mode is not None
+                            and t.fc_custom_mode == wanted_mode
+                        ):
+                            # The answer was lost, but a HEARTBEAT received after the first
+                            # send shows the mode. One received before it proves nothing:
+                            # the mode may have left since, and the command may still be
+                            # on its way; then the command is sent again.
                             # Not recorded yet when the mode at send was the one asked
                             # for (no HEARTBEAT could tell): that HEARTBEAT is the answer,
                             # so a later one carries it (``mode_answer_seq``).
-                            seq = t.fc_heartbeat_seq
-                            if self._mode_command is not None and seq is not None:
+                            if self._mode_command is not None:
                                 self._mode_answer_seq = max(seq, self._mode_answer_seq or seq)
                                 self._mode_command = None
                             self._event("mav.ack_lost_mode_reached", {"mode": t.fc_mode})
@@ -930,8 +940,9 @@ class Vehicle:
         Limit: any accepted DO_SET_MODE ACK addressed to us while our command waits counts
         as its answer, a late duplicate of an earlier one or a (0, 0)-addressed ACK that
         may be the GCS's included. A newer answer only ends a late mode record sooner
-        (``sd_onboard`` Authority), so a wrong one fails safe: a late AUTO is then taken
-        as a takeover."""
+        (``sd_onboard`` Authority), so a wrong one fails safe: a stray or late duplicate
+        accepted ACK can end a late record early, and a late AUTO is then taken as a
+        takeover (a false hold), never the other way round."""
         if (
             self._mode_command is not None
             and int(msg.command) == mavlink.MAV_CMD_DO_SET_MODE

@@ -346,6 +346,21 @@ def test_another_mode_shown_after_its_own_answer_ends_a_cancelled_auto() -> None
     assert a.unexpected_mode(t, 1100) is not None
 
 
+def test_a_reordered_stale_heartbeat_fails_to_a_hold() -> None:
+    """#161 round-8 review: receive order stands for send order (the link does not
+    reorder). Were a GUIDED HEARTBEAT sent before the AUTO answer received after it, the
+    late AUTO would end, and the AUTO that shows next is a takeover: a false hold, never
+    a takeover taken as ours."""
+    a = _late_auto()
+    stale = _shows(CopterMode.GUIDED, 1050, seq=_OWN + 1)  # sent before the answer
+    assert a.unexpected_mode(stale, 1050) is None
+    assert a.late is None
+    t = _shows(CopterMode.AUTO, 1100, seq=_OWN + 2, other=_OWN + 1)
+    assert a.adopt_late(t, 1100) is None
+    assert a.expected_mode == CopterMode.GUIDED
+    assert a.unexpected_mode(t, 1100) is not None
+
+
 def test_any_heartbeat_after_a_newer_answer_ends_a_cancelled_auto() -> None:
     """The flight controller handles mode commands in order: after a newer mode command of
     ours was answered, the cancelled AUTO can no longer show. A HEARTBEAT received after
