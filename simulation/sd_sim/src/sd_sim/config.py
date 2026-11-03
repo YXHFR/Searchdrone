@@ -44,6 +44,10 @@ TELE_GZ_QUAD14 = (
     "tele=true (telekameran) finns bara med physics=gz och vehicle=sd_quad14, "
     "bredvid stillbildskameran."
 )
+RANGEFINDERS = ("none", "tf02", "grf250")  # sd_sim.rangefinder.MODELS
+RANGEFINDER_MOCK = (
+    "rangefinder= (den simulerade lasern) kräver ArduPilot: physics=builtin eller physics=gz."
+)
 PERSONAL_HOME_WARNING = "Personlig startplats används. Spela inte in demo med den."
 _HOME = re.compile(r"^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$")
 _TRUE = ("1", "true", "yes", "on")
@@ -91,6 +95,8 @@ class SimConfig:
     tele_hfov_deg: float = cameras.TELE_HFOV_DEG
     tele_width: int = cameras.TELE_SIZE_PX[0]
     tele_height: int = cameras.TELE_SIZE_PX[1]
+    # The laser pointing down (sd_sim.rangefinder): "none" | "tf02" | "grf250".
+    rangefinder: str = "none"
 
     def tele_camera(self) -> cameras.StillsCamera | None:
         """The tele camera this run asks for, or ``None``."""
@@ -238,6 +244,9 @@ def load(
             cfg.tele_camera()
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
+    cfg.rangefinder = _choice("rangefinder", merged.get("rangefinder", "none"), RANGEFINDERS)
+    if cfg.rangefinder != "none" and cfg.physics == "mock":
+        raise ConfigError(RANGEFINDER_MOCK)
     home = str(merged.get("home_override", "")).strip()
     if home and not demo:
         if not _HOME.match(home):

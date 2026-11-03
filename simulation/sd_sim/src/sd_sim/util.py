@@ -17,6 +17,7 @@ UDP_PORTS = frozenset(
         "mavtap_in",
         "onboard_mavlink",
         "harness_mavlink",
+        "rangefinder_mavlink",
         "qgc_mavlink",
         "sitl_json_fdm",
         "sitl_rc_in",
