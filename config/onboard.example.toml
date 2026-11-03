@@ -35,3 +35,10 @@ still_dir = ""                                    # its own folder, written like
 width_px = 4056
 height_px = 3040
 hfov_deg = 20.0                                   # replace with the measured field of view
+
+[rangefinder]                                     # optional laser pointing down, via the flight controller
+model = "none"                                    # "none" | "tf02_pro" | "grf250" | "other"
+min_tested_m = 0.0                                # shortest distance tested with it (GRF-250: 10)
+max_tested_m = 0.0                                # longest tested over dark ground (TF02-Pro: 13)
+# With a laser, add its simulation/sitl/params/searchdrone-rangefinder-*.parm to
+# expected_param_files: the flight controller is read back against it before every takeoff.
