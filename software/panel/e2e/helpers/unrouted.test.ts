@@ -51,11 +51,19 @@ describe("classify the requests that reached the preview server", () => {
     expect(classify(log)).toEqual({ during: [retry], closing: [] });
   });
 
+  it("a request logged in the same millisecond as its own END is from the closing page", () => {
+    const at = "2026-11-02T20:00:01.000Z";
+    const line = req(at, "GET /api/v1/x", "t1.0.0");
+    expect(classify([end("t1.0.0", at), line].join("\n"))).toEqual({ during: [], closing: [line] });
+  });
+
   it("a line it cannot read fails the run instead of being let through", () => {
     for (const bad of [
       "garbage",
       "2026-11-02T20:00:01.000Z GET /api/v1/x",
       "notatime END t1.0.0",
+      "1 END t1.0.0",
+      "1 GET /api/v1/x (no test header; referer -; empty/cors)",
     ]) {
       expect(classify(bad)).toEqual({ during: [`unreadable log line: ${bad}`], closing: [] });
     }

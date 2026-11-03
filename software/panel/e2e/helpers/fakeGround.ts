@@ -196,6 +196,8 @@ export class FakeGround {
     page.on("requestfinished", (r) => this.inFlight.delete(r));
     page.on("requestfailed", (r) => this.inFlight.delete(r));
     // A reload or navigation cuts the old document's requests off without either event.
+    // This also fires on history.replaceState and hash changes; settle() then just
+    // returns early, as it did before it waited at all.
     page.on("framenavigated", (f) => {
       if (f === page.mainFrame()) this.inFlight.clear();
     });

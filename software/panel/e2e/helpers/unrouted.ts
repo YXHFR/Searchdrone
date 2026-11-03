@@ -33,37 +33,42 @@ export const CLOSE_WINDOW_MS = 5_000;
  * marker, or, without the test header (the page had dropped its headers), within
  * CLOSE_WINDOW_MS after some test's END. Everything else fails: a request before its
  * test's END, one whose test never wrote END (the worker died mid-test), one without the
- * header and no END just before it, and any line that cannot be read. */
+ * header and no END just before it, and any line that cannot be read. With several
+ * workers some test has usually just ended, so the window only bounds header-less
+ * requests loosely; with one worker it is tight. */
 export function classify(log: string): { during: string[]; closing: string[] } {
-  const ends = new Map<string, string>();
+  const ends = new Map<string, number>();
   const endTimes: number[] = [];
-  const requests: { at: string; test: string | null; line: string }[] = [];
+  const requests: { at: number; test: string | null; line: string }[] = [];
+  // The guard writes Date#toISOString(); anything looser is not its line.
+  const time = (s: string | undefined): number =>
+    s && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(s) ? Date.parse(s) : Number.NaN;
   const during: string[] = [];
   for (const line of log.split("\n")) {
     if (!line.trim()) continue;
     const [, endAt, endOf] = /^(\S+) END (\S+)$/.exec(line) ?? [];
-    if (endAt && endOf && !Number.isNaN(Date.parse(endAt))) {
-      ends.set(endOf, endAt);
-      endTimes.push(Date.parse(endAt));
+    if (endOf && !Number.isNaN(time(endAt))) {
+      ends.set(endOf, time(endAt));
+      endTimes.push(time(endAt));
       continue;
     }
     const [, at, header] = /^(\S+) \S+ \S+ \((.*?); referer /.exec(line) ?? [];
-    if (!at || header === undefined || Number.isNaN(Date.parse(at))) {
+    if (header === undefined || Number.isNaN(time(at))) {
       during.push(`unreadable log line: ${line}`);
       continue;
     }
     const test = header === "no test header" ? null : (header.split(" ")[0] ?? "");
-    requests.push({ at, test, line });
+    requests.push({ at: time(at), test, line });
   }
   const closing: string[] = [];
   for (const r of requests) {
     let afterClose: boolean;
     if (r.test === null) {
-      const t = Date.parse(r.at);
-      afterClose = endTimes.some((e) => e <= t && t - e <= CLOSE_WINDOW_MS);
+      afterClose = endTimes.some((e) => e <= r.at && r.at - e <= CLOSE_WINDOW_MS);
     } else {
       const end = ends.get(r.test);
-      afterClose = end !== undefined && r.at > end;
+      // The same millisecond as its END counts as after it: the log has no finer order.
+      afterClose = end !== undefined && r.at >= end;
     }
     (afterClose ? closing : during).push(r.line);
   }
